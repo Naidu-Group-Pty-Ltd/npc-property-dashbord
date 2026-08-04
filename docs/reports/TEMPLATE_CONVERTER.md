@@ -128,6 +128,175 @@ document was not printing. Confirmed against WeasyPrint — claimed 13, actual 1
 and closed by reading the answer back off the spine rather than deciding it
 twice. All four fixtures now claim exactly what they render.
 
+**C5 — the chapter list was invented.** The first `FORMAT_CHAPTERS` entry said
+*Position Summary, Income, Commitments, Serviceability, Capacity & Scenarios,
+Assumptions, Next Steps* — seven noun phrases lifted from the archetype's
+*description*. The renderer prints none of them. A comment in the module claimed
+the titles were "taken from each format's shipped document rather than
+invented"; they were invented. Converting a real Borrowing Capacity Snapshot
+bound 3 of 7 chapters and sent 3 sections to the appendix, because the
+document's chapters are editorial sentences and the list was functional labels.
+`TABULAR_CHAPTERS` keyed off the same invented strings, so the shape signal in
+`scoreMatch` had been inert since it was written. Nothing failed loudly — the
+review screen showed a plausible binding of the wrong things, which is the
+failure mode this whole feature is designed around. Fixed, and locked by
+`converterChapters.spec.ts` importing `snapshotSections`.
+
+**C6 — the heading hierarchy arrived inverted.** Our chapters print a small
+`SECTION 01` eyebrow above a large title. A model transcribing that page maps
+*visual size* to heading level, so the eyebrow returned as `##` and the title it
+labels as `#`, for every chapter, and the cover's masthead and client name came
+back as `#` headings owning nothing. `extractStructure` now runs four passes:
+collect each heading with the body it owns, fold a heading that owns nothing and
+reads like a label into the title beneath it, take the baseline from the headings
+that actually own content, then emit. The old `titleIsLone` rule is gone rather
+than joined — it was a proxy for "does this heading own content?", and the new
+rule answers that directly, including two cases the proxy got wrong (a `# Title`
+over `## A` / `### A.1`, where it flattened real nesting; and a title carrying a
+preamble, which it discarded). `pdfExtractionPrompt` also fixes it at source,
+which is worth more than the repair.
+
+**C7 — the document body was flat.** See *The design pass* below. This was the
+big one.
+
+**C8 — the format called itself two things on one page.** The cover eyebrow and
+the running head printed the archetype's `documentName` ("Borrowing Capacity
+Assessment") while the cover's own "Bound to" line printed `formatName()`
+("Borrowing Capacity Snapshot"). One name now, taken from the renderer.
+
+**C9 — the first chapter's notice was never costed.** `renderConvertedBody` puts
+the lede and the draft notice inside the first chapter's body; `planConvertedChapters`
+charged nothing for them. Read off a real fifteen-page render, this was one of
+the two pages the budget was missing. `OPENING_NOTICE_LINES` now charges it, and
+the remaining gap is a single page from `pagesForLines`' own ±1.
+
+---
+
+## The design pass
+
+### What was wrong
+
+A Borrowing Capacity Snapshot converted in production came back reading far
+worse than the PDF it was made from, and the transcription was not the reason:
+Claude returned 6,311 characters of Markdown in eleven seconds with every pipe
+table and every figure intact. What happened next was
+`renderMarkdown(chapter.markdown).html` and nothing else — the renderer imported
+*zero* chart functions and never called `renderKpiStrip`, `renderCallout`,
+`renderSidenote` or `renderLede` for chapter content. `renderMarkdown` knows
+headings, lists, emphasis, blockquotes and pipe tables; every other line becomes
+a `<p>`. So the source's KPI strip arrived as a three-column table and its
+utilisation bar arrived as a paragraph reading `Proposed loan 76%`.
+
+The design system it was converting *onto* has all of those primitives. None was
+reachable from a converted document, because nothing decided which one a given
+passage wanted. That decision is the design work.
+
+### Typed blocks, not HTML
+
+A schema-constrained tool call turns each bound chapter's Markdown into blocks
+from a **closed vocabulary**, and `renderBlocks.pure.ts` renders them through the
+real primitives. The model never emits HTML, never chooses a colour, never sets a
+size — it says "these three figures are a KPI strip" and the design system
+decides what one looks like under the chosen brand.
+
+| block | renders via | non-degenerate when |
+| --- | --- | --- |
+| `lede` | `renderLede` | ≤ 240 chars |
+| `kpi` | `renderKpiStrip` | 2–4 cells |
+| `table` | `renderDataTable` | ≥1 row, ≥1 column |
+| `callout` | `renderCallout` | tone ∈ 5, label + body |
+| `sidenote` | `renderSidenote` | label + body |
+| `bars` | `renderBars` | ≥2 items, not all zero |
+| `donut` | `renderDonut` | ≥3 positive segments |
+| `bullet` | `renderBullet` | a value **and** a target or a max |
+| `prose` | `renderMarkdown` | anything else |
+
+Waterfall, quadrant, heatmap, pictograph, timeline and series-fan are excluded on
+purpose: they need shapes a transcription rarely yields, and offering one to a
+model that has a page of prose is an invitation to invent the data that would
+justify it. `renderGrid12`/`renderTwoCol` are layout, which is the design
+system's decision. `renderPullQuote`/`renderDecisionBox` are editorial voice.
+
+Table rows are positional `string[]` rather than keyed objects, because a keyed
+row asks the model to repeat a key exactly across sixty rows and one typo blanks
+a cell.
+
+### Fidelity
+
+Chosen per conversion, on the render step. Figures are locked at every level.
+
+- **`restructure`** (default) — the same words, in better form. No new prose.
+- **`connective`** — may additionally write one opening sentence per chapter and
+  short sub-headings.
+- **`rewrite`** — may rewrite the prose in house voice, keeping every claim.
+
+The default is the conservative one because a converter that quietly rewrites
+somebody's template is not a converter, and nobody has said otherwise yet.
+Anything unrecognised on the wire — including an absent field, which is every
+request written before this existed — reads as `restructure`.
+
+### Two guards, and one retry
+
+**Faithfulness** (`faithfulness.pure.ts`) runs *enriched → source*: every figure
+in the output must appear in the input. Only that direction, because omission is
+visible on a review screen and invention is not. Both sides are canonicalised to
+numbers rounded to two decimals, so `$856,932` and `856932.00` are one figure —
+and so `9.440000000000001`, which this codebase produces whenever a rate is
+summed before it is displayed and which appears verbatim in the real failing
+document, does not reject an honest answer. Bare integers ≤ 12 and bare years
+1900–2100 are ignored on the output side, or "the two scenarios" would fail every
+chapter at `connective`. A rescaled rate (`0.0944` → `9.44%`) is *not* accepted:
+rescaling is computing.
+
+**The content quota** catches the failure that costs the most and looks least
+like one — a model that wraps the whole chapter in a single `prose` block. That
+is valid, parses cleanly, and produces exactly the flat output this replaces. A
+chapter passes if it produced ≥1 non-`prose` block, **or** if its source has no
+table and no figure to promote; that escape hatch matters as much as the rule,
+because demanding a chart from three paragraphs of prose is how invented data
+gets into a client document.
+
+A chapter that fails either guard is retried **once**, with the rejection handed
+back verbatim. Twice is where `designBrief.pure.ts` settled for the same reason:
+a model that answers all-prose twice is telling you the chapter is prose.
+
+### It cannot fail the render
+
+Every failure path — no key, a timeout, a refusal, a guard rejecting twice, zero
+blocks, a primitive returning `''` — resolves to that chapter having no entry in
+the `enriched` map, and a chapter with no entry renders exactly as the converter
+always rendered it. The worst outcome of the entire design pass going wrong is
+the output the converter produced before it existed. One call per chapter rather
+than one per document, so six chapters are six independent chances.
+
+### Saying whether Claude ran
+
+`fidelity`, `enriched_chapters`, `enrichment_model`, `enrichment_blocks` (counts
+per kind), `enrichment_notes` and `binding_source` on `template_conversions`;
+chips on the result block and in *Earlier conversions*; every guard rejection
+listed under the result. *"Is the converter running this through Claude at all?"*
+is now answerable from the screen. It was not, and the honest answer at the time
+was "for the transcription yes, for the design no".
+
+---
+
+## Binding: proposed, then confirmed
+
+`proposeBindingWithModel` asks a model which section plays each chapter, showing
+it the titles and the first 200 characters of each. The answer goes through
+`readBindingPlan` — the same reader that validates a plan a person edited in the
+browser — so every index is re-checked against the structure and one-to-one is
+enforced. On any failure, and on an answer that bound nothing, the word-overlap
+scorer's plan is used and the row records `binding_source = 'scorer'`.
+
+The scorer is not a poor relation: for one of our own reports read back it binds
+*Capacity at a glance*, *Income and commitments* and *How the capacity is built*
+at 88, 96 and 91 with no model involved. What it cannot do is reach
+"Serviceability Assessment" → "How the capacity is built", which share no word —
+and that is the case a stranger's template is made of.
+
+A person still confirms every row. Nothing here decides anything.
+
 ---
 
 ## Brand design systems
@@ -348,15 +517,21 @@ Template Builder's start menu with a sentence each saying which is which.
 
 ## Formats it can bind to
 
-`FORMAT_CHAPTERS` currently declares one: **Borrowing Capacity Assessment**
-(Position Summary, Income, Commitments, Serviceability, Capacity & Scenarios,
-Assumptions, Next Steps). The titles are taken from the shipped renderer rather
-than invented — bind to "Serviceability" here and the Borrowing Capacity
-renderer's serviceability chapter is what receives it.
+`FORMAT_CHAPTERS` currently declares one: the **Borrowing Capacity Snapshot** —
+*Capacity at a glance*, *Income and commitments*, *How the capacity is built*,
+*How this was calculated*, *Audit trail*, *Scenario comparison*. The last three
+are conditional in the real document (the renderer emits them only when the
+payload carries an explanation, an audit or scenarios); the converter offers all
+six and the unmatched ones simply go unfilled, which is a state the document
+already handles.
+
+These are the renderer's own titles and `converterChapters.spec.ts` proves it,
+by importing `snapshotSections` and asserting the two lists are identical. That
+spec exists because the first version of this list was not: see **C5** below.
 
 Adding a format is one entry in `FORMAT_CHAPTERS`; `bindableFormats()` drives
 both the route's validation and the page's dropdown, so nothing else has to
-change.
+change. Add the drift-guard spec at the same time.
 
 ---
 
@@ -364,13 +539,20 @@ change.
 
 1. Apply `20260823000000_template_converter.sql`. It creates both tables, the
    `converted-templates` bucket and its policies.
-2. Deploy `convert-template-document` and `generate-brand-design-system`.
-3. `ANTHROPIC_API_KEY` must be set for PDF sources and for drafting a design
-   system from a brief. Without it, `.md`/`.txt` sources still convert and the
-   route says so rather than failing opaquely.
-4. `WEASYPRINT_SERVICE_URL` + `WEASYPRINT_SERVICE_TOKEN`, as for every other
+2. Apply `20260824000000_converter_enrichment.sql`. Additive only — six
+   nullable-or-defaulted columns recording the design pass.
+3. Deploy `convert-template-document` and `generate-brand-design-system`.
+4. `ANTHROPIC_API_KEY` must be set for PDF sources, for the design pass, for the
+   binding proposal and for drafting a design system from a brief. Without it,
+   `.md`/`.txt` sources still convert, the binding falls back to the word-overlap
+   scorer, and every chapter renders as flat Markdown — the route says which,
+   rather than failing opaquely.
+5. `WEASYPRINT_SERVICE_URL` + `WEASYPRINT_SERVICE_TOKEN`, as for every other
    render route.
 
-The DDL was executed against production inside a transaction — including the
-bucket insert, the storage policy, both foreign keys and a full insert/update
-round-trip — and rolled back; `to_regclass` confirmed null afterwards.
+Both migrations' DDL was executed against production inside a transaction and
+rolled back. The first covered the bucket insert, the storage policy, both
+foreign keys and a full insert/update round-trip; the second inserted a row
+carrying all six new columns and confirmed that the `fidelity` and
+`binding_source` CHECK constraints reject an illegal value. `to_regclass` and a
+column count confirmed nothing was left behind.

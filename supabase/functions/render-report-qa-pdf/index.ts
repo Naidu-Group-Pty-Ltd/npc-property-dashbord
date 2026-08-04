@@ -64,7 +64,7 @@ import { actorIsSuperadmin, requireModulePermission } from '../_shared/authz.ts'
 import { resolveReportQaAccess } from '../_shared/reportQaAccess.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
-import { countPdfPages, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
+import { countPdfPagesAsync, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import { extractOpenAIUsage, logApiUsage } from '../_shared/logApiUsage.ts';
 import {
   buildReportBrandSnapshot,
@@ -562,7 +562,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     const durationMs = Date.now() - started;
-    const pageCount = countPdfPages(pdf);
+    const pageCount = await countPdfPagesAsync(pdf);
 
     if (renderId) {
       await supabase

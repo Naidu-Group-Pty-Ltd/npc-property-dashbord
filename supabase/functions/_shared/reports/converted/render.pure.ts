@@ -56,16 +56,44 @@ import type { ResolvedReportPalette } from '../../reportDesign/roles.pure.ts';
 import type { ReportDesignOptions } from '../../reportDesign/options.pure.ts';
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
+import { chartContext } from '../../reportDesign/charts.pure.ts';
 import { pagesForLines, renderMarkdown } from '../markdown.pure.ts';
 import type { BindingPlan } from './binding.pure.ts';
 import { formatName } from './binding.pure.ts';
+import { enrichedLines, type EnrichedBlock } from './enrich.pure.ts';
+import { renderEnrichedBlocks } from './renderBlocks.pure.ts';
 import type { ExtractedStructure } from './structure.pure.ts';
+
+/**
+ * Enriched blocks for the chapters that got them, by chapter id.
+ *
+ * Partial on purpose. Enrichment is per-chapter and every chapter can fail on
+ * its own — no key, a timeout, a guard rejection twice, zero blocks — and a
+ * chapter with no entry here renders exactly as the converter always rendered
+ * it. That is what makes enrichment safe to add to a working path: its total
+ * failure is the previous behaviour.
+ */
+export type EnrichedChapters = Readonly<Record<string, readonly EnrichedBlock[]>>;
 
 /** Lines a chapter costs before a word of it is set. Pinned by the programme. */
 export const CHAPTER_FURNITURE_LINES = 3;
 
 /** An unfilled chapter is a header and one callout. */
 export const UNFILLED_CHAPTER_LINES = 10;
+
+/**
+ * The lede and the draft notice, which only the first chapter carries.
+ *
+ * Measured against a render, not estimated: a two-line lede, a five-line
+ * callout with its label and rules, and the space around both. It was not
+ * charged at all until a real conversion was rendered and read — the spine
+ * claimed thirteen pages for a document WeasyPrint printed in fifteen, and this
+ * was one of the two pages missing.
+ */
+export const OPENING_NOTICE_LINES = 11;
+
+/** The "your upload had no headings" callout, when there is one. */
+export const UNSTRUCTURED_NOTICE_LINES = 7;
 
 export type PlannedChapterKind = 'bound' | 'unfilled' | 'appendix';
 
@@ -75,6 +103,8 @@ export interface PlannedConvertedChapter {
   title: string;
   note?: string;
   markdown: string;
+  /** Present only when this chapter was enriched. Rendered instead of `markdown`. */
+  blocks?: readonly EnrichedBlock[];
   lines: number;
   pages: number;
 }
@@ -83,49 +113,75 @@ export interface PlannedConvertedChapter {
 export function planConvertedChapters(
   structure: ExtractedStructure,
   plan: BindingPlan,
+  enriched: EnrichedChapters = {},
 ): PlannedConvertedChapter[] {
   const chapters: PlannedConvertedChapter[] = [];
+
+  // Whatever the first chapter carries on top of its own content.
+  const opening = OPENING_NOTICE_LINES
+    + (structure.notices.unstructured ? UNSTRUCTURED_NOTICE_LINES : 0);
+
+  // Enriched blocks and flat Markdown cost different numbers of lines — a KPI
+  // strip is four where the table it replaced was nine — so the budget has to
+  // be taken from whichever will actually be printed. Costing the Markdown and
+  // printing the blocks is how a spine claims a page count the document does
+  // not have, which is the defect `BORROWING_CAPACITY.md` §2 exists about.
+  const costOf = (id: string, markdown: string, idPrefix: string): number => {
+    const blocks = enriched[id];
+    return (blocks?.length ? enrichedLines(blocks) : renderMarkdown(markdown, { idPrefix }).lines)
+      + CHAPTER_FURNITURE_LINES
+      // `renderConvertedBody` puts the lede and the draft notice inside the
+      // first chapter's body, so the first chapter is the one that pays for
+      // them. Keyed on the list being empty rather than on an index, because
+      // an unfilled first chapter is charged too — it prints the same notice.
+      + (chapters.length === 0 ? opening : 0);
+  };
 
   plan.bindings.forEach((binding, i) => {
     const section = binding.sectionIndex === null
       ? null
       : structure.sections[binding.sectionIndex] ?? null;
     if (section) {
-      const lines = renderMarkdown(section.markdown, { idPrefix: `cv${i}` }).lines
-        + CHAPTER_FURNITURE_LINES;
+      const id = `cv.${i}`;
+      const blocks = enriched[id];
+      const lines = costOf(id, section.markdown, `cv${i}`);
       chapters.push({
-        id: `cv.${i}`,
+        id,
         kind: 'bound',
         title: binding.chapter,
         note: section.title === binding.chapter ? undefined : `From "${section.title}"`,
         markdown: section.markdown,
+        blocks: blocks?.length ? blocks : undefined,
         lines,
         pages: pagesForLines(lines),
       });
       return;
     }
+    const unfilledLines = UNFILLED_CHAPTER_LINES + (chapters.length === 0 ? opening : 0);
     chapters.push({
       id: `cv.${i}`,
       kind: 'unfilled',
       title: binding.chapter,
       note: 'Supplied by the live report',
       markdown: '',
-      lines: UNFILLED_CHAPTER_LINES,
-      pages: 1,
+      lines: unfilledLines,
+      pages: pagesForLines(unfilledLines),
     });
   });
 
   plan.unbound.forEach((index, n) => {
     const section = structure.sections[index];
     if (!section) return;
-    const lines = renderMarkdown(section.markdown, { idPrefix: `cva${n}` }).lines
-      + CHAPTER_FURNITURE_LINES;
+    const id = `cv.a${n}`;
+    const blocks = enriched[id];
+    const lines = costOf(id, section.markdown, `cva${n}`);
     chapters.push({
-      id: `cv.a${n}`,
+      id,
       kind: 'appendix',
       title: section.title,
       note: 'From the uploaded template',
       markdown: section.markdown,
+      blocks: blocks?.length ? blocks : undefined,
       lines,
       pages: pagesForLines(lines),
     });
@@ -148,6 +204,8 @@ export interface RenderConvertedInput {
   options?: ReportDesignOptions | null;
   preparedOn: string;
   reference?: string | null;
+  /** Enriched blocks, by chapter id. Absent chapters render as flat Markdown. */
+  enriched?: EnrichedChapters;
 }
 
 export interface ConvertedRenderPlan {
@@ -158,6 +216,10 @@ export interface ConvertedRenderPlan {
   boundCount: number;
   unfilledCount: number;
   appendixCount: number;
+  /** Chapters that printed enriched blocks rather than flat Markdown. */
+  enrichedCount: number;
+  /** Every block kind printed across the document, counted. For the ledger. */
+  blockCounts: Record<string, number>;
   problems: string[];
   /**
    * The format's page band, when the draft sits outside it.
@@ -183,7 +245,17 @@ export function formatReportDate(iso: string): string {
 
 export function renderConvertedBody(input: RenderConvertedInput): ConvertedRenderPlan {
   const archetype = REPORT_ARCHETYPES[input.plan.format];
-  const chapters = planConvertedChapters(input.structure, input.plan);
+  const chapters = planConvertedChapters(input.structure, input.plan, input.enriched ?? {});
+  const charts = chartContext(input.palette);
+
+  // The name the document calls itself, everywhere.
+  //
+  // `archetype.documentName` is catalogue metadata; `formatName` is what the
+  // renderer prints on a real one of these. Using both put "Borrowing Capacity
+  // Assessment" in the cover eyebrow and the running head while the cover's own
+  // "Bound to" line said "Borrowing Capacity Snapshot" — one page, two names
+  // for the same format.
+  const documentName = formatName(input.plan.format);
 
   const spine = buildSpine({
     archetype: input.plan.format,
@@ -224,7 +296,7 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
   const appendix = chapters.filter((c) => c.kind === 'appendix').length;
 
   const cover = renderCover({
-    eyebrow: `${archetype.documentName} · converted draft`,
+    eyebrow: `${documentName} · converted draft`,
     title: input.structure.title,
     masthead: input.masthead,
     edition: input.systemName ? input.systemName.toUpperCase() : null,
@@ -274,6 +346,9 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     )
     : '';
 
+  const blockCounts: Record<string, number> = {};
+  let enrichedCount = 0;
+
   const body = chapters.map((chapter, index) => {
     const number = String(index + 1).padStart(2, '0');
     const opening = index === 0
@@ -284,8 +359,10 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
       ) + draftNotice + unstructured
       : '';
 
-    const inner = chapter.kind === 'unfilled'
-      ? renderCallout(
+    const idPrefix = chapter.id.replace(/[^a-z0-9]/gi, '');
+    let inner: string;
+    if (chapter.kind === 'unfilled') {
+      inner = renderCallout(
         'informative',
         'Supplied by the live report',
         `<p>${escapeHtml(
@@ -293,10 +370,27 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
           + 'its own data. The uploaded template had no section that matched it, so this chapter '
           + 'is empty in the draft and will fill itself when the format renders for real.',
         )}</p>`,
-      )
-      : renderMarkdown(chapter.markdown, { idPrefix: chapter.id.replace(/[^a-z0-9]/gi, '') }).html;
+      );
+    } else if (chapter.blocks?.length) {
+      // Designed. `renderEnrichedBlocks` returns the primitives' own output —
+      // KPI strips, data tables, charts — rather than the paragraph soup that
+      // `renderMarkdown` makes of anything it does not have a rule for.
+      const rendered = renderEnrichedBlocks(chapter.blocks, charts, idPrefix);
+      if (rendered.html) {
+        enrichedCount += 1;
+        for (const b of chapter.blocks) blockCounts[b.kind] = (blockCounts[b.kind] ?? 0) + 1;
+        inner = rendered.html;
+      } else {
+        // Every block refused by its primitive. Vanishingly unlikely — the
+        // reader rejects degenerate input before it gets here — but a chapter
+        // that prints nothing is worse than one that prints flat prose.
+        inner = renderMarkdown(chapter.markdown, { idPrefix }).html;
+      }
+    } else {
+      inner = renderMarkdown(chapter.markdown, { idPrefix }).html;
+    }
 
-    return openChapter(archetype.documentName, number, chapter.title)
+    return openChapter(documentName, number, chapter.title)
       + renderChapterHeader({
         number,
         title: chapter.title,
@@ -317,6 +411,8 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     boundCount: bound,
     unfilledCount: unfilled,
     appendixCount: appendix,
+    enrichedCount,
+    blockCounts,
     problems,
     bandNote,
   };
@@ -331,7 +427,7 @@ export function renderConvertedDocument(
     html: renderDocument({
       title: `${input.structure.title} — converted draft`,
       author: input.masthead,
-      subject: REPORT_ARCHETYPES[input.plan.format].documentName,
+      subject: formatName(input.plan.format),
       css: buildReportCss({
         palette: input.palette,
         options: input.options ?? null,
@@ -354,6 +450,7 @@ export interface RenderConvertedFromBrandInput {
   coverArtDataUri?: string | null;
   preparedOn: string;
   reference?: string | null;
+  enriched?: EnrichedChapters;
 }
 
 export interface ConvertedRenderResult extends ConvertedRenderPlan {
@@ -391,6 +488,7 @@ export function renderConvertedFromBrand(
     options: input.options,
     preparedOn: input.preparedOn,
     reference: input.reference ?? null,
+    enriched: input.enriched,
   });
 
   return { ...rendered, gaps: brand.gaps };

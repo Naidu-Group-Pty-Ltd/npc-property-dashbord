@@ -233,6 +233,92 @@ export function proposeBinding(
   };
 }
 
+// ── Asking a model instead ──────────────────────────────────────────────────
+
+/** The most of a section's body the model is shown when proposing a binding. */
+export const BINDING_PREVIEW_CHARS = 200;
+
+/**
+ * The tool schema for a model-proposed binding.
+ *
+ * Deliberately the same shape `readBindingPlan` already validates, so the
+ * model's answer goes through exactly the checks a person's edited plan does —
+ * every index re-checked against the structure, one-to-one enforced, an
+ * out-of-range reference degraded to `null` rather than raised. There is no
+ * "trusted because a model said it" path.
+ */
+export const BINDING_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['bindings'],
+  properties: {
+    bindings: {
+      type: 'array',
+      description: 'One entry per chapter, in the order given.',
+      items: {
+        type: 'object',
+        required: ['chapter', 'sectionIndex', 'confidence', 'reason'],
+        properties: {
+          chapter: { type: 'string', description: 'The chapter, copied exactly.' },
+          sectionIndex: {
+            type: ['integer', 'null'],
+            description: 'The section that plays this chapter, or null for nothing suitable.',
+          },
+          confidence: { type: 'integer', description: '0–100. Be honest; a person reads this.' },
+          reason: { type: 'string', description: 'One sentence. Why this section, for a reviewer.' },
+        },
+      },
+    },
+  },
+} as const;
+
+/**
+ * What the model is asked when proposing a binding.
+ *
+ * The scorer below only knows about shared words, which is enough for one of
+ * our own reports read back — the titles are identical — and not enough for a
+ * stranger's template, where "Serviceability Assessment" has to reach "How the
+ * capacity is built". That is a judgement about meaning, and it is the one
+ * thing a model is unambiguously better at than a token-overlap heuristic.
+ *
+ * A person still confirms every row. The model's job is to make the review
+ * screen's defaults right, not to decide anything.
+ */
+export function bindingPrompt(
+  formatLabel: string,
+  chapters: readonly string[],
+  sections: readonly ExtractedSection[],
+): string {
+  const chapterList = chapters.map((c, i) => `${i + 1}. ${c}`).join('\n');
+  const sectionList = sections.map((s) => {
+    const preview = s.markdown.replace(/\s+/g, ' ').trim().slice(0, BINDING_PREVIEW_CHARS);
+    return `[${s.index}] "${s.title}"${s.tabular ? ' (mostly a table)' : ''}\n    ${preview}`;
+  }).join('\n');
+
+  return `A ${formatLabel} has these chapters:
+
+${chapterList}
+
+Somebody uploaded their own template. It has these sections:
+
+${sectionList}
+
+For each chapter, say which section of the uploaded template plays that part.
+
+- Match on what a section is *for*, not on shared words. "Serviceability
+  assessment" and "How the capacity is built" are the same chapter under
+  different names; "Fee schedule" and "How this was calculated" are not.
+- Use each section at most once. If two chapters both want one section, give it
+  to the better fit and return null for the other — a section printed under two
+  headings is the failure this is checked for.
+- Return null rather than reaching. A chapter with nothing bound is printed from
+  the format's own data, which is a good outcome; a chapter filled with the
+  wrong section looks entirely correct and is completely wrong.
+- \`confidence\` is read by the person confirming this. Below 35 shows as "check
+  it", so use a low number when you mean one.
+- \`sectionIndex\` is the number in brackets, not the position in your list.`;
+}
+
 /** Formats the converter can bind to today. */
 export function bindableFormats(): ReportArchetypeId[] {
   return (Object.keys(FORMAT_CHAPTERS) as ReportArchetypeId[])

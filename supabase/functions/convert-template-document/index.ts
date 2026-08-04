@@ -42,7 +42,7 @@ import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
-import { countPdfPages, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
+import { countPdfPagesAsync, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import {
   buildReportBrandSnapshot,
   REPORT_SNAPSHOT_VERSION,
@@ -63,13 +63,14 @@ import {
 import {
   bindableFormats,
   formatName,
-  proposeBinding,
   readBindingPlan,
 } from '../_shared/reports/converted/binding.pure.ts';
+import { proposeBindingWithModel } from '../_shared/reports/converted/bind.ts';
 import {
   planConvertedChapters,
   renderConvertedFromBrand,
 } from '../_shared/reports/converted/render.pure.ts';
+import { enrichChapters } from '../_shared/reports/converted/enrich.ts';
 import type { ReportArchetypeId } from '../_shared/reportDesign/structure.pure.ts';
 import {
   type ConvertChaptersResponse,
@@ -297,7 +298,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .select(
           'id, status, source_filename, file_name, bound_format, storage_bucket, storage_path, '
           + 'page_count, bytes, bound_chapters, unfilled_chapters, appendix_sections, '
-          + 'unstructured, error, created_at, brand_design_systems(name)',
+          + 'unstructured, error, created_at, fidelity, enriched_chapters, '
+          + 'enrichment_model, binding_source, brand_design_systems(name)',
         )
         .order('created_at', { ascending: false })
         .limit(request.limit);
@@ -333,6 +335,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           boundChapters: Number(row.bound_chapters ?? 0),
           unfilledChapters: Number(row.unfilled_chapters ?? 0),
           appendixSections: Number(row.appendix_sections ?? 0),
+          enrichedChapters: Number(row.enriched_chapters ?? 0),
+          fidelity: typeof row.fidelity === 'string' && row.fidelity ? row.fidelity : null,
+          enrichmentModel: typeof row.enrichment_model === 'string' && row.enrichment_model
+            ? row.enrichment_model
+            : null,
+          bindingSource: typeof row.binding_source === 'string' && row.binding_source
+            ? row.binding_source
+            : null,
           unstructured: row.unstructured === true,
           error: typeof row.error === 'string' && row.error ? row.error : null,
           createdAt: String(row.created_at ?? ''),
@@ -374,7 +384,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }, 400);
       }
 
-      const plan = proposeBinding(request.format, structure);
+      const apiKeyForBinding = Deno.env.get('ANTHROPIC_API_KEY');
+      const proposed = await proposeBindingWithModel(apiKeyForBinding, request.format, structure);
+      const plan = proposed.plan;
+      if (proposed.note) console.info(`[convert-template-document] binding: ${proposed.note}`);
 
       const { data: row, error: insertError } = await supabase
         .from('template_conversions')
@@ -394,6 +407,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           bound_chapters: plan.bindings.filter((b) => b.sectionIndex !== null).length,
           unfilled_chapters: plan.unfilled.length,
           appendix_sections: plan.unbound.length,
+          binding_source: proposed.source,
           unstructured: structure.notices.unstructured,
         })
         .select('id')
@@ -415,7 +429,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         flattened: structure.notices.flattened,
         tooShort: structure.notices.tooShort,
         charsOmitted: structure.notices.charsOmitted,
+        labelsFolded: structure.notices.labelsFolded,
         binding: plan,
+        bindingSource: proposed.source,
+        bindingNote: proposed.note,
         durationMs: Date.now() - started,
       };
       return json(response);
@@ -501,7 +518,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     if (request.action === 'propose') {
-      const plan = proposeBinding(request.format, structure);
+      const proposed = await proposeBindingWithModel(
+        Deno.env.get('ANTHROPIC_API_KEY'), request.format, structure,
+      );
+      const plan = proposed.plan;
+      if (proposed.note) console.info(`[convert-template-document] binding: ${proposed.note}`);
       await supabase
         .from('template_conversions')
         .update({
@@ -510,6 +531,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           bound_chapters: plan.bindings.filter((b) => b.sectionIndex !== null).length,
           unfilled_chapters: plan.unfilled.length,
           appendix_sections: plan.unbound.length,
+          binding_source: proposed.source,
           updated_at: new Date().toISOString(),
         })
         .eq('id', conversionId);
@@ -520,6 +542,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         format: request.format,
         formatName: formatName(request.format),
         binding: plan,
+        bindingSource: proposed.source,
+        bindingNote: proposed.note,
         durationMs: Date.now() - started,
       };
       return json(response);
@@ -625,6 +649,29 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
+    // ── The design pass ─────────────────────────────────────────────────────
+    //
+    // Everything above this point produced the same document the converter
+    // always produced: the right chapters, in the right order, set in the right
+    // brand, and *flat* — every passage a paragraph, because `renderMarkdown`
+    // has no rule for a KPI strip or a utilisation bar.
+    //
+    // This is where a model decides what each passage actually is. It cannot
+    // fail the render: a chapter that times out, invents a figure, or comes
+    // back as one prose block simply has no entry in `enriched`, and
+    // `planConvertedChapters` renders it exactly as before.
+    const planned = planConvertedChapters(structure, plan);
+    const enrichment = await enrichChapters(
+      Deno.env.get('ANTHROPIC_API_KEY'),
+      planned
+        .filter((c) => c.kind !== 'unfilled')
+        .map((c) => ({ id: c.id, title: c.title, markdown: c.markdown })),
+      request.fidelity,
+    );
+    for (const note of enrichment.notes) {
+      console.info(`[convert-template-document] enrichment — ${note}`);
+    }
+
     const rendered = renderConvertedFromBrand({
       structure,
       plan,
@@ -636,6 +683,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       preparedOn: new Date().toISOString(),
       reference: convertedReference(request.conversionId),
+      enriched: enrichment.enriched,
     });
 
     // The page band is advisory for a converted draft and lives in `bandNote`
@@ -672,7 +720,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     const durationMs = Date.now() - started;
-    const pageCount = countPdfPages(pdf);
+    const pageCount = await countPdfPagesAsync(pdf);
 
     await supabase
       .from('template_conversions')
@@ -689,6 +737,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         bound_chapters: rendered.boundCount,
         unfilled_chapters: rendered.unfilledCount,
         appendix_sections: rendered.appendixCount,
+        fidelity: request.fidelity,
+        enriched_chapters: rendered.enrichedCount,
+        enrichment_model: enrichment.model,
+        enrichment_blocks: rendered.blockCounts,
+        enrichment_notes: enrichment.notes.slice(0, 40),
         brand_snapshot_id: (brandSnapshotId as string) ?? null,
         duration_ms: durationMs,
         error: null,
@@ -712,6 +765,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       unfilledCount: rendered.unfilledCount,
       appendixCount: rendered.appendixCount,
       bandNote: rendered.bandNote,
+      fidelity: request.fidelity,
+      enrichedChapters: rendered.enrichedCount,
+      attemptedChapters: enrichment.chaptersAttempted,
+      enrichmentModel: enrichment.model,
+      blockCounts: rendered.blockCounts,
+      enrichmentNotes: enrichment.notes.slice(0, 40),
       durationMs,
     };
     return json(response);

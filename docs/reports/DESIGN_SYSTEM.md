@@ -524,3 +524,16 @@ the negative figures stay the one red and the positives the one green.
 7. **Server-side generation changes delivery** — a Blob download becomes an
    authenticated invocation plus a storage object plus a signed URL, with Cloud Run
    cold-start latency. The UI needs progress states.
+8. ~~**`page_count` is null on every render in the programme.**~~ **Resolved.**
+   `countPdfPages` scanned the raw bytes for `/Type /Page`; WeasyPrint packs its
+   page objects into a compressed object stream, so the token appears nowhere
+   outside `/Type /ObjStm … /Filter /FlateDecode` and the scan found zero
+   matches — and, by its own rule, returned null. It was not wrong, it was
+   blind, and it had been blind since the first migrated format shipped.
+   `countPdfPagesAsync` inflates the object streams with `DecompressionStream`
+   and counts inside; all nine render routes now call it. Verified against a
+   WeasyPrint PDF whose true page count is four. Slicing the stream at
+   `endstream` overshoots by the end-of-line the spec requires before the
+   keyword, and one trailing byte makes a deflate stream fail outright rather
+   than inflate what it can — so the dictionary's `/Length` is used when it has
+   one. That single byte is why the first attempt at the fix also counted zero.

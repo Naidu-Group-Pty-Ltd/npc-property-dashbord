@@ -37,7 +37,7 @@ import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
-  countPdfPages,
+  countPdfPagesAsync,
   renderPdf,
   weasyPrintConfig,
 } from '../_shared/weasyprintClient.ts';
@@ -327,7 +327,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     const durationMs = Date.now() - started;
-    const pageCount = countPdfPages(pdf);
+    const pageCount = await countPdfPagesAsync(pdf);
 
     if (renderId) {
       await supabase

@@ -28,6 +28,16 @@
  */
 import type { ReportArchetypeId } from '../../reportDesign/structure.pure.ts';
 import { bindableFormats } from './binding.pure.ts';
+import { readFidelity, type ConversionFidelity } from './enrich.pure.ts';
+
+/**
+ * Where a proposed binding came from.
+ *
+ * On the wire because a person confirming a binding should know whether the
+ * defaults in front of them were a judgement about meaning or a count of shared
+ * words — the two deserve different amounts of scrutiny.
+ */
+export type BindingSource = 'model' | 'scorer';
 
 /**
  * The largest source a conversion accepts.
@@ -75,6 +85,15 @@ export interface RenderRequest {
   binding: unknown;
   /** Which saved design system to set it in. Null means the house default. */
   designSystemId: string | null;
+  /**
+   * How much licence the design pass has with the words.
+   *
+   * Anything unrecognised — including an absent field, which is every request
+   * written before this existed — reads as `restructure`. A converter that
+   * quietly rewrites somebody's template on a typo is worse than one that does
+   * less than asked.
+   */
+  fidelity: ConversionFidelity;
 }
 
 /**
@@ -213,6 +232,7 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
         format,
         binding: b.binding ?? null,
         designSystemId: rawSystem || null,
+        fidelity: readFidelity(b.fidelity),
       },
     };
   }
@@ -340,7 +360,13 @@ export interface ConvertExtractResponse {
   flattened: number;
   tooShort: number;
   charsOmitted: number;
+  /** Eyebrow labels folded into the title beneath them. See `structure.pure.ts`. */
+  labelsFolded: number;
   binding: unknown;
+  /** Whether a model proposed the binding, or the word-overlap scorer did. */
+  bindingSource: BindingSource;
+  /** Why the scorer was used, when it was. Empty when the model answered. */
+  bindingNote: string;
   durationMs: number;
 }
 
@@ -350,6 +376,8 @@ export interface ConvertProposeResponse {
   format: ReportArchetypeId;
   formatName: string;
   binding: unknown;
+  bindingSource: BindingSource;
+  bindingNote: string;
   durationMs: number;
 }
 
@@ -367,6 +395,17 @@ export interface ConvertListRow {
   boundChapters: number;
   unfilledChapters: number;
   appendixSections: number;
+  /**
+   * Chapters that printed designed blocks, and how much licence the pass had.
+   *
+   * On the history row rather than only on the render response so that
+   * "did a model design this one?" survives closing the tab. Null fidelity is a
+   * conversion made before the design pass existed.
+   */
+  enrichedChapters: number;
+  fidelity: string | null;
+  enrichmentModel: string | null;
+  bindingSource: string | null;
   unstructured: boolean;
   error: string | null;
   createdAt: string;
@@ -418,5 +457,24 @@ export interface ConvertRenderResponse {
   appendixCount: number;
   /** The format's page band, when the draft sits outside it. Advisory. */
   bandNote: string[];
+  /**
+   * Whether a model designed this document, and how much of it.
+   *
+   * On the response rather than only in the ledger because "is this actually
+   * running through Claude?" was a question a person could not answer from the
+   * screen — the honest answer at the time was "for the transcription, yes; for
+   * the design, no", and nothing on the page said either.
+   */
+  fidelity: ConversionFidelity;
+  /** Chapters that printed designed blocks rather than flat Markdown. */
+  enrichedChapters: number;
+  /** Chapters a design pass was attempted on. */
+  attemptedChapters: number;
+  /** The model that did it, or null when none ran. */
+  enrichmentModel: string | null;
+  /** Block kinds printed across the document, counted. */
+  blockCounts: Record<string, number>;
+  /** Every guard rejection and fallback, in words. Shown under the result. */
+  enrichmentNotes: string[];
   durationMs: number;
 }

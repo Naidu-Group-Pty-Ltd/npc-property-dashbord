@@ -17,7 +17,12 @@ import {
   scoreMatch,
   WEAK_MATCH,
 } from '../binding.pure';
-import { planConvertedChapters, renderConvertedDocument } from '../render.pure';
+import {
+  CHAPTER_FURNITURE_LINES,
+  planConvertedChapters,
+  renderConvertedDocument,
+} from '../render.pure';
+import { enrichedLines, type EnrichedBlock } from '../enrich.pure';
 import {
   auditBrandDesignSystem,
   describeAuditProblems,
@@ -322,8 +327,14 @@ describe('the converted document', () => {
     expect(html).toContain('This is a converted draft, not a client document');
   });
 
-  it('says which format it was bound to', () => {
-    expect(render().html).toContain('Borrowing Capacity Assessment');
+  it('says which format it was bound to, by one name', () => {
+    // One name, everywhere. The cover eyebrow and the running head used to
+    // print the archetype's `documentName` ("Borrowing Capacity Assessment")
+    // while the cover's own "Bound to" line printed the renderer's
+    // ("Borrowing Capacity Snapshot") — one page, two names for one format.
+    const html = render().html;
+    expect(html).toContain('Borrowing Capacity Snapshot');
+    expect(html).not.toContain('Borrowing Capacity Assessment');
   });
 
   it('prints an unfilled chapter rather than skipping it', () => {
@@ -346,6 +357,77 @@ describe('the converted document', () => {
 
   it('produces a legal spine', () => {
     expect(render().problems).toEqual([]);
+  });
+});
+
+describe('a converted document that was designed', () => {
+  const structure = extractStructure(UPLOAD);
+  const plan = proposeBinding('borrowing-capacity', structure);
+  const palette = resolveReportPalette({ preset: 'signature', brandHex: '#1F4E79' });
+
+  /** The blocks a design pass returns for the first bound chapter. */
+  const blocks: EnrichedBlock[] = [
+    {
+      kind: 'kpi',
+      cells: [
+        { label: 'Assessment rate', value: '9.44%' },
+        { label: 'Maximum loan', value: '$856,932' },
+      ],
+    },
+    { kind: 'bullet', label: 'Proposed loan', value: 76, max: 100 },
+  ];
+
+  const renderWith = (enriched: Record<string, EnrichedBlock[]>) => renderConvertedDocument({
+    structure, plan, palette,
+    company: COMPANY,
+    masthead: 'Harbour & Vale',
+    systemName: 'Harbour Editorial',
+    preparedOn: '2026-08-04T00:00:00.000Z',
+    enriched,
+  });
+
+  it('prints the primitives instead of paragraph soup', () => {
+    // The whole point. Before this, a KPI strip in the source arrived as a
+    // three-column table and a progress bar arrived as `<p>Proposed loan 76%</p>`.
+    const html = renderWith({ 'cv.1': blocks }).html;
+    expect(html).toContain('class="kpi-strip"');
+    expect(html).toContain('<svg');
+  });
+
+  it('counts what it designed, for the row and the screen', () => {
+    const out = renderWith({ 'cv.1': blocks });
+    expect(out.enrichedCount).toBe(1);
+    expect(out.blockCounts).toEqual({ kpi: 1, bullet: 1 });
+  });
+
+  it('leaves every other chapter exactly as it was', () => {
+    const plain = renderConvertedDocument({
+      structure, plan, palette,
+      company: COMPANY, masthead: 'Harbour & Vale', systemName: 'Harbour Editorial',
+      preparedOn: '2026-08-04T00:00:00.000Z',
+    });
+    expect(plain.enrichedCount).toBe(0);
+    expect(plain.blockCounts).toEqual({});
+    // An enriched chapter changes; the rest of the document does not.
+    expect(renderWith({}).html).toBe(plain.html);
+  });
+
+  it('budgets the pages it will print, not the ones it would have', () => {
+    // A KPI strip is four lines where the table it replaced was nine. Costing
+    // the Markdown and printing the blocks is how a spine claims a page count
+    // the document does not have.
+    const designed = planConvertedChapters(structure, plan, { 'cv.1': blocks });
+    const flat = planConvertedChapters(structure, plan);
+    const one = designed.find((c) => c.id === 'cv.1')!;
+    const before = flat.find((c) => c.id === 'cv.1')!;
+    expect(one.blocks).toHaveLength(2);
+    expect(one.lines).not.toBe(before.lines);
+    expect(one.lines).toBe(enrichedLines(blocks) + CHAPTER_FURNITURE_LINES);
+  });
+
+  it('ignores blocks for a chapter that is not in the document', () => {
+    const out = renderWith({ 'cv.nonsense': blocks });
+    expect(out.enrichedCount).toBe(0);
   });
 });
 

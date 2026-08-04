@@ -436,8 +436,18 @@ describe('source of truth', () => {
 
   it('keeps the route contracts as one-line bridges to the Edge Function modules', () => {
     // Two copies of "what a request is" is how a client and a server stop
-    // agreeing about it.
-    for (const rel of ['reports/converted/route.pure.ts', 'brandDesign/route.pure.ts']) {
+    // agreeing about it. The design-pass modules are on the list for a stronger
+    // reason: `enrich.pure.ts` holds the block vocabulary, `renderBlocks` maps
+    // it to primitives and `faithfulness` checks the output — a browser copy of
+    // any of the three would let the screen describe a document the renderer is
+    // not producing.
+    for (const rel of [
+      'reports/converted/route.pure.ts',
+      'reports/converted/enrich.pure.ts',
+      'reports/converted/renderBlocks.pure.ts',
+      'reports/converted/faithfulness.pure.ts',
+      'brandDesign/route.pure.ts',
+    ]) {
       const source = bridge(rel);
       const code = source.split('\n').filter((l) => l.trim() && !l.trim().startsWith('*')
         && !l.trim().startsWith('/*') && !l.trim().startsWith('//'));

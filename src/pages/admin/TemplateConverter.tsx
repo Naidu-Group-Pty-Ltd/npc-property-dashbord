@@ -79,6 +79,8 @@ import {
   formatName,
   WEAK_MATCH,
 } from '@/lib/reports/converted/binding.pure';
+import { DEFAULT_FIDELITY, type ConversionFidelity } from '@/lib/reports/converted/enrich.pure';
+import { FIDELITY_CHOICES, fidelityLabel } from '@/lib/reports/converted/fidelityChoices';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
 
 const ACCEPT = [...TEXT_SUFFIXES, '.pdf'].join(',');
@@ -112,6 +114,7 @@ export default function TemplateConverter() {
   const [extracted, setExtracted] = useState<ConvertExtractResponse | null>(null);
   const [plan, setPlan] = useState<BindingPlan | null>(null);
   const [designSystemId, setDesignSystemId] = useState<string | null>(null);
+  const [fidelity, setFidelity] = useState<ConversionFidelity>(DEFAULT_FIDELITY);
   const [systemDialogOpen, setSystemDialogOpen] = useState(false);
   const [result, setResult] = useState<ConvertRenderResponse | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -300,6 +303,7 @@ export default function TemplateConverter() {
         format,
         binding: plan,
         designSystemId,
+        fidelity,
       });
       setResult(delivered);
       setPreviewUrl((old) => {
@@ -311,7 +315,8 @@ export default function TemplateConverter() {
       queryClient.invalidateQueries({ queryKey: RECENT_CONVERSIONS_QUERY_KEY });
       toast.success(`Converted — ${delivered.pageCount ?? '?'} pages`, {
         description: `${delivered.boundCount} bound, ${delivered.unfilledCount} left to the live report, `
-          + `${delivered.appendixCount} in the appendix.`,
+          + `${delivered.appendixCount} in the appendix. `
+          + `${delivered.enrichedChapters} of ${delivered.attemptedChapters} chapters designed.`,
       });
     } catch (e) {
       toast.error('The conversion failed', { description: (e as Error).message });
@@ -608,6 +613,29 @@ export default function TemplateConverter() {
                 )}
               </div>
 
+              {/* The design pass, beside the design system, because they are
+                  the two halves of one answer: the system decides how a KPI
+                  strip looks and this decides whether the chapter has one.
+                  Defaulting to "Keep the words" is deliberate — a converter
+                  that quietly rewrites somebody's template is not a converter,
+                  and nobody has said otherwise yet. */}
+              <div className="space-y-1.5">
+                <Label htmlFor="converter-fidelity">Design pass</Label>
+                <Select
+                  value={fidelity}
+                  onValueChange={(v) => { setFidelity(v as ConversionFidelity); setResult(null); }}
+                >
+                  <SelectTrigger id="converter-fidelity" className="w-[220px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FIDELITY_CHOICES.map((c) => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <Button variant="outline" onClick={() => setSystemDialogOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
                 New design system
@@ -654,6 +682,21 @@ export default function TemplateConverter() {
                 {selectedSystem.origin === 'generated' ? ' · Drafted by Claude' : ''}
               </p>
             )}
+
+            {/* What the chosen pass will do, in the words somebody choosing it
+                needs. The figures line repeats at every level on purpose: "will
+                my client's numbers change?" is the only question anyone has and
+                it should not depend on which option is selected to find the
+                answer. */}
+            {(() => {
+              const choice = FIDELITY_CHOICES.find((c) => c.value === fidelity);
+              return choice ? (
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{choice.label}.</span>{' '}
+                  {choice.body} {choice.figures}
+                </p>
+              ) : null;
+            })()}
 
             {result && (
               <>
@@ -704,6 +747,45 @@ export default function TemplateConverter() {
                     this design. Its page breaks are estimated from the text, so a page may run long
                     until you adjust it.
                   </p>
+
+                  {/* Whether a model designed this, said on the screen.
+                      "Is the converter running this through Claude at all?" was
+                      a question that could not be answered from the page — the
+                      honest answer was "for the transcription yes, for the
+                      design no", and nothing said either. */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={result.enrichedChapters > 0 ? 'default' : 'outline'}>
+                      {result.enrichedChapters > 0
+                        ? `${result.enrichedChapters} of ${result.attemptedChapters} chapters designed`
+                        : 'No chapter was designed'}
+                    </Badge>
+                    <Badge variant="outline">{fidelityLabel(result.fidelity)}</Badge>
+                    {result.enrichmentModel && (
+                      <Badge variant="outline">{result.enrichmentModel}</Badge>
+                    )}
+                    {Object.entries(result.blockCounts)
+                      .filter(([kind]) => kind !== 'prose')
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([kind, n]) => (
+                        <Badge key={kind} variant="outline">{n} {kind}</Badge>
+                      ))}
+                  </div>
+
+                  {/* Every guard rejection and fallback, rather than a silent
+                      one. A chapter that fell back to flat prose because it
+                      invented a figure is the most useful thing this screen can
+                      tell somebody, and it is invisible in the PDF. */}
+                  {result.enrichmentNotes.length > 0 && (
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">
+                        {result.enrichmentNotes.length} note
+                        {result.enrichmentNotes.length === 1 ? '' : 's'} from the design pass
+                      </summary>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {result.enrichmentNotes.map((note, i) => <li key={i}>{note}</li>)}
+                      </ul>
+                    </details>
+                  )}
 
                   {result.bandNote.length > 0 && (
                     <Alert>
