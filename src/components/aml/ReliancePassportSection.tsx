@@ -8,7 +8,7 @@ import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import {
   amlRelianceApi, type ComplianceAttestation, type IndependentAssessment,
-  type PartnerCaseLink, type PartnerOrganisation,
+  type PartnerCaseLink, type PartnerOrganisation, type PartnerRecordsRequest,
   type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
 
@@ -29,6 +29,7 @@ export function ReliancePassportSection({
   const [agreements, setAgreements] = useState<RelianceAgreement[]>([]);
   const [links, setLinks] = useState<PartnerCaseLink[]>([]);
   const [organisations, setOrganisations] = useState<PartnerOrganisation[]>([]);
+  const [recordsRequests, setRecordsRequests] = useState<PartnerRecordsRequest[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const { prompt, dialog } = usePromptDialog();
@@ -59,6 +60,12 @@ export function ReliancePassportSection({
       setOrganisations(o.partner_organisations ?? []);
     } catch {
       // Partner-identity tables not present yet — hide the links block.
+    }
+    try {
+      const rr = await amlRelianceApi.staffListPartnerRecordsRequests(caseId);
+      setRecordsRequests(rr.requests ?? []);
+    } catch {
+      // Phase 4 tables not present yet — hide the requests block.
     } finally {
       setLoaded(true);
     }
@@ -259,6 +266,68 @@ export function ReliancePassportSection({
       await refresh();
     } catch (e: any) {
       toast({ title: "Could not end link", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const reviewRecordsRequest = async (request: PartnerRecordsRequest) => {
+    const values = await prompt({
+      title: "Review partner records request",
+      description:
+        `${request.partner_organisations?.legal_name ?? "Partner"} requested: ` +
+        `${request.requested_record_codes.join(", ")}. Releasing CDD records is a restricted ` +
+        "disclosure decision. The response message is shown to the partner — write it partner-safe.",
+      confirmLabel: "Record decision",
+      fields: [
+        { name: "decision", label: 'Decision ("approved" / "partly_approved" / "denied" / "under_review")', required: true, placeholder: "approved" },
+        { name: "approved_codes", label: "Approved codes (comma-separated; blank = all requested for approval)", required: false, placeholder: request.requested_record_codes.join(", ") },
+        { name: "response_message", label: "Partner-safe response message", type: "textarea", required: false, placeholder: "What the partner will read…" },
+      ],
+    });
+    if (!values) return;
+    setBusy("review-request");
+    try {
+      const decision = values.decision.trim() as any;
+      const approved = values.approved_codes
+        ? values.approved_codes.split(",").map((c) => c.trim()).filter(Boolean)
+        : decision === "approved" ? request.requested_record_codes : [];
+      await amlRelianceApi.reviewPartnerRecordsRequest({
+        request_id: request.id, decision,
+        approved_record_codes: approved,
+        response_message: values.response_message,
+      });
+      toast({ title: "Records request decision recorded" });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not record decision", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const recordDelivery = async (request: PartnerRecordsRequest) => {
+    const values = await prompt({
+      title: "Record evidence delivery",
+      description:
+        "Metadata only: the delivery register records what was supplied, its hash and expiry. " +
+        `Approved codes: ${request.approved_record_codes.join(", ") || "none"}.`,
+      confirmLabel: "Record delivery",
+      fields: [
+        { name: "record_code", label: "Record code (from the approved list)", required: true, placeholder: request.approved_record_codes[0] ?? "" },
+        { name: "safe_label", label: "Partner-safe label", required: true, placeholder: "e.g. Identity verification record — J. Citizen…" },
+        { name: "delivered_sha256", label: "Content hash (optional)", required: false, placeholder: "sha256…" },
+      ],
+    });
+    if (!values) return;
+    setBusy("delivery");
+    try {
+      await amlRelianceApi.recordPartnerEvidenceDelivery({
+        request_id: request.id,
+        record_code: values.record_code.trim(),
+        safe_label: values.safe_label,
+        delivered_sha256: values.delivered_sha256 || undefined,
+      });
+      toast({ title: "Evidence delivery recorded" });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not record delivery", description: e?.message, variant: "destructive" });
     } finally { setBusy(null); }
   };
 
@@ -484,6 +553,47 @@ export function ReliancePassportSection({
             </ul>
           )}
         </div>
+
+        {/* Partner records requests (Phase 4). Origin review of controlled
+            record-class requests; nothing is delivered without an explicit
+            decision here, and the response wording is partner-safe. */}
+        {recordsRequests.length > 0 && (
+          <div className="border-t pt-3">
+            <div className="text-xs font-medium">Partner records requests</div>
+            <ul className="mt-1.5 space-y-1.5 text-xs">
+              {recordsRequests.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">
+                    {r.partner_organisations?.legal_name ?? "Partner"}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {r.requested_record_codes.join(", ")}
+                  </span>
+                  <Badge variant="outline" className={
+                    r.status === "denied" ? "text-destructive"
+                      : ["approved", "partly_approved", "delivered"].includes(r.status) ? "text-success"
+                        : "text-warning"
+                  }>
+                    {r.status.replace(/_/g, " ")}
+                  </Badge>
+                  {isMlro && ["submitted", "under_review"].includes(r.status) && (
+                    <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                      onClick={() => reviewRecordsRequest(r)} disabled={busy !== null}>
+                      Review
+                    </Button>
+                  )}
+                  {isMlro && ["approved", "partly_approved", "delivered"].includes(r.status)
+                    && r.approved_record_codes.length > 0 && (
+                    <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                      onClick={() => recordDelivery(r)} disabled={busy !== null}>
+                      Record delivery
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </CardContent>
       {dialog}
     </Card>

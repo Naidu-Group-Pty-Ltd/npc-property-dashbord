@@ -133,6 +133,38 @@ export interface ArrangementAssessment {
   superseded_at: string | null;
 }
 
+export interface PartnerRecordsRequest {
+  id: string;
+  case_id: string;
+  partner_case_link_id: string;
+  partner_org_id: string;
+  requested_record_codes: string[];
+  rationale: string;
+  scope_evaluation: Array<{ code: string; label: string | null; scope: string }>;
+  status: "draft" | "submitted" | "under_review" | "approved" | "partly_approved"
+    | "denied" | "delivered" | "expired" | "cancelled";
+  requested_at: string;
+  requested_by_label: string | null;
+  due_at: string | null;
+  approved_record_codes: string[];
+  denied_record_codes: string[];
+  origin_response_message: string | null;
+  reviewed_at: string | null;
+  partner_organisations?: { legal_name: string; organisation_type: string };
+}
+
+export interface PartnerEvidenceDelivery {
+  id: string;
+  request_id: string;
+  record_code: string;
+  safe_label: string;
+  delivered_version: number;
+  delivered_sha256: string | null;
+  delivered_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
 export interface PartnerOrgNameMapping {
   id: string;
   agreement_id: string;
@@ -223,6 +255,22 @@ export const amlRelianceApi = {
     mapping_id: string; action?: "map" | "reject";
     partner_org_id?: string; note?: string;
   }) => invoke<{ mapping: PartnerOrgNameMapping }>({ op: "resolve_partner_mapping", ...params }),
+
+  /* ── partner workspace: Command Center support (Phase 4) ──────────────── */
+
+  staffListPartnerRecordsRequests: (case_id: string) =>
+    invoke<{ requests: PartnerRecordsRequest[]; deliveries: PartnerEvidenceDelivery[] }>(
+      { op: "staff_list_partner_records_requests", case_id }),
+  reviewPartnerRecordsRequest: (params: {
+    request_id: string;
+    decision: "under_review" | "approved" | "partly_approved" | "denied";
+    approved_record_codes?: string[];
+    response_message?: string;
+  }) => invoke<{ request: PartnerRecordsRequest }>({ op: "review_partner_records_request", ...params }),
+  recordPartnerEvidenceDelivery: (params: {
+    request_id: string; record_code: string; safe_label: string;
+    delivered_sha256?: string; expires_days?: number;
+  }) => invoke<{ delivery: PartnerEvidenceDelivery }>({ op: "record_partner_evidence_delivery", ...params }),
 
   /* ── arrangement governance (Phase 2) ─────────────────────────────────── */
 

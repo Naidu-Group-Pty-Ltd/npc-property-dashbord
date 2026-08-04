@@ -49,10 +49,23 @@ import {
   sha256HexCanonical,
   toV2Payload,
 } from "../_shared/aml/attestationV2.ts";
+import {
+  REQUESTABLE_RECORD_CLASSES,
+  buildPartnerWorkspaceDto,
+  evaluateRecordsRequestScope,
+  validatePartnerDetermination,
+} from "../_shared/aml/partnerWorkspace.ts";
+import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
+import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
+import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
+  // Includes the first-party partner-portal session carriers (all present in
+  // the canonical CORS_ALLOWED_REQUEST_HEADERS list in _shared/auth.ts):
+  // finance sends x-finance-session-token; the builder and solicitor portals
+  // authenticate with HttpOnly cookies plus the x-portal-request marker.
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token, x-finance-session-token, x-solicitor-session-token, x-portal-request",
   "Access-Control-Expose-Headers": "x-correlation-id, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
@@ -211,6 +224,171 @@ async function resolveGrant(admin: any, rawToken: string) {
   return { grant, denied: null };
 }
 
+/* ── first-party partner workspace (Phase 4) ──────────────────────────── */
+
+/** Surface → membership/link portal types it may serve. The Builder surface
+ * serves both builder and developer organisations (there is no standalone
+ * Developer Portal; that absence FAILS CLOSED — no session, no access). */
+const SURFACE_PORTAL_TYPES: Record<string, string[]> = {
+  finance: ["finance"],
+  builder: ["builder", "developer"],
+  solicitor_conveyancer: ["solicitor_conveyancer"],
+};
+
+const PARTNER_WORKSPACE_OPS = new Set([
+  "get_partner_compliance_workspace",
+  "request_cdd_records",
+  "list_partner_records_requests",
+  "record_partner_determination",
+  "list_partner_evidence_deliveries",
+  "get_partner_audit_receipt",
+]);
+
+const WORKSPACE_PORTAL_FLAGS: Record<string, string> = {
+  finance: "aml_partner_workspace_finance",
+  builder: "aml_partner_workspace_builder",
+  solicitor_conveyancer: "aml_partner_workspace_solicitor",
+};
+
+type PartnerPortalContext = {
+  ok: true;
+  surface: string;
+  source: string;
+  portalUserId: string;
+  portalUserLabel: string | null;
+  membership: any;
+  partnerOrg: any;
+};
+type PartnerPortalDenied = { ok: false; status: number; error: string; code?: string };
+
+/**
+ * Resolve the authenticated portal identity to ONE canonical partner
+ * organisation via an active membership.
+ *
+ * Identity always comes from the portal's own server-trusted session
+ * resolver — never from a body identifier. Where the session itself carries
+ * an organisation (builder active organisation, solicitor firm), the
+ * canonical organisation's recorded portal reference MUST match it; a
+ * membership row alone cannot widen a session into another organisation.
+ * Finance sessions carry no organisation, so the membership must be
+ * unambiguous (exactly one candidate) — ambiguity fails closed.
+ */
+async function resolvePartnerPortalContext(
+  admin: any, req: Request, body: any,
+): Promise<PartnerPortalContext | PartnerPortalDenied> {
+  const surface = String(body.portal_type ?? "");
+  if (!Object.keys(SURFACE_PORTAL_TYPES).includes(surface)) {
+    return { ok: false, status: 400, error: "portal_type must be finance, builder or solicitor_conveyancer" };
+  }
+
+  let source = "";
+  let portalUserId = "";
+  let portalUserLabel: string | null = null;
+  let sessionBuilderOrgId: string | null = null;
+  let sessionSolicitorFirmId: string | null = null;
+  let sessionFinanceContactId: string | null = null;
+
+  if (surface === "finance") {
+    const token = extractFinanceToken(req.headers, body);
+    const resolved: any = await resolveFinancePartner(admin, token);
+    if (resolved.error || !resolved.portalUser) {
+      return { ok: false, status: resolved.status ?? 401, error: "Invalid or expired session", code: "auth_required" };
+    }
+    source = "finance_portal_users";
+    portalUserId = String(resolved.portalUser.id);
+    portalUserLabel = resolved.portalUser.email ?? null;
+    const { data: fpUser } = await admin.from("finance_portal_users")
+      .select("finance_contact_id").eq("id", portalUserId).maybeSingle();
+    sessionFinanceContactId = fpUser?.finance_contact_id ?? null;
+  } else if (surface === "builder") {
+    const resolved: any = await resolveBuilderSession(admin, req);
+    if (!resolved.ok || !resolved.user) {
+      return { ok: false, status: resolved.status ?? 401, error: resolved.error ?? "Invalid or expired session", code: resolved.code };
+    }
+    source = "builder_portal_users";
+    portalUserId = String(resolved.user.id);
+    portalUserLabel = resolved.user.email ?? null;
+    sessionBuilderOrgId = resolved.active_organisation?.organisation_id ?? null;
+    if (!sessionBuilderOrgId) {
+      return { ok: false, status: 403, error: "Select an organisation before opening the compliance workspace.", code: "organisation_selection_required" };
+    }
+  } else {
+    const resolved: any = await resolveSolicitorSession(admin, req.headers, body);
+    if (!resolved.ok || !resolved.user) {
+      return { ok: false, status: resolved.status ?? 401, error: resolved.error ?? "Invalid or expired session", code: "auth_required" };
+    }
+    source = "solicitor_portal_users";
+    portalUserId = String(resolved.user.id);
+    portalUserLabel = resolved.user.email ?? null;
+    sessionSolicitorFirmId = resolved.user.firm_id ?? null;
+    if (!sessionSolicitorFirmId) {
+      return { ok: false, status: 403, error: "No legal practice is linked to this account.", code: "firm_required" };
+    }
+  }
+
+  const allowedTypes = SURFACE_PORTAL_TYPES[surface];
+  const { data: memberships } = await admin.schema("aml").from("partner_portal_memberships")
+    .select("*").eq("portal_user_source", source).eq("portal_user_id", portalUserId)
+    .eq("status", "active").in("portal_type", allowedTypes);
+  const membershipRows: any[] = memberships ?? [];
+  if (membershipRows.length === 0) {
+    return { ok: false, status: 403, error: "Your account is not enrolled for the compliance workspace. Ask the issuing organisation to set up your membership.", code: "membership_missing" };
+  }
+
+  const orgIds = [...new Set(membershipRows.map((m) => String(m.partner_org_id)))];
+  const { data: orgs } = await admin.schema("aml").from("partner_organisations")
+    .select("*").in("id", orgIds).eq("status", "active");
+  const orgRows: any[] = orgs ?? [];
+
+  // Session-organisation cross-check: the canonical organisation must carry
+  // the matching portal reference where the session names one.
+  let candidates = orgRows;
+  if (surface === "builder") {
+    candidates = orgRows.filter((o) => o.builder_organisation_id === sessionBuilderOrgId);
+  } else if (surface === "solicitor_conveyancer") {
+    candidates = orgRows.filter((o) => o.solicitor_firm_id === sessionSolicitorFirmId);
+  } else {
+    candidates = orgRows.filter((o) =>
+      !o.finance_agent_contact_id || o.finance_agent_contact_id === sessionFinanceContactId);
+  }
+  if (candidates.length === 0) {
+    return { ok: false, status: 403, error: "No canonical partner organisation is mapped to your current portal organisation.", code: "partner_org_unmapped" };
+  }
+  if (candidates.length > 1) {
+    // Never guess between organisations.
+    return { ok: false, status: 409, error: "Your account maps to more than one partner organisation. Ask the issuing organisation to correct the memberships.", code: "partner_org_ambiguous" };
+  }
+  const partnerOrg = candidates[0];
+  const membership = membershipRows.find((m) => String(m.partner_org_id) === String(partnerOrg.id));
+  if (!membership) {
+    return { ok: false, status: 403, error: "Membership not found for the resolved organisation.", code: "membership_missing" };
+  }
+  return { ok: true, surface, source, portalUserId, portalUserLabel, membership, partnerOrg };
+}
+
+/** Load a partner-case link by id, scoped to the resolved organisation and
+ * the surface's permitted portal types. Absence answers 404 — a link id is
+ * never confirmed to an organisation it does not belong to. */
+async function loadScopedPartnerLink(admin: any, linkId: string, partnerOrgId: string, surface: string) {
+  if (!linkId) return null;
+  const { data: link } = await admin.schema("aml").from("partner_case_links")
+    .select("*").eq("id", linkId).eq("partner_org_id", partnerOrgId).maybeSingle();
+  if (!link) return null;
+  if (!SURFACE_PORTAL_TYPES[surface].includes(link.portal_type)) return null;
+  return link;
+}
+
+/** Latest grant/attestation pair for a case × canonical organisation. Only
+ * canonically-stamped grants participate — the workspace is the new path. */
+async function loadOrgGrantAndAttestation(admin: any, caseId: string, partnerOrgId: string) {
+  const { data: grant } = await admin.schema("aml").from("reliance_grants")
+    .select("*, compliance_attestations:attestation_id(*)")
+    .eq("case_id", caseId).eq("partner_org_id", partnerOrgId)
+    .order("granted_at", { ascending: false }).limit(1).maybeSingle();
+  if (!grant) return { grant: null, attestation: null };
+  return { grant, attestation: (grant as any).compliance_attestations ?? null };
+}
+
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const __csrf = enforceCsrf(req);
@@ -223,6 +401,311 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const op = String(body?.op ?? "");
     if (!op) return jr({ error: "op required" }, 400);
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+
+    /* ── partner workspace ops: first-party portal sessions (Phase 4) ────── */
+    // Session-authenticated, membership-mapped, link-scoped. No bearer token
+    // ever reaches a first-party browser; identity comes from the portal's
+    // own server-trusted session resolver. Everything is flag-gated: with
+    // the master or surface flag off these ops answer 404 and the system
+    // behaves exactly as before Phase 4.
+
+    if (PARTNER_WORKSPACE_OPS.has(op)) {
+      const surfaceForFlag = String(body.portal_type ?? "");
+      const masterOn = await flagEnabled(admin, "aml_partner_compliance_workspace");
+      const surfaceFlagKey = WORKSPACE_PORTAL_FLAGS[surfaceForFlag];
+      const surfaceOn = surfaceFlagKey ? await flagEnabled(admin, surfaceFlagKey) : false;
+      if (!masterOn || !surfaceOn) {
+        return jr({ error: "The partner compliance workspace is not available.", code: "workspace_disabled" }, 404);
+      }
+      const ctx = await resolvePartnerPortalContext(admin, req, body);
+      if (!ctx.ok) return jr({ error: ctx.error, code: ctx.code }, ctx.status);
+      const { surface, source, portalUserId, portalUserLabel, membership, partnerOrg } = ctx;
+
+      if (op === "get_partner_compliance_workspace") {
+        const linkId = String(body.partner_case_link_id ?? "");
+        if (!linkId) {
+          // Link directory: the organisation's own links only, safe fields only.
+          const { data: links } = await admin.schema("aml").from("partner_case_links")
+            .select("id, relationship_role, legal_route, state, portal_type, linked_at, ended_at, end_reason_code, purchase_file_id, legal_matter_id")
+            .eq("partner_org_id", partnerOrg.id)
+            .in("portal_type", SURFACE_PORTAL_TYPES[surface])
+            .order("linked_at", { ascending: false }).limit(100);
+          return jr({
+            organisation: { legal_name: partnerOrg.legal_name, classification_status: partnerOrg.classification_status },
+            links: links ?? [],
+          });
+        }
+        const link = await loadScopedPartnerLink(admin, linkId, partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+
+        const { grant, attestation } = await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        let procedures: Record<string, unknown> | null = null;
+        let recordAvailability: string[] = [];
+        let limitations: string[] = [];
+        let manifestRow: any = null;
+        if (grant && attestation && (attestation.schema_version ?? 1) === 2) {
+          const { data: manifest } = await admin.schema("aml").from("disclosure_manifests")
+            .select("*").eq("grant_id", grant.id).maybeSingle();
+          manifestRow = manifest ?? null;
+          const manifestDecision = evaluateManifestForRead(manifestRow, new Date());
+          if (manifestDecision.ok && !attestation.superseded_at && !grant.revoked_at
+            && new Date(grant.expires_at).getTime() > Date.now()) {
+            try {
+              procedures = intersectPayloadWithManifest(attestation.payload, manifestRow);
+              recordAvailability = [...(manifestRow.allowed_record_classes ?? [])];
+              limitations = Array.isArray(attestation.payload?.limitations)
+                ? attestation.payload.limitations.map(String) : [];
+            } catch (_integrity) {
+              procedures = null; // tripwire: disclose nothing
+            }
+          }
+        }
+
+        const [{ data: determinations }, { data: requests }, { data: deliveries }, { data: tenantRow }] = await Promise.all([
+          admin.schema("aml").from("independent_assessments")
+            .select("status, decided_at, based_on_attestation_sha256, created_at")
+            .eq("case_id", link.case_id).eq("partner_org_id", partnerOrg.id)
+            .order("created_at", { ascending: false }).limit(50),
+          admin.schema("aml").from("partner_records_requests")
+            .select("id, requested_record_codes, status, requested_at, due_at, origin_response_message")
+            .eq("partner_case_link_id", link.id)
+            .order("requested_at", { ascending: false }).limit(50),
+          admin.schema("aml").from("partner_evidence_deliveries")
+            .select("id, record_code, safe_label, delivered_version, delivered_sha256, delivered_at, expires_at, revoked_at")
+            .eq("partner_case_link_id", link.id)
+            .order("delivered_at", { ascending: false }).limit(100),
+          admin.schema("aml").from("tenant_settings")
+            .select("display_name").eq("tenant_id", link.tenant_id ?? "default").maybeSingle(),
+        ]);
+
+        const dto = buildPartnerWorkspaceDto({
+          partnerOrg: { legal_name: partnerOrg.legal_name, classification_status: partnerOrg.classification_status },
+          originLabel: tenantRow?.display_name ?? "Issuing organisation",
+          link: {
+            id: link.id, relationship_role: link.relationship_role, legal_route: link.legal_route,
+            state: link.state, portal_type: link.portal_type, linked_at: link.linked_at,
+            purchase_file_id: link.purchase_file_id ?? null, legal_matter_id: link.legal_matter_id ?? null,
+          },
+          attestation: attestation ? {
+            schema_version: attestation.schema_version ?? 1, version: attestation.version,
+            payload_sha256: attestation.payload_sha256, issued_at: attestation.issued_at,
+            superseded_at: attestation.superseded_at ?? null,
+          } : null,
+          grant: grant ? { revoked_at: grant.revoked_at ?? null, expires_at: grant.expires_at } : null,
+          procedures, limitations, recordAvailability,
+          determinations: determinations ?? [],
+          requests: requests ?? [],
+          deliveries: deliveries ?? [],
+          now: new Date(),
+        });
+
+        // A workspace view that actually disclosed procedure content is an
+        // access — logged like a token redemption.
+        if (grant && dto.procedures) {
+          await admin.schema("aml").from("reliance_access_log").insert({
+            grant_id: grant.id, case_id: link.case_id, action: "view_attestation",
+            actor_label: `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`,
+            ip_address: ip,
+            detail: { via: "partner_workspace", partner_case_link_id: link.id, attestation_version: attestation?.version ?? null },
+          });
+        }
+        return jr({ workspace: dto });
+      }
+
+      if (op === "request_cdd_records") {
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+        if (link.state !== "active") {
+          return jr({ error: "This link is no longer active.", code: "link_inactive" }, 409);
+        }
+        const codes = Array.isArray(body.record_codes)
+          ? [...new Set(body.record_codes.map((c: unknown) => String(c)))] : [];
+        const rationale = String(body.rationale ?? "").trim();
+        if (codes.length === 0) return jr({ error: "record_codes required" }, 400);
+        if (rationale.length < 10) return jr({ error: "rationale must be at least 10 characters — record why the records are necessary" }, 400);
+
+        const { data: agreementRow } = link ? await admin.schema("aml").from("reliance_agreements")
+          .select("scope_record_classes").eq("partner_org_id", partnerOrg.id)
+          .eq("status", "active").order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null };
+        const evaluation = evaluateRecordsRequestScope(codes, agreementRow?.scope_record_classes ?? null);
+        const prohibited = evaluation.filter((e) => e.scope === "prohibited");
+        if (prohibited.length > 0) {
+          return jr({
+            error: `These record codes are not available through this channel: ${prohibited.map((p) => p.code).join(", ")}. Only the controlled record classes can be requested.`,
+            code: "record_codes_prohibited",
+            prohibited_codes: prohibited.map((p) => p.code),
+          }, 400);
+        }
+        const dueAt = String(body.due_at ?? "");
+        if (dueAt && !/^\d{4}-\d{2}-\d{2}$/.test(dueAt)) return jr({ error: "due_at must be YYYY-MM-DD" }, 400);
+
+        const { grant, attestation } = await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        const { data: request, error } = await admin.schema("aml").from("partner_records_requests").insert({
+          tenant_id: link.tenant_id ?? "default",
+          case_id: link.case_id,
+          partner_case_link_id: link.id,
+          partner_org_id: partnerOrg.id,
+          grant_id: grant?.id ?? null,
+          attestation_id: attestation?.id ?? null,
+          requested_record_codes: codes,
+          rationale: rationale.slice(0, 2000),
+          scope_evaluation: evaluation,
+          requested_by_source: source,
+          requested_by_id: portalUserId,
+          requested_by_label: portalUserLabel,
+          due_at: dueAt || null,
+        }).select("id, requested_record_codes, status, requested_at, due_at, origin_response_message").single();
+        if (error) throw error;
+
+        await appendCaseEvent(admin, link.case_id, "system",
+          `Partner records request from ${partnerOrg.legal_name} (${codes.length} record class${codes.length === 1 ? "" : "es"})`,
+          {
+            partner_records_request_id: request.id, partner_case_link_id: link.id,
+            requested_record_codes: codes,
+            note: "Controlled records request. Nothing is delivered without an origin review decision.",
+          }, null, `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`);
+        return jr({ request });
+      }
+
+      if (op === "list_partner_records_requests") {
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+        const { data, error } = await admin.schema("aml").from("partner_records_requests")
+          .select("id, requested_record_codes, rationale, scope_evaluation, status, requested_at, due_at, approved_record_codes, denied_record_codes, origin_response_message, reviewed_at")
+          .eq("partner_case_link_id", link.id).order("requested_at", { ascending: false }).limit(100);
+        if (error) throw error;
+        return jr({ requests: data ?? [] });
+      }
+
+      if (op === "record_partner_determination") {
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+        if (link.state !== "active") {
+          return jr({ error: "This link is no longer active.", code: "link_inactive" }, 409);
+        }
+        const outcome = String(body.outcome ?? "");
+        const decisionBasis = String(body.decision_basis ?? "").trim();
+        const responsibilityAcknowledged = body.responsibility_acknowledged === true;
+        const { grant, attestation } = await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        const currentHash = attestation && !attestation.superseded_at ? attestation.payload_sha256 : null;
+
+        const validation = validatePartnerDetermination({
+          outcome, decisionBasis, responsibilityAcknowledged,
+          complianceRole: membership.compliance_role ?? null,
+          attestationSha256: currentHash,
+        });
+        if (!validation.ok) return jr({ error: validation.message, code: validation.code }, 403);
+
+        // Append-only: a new determination row, never an update of history.
+        const { data: assessment, error } = await admin.schema("aml").from("independent_assessments").insert({
+          grant_id: grant?.id ?? null,
+          case_id: link.case_id,
+          agreement_id: grant?.agreement_id ?? null,
+          partner_org_id: partnerOrg.id,
+          partner_case_link_id: link.id,
+          assessor_user_source: source,
+          assessor_user_id: portalUserId,
+          membership_id: membership.id,
+          assessor_name: (portalUserLabel ?? "partner compliance officer").slice(0, 200),
+          assessor_role: membership.compliance_role,
+          responsibility_acknowledged: true,
+          decision_basis: decisionBasis.slice(0, 4000),
+          conditions: String(body.conditions ?? "").slice(0, 4000) || null,
+          based_on_attestation_sha256: currentHash,
+          status: outcome,
+          decision_notes: decisionBasis.slice(0, 4000),
+          decided_at: new Date().toISOString(),
+        }).select("id, status, decided_at, based_on_attestation_sha256").single();
+        if (error) throw error;
+
+        if (grant) {
+          await admin.schema("aml").from("reliance_access_log").insert({
+            grant_id: grant.id, case_id: link.case_id,
+            action: outcome === "records_requested" ? "records_request" : "independent_assessment",
+            actor_label: `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`,
+            ip_address: ip,
+            detail: { assessment_id: assessment.id, status: outcome, via: "partner_workspace" },
+          });
+        }
+        await appendCaseEvent(admin, link.case_id, "system",
+          `Independent assessment by ${partnerOrg.legal_name}: ${outcome.replace(/_/g, " ")}`,
+          {
+            assessment_id: assessment.id, partner_case_link_id: link.id,
+            based_on_attestation_sha256: currentHash,
+            note: "Partner determination under its own AML/CTF obligations. Does not alter this case's status or service gate.",
+          }, null, partnerOrg.legal_name);
+        return jr({ assessment });
+      }
+
+      if (op === "list_partner_evidence_deliveries") {
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+        const { data, error } = await admin.schema("aml").from("partner_evidence_deliveries")
+          .select("id, request_id, record_code, safe_label, delivered_version, delivered_sha256, delivered_at, expires_at, revoked_at")
+          .eq("partner_case_link_id", link.id).order("delivered_at", { ascending: false }).limit(100);
+        if (error) throw error;
+        return jr({ deliveries: data ?? [] });
+      }
+
+      if (op === "get_partner_audit_receipt") {
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+        const [{ data: tenantRow }, { data: attestations }, { data: grants }, { data: determinations }, { data: requests }, { data: deliveries }] = await Promise.all([
+          admin.schema("aml").from("tenant_settings")
+            .select("display_name").eq("tenant_id", link.tenant_id ?? "default").maybeSingle(),
+          admin.schema("aml").from("compliance_attestations")
+            .select("version, payload_sha256, issued_at, superseded_at")
+            .eq("case_id", link.case_id).order("version", { ascending: false }).limit(20),
+          admin.schema("aml").from("reliance_grants")
+            .select("id, granted_at, expires_at, revoked_at")
+            .eq("case_id", link.case_id).eq("partner_org_id", partnerOrg.id),
+          admin.schema("aml").from("independent_assessments")
+            .select("status, decided_at, based_on_attestation_sha256, decision_basis, conditions, assessor_name, assessor_role, created_at")
+            .eq("case_id", link.case_id).eq("partner_org_id", partnerOrg.id)
+            .order("created_at", { ascending: false }).limit(50),
+          admin.schema("aml").from("partner_records_requests")
+            .select("id, requested_record_codes, status, requested_at, approved_record_codes, denied_record_codes, reviewed_at")
+            .eq("partner_case_link_id", link.id).order("requested_at", { ascending: false }).limit(50),
+          admin.schema("aml").from("partner_evidence_deliveries")
+            .select("record_code, safe_label, delivered_version, delivered_sha256, delivered_at, expires_at, revoked_at")
+            .eq("partner_case_link_id", link.id).order("delivered_at", { ascending: false }).limit(100),
+        ]);
+        const grantIds = (grants ?? []).map((g: any) => g.id);
+        let accessEntries: any[] = [];
+        if (grantIds.length > 0) {
+          const { data: accessLog } = await admin.schema("aml").from("reliance_access_log")
+            .select("action, created_at").in("grant_id", grantIds)
+            .order("created_at", { ascending: false }).limit(200);
+          accessEntries = accessLog ?? [];
+        }
+        const receipt = {
+          generated_at: new Date().toISOString(),
+          origin_organisation: tenantRow?.display_name ?? "Issuing organisation",
+          partner_organisation: partnerOrg.legal_name,
+          link_reference: {
+            id: link.id, relationship_role: link.relationship_role,
+            legal_route: link.legal_route, state: link.state,
+            purchase_file_id: link.purchase_file_id ?? null,
+            legal_matter_id: link.legal_matter_id ?? null,
+          },
+          attestations: (attestations ?? []).map((a: any) => ({
+            version: a.version, sha256: a.payload_sha256,
+            issued_at: a.issued_at, superseded_at: a.superseded_at,
+          })),
+          access_events: accessEntries,
+          records_requests: requests ?? [],
+          evidence_deliveries: deliveries ?? [],
+          determinations: determinations ?? [],
+          responsibility_notice:
+            "This receipt records your organisation's own reliance activity and determinations. It does not contain, and must not be read as, the issuing organisation's internal assessment.",
+        };
+        const violations = findRestrictedKeys(receipt);
+        if (violations.length > 0) {
+          return jr({ error: "Receipt blocked by an integrity check." }, 500);
+        }
+        return jr({ receipt });
+      }
+    }
 
     /* ── partner ops: bearer token, no staff session ─────────────────────── */
 
@@ -1244,6 +1727,129 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .update(patch).eq("id", agreementId).select("*").single();
         if (error) throw error;
         return jr({ agreement: data });
+      }
+
+      /* ── partner workspace: Command Center support (Phase 4) ──────────── */
+      // Origin review of controlled records requests and the delivery read
+      // model. Requests never auto-approve; delivering restricted classes
+      // is an MLRO decision; the response message is partner-safe wording
+      // authored by staff, never internal notes.
+
+      case "staff_list_partner_records_requests": {
+        if (!body.case_id) return jr({ error: "case_id required" }, 400);
+        const [{ data: requests, error: reqErr }, { data: deliveries }] = await Promise.all([
+          admin.schema("aml").from("partner_records_requests")
+            .select("*, partner_organisations:partner_org_id(legal_name, organisation_type)")
+            .eq("case_id", String(body.case_id)).order("requested_at", { ascending: false }).limit(100),
+          admin.schema("aml").from("partner_evidence_deliveries")
+            .select("*").eq("case_id", String(body.case_id))
+            .order("delivered_at", { ascending: false }).limit(200),
+        ]);
+        if (reqErr) throw reqErr;
+        return jr({ requests: requests ?? [], deliveries: deliveries ?? [] });
+      }
+
+      case "review_partner_records_request": {
+        if (!isMlro) return jr({ error: "MLRO role required — releasing CDD records to a partner is a restricted disclosure decision" }, 403);
+        const requestId = String(body.request_id ?? "");
+        const decision = String(body.decision ?? "");
+        if (!requestId) return jr({ error: "request_id required" }, 400);
+        if (!["under_review", "approved", "partly_approved", "denied"].includes(decision)) {
+          return jr({ error: "decision must be under_review, approved, partly_approved or denied" }, 400);
+        }
+        const { data: request } = await admin.schema("aml").from("partner_records_requests")
+          .select("*").eq("id", requestId).maybeSingle();
+        if (!request) return jr({ error: "Request not found" }, 404);
+        if (!["submitted", "under_review"].includes(request.status)) {
+          return jr({ error: `Request is already ${request.status}` }, 409);
+        }
+        const responseMessage = String(body.response_message ?? "").trim();
+        const patch: Record<string, unknown> = { status: decision };
+        if (decision !== "under_review") {
+          const requested: string[] = request.requested_record_codes ?? [];
+          const approved = Array.isArray(body.approved_record_codes)
+            ? [...new Set(body.approved_record_codes.map((c: unknown) => String(c)))]
+              .filter((c) => requested.includes(c))
+            : [];
+          if (decision === "approved" && approved.length !== requested.length) {
+            return jr({ error: "Full approval must approve every requested code — otherwise use partly_approved." }, 400);
+          }
+          if (decision === "partly_approved" && (approved.length === 0 || approved.length === requested.length)) {
+            return jr({ error: "Partial approval needs a non-empty strict subset of the requested codes." }, 400);
+          }
+          if (decision === "denied" && approved.length > 0) {
+            return jr({ error: "A denial approves nothing." }, 400);
+          }
+          if (responseMessage.length < 10) {
+            return jr({ error: "response_message of at least 10 characters is required — it is the partner-safe explanation of the decision" }, 400);
+          }
+          patch.approved_record_codes = decision === "denied" ? [] : approved;
+          patch.denied_record_codes = requested.filter((c) => !(patch.approved_record_codes as string[]).includes(c));
+          patch.origin_response_message = responseMessage.slice(0, 2000);
+          patch.reviewed_by = userId;
+          patch.reviewed_by_label = userEmail;
+          patch.reviewed_at = new Date().toISOString();
+        }
+        const { data: updated, error } = await admin.schema("aml").from("partner_records_requests")
+          .update(patch).eq("id", requestId).select("*").single();
+        if (error) throw error;
+        await appendCaseEvent(admin, request.case_id, "mlro_decision",
+          `Partner records request ${decision.replace(/_/g, " ")}`,
+          {
+            partner_records_request_id: requestId, decision,
+            approved_record_codes: (patch.approved_record_codes as string[]) ?? null,
+          }, userId, userEmail);
+        return jr({ request: updated });
+      }
+
+      case "record_partner_evidence_delivery": {
+        if (!isMlro) return jr({ error: "MLRO role required" }, 403);
+        const requestId = String(body.request_id ?? "");
+        const recordCode = String(body.record_code ?? "");
+        const safeLabel = String(body.safe_label ?? "").trim();
+        if (!requestId || !recordCode || !safeLabel) {
+          return jr({ error: "request_id, record_code and safe_label are required" }, 400);
+        }
+        const { data: request } = await admin.schema("aml").from("partner_records_requests")
+          .select("*").eq("id", requestId).maybeSingle();
+        if (!request) return jr({ error: "Request not found" }, 404);
+        if (!["approved", "partly_approved", "delivered"].includes(request.status)) {
+          return jr({ error: "Only an approved request can receive a delivery." }, 409);
+        }
+        if (!(request.approved_record_codes ?? []).includes(recordCode)) {
+          return jr({ error: "That record code was not approved on this request." }, 403);
+        }
+        const days = Math.min(Math.max(Number(body.expires_days ?? 14) || 14, 1), 90);
+        const { data: delivery, error } = await admin.schema("aml").from("partner_evidence_deliveries").insert({
+          request_id: requestId,
+          case_id: request.case_id,
+          partner_case_link_id: request.partner_case_link_id,
+          partner_org_id: request.partner_org_id,
+          record_code: recordCode,
+          safe_label: safeLabel.slice(0, 300),
+          delivered_sha256: String(body.delivered_sha256 ?? "").slice(0, 64) || null,
+          delivered_by: userId,
+          delivered_by_label: userEmail,
+          expires_at: new Date(Date.now() + days * 864e5).toISOString(),
+        }).select("*").single();
+        if (error) throw error;
+
+        // Once every approved code has at least one live delivery, the
+        // request itself reads delivered.
+        const { data: allDeliveries } = await admin.schema("aml").from("partner_evidence_deliveries")
+          .select("record_code").eq("request_id", requestId).is("revoked_at", null);
+        const deliveredCodes = new Set((allDeliveries ?? []).map((d: any) => d.record_code));
+        if ((request.approved_record_codes ?? []).every((c: string) => deliveredCodes.has(c))) {
+          await admin.schema("aml").from("partner_records_requests")
+            .update({ status: "delivered" }).eq("id", requestId);
+        }
+        await appendCaseEvent(admin, request.case_id, "mlro_decision",
+          `Evidence delivery recorded: ${safeLabel}`,
+          {
+            partner_records_request_id: requestId, delivery_id: delivery.id,
+            record_code: recordCode, expires_at: delivery.expires_at,
+          }, userId, userEmail);
+        return jr({ delivery });
       }
 
       default:
