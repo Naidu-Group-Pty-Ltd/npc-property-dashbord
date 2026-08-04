@@ -299,14 +299,22 @@ export interface ResolvedListingImages {
  */
 export function resolveListingImages(fields: Record<string, unknown>): ResolvedListingImages {
   const attachments = normaliseImageCandidates(fields[F.listingImages], 'airtable');
-  const scraped = normaliseImageCandidates(
+  // `listing_url`, not `scraped`. These URLs were read off the agency's own
+  // listing page by intake, so they outrank a generic scrape — and, more
+  // importantly, they must not share an origin with the photographs
+  // `listing-enrichment` harvests, which are stored as `scraped`. Two sources
+  // under one label cannot be told apart when the library merges them.
+  const fromListing = normaliseImageCandidates(
     parseImageUrlList(fields[F.listingImageUrls]),
-    'scraped',
+    'listing_url',
   );
-  const primary = normaliseImageCandidates(parseImageUrlList(fields[F.primaryImageUrl]), 'scraped');
+  const primary = normaliseImageCandidates(
+    parseImageUrlList(fields[F.primaryImageUrl]),
+    'listing_url',
+  );
 
   const byIdentity = new Map<string, ImageCandidate>();
-  for (const candidate of [...attachments, ...scraped, ...primary]) {
+  for (const candidate of [...attachments, ...fromListing, ...primary]) {
     const key = candidate.externalId ? `att:${candidate.externalId}` : candidate.url;
     if (!byIdentity.has(key)) byIdentity.set(key, candidate);
   }
@@ -485,7 +493,10 @@ export function projectAirtableRecord(
     // re-scraped in August, and it is the August date that decides whether the
     // page is showing the most recent images and how soon to re-verify them.
     imagesCapturedAt: media.capturedAt,
-    imageCount: media.candidates.length,
+    // Named for what it is: how many candidates intake gave us, which is a
+    // different number from how many photographs the page renders. The
+    // rendered count comes from the image library, keyed by listing id.
+    imageCandidateCount: media.candidates.length,
     reportedImageCount: media.reportedCount,
     imageSource: media.source,
     primaryImageUrl: media.primaryUrl,

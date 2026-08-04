@@ -259,6 +259,11 @@ export function listingHasPhotos(
   resolved?: ReadonlySet<string> | null,
 ): boolean {
   if (resolved) return resolved.has(listing.id);
+  // The fallback, used before the image library has answered. It has to read
+  // the same sources the projection does: reading the attachment column alone
+  // answered "no" for every record, because photographs arrive as links in
+  // `Listing Image URLs`, not as attachments.
+  if (Array.isArray(listing.imageCandidates)) return listing.imageCandidates.length > 0;
   return normaliseImageCandidates(listing.images).length > 0;
 }
 

@@ -536,6 +536,13 @@ async function harvestImages(
      * it just takes its candidates as a listings array and accepts plain URL
      * strings. Trying it second costs one request in the failure case and makes
      * the service correct against either version of its neighbour.
+     *
+     * One difference now: `resolve` reconciles additively, because its usual
+     * caller is a browser that can only see what Airtable holds. This path does
+     * hand over the whole scraped gallery, so going through it means a photo
+     * dropped from the agency's page stays `stored` until the next `harvest`
+     * run retires it. That is the safe direction — a stale photo on a card
+     * beats a blank one — and this fallback only fires on deploy skew.
      */
     if (response.status === 400 || response.status === 404) {
       const legacy = await post({
