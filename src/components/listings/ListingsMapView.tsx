@@ -1334,6 +1334,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mapFrameRef = useRef<HTMLDivElement | null>(null);
+  const [frameHeight, setFrameHeight] = useState(0);
   const popupRef = useRef<L.Popup | null>(null);
   const markersRef = useRef<ListingMarker[]>([]);
   const markerIndexRef = useRef(new Map<string, L.Marker>());
@@ -1405,6 +1406,17 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
     [markers, selectedId],
   );
 
+  // By value, not by render: `position={[lat, lng]}` inline hands react-leaflet
+  // a new array every render, and it responds to every "new" position with
+  // popup.setLatLng — which re-runs Leaflet's auto-pan every time. A popup
+  // that pans on every unrelated re-render is the spasm a screenshot caught.
+  const selectedLat = selected?.point.lat;
+  const selectedLng = selected?.point.lng;
+  const popupPosition = useMemo<[number, number] | null>(
+    () => (selectedLat !== undefined && selectedLng !== undefined ? [selectedLat, selectedLng] : null),
+    [selectedLat, selectedLng],
+  );
+
   const markerSignature = useMemo(
     () => listingSetSignature(markers.map((m) => ({ id: m.listing.id }))),
     [markers],
@@ -1450,7 +1462,21 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
       if (rows.length < IN_VIEW_LIMIT) rows.push(m);
     }
     setInViewCount(count);
-    setInViewRows(rows);
+    // Same rows → same state object, so a settle pan that changes nothing
+    // causes no re-render. This matters more than it looks: recount runs on
+    // every moveend, and a re-render while the popup is open used to hand the
+    // popup a fresh position array, which re-ran Leaflet's auto-pan, which
+    // fired another moveend — the popup visibly spasming in a loop of its own
+    // making. Each leg of that loop is now cut independently.
+    setInViewRows((prior) => {
+      if (
+        prior.length === rows.length &&
+        prior.every((row, i) => row.listing.id === rows[i].listing.id)
+      ) {
+        return prior;
+      }
+      return rows;
+    });
     setZoom(instance.getZoom());
   }, [map]);
 
@@ -1501,7 +1527,11 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   // frame while leaving the shell exactly the same size.
   useEffect(() => {
     if (!map || !mapFrameRef.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
+    const observer = new ResizeObserver((entries) => {
+      map.invalidateSize({ animate: false });
+      const height = entries[0]?.contentRect?.height;
+      if (typeof height === 'number' && height > 0) setFrameHeight(Math.round(height));
+    });
     observer.observe(mapFrameRef.current);
     return () => observer.disconnect();
   }, [map]);
@@ -1796,11 +1826,11 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
             </>
           ) : null}
 
-          {selected ? (
+          {selected && popupPosition ? (
             <Popup
               key={selected.listing.id}
               ref={popupRef}
-              position={[selected.point.lat, selected.point.lng]}
+              position={popupPosition}
               maxWidth={320}
               minWidth={268}
               // Bounded so the card can never outgrow the frame it sits in:
@@ -1811,7 +1841,10 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
               // a target — the card is still deliberately compact, and anything
               // richer belongs on the property page rather than in a popup that
               // has to sit inside the viewport with its own marker visible.
-              maxHeight={440}
+              // Never taller than the frame can actually show: a popup that
+              // cannot fully fit gives Leaflet's auto-pan an unsatisfiable
+              // goal, and an unsatisfiable auto-pan is a pan on every update.
+              maxHeight={frameHeight > 0 ? Math.max(240, Math.min(440, frameHeight - 140)) : 440}
               autoPanPadding={L.point(32, 44)}
               className="listings-map__popup"
             >
