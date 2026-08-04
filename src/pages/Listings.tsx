@@ -20,7 +20,6 @@ import { PropertyCard } from '@/components/listings/PropertyCard';
 import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
-import { useEnrichListing } from '@/hooks/useEnrichListing';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 
 /**
@@ -620,12 +619,6 @@ export default function Listings() {
   const { images: listingImages, isResolving: listingImagesResolving, refresh: refreshListingImages } =
     useListingImages(preFilteredListings);
 
-  // Fetching a listing's photos on demand. The sweep gets there eventually;
-  // this is for the person looking at the card right now. Re-resolving only the
-  // one listing keeps it to a single round trip.
-  const { enrich: findPhotos, pendingListingId: findingPhotosFor } =
-    useEnrichListing(refreshListingImages);
-
 
   /** Ids the image library actually holds stored photos for. */
   const listingsWithPhotos = useMemo(() => {
@@ -972,8 +965,7 @@ export default function Listings() {
             onOpenDetails={openDetailsModal}
             onOpenSource={(listing) => listing.url && openSourceUrl(listing.url)}
             onEmailAgent={openEmailAgent}
-            onFindPhotos={(listing) => findPhotos(listing.id)}
-            findingPhotosFor={findingPhotosFor}
+            onImagesFound={refreshListingImages}
             points={galleryPoints}
             onVisibleCountChange={setGalleryVisibleCount}
             formatDate={formatDate}

@@ -4,16 +4,33 @@ import { afterEach } from 'vitest';
 import { ListingHero } from './ListingHero';
 import type { StoredListingImage } from '@/lib/listingImages';
 
-// Street View fetches a static panorama through an edge function. The carousel's
-// job is to put it on the last slide; whether Google answers is that panel's
-// problem, so it is stubbed to something inert.
-vi.mock('@/components/listings/StreetViewPanel', () => ({
-  StreetViewPanel: ({ label }: { label?: string }) => (
-    <div data-testid="street-view">{label ?? 'street view'}</div>
-  ),
-}));
+// Street View fetches a static panorama through an edge function. The hero's
+// job is where the panel goes and what happens on each verdict; whether Google
+// answers is the panel's problem, so it is stubbed — but the stub reports a
+// controllable status, because the hero's automatic mode branches on it.
+let mockPanelStatus = 'available';
+vi.mock('@/components/listings/StreetViewPanel', async () => {
+  const { useEffect } = await import('react');
+  return {
+    StreetViewPanel: ({
+      label,
+      onStatus,
+    }: {
+      label?: string;
+      onStatus?: (status: string) => void;
+    }) => {
+      useEffect(() => {
+        onStatus?.(mockPanelStatus);
+      }, [onStatus]);
+      return <div data-testid="street-view">{label ?? 'street view'}</div>;
+    },
+  };
+});
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mockPanelStatus = 'available';
+});
 
 const photo = (n: number): StoredListingImage =>
   ({ url: `https://cdn.example.com/p${n}.jpg`, position: n, origin: 'scraped' }) as StoredListingImage;
@@ -54,39 +71,55 @@ describe('ListingHero', () => {
     expect(screen.queryByText('Checking for photos…')).toBeNull();
   });
 
-  it('offers to fetch photos when the caller can, and shows progress while it does', () => {
-    // The sweep works worst-first through 1,441 records, so a given listing may
-    // be hours from its turn. The empty state is the only place someone looking
-    // at that listing can say "do it now".
-    const onFindPhotos = vi.fn();
-    const { rerender } = render(<ListingHero images={[]} onFindPhotos={onFindPhotos} />);
-
-    fireEvent.click(screen.getByRole('button', { name: /find photos/i }));
-    expect(onFindPhotos).toHaveBeenCalledTimes(1);
-
-    rerender(<ListingHero images={[]} onFindPhotos={onFindPhotos} isFindingPhotos />);
-    expect(screen.getByText('Looking for photos…')).toBeTruthy();
-    // The button must not survive into the pending state; a second press would
-    // queue a duplicate fetch for the same record.
-    expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
+  it('keeps the cover on screen while a source search runs, and says what is happening', () => {
+    // The search is automatic now — nobody pressed anything — so the card must
+    // narrate itself: photographs appearing seconds later need an explanation,
+    // and a spinner over a blank frame is the white-rectangle bug again.
+    render(<ListingHero images={[]} isFindingPhotos listing={LISTING} />);
+    expect(screen.getByText('City Beach WA')).toBeTruthy();
+    expect(screen.getByText('Searching the source listing…')).toBeTruthy();
+    expect(screen.queryByText('No photo on record')).toBeNull();
   });
 
-  it('leaves the empty state a plain statement when no fetch is offered', () => {
-    render(<ListingHero images={[]} />);
+  it('offers no manual imagery controls anywhere in the empty state', () => {
+    // The cascade decides: record photos, else the source page, else Street
+    // View. A person browsing properties is not operating an imagery pipeline.
+    render(<ListingHero images={[]} point={POINT} streetViewMode="auto" listing={LISTING} />);
+    expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /street view/i })).toBeNull();
+  });
+
+  it('loads the street frontage automatically once the cascade has nothing else', () => {
+    // The failsafe stage: no stored photos, no search in flight — the frame
+    // shows the street without being asked, and the caption bar stands down.
+    render(<ListingHero images={[]} point={POINT} streetViewMode="auto" listing={LISTING} />);
+    expect(screen.getByTestId('street-view')).toBeTruthy();
+    expect(screen.queryByText('No photo on record')).toBeNull();
+  });
+
+  it('puts the cover back when the panorama fails, rather than apologising in the frame', () => {
+    mockPanelStatus = 'no_coverage';
+    render(<ListingHero images={[]} point={POINT} streetViewMode="auto" listing={LISTING} />);
+    // The panel is abandoned for good and the drawn cover stands, with the
+    // honest caption — not an error message where imagery was promised.
+    expect(screen.queryByTestId('street-view')).toBeNull();
+    expect(screen.getByText('City Beach WA')).toBeTruthy();
     expect(screen.getByText('No photo on record')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
   });
 
-  it('does not load Street View for a photo-less card until asked', () => {
-    // A 48-card grid where every photo-less tile auto-loaded a panorama would
-    // spend ~96 metered Google calls per page view against a 5,000/day global
-    // quota that the edge function does not cache. The cover is free; the
-    // panorama is one deliberate click.
-    render(<ListingHero images={[]} point={POINT} streetViewMode="on-demand" listing={LISTING} />);
+  it('does not spend street view calls while earlier cascade stages are still running', () => {
+    // Photographs may be seconds away — from the resolution pass or from the
+    // source search. Loading a panorama that a photo immediately replaces
+    // wastes a metered call on imagery nobody sees.
+    const { rerender } = render(
+      <ListingHero images={[]} point={POINT} streetViewMode="auto" listing={LISTING} isResolving />,
+    );
     expect(screen.queryByTestId('street-view')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Street View' }));
-    expect(screen.getByTestId('street-view')).toBeTruthy();
+    rerender(
+      <ListingHero images={[]} point={POINT} streetViewMode="auto" listing={LISTING} isFindingPhotos />,
+    );
+    expect(screen.queryByTestId('street-view')).toBeNull();
   });
 
   it('keeps Street View as an always-present slide where one listing is on screen', () => {
@@ -97,24 +130,26 @@ describe('ListingHero', () => {
     expect(screen.queryByRole('button', { name: 'Street View' })).toBeNull();
   });
 
-  it('does not carry one listing\u2019s Street View request onto the next', () => {
-    // Cards are recycled as the reader filters and scrolls. Inheriting the
-    // request would silently spend a call on a property nobody asked about.
+  it('does not carry one listing\u2019s panorama verdict onto the next', () => {
+    // Cards are recycled as the reader filters and scrolls. A previous
+    // property's "no coverage" must not condemn the next one to a cover when
+    // its own street is photographed.
+    mockPanelStatus = 'no_coverage';
     const { rerender } = render(
-      <ListingHero images={[]} point={POINT} streetViewMode="on-demand" listing={LISTING} />,
+      <ListingHero images={[]} point={POINT} streetViewMode="auto" listing={LISTING} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Street View' }));
-    expect(screen.getByTestId('street-view')).toBeTruthy();
+    expect(screen.queryByTestId('street-view')).toBeNull();
 
+    mockPanelStatus = 'available';
     rerender(
       <ListingHero
         images={[]}
         point={POINT}
-        streetViewMode="on-demand"
+        streetViewMode="auto"
         listing={{ ...LISTING, address: '9 Birch Road', suburb: 'Aubin Grove' }}
       />,
     );
-    expect(screen.queryByTestId('street-view')).toBeNull();
+    expect(screen.getByTestId('street-view')).toBeTruthy();
   });
 
   it('draws a cover instead of a blank frame when the record can describe itself', () => {

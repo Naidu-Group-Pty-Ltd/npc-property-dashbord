@@ -34,8 +34,8 @@ export interface ListingGalleryCardProps {
   onOpenDetails: () => void;
   onOpenSource?: () => void;
   onEmailAgent?: () => void;
-  onFindPhotos?: () => void;
-  isFindingPhotos?: boolean;
+  /** The automatic cascade is reading this listing's source page right now. */
+  isAutoSearching?: boolean;
   formatDate: (value: Date | string) => string;
 }
 
@@ -73,8 +73,7 @@ export function ListingGalleryCard({
   onOpenDetails,
   onOpenSource,
   onEmailAgent,
-  onFindPhotos,
-  isFindingPhotos = false,
+  isAutoSearching = false,
   formatDate,
 }: ListingGalleryCardProps) {
   const price = displayPrice(listing);
@@ -105,10 +104,9 @@ export function ListingGalleryCard({
           aspect="aspect-[4/3]"
           rounded={false}
           onExpand={onOpenDetails}
-          onFindPhotos={onFindPhotos}
-          isFindingPhotos={isFindingPhotos}
+          isFindingPhotos={isAutoSearching}
           listing={listing}
-          streetViewMode="on-demand"
+          streetViewMode="auto"
         />
 
         {/*
@@ -247,16 +245,6 @@ export function ListingGalleryCard({
               )}
               {listing.url && onOpenSource && (
                 <DropdownMenuItem onClick={onOpenSource}>Open source listing</DropdownMenuItem>
-              )}
-              {/*
-                Also in the menu: a geocoded listing that has loaded Street View
-                is no longer showing the empty frame, so the frame's own button
-                is gone — and that is exactly the listing worth fetching.
-              */}
-              {photoCount === 0 && onFindPhotos && (
-                <DropdownMenuItem onClick={onFindPhotos} disabled={isFindingPhotos}>
-                  {isFindingPhotos ? 'Looking for photos…' : 'Find photos'}
-                </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>

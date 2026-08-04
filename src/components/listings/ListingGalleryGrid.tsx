@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import type { PropertyListing } from '@/lib/airtable';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { ListingGalleryCard } from '@/components/listings/ListingGalleryCard';
+import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 
 /**
  * Cards drawn before the reader has to ask for more.
@@ -27,9 +28,11 @@ export interface ListingGalleryGridProps {
   onOpenDetails: (listing: PropertyListing) => void;
   onOpenSource?: (listing: PropertyListing) => void;
   onEmailAgent?: (listing: PropertyListing) => void;
-  onFindPhotos?: (listing: PropertyListing) => void;
-  /** Id of the listing currently being enriched, if any. */
-  findingPhotosFor?: string | null;
+  /**
+   * Told when the automatic source-page search found photographs for a
+   * listing, so the owner of the image state can re-resolve that one record.
+   */
+  onImagesFound: (listingId: string) => void;
   formatDate: (value: Date | string) => string;
   /** Told how many cards are on screen, so image resolution follows the reader. */
   onVisibleCountChange?: (count: number) => void;
@@ -45,8 +48,7 @@ export function ListingGalleryGrid({
   onOpenDetails,
   onOpenSource,
   onEmailAgent,
-  onFindPhotos,
-  findingPhotosFor,
+  onImagesFound,
   formatDate,
   onVisibleCountChange,
 }: ListingGalleryGridProps) {
@@ -59,6 +61,11 @@ export function ListingGalleryGrid({
   useEffect(() => setVisible(PAGE_SIZE), [signature]);
 
   const shown = useMemo(() => listings.slice(0, visible), [listings, visible]);
+
+  // The cascade's middle stage runs over exactly the cards on screen — the
+  // rendered slice, not the filtered corpus. The ten-minute sweep owns the
+  // other thirteen hundred; the browser's job is what the reader can see.
+  const { searchingId } = useAutoFindPhotos(shown, images, imagesResolving, onImagesFound);
 
   useEffect(() => {
     onVisibleCountChange?.(shown.length);
@@ -79,11 +86,7 @@ export function ListingGalleryGrid({
             onOpenDetails={() => onOpenDetails(listing)}
             onOpenSource={onOpenSource ? () => onOpenSource(listing) : undefined}
             onEmailAgent={onEmailAgent ? () => onEmailAgent(listing) : undefined}
-            // Only where there is a page to read. Without a source link the
-            // enrichment has nowhere to go, and an action that can only ever
-            // report its own futility is worse than no action.
-            onFindPhotos={onFindPhotos && listing.url ? () => onFindPhotos(listing) : undefined}
-            isFindingPhotos={findingPhotosFor === listing.id}
+            isAutoSearching={searchingId === listing.id}
             formatDate={formatDate}
           />
         ))}

@@ -422,3 +422,44 @@ select count(*) from public.listing_images where status = 'stored';
 Unit tests: `src/lib/listingScrape.test.ts` (extraction, boilerplate rejection),
 `src/lib/listingUrlPolicy.test.ts` (classification, every SSRF range, merge
 rules).
+
+## Deployment (2026-08-04)
+
+The function is **live**. It was never deployed by CI — there is still no
+`SUPABASE_ACCESS_TOKEN` secret, so the deploy workflow stays inert — but the
+repository is public, and Deno resolves TypeScript modules over HTTPS. The
+deployed artefact is therefore a three-line shim that imports the real,
+reviewed source at a pinned commit:
+
+```ts
+import 'https://raw.githubusercontent.com/lavan96/npc-property-dashbord/4674b62f8d1be74965b48086717767fc01998df9/supabase/functions/listing-enrichment/index.ts';
+```
+
+Deno fetches the module and its `_shared/` imports relative to that commit, so
+what runs in production is byte-for-byte what was merged. `verify_jwt` is
+false, matching `config.toml` — the module carries the project's own session
+auth, CSRF guard and abuse controls.
+
+Two consequences landed the moment it booted:
+
+- The `listing-enrichment-sweep` cron (`*/10 * * * *`), which the migration had
+  installed and which had been firing into a 404 every ten minutes, started
+  working. Within its first two fires it had seeded 400 queue rows, enriched
+  its first ~30 listings and grown the stored-image count from 876 to 1,034.
+- The dashboard's "Fetch details" button stopped answering with a CORS error.
+
+**To upgrade** the function: redeploy the shim with a newer commit SHA (or land
+the access-token secret and let the workflow replace the shim with a normal
+deploy). The pinned commit never changes underneath the deployment.
+
+## The client-side cascade (same date)
+
+The browser now runs the acquisition chain automatically wherever a listing
+renders with no photographs: stored images first (`useListingImages`), then a
+silent `op:'enrich'` against the listing's own source page
+(`useAutoFindPhotos` — one at a time, eight seconds apart, twelve per page
+view, remembered in localStorage for three days so fruitless searches are not
+repeated), then Street View loaded automatically in-viewport
+(`ListingHero` `streetViewMode:'auto'`, session-cached per location including
+negative answers, badged "Street view" on the frame). There are no imagery
+buttons left on the cards; the failsafe order is the interface.
