@@ -36,6 +36,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import {
   LEGAL_ROUTES,
+  evaluateArrangementForReliance,
   evaluatePartnerLinkForReliance,
 } from "../_shared/aml/relianceEligibility.ts";
 
@@ -163,14 +164,17 @@ async function buildAttestationPayload(admin: any, caseRow: any) {
  * organisation and an active partner-case link (legal_route = reliance).
  * Tolerates both feature-flag value shapes used in this repo.
  */
-async function partnerIdentityEnforced(admin: any): Promise<boolean> {
+async function flagEnabled(admin: any, key: string): Promise<boolean> {
   const { data } = await admin.from("feature_flags")
-    .select("value").eq("key", "aml_partner_identity").maybeSingle();
+    .select("value").eq("key", key).maybeSingle();
   const v = data?.value;
   if (v === true || v === "true") return true;
   if (v && typeof v === "object" && (v as any).enabled === true) return true;
   return false;
 }
+
+const partnerIdentityEnforced = (admin: any) => flagEnabled(admin, "aml_partner_identity");
+const arrangementGovernanceEnforced = (admin: any) => flagEnabled(admin, "aml_arrangement_governance");
 
 const PARTNER_ORG_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer", "other"];
 const PARTNER_PORTAL_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer"];
@@ -464,7 +468,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
         {
           const { data: caseRowForLink } = await admin.schema("aml").from("cases")
-            .select("id, tenant_id").eq("id", caseId).maybeSingle();
+            .select("id, tenant_id, subject_type").eq("id", caseId).maybeSingle();
           const caseTenant = caseRowForLink?.tenant_id ?? "default";
           let linkRows: any[] = [];
           if (partnerOrgRow) {
@@ -483,6 +487,38 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             // Partner-safe code, operator-facing message. Independent CDD
             // remains available — this blocks the reliance grant only.
             return jr({ error: decision.message, code: decision.code }, 409);
+          }
+
+          // Arrangement governance (Phase 2, flag-gated). The full guard —
+          // eligibility recorded, arrangement in force and in scope,
+          // operative + current + suitable assessment — sits on top of the
+          // legacy checks above; those stay for byte-identical behaviour
+          // while the flag is off.
+          if (await arrangementGovernanceEnforced(admin)) {
+            const { data: assessRow } = await admin.schema("aml")
+              .from("arrangement_assessments")
+              .select("decision, next_due_at, status")
+              .eq("agreement_id", agreementId).eq("status", "operative")
+              .maybeSingle();
+            const arrangementDecision = evaluateArrangementForReliance({
+              arrangement: {
+                id: agreement.id, status: agreement.status,
+                next_review_due: agreement.next_review_due,
+                eligibility_classification: agreement.eligibility_classification ?? "unassessed",
+                scope_procedures: agreement.scope_procedures ?? null,
+                scope_customer_types: agreement.scope_customer_types ?? null,
+                effective_from: agreement.effective_from ?? null,
+                expires_on: agreement.expires_on ?? null,
+                partner_org_id: agreement.partner_org_id ?? null,
+              },
+              assessment: assessRow ?? null,
+              requiredProcedure: "customer_identification",
+              caseCustomerType: caseRowForLink?.subject_type ?? null,
+              now: new Date(),
+            });
+            if (!arrangementDecision.ok) {
+              return jr({ error: arrangementDecision.message, code: arrangementDecision.code }, 409);
+            }
           }
         }
 
@@ -887,6 +923,149 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq("id", mapping.agreement_id);
         if (agErr) throw agErr;
         return jr({ mapping: updatedMapping });
+      }
+
+      /* ── arrangement governance (Phase 2) ─────────────────────────────── */
+      // The assessment history is immutable: re-assessment supersedes, it
+      // never edits. Eligibility is a recorded determination with its own
+      // preconditions — the system never concludes that an organisation is
+      // legally eligible, it records that an authorised human did.
+
+      case "list_arrangement_assessments": {
+        if (!body.agreement_id) return jr({ error: "agreement_id required" }, 400);
+        const { data, error } = await admin.schema("aml").from("arrangement_assessments")
+          .select("*").eq("agreement_id", String(body.agreement_id))
+          .order("assessment_version", { ascending: false });
+        if (error) throw error;
+        return jr({ assessments: data ?? [] });
+      }
+
+      case "record_arrangement_assessment": {
+        if (!isMlro) return jr({ error: "MLRO role required — an arrangement assessment is a governance decision" }, 403);
+        const agreementId = String(body.agreement_id ?? "");
+        const trigger = String(body.trigger ?? "");
+        const decision = String(body.decision ?? "");
+        const nextDue = String(body.next_due_at ?? "");
+        const findings = String(body.findings ?? "").trim();
+        if (!agreementId) return jr({ error: "agreement_id required" }, 400);
+        if (!["initial", "scheduled", "significant_change", "incident", "other"].includes(trigger)) {
+          return jr({ error: "trigger must be initial, scheduled, significant_change, incident or other" }, 400);
+        }
+        if (!["suitable", "suitable_with_conditions", "unsuitable"].includes(decision)) {
+          return jr({ error: "decision must be suitable, suitable_with_conditions or unsuitable" }, 400);
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDue)) {
+          return jr({ error: "next_due_at must be YYYY-MM-DD — regular review is a statutory condition" }, 400);
+        }
+        if (decision !== "suitable" && findings.length < 10) {
+          return jr({ error: "findings of at least 10 characters are required when the decision is not plainly suitable" }, 400);
+        }
+        const { data: agreement } = await admin.schema("aml").from("reliance_agreements")
+          .select("id").eq("id", agreementId).maybeSingle();
+        if (!agreement) return jr({ error: "Agreement not found" }, 404);
+
+        const { data: last } = await admin.schema("aml").from("arrangement_assessments")
+          .select("id, assessment_version, status").eq("agreement_id", agreementId)
+          .order("assessment_version", { ascending: false }).limit(1).maybeSingle();
+        const version = (last?.assessment_version ?? 0) + 1;
+        // Supersede-then-insert keeps the one-operative-per-agreement
+        // invariant. If the insert fails after the supersede, the agreement
+        // has NO operative assessment — which fails closed, never open.
+        if (last && last.status === "operative") {
+          await admin.schema("aml").from("arrangement_assessments")
+            .update({ status: "superseded", superseded_at: new Date().toISOString() })
+            .eq("id", last.id);
+        }
+        const conditions = String(body.conditions ?? "").trim();
+        const evidence = Array.isArray(body.evidence_references)
+          ? body.evidence_references.map((e: unknown) => String(e).slice(0, 500)).slice(0, 50)
+          : [];
+        const { data: assessment, error } = await admin.schema("aml")
+          .from("arrangement_assessments").insert({
+            agreement_id: agreementId, assessment_version: version,
+            assessed_by: userId, assessed_by_label: userEmail,
+            trigger, decision,
+            findings: findings.slice(0, 4000) || null,
+            conditions: conditions.slice(0, 4000) || null,
+            evidence_references: evidence,
+            next_due_at: nextDue,
+          }).select("*").single();
+        if (error) throw error;
+        if (last && last.status === "operative") {
+          await admin.schema("aml").from("arrangement_assessments")
+            .update({ superseded_by_id: assessment.id }).eq("id", last.id);
+        }
+        await admin.schema("aml").from("reliance_agreements")
+          .update({ current_assessment_id: assessment.id, updated_at: new Date().toISOString() })
+          .eq("id", agreementId);
+        return jr({ assessment });
+      }
+
+      case "update_agreement_scope": {
+        if (!isMlro) return jr({ error: "MLRO role required" }, 403);
+        const agreementId = String(body.agreement_id ?? "");
+        if (!agreementId) return jr({ error: "agreement_id required" }, 400);
+        const { data: agreement } = await admin.schema("aml").from("reliance_agreements")
+          .select("*").eq("id", agreementId).maybeSingle();
+        if (!agreement) return jr({ error: "Agreement not found" }, 404);
+
+        const patch: Record<string, unknown> = {};
+        const strArray = (v: unknown) =>
+          Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, 50) : null;
+        if (body.scope_customer_types !== undefined) patch.scope_customer_types = strArray(body.scope_customer_types);
+        if (body.scope_procedures !== undefined) patch.scope_procedures = strArray(body.scope_procedures);
+        if (body.scope_record_classes !== undefined) patch.scope_record_classes = strArray(body.scope_record_classes);
+        if (body.record_availability_sla_hours !== undefined) {
+          const sla = Number(body.record_availability_sla_hours);
+          patch.record_availability_sla_hours = Number.isFinite(sla) && sla > 0 ? Math.round(sla) : null;
+        }
+        if (body.jurisdiction !== undefined) patch.jurisdiction = String(body.jurisdiction ?? "").slice(0, 100) || null;
+        if (body.cross_border_terms !== undefined) patch.cross_border_terms = String(body.cross_border_terms ?? "").slice(0, 2000) || null;
+        if (body.executed_document_reference !== undefined) patch.executed_document_reference = String(body.executed_document_reference ?? "").slice(0, 300) || null;
+        if (body.effective_from !== undefined) {
+          const d = String(body.effective_from ?? "");
+          if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return jr({ error: "effective_from must be YYYY-MM-DD" }, 400);
+          patch.effective_from = d || null;
+        }
+        if (body.expires_on !== undefined) {
+          const d = String(body.expires_on ?? "");
+          if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return jr({ error: "expires_on must be YYYY-MM-DD" }, 400);
+          patch.expires_on = d || null;
+        }
+        if (body.eligibility_classification !== undefined) {
+          const cls = String(body.eligibility_classification ?? "");
+          if (!["unassessed", "eligible_reporting_entity", "eligible_foreign_equivalent", "not_eligible"].includes(cls)) {
+            return jr({ error: "eligibility_classification must be unassessed, eligible_reporting_entity, eligible_foreign_equivalent or not_eligible" }, 400);
+          }
+          // An eligible determination on the ARRANGEMENT presupposes an
+          // eligible-classified canonical PARTNER — the two records must
+          // agree, and neither is ever guessed.
+          if (cls === "eligible_reporting_entity" || cls === "eligible_foreign_equivalent") {
+            if (!agreement.partner_org_id) {
+              return jr({
+                error: "Map this agreement to a canonical partner organisation before recording an eligible determination.",
+                code: "partner_org_unresolved",
+              }, 409);
+            }
+            const { data: org } = await admin.schema("aml").from("partner_organisations")
+              .select("reporting_entity_classification").eq("id", agreement.partner_org_id).maybeSingle();
+            const orgCls = org?.reporting_entity_classification ?? "unclassified";
+            if (!["eligible_relying_reporting_entity", "eligible_foreign_equivalent"].includes(orgCls)) {
+              return jr({
+                error: "The canonical partner organisation is not classified as reliance-capable. Record the partner classification (with evidence) first.",
+                code: "partner_classification_required",
+              }, 409);
+            }
+          }
+          patch.eligibility_classification = cls;
+        }
+        if (Object.keys(patch).length === 0) return jr({ error: "No recognised fields to update" }, 400);
+        patch.agreement_version = (agreement.agreement_version ?? 1) + 1;
+        patch.updated_at = new Date().toISOString();
+        const { data, error } = await admin.schema("aml").from("reliance_agreements")
+          .update(patch).eq("id", agreementId).select("*").single();
+        if (error) throw error;
+        return jr({ agreement: data });
       }
 
       default:

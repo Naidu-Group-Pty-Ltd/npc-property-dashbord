@@ -39,7 +39,21 @@ export type RelianceDenialCode =
   | "partner_link_not_active"
   | "partner_link_wrong_route"
   | "partner_link_wrong_case"
-  | "partner_link_wrong_tenant";
+  | "partner_link_wrong_tenant"
+  // Phase 2 — arrangement layer
+  | "agreement_missing"
+  | "agreement_inactive"
+  | "agreement_not_yet_effective"
+  | "agreement_expired"
+  | "review_overdue"
+  | "eligibility_not_recorded"
+  | "eligibility_not_eligible"
+  | "scope_not_recorded"
+  | "scope_procedure_not_covered"
+  | "scope_customer_type_not_covered"
+  | "assessment_missing"
+  | "assessment_overdue"
+  | "assessment_unsuitable";
 
 export interface PartnerOrganisationInput {
   id: string;
@@ -150,4 +164,142 @@ export function evaluatePartnerLinkForReliance(
   }
 
   return { ok: true, link: active };
+}
+
+/* ── Phase 2: arrangement governance layer ─────────────────────────────── */
+
+export interface ArrangementInput {
+  id: string;
+  status: string; // active | suspended | terminated
+  next_review_due: string; // YYYY-MM-DD
+  /** Recorded configuration value, never a system inference. */
+  eligibility_classification: string;
+  scope_procedures: string[] | null;
+  scope_customer_types: string[] | null;
+  effective_from: string | null;
+  expires_on: string | null;
+  partner_org_id: string | null;
+}
+
+export interface ArrangementAssessmentInput {
+  decision: string; // suitable | suitable_with_conditions | unsuitable
+  next_due_at: string; // YYYY-MM-DD
+  status: string; // operative | superseded
+}
+
+export type ArrangementDecision =
+  | { ok: true }
+  | { ok: false; code: RelianceDenialCode; message: string };
+
+/**
+ * Phase 2 layer: is the WRITTEN arrangement itself capable of carrying new
+ * reliance right now?
+ *
+ * Deny-by-default across every dimension: an unassessed eligibility, a
+ * missing or overdue or unsuitable assessment, an out-of-force agreement,
+ * or an uncovered procedure all deny. Customer-type scope is checked only
+ * when it was recorded (an empty/unrecorded customer-type scope means the
+ * arrangement does not restrict by type); procedure scope must be recorded
+ * explicitly — procedures are WHAT the arrangement covers, so their absence
+ * is an incomplete arrangement, not an unrestricted one.
+ *
+ * None of this ever gates independent_cdd, outsourced_cdd or information
+ * sharing, and none of it reads or writes the originating case, risk
+ * assessment or service gate. `now` is a parameter so the decision is
+ * deterministic and testable.
+ */
+export function evaluateArrangementForReliance(ctx: {
+  arrangement: ArrangementInput | null;
+  assessment: ArrangementAssessmentInput | null;
+  requiredProcedure: string;
+  caseCustomerType?: string | null;
+  now: Date;
+}): ArrangementDecision {
+  const a = ctx.arrangement;
+  const nowMs = ctx.now.getTime();
+  if (!a) {
+    return {
+      ok: false, code: "agreement_missing",
+      message: "No written CDD arrangement exists for this partner. s 37A reliance is unavailable without one.",
+    };
+  }
+  if (a.status !== "active") {
+    return {
+      ok: false, code: "agreement_inactive",
+      message: `The arrangement is ${a.status}. Only an active arrangement can carry new reliance access.`,
+    };
+  }
+  if (a.effective_from && new Date(a.effective_from).getTime() > nowMs) {
+    return {
+      ok: false, code: "agreement_not_yet_effective",
+      message: "The arrangement is not yet in effect.",
+    };
+  }
+  if (a.expires_on && new Date(a.expires_on).getTime() < nowMs) {
+    return {
+      ok: false, code: "agreement_expired",
+      message: "The arrangement has expired. Re-execute or extend it before new reliance access.",
+    };
+  }
+  if (new Date(a.next_review_due).getTime() < nowMs) {
+    return {
+      ok: false, code: "review_overdue",
+      message: "This CDD arrangement's review is overdue. Review the agreement before issuing new grants.",
+    };
+  }
+  if (a.eligibility_classification === "not_eligible") {
+    return {
+      ok: false, code: "eligibility_not_eligible",
+      message: "The recorded eligibility determination for this arrangement is 'not eligible'. Use the independent CDD route.",
+    };
+  }
+  if (a.eligibility_classification !== "eligible_reporting_entity"
+    && a.eligibility_classification !== "eligible_foreign_equivalent") {
+    return {
+      ok: false, code: "eligibility_not_recorded",
+      message: "No eligibility classification has been recorded for this arrangement. Record the legal determination before new reliance access — until then the independent CDD route remains available.",
+    };
+  }
+  if (!a.scope_procedures || a.scope_procedures.length === 0) {
+    return {
+      ok: false, code: "scope_not_recorded",
+      message: "The arrangement's procedure scope has not been recorded. Record which procedures it covers before new reliance access.",
+    };
+  }
+  if (!a.scope_procedures.includes(ctx.requiredProcedure)) {
+    return {
+      ok: false, code: "scope_procedure_not_covered",
+      message: `The arrangement does not cover the "${ctx.requiredProcedure}" procedure. Amend the arrangement or use the independent CDD route.`,
+    };
+  }
+  if (
+    ctx.caseCustomerType &&
+    a.scope_customer_types && a.scope_customer_types.length > 0 &&
+    !a.scope_customer_types.includes(ctx.caseCustomerType)
+  ) {
+    return {
+      ok: false, code: "scope_customer_type_not_covered",
+      message: "The arrangement does not cover this customer type. Amend the arrangement or use the independent CDD route.",
+    };
+  }
+  const s = ctx.assessment;
+  if (!s || s.status !== "operative") {
+    return {
+      ok: false, code: "assessment_missing",
+      message: "No operative arrangement assessment exists. s 37A requires the arrangement to be regularly reviewed — record an assessment before new reliance access.",
+    };
+  }
+  if (s.decision === "unsuitable") {
+    return {
+      ok: false, code: "assessment_unsuitable",
+      message: "The operative assessment found the arrangement unsuitable. New reliance access is blocked; the independent CDD route remains available.",
+    };
+  }
+  if (new Date(s.next_due_at).getTime() < nowMs) {
+    return {
+      ok: false, code: "assessment_overdue",
+      message: "The arrangement assessment is overdue. Re-assess the arrangement before new reliance access.",
+    };
+  }
+  return { ok: true };
 }

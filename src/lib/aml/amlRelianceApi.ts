@@ -22,6 +22,18 @@ export interface RelianceAgreement {
   status: "active" | "suspended" | "terminated";
   notes: string | null;
   created_at: string;
+  /** Phase 1–2 additions — null/absent on environments before the migrations. */
+  partner_org_id?: string | null;
+  eligibility_classification?: "unassessed" | "eligible_reporting_entity" | "eligible_foreign_equivalent" | "not_eligible";
+  scope_customer_types?: string[] | null;
+  scope_procedures?: string[] | null;
+  scope_record_classes?: string[] | null;
+  record_availability_sla_hours?: number | null;
+  executed_document_reference?: string | null;
+  effective_from?: string | null;
+  expires_on?: string | null;
+  agreement_version?: number;
+  current_assessment_id?: string | null;
 }
 
 export interface ComplianceAttestation {
@@ -103,6 +115,22 @@ export interface PartnerCaseLink {
     legal_name: string; organisation_type: string;
     classification_status: string; status: string;
   };
+}
+
+export interface ArrangementAssessment {
+  id: string;
+  agreement_id: string;
+  assessment_version: number;
+  assessed_by_label: string | null;
+  assessed_at: string;
+  trigger: "initial" | "scheduled" | "significant_change" | "incident" | "other";
+  evidence_references: string[];
+  findings: string | null;
+  decision: "suitable" | "suitable_with_conditions" | "unsuitable";
+  conditions: string | null;
+  next_due_at: string;
+  status: "operative" | "superseded";
+  superseded_at: string | null;
 }
 
 export interface PartnerOrgNameMapping {
@@ -195,4 +223,25 @@ export const amlRelianceApi = {
     mapping_id: string; action?: "map" | "reject";
     partner_org_id?: string; note?: string;
   }) => invoke<{ mapping: PartnerOrgNameMapping }>({ op: "resolve_partner_mapping", ...params }),
+
+  /* ── arrangement governance (Phase 2) ─────────────────────────────────── */
+
+  listArrangementAssessments: (agreement_id: string) =>
+    invoke<{ assessments: ArrangementAssessment[] }>({ op: "list_arrangement_assessments", agreement_id }),
+  recordArrangementAssessment: (params: {
+    agreement_id: string;
+    trigger: ArrangementAssessment["trigger"];
+    decision: ArrangementAssessment["decision"];
+    next_due_at: string; findings?: string; conditions?: string;
+    evidence_references?: string[];
+  }) => invoke<{ assessment: ArrangementAssessment }>({ op: "record_arrangement_assessment", ...params }),
+  updateAgreementScope: (params: {
+    agreement_id: string;
+    eligibility_classification?: "unassessed" | "eligible_reporting_entity" | "eligible_foreign_equivalent" | "not_eligible";
+    scope_customer_types?: string[]; scope_procedures?: string[];
+    scope_record_classes?: string[]; record_availability_sla_hours?: number;
+    jurisdiction?: string; cross_border_terms?: string;
+    executed_document_reference?: string;
+    effective_from?: string; expires_on?: string;
+  }) => invoke<{ agreement: RelianceAgreement }>({ op: "update_agreement_scope", ...params }),
 };

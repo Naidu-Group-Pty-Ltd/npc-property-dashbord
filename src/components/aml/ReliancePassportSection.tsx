@@ -262,6 +262,37 @@ export function ReliancePassportSection({
     } finally { setBusy(null); }
   };
 
+  const recordAssessment = async (agreement: RelianceAgreement) => {
+    const values = await prompt({
+      title: `Assess arrangement — ${agreement.partner_org_name}`,
+      description:
+        "s 37A requires the arrangement to be regularly reviewed. The assessment history is " +
+        "immutable: a new assessment supersedes the previous one, it never edits it.",
+      confirmLabel: "Record assessment",
+      fields: [
+        { name: "trigger", label: 'Trigger ("initial" / "scheduled" / "significant_change" / "incident" / "other")', required: true, placeholder: "scheduled" },
+        { name: "decision", label: 'Decision ("suitable" / "suitable_with_conditions" / "unsuitable")', required: true, placeholder: "suitable" },
+        { name: "next_due_at", label: "Next assessment due", type: "date", required: true, helpText: "An overdue assessment blocks new reliance grants." },
+        { name: "findings", label: "Findings", type: "textarea", required: false, placeholder: "Required unless plainly suitable…" },
+      ],
+    });
+    if (!values) return;
+    setBusy("assessment");
+    try {
+      await amlRelianceApi.recordArrangementAssessment({
+        agreement_id: agreement.id,
+        trigger: values.trigger.trim() as any,
+        decision: values.decision.trim() as any,
+        next_due_at: values.next_due_at,
+        findings: values.findings || undefined,
+      });
+      toast({ title: "Arrangement assessment recorded" });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not record assessment", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
   if (!loaded) return null;
   const current = attestations.find((a) => !a.superseded_at) ?? null;
 
@@ -340,6 +371,58 @@ export function ReliancePassportSection({
             ))}
           </div>
         </div>
+
+        {/* Arrangement governance (Phase 2). The written arrangement and
+            its immutable assessment history. An overdue, unsuitable or
+            inactive arrangement blocks NEW reliance grants; the independent
+            CDD route is never affected. */}
+        {agreements.length > 0 && (
+          <div className="border-t pt-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-medium flex items-center gap-1.5">
+                <FileSignature className="h-3.5 w-3.5 text-primary" /> Written arrangements
+              </div>
+            </div>
+            <ul className="mt-1.5 space-y-1.5 text-xs">
+              {agreements.map((a) => {
+                const reviewOverdue = new Date(a.next_review_due).getTime() < Date.now();
+                return (
+                  <li key={a.id} className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{a.partner_org_name}</span>
+                    <Badge variant="outline" className={
+                      a.status === "active" ? "text-success"
+                        : a.status === "suspended" ? "text-warning" : "text-muted-foreground"
+                    }>
+                      {a.status}
+                    </Badge>
+                    {reviewOverdue && (
+                      <Badge variant="outline" className="text-destructive">review overdue</Badge>
+                    )}
+                    {(a.eligibility_classification ?? "unassessed") === "unassessed" && (
+                      <Badge variant="outline" className="text-warning">eligibility not recorded</Badge>
+                    )}
+                    {!a.current_assessment_id && (
+                      <Badge variant="outline" className="text-warning">no assessment</Badge>
+                    )}
+                    {isMlro && (
+                      <Button
+                        size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                        onClick={() => recordAssessment(a)} disabled={busy !== null}
+                      >
+                        Record assessment
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="text-[11px] text-muted-foreground mt-1.5">
+              An overdue, unsuitable or inactive arrangement blocks new reliance grants. A partner
+              that cannot rely completes its own independent CDD instead — that route is always
+              available.
+            </div>
+          </div>
+        )}
 
         {/* Canonical partner links (Phase 1). A link is the access root —
             it explains WHY an organisation may see this matter. It is never
