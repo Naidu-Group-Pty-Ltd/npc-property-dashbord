@@ -1,5 +1,5 @@
-import { Bath, Bed, Calendar, Car, Mail, MapPin, Maximize2, MoreVertical, Phone } from 'lucide-react';
-import { Badge, badgeVariants } from '@/components/ui/badge';
+import { Bath, Bed, Car, CalendarClock, Mail, Maximize2, MoreVertical, Phone } from 'lucide-react';
+import { badgeVariants } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -12,11 +12,16 @@ import { cn } from '@/lib/utils';
 import type { PropertyListing } from '@/lib/airtable';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { ListingHero } from '@/components/listings/ListingHero';
-import { displayPrice, formatArea, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
+import {
+  displayPrice,
+  formatArea,
+  formatLocality,
+  listingFreshness,
+  qualityCaveat,
+} from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
 
-const BADGE = 'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold leading-none tracking-[0.02em] shadow-sm';
-const SPEC_CHIP = 'inline-flex items-center gap-1 rounded-full border border-border/50 bg-background/70 px-2 py-1 text-xs font-semibold tabular-nums';
+const PILL = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold leading-none tracking-[0.02em] shadow-sm';
 
 export interface ListingGalleryCardProps {
   listing: PropertyListing;
@@ -34,18 +39,28 @@ export interface ListingGalleryCardProps {
 }
 
 /**
- * A listing as a photo-first card.
+ * A listing as a photo-first card, laid out the way the national portals do it.
  *
- * The list and table views lead with text because they are built for scanning a
- * thousand rows. This one is built for browsing: the photograph is the subject
- * and everything else is annotation, which is how anyone actually shops for
- * property.
+ * The reference is realestate.com.au, and the reason to follow it is not
+ * fashion: every agent who sends us a listing reads that site daily, and so
+ * does every buyer they deal with. Matching the reading order — agency band
+ * over the photograph, freshness on the image, **price as the headline**,
+ * address beneath it, then a row of specification icons — means nobody has to
+ * learn our card. Deviating would cost recognition and buy nothing.
  *
- * It states what it does not know. A card that renders a grey box where a photo
- * should be, and nothing where a price should be, reads as broken; one that says
- * "No photo on record" and "Price on request" reads as honest. Given roughly
- * half these records genuinely have no price and photographs are still being
- * harvested, that distinction carries most of the page's credibility.
+ * Where this goes further than the portals, it does so because the portals are
+ * publishing polished listings and we are publishing a mailbox:
+ *
+ * - **It says what it does not know.** A portal never shows a listing without a
+ *   price or a photograph; roughly half of ours have no price and most have no
+ *   photograph yet. "Price on request" and a drawn cover are honest where a
+ *   blank would read as broken.
+ * - **It carries a quality signal.** A portal's data is entered by the agent;
+ *   ours is parsed out of an email, so a card that has been geocoded into the
+ *   wrong state has to be able to admit it.
+ * - **It offers the next action inline.** The portals make you open the listing
+ *   to reach the agent. If we already hold an address, the enquiry is one click
+ *   from the grid.
  */
 export function ListingGalleryCard({
   listing,
@@ -67,12 +82,14 @@ export function ListingGalleryCard({
   const land = formatArea(listing.landSizeSqm);
   const photoCount = images?.length ?? 0;
   const contact = listingContact(listing);
+  const freshness = listingFreshness(listing);
+  const inspection = listing.inspectionStart ?? listing.nextInspectionDate;
 
   return (
     <article
       className={cn(
-        'group/card relative flex flex-col overflow-hidden rounded-2xl border bg-card/90 shadow-[0_10px_30px_rgba(15,23,42,0.06)] transition-all duration-200',
-        'hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(15,23,42,0.10)] focus-within:ring-2 focus-within:ring-primary/35',
+        'group/card relative flex flex-col overflow-hidden rounded-2xl border bg-card shadow-[0_10px_30px_rgba(15,23,42,0.06)] transition-all duration-200',
+        'hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(15,23,42,0.12)] focus-within:ring-2 focus-within:ring-primary/35',
         'dark:bg-background/80 dark:shadow-black/30',
         isSelected ? 'border-primary ring-2 ring-primary/30' : 'border-border/70 dark:border-white/10',
       )}
@@ -92,25 +109,76 @@ export function ListingGalleryCard({
           streetViewMode="on-demand"
         />
 
-        <div className="pointer-events-none absolute left-2 top-2 flex flex-wrap gap-1">
+        {/*
+          The agency band. On realestate.com.au this carries the agency's
+          uploaded logo and the agent's headshot; we hold neither — every image
+          column on all 1,441 records is empty — so it sets the agency name in
+          its place rather than reserving a gap for a logo that never arrives.
+        */}
+        {(listing.agencyName || contact.name) && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 bg-gradient-to-b from-foreground/70 to-transparent px-2.5 pb-6 pt-2">
+            <span className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.06em] text-background">
+              {listing.agencyName ?? 'Private listing'}
+            </span>
+            {contact.name && (
+              <span className="shrink-0 truncate text-[11px] font-medium text-background/90">
+                {contact.name}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Status flags sit under the band so they never collide with it. */}
+        <div className="pointer-events-none absolute left-2 top-9 flex flex-wrap gap-1">
           {listing.listingStatus && (
-            <span className={cn(BADGE, 'bg-foreground/75 text-background')}>{listing.listingStatus}</span>
+            <span className={cn(PILL, 'bg-foreground/75 text-background')}>{listing.listingStatus}</span>
           )}
           {listing.intent && listing.intent !== 'Sale' && (
-            <span className={cn(BADGE, 'bg-brand-500/90 text-foreground dark:text-white')}>
+            <span className={cn(PILL, 'bg-brand-500/90 text-foreground dark:text-white')}>
               {listing.intent}
             </span>
           )}
-          {price.isRent && <span className={cn(BADGE, 'bg-info/85 text-background')}>Rental</span>}
+          {price.isRent && <span className={cn(PILL, 'bg-info/85 text-background')}>Rental</span>}
         </div>
 
         {photoCount > 1 && (
-          <span className={cn(BADGE, 'pointer-events-none absolute right-2 top-2 bg-foreground/70 text-background')}>
+          <span className={cn(PILL, 'pointer-events-none absolute right-2 top-9 bg-foreground/70 text-background')}>
             {photoCount} photos
           </span>
         )}
 
-        <div className="absolute left-2 bottom-2 opacity-0 transition-opacity group-hover/card:opacity-100 focus-within:opacity-100">
+        {/*
+          Freshness over the image, as the portals do — mirrored to the right.
+
+          realestate.com.au puts this bottom-left, and matching it was the first
+          attempt. Both bottom-left slots inside the frame are already taken:
+          `ListingHero` draws its slide counter there when a listing has more
+          than one photograph, and its "No photo on record" caption there when
+          it has none. Screenshotting showed the pill sitting on top of both.
+          The right-hand side is free in each case — the photo-count badge only
+          occupies the top-right when photos exist, which is exactly when this
+          pill is at the bottom.
+        */}
+        {freshness && (
+          <span
+            className={cn(
+              PILL,
+              'pointer-events-none absolute transition-opacity',
+              photoCount > 0 ? 'bottom-2 right-2' : 'right-2 top-9',
+              // The bulk-select checkbox is revealed in this same corner on
+              // hover. Informational text yields to an actual control.
+              photoCount > 0 && 'group-hover/card:opacity-0',
+              freshness.isNew ? 'bg-success text-background' : 'bg-background/90 text-foreground',
+            )}
+          >
+            {freshness.isNew && (
+              <span className="h-1.5 w-1.5 rounded-full bg-background/90" aria-hidden="true" />
+            )}
+            {freshness.label}
+          </span>
+        )}
+
+        <div className="absolute right-2 bottom-2 opacity-0 transition-opacity group-hover/card:opacity-100 focus-within:opacity-100">
           <Checkbox
             checked={isSelected}
             onCheckedChange={(checked) => onSelect(checked === true)}
@@ -120,28 +188,38 @@ export function ListingGalleryCard({
         </div>
       </div>
 
-      <div className="flex flex-1 flex-col gap-2.5 p-3.5">
+      <div className="flex flex-1 flex-col gap-2 p-3.5">
+        {/*
+          Price first, address second — the portals' order, and the right one.
+          Someone scanning a grid is filtering on affordability before they care
+          which street it is on.
+        */}
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <button
-              type="button"
-              onClick={onOpenDetails}
-              className="block w-full truncate text-left text-[15px] font-semibold leading-tight text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          <button
+            type="button"
+            onClick={onOpenDetails}
+            className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            <span
+              className={cn(
+                'block truncate text-[17px] font-bold leading-tight',
+                price.known ? 'text-foreground' : 'text-muted-foreground',
+              )}
             >
+              {price.text}
+            </span>
+            <span className="mt-0.5 block truncate text-[13px] text-muted-foreground">
               {listing.address ?? listing.fullAddress ?? 'Address not extracted'}
-            </button>
-            <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
-              <MapPin className="h-3 w-3 shrink-0" aria-hidden="true" />
-              {locality ?? 'Location unknown'}
-            </p>
-          </div>
+              {locality ? `, ${locality}` : ''}
+            </span>
+          </button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 shrink-0 rounded-full focus-visible:ring-2 focus-visible:ring-primary/40"
+                className="-mr-1 h-8 w-8 shrink-0 rounded-full focus-visible:ring-2 focus-visible:ring-primary/40"
                 aria-label="Listing actions"
               >
                 <MoreVertical className="h-4 w-4" />
@@ -161,10 +239,9 @@ export function ListingGalleryCard({
                 <DropdownMenuItem onClick={onOpenSource}>Open source listing</DropdownMenuItem>
               )}
               {/*
-                Also in the menu, not only in the empty frame: a geocoded listing
-                with no photographs shows the Street View slide instead of the
-                empty state, so the frame's own button never renders — and that
-                is exactly the listing most worth fetching.
+                Also in the menu: a geocoded listing that has loaded Street View
+                is no longer showing the empty frame, so the frame's own button
+                is gone — and that is exactly the listing worth fetching.
               */}
               {photoCount === 0 && onFindPhotos && (
                 <DropdownMenuItem onClick={onFindPhotos} disabled={isFindingPhotos}>
@@ -175,85 +252,60 @@ export function ListingGalleryCard({
           </DropdownMenu>
         </div>
 
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span
-            className={cn(
-              'text-lg font-bold leading-none',
-              price.known ? 'text-primary' : 'text-muted-foreground',
-            )}
-          >
-            {price.text}
-          </span>
+        {/*
+          The specification row, in the portals' fixed order: beds, baths, cars,
+          land, then type. Fixed order matters more than compactness — the eye
+          learns the positions and stops reading the icons.
+        */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] font-semibold text-foreground">
+          <Spec icon={Bed} value={listing.beds} unit="bedrooms" />
+          <Spec icon={Bath} value={listing.baths} unit="bathrooms" />
+          <Spec icon={Car} value={listing.carSpaces} unit="car spaces" />
+          {land && (
+            <span className="inline-flex items-center gap-1 tabular-nums">
+              <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+              {land}
+            </span>
+          )}
           {listing.propertyType && (
-            <span className={cn(badgeVariants({ variant: 'outline' }), BADGE, 'shrink-0')}>
+            <span className="text-muted-foreground">
+              <span aria-hidden="true">· </span>
               {listing.propertyType}
             </span>
           )}
         </div>
 
-        {(listing.beds || listing.baths || listing.carSpaces || land) && (
-          <div className="flex flex-wrap gap-1.5">
-            {listing.beds ? (
-              <span className={SPEC_CHIP}>
-                <Bed className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                {listing.beds}
-                <span className="sr-only"> bedrooms</span>
+        {(inspection || caveat) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {inspection && (
+              <span className={cn(badgeVariants({ variant: 'outline' }), PILL, 'border-primary/40 text-primary')}>
+                <CalendarClock className="h-3 w-3" aria-hidden="true" />
+                {formatDate(inspection)}
               </span>
-            ) : null}
-            {listing.baths ? (
-              <span className={SPEC_CHIP}>
-                <Bath className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                {listing.baths}
-                <span className="sr-only"> bathrooms</span>
+            )}
+            {caveat && (
+              <span
+                title={caveat}
+                className={cn(badgeVariants({ variant: 'outline' }), PILL, 'border-warning/40 text-warning')}
+              >
+                Check location
               </span>
-            ) : null}
-            {listing.carSpaces ? (
-              <span className={SPEC_CHIP}>
-                <Car className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                {listing.carSpaces}
-                <span className="sr-only"> car spaces</span>
-              </span>
-            ) : null}
-            {land ? (
-              <span className={SPEC_CHIP}>
-                <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                {land}
-              </span>
-            ) : null}
+            )}
           </div>
         )}
 
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/60 pt-2.5 text-xs">
-          <span className="min-w-0 truncate text-muted-foreground">
-            {[contact.name, listing.agencyName].filter(Boolean).join(' · ') || 'Agency not extracted'}
-          </span>
-          {listing.inspectionStart ? (
-            <span className="flex shrink-0 items-center gap-1 font-medium text-primary">
-              <Calendar className="h-3 w-3" aria-hidden="true" />
-              {formatDate(listing.inspectionStart)}
-            </span>
-          ) : listing.listedAtKnown === false ? (
-            // Better than showing today's date for a record that carries none.
-            <span className="shrink-0 text-muted-foreground/70">Date unknown</span>
-          ) : null}
-        </div>
-
         {/*
-          A first-class action rather than a menu item. The whole point of a
-          photo-first grid is that someone browses it and wants to ask about one,
-          and burying that behind a kebab adds a click to the only thing they
-          came to do. It is only rendered when there is somewhere to send it —
-          two thirds of these records carry no address at all, and a disabled
-          button on most of the page is just noise.
+          The action the portals make you open a page for. Only rendered when
+          there is somewhere to send it — two thirds of these records carry no
+          contact address, and a disabled button on most of the page is noise.
         */}
         {(contact.email || contact.phone) && (
-          <div className="flex gap-1.5">
+          <div className="mt-auto flex gap-1.5 pt-1">
             {contact.email && onEmailAgent && (
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
-                className="h-8 flex-1 rounded-full text-xs font-semibold"
+                className="h-9 flex-1 rounded-full text-xs font-bold"
                 onClick={onEmailAgent}
               >
                 <Mail className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
@@ -265,7 +317,7 @@ export function ListingGalleryCard({
                 asChild
                 size="sm"
                 variant="outline"
-                className={cn('h-8 rounded-full text-xs font-semibold', !contact.email && 'flex-1')}
+                className={cn('h-9 rounded-full text-xs font-bold', !contact.email && 'flex-1')}
               >
                 <a href={`tel:${contact.phone.replace(/\s/g, '')}`} aria-label={`Call ${contact.phone}`}>
                   <Phone className="h-3.5 w-3.5" aria-hidden="true" />
@@ -275,18 +327,35 @@ export function ListingGalleryCard({
             )}
           </div>
         )}
-
-        {caveat && (
-          <Badge
-            variant="outline"
-            title={caveat}
-            className={cn(BADGE, 'self-start border-warning/40 text-warning')}
-          >
-            Check location
-          </Badge>
-        )}
       </div>
     </article>
+  );
+}
+
+/**
+ * One specification.
+ *
+ * Rendered only when the number is known. The portals always show all three
+ * because their listings always have all three; ours often do not, and a `–`
+ * where a bedroom count should be tells the reader nothing they cannot infer
+ * from its absence.
+ */
+function Spec({
+  icon: Icon,
+  value,
+  unit,
+}: {
+  icon: typeof Bed;
+  value: number | null | undefined;
+  unit: string;
+}) {
+  if (!value) return null;
+  return (
+    <span className="inline-flex items-center gap-1 tabular-nums">
+      <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+      {value}
+      <span className="sr-only"> {unit}</span>
+    </span>
   );
 }
 

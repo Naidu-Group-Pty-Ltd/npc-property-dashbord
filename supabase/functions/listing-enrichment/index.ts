@@ -502,23 +502,51 @@ async function harvestImages(
   const baseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   if (!serviceKey || !baseUrl) return { ok: false, error: 'not_configured' };
 
-  try {
-    const response = await fetchWithTimeout(
+  const post = (body: unknown) =>
+    fetchWithTimeout(
       `${baseUrl}/functions/v1/listing-images`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          op: 'harvest',
-          listingId,
-          listedAt,
-          candidates: urls.map((url) => ({ url, origin: 'scraped' })),
-        }),
+        body: JSON.stringify(body),
       },
       60_000,
     );
-    if (!response.ok) return { ok: false, error: `harvest_${response.status}` };
-    return { ok: true };
+
+  try {
+    const response = await post({
+      op: 'harvest',
+      listingId,
+      listedAt,
+      candidates: urls.map((url) => ({ url, origin: 'scraped' })),
+    });
+    if (response.ok) return { ok: true };
+
+    /*
+     * Fall back to `resolve` when `harvest` is not there.
+     *
+     * `op:'harvest'` shipped in the same change as this service, and edge
+     * functions deploy individually — so this one can be live against a
+     * `listing-images` that predates it, which answers `unknown_op` and drops
+     * every photograph on the floor. That is not hypothetical: it is the state
+     * production was in, and it is invisible because the sweep still reports
+     * success.
+     *
+     * `resolve` has existed the whole time and harvests exactly the same way;
+     * it just takes its candidates as a listings array and accepts plain URL
+     * strings. Trying it second costs one request in the failure case and makes
+     * the service correct against either version of its neighbour.
+     */
+    if (response.status === 400 || response.status === 404) {
+      const legacy = await post({
+        op: 'resolve',
+        listings: [{ id: listingId, images: urls, listedAt }],
+      });
+      if (legacy.ok) return { ok: true };
+      return { ok: false, error: `harvest_${response.status}_resolve_${legacy.status}` };
+    }
+
+    return { ok: false, error: `harvest_${response.status}` };
   } catch (error) {
     return { ok: false, error: redactError(error) };
   }
@@ -689,6 +717,11 @@ Deno.serve(async (req) => {
         fieldsFilled: Object.keys(outcome.values),
         images: outcome.imageUrls.length,
         imagesHarvested: harvest.ok,
+        // Returned so the caller can hand them to `listing-images` itself when
+        // the server-side harvest could not. Without this the UI is told "we
+        // found 12 photographs" and has no way to render one.
+        imageUrls: outcome.imageUrls,
+        harvestError: harvest.error,
         resolvedUrl: outcome.resolvedUrl,
         error: outcome.error,
       });

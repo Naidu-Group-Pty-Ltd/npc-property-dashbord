@@ -98,3 +98,45 @@ export function qualityCaveat(listing: PropertyListing): string | null {
   if (listing.needsHumanReview && listing.errorType) return listing.errorType;
   return null;
 }
+
+/**
+ * How long this listing has been with us, in the phrasing portals use.
+ *
+ * realestate.com.au leads every card with "Added 4 days ago", and it earns its
+ * place: on a marketplace fed by a mailbox, the first question is always
+ * whether a property is still live. It is the cheapest signal we have and the
+ * only one that needs no enrichment at all.
+ *
+ * `listedAtKnown === false` marks a record whose date we invented rather than
+ * read, so it gets no phrase — "Added today" on a month-old listing is worse
+ * than saying nothing.
+ */
+export function listingFreshness(
+  listing: PropertyListing,
+  now: number = Date.now(),
+): { label: string; isNew: boolean } | null {
+  if (listing.listedAtKnown === false) return null;
+
+  const raw =
+    listing.receivedAt ?? listing.createdTime ?? listing.createdAt ?? listing.listingDate ?? null;
+  if (!raw) return null;
+
+  const at = raw instanceof Date ? raw.getTime() : Date.parse(String(raw));
+  if (!Number.isFinite(at)) return null;
+
+  const days = Math.floor((now - at) / 86_400_000);
+  // A future timestamp is a clock or a parse problem, not a listing that has
+  // not happened yet. Say nothing rather than "Added in 3 days".
+  if (days < 0) return null;
+
+  const label =
+    days === 0 ? 'Added today'
+    : days === 1 ? 'Added yesterday'
+    : days < 7 ? `Added ${days} days ago`
+    : days < 14 ? 'Added last week'
+    : days < 31 ? `Added ${Math.floor(days / 7)} weeks ago`
+    : 'Added over a month ago';
+
+  // Airtable prunes at 30 days, so "new" has to mean days, not weeks.
+  return { label, isNew: days <= 3 };
+}
