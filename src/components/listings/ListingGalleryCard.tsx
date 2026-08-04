@@ -137,15 +137,22 @@ export function ListingGalleryCard({
           derivation and the wording live in `marketPresence`, shared with the
           detail surfaces, with a title carrying how we know.
         */}
-        <div className="pointer-events-none absolute left-2 top-9 flex flex-wrap gap-1">
+        <div className="pointer-events-none absolute left-2 top-9 flex flex-wrap gap-1.5">
           <span
             title={presence.explanation}
-            className={cn(PILL, 'border', MARKET_PRESENCE_TONE[presence.presence])}
+            className={cn(
+              'pointer-events-auto inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wider shadow-md backdrop-blur-[1px]',
+              MARKET_PRESENCE_TONE[presence.presence],
+            )}
           >
+            <span
+              className="h-2 w-2 rounded-full bg-current opacity-90 ring-1 ring-background/20"
+              aria-hidden="true"
+            />
             {presence.label}
           </span>
           {price.isRent && presence.presence !== 'on-market' && (
-            <span className={cn(PILL, 'bg-info/85 text-background')}>Rental</span>
+            <span className={cn(PILL, 'bg-info/90 text-background shadow-md')}>Rental</span>
           )}
         </div>
 

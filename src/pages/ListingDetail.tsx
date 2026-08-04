@@ -179,8 +179,12 @@ export default function ListingDetail() {
                 <Badge
                   variant="outline"
                   title={presence.explanation}
-                  className={MARKET_PRESENCE_TONE[presence.presence]}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-extrabold uppercase tracking-wider shadow-sm',
+                    MARKET_PRESENCE_TONE[presence.presence],
+                  )}
                 >
+                  <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" aria-hidden="true" />
                   {presence.label}
                 </Badge>
               );
