@@ -27,6 +27,15 @@
  * The cost is a request-size ceiling, and `MAX_SOURCE_BYTES` is it.
  */
 import type { ReportArchetypeId } from '../../reportDesign/structure.pure.ts';
+import {
+  readReportNeutrals,
+  type ReportNeutrals,
+} from '../../reportDesign/brandResolve.pure.ts';
+import {
+  DEFAULT_REPORT_DESIGN_OPTIONS,
+  normalizeReportDesignOptions,
+  type ReportDesignOptions,
+} from '../../reportDesign/options.pure.ts';
 import { bindableFormats } from './binding.pure.ts';
 import { readFidelity, type ConversionFidelity } from './enrich.pure.ts';
 
@@ -240,6 +249,61 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
   return {
     ok: false,
     error: `unknown action "${action.slice(0, 40)}" — expected extract, propose, render, list or chapters`,
+  };
+}
+
+// ── The chosen design system ────────────────────────────────────────────────
+
+/** A `brand_design_systems` row, read into what the renderer needs from it. */
+export interface DesignSystemChoice {
+  systemName: string;
+  options: ReportDesignOptions;
+  brandHex: string | null;
+  /** All seven grounds or none. Null means "use the preset's". */
+  neutrals: ReportNeutrals | null;
+}
+
+/**
+ * Read the design system somebody picked.
+ *
+ * ## The defect this exists to close
+ *
+ * The render branch used to inline this, and it read four columns:
+ * `id, name, brand_hex, options`. `neutrals` was never selected and never
+ * passed, so `resolveReportPalette` fell back to `PRESET_NEUTRALS` every time —
+ * and the four presets are permutations of the same three constants. A design
+ * system imported from a Claude Design project showed its real ivory,
+ * porcelain, obsidian and hairline in the specimen gallery, which reads the
+ * column, and printed on ours. The document was in the wrong design, silently,
+ * with the ledger row recording only that a system had been *chosen*.
+ *
+ * ## Why it takes the row rather than the API shape
+ *
+ * `readBrandDesignSystem` in `brandDesign/system.pure.ts` does the same job for
+ * the camelCase object a browser or a model sends. This one takes the
+ * snake_case row Postgres returns. Two shapes, two readers, one set of rules
+ * underneath — `normalizeReportDesignOptions` and `readReportNeutrals` are
+ * shared, so neither can drift from the other on what an option or a ground is.
+ *
+ * A null row is the house default, which is what `designSystemId: null` has
+ * always meant: the preset's paper, the tenant's brand from the snapshot, and
+ * "House design" on the cover.
+ */
+export function readDesignSystemRow(row: unknown): DesignSystemChoice {
+  const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+  const name = typeof r.name === 'string' ? r.name.trim() : '';
+  const brandHex = typeof r.brand_hex === 'string' && r.brand_hex.trim() ? r.brand_hex : null;
+  return {
+    systemName: name || 'House design',
+    options: normalizeReportDesignOptions(
+      (r.options && typeof r.options === 'object' ? r.options : DEFAULT_REPORT_DESIGN_OPTIONS) as
+        Record<string, unknown>,
+    ),
+    brandHex,
+    // All seven or none. A half-read set would print somebody else's obsidian
+    // cover on our ivory, which looks like a deliberate choice rather than a
+    // parse failure.
+    neutrals: readReportNeutrals(r.neutrals),
   };
 }
 
