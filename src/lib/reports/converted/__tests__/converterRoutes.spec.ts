@@ -57,7 +57,7 @@ describe('parseConvertRequest', () => {
     // `FORMAT_CHAPTERS`, so binding to it produces a spine with zero chapters.
     const parsed = parseConvertRequest({ action: 'extract', format: 'investment-compass' });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.error).toContain(FORMAT);
+    if (parsed.ok === false) expect(parsed.error).toContain(FORMAT);
   });
 
   it('refuses a source whose suffix it cannot read', () => {
@@ -68,7 +68,7 @@ describe('parseConvertRequest', () => {
       sourceBase64: 'QQ==',
     });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.error).toContain('Template.docx');
+    if (parsed.ok === false) expect(parsed.error).toContain('Template.docx');
   });
 
   it('accepts every text suffix it advertises, and pdf', () => {
@@ -144,7 +144,7 @@ describe('parseConvertRequest', () => {
   it('names the actions it knows when given one it does not', () => {
     const parsed = parseConvertRequest({ action: 'convert', format: FORMAT });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
+    if (parsed.ok === false) {
       expect(parsed.error).toContain('extract');
       expect(parsed.error).toContain('propose');
       expect(parsed.error).toContain('render');
@@ -231,7 +231,7 @@ describe('parseBrandRequest', () => {
   it('refuses a brief too short to design from', () => {
     const parsed = parseBrandRequest({ action: 'generate', brief: 'nice' });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.error).toContain(String(MIN_BRIEF_CHARS));
+    if (parsed.ok === false) expect(parsed.error).toContain(String(MIN_BRIEF_CHARS));
   });
 
   it('accepts a real brief', () => {
@@ -251,7 +251,7 @@ describe('parseBrandRequest', () => {
     // wrong colour with no indication of why.
     const parsed = parseBrandRequest({ action: 'save', system: { ...SYSTEM, brandHex: 'forest' } });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.error).toContain('brandHex');
+    if (parsed.ok === false) expect(parsed.error).toContain('brandHex');
   });
 
   it('refuses a system with no name', () => {
@@ -276,7 +276,7 @@ describe('parseBrandRequest', () => {
   it('names the actions it knows', () => {
     const parsed = parseBrandRequest({ action: 'draft' });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) {
+    if (parsed.ok === false) {
       expect(parsed.error).toContain('audit');
       expect(parsed.error).toContain('generate');
       expect(parsed.error).toContain('save');

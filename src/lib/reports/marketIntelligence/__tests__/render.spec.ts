@@ -36,7 +36,7 @@ const render = (row: unknown, audienceOverride?: string) => {
     brandName: TENANT,
     audienceOverride,
   });
-  if (!built.ok) throw new Error(built.error);
+  if (built.ok === false) throw new Error(built.error);
   return renderMarketIntelligenceFromBrand({ report: built.report, snapshot });
 };
 
