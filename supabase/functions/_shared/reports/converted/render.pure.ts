@@ -39,6 +39,7 @@ import {
   renderCover,
   renderDocument,
   renderLede,
+  renderSheet,
   renderSidenote,
   type BrandLockupProps,
 } from '../../reportDesign/primitives.pure.ts';
@@ -338,6 +339,13 @@ export interface RenderConvertedInput {
   /** Enriched blocks, by chapter id. Absent chapters render as flat Markdown. */
   enriched?: EnrichedChapters;
   /**
+   * Composed sheets by chapter id — model-authored, already sanitised.
+   *
+   * Wins over `enriched` for a chapter that has both, which cannot happen: a
+   * conversion asks for one or the other. Each sheet is one printed page.
+   */
+  composed?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Print it as a document rather than as a draft.
    *
    * Drops the caution block, the `converted draft` on the cover and the
@@ -355,8 +363,10 @@ export interface ConvertedRenderPlan {
   boundCount: number;
   unfilledCount: number;
   appendixCount: number;
-  /** Chapters that printed enriched blocks rather than flat Markdown. */
+  /** Chapters that printed designed output rather than flat Markdown. */
   enrichedCount: number;
+  /** Of those, the ones the model composed as pages. */
+  composedCount: number;
   /** Every block kind printed across the document, counted. For the ledger. */
   blockCounts: Record<string, number>;
   problems: string[];
@@ -495,6 +505,8 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
 
   const blockCounts: Record<string, number> = {};
   let enrichedCount = 0;
+  let composedCount = 0;
+  const composedFor = (id: string): readonly string[] => input.composed?.[id] ?? [];
 
   const body = chapters.map((chapter, index) => {
     const number = String(index + 1).padStart(2, '0');
@@ -520,6 +532,13 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
           + 'is empty in the draft and will fill itself when the format renders for real.',
         )}</p>`,
       );
+    } else if (composedFor(chapter.id).length) {
+      // Composed: the model chose what fills each page, so the renderer stops
+      // flowing and starts placing. `renderSheet` uses `min-height`, so an
+      // over-full page grows rather than clipping.
+      const sheets = composedFor(chapter.id);
+      composedCount += 1;
+      inner = sheets.map((html) => renderSheet(html)).join('');
     } else if (chapter.blocks?.length) {
       // Designed. `renderEnrichedBlocks` returns the primitives' own output —
       // KPI strips, data tables, charts — rather than the paragraph soup that
@@ -562,7 +581,8 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     boundCount: bound,
     unfilledCount: unfilled,
     appendixCount: appendix,
-    enrichedCount,
+    enrichedCount: enrichedCount + composedCount,
+    composedCount,
     blockCounts,
     problems,
     bandNote,
@@ -607,6 +627,8 @@ export interface RenderConvertedFromBrandInput {
   preparedOn: string;
   reference?: string | null;
   enriched?: EnrichedChapters;
+  /** See `RenderConvertedInput.composed`. */
+  composed?: Readonly<Record<string, readonly string[]>>;
   /** See `RenderConvertedInput.final`. */
   final?: boolean;
 }
@@ -647,6 +669,7 @@ export function renderConvertedFromBrand(
     preparedOn: input.preparedOn,
     reference: input.reference ?? null,
     enriched: input.enriched,
+    composed: input.composed,
     final: input.final,
   });
 

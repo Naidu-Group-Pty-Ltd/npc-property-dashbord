@@ -911,3 +911,72 @@ describe('a table whose header says nothing', () => {
     expect(html).toContain('Component');
   });
 });
+
+describe('a chapter the model composed', () => {
+  const structure = extractStructure(UPLOAD);
+  const plan = proposeBinding('borrowing-capacity', structure);
+  const palette = resolveReportPalette({ preset: 'signature', brandHex: '#1F4E79' });
+
+  const SHEET = '<p class="lede">The assessment concluded a maximum capacity of $856,932.</p>'
+    + '<div class="grid-12"><div class="col col-8"><div class="table-block"><table class="data">'
+    + '<tbody><tr><th scope="row">Rate</th><td class="num">9.44%</td></tr></tbody>'
+    + '</table></div></div><div class="col col-4">'
+    + '<div class="callout tone-caution"><span class="callout-label">Assumed</span>'
+    + '<p>Rates hold.</p></div></div></div>';
+
+  const renderWith = (composed: Record<string, string[]>) => renderConvertedDocument({
+    structure, plan, palette,
+    company: COMPANY, masthead: 'Harbour & Vale', systemName: 'Harbour Editorial',
+    preparedOn: '2026-08-04T00:00:00.000Z',
+    composed,
+  });
+
+  it('prints the composition inside a sheet', () => {
+    const out = renderWith({ 'cv.1': [SHEET] });
+    expect(out.html).toContain('<section class="sheet">');
+    expect(out.html).toContain('class="grid-12"');
+    expect(out.html).toContain('class="callout tone-caution"');
+    expect(out.composedCount).toBe(1);
+    // Composed chapters count as designed, so the ledger's "n of m designed"
+    // stays true whichever mode produced them.
+    expect(out.enrichedCount).toBe(1);
+  });
+
+  it('gives each sheet a page of its own', () => {
+    const out = renderWith({ 'cv.1': [SHEET, SHEET] });
+    expect(out.html.match(/<section class="sheet">/g)).toHaveLength(2);
+  });
+
+  it('is a page because it ends, not because it is tall', () => {
+    // The obvious implementation gave the sheet the height of the content box.
+    // Rendered, that pushed the first sheet's contents past the chapter header
+    // onto the next page and turned a two-chapter document into ten. Whether a
+    // page is full is a question `judgeDocument` answers from the render.
+    const css = buildReportCss({ palette, options: null, masthead: 'X' });
+    expect(css).toContain('.sheet { break-after: page; }');
+    expect(css).not.toMatch(/\.sheet \{[^}]*min-height/);
+    expect(css).toContain('.sheet:last-of-type { break-after: auto; }');
+  });
+
+  it('does not let a sheet claim a named page inside a chapter that has one', () => {
+    // `.page-body + .page-body { break-before: page }` exists to separate
+    // sibling named pages. A sheet nested inside a chapter that is already
+    // `page-body` triggered it — a break before every sheet on top of the one
+    // after it.
+    expect(renderWith({ 'cv.1': [SHEET] }).html).not.toContain('class="sheet page-body"');
+  });
+
+  it('leaves every other chapter exactly as it was', () => {
+    const plain = renderConvertedDocument({
+      structure, plan, palette,
+      company: COMPANY, masthead: 'Harbour & Vale', systemName: 'Harbour Editorial',
+      preparedOn: '2026-08-04T00:00:00.000Z',
+    });
+    expect(renderWith({}).html).toBe(plain.html);
+    expect(plain.composedCount).toBe(0);
+  });
+
+  it('ignores sheets for a chapter that is not in the document', () => {
+    expect(renderWith({ 'cv.nonsense': [SHEET] }).composedCount).toBe(0);
+  });
+});

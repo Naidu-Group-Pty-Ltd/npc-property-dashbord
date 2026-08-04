@@ -1003,6 +1003,11 @@ export function tooShortNote(chapter: EnrichableChapter): string {
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
 
+/** The fidelity rule as a sentence, for a prompt that is not `enrichmentPrompt`. */
+export function FIDELITY_RULE_FOR(fidelity: ConversionFidelity): string {
+  return FIDELITY_RULES[fidelity];
+}
+
 const FIDELITY_RULES: Record<ConversionFidelity, string> = {
   restructure:
     'Use only words that are already in the chapter. You may drop words, split a '
@@ -1021,7 +1026,7 @@ const FIDELITY_RULES: Record<ConversionFidelity, string> = {
 };
 
 /** The one rule that does not vary, stated separately because it never bends. */
-const FIGURE_RULE =
+export const FIGURE_RULE =
   'Every number, percentage, currency amount and date in your output must appear '
   + 'in the chapter above, character for character where it is a formatted value '
   + '($856,932 stays $856,932). Do not compute a new figure, do not round one, do '

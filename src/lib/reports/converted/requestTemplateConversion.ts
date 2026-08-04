@@ -145,6 +145,8 @@ export function renderConvertedTemplate(args: {
    * `converted draft` on the cover, no `From "…"` deks. Absent means draft.
    */
   final?: boolean;
+  /** Let the model compose the pages. See `composeHtml.pure.ts`. */
+  compose?: boolean;
 }): Promise<ConvertRenderResponse> {
   return call<ConvertRenderResponse>({ action: 'render', ...args }, 240_000);
 }

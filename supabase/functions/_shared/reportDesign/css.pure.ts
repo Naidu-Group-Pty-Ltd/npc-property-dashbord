@@ -808,6 +808,21 @@ ${options.showDropCaps
     color: ${palette.mutedInk};
   }
 
+  /* ── The composed sheet ─────────────────────────────────────────────── */
+  /* A page whose contents were chosen rather than flowed into.
+
+     A break and nothing else — no min-height. Giving the sheet the height of
+     the content box seemed obvious and was wrong twice: a chapter header sits
+     above the first sheet, so a full-height box no longer fitted beside it and
+     the contents were pushed to the next page under a sheet of blank paper;
+     and a run of them turned a two-chapter document into ten pages. Whether a
+     sheet fills its page is a question about the composition, and the page
+     critique answers it by measuring the ink on the render. */
+  .sheet { break-after: page; }
+  /* Without this the last sheet's break emits a blank page before the closing
+     company page. */
+  .sheet:last-of-type { break-after: auto; }
+
   /* ── Columns and the asymmetric grid ────────────────────────────────── */
   .two-col {
     column-count: 2;

@@ -486,6 +486,87 @@ a header row whose labels are all blank.
 
 ---
 
+## Compose: the model lays out the page
+
+The typed vocabulary says *what a passage is* and the design system decides what
+that looks like. That split is what makes brand and contrast guarantees rather
+than hopes, and it stays. What it cannot express is **composition** — which
+things sit beside which, and what fills one page. `row` bought two or three
+across; it did not buy a model deciding that page three is a table with a
+callout and a sidenote stacked beside it and a decision box across the foot.
+
+`compose: true` on a render request is the other mode. The model writes HTML.
+
+### The bargain
+
+`composeHtml.pure.ts` is the boundary, and it is narrow on purpose:
+
+| | |
+| --- | --- |
+| tags | a closed list — no `img`, `a`, `svg`, form or media elements |
+| classes | a closed list, every one of which `css.pure.ts` defines |
+| `style` | **refused, not filtered** |
+| colour, size, font, spacing | not expressible at all |
+| `src`, `href`, `url()` | nothing may point at anything |
+| `<script>`, `<style>`, `<iframe>` | dropped **with their contents** |
+
+Everything else is *unwrapped* rather than dropped — a `<b>` becomes its words —
+because losing a paragraph because it was tagged wrongly loses client content,
+which is worse than losing its emphasis. What was stripped is reported in the
+run's notes.
+
+So the model gains layout and gains nothing else. Every colour still comes from
+the resolved palette, every size from the type scale, and the contrast floors
+hold. The widest thing a confused or hostile answer can do is arrange the right
+components badly, which looks wrong and is not dangerous.
+
+It is written by hand rather than reached for off the shelf: `dompurify` and
+`jsdom` are dependencies of the *browser* bundle, this runs in Deno on the
+render path, and what is needed is not a general sanitiser but a very narrow
+one — a dozen tags and thirty classes. Small enough to read in one sitting,
+which matters more than generality for output that is stored, signed and sent
+to a client.
+
+### Two guards, adapted
+
+**Faithfulness is stronger here than for blocks.** `enrichedText` is a switch
+somebody has to remember to extend; `htmlText` takes the words out of the markup
+and is therefore, by construction, everything that reaches the page. The
+sanitiser runs *first*, so both guards read what will actually print.
+
+**The quota becomes `composedIsDesigned`.** A model asked for a laid-out page
+can satisfy the letter of the request with a stack of `<p>`s — which is exactly
+the flat output the feature replaces. A sheet that uses no design-system class
+is rejected and retried once.
+
+### The sheet is a page because it ends, not because it is tall
+
+`renderSheet` emits `<section class="sheet">` and the rule is
+`break-after: page`. The obvious implementation — give the sheet the height of
+the content box so it *occupies* a page — was tried and is wrong twice over: a
+chapter header sits above the first sheet, so a full-height box no longer fitted
+beside it and the contents were pushed onto the next page under a sheet of blank
+paper; and a run of them turned a two-chapter document into ten pages, six empty.
+
+It also must not claim a named page. `.page-body + .page-body { break-before:
+page }` exists to separate *sibling* named pages, and a sheet nested inside a
+chapter that already is one triggered it — a break before every sheet on top of
+the one after it.
+
+Whether a sheet *fills* its page is a question about the composition, not about
+the box, and it is answered where it can be: `judgeDocument` measures the ink on
+the rendered page.
+
+### Which mode to use
+
+`compose` is absent by default, which means blocks — the path with three rounds
+of production behind it. A chapter appears in exactly one of `enriched` and
+`composed`, or in neither, in which case it renders as flat Markdown exactly as
+the converter always did. The failure of either mode is still the output the
+converter produced before any of this existed.
+
+---
+
 ## The design pass
 
 ### What was wrong

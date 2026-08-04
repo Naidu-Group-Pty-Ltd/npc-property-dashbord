@@ -160,6 +160,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         out_dir = args.images or Path(tmp)
         out_dir.mkdir(parents=True, exist_ok=True)
+        # A --images directory is reused between runs, and a shorter document
+        # leaves the previous run's later pages behind. Measuring those reports
+        # on a document that no longer exists, and asks pdftotext for a page
+        # past the end — which is how this was found.
+        for stale in out_dir.glob('page-*.png'):
+            stale.unlink()
         stem = out_dir / 'page'
         subprocess.run(
             ['pdftoppm', '-png', '-r', str(args.dpi), str(args.pdf), str(stem)],

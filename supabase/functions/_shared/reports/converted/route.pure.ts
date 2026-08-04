@@ -118,6 +118,24 @@ export interface RenderRequest {
    * of an unset flag on a document that might reach a client is the loud one.
    */
   final: boolean;
+  /**
+   * Let the model compose the pages instead of picking typed blocks.
+   *
+   * The typed vocabulary says *what a passage is* and the design system decides
+   * what that looks like. It cannot say what sits beside what, or what fills one
+   * page — and composition is most of the difference between a document that
+   * reads as designed and one that reads as generated.
+   *
+   * Under `compose` the model writes HTML against the design system's own class
+   * vocabulary. `composeHtml.pure.ts` is the boundary: a closed list of tags and
+   * classes, no style attribute, no colour, no size, no reference to anything.
+   * So the model gains layout and gains nothing else — every colour still comes
+   * from the resolved palette and the contrast floors still hold.
+   *
+   * Absent means blocks, which is the path with three rounds of production
+   * behind it. This is the newer one.
+   */
+  compose: boolean;
 }
 
 /**
@@ -261,6 +279,7 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
         // not be what silently strips a document's "not a client document"
         // warning.
         final: b.final === true,
+        compose: b.compose === true,
       },
     };
   }

@@ -663,6 +663,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .filter((c) => c.kind !== 'unfilled')
         .map((c) => ({ id: c.id, title: c.title, markdown: c.markdown })),
       request.fidelity,
+      request.compose,
     );
     for (const note of enrichment.notes) {
       console.info(`[convert-template-document] enrichment — ${note}`);
@@ -680,6 +681,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       preparedOn: new Date().toISOString(),
       reference: convertedReference(request.conversionId),
       enriched: enrichment.enriched,
+      composed: enrichment.composed,
       final: request.final,
     });
 

@@ -94,6 +94,38 @@ export function renderPage(page: NamedPage, contentHtml: string): string {
   return `<section class="page-${page}">${contentHtml}</section>`;
 }
 
+/**
+ * One composed sheet — a page somebody decided the contents of.
+ *
+ * The rest of this system *flows*: content goes into one column and the engine
+ * breaks it wherever it lands, which is why a chapter with two bullets in it
+ * prints as a page with two bullets on it. A sheet is the other model. Its
+ * contents were chosen, by the thing that wrote them, to fill a page.
+ *
+ * ## It is a page because it ends, not because it is tall
+ *
+ * The obvious implementation gives the sheet a `min-height` of the content box
+ * so it *occupies* a page. Rendered, that is wrong twice over. A chapter header
+ * sits above the first sheet, so a full-height box no longer fits beside it and
+ * the engine pushes the contents to the next page — leaving a sheet's worth of
+ * blank paper under the header. And a run of sheets each forcing its own height
+ * turned a two-chapter document into ten pages, six of them empty.
+ *
+ * So a sheet is `break-after: page` and nothing else. Whether it *fills* the
+ * page is a question about the composition, not about the box, and it is
+ * answered where it can actually be answered — `judgeDocument` measures the ink
+ * on the rendered page and reports a sparse one. A CSS rule cannot know whether
+ * a page looks finished; a measurement of the render can.
+ *
+ * No named page either. A sheet lives inside a chapter that has already claimed
+ * one, and nesting a second `page-body` inside it triggers the adjacency rule
+ * that exists to separate *sibling* named pages — a page break before every
+ * sheet, on top of the one after it.
+ */
+export function renderSheet(contentHtml: string): string {
+  return `<section class="sheet">${contentHtml}</section>`;
+}
+
 // ── Brand lockup ────────────────────────────────────────────────────────────
 
 export interface BrandLockupProps {
