@@ -26,7 +26,7 @@ const LISTING = {
   state: 'WA',
   propertyType: 'House',
   price: 850_000,
-} as Record<string, unknown> as never;
+} as any;
 
 describe('ListingHero', () => {
   it('says so when there is no photo, rather than showing an empty frame', () => {
