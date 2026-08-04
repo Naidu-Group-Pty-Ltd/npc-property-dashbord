@@ -86,6 +86,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.pure';
+import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPostcodeGeo.pure';
+import { installClusterAnchorPatch } from '@/lib/leafletClusterAnchor';
 import type { StoredListingImage } from '@/lib/listingImages';
 
 /**
@@ -104,6 +106,9 @@ declare module 'leaflet' {
 }
 
 export type { GeoPoint } from '@/lib/listingsMap';
+
+// Clusters draw on a real member property, never a mid-ocean average.
+installClusterAnchorPatch();
 
 // Fix default marker icons for bundlers that don't handle Leaflet's asset URLs.
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -985,89 +990,6 @@ const ListingMarkers = memo(function ListingMarkers({
 });
 
 /**
- * Keeps every cluster bubble on a property instead of in the sea.
- *
- * leaflet.markercluster positions a cluster at the weighted centroid of its
- * members, and Australia's stock hugs the coastline — so at country zoom the
- * centroid of Perth's arc of suburbs lands in the Indian Ocean and Sydney's
- * lands in the Tasman, with the count bubble floating over open water. The
- * geocodes themselves are fine (all 957 sit inside the continental bounding
- * box); only the presentation drifts offshore.
- *
- * After each re-cluster, every visible cluster is nudged to the member nearest
- * its centroid — a real property, therefore on land. Purely presentational:
- * spiderfy, zoom-to-bounds and membership all still work from the cluster's
- * internal state, and any failure here leaves the map exactly as it was.
- */
-function ClusterAnchorToProperty({
-  clusterRef,
-  signature,
-}: {
-  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
-  /** Re-arms the listeners when the data or the cluster group itself changes. */
-  signature: string;
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    let frame: number | null = null;
-
-    const snap = () => {
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        const group = clusterRef.current;
-        if (!group) return;
-        try {
-          const featureGroup = (group as unknown as { _featureGroup?: L.FeatureGroup })
-            ._featureGroup;
-          featureGroup?.eachLayer((layer) => {
-            const cluster = layer as L.MarkerCluster;
-            if (typeof cluster.getAllChildMarkers !== 'function') return;
-            const children = cluster.getAllChildMarkers();
-            if (!children || children.length === 0) return;
-            // Median-anchored, not nearest-to-current: when the library
-            // anchors the bubble on a member that is itself a wrong
-            // coordinate, "nearest member to the bubble" is that member, at
-            // distance zero — the snap would ratify the error. The median
-            // member cannot be dragged offshore by an outlier.
-            const anchor = robustClusterAnchor(
-              children.map((child) => {
-                const at = child.getLatLng();
-                return { lat: at.lat, lng: at.lng };
-              }),
-            );
-            if (!anchor) return;
-            const at = cluster.getLatLng();
-            if (at.lat !== anchor.lat || at.lng !== anchor.lng) {
-              cluster.setLatLng(L.latLng(anchor.lat, anchor.lng));
-            }
-          });
-        } catch {
-          /* presentational only — never let a snap failure touch the map */
-        }
-      });
-    };
-
-    const group = clusterRef.current;
-    map.on('zoomend moveend viewreset', snap);
-    group?.on('animationend', snap);
-    // chunkedLoading builds clusters over several frames after mount, so a
-    // single immediate pass would run before most clusters exist.
-    const timers = [0, 300, 900, 2000].map((ms) => window.setTimeout(snap, ms));
-
-    return () => {
-      map.off('zoomend moveend viewreset', snap);
-      group?.off('animationend', snap);
-      timers.forEach((t) => window.clearTimeout(t));
-      if (frame !== null) window.cancelAnimationFrame(frame);
-    };
-  }, [map, clusterRef, signature]);
-
-  return null;
-}
-
-/**
  * Cluster hover intelligence: count, median and where — bound lazily on the
  * group's own event, so a thousand clusters cost nothing until one is under
  * the pointer.
@@ -1432,7 +1354,10 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
         held.push({ listing, reason: 'no_coordinates' });
         continue;
       }
-      if (!assessAuPoint(point.lat, point.lng, listing.state).ok) {
+      if (
+        !assessAuPoint(point.lat, point.lng, listing.state).ok ||
+        !assessAuPostcodePoint(point.lat, point.lng, listing.zipCode).ok
+      ) {
         held.push({ listing, reason: 'failed_check' });
         continue;
       }
@@ -1710,9 +1635,13 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
   const openSelectedDetails = useCallback(() => {
     if (!selected) return;
-    map?.closePopup();
+    // Deliberately does NOT close the popup. Closing it here made Leaflet
+    // reverse its auto-pan and re-settle the map at the exact moment the
+    // details modal was opening over it — a lurch the reader experienced as
+    // the map glitching. The modal covers the popup; when it closes, the
+    // reader is back exactly where they were, popup and all.
     onSelectListing(selected.listing);
-  }, [map, onSelectListing, selected]);
+  }, [onSelectListing, selected]);
 
   /* ---------------------------------------------------------------------- */
   /* Render                                                                  */
@@ -1831,10 +1760,6 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
           {/* The cluster group remounts when the ghost style toggles, so the
               signature carries the variant as well as the data size — both
               re-arm the listeners on the fresh group. */}
-          <ClusterAnchorToProperty
-            clusterRef={clusterRef}
-            signature={`${markers.length}:${pinVariant === 'ghost'}`}
-          />
           <ClusterHoverIntel
             clusterRef={clusterRef}
             signature={`${markers.length}:${pinVariant === 'ghost'}`}

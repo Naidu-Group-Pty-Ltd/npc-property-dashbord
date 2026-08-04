@@ -25,7 +25,11 @@ interface CacheEntry extends CachedPoint {
   at: number;
 }
 
-const STORAGE_KEY = 'npc.listing-coords.v1';
+// v2: the v1 namespace predates the geography gates, so browsers out there
+// hold coordinates that were accepted when "anywhere on Earth" passed
+// validation. Purge-on-read catches entries as they are touched; bumping the
+// namespace retires the whole era at once, deterministically, on first load.
+const STORAGE_KEY = 'npc.listings.coordinates.v2';
 const CACHE_LIMIT = 5000;
 /** Geocoded points are stable; a month keeps them fresh enough. */
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;

@@ -7,6 +7,7 @@ import {
   writeCachedPoint,
 } from '@/lib/listingCoordinateCache';
 import { assessAuPoint } from '../../supabase/functions/_shared/auGeoSanity.pure';
+import { assessAuPostcodePoint } from '../../supabase/functions/_shared/auPostcodeGeo.pure';
 import type { PropertyListing } from '@/lib/airtable';
 
 export interface ResolvedPoint {
@@ -67,8 +68,17 @@ function numeric(value: unknown): number | null {
  * one: a Perth listing plotted in the Tasman is wrong even though both points
  * are inside the country box.
  */
-function isValid(lat: number | null, lng: number | null, state?: string | null): boolean {
-  return lat !== null && lng !== null && assessAuPoint(lat, lng, state).ok;
+function isValid(
+  lat: number | null,
+  lng: number | null,
+  state?: string | null,
+  postcode?: string | null,
+): boolean {
+  if (lat === null || lng === null) return false;
+  if (!assessAuPoint(lat, lng, state).ok) return false;
+  // The state box cannot catch a Sunshine Coast property geocoded to Cairns —
+  // both are Queensland. The postcode band can, and does.
+  return assessAuPostcodePoint(lat, lng, postcode).ok;
 }
 
 /** Enough of an address for the server to have any chance of placing it. */
@@ -104,7 +114,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
       if (!hit) continue;
       // A cached point that fails the geography check is a poisoned answer
       // from an earlier session. Forget it so it stops resurrecting.
-      if (!isValid(hit.lat, hit.lng, listing.state)) {
+      if (!isValid(hit.lat, hit.lng, listing.state, listing.zipCode)) {
         forgetCachedPoint(listing.id);
         continue;
       }
@@ -163,7 +173,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     for (const row of payload) {
       const lat = numeric(row.latitude);
       const lng = numeric(row.longitude);
-      if (isValid(lat, lng, row.state)) {
+      if (isValid(lat, lng, row.state, row.postcode)) {
         immediate[row.id] = { lat: lat as number, lng: lng as number, source: 'record' };
       }
     }
@@ -189,10 +199,10 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     const cached: Record<string, ResolvedPoint> = {};
     for (const row of payload) {
       if (pointsRef.current[row.id]) continue;
-      if (isValid(numeric(row.latitude), numeric(row.longitude), row.state)) continue;
+      if (isValid(numeric(row.latitude), numeric(row.longitude), row.state, row.postcode)) continue;
       const hit = readCachedPoint(row.id, fingerprintOf(row));
       if (!hit) continue;
-      if (!isValid(hit.lat, hit.lng, row.state)) {
+      if (!isValid(hit.lat, hit.lng, row.state, row.postcode)) {
         forgetCachedPoint(row.id);
         continue;
       }
@@ -208,7 +218,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
       payloadRef.current.filter(
         (row) =>
           !pointsRef.current[row.id] &&
-          !isValid(numeric(row.latitude), numeric(row.longitude), row.state) &&
+          !isValid(numeric(row.latitude), numeric(row.longitude), row.state, row.postcode) &&
           (attemptsRef.current.get(row.id) ?? 0) < MAX_ATTEMPTS &&
           isResolvable(row),
       );
@@ -224,9 +234,10 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     ) => {
       const next: Record<string, ResolvedPoint> = {};
       const fingerprints = new Map(payloadRef.current.map((row) => [row.id, fingerprintOf(row)]));
-      const states = new Map(payloadRef.current.map((row) => [row.id, row.state]));
+      const rowsById = new Map(payloadRef.current.map((row) => [row.id, row]));
       for (const r of resolved) {
-        if (!isValid(r.lat, r.lng, states.get(r.id))) {
+        const row = rowsById.get(r.id);
+        if (!isValid(r.lat, r.lng, row?.state, row?.postcode)) {
           // The geocoder placed an Australian property outside Australia (or
           // outside its own state). That is a wrong answer, not a pending
           // one: record the attempt so the pass does not ask forever, and

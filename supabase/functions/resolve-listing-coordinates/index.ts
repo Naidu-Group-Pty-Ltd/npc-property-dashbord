@@ -3,6 +3,7 @@ import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, create
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { assessAuPoint } from '../_shared/auGeoSanity.pure.ts';
+import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
 import {
   enforceGlobalDailyQuota,
   fetchWithTimeout,
@@ -99,7 +100,13 @@ Deno.serve(async (req) => {
       source: string;
       precision?: string | null;
     }> = [];
-    const pending: Array<{ id: string; query: string; hash: string; state: string | null }> = [];
+    const pending: Array<{
+      id: string;
+      query: string;
+      hash: string;
+      state: string | null;
+      postcode: string | null;
+    }> = [];
 
     for (const listing of rawListings) {
       const id = clean(listing.id, 120);
@@ -119,6 +126,7 @@ Deno.serve(async (req) => {
         query,
         hash: await hashQuery(query),
         state: clean(listing.state, 60) || null,
+        postcode: clean(listing.postcode, 8) || null,
       });
     }
 
@@ -162,7 +170,8 @@ Deno.serve(async (req) => {
           // The Australian-geography gate, against the listing's own state. A
           // stored answer that fails it is never served — a wrong pin with a
           // cache behind it is the most durable kind of wrong.
-          assessAuPoint(hit.lat as number, hit.lng as number, item.state).ok
+          assessAuPoint(hit.lat as number, hit.lng as number, item.state).ok &&
+          assessAuPostcodePoint(hit.lat as number, hit.lng as number, item.postcode).ok
         ) {
           results.push({
             id: item.id,
@@ -233,7 +242,10 @@ Deno.serve(async (req) => {
             const precision = String(data.results[0].geometry.location_type ?? 'UNKNOWN').slice(0, 40);
             const sane =
               validPoint(lat, lng) &&
-              assessAuPoint(lat as number, lng as number, item.state).ok;
+              assessAuPoint(lat as number, lng as number, item.state).ok &&
+              // A geocode in the right state but the wrong end of it — the
+              // postcode band is the only gate that can see this.
+              assessAuPostcodePoint(lat as number, lng as number, item.postcode).ok;
             if (sane) {
               cacheMap.set(item.hash, { lat, lng, status: 'ok', precision });
               inserts.push({
