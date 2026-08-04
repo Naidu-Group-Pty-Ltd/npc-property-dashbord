@@ -2274,15 +2274,15 @@ export default function ReportQA() {
           </p>
         </div>
         <div className="report-qa-header-actions flex flex-wrap items-center gap-2 sm:gap-2.5 md:justify-end">
-          <Button onClick={handleNewChat} className="report-qa-new-chat gap-1.5 h-9 rounded-full px-3 text-xs font-semibold sm:h-10 sm:px-4 sm:text-sm" size="sm">
+          <Button onClick={handleNewChat} className="report-qa-new-chat h-9 gap-1.5 rounded-xl px-3 text-xs font-semibold sm:h-10 sm:px-4 sm:text-sm" size="sm">
             <Plus className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">New Chat</span>
           </Button>
-          <Button ref={historyButtonRef} variant="outline" onClick={() => setShowHistory(true)} className="report-qa-history-button gap-1.5 h-9 rounded-full border-primary/20 bg-background/80 px-3 text-xs font-semibold shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-md sm:h-10 sm:px-4 sm:text-sm" size="sm">
+          <Button ref={historyButtonRef} variant="outline" onClick={() => setShowHistory(true)} className="report-qa-history-button h-9 gap-1.5 rounded-xl px-3 text-xs font-semibold sm:h-10 sm:px-4 sm:text-sm" size="sm">
             <History className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">History</span>
             {savedConversations.length > 0 && (
-              <Badge variant="secondary" className="report-qa-history-badge ml-0.5 h-5 min-w-5 rounded-full border border-primary/20 bg-primary text-primary-foreground px-1.5 text-[10px] font-bold tabular-nums shadow-sm sm:h-5 sm:px-1.5 sm:text-xs">
+              <Badge variant="secondary" className="report-qa-history-badge ml-0.5 h-5 min-w-5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums sm:h-5 sm:px-1.5 sm:text-xs">
                 {savedConversations.length}
               </Badge>
             )}
@@ -2353,7 +2353,7 @@ export default function ReportQA() {
                   onAdd={handleLibraryAdd}
                   existingNames={uploadedReports.map((r) => r.name)}
                   disabled={isUploading}
-                  className="report-qa-library-button h-8 shrink-0 rounded-full border-primary/35 bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/15 hover:text-primary"
+                  className="report-qa-library-button h-8 shrink-0 rounded-lg px-3 text-xs font-semibold"
                 />
               </div>
               <p className="text-[11px] leading-4 text-muted-foreground">
@@ -2361,7 +2361,7 @@ export default function ReportQA() {
               </p>
             </div>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 sm:px-4 sm:pb-4">
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4 lg:overflow-hidden">
             <div className="report-qa-panel-section space-y-2">
               <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                 <span>Document intake</span>
@@ -2370,8 +2370,8 @@ export default function ReportQA() {
                   hasUploadError
                     ? "border-destructive/25 bg-destructive/10 text-destructive"
                     : uploadProgress.some((item) => item.status === 'uploading' || item.status === 'processing')
-                      ? "border-brand-500/25 bg-brand-500/10 text-brand-600 dark:text-brand-300"
-                      : "border-success/25 bg-success/10 text-success dark:text-success"
+                      ? "border-warning/25 bg-warning/10 text-warning"
+                      : "border-success/25 bg-success/10 text-success"
                 )}>
                   {hasUploadError
                     ? 'Needs attention'
@@ -2413,7 +2413,7 @@ export default function ReportQA() {
               {isUploading ? (
                 <div className="flex flex-col items-center justify-center gap-2">
                   <span className="report-qa-upload-icon flex h-11 w-11 items-center justify-center rounded-2xl sm:h-12 sm:w-12">
-                    <Loader2 className="h-7 w-7 animate-spin text-brand-300" />
+                    <Loader2 className="h-7 w-7 animate-spin text-primary" />
                   </span>
                   <p className="text-sm font-semibold text-foreground sm:text-base">Processing report…</p>
                   <p className="max-w-[16rem] text-xs leading-5 text-muted-foreground">Extracting content for AI retrieval</p>
@@ -2424,7 +2424,7 @@ export default function ReportQA() {
                     {hasUploadError ? (
                       <AlertCircle className="h-7 w-7 text-destructive transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
                     ) : isUploadComplete ? (
-                      <CheckCircle2 className="h-7 w-7 text-success-foreground0 transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
+                      <CheckCircle2 className="h-7 w-7 text-success transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
                     ) : (
                       <Upload className="h-7 w-7 text-primary transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
                     )}
@@ -2482,7 +2482,7 @@ export default function ReportQA() {
             )}
 
             {/* Reports in this chat — primary flexible list */}
-            <div className="report-qa-loaded-reports flex min-h-0 flex-1 basis-0 flex-col gap-2">
+            <div className="report-qa-loaded-reports flex min-h-0 shrink-0 flex-col gap-2 lg:flex-1 lg:basis-0 lg:shrink">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                   <span>Reports in this chat</span>
                   <span className="normal-case tracking-normal text-primary">{selectedReports.length > 1 ? `Comparing ${selectedReports.length}` : selectedReports.length === 1 ? '1 selected' : 'Select reports'}</span>
@@ -2553,7 +2553,7 @@ export default function ReportQA() {
                     </div>
                   </ScrollArea>
                 ) : (
-                  <div className="rounded-xl border border-dashed border-border/60 px-3 py-3 text-[11px] leading-4 text-muted-foreground">
+                  <div className="flex items-center justify-center rounded-xl border border-dashed border-border/60 px-3 py-3 text-center text-[11px] leading-4 text-muted-foreground lg:min-h-[5rem] lg:flex-1">
                     Reports you upload or pick from the library will appear here for selection and removal.
                   </div>
                 )}
@@ -2793,7 +2793,7 @@ export default function ReportQA() {
                     className="text-xs text-muted-foreground"
                   >
                     {isLoadingOlder ? (
-                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Loading older messages...</>
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Loading older messages…</>
                     ) : (
                       <>↑ Load older messages ({totalMessageCount - messages.length} remaining)</>
                     )}
@@ -2815,7 +2815,6 @@ export default function ReportQA() {
                   <div className="report-qa-empty-card space-y-3">
                     <div className="report-qa-empty-icon-wrap" aria-hidden="true">
                       <MessageSquare className="report-qa-empty-icon" />
-                      <Sparkles className="report-qa-empty-sparkle" />
                     </div>
                     <div className="space-y-2">
                       <p className="report-qa-empty-title">
@@ -3112,8 +3111,8 @@ export default function ReportQA() {
 
             {/* Indexing indicator */}
             {isIndexing && (
-              <div className="flex shrink-0 items-center gap-3 rounded-2xl border border-brand-500/25 bg-brand-500/10 px-3 py-2.5 text-sm text-brand-700 shadow-sm dark:text-brand-200">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-brand-500/25 bg-brand-500/15">
+              <div className="flex shrink-0 items-center gap-3 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2.5 text-sm text-foreground">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
                   <Loader2 className="h-4 w-4 animate-spin" />
                 </span>
                 <span className="font-medium">Indexing reports for intelligent retrieval… <span className="font-normal text-muted-foreground">Chat will be available shortly.</span></span>
@@ -3789,7 +3788,7 @@ export default function ReportQA() {
                   {isValidatingPDF ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                   ) : pdfValidationError ? (
-                    <Badge variant="outline" className="text-brand-600 border-brand-300 bg-brand-50">
+                    <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning">
                       Warning
                     </Badge>
                   ) : (
@@ -3826,8 +3825,8 @@ export default function ReportQA() {
 
               {/* Validation warning */}
               {pdfValidationError && (
-                <div className="p-3 bg-brand-50 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-800 rounded-md">
-                  <p className="text-xs text-brand-700 dark:text-brand-400">{pdfValidationError}</p>
+                <div className="rounded-md border border-warning/30 bg-warning/10 p-3">
+                  <p className="text-xs text-warning">{pdfValidationError}</p>
                 </div>
               )}
             </div>
