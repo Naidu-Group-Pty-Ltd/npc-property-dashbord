@@ -17,6 +17,7 @@ import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 import { propertyDataService } from '@/services/propertyDataService';
 import { displayPrice, formatLocality } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
+import { marketPresence, MARKET_PRESENCE_TONE } from '@/lib/marketPresence';
 import { EmailAgentDialog } from '@/components/listings/EmailAgentDialog';
 import { ListingLightbox } from '@/components/listings/ListingLightbox';
 import type { PropertyListing } from '@/lib/airtable';
@@ -164,8 +165,19 @@ export default function ListingDetail() {
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
+            {(() => {
+              const presence = marketPresence(listing);
+              return (
+                <Badge
+                  variant="outline"
+                  title={presence.explanation}
+                  className={MARKET_PRESENCE_TONE[presence.presence]}
+                >
+                  {presence.label}
+                </Badge>
+              );
+            })()}
             {listing.propertyType && <Badge variant="secondary">{listing.propertyType}</Badge>}
-            {listing.listingStatus && <Badge variant="outline">{listing.listingStatus}</Badge>}
             {listing.intent && <Badge variant="outline">{listing.intent}</Badge>}
             {listing.needsHumanReview && (
               <Badge variant="outline" className="border-warning/40 text-warning">

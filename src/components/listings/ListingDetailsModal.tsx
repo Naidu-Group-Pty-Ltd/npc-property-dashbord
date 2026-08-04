@@ -358,7 +358,18 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
           */}
           <div>
             <div className="mb-3 flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Images</h3>
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Images</h3>
+                {galleryImages.some((image) => image.origin === 'scraped') && (
+                  // Sourced photographs carry their provenance. A buyer's agent
+                  // forwarding this listing should know the imagery came from
+                  // the agency's public page, not from the email.
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Photographs sourced from the agency&rsquo;s public listing
+                    {listing.url ? ' — the source link is under the actions menu.' : '.'}
+                  </p>
+                )}
+              </div>
               {listing.url && galleryImages.length === 0 && !galleryResolving && (
                 <Button
                   size="sm"

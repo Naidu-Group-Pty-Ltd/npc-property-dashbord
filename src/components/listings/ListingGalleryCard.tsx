@@ -20,6 +20,7 @@ import {
   qualityCaveat,
 } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
+import { marketPresence, MARKET_PRESENCE_TONE } from '@/lib/marketPresence';
 
 const PILL = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold leading-none tracking-[0.02em] shadow-sm';
 
@@ -84,6 +85,7 @@ export function ListingGalleryCard({
   const contact = listingContact(listing);
   const freshness = listingFreshness(listing);
   const inspection = listing.inspectionStart ?? listing.nextInspectionDate;
+  const presence = marketPresence(listing);
 
   return (
     <article
@@ -128,17 +130,25 @@ export function ListingGalleryCard({
           </div>
         )}
 
-        {/* Status flags sit under the band so they never collide with it. */}
+        {/*
+          Market presence, where the raw status string used to sit. "Available"
+          told a buyer's agent nothing they act on; on-market versus off-market
+          is the first question they ask, and off market — a listing the agent
+          sent us with no public campaign — is this marketplace's whole edge,
+          so it gets a first-class pill rather than an absence of one. The
+          derivation and the wording live in `marketPresence`, shared with the
+          detail surfaces, with a title carrying how we know.
+        */}
         <div className="pointer-events-none absolute left-2 top-9 flex flex-wrap gap-1">
-          {listing.listingStatus && (
-            <span className={cn(PILL, 'bg-foreground/75 text-background')}>{listing.listingStatus}</span>
+          <span
+            title={presence.explanation}
+            className={cn(PILL, 'border', MARKET_PRESENCE_TONE[presence.presence])}
+          >
+            {presence.label}
+          </span>
+          {price.isRent && presence.presence !== 'on-market' && (
+            <span className={cn(PILL, 'bg-info/85 text-background')}>Rental</span>
           )}
-          {listing.intent && listing.intent !== 'Sale' && (
-            <span className={cn(PILL, 'bg-brand-500/90 text-foreground dark:text-white')}>
-              {listing.intent}
-            </span>
-          )}
-          {price.isRent && <span className={cn(PILL, 'bg-info/85 text-background')}>Rental</span>}
         </div>
 
         {photoCount > 1 && (
