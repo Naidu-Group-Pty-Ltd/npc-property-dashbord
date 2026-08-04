@@ -76,7 +76,12 @@ const BLOCKED_HOST_PATTERNS: RegExp[] = [
   /\.localhost$/i,
 ];
 
-function isBlockedHost(hostname: string): boolean {
+/**
+ * Exported on its own because callers outside `assertAcceptableUrl` need the
+ * same answer — the bulk image seeder steps through redirects manually and
+ * must re-check every hop against the identical ranges.
+ */
+export function isBlockedHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/\.$/, '');
   return BLOCKED_HOST_PATTERNS.some((pattern) => pattern.test(host));
 }
