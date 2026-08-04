@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-do
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { Button } from '@/components/ui/button';
 import {
-  Building2, LayoutDashboard, Users, LogOut, Menu, MessageSquare, Wallet, X, Shield, Briefcase, BookOpen, BarChart3, Settings as SettingsIcon, Inbox, Layers, Trophy, ArrowLeft,
+  Building2, LayoutDashboard, Users, LogOut, Menu, MessageSquare, Wallet, X, Shield, ShieldCheck, Briefcase, BookOpen, BarChart3, Settings as SettingsIcon, Inbox, Layers, Trophy, ArrowLeft,
   ArrowLeftRight,
 } from 'lucide-react';
 
@@ -21,6 +21,7 @@ import { QuickAddFab } from './QuickAddFab';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { FinanceOnboardingTour } from './FinanceOnboardingTour';
 import { bootFinanceAppearance } from '@/lib/finance-portal/theme';
+import { usePartnerWorkspaceEnabled } from '@/lib/aml/usePartnerWorkspaceFlags';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -36,6 +37,10 @@ const NAV_ITEMS = [
   { to: '/finance/insights', label: 'Pipeline Insights', icon: Trophy, end: false, tour: 'insights' },
   { to: '/finance/reports', label: 'Reports & KPIs', icon: BarChart3, end: false },
   { to: '/finance/earnings', label: 'Earnings', icon: Wallet, end: false },
+  // Feature-flagged (aml_partner_compliance_workspace + finance surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/finance/compliance', label: 'Client Compliance', icon: ShieldCheck, end: false, partnerWorkspace: true },
   
 ];
 
@@ -52,9 +57,10 @@ function getInitials(name?: string | null, email?: string | null): string {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  const { enabled: partnerWorkspaceEnabled } = usePartnerWorkspaceEnabled('finance');
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {NAV_ITEMS.map(item => {
+      {NAV_ITEMS.filter(item => !('partnerWorkspace' in item) || partnerWorkspaceEnabled).map(item => {
         const Icon = item.icon;
         return (
           <NavLink

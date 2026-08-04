@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import {
   ArrowLeft, Bell, Boxes, Building2, FileText, Hammer, HardHat, History, KanbanSquare,
   LayoutDashboard, ListChecks, LogOut, Menu, MessageSquare, Receipt, Settings as SettingsIcon,
-  Shield, X,
+  Shield, ShieldCheck, X,
 } from 'lucide-react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -26,6 +26,7 @@ import { BuilderPortalUserCard } from './ui/BuilderPortalUserCard';
 import { BuilderOrganisationSwitcher } from './BuilderOrganisationSwitcher';
 import { BuilderOnboardingTour } from './BuilderOnboardingTour';
 import { BUILDER_TOUR_EVENT } from './BuilderOnboardingTour';
+import { usePartnerWorkspaceEnabled } from '@/lib/aml/usePartnerWorkspaceFlags';
 
 /**
  * One authenticated layout owns the Builder Portal chrome: a branded sidebar,
@@ -54,6 +55,8 @@ interface BuilderNavItem {
   icon: typeof LayoutDashboard;
   exact?: boolean;
   available: boolean;
+  /** Present only on the flag-gated AML compliance entry. */
+  complianceGated?: boolean;
 }
 
 const NAV: BuilderNavItem[] = [
@@ -68,6 +71,10 @@ const NAV: BuilderNavItem[] = [
   { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: true },
   { to: '/builder/notifications', label: 'Notifications', icon: Bell, available: true },
   { to: '/builder/activity', label: 'Activity', icon: History, available: true },
+  // Feature-flagged (aml_partner_compliance_workspace + builder surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/builder/compliance', label: 'Compliance', icon: ShieldCheck, available: true, complianceGated: true },
   { to: '/builder/settings', label: 'Settings', icon: SettingsIcon, available: true },
 ];
 
@@ -85,11 +92,13 @@ function tourAnchor(to: string): string {
 }
 
 /** One flat navigation list, matching the Solicitor sidebar. */
-function SidebarNav({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function SidebarNav({ pathname, showCompliance, onNavigate }: { pathname: string; showCompliance?: boolean; onNavigate?: () => void }) {
   return (
     <TooltipProvider delayDuration={200}>
       <nav aria-label="Builder portal" className="space-y-1 px-3">
-        {NAV.map(({ to, label, icon: Icon, exact, available }) => {
+        {NAV.map(({ to, label, icon: Icon, exact, available, complianceGated }) => {
+          // Flag-gated entry: absent until the compliance surface is enabled.
+          if (complianceGated && !showCompliance) return null;
           if (!available) {
             return (
               <Tooltip key={to}>
@@ -147,6 +156,7 @@ export function BuilderPortalLayout() {
   const { settings } = useWhiteLabel();
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const { enabled: complianceNavEnabled } = usePartnerWorkspaceEnabled('builder');
   const [mobileOpen, setMobileOpen] = useState(false);
   const reduceMotion = useReducedMotion();
 
@@ -267,7 +277,7 @@ export function BuilderPortalLayout() {
           <div className="px-4 py-4">{userCard}</div>
 
           <ScrollArea className="flex-1 py-2">
-            <SidebarNav pathname={pathname} />
+            <SidebarNav pathname={pathname} showCompliance={complianceNavEnabled} />
           </ScrollArea>
 
           <Separator />
@@ -433,7 +443,7 @@ export function BuilderPortalLayout() {
               <div className="px-3 py-3">{userCard}</div>
 
               <ScrollArea className="flex-1 py-1">
-                <SidebarNav pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+                <SidebarNav pathname={pathname} showCompliance={complianceNavEnabled} onNavigate={() => setMobileOpen(false)} />
               </ScrollArea>
 
               <Separator />
