@@ -116,12 +116,26 @@ function evaluateTriggers(triggers: Trigger[], inputs: Record<string, any>) {
 }
 
 async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise<Record<string, any>> {
-  const [{ data: failedIdv }, { data: confirmedSanctions }] = await Promise.all([
-    admin.schema("aml").from("identity_checks")
+  // Only authoritative executions may feed the risk model — a simulator
+  // 'failed' is not an adverse fact about the customer. The filtered query
+  // falls back to the legacy shape while the execution-mode migration is
+  // not applied (where every row is treated as authoritative, as before).
+  async function failedAuthoritativeIdv() {
+    const filtered = await admin.schema("aml").from("identity_checks")
       .select("id, status, completed_at, updated_at")
       .eq("case_id", caseId)
       .eq("status", "failed")
-      .limit(1),
+      .eq("authoritative", true)
+      .limit(1);
+    if (!filtered.error) return filtered;
+    return await admin.schema("aml").from("identity_checks")
+      .select("id, status, completed_at, updated_at")
+      .eq("case_id", caseId)
+      .eq("status", "failed")
+      .limit(1);
+  }
+  const [{ data: failedIdv }, { data: confirmedSanctions }] = await Promise.all([
+    failedAuthoritativeIdv(),
     admin.schema("aml").from("screening_matches")
       .select("id, match_type, status, updated_at")
       .eq("case_id", caseId)

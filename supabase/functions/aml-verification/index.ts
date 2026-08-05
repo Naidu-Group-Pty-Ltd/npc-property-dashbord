@@ -178,7 +178,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           console.warn("[aml-verification] IDV token reserve failed", e?.message);
         }
 
-        const { data: inserted, error: insertErr } = await admin.schema("aml").from("identity_checks").insert({
+        const baseRow = {
           case_id: caseId,
           subject_label: caseRow.subject_display_name,
           provider: provider.name,
@@ -187,7 +187,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           requested_by: userId,
           mc_job_id: reservation?.jobId ?? null,
           metadata: body.metadata ?? {},
+        };
+        // Stamp the evidential standing at creation: a simulator execution is
+        // never authoritative. Retry without the columns while a database has
+        // not applied 20260830000000_aml_check_execution_mode.
+        let { data: inserted, error: insertErr } = await admin.schema("aml").from("identity_checks").insert({
+          ...baseRow,
+          execution_mode: provider.mode === "simulator" ? "simulation" : "live",
+          authoritative: provider.mode !== "simulator",
+          environment: currentEnvironment(),
         }).select().single();
+        if (insertErr && /execution_mode|authoritative|environment/i.test(insertErr.message ?? "")) {
+          ({ data: inserted, error: insertErr } = await admin.schema("aml")
+            .from("identity_checks").insert(baseRow).select().single());
+        }
         if (insertErr) throw insertErr;
 
         try {
