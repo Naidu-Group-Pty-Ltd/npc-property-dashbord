@@ -343,8 +343,12 @@
     background: hsl(var(--primary) / 0.4);
   }
   /* The wrapper carries the scaled size; the frame inside it is unscaled and
-     never scrolls, so the stage is the only scroller in the dialog. */
-  .ci-pack-frame-box { @apply relative mx-auto block overflow-hidden; }
+     never scrolls, so the stage is the only scroller in the dialog.
+     `overflow-visible` is deliberate: this box used to clip, which meant any
+     under-measurement silently ate the bottom of the document instead of
+     showing it. It is the only child of the stage, so there is nothing for an
+     overhang to collide with. */
+  .ci-pack-frame-box { @apply relative mx-auto block overflow-visible; }
   .ci-pack-frame { @apply block border-0 bg-background; }
   .ci-pack-state { @apply flex flex-col items-center justify-center gap-2 px-6 py-16 text-center; }
 

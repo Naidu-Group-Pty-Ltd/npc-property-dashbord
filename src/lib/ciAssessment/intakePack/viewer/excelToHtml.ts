@@ -30,6 +30,7 @@
 
 import * as XLSX from 'xlsx';
 import { readWorkbookStyles, type CellStyle, type SheetStyles } from './xlsxStyles';
+import { measureDocuments } from './measureFrame';
 
 export interface RenderedSheet {
   name: string;
@@ -38,13 +39,12 @@ export interface RenderedSheet {
   rows: number;
   columns: number;
   /**
-   * Rendered size in CSS pixels.
+   * Rendered size in CSS pixels, measured by laying the sheet out.
    *
-   * The frame is sandboxed and script-free, so it cannot report its own
-   * content height — but every width and height here is known at render time,
-   * so the caller can size the frame exactly. Without this the frame was given
-   * `height: 100%`, which left a band of dead space under short sheets and put
-   * a second scrollbar inside the frame on long ones.
+   * The frame is sandboxed and script-free, so it cannot report its own size.
+   * These come from `measureFrame`, which renders the identical HTML in a
+   * hidden frame and reads the result — see that module for why adding up the
+   * spreadsheet's own row heights is not good enough.
    */
   width: number;
   height: number;
@@ -257,10 +257,12 @@ function renderSheet(
     html: documentShell(body),
     rows: range.e.r + 1,
     columns: range.e.c + 1,
-    // `SHEET_PADDING_PX` on each side, plus a little slack so the last row's
-    // bottom border is never clipped by a rounding difference.
+    // A floor only. The real size is measured after rendering: a row whose text
+    // wraps to two lines in a browser where Excel used one is taller than the
+    // height stored in the file, and summing those heights under-measured every
+    // sheet in the pack.
     width: contentWidth + SHEET_PADDING_PX * 2,
-    height: contentHeight + SHEET_PADDING_PX * 2 + 2,
+    height: contentHeight + SHEET_PADDING_PX * 2,
   };
 }
 
@@ -295,5 +297,20 @@ export async function renderWorkbookToHtml(data: ArrayBuffer): Promise<RenderedW
     .map((name) => renderSheet(name, workbook.Sheets[name], styles.get(name)));
 
   if (!sheets.length) throw new Error('The workbook has no visible sheets.');
-  return { sheets };
+
+  // Lay each sheet out for real and take the size from that. Sheets with no
+  // grid have nothing to measure and keep their (zero) estimate.
+  const measured = await measureDocuments(sheets.map((sheet) => ({
+    html: sheet.html,
+    selector: 'table',
+    fallback: { width: sheet.width, height: sheet.height },
+  })));
+
+  return {
+    sheets: sheets.map((sheet, index) => ({
+      ...sheet,
+      width: measured[index]?.width ?? sheet.width,
+      height: measured[index]?.height ?? sheet.height,
+    })),
+  };
 }

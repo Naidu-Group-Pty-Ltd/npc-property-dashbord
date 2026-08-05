@@ -21,6 +21,8 @@
  * none allowed.
  */
 
+import { measureDocument } from './measureFrame';
+
 export interface RenderedWordDocument {
   /** Complete HTML document for the iframe. */
   html: string;
@@ -160,10 +162,24 @@ export async function renderWordToHtml(data: ArrayBuffer): Promise<RenderedWordD
       .map((child) => child.outerHTML)
       .join('');
 
+    const html = documentShell(styleNodes, content);
+
+    // Measure the finished document rather than trusting the staging area.
+    // The stage lives in the app's own DOM, where our design system's type and
+    // spacing rules apply to `p`, `td` and `span` — so a paragraph can occupy a
+    // different number of lines there than it does inside the frame. The frame
+    // is what the user sees, so the frame is what gets measured.
+    const measured = await measureDocument({
+      html,
+      selector: '.docx-wrapper',
+      offsetSelector: 'section.docx',
+      fallback: { width: Math.max(width, 1), height: Math.max(height, 1) },
+    });
+
     return {
-      html: documentShell(styleNodes, content),
-      pageOffsets,
-      height: Math.max(height, 1),
+      html,
+      pageOffsets: measured.offsets?.length ? measured.offsets : pageOffsets,
+      height: measured.height,
       width: Math.max(width, 1),
     };
   } finally {
