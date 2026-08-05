@@ -318,7 +318,9 @@ export function buildCapacitySnapshot(input: BuildSnapshotInput): CommercialCapa
   // ── property income ───────────────────────────────────────────────────────
 
   const tenancies = list(lease.tenancies);
-  const passingRentTotal = tenancies.reduce((total, entry) => total + num(bag(entry).annualRent), 0);
+  // `list()` returns unknown[], so the accumulator infers `unknown` and every
+  // later use of the total is an error. Pin it to number.
+  const passingRentTotal = tenancies.reduce<number>((total, entry) => total + num(bag(entry).annualRent), 0);
 
   const hasPropertyIncome = num(propertyIncome.netOperatingIncomeCents) !== 0
     || num(propertyIncome.grossPropertyIncomeCents) !== 0

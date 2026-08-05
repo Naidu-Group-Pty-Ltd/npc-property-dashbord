@@ -35,7 +35,7 @@
  * including failures with their reason.
  */
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
-import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
@@ -224,7 +224,11 @@ function analysisFacts(payload: CommercialCapacitySnapshot): AnalysisFacts {
  * missing" has an answer at the moment somebody is about to send the document.
  */
 async function generateAnalysis(
-  supabase: ReturnType<typeof createClient>,
+  // NOT `ReturnType<typeof createClient>`: that instantiates the generic's type
+  // parameters from their CONSTRAINTS rather than their defaults, so it does not
+  // describe what `createClient(url, key)` actually returns and nothing can be
+  // passed to it. `SupabaseClient` with its own defaults is the accurate type.
+  supabase: SupabaseClient,
   args: { payload: CommercialCapacitySnapshot; userId: string; assessmentId: string },
 ): Promise<{ analysis: CapacityAnalysis | null; note: string | null }> {
   const apiKey = Deno.env.get('LOVABLE_API_KEY');
@@ -351,7 +355,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const auth = await verifyAuth(
       supabase,
       req.headers,
-      body as { session_token?: string } | null,
+      // verifyAuth's body parameter is optional, not nullable — `null` is not an
+      // accepted value, so an absent body must be `undefined`.
+      (body as { session_token?: string } | null) ?? undefined,
     );
     if (auth.error || !auth.userId || auth.userId === 'service_role') {
       return json({ error: auth.error || 'Authentication required' }, 401, corsHeaders);
