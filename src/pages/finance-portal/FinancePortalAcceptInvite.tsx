@@ -116,7 +116,7 @@ export default function FinancePortalAcceptInvite() {
 
   if (stage === 'loading') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">
           {settings.authLogo ? (
             <BrandLogo slot="auth" className="mx-auto h-16 max-w-[240px] object-contain" fallbackClassName="mx-auto h-12 w-12" />
@@ -132,7 +132,7 @@ export default function FinancePortalAcceptInvite() {
 
   if (stage === 'invalid' || stage === 'expired') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="min-h-screen flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <div className="flex justify-center mb-4">
@@ -157,7 +157,7 @@ export default function FinancePortalAcceptInvite() {
 
   if (stage === 'already_active') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="min-h-screen flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
             <div className="flex justify-center mb-4">

@@ -60,7 +60,7 @@ export default function PortalAuth() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
+      <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
           <div className="flex flex-col items-center gap-3">
             <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
@@ -146,7 +146,7 @@ export default function PortalAuth() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex">
       {/* ── Left branded panel (desktop only) ── */}
       <aside className="hidden lg:flex lg:w-[480px] xl:w-[520px] flex-col relative bg-gradient-to-br from-card via-card to-primary/5 border-r border-border overflow-hidden" aria-hidden="true">
         <div className="absolute top-0 right-0 w-[2px] h-full bg-gradient-to-b from-transparent via-primary/30 to-transparent" />

@@ -2839,7 +2839,7 @@
     color: hsl(var(--primary));
   }
 
-  :root:not(.dark) .luxury-input::file-selector-button {
+  :root:not(.dark):not([data-palette='dark']) .luxury-input::file-selector-button {
     color: hsl(var(--primary));
   }
 
