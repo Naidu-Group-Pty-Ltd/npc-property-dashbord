@@ -194,6 +194,35 @@ export const PRINT_STACK = {
 export const NUMERIC_FEATURES = 'font-variant-numeric: tabular-nums lining-nums;';
 
 /**
+ * Applied to figures in running prose, which is the other half of the rule.
+ *
+ * `tabular-nums` is right in a table and wrong in a sentence: it sets every
+ * digit on the same advance, so `1` carries the width of `0` and a year or a
+ * percentage inside a paragraph opens a gap on both sides of the narrow digits.
+ * The face's proportional figures are what the text was drawn with.
+ *
+ * Nothing in this system set them, so body copy took whatever the face
+ * defaulted to and inherited `tabular-nums` wherever a numeric rule was an
+ * ancestor. This says the intent instead of leaving it to inheritance.
+ */
+export const PROSE_NUMERIC_FEATURES = 'font-variant-numeric: proportional-nums lining-nums;';
+
+/**
+ * Applied to the italic editorial voices — the lede and the pull quote.
+ *
+ * Old-style figures sit on the x-height with ascenders and descenders, which is
+ * what a serif italic is drawn to carry, and they are the reason a date in a
+ * standfirst reads as part of the sentence rather than as a number stuck into
+ * it. Playfair Display ships them; a face that does not will fall back to
+ * lining, which is the current behaviour and no worse.
+ *
+ * Only these two. Old-style figures in body copy at this size are a
+ * nineteenth-century book, not a financial report, and in a table they are
+ * unreadable down the column.
+ */
+export const EDITORIAL_NUMERIC_FEATURES = 'font-variant-numeric: oldstyle-nums proportional-nums;';
+
+/**
  * The brand signature in print: a wide uppercase eyebrow over a tight-tracked
  * title. Carried from `--tracking-eyebrow` / `--tracking-tight`.
  */

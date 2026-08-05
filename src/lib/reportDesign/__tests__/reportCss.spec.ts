@@ -192,9 +192,36 @@ describe('buildReportCss — options actually change the output', () => {
     expect(css({ showDropCaps: true })).toContain('::first-letter');
   });
 
-  it('justifies body copy only when asked, and hyphenates when it does', () => {
-    expect(css({ justifyText: true })).toContain('hyphens: auto;');
-    expect(css({ justifyText: false })).not.toContain('hyphens: auto;');
+  it('justifies body copy only when asked', () => {
+    expect(css({ justifyText: true })).toContain('text-align: justify;');
+    expect(css({ justifyText: false })).toContain('text-align: left;');
+  });
+
+  it('hyphenates body prose whether or not it justifies', () => {
+    // These were one declaration in one ternary, so turning justification off
+    // turned hyphenation off with it — and ragged-right is where a long word
+    // hurts most. They are separate settings about separate things.
+    for (const justifyText of [true, false]) {
+      const sheet = css({ justifyText });
+      expect(sheet, `justifyText: ${justifyText}`).toContain('hyphens: auto;');
+      expect(sheet).toContain('hyphenate-limit-chars: 6 3 3;');
+    }
+  });
+
+  it('hyphenates a list item and a callout, not just a paragraph', () => {
+    // Both sit on a narrower measure than the text around them, which is where
+    // a word most needs to break, and both were left out.
+    const rule = /([^{}]*)\{[^}]*hyphens: auto;/.exec(css())?.[1] ?? '';
+    for (const selector of ['p', 'li', '.callout-body p']) {
+      expect(rule).toContain(selector);
+    }
+  });
+
+  it('hyphenates nothing that is read at a glance', () => {
+    const off = /([^{}]*)\{\s*hyphens: none;/.exec(css())?.[1] ?? '';
+    for (const selector of ['h1', 'h2', 'th', 'td', 'caption', '.cover-title']) {
+      expect(off).toContain(selector);
+    }
   });
 
   it('changes vertical rhythm with density', () => {

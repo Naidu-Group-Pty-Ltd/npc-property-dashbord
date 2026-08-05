@@ -48,7 +48,13 @@ import {
 } from './page.pure.ts';
 import type { ResolvedReportPalette } from './roles.pure.ts';
 import { PRINT_TRACKING } from './tokens.pure.ts';
-import { COVER_TITLE_SCALE, NUMERIC_FEATURES, PRINT_STACK } from './typography.pure.ts';
+import {
+  COVER_TITLE_SCALE,
+  EDITORIAL_NUMERIC_FEATURES,
+  NUMERIC_FEATURES,
+  PRINT_STACK,
+  PROSE_NUMERIC_FEATURES,
+} from './typography.pure.ts';
 
 export interface ReportCssInput {
   /** From `resolveReportPalette()` — or from the report's brand snapshot. */
@@ -180,6 +186,9 @@ function pageRules(
       font-size: ${pt(type.micro)};
       letter-spacing: ${PRINT_TRACKING.widest};
       text-transform: uppercase;
+      /* A margin box inherits nothing, so the case-sensitive forms the rest of
+         this sheet's uppercase runs get have to be asked for here too. */
+      font-feature-settings: "kern" 1, "case" 1;
       color: ${palette.mutedInk};
     }
     @top-right {
@@ -195,6 +204,7 @@ function pageRules(
       font-size: ${pt(type.micro)};
       letter-spacing: ${PRINT_TRACKING.widest};
       text-transform: uppercase;
+      font-feature-settings: "kern" 1, "case" 1;
       color: ${palette.mutedInk};
     }
     @bottom-center {
@@ -707,6 +717,47 @@ export function buildReportCss(input: ReportCssInput): string {
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
   }
 
+  /* ── Case-sensitive forms on everything set in caps ───────────────────
+
+     Every uppercase run in this system is also letterspaced, most of them at
+     0.18em. Without the case feature, a parenthesis, a hyphen, a bullet or a
+     slash inside one keeps its lowercase optical position — designed to sit
+     against an x-height — so it drops below the centre of the capitals around
+     it and the extra tracking makes the misalignment plain. EXAMPLE (DRAFT) is
+     the one to look at: both parentheses sit low and small.
+
+     Both IBM Plex Mono and Playfair Display carry the feature. One declaration
+     per surface, and it is the cheapest visible improvement available anywhere
+     in this stylesheet.
+
+     Enumerated rather than put on the body rule to inherit: case also
+     substitutes figure forms in some faces, and this system sets figures
+     deliberately three different ways below. A feature that reached everything
+     by default would quietly overrule all three.
+
+     The running head and foot are margin boxes, which take their own
+     declarations and inherit nothing from this rule. Theirs sit beside their
+     own text-transform. */
+  .report-cover .cover-eyebrow,
+  .report-cover .cover-masthead,
+  .report-cover .cover-meta,
+  .report-cover .cover-footer,
+  .brand-lockup .lockup-text,
+  .company-page .company-name .tail,
+  .company-page .contact-label,
+  .callout .callout-label,
+  .decision-box .decision-label,
+  .sidenote .sidenote-label,
+  .kpi .kpi-label,
+  .chart-figure figcaption,
+  .pull-quote cite,
+  .eyebrow,
+  h4,
+  table.data caption,
+  table.data th {
+    font-feature-settings: "kern" 1, "liga" 1, "case" 1;
+  }
+
   /* ── Typography ─────────────────────────────────────────────────────── */
   h1, h2, h3 {
     font-family: ${PRINT_STACK.display};
@@ -777,10 +828,67 @@ export function buildReportCss(input: ReportCssInput): string {
     margin: 0 0 ${pt(d.paragraphGapPt)};
     orphans: 3;
     widows: 3;
-    ${options.justifyText ? 'text-align: justify;\n    hyphens: auto;' : 'text-align: left;'}
+    ${options.justifyText ? 'text-align: justify;' : 'text-align: left;'}
   }
-  strong { font-weight: 600; color: ${palette.bodyInk}; }
-  em { font-family: ${PRINT_STACK.accent}; font-style: italic; font-size: 1.05em; }
+  /* Figures in a sentence are not figures in a column. Tabular figures set
+     every digit on the same advance, so a year or a percentage inside a
+     paragraph opens a gap on both sides of its narrow digits — right in a
+     table, wrong in prose, and inherited into prose wherever a numeric rule
+     was an ancestor. Said here rather than left to the face's default. */
+  p, li, blockquote, .callout-body, .decision-box, .sidenote-body {
+    ${PROSE_NUMERIC_FEATURES}
+  }
+
+  /* ── Hyphenation, body prose only ─────────────────────────────────────
+
+     It works: pyphen ships with the engine and renderDocument sets lang.
+     Two things about how it was wired were wrong.
+
+     It was welded to justifyText, in the same ternary — so turning
+     justification off silently turned hyphenation off too, and a ragged-right
+     setting is where a long word hurts most. And it was on p alone, so a list
+     item and a callout body, which sit on a narrower measure than the text
+     around them, were the two places that could not break a word.
+
+     The limits are what keep it from being the other kind of eyesore: never
+     break a word under six letters, never leave fewer than three before the
+     hyphen or three after it, and never let three lines in a row end in one.
+
+     Not on headings, cover type, table cells or figure labels — those are set
+     to be read at a glance and a hyphen in one reads as a typo. */
+  p, li, .callout-body p, .decision-box p, .sidenote-body p {
+    hyphens: auto;
+    hyphenate-limit-chars: 6 3 3;
+    hyphenate-limit-lines: 2;
+  }
+  h1, h2, h3, h4, caption, th, td,
+  .cover-title, .cover-eyebrow, .cover-meta, .chapter-header,
+  .kpi-label, .kpi-value, .eyebrow, .figure-label, .toc-row {
+    hyphens: none;
+  }
+
+  strong {
+    font-weight: 600;
+    color: ${palette.bodyInk};
+    /* Inter's 600 is a real cut and ships; this makes a missing one visible
+       rather than smeared. See the note on em. */
+    font-synthesis: none;
+  }
+  em {
+    font-family: ${PRINT_STACK.accent};
+    font-style: italic;
+    font-size: 1.05em;
+    /* Only the 400 italic of the accent face ships. Inside an h1 (600) or an
+       h2 (500) this rule inherits the weight and asks for an italic at that
+       weight, which does not exist — so Pango emboldens the 400 synthetically
+       and nothing downstream can see that it did. The cover title already pins
+       400 for exactly this reason, which shows the hazard was known and handled
+       in one place only.
+
+       font-synthesis: none turns every remaining instance from a silent smear
+       into a visible fallback, which is a thing a person can find. */
+    font-synthesis: none;
+  }
   a {
     color: ${palette.accentOnPaper};
     text-decoration: none;
@@ -831,6 +939,8 @@ ${options.showDropCaps
     font-style: italic;
     font-size: ${pt(type.pullQuote)};
     line-height: 1.25;
+    ${EDITORIAL_NUMERIC_FEATURES}
+    font-synthesis: none;
     color: ${palette.bodyInk};
     margin: ${pt(d.blockGapPt + 4)} 0;
     padding: 0 0 0 14pt;
@@ -1157,6 +1267,8 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
     font-style: italic;
     font-size: ${pt(type.bodyLg + 1)};
     line-height: 1.4;
+    ${EDITORIAL_NUMERIC_FEATURES}
+    font-synthesis: none;
     color: ${palette.mutedInk};
     margin-bottom: ${pt(d.blockGapPt)};
     text-align: left;

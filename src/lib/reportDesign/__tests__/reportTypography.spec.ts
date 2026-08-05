@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
 import {
   CONTAINER_FONT_FILES,
   CONTAINER_FONT_PACKAGES,
@@ -301,5 +302,71 @@ describe('CONTAINER_INSTALLED_FAMILIES is derived, not restated', () => {
 
   it('lists no family twice', () => {
     expect(new Set(CONTAINER_INSTALLED_FAMILIES).size).toBe(CONTAINER_INSTALLED_FAMILIES.length);
+  });
+});
+
+/**
+ * The levers a face carries that the stylesheet has to ask for.
+ *
+ * None of these change what the document says, and all three are visible on
+ * every page of every format. They are here rather than in `reportCss.spec.ts`
+ * because each is a claim about the *typeface* — a feature it ships, a cut it
+ * does or does not have — and this is the file that knows what ships.
+ */
+describe('the OpenType features the sheet asks for', () => {
+  const sheet = buildReportCss({ palette: resolveReportPalette(), masthead: 'Acme' });
+
+  it('sets case-sensitive forms on every uppercase, letterspaced run', () => {
+    // Without it a parenthesis, hyphen or bullet inside a run of capitals keeps
+    // its lowercase optical position and drops below their centre — and every
+    // uppercase run in this system is also tracked at 0.18em, which makes the
+    // misalignment plain rather than subtle.
+    const rule = /([^{}]*)\{\s*font-feature-settings: "kern" 1, "liga" 1, "case" 1;/.exec(sheet)?.[1] ?? '';
+    for (const selector of [
+      '.report-cover .cover-eyebrow',
+      '.company-page .contact-label',
+      '.callout .callout-label',
+      '.kpi .kpi-label',
+      '.eyebrow',
+      'h4',
+      'table.data th',
+    ]) {
+      expect(rule, `${selector} sets caps without case-sensitive forms`).toContain(selector);
+    }
+  });
+
+  it('asks for it in the margin boxes too, which inherit nothing', () => {
+    // The running head and foot are `@top-left` and `@bottom-left`. A margin
+    // box takes its own declarations and inherits none of the rule above.
+    expect(sheet.match(/font-feature-settings: "kern" 1, "case" 1;/g) ?? []).toHaveLength(2);
+  });
+
+  it('refuses a synthesised italic and a synthesised bold', () => {
+    // `em` sets the accent family in italic and no weight, so inside an h1
+    // (600) or an h2 (500) it inherits the weight and asks for an italic at
+    // that weight. Only the 400 italic ships, so Pango emboldens it
+    // synthetically and nothing downstream can see that it did. The cover title
+    // already pins 400 for this reason — in one place only.
+    expect(sheet.match(/font-synthesis: none;/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    expect(sheet).toMatch(/em \{[^}]*font-synthesis: none;/);
+    expect(sheet).toMatch(/strong \{[^}]*font-synthesis: none;/);
+  });
+
+  it('sets figures three ways, because a table is not a sentence', () => {
+    // Tabular in a column, proportional in prose, old-style in the two italic
+    // editorial voices. Only the first was ever declared; body copy took the
+    // face's default and inherited tabular wherever a numeric rule was an
+    // ancestor.
+    expect(sheet).toContain('font-variant-numeric: tabular-nums lining-nums;');
+    expect(sheet).toContain('font-variant-numeric: proportional-nums lining-nums;');
+    expect(sheet).toContain('font-variant-numeric: oldstyle-nums proportional-nums;');
+  });
+
+  it('keeps old-style figures out of the body and the tables', () => {
+    const selectors = [...sheet.matchAll(/([^{};]*)\{[^}]*oldstyle-nums/g)]
+      // The captured run reaches back through whatever preceded the rule,
+      // including a comment banner; the selector is its last line.
+      .map((m) => m[1].trim().split('\n').pop()!.trim());
+    expect(selectors).toEqual(['.pull-quote', '.lede']);
   });
 });
