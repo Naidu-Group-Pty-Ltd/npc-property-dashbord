@@ -284,7 +284,30 @@ export default function PortalAml() {
           </div>
 
           {(data?.open_requests?.length ?? 0) > 0 && (
-            <OpenRequestsCard requests={data!.open_requests!} onDone={load} />
+            <OpenRequestsCard
+              requests={data!.open_requests!}
+              onDone={load}
+              onNavigate={(target, sectionCode) => {
+                // Internal routing only: resolve the validated target to a
+                // step index in the server-derived step list.
+                const findIdx = (pred: (st: PortalStep) => boolean) => steps.findIndex(pred);
+                let idx = -1;
+                if (target === 'consent') idx = findIdx((st) => st.key === 'consent');
+                else if (target === 'documents') idx = findIdx((st) => st.key === 'documents');
+                else if (target === 'verify') idx = findIdx((st) => st.key === 'verify');
+                else if (target === 'review') idx = findIdx((st) => st.key === 'review');
+                else if (target === 'questionnaire') {
+                  idx = sectionCode ? findIdx((st) => st.section === sectionCode) : -1;
+                  if (idx < 0) idx = findIdx((st) => Boolean(st.section));
+                }
+                if (idx >= 0) {
+                  safeSetStep(idx);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                } else {
+                  toast.error('That step is not available yet. Please contact your adviser.');
+                }
+              }}
+            />
           )}
         </>
       )}
@@ -1148,7 +1171,19 @@ function ReviewStep({
 
 /* ────────────────────  Open information requests  ─────────────────── */
 
-function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () => void }) {
+/** Closed action vocabulary → button copy + the portal step it routes to.
+ * The server projects only validated action metadata; nothing here follows a
+ * URL from a request payload. */
+const REQUEST_ACTIONS: Record<string, { label: string; step: string }> = {
+  complete_identity_verification: { label: 'Complete identity verification', step: 'verify' },
+  upload_document: { label: 'Upload requested document', step: 'documents' },
+  update_questionnaire_section: { label: 'Update information', step: 'questionnaire' },
+  review_consent: { label: 'Review updated consent', step: 'consent' },
+  provide_clarification: { label: 'Respond', step: 'respond' },
+  review_and_submit: { label: 'Review and submit', step: 'review' },
+};
+
+function OpenRequestsCard({ requests, onDone, onNavigate }: { requests: any[]; onDone: () => void; onNavigate?: (target: string, sectionCode?: string | null) => void }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1157,7 +1192,11 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
     if (!text.trim()) return;
     setSaving(true);
     try {
-      await amlPortalApi.respondRequest(id, { response: text.trim() });
+      // Versioned v1 contract; the server validates and stores it.
+      await amlPortalApi.respondRequest(id, {
+        version: 1, text: text.trim(), attachments: [],
+        completed_action: 'provide_clarification',
+      });
       toast.success('Response sent');
       setActiveId(null); setText('');
       onDone();
@@ -1178,7 +1217,11 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
           <div key={r.id} className="rounded-md border p-3 bg-background/40">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-medium">{r.subject ?? 'Additional information required'}</p>
-              <Badge variant="outline" className="capitalize">{r.status}</Badge>
+              <Badge variant="outline" className="capitalize">
+                {r.status === 'open' ? 'Action required'
+                  : r.status === 'responded' ? 'Response sent'
+                  : r.status === 'resolved' ? 'Resolved' : r.status}
+              </Badge>
             </div>
             {r.message && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{r.message}</p>}
             {activeId === r.id ? (
@@ -1192,11 +1235,32 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
                 </div>
               </div>
             ) : (
-              r.status === 'open' && (
-                <div className="mt-2 flex justify-end">
-                  <Button size="sm" variant="outline" onClick={() => setActiveId(r.id)}>Respond</Button>
-                </div>
-              )
+              r.status === 'open' && (() => {
+                const action = REQUEST_ACTIONS[String(r.action_code ?? '')] ?? null;
+                const sectionCode = r.action_target?.section_code ?? null;
+                const targetStep = action?.step ?? 'respond';
+                return (
+                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                    {r.due_at && (
+                      <span className="text-xs text-muted-foreground">
+                        Due {new Date(r.due_at).toLocaleDateString()}
+                      </span>
+                    )}
+                    {action && targetStep !== 'respond' ? (
+                      <Button
+                        size="sm"
+                        onClick={() => onNavigate?.(targetStep, sectionCode)}
+                      >
+                        {action.label}
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => setActiveId(r.id)}>
+                        {action?.label ?? 'Respond'}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </div>
         ))}

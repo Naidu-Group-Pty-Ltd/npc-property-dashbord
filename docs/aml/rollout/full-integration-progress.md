@@ -58,17 +58,37 @@ stage boundary and before any long-running suite.
       + reapply clean; DB destroyed
 - [x] Stage 28A — fresh-ledger rehearsal: NOT replayable (documented
       pre-existing failure at parent-ledger row 90/~600; platform issue)
+- [x] Submission Review backend + UI — get_submission_review (complete
+      immutable package) and accept/changes/document/clarification/escalate/
+      supersede; own workspace section; next-best-action retargeted
+      (73064daa9 + 56aed2366)
+- [x] Document rejection + replacement — dual reasons (client-safe code
+      required; internal note staff-only), lineage columns, replacement
+      request raised automatically (73064daa9)
+- [x] P3 IDV evidence references + P6 biometric governance —
+      aml.idv_evidence_references with classification, legal hold, disposal
+      status/evidence; object never duplicated (20260901000000)
+- [x] Party reconciliation backend + UI — work items, provenance, no fuzzy
+      merge (suggestion-only), rationale + cross-case denial
+- [x] Party verification linking — canonical links only, simulated/
+      non-authoritative refused, unlink reason enforced, panel derives state
+- [x] Party-scoped screening orchestration — subjects, freshness window,
+      reviewer-only adjudication, panel with queue/re-screen/adjudicate
+- [x] Unified staff verification surface — one canonical section plus a
+      collapsed read-only legacy panel; duplicate VerificationTab unmounted
+- [x] Client Portal action buttons — closed vocabulary → internal step
+      routing (no URLs), lifecycle chips, v1 response contract
+- [x] Retention registrations — 11 new record types registered with
+      necessity-based years=0 for raw ID copies and biometrics
+- [x] Tests — 48 integration contracts; AML glob 727/727
+- [x] Rehearsal B (continuation) — four migrations applied on a
+      production-shaped DB; lineage, P3/P6 evidence without duplication,
+      legal-hold blocking, disposal evidence, suggestion-only similarity,
+      adjudication, link isolation, immutable v1 snapshot, 11 retention rows;
+      rollback per header + reapply clean; DB destroyed
 - [ ] Stage 10 — self-hosted service deployment (infrastructure + owner)
-- [ ] Stage 15 — submission review workspace (staff UI)
-- [ ] Stage 16 — document rejection loop (staff UI + portal replace)
-- [ ] Stage 17 — IDV evidence references (retention link table)
-- [ ] Stage 18/19 UI — reconciliation work-items + link management surfaces
-      (party_verification_links table shipped in 20260831000000)
-- [ ] Stage 20 — party-scoped screening orchestration
-- [ ] Stage 23 — unified staff verification surface (merge
-      VerificationSection/VerificationTab + collapsed legacy history)
-- [ ] Stage 24–26 — full transition matrix doc, security proof suite pass,
-      retention classes for new tables
+- [ ] Browser E2E — needs a served frontend against the synthetic staging
+      backend (attempted next)
 - [ ] Stage 29/30 — staging + browser E2E (blockers recorded below)
 - [ ] Stage 31 — monitoring/runbooks
 - [ ] Stages 32–36 — commits/PR/gates/release (release expected BLOCKED)
