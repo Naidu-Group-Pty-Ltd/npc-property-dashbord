@@ -56,7 +56,7 @@ type Status = 'idle' | 'loading' | 'ready' | 'error' | 'unsupported';
 
 interface WorkbookState {
   kind: 'workbook';
-  sheets: Array<{ name: string; html: string }>;
+  sheets: Array<{ name: string; html: string; width: number; height: number }>;
 }
 
 interface WordState {
@@ -69,29 +69,46 @@ interface WordState {
 
 type Rendered = WorkbookState | WordState;
 
-/** The frame. `sandbox` with no tokens blocks scripts, forms and navigation. */
+/**
+ * The frame, sized to its content and scaled inside a box that matches.
+ *
+ * `transform: scale()` does not change an element's layout size, so scaling the
+ * frame alone left the scroll extent wrong at every zoom except 100% — dead
+ * space below when zoomed out, content unreachable when zoomed in. The wrapper
+ * carries the scaled dimensions so the container scrolls by exactly as much as
+ * there is to see.
+ *
+ * `sandbox` with no tokens blocks scripts, forms and navigation.
+ */
 function DocumentFrame({
-  html, title, height, scale,
+  html, title, width, height, scale,
 }: {
   html: string;
   title: string;
-  height?: number;
+  width: number;
+  height: number;
   scale: number;
 }) {
   return (
-    <iframe
-      title={title}
-      srcDoc={html}
-      sandbox=""
-      referrerPolicy="no-referrer"
-      className="ci-pack-frame"
-      style={{
-        height: height ? `${height}px` : '100%',
-        transform: `scale(${scale})`,
-        transformOrigin: 'top left',
-        width: `${100 / scale}%`,
-      }}
-    />
+    <div
+      className="ci-pack-frame-box"
+      style={{ width: `${Math.round(width * scale)}px`, height: `${Math.round(height * scale)}px` }}
+    >
+      <iframe
+        title={title}
+        srcDoc={html}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        scrolling="no"
+        className="ci-pack-frame"
+        style={{
+          width: `${width}px`,
+          height: `${height}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+        }}
+      />
+    </div>
   );
 }
 
@@ -157,7 +174,9 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
           if (cancelled) return;
           setRendered({
             kind: 'workbook',
-            sheets: result.sheets.map((sheet) => ({ name: sheet.name, html: sheet.html })),
+            sheets: result.sheets.map((sheet) => ({
+              name: sheet.name, html: sheet.html, width: sheet.width, height: sheet.height,
+            })),
           });
         } else {
           const { renderWordToHtml } = await import(
@@ -195,6 +214,25 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
       top: rendered.pageOffsets[clamped] * zoom,
       behavior: 'smooth',
     });
+  }, [rendered, zoom]);
+
+  /**
+   * Keep the page indicator honest.
+   *
+   * It used to change only when the pager was clicked, so scrolling by hand
+   * left it reading "Page 1 of 27" halfway down the document — which is how a
+   * blank stretch looks like a broken first page rather than the middle of
+   * one. The nearest page boundary at or above the scroll position is the page
+   * you are on.
+   */
+  const handleScroll = useCallback(() => {
+    if (rendered?.kind !== 'guide' || !scrollRef.current) return;
+    const top = scrollRef.current.scrollTop / zoom;
+    let current = 0;
+    rendered.pageOffsets.forEach((offset, index) => {
+      if (top >= offset - 24) current = index;
+    });
+    setPageIndex((previous) => (previous === current ? previous : current));
   }, [rendered, zoom]);
 
   const goToSheet = useCallback((index: number) => {
@@ -337,6 +375,7 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
 
         <div
           ref={scrollRef}
+          onScroll={handleScroll}
           className="ci-pack-stage"
           tabIndex={0}
           role="group"
@@ -375,6 +414,8 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
               key={`${source?.id}-${sheetIndex}`}
               html={rendered.sheets[sheetIndex]?.html ?? ''}
               title={`${title} — ${rendered.sheets[sheetIndex]?.name ?? ''}`}
+              width={rendered.sheets[sheetIndex]?.width ?? 0}
+              height={rendered.sheets[sheetIndex]?.height ?? 0}
               scale={zoom}
             />
           ) : null}
@@ -384,6 +425,7 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
               key={source?.id}
               html={rendered.html}
               title={title}
+              width={rendered.width}
               height={rendered.height}
               scale={zoom}
             />
