@@ -113,6 +113,31 @@ export default {
 					ring: 'hsl(var(--sidebar-ring))'
 				}
 			},
+			/* `screen` means the *visible* viewport, not the tallest the
+			   viewport could ever be.
+
+			   `100vh` on mobile Safari and Chrome Android is the large
+			   viewport — the height with the address bar hidden. A
+			   `min-h-screen` page shell is therefore taller than what the
+			   user can see whenever the bar is showing, which puts the
+			   bottom of every full-height layout underneath the browser
+			   chrome. `dvh` tracks the bar instead.
+
+			   Remapping the scale here rather than editing the 61 call
+			   sites means `h-screen` / `min-h-screen` are simply correct
+			   everywhere, including in code written later. No `@supports`
+			   fallback: `dvh` has been in Safari since 15.4 and Firefox
+			   since 101, and the app already ships 42 unguarded `dvh` /
+			   `svh` values. */
+			height: {
+				screen: '100dvh'
+			},
+			minHeight: {
+				screen: '100dvh'
+			},
+			maxHeight: {
+				screen: '100dvh'
+			},
 			borderRadius: {
 				lg: 'var(--radius)',
 				md: 'calc(var(--radius) - 2px)',

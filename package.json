@@ -137,7 +137,8 @@
     "reportkit:specimen": "tsx scripts/reportDesign/buildSpecimen.ts",
     "reportkit:assets": "tsx scripts/reportDesign/buildDefaultAssets.ts",
     "reportkit:assets:check": "tsx scripts/reportDesign/buildDefaultAssets.ts --check",
-    "brand:sync": "tsx scripts/brandDesign/syncClaudeDesign.ts"
+    "brand:sync": "tsx scripts/brandDesign/syncClaudeDesign.ts",
+    "audit:css-compat": "node scripts/audit-css-compat.cjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
