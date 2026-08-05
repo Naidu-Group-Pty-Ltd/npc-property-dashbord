@@ -18,6 +18,8 @@ import {
   getScreeningProvider,
   resolveTenantProvider,
   runWithMetrics,
+  currentEnvironment,
+  ProviderResolutionError,
   type ScreeningScope,
 } from "../_shared/aml/providers/index.ts";
 
@@ -144,7 +146,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             ? body.method : "document_and_liveness";
         const tenantId = await resolveTenantId(admin, caseId);
         const resolved = await resolveTenantProvider(admin, tenantId, "idv");
-        const provider = getIdvProvider({ resolved, preferred: body.provider });
+        // Provider resolution happens BEFORE anything is written: a refusal
+        // (production simulator block, missing configuration) must never
+        // create an identity_checks row, consume an attempt, or read as a
+        // customer failure. It is an operator condition, answered as 409.
+        let provider;
+        try {
+          provider = getIdvProvider({ resolved, preferred: body.provider });
+        } catch (resolutionErr: any) {
+          if (resolutionErr instanceof ProviderResolutionError) {
+            return jr({
+              error: resolutionErr.message.replace(/^\[aml\/providers\]\s*/, ""),
+              code: resolutionErr.code,
+              environment: currentEnvironment(),
+            }, 409);
+          }
+          throw resolutionErr;
+        }
 
         const idempotencyKey = `aml-idv-${caseId}-${Date.now()}`;
         let reservation: { jobId: string } | null = null;
@@ -203,12 +221,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jr({ identity_check: updated, result });
         } catch (e: any) {
           if (reservation) await cancelTokens(reservation.jobId, "idv_failed");
+          // An infrastructure/provider failure is NOT a verification result.
+          // The row records that a request never produced an outcome —
+          // "failed" is reserved for a provider that actually examined the
+          // subject and said no.
           await admin.schema("aml").from("identity_checks").update({
-            status: "failed",
-            result_payload: { error: e?.message ?? "provider_failure" },
+            status: "pending",
+            result_payload: {
+              error_category: "provider_unavailable",
+              error: String(e?.message ?? "provider_failure").slice(0, 300),
+              attempt_not_consumed: true,
+            },
             completed_at: new Date().toISOString(),
           }).eq("id", inserted.id);
-          throw e;
+          return jr({
+            error: "The verification provider could not be reached. The request was recorded and no result was produced — try again once Integration Health shows the provider is available.",
+            code: "provider_unavailable",
+          }, 502);
         }
       }
 
@@ -257,7 +286,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const tenantId = await resolveTenantId(admin, caseId);
         const capability = scope.length === 1 && scope[0] === "adverse_media" ? "adverse_media" : "pep_sanctions";
         const resolved = await resolveTenantProvider(admin, tenantId, capability);
-        const provider = getScreeningProvider({ resolved, preferred: body.provider });
+        let provider;
+        try {
+          provider = getScreeningProvider({ resolved, preferred: body.provider });
+        } catch (resolutionErr: any) {
+          if (resolutionErr instanceof ProviderResolutionError) {
+            return jr({
+              error: resolutionErr.message.replace(/^\[aml\/providers\]\s*/, ""),
+              code: resolutionErr.code,
+              environment: currentEnvironment(),
+            }, 409);
+          }
+          throw resolutionErr;
+        }
 
         const idempotencyKey = `aml-scr-${caseId}-${Date.now()}`;
         let reservation: { jobId: string } | null = null;
@@ -338,12 +379,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jr({ screening_check: updated, result });
         } catch (e: any) {
           if (reservation) await cancelTokens(reservation.jobId, "screening_failed");
+          // Same contract as IDV: an unreachable provider is not a screening
+          // outcome and never renders as a failure against the subject.
           await admin.schema("aml").from("screening_checks").update({
-            status: "failed",
-            result_summary: { error: e?.message ?? "provider_failure" },
+            status: "pending",
+            result_summary: {
+              error_category: "provider_unavailable",
+              error: String(e?.message ?? "provider_failure").slice(0, 300),
+            },
             completed_at: new Date().toISOString(),
           }).eq("id", inserted.id);
-          throw e;
+          return jr({
+            error: "The screening provider could not be reached. No result was produced — try again once Integration Health shows the provider is available.",
+            code: "provider_unavailable",
+          }, 502);
         }
       }
 
@@ -678,6 +727,65 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const { count } = await admin.schema("aml").from("sanctions_entries")
           .select("id", { count: "exact", head: true });
         return jr({ syncs: data ?? [], entry_count: count ?? 0 });
+      }
+
+      // Read-only provider readiness: what would actually run if staff asked
+      // for a verification right now, and why. Booleans only for secrets —
+      // never values. This is the operator preflight for the IDV workflow.
+      case "provider_readiness": {
+        const environment = currentEnvironment();
+        const tenantId = String(body.tenant_id ?? DEFAULT_TENANT);
+
+        async function capabilityReadiness(capability: "idv" | "pep_sanctions") {
+          const resolved = await resolveTenantProvider(admin, tenantId, capability);
+          const mode = resolved?.mode ??
+            ((Deno.env.get("AML_PROVIDER_MODE") || "").toLowerCase() === "live" ? "live" : "simulator");
+          const key = (resolved?.providerKey ?? "simulator").toLowerCase();
+          const secrets = capability === "idv" ? {
+            AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
+            AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
+          } : {};
+          const wired = capability === "idv" ? key === "selfhosted" : key === "local_lists";
+          const configured = capability === "idv"
+            ? Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")) && Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN"))
+            : true;
+          const wantsSimulator = mode === "simulator" || key === "simulator";
+          let state: string;
+          if (wantsSimulator) {
+            state = environment === "production" ? "not_configured" : "simulator_non_production";
+          } else if (!wired || !configured) {
+            state = "misconfigured";
+          } else if (resolved && ["failing", "unhealthy"].includes(String((resolved as any).lastHealthStatus ?? ""))) {
+            state = "unavailable";
+          } else {
+            state = "ready_live";
+          }
+          const { data: cfg } = resolved?.configId
+            ? await admin.schema("aml").from("provider_configs")
+              .select("last_health_at, last_health_status, last_health_message")
+              .eq("id", resolved.configId).maybeSingle()
+            : { data: null };
+          return {
+            capability,
+            configured_provider: resolved?.providerKey ?? null,
+            mode,
+            adapter_wired: wired,
+            secrets_present: secrets,
+            last_health: cfg ? {
+              at: cfg.last_health_at, status: cfg.last_health_status,
+              message: cfg.last_health_message,
+            } : null,
+            state,
+          };
+        }
+
+        return jr({
+          environment,
+          simulator_blocked: environment === "production",
+          note: "Recorded configuration and runtime booleans — not a claim that any provider call has been made.",
+          idv: await capabilityReadiness("idv"),
+          screening: await capabilityReadiness("pep_sanctions"),
+        });
       }
 
       default:
