@@ -24,6 +24,11 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
+import {
+  getIdvProvider,
+  resolveTenantProvider,
+  ProviderResolutionError,
+} from "../_shared/aml/providers/index.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -215,10 +220,30 @@ async function loadConsentState(admin: any, caseId: string): Promise<ConsentStat
 /** Owner decision of 2026-07-28: one attempt plus two retries. */
 const MAX_VERIFICATION_ATTEMPTS = 3;
 
-/** Attempts already consumed by this party on the electronic path. */
+/** Closed client-action vocabulary (Stage 12) — mirrored by the CHECK
+ * constraint in 20260831000100. Anything else projects as null. */
+const CLIENT_ACTION_CODES = [
+  'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
+  'review_consent', 'provide_clarification', 'review_and_submit',
+];
+
+/**
+ * Attempts already CONSUMED by this party on the electronic path.
+ *
+ * The truth is aml.verification_attempts_used(): only rows whose provider
+ * examination produced an authoritative outcome (attempt_consumed) count —
+ * outages, unusable captures, worker retries and simulations never do.
+ * MAX(attempt_number) is kept solely as the legacy fallback for a database
+ * that has not applied 20260831000000 yet, where every historical row
+ * implied a consumed attempt by construction.
+ */
 async function verificationAttemptsUsed(
   admin: any, caseId: string, partyId: string | null,
 ): Promise<number> {
+  const { data: counted, error: rpcError } = await admin.schema('aml')
+    .rpc('verification_attempts_used', { p_case_id: caseId, p_party_id: partyId });
+  if (!rpcError && typeof counted === 'number') return counted;
+
   let q = admin.schema('aml').from('verification_checks')
     .select('attempt_number')
     .eq('case_id', caseId)
@@ -228,6 +253,52 @@ async function verificationAttemptsUsed(
   if (error) throw error;
   return Number((data ?? [])[0]?.attempt_number ?? 0);
 }
+
+/**
+ * An in-flight electronic check for this party (submitted/queued/processing/
+ * retry_scheduled). A second submission while one is processing would burn
+ * provider work and confuse the journey — the portal refuses it safely.
+ */
+async function activeProcessingCheck(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<{ id: string; processing_status: string } | null> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('id, processing_status')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv')
+    .in('processing_status', ['submitted', 'queued', 'processing', 'retry_scheduled']);
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.limit(1);
+  if (error) {
+    // Legacy schema without processing_status: nothing can be "in flight".
+    if (/processing_status/i.test(error.message ?? '')) return null;
+    throw error;
+  }
+  return (data ?? [])[0] ?? null;
+}
+
+/**
+ * Client-safe electronic-IDV availability. Internal readiness (provider keys,
+ * environment classification, secret presence) NEVER crosses this boundary —
+ * the portal learns only whether capture may proceed.
+ */
+async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'temporarily_unavailable' | 'manual_verification_required'> {
+  try {
+    const resolved = await resolveTenantProvider(admin, 'default', 'idv');
+    getIdvProvider({ resolved, admin });
+    return 'available';
+  } catch (err: any) {
+    if (err instanceof ProviderResolutionError) {
+      // Not configured / simulator blocked → the adviser will arrange manual
+      // sighting; transient misconfiguration reads as temporary.
+      return err.code === 'provider_misconfigured'
+        ? 'temporarily_unavailable'
+        : 'manual_verification_required';
+    }
+    return 'temporarily_unavailable';
+  }
+}
+
 
 /**
  * Stable per-party identifier derived from the case and the declared name.
@@ -445,6 +516,16 @@ Deno.serve(async (req) => {
           open_requests: (openRequests ?? []).map((r: any) => ({
             id: r.id, kind: r.kind, subject: r.subject, message: r.message,
             status: r.status, created_at: r.created_at,
+            // Closed action vocabulary only — anything uncatalogued projects
+            // as null, and routing fields are the safe whitelisted subset.
+            // Arbitrary URLs from request payloads never reach the client.
+            action_code: CLIENT_ACTION_CODES.includes(String(r.action_code ?? '')) ? r.action_code : null,
+            action_target: {
+              target_step: typeof r.action_target?.target_step === 'string' ? r.action_target.target_step.slice(0, 60) : null,
+              requirement_id: typeof r.action_target?.requirement_id === 'string' ? r.action_target.requirement_id : null,
+              section_code: typeof r.action_target?.section_code === 'string' ? r.action_target.section_code.slice(0, 60) : null,
+            },
+            due_at: r.due_at ?? null,
           })),
           recent_submissions: submissions ?? [],
         });
@@ -594,8 +675,12 @@ Deno.serve(async (req) => {
         if (!c) return jsonResponse({ parties: [], enabled: false });
         const consentState = await loadConsentState(admin, c.id);
         const parties = await verificationParties(admin, c.id);
+        // Client-safe availability only — never provider names, environment
+        // classification, secret presence or internal health detail.
+        const availability = await clientSafeIdvAvailability(admin);
         return jsonResponse({
           enabled: true,
+          availability,
           max_attempts: MAX_VERIFICATION_ATTEMPTS,
           // The biometric consent is separate (APP 3.3) and is what unlocks
           // the facial check specifically.
@@ -652,39 +737,92 @@ Deno.serve(async (req) => {
           }
         }
 
-        const { data: created, error: insErr } = await admin.schema('aml')
+        // Live-provider readiness gates the SUBMISSION, not just the UI: a
+        // capture must never sit against a provider that cannot examine it.
+        const availability = await clientSafeIdvAvailability(admin);
+        if (availability !== 'available') {
+          return jsonResponse({
+            error: availability === 'manual_verification_required'
+              ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+              : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: availability,
+          }, 409);
+        }
+
+        // One in-flight check per party: a duplicate submission neither
+        // creates a second row nor calls the provider twice.
+        const active = await activeProcessingCheck(admin, c.id, partyId);
+        if (active) {
+          return jsonResponse({
+            submitted: true,
+            status: 'processing',
+            code: 'already_processing',
+            message: 'Your verification is already being checked. We will update you shortly.',
+          });
+        }
+
+        // Stable per-capture idempotency: resubmitting the SAME captures
+        // collapses onto one row (unique index), while a new capture pair is
+        // a genuinely new submission.
+        const idempotencyKey = 'portal-idv-' + await sha256Hex(`${c.id}|${partyId ?? 'subject'}|${documentPath}|${selfiePath}`);
+
+        const baseRow = {
+          case_id: c.id,
+          party_id: partyId,
+          party_label: partyLabel,
+          check_type: 'electronic_idv',
+          attempt_number: used + 1,
+          status: 'pending',
+          provider: 'selfhosted',
+          biometric_kind: 'face_image',
+          biometric_storage_path: selfiePath,
+          biometric_captured_at: new Date().toISOString(),
+          biometric_consent_id: bioConsent.id,
+          document_reference: documentPath,
+          outcome_detail: { submitted_from: 'client_portal' },
+        };
+        // Canonical-model columns stamped at creation; the AFTER-trigger from
+        // 20260831000100 emits aml.verification.requested in the same
+        // transaction, and the worker takes it from there. Legacy-schema
+        // retry keeps the portal working before the migration is applied.
+        let { data: created, error: insErr } = await admin.schema('aml')
           .from('verification_checks').insert({
-            case_id: c.id,
-            party_id: partyId,
-            party_label: partyLabel,
-            check_type: 'electronic_idv',
-            attempt_number: used + 1,
-            status: 'pending',
-            provider: 'selfhosted',
-            biometric_kind: 'face_image',
-            biometric_storage_path: selfiePath,
-            biometric_captured_at: new Date().toISOString(),
-            biometric_consent_id: bioConsent.id,
-            document_reference: documentPath,
-            outcome_detail: { submitted_from: 'client_portal' },
+            ...baseRow,
+            processing_status: 'queued',
+            capture_sequence: used + 1,
+            attempt_consumed: false,
+            execution_mode: 'live',
+            idempotency_key: idempotencyKey,
           }).select('*').single();
+        if (insErr && /processing_status|capture_sequence|attempt_consumed|execution_mode|idempotency_key/i.test(insErr.message ?? '')) {
+          ({ data: created, error: insErr } = await admin.schema('aml')
+            .from('verification_checks').insert(baseRow).select('*').single());
+        }
         if (insErr) {
           if (insErr.code === '23514') {
             return jsonResponse({
               error: 'You have used all available attempts.', code: 'attempts_exhausted',
             }, 409);
           }
+          if (insErr.code === '23505') {
+            // Same captures already submitted — idempotent success.
+            return jsonResponse({
+              submitted: true, status: 'processing', code: 'already_processing',
+              message: 'Your verification is already being checked. We will update you shortly.',
+            });
+          }
           throw insErr;
         }
 
         // Adjudication happens staff-side. The portal deliberately does not
         // learn the score, the threshold, or why a check was referred —
-        // that is internal AML information (Appendix C.1).
+        // that is internal AML information (Appendix C.1). Attempts shown
+        // are CONSUMED attempts: a technical failure will not move them.
         return jsonResponse({
           submitted: true,
           attempt_number: created.attempt_number,
-          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - created.attempt_number,
-          status: 'pending',
+          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - used,
+          status: 'processing',
           message: 'Thank you. We are checking your identity documents and will be in touch if anything else is needed.',
         });
       }
@@ -698,6 +836,36 @@ Deno.serve(async (req) => {
         const kind = String(body.kind ?? '');
         if (!['document', 'selfie'].includes(kind)) {
           return jsonResponse({ error: 'kind must be "document" or "selfie"' }, 400);
+        }
+        // A biometric is only ever COLLECTED when a live provider can examine
+        // it, attempts remain, and nothing is already processing. Collecting
+        // a face against a dead provider would be collection without purpose
+        // (APP 3) — the gate sits on the upload URL, before any capture UI.
+        if (kind === 'selfie') {
+          const availability = await clientSafeIdvAvailability(admin);
+          if (availability !== 'available') {
+            return jsonResponse({
+              error: availability === 'manual_verification_required'
+                ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+                : 'Verification is temporarily unavailable. Please try again shortly.',
+              code: availability,
+            }, 409);
+          }
+          const uploadPartyId = body.party_id ? String(body.party_id) : null;
+          const used = await verificationAttemptsUsed(admin, c.id, uploadPartyId);
+          if (used >= MAX_VERIFICATION_ATTEMPTS) {
+            return jsonResponse({
+              error: 'You have used all available attempts. A member of our team will contact you.',
+              code: 'attempts_exhausted',
+            }, 409);
+          }
+          const active = await activeProcessingCheck(admin, c.id, uploadPartyId);
+          if (active) {
+            return jsonResponse({
+              error: 'Your previous submission is still being checked.',
+              code: 'already_processing',
+            }, 409);
+          }
         }
         // Selfies go to the biometrics bucket, never to aml-documents: the
         // tighter access policy and the access log both hang off that bucket.
@@ -803,9 +971,28 @@ Deno.serve(async (req) => {
         const { data: rr } = await admin.schema('aml').from('client_requests')
           .select('*, cases:case_id(client_id)').eq('id', body.request_id).maybeSingle();
         if (!rr || (rr as any).cases?.client_id !== clientId) return jsonResponse({ error: 'Not found' }, 404);
+        // Versioned response contract (v1): one shape both sides read.
+        // Historical free-form payloads stay readable staff-side through the
+        // compatibility projection; new writes are always v1.
+        const raw = body.response_payload && typeof body.response_payload === 'object' && !Array.isArray(body.response_payload)
+          ? body.response_payload : {};
+        const responsePayload = {
+          version: 1,
+          text: String(raw.text ?? raw.message ?? '').slice(0, 4000),
+          attachments: Array.isArray(raw.attachments)
+            ? raw.attachments.filter((a: unknown) => typeof a === 'string').slice(0, 10)
+            : [],
+          completed_action: CLIENT_ACTION_CODES.includes(String(raw.completed_action ?? ''))
+            ? raw.completed_action : null,
+          submitted_at: new Date().toISOString(),
+        };
+        if (!responsePayload.text && responsePayload.attachments.length === 0 && !responsePayload.completed_action) {
+          return jsonResponse({ error: 'A response needs text, an attachment reference or a completed action.' }, 400);
+        }
         const { data, error } = await admin.schema('aml').from('client_requests').update({
           status: 'responded', responded_at: new Date().toISOString(),
-          responded_by: portalUserId, response_payload: body.response_payload ?? {},
+          responded_by: portalUserId, response_payload: responsePayload,
+          response_version: 1,
         }).eq('id', body.request_id).select('*').single();
         if (error) throw error;
         return jsonResponse({ request: data });
