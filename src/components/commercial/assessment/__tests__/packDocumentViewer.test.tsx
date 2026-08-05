@@ -49,8 +49,8 @@ beforeEach(() => {
   readSourceDocument.mockResolvedValue(new ArrayBuffer(8));
   renderWorkbookToHtml.mockResolvedValue({
     sheets: [
-      { name: 'Start here', html: '<html><body>start</body></html>', rows: 4, columns: 3 },
-      { name: 'Summary', html: '<html><body>summary</body></html>', rows: 60, columns: 4 },
+      { name: 'Start here', html: '<html><body>start</body></html>', rows: 4, columns: 3, width: 900, height: 700 },
+      { name: 'Summary', html: '<html><body>summary</body></html>', rows: 60, columns: 4, width: 1100, height: 1600 },
     ],
   });
   renderWordToHtml.mockResolvedValue({
@@ -59,8 +59,10 @@ beforeEach(() => {
     height: 3400,
     width: 794,
   });
-  // jsdom has no layout, so the scroll the pager performs is a no-op stub.
+  // jsdom has no layout, so the scrolling the pager and tab strip perform are
+  // no-op stubs.
   Element.prototype.scrollTo = vi.fn();
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
@@ -96,14 +98,43 @@ describe('PackDocumentViewer', () => {
     expect(document.querySelector('a[download]')).toBeNull();
   });
 
-  it('lists the worksheets and switches between them', async () => {
+  it('lists the worksheets as a tablist and switches between them', async () => {
     render(<PackDocumentViewer document={WORKBOOK} open onOpenChange={() => {}} />);
-    const summaryTab = await screen.findByRole('button', { name: 'Summary' });
+    const summaryTab = await screen.findByRole('tab', { name: 'Summary' });
+
+    // A dozen sheets is enough that "tab 2 of 12, selected" is worth saying.
+    expect(screen.getByRole('tablist', { name: 'Worksheets' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Start here' })).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.click(summaryTab);
     await waitFor(() => {
       expect(document.querySelector('iframe')?.getAttribute('srcdoc')).toContain('summary');
     });
+    expect(summaryTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'ci-pack-tab-1');
+  });
+
+  it('moves between worksheets with the arrow keys', async () => {
+    render(<PackDocumentViewer document={WORKBOOK} open onOpenChange={() => {}} />);
+    const first = await screen.findByRole('tab', { name: 'Start here' });
+
+    fireEvent.keyDown(first, { key: 'ArrowRight' });
+    expect(screen.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.keyDown(first, { key: 'Home' });
+    expect(first).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps the strip to a single tab stop', async () => {
+    // Roving tabindex: tabbing past the strip should not walk twelve sheets.
+    render(<PackDocumentViewer document={WORKBOOK} open onOpenChange={() => {}} />);
+    await screen.findByRole('tab', { name: 'Start here' });
+
+    const reachable = screen.getAllByRole('tab').filter(
+      (tab) => tab.getAttribute('tabindex') === '0',
+    );
+    expect(reachable).toHaveLength(1);
+    expect(reachable[0]).toHaveAccessibleName('Start here');
   });
 
   it('pages through a Word document', async () => {

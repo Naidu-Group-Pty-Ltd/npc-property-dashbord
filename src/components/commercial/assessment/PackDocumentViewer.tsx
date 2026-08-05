@@ -123,6 +123,8 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
   /** Bumped to re-run the render effect after a failure. */
   const [attempt, setAttempt] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** One entry per worksheet tab, so arrow keys can move focus between them. */
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   /**
    * Horizontal extent of the dashboard's main column, measured while the viewer
@@ -238,28 +240,69 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
   const goToSheet = useCallback((index: number) => {
     setSheetIndex(index);
     scrollRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    // With twelve sheets the strip scrolls, and arrowing onto a tab that is
+    // off-screen would otherwise select something the user cannot see.
+    tabRefs.current[index]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, []);
 
   const retry = useCallback(() => setAttempt((count) => count + 1), []);
 
   const title = source?.title ?? 'Document';
 
+  /**
+   * The worksheet strip.
+   *
+   * A real tablist rather than a row of buttons: twelve sheets is enough that
+   * arrow-key navigation is worth having, and a screen reader announcing
+   * "tab 3 of 12, selected" says something a list of buttons cannot.
+   *
+   * Roving tabindex — only the selected tab is reachable by Tab — is what the
+   * pattern requires, so the strip is one stop rather than twelve.
+   */
   const sheetStrip = useMemo(() => {
     if (rendered?.kind !== 'workbook') return null;
+
+    const move = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const last = rendered.sheets.length - 1;
+      const next = {
+        ArrowRight: Math.min(sheetIndex + 1, last),
+        ArrowLeft: Math.max(sheetIndex - 1, 0),
+        Home: 0,
+        End: last,
+      }[event.key];
+      if (next === undefined || next === sheetIndex) return;
+      event.preventDefault();
+      goToSheet(next);
+      // Follow the selection with focus so the next key press continues from
+      // where the user actually is.
+      tabRefs.current[next]?.focus();
+    };
+
     return (
-      <nav className="ci-pack-tabs" aria-label="Worksheets">
+      <div
+        className="ci-pack-tabs"
+        role="tablist"
+        aria-label="Worksheets"
+        aria-orientation="horizontal"
+        onKeyDown={move}
+      >
         {rendered.sheets.map((sheet, index) => (
           <button
             key={sheet.name}
+            ref={(node) => { tabRefs.current[index] = node; }}
             type="button"
+            role="tab"
+            id={`ci-pack-tab-${index}`}
+            aria-selected={index === sheetIndex}
+            aria-controls="ci-pack-panel"
+            tabIndex={index === sheetIndex ? 0 : -1}
             onClick={() => goToSheet(index)}
-            aria-current={index === sheetIndex ? 'true' : undefined}
             className={cn('ci-pack-tab', index === sheetIndex && 'ci-pack-tab-active')}
           >
             {sheet.name}
           </button>
         ))}
-      </nav>
+      </div>
     );
   }, [rendered, sheetIndex, goToSheet]);
 
@@ -373,13 +416,23 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
 
         {sheetStrip}
 
+        {/*
+          The stage is the tab panel when a workbook is open, and a plain
+          scrollable group for the guide. It is focusable either way so the
+          document can be scrolled from the keyboard without a pointer.
+        */}
         <div
           ref={scrollRef}
           onScroll={handleScroll}
           className="ci-pack-stage"
           tabIndex={0}
-          role="group"
-          aria-label={`${title} — scrollable document`}
+          {...(rendered?.kind === 'workbook'
+            ? {
+              id: 'ci-pack-panel',
+              role: 'tabpanel',
+              'aria-labelledby': `ci-pack-tab-${sheetIndex}`,
+            }
+            : { role: 'group', 'aria-label': `${title} — scrollable document` })}
         >
           {status === 'loading' ? (
             <div className="ci-pack-state" role="status">
