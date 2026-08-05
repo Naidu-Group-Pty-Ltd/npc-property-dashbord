@@ -126,10 +126,24 @@ function validate(pdf: string): Finding[] {
   return out;
 }
 
-/** The one fact about the file that is not in the validator's report. */
+/**
+ * The one fact about the file that is not in the validator's report.
+ *
+ * An outline entry is a dictionary carrying both `/Title` and `/Parent`. Both
+ * halves matter: the document Info dictionary also has a `/Title` and is not an
+ * entry, and the outline root has a `/Parent`-less `/Count` and is not one
+ * either. Counting `/Count` occurrences instead — which this did first —
+ * over-reported every document by exactly two, the root and the page tree, and
+ * printed 46 for an Investment report with 44 bookmarks in it.
+ *
+ * Only correct on an uncompressed PDF, which is why this script renders with
+ * `--uncompressed-pdf` rather than reusing `reports/pdf/`.
+ */
 function outlineEntries(pdf: string): number {
   const bytes = readFileSync(pdf).toString('latin1');
-  return bytes.includes('/Outlines') ? (bytes.match(/\/Count\s+-?\d+/g) ?? []).length : 0;
+  if (!bytes.includes('/Outlines')) return 0;
+  const dicts = bytes.match(/<<[^<>]*(?:<<[^<>]*>>[^<>]*)*>>/g) ?? [];
+  return dicts.filter((d) => d.includes('/Title') && d.includes('/Parent')).length;
 }
 
 const rows: Array<{ id: string; findings: Finding[]; pages: number }> = [];

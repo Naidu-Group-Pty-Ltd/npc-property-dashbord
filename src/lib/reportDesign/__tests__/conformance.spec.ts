@@ -20,6 +20,7 @@ import { resolveReportPalette } from '../brandResolve.pure';
 import { chartFigure } from '../charts.pure';
 import { DEFAULT_REPORT_DESIGN_OPTIONS } from '../options.pure';
 import { withDecodedCharts } from './chartSvg';
+import { PDF_NO_VARIANT, renderPdf } from '../../../../supabase/functions/_shared/weasyprintClient';
 
 const REPO = resolve(__dirname, '../../../..');
 const css = (options?: Record<string, unknown>) => buildReportCss({
@@ -122,6 +123,48 @@ describe('the press sheet', () => {
     const sheet = css({ pressMarks: true });
     const base = sheet.slice(sheet.indexOf('@page {'), sheet.indexOf('@page cover'));
     expect(base).toContain('marks: crop cross;');
+  });
+});
+
+describe('the variant the request asks for', () => {
+  /**
+   * `weasyprint.pdf.VARIANTS` on the pinned engine holds eighteen names and
+   * `pdf-1.7` is not one of them — asking for it raises `KeyError: 'pdf-1.7'`
+   * inside `Document._render`, which the service returns as a 500. The Export
+   * Pipeline dialog offers it as "PDF 1.7 (standard)", so that option has never
+   * produced a file.
+   */
+  const bodyOf = async (options: Record<string, unknown>) => {
+    const calls: Array<Record<string, unknown>> = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)));
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    }) as typeof fetch;
+    try {
+      await renderPdf({ url: 'http://x', token: 't' }, '<html><head></head><body>x</body></html>', options);
+    } finally {
+      globalThis.fetch = original;
+    }
+    return calls[0];
+  };
+
+  it('sends no variant at all for the one name the engine does not have', async () => {
+    expect((await bodyOf({ variant: PDF_NO_VARIANT })).pdf_variant).toBeNull();
+  });
+
+  it('sends the four the engine does have, verbatim', async () => {
+    for (const variant of ['pdf/ua-1', 'pdf/a-2b', 'pdf/a-3b'] as const) {
+      expect((await bodyOf({ variant })).pdf_variant).toBe(variant);
+    }
+  });
+
+  it('claims accessibility when the caller says nothing', async () => {
+    const body = await bodyOf({});
+    expect(body.pdf_variant).toBe('pdf/ua-1');
+    // `pdf/ua-1` does not add an output intent the way the PDF/A variants do.
+    expect(body.output_intent).toBe('srgb');
+    expect(body.custom_metadata).toBe(true);
   });
 });
 

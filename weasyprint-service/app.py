@@ -406,10 +406,26 @@ def render():
     # which is what the first attempt here did.
     output_intent = payload.get("output_intent") or None
 
+    # Copy the document's own `<meta name=…>` tags into the PDF.
+    #
+    # What this is for: nothing connected a delivered file back to the row that
+    # produced it. The render routes now put `npc-format`, `npc-render-id` and
+    # `npc-source-id` in the head, and this is the switch that carries them into
+    # the file. Measured against the pinned engine — the key is lowercased and
+    # stripped to letters and digits (`npc-render-id` → `/npcrenderid`), the
+    # values land in the Info dictionary rather than the XMP packet, and the
+    # tags the engine already understands (`author`, `description`) are not
+    # duplicated. A `pdf/ua-1` file with all of them present validates clean.
+    #
+    # Default on: the option means "carry what the document declares", and a
+    # document declaring nothing is unaffected by it.
+    custom_metadata = bool(payload.get("custom_metadata", True))
+
     options = _supported_options(
         {
             "pdf_variant": pdf_variant,
             "output_intent": output_intent,
+            "custom_metadata": custom_metadata,
             # The knob that actually produces /StructTreeRoot. This service read
             # `tagged` from the body and never passed it to the engine, so every
             # report it has produced has been untagged — valid, printable, and

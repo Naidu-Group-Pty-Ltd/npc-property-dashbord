@@ -134,6 +134,46 @@ class RenderTests(unittest.TestCase):
                 self.render(tagged=tagged)
                 self.assertIs(rendered.call_args.kwargs["pdf_tags"], tagged)
 
+    def test_carries_the_documents_own_metadata_into_the_file(self):
+        # What connects a delivered PDF back to the row that produced it. The
+        # render routes put `npc-format` and `npc-render-id` in the head; this
+        # is the switch that copies them into the file.
+        #
+        # The keys arrive lowercased and stripped to letters and digits — that
+        # is the engine, not this service, and it is why the assertion below
+        # looks for `npcrenderid` rather than the tag's own name.
+        html = TWO_PAGES.replace(
+            "<head>",
+            '<head><meta name="npc-format" content="borrowing-capacity">'
+            '<meta name="npc-render-id" content="row-42">',
+        )
+        self.assertIn("npc-render-id", html)  # the fixture really has a head
+        pdf = self.client.post(
+            "/render", headers=AUTH, json={"html": html, "pdf_variant": "pdf-1.7"},
+        ).data
+        self.assertIn(b"/npcrenderid", pdf)
+        self.assertIn(b"row-42", pdf)
+
+    def test_honours_custom_metadata_false(self):
+        html = TWO_PAGES.replace("<head>", '<head><meta name="npc-render-id" content="row-42">')
+        pdf = self.client.post(
+            "/render",
+            headers=AUTH,
+            json={"html": html, "custom_metadata": False, "pdf_variant": "pdf-1.7"},
+        ).data
+        self.assertNotIn(b"/npcrenderid", pdf)
+
+    def test_asks_the_engine_for_the_colour_space_by_name(self):
+        # `pdf/ua-1` does not add an output intent the way the PDF/A variants
+        # do, so the switch to UA dropped the colour space from every report
+        # until this was passed explicitly.
+        with patch.object(
+            app.HTML, "render", wraps=app.HTML.render, autospec=True,
+        ) as rendered:
+            self.render(pdf_variant="pdf/ua-1", output_intent="srgb")
+            self.assertEqual(rendered.call_args.kwargs["output_intent"], "srgb")
+            self.assertEqual(rendered.call_args.kwargs["pdf_variant"], "pdf/ua-1")
+
     def test_a_clean_document_reports_no_warnings(self):
         response = self.render()
         self.assertEqual(response.headers["X-WeasyPrint-Warning-Count"], "0")

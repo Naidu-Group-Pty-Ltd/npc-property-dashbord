@@ -348,6 +348,10 @@ export const REQUIRED_OPTIONS: readonly string[] = [
   // produced was untagged — valid, printable, and unnavigable to a screen
   // reader. A rename here would silently do the same thing again.
   'pdf_tags',
+  // Carries the document's own `<meta name=…>` tags into the file, which is
+  // the only thing connecting a delivered PDF back to the row that produced
+  // it. Losing it would not break a render or move a pixel.
+  'custom_metadata',
   'optimize_images',
   'presentational_hints',
 ];

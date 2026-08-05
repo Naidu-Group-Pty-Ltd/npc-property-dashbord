@@ -702,6 +702,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       console.info(`[convert-template-document] enrichment — ${note}`);
     }
 
+    // One clock reading for the document and for its provenance stamp, so the
+    // date printed on the page and the date inside the file cannot disagree.
+    const renderedAt = new Date().toISOString();
+
     const rendered = renderConvertedFromBrand({
       structure: renderStructure,
       plan: renderPlan,
@@ -711,7 +715,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       systemName,
       disclaimer: settings.disclaimer as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
-      preparedOn: new Date().toISOString(),
+      preparedOn: renderedAt,
       reference: convertedReference(request.conversionId),
       enriched: enrichment.enriched,
       composed: enrichment.composed,
@@ -732,7 +736,18 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const fileName = convertedFileName(structure.title, request.format);
     const path = convertedStoragePath(request.conversionId, fileName);
 
-    const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/ua-1', tagged: true });
+    const pdf = await renderPdf(weasyprint, rendered.html, {
+      variant: 'pdf/ua-1',
+      tagged: true,
+      // The conversion this draft belongs to, stamped into the PDF itself.
+      // See `DocumentProvenance`. No separate `sourceId`: on this route the
+      // ledger row and the source row are the same conversion.
+      provenance: {
+        format: 'converted',
+        renderId: conversionId,
+        renderedAt,
+      },
+    });
 
     // `upsert: true`: re-rendering one conversion after changing its binding is
     // the normal way this screen is used, and each render is the current draft

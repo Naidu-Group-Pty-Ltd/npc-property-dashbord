@@ -96,9 +96,15 @@ refused — it fails closed.
   {"probes": {"name": "declaration"}}` to supply your own set; that is how the
   repo's list is checked without redeploying the service.
 - `POST /render` — body
-  `{ "html": "...", "base_url": "...", "pdf_variant": "pdf/a-2b",
-  "tagged": true, "optimize_images": true, "strict": false }`, returns
-  `application/pdf` bytes.
+  `{ "html": "...", "base_url": "...", "pdf_variant": "pdf/ua-1",
+  "output_intent": "srgb", "tagged": true, "optimize_images": true,
+  "custom_metadata": true, "strict": false }`, returns `application/pdf` bytes.
+
+  `pdf_variant` omitted (or `null`) means the engine's default — no conformance
+  claim. `output_intent` takes the keyword `srgb` or `device-cmyk`, not a path
+  to a profile; a path silently matches nothing and produces no intent at all.
+  `custom_metadata` copies the document's own `<meta name=…>` tags into the
+  PDF, which is how a delivered file names the row that produced it.
 
 `/render` answers with the engine's diagnostics in headers:
 
@@ -118,6 +124,30 @@ on a report is not served by a refusal — and on in CI.
 > This service accepted `tagged` in the body, defaulted it to true, and never
 > passed anything to the engine, so **every report it produced before this was
 > untagged**: valid, printable, and unnavigable to a screen reader.
+
+### The conformance claim is checked, not asserted
+
+The image carries **veraPDF 1.30.2** at `/opt/verapdf/verapdf`, and
+`selfcheck.py` fails the build if the specimen it renders does not validate as
+PDF/UA-1. A claim that fails validation is worse than no claim — it tells a
+procurement officer, a screen-reader user and an accessibility auditor that the
+document is navigable, and none of them finds out otherwise until they try.
+
+```bash
+docker run --rm --entrypoint /opt/verapdf/verapdf weasyprint-service \
+  -f ua1 /path/to/report.pdf          # exit 0 means conformant
+```
+
+`scripts/reports/validateUa.mts` runs the same check over all ten report
+formats using whatever validator `VERAPDF` points at, defaulting to the path
+above.
+
+Two facts about `pdf/ua-1` that cost time to find. It **does not** add an
+OutputIntent the way the PDF/A variants do — accessibility says nothing about
+colour — so `output_intent` has to be asked for by name or the file has no
+colour space at all. And `pdf/a-2a` fails UA-1 on exactly one check (clause 5,
+the XMP identification schema) while passing everything structural, which means
+these documents satisfy both standards' content rules and can declare only one.
 
 ## Local run
 
@@ -161,6 +191,14 @@ unprivileged user, carries a `HEALTHCHECK`, and starts gunicorn with
 `warm_up()` renders a throwaway page at boot in the parent, so every worker
 inherits a hot Pango and fontconfig instead of the first client's report paying
 for them. `WEASYPRINT_WARMUP=0` turns that off.
+
+> **A container change reaches production only by hand.** There is no deploy
+> workflow anywhere in this repository — `ci.yml` builds this image to test it
+> and publishes nothing. So anything that lives here (the veraPDF layer, the
+> `output_intent` and `custom_metadata` options, a font, an engine bump) is
+> inert in production until somebody runs the deploy below. Changes on the
+> other side of the boundary — the stylesheet, the document structure, what the
+> render routes ask for — ship with the edge functions and do not wait for it.
 
 ## Deploy — Google Cloud Run (recommended)
 

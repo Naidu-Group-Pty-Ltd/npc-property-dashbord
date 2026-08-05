@@ -352,8 +352,16 @@ jobs:
             // tested it, `weasyprintClient.ts` offered it and documented it as
             // being on "for CI", and every caller including this one left it
             // false.
+            //
+            // `pdf/ua-1` and `output_intent` are what the nine render routes
+            // send, so this renders the same file a client gets. The variant is
+            // validated two steps down; the output intent is here because
+            // `pdf/ua-1` — unlike the PDF/A variants — does not add one, so
+            // asking for it by name is the only thing that keeps a colour
+            // space in the file.
             fs.writeFileSync("/tmp/bc.json", JSON.stringify({
-              html, pdf_variant: "pdf/a-2b", tagged: true, strict: true,
+              html, pdf_variant: "pdf/ua-1", output_intent: "srgb",
+              tagged: true, strict: true,
             }));
           '
           curl -sf -X POST http://localhost:8081/render \
@@ -377,6 +385,50 @@ jobs:
           grep -qi '^x-pdf-tagged: *1' /tmp/bc.headers || {
             echo "the report is untagged"; exit 1;
           }
+
+      # The claim, checked. Everything above proves the file was *asked* to be
+      # PDF/UA-1; this is the only step that proves it is one, and it runs
+      # against the same bytes a client would receive.
+      #
+      # A conformance claim that fails validation is worse than no claim — it
+      # tells a procurement officer, a screen-reader user and an accessibility
+      # auditor that the document is navigable, and none of them finds out
+      # otherwise until they try. veraPDF exits non-zero on a non-conformant
+      # file, so the gate is the exit code.
+      #
+      # It found a real one on its first run: six formats emitted an `h1`
+      # chapter title followed by an `h3`, because each had grown its own
+      # `const h3 = …` helper for "a subhead" while the design system's actual
+      # subhead — `h2` — went unused in all six. Clause 7.4.2, three checks.
+      - name: The report validates as PDF/UA-1
+        run: |
+          docker run --rm -v /tmp:/work:ro --entrypoint /opt/verapdf/verapdf \
+            weasyprint-service:ci -f ua1 /work/bc.pdf
+
+      # An outline is the one part of a tagged PDF a sighted reader also uses,
+      # and it is invisible to every other check here: a document with an empty
+      # bookmarks pane validates as PDF/UA and renders identically. Every
+      # generated report had one until `bookmark-level` reached the stylesheet.
+      #
+      # qpdf rather than a PDF library: the outline lives in the catalogue,
+      # which the engine writes into an object stream, so `grep` on the shipped
+      # bytes finds nothing. `--qdf --object-streams=disable` unpacks it.
+      - name: The report carries a document outline
+        run: |
+          sudo apt-get install -y -qq qpdf
+          qpdf --qdf --object-streams=disable /tmp/bc.pdf /tmp/bc.qdf.pdf
+          grep -q '/Outlines' /tmp/bc.qdf.pdf || {
+            echo "the report opens with an empty bookmarks pane"; exit 1;
+          }
+          # Fourteen entries on this document: one per chapter, plus each
+          # chapter's subheads. A floor rather than the exact number, because
+          # `grep` also counts the Info dictionary's own `/Title` and the
+          # fixture is allowed to grow — but a count rather than a presence
+          # check, because the first version of the stylesheet rule emitted the
+          # cover title and nothing else and "has an outline" was true of it.
+          ENTRIES=$(grep -c '/Title' /tmp/bc.qdf.pdf || true)
+          echo "outline entries (including the Info title): $ENTRIES"
+          [ "$ENTRIES" -ge 12 ] || { echo "outline is too shallow"; exit 1; }
 
       # The repo's list of constructs the engine drops, checked against the
       # engine that is actually deployed. A list like that rots the moment the
@@ -407,10 +459,17 @@ jobs:
             printf '%s' "$EMBEDDED" | grep -q "$face" \
               || { echo "$face not embedded in the report"; exit 1; }
           done
-          # The document the fixture describes is eleven pages. A migration
+          # The document the fixture describes is twelve pages. A migration
           # that drops the audit trail changes nothing a unit test sees, and
           # changes this.
-          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +11$' || {
+          #
+          # Eleven until the subheads moved from `h3` to `h2` to satisfy PDF/UA
+          # clause 7.4.2. `h2` is the design system's subhead and carries 3pt
+          # more type and 16pt more air than the `h3` these six formats had
+          # each invented for themselves, which is a page across a document of
+          # this length. Recorded because the next person to see this number
+          # move should know whether it moved for a reason.
+          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +12$' || {
             echo "unexpected page count:"; pdfinfo /tmp/bc.pdf | grep Pages; exit 1;
           }
 

@@ -42,11 +42,29 @@
  * switch anyway — fonts stay embedded 168 of 168, and the output intent the
  * A variant used to add for free is now asked for explicitly.
  *
- * `pdf-1.7` stays for cases that need features a conformance level forbids.
+ * `pdf-1.7` stays for cases that need features a conformance level forbids. It
+ * is **this codebase's name, not the engine's** — see `PDF_NO_VARIANT`.
  */
 export type PdfVariant = 'pdf/ua-1' | 'pdf/a-2b' | 'pdf/a-3b' | 'pdf-1.7';
 
 export const PDF_VARIANTS: readonly PdfVariant[] = ['pdf/ua-1', 'pdf/a-2b', 'pdf/a-3b', 'pdf-1.7'];
+
+/**
+ * "Claim nothing" — and the one entry in `PdfVariant` the engine has never had.
+ *
+ * `weasyprint.pdf.VARIANTS` on the pinned engine holds eighteen names and
+ * `pdf-1.7` is not among them; asking for it raises `KeyError: 'pdf-1.7'`
+ * inside `Document._render`, which the service returns as a 500. The Export
+ * Pipeline dialog has offered it as "PDF 1.7 (standard)" the whole time, and
+ * `render-template-pdf` passes whatever the dialog sends straight through, so
+ * that option has never produced a file.
+ *
+ * The engine's way of saying "no conformance level" is to be given no variant
+ * at all, and its default version is already 1.7 — so this is translated to an
+ * omitted `pdf_variant` rather than rejected. The name stays because it is
+ * what the dialog shows a user and what is stored against saved pipelines.
+ */
+export const PDF_NO_VARIANT: PdfVariant = 'pdf-1.7';
 
 /**
  * The colour space the file declares it was prepared for.
@@ -103,6 +121,90 @@ export interface WeasyPrintOptions {
    * every run.
    */
   strict?: boolean;
+  /**
+   * Where this file came from. See `DocumentProvenance`.
+   *
+   * Injected into the document's `<head>` and stamped into the PDF by the
+   * engine. Omitted means the file says nothing about its origin, which is
+   * what every report produced by this programme has said so far.
+   */
+  provenance?: DocumentProvenance;
+}
+
+/**
+ * The row a PDF came from, carried inside the PDF.
+ *
+ * Nothing connected a delivered file back to the render that produced it. The
+ * ledger has the row; the file a client forwards to their broker eighteen
+ * months later has a name and a page count. When someone asks "which
+ * assessment is this", the honest answer has been to search by date.
+ *
+ * These become entries in the PDF's document information dictionary, via the
+ * engine's `custom_metadata`. Two things about that are worth knowing before
+ * changing a key here, both measured against the pinned engine:
+ *
+ *  - the engine **lowercases the key and strips everything that is not a
+ *    letter or a digit**, so `npc-render-id` arrives as `/npcrenderid`;
+ *  - they land in the Info dictionary, not in the XMP packet. That is fine for
+ *    PDF/UA — verified, 106 rules pass with these present — and would not be
+ *    for PDF/A, which requires the two to agree.
+ *
+ * Nothing here is a secret and nothing here is new to the reader: the client's
+ * name is already on the cover and the reference is already in the running
+ * foot. Do not add anything that is not already printed on the page.
+ */
+export interface DocumentProvenance {
+  /** The archetype id — `borrowing-capacity`, `market-intelligence`. */
+  format: string;
+  /** The ledger row this render is recorded against. */
+  renderId?: string | null;
+  /** The row the document was built from — an assessment, a report, a conversion. */
+  sourceId?: string | null;
+  /** ISO-8601, from the caller. This module does not read the clock. */
+  renderedAt?: string | null;
+}
+
+/**
+ * A key the engine will keep and a value that cannot escape the attribute.
+ *
+ * The values are ids this codebase generated and a format name out of a fixed
+ * list, so this is a belt rather than a rescue — but the tags are injected
+ * *after* `assertSafeRenderResources` has passed the document, so nothing else
+ * is going to look at them.
+ */
+function metaTag(name: string, value: string): string {
+  const key = name.toLowerCase().replace(/[^a-z0-9-]/g, '');
+  const safe = value
+    // Control characters, spelled with escapes rather than written
+    // literally: a raw byte in a source file makes it binary to `grep`.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .slice(0, 200);
+  return `<meta name="${key}" content="${safe}">`;
+}
+
+/**
+ * Put the provenance into the document's head.
+ *
+ * Injected immediately after `<head>` rather than appended before `</head>`,
+ * because a document whose head the caller assembled by hand may not have a
+ * closing tag at all — HTML does not require one — while `<head>` is written
+ * by `renderDocument` and is always there. A document with no `<head>` is
+ * returned unchanged: a missing stamp is not worth failing a render over.
+ */
+export function withProvenance(html: string, provenance?: DocumentProvenance): string {
+  if (!provenance) return html;
+  const tags = [
+    metaTag('npc-format', provenance.format),
+    provenance.renderId ? metaTag('npc-render-id', provenance.renderId) : '',
+    provenance.sourceId ? metaTag('npc-source-id', provenance.sourceId) : '',
+    provenance.renderedAt ? metaTag('npc-rendered-at', provenance.renderedAt) : '',
+  ].filter(Boolean).join('\n');
+  return html.replace(/<head(\s[^>]*)?>/i, (match) => `${match}\n${tags}`);
 }
 
 /**
@@ -183,7 +285,9 @@ export async function renderPdfWithDiagnostics(
   html: string,
   options: WeasyPrintOptions = {},
 ): Promise<WeasyPrintDiagnostics> {
-  const bytes = new TextEncoder().encode(html).length;
+  const variant = options.variant ?? 'pdf/ua-1';
+  const stamped = withProvenance(html, options.provenance);
+  const bytes = new TextEncoder().encode(stamped).length;
   if (bytes > MAX_HTML_BYTES) {
     throw new Error(
       `document is ${bytes} bytes, over the ${MAX_HTML_BYTES}-byte render cap; `
@@ -202,11 +306,19 @@ export async function renderPdfWithDiagnostics(
         Accept: 'application/pdf',
       },
       body: JSON.stringify({
-        html,
-        pdf_variant: options.variant ?? 'pdf/ua-1',
+        html: stamped,
+        // `null` rather than the name: the service treats a null variant as
+        // "the engine's default", which is what `pdf-1.7` means. See
+        // `PDF_NO_VARIANT`.
+        pdf_variant: variant === PDF_NO_VARIANT ? null : variant,
         output_intent: options.outputIntent ?? 'srgb',
         tagged: options.tagged !== false,
         optimize_images: options.optimizeImages !== false,
+        // Asked for unconditionally rather than only when there is provenance:
+        // the option means "copy this document's own `<meta>` tags into the
+        // file", and a document with none is unaffected. Making it conditional
+        // would mean two shapes of request for one shape of document.
+        custom_metadata: true,
         strict: options.strict === true,
       }),
       signal: controller.signal,
