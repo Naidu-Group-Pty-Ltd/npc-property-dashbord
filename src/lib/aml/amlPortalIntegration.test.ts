@@ -363,3 +363,86 @@ describe("notification category regression (found by staging browser E2E)", () =
     expect(fix).not.toMatch(/\bDROP TABLE\b|\bDELETE FROM\b/);
   });
 });
+
+describe("browser-journey regressions (found by real Chromium against staging)", () => {
+  const terminology = readFileSync("src/lib/aml/useAmlTerminology.ts", "utf8");
+  const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
+  const verificationSection = readFileSync("src/components/aml/VerificationSection.tsx", "utf8");
+  const verificationApi = readFileSync("src/lib/aml/amlVerificationApi.ts", "utf8");
+  const portalFn = readFileSync("supabase/functions/aml-client-portal/index.ts", "utf8");
+  const mobileHeader = readFileSync("src/components/layout/MobileHeader.tsx", "utf8");
+  const bell = readFileSync("src/components/layout/NotificationsDropdown.tsx", "utf8");
+
+  // DEF-B1 — the no-case empty state read like a fault.
+  it("the no-case message is client-facing copy, not an API status line", () => {
+    expect(portalFn).not.toContain("message: 'No AML onboarding case yet.'");
+    expect(portalFn).toContain("hasn’t opened an identity and compliance case");
+    expect(portalFn).toContain("nothing for you to do now");
+  });
+
+  // DEF-B2 — a terminology payload without the expected key white-screened
+  // every AML surface through AmlLayout's ErrorBoundary.
+  it("terminology overrides are coerced so a missing key cannot crash AmlLayout", () => {
+    expect(terminology).toContain("function asOverrideMap");
+    expect(terminology).toMatch(/writeCache\(next: unknown\)/);
+    expect(terminology).toContain("overrides?.[label] ?? label");
+    // readCache must sanitise what it parses out of sessionStorage too.
+    expect(terminology).toContain("asOverrideMap(JSON.parse(raw))");
+  });
+
+  // DEF-B3 — "Invalid Date" was rendered to compliance staff.
+  it("every workspace date render goes through displayDate", () => {
+    expect(workspace).toContain("function displayDate");
+    const executable = workspace
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//"))
+      .join("\n");
+    // The only remaining toLocaleDateString call is inside displayDate itself.
+    expect(executable.match(/toLocaleDateString\(\)/g) ?? []).toHaveLength(1);
+  });
+
+  // DEF-B4 — "attempt undefined of 3".
+  it("an absent attempt number omits the clause instead of printing undefined", () => {
+    expect(verificationSection).toContain("Number.isFinite(Number(c.attempt_number))");
+  });
+
+  // DEF-B5 — canonical processing state and its retry had no staff UI at all.
+  it("the staff panel surfaces processing status separately from the identity outcome", () => {
+    expect(verificationSection).toContain("PROCESSING_LABELS");
+    for (const state of ["capture_unusable", "technical_failure", "retry_scheduled", "dead_lettered"]) {
+      expect(verificationSection).toContain(state);
+    }
+    expect(verificationSection).toContain("No client attempt was used.");
+    expect(verificationSection).toContain("Test simulation — not compliance evidence");
+  });
+  it("retry processing is wrapped, offered only when eligible, and claims no new attempt", () => {
+    expect(verificationApi).toContain("retryVerificationProcessing");
+    expect(verificationApi).toContain('op: "retry_verification_processing"');
+    expect(verificationApi).toContain("RETRYABLE_PROCESSING_STATUSES");
+    // Exactly the two states the server accepts, and no others.
+    const list = verificationApi.slice(
+      verificationApi.indexOf("RETRYABLE_PROCESSING_STATUSES"),
+      verificationApi.indexOf("isRetryableProcessingStatus"),
+    );
+    expect(list).toContain("technical_failure");
+    expect(list).toContain("dead_lettered");
+    expect(list).not.toContain("completed");
+    expect(list).not.toContain("capture_unusable");
+    expect(verificationSection).toContain("isRetryableProcessingStatus(c.processing_status)");
+    expect(verificationSection).toContain("No further client attempt was used.");
+  });
+  it("provider readiness is shown so staff do not chase an unprocessable capture", () => {
+    expect(verificationSection).toContain("providerReadiness()");
+    expect(verificationSection).toContain("Electronic verification:");
+    expect(verificationSection).toContain("no client attempt is ");
+  });
+
+  // DEF-B6 — icon-only shell controls had no accessible name at 360×800.
+  it("icon-only shell controls carry an accessible name", () => {
+    for (const label of ["Open navigation menu", "Search", "Change theme", "Account menu", "Close search"]) {
+      expect(mobileHeader).toContain(`aria-label="${label}"`);
+    }
+    expect(bell).toContain("aria-label={unreadCount > 0 ?");
+    expect(bell).toContain("'Notifications'");
+  });
+});

@@ -148,6 +148,21 @@ const isKnownSection = (value: string | null): value is SectionKey =>
   !!value &&
   SECTION_GROUPS.some((g) => g.sections.some((s) => s.key === value));
 
+/**
+ * A date for display, or an em dash.
+ *
+ * Formatting a missing timestamp directly renders the literal string
+ * "Invalid Date", which the workspace header was showing to compliance staff
+ * whenever a timestamp was absent — the workflow-dimension columns are
+ * explicitly nullable until backfilled, so this is reachable on real cases.
+ * Found by the staff browser journey.
+ */
+function displayDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString();
+}
+
 export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -270,7 +285,7 @@ export default function AmlCaseWorkspace() {
                   <User className="h-3.5 w-3.5" /> Client record
                 </Link>
               )}
-              <span>Updated {new Date(caseRow.updated_at).toLocaleDateString()}</span>
+              <span>Updated {displayDate(caseRow.updated_at)}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2" aria-label="Case status">
@@ -463,7 +478,7 @@ export default function AmlCaseWorkspace() {
       {/* Activation provenance footnote for context, kept out of the header */}
       {activation && (
         <p className="text-xs text-muted-foreground">
-          Activated {activation.activated_at ? new Date(activation.activated_at).toLocaleDateString() : ""} —{" "}
+          Activated {activation.activated_at ? displayDate(activation.activated_at) : ""} —{" "}
           {caseRow.activation_timing === "conditional_agreement"
             ? "compliance runs under a conditional agreement; the service unlocks when the gate is approved."
             : "the designated service trigger had occurred at activation."}
@@ -507,7 +522,7 @@ function CaseOverviewSection({
                 <span className="text-muted-foreground">Not linked</span>
               )}
             />
-            <Row k="Opened" v={new Date(caseRow.opened_at).toLocaleDateString()} />
+            <Row k="Opened" v={displayDate(caseRow.opened_at)} />
           </CardContent>
         </Card>
 
@@ -793,7 +808,7 @@ function DocumentsEvidenceSection({
                     <div className="truncate">{r.label}</div>
                     <div className="text-xs text-muted-foreground">
                       {r.required ? "Required" : "Optional"}
-                      {r.due_at ? ` · due ${new Date(r.due_at).toLocaleDateString()}` : ""}
+                      {r.due_at ? ` · due ${displayDate(r.due_at)}` : ""}
                     </div>
                   </div>
                   <Badge variant="outline" className="capitalize">{String(r.status ?? "pending").replace(/_/g, " ")}</Badge>
@@ -876,7 +891,7 @@ function DocumentsEvidenceSection({
                       {String(e.reference_type ?? "reference").replace(/_/g, " ")}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleDateString()}
+                      {displayDate(e.created_at)}
                     </span>
                   </div>
                 </li>
@@ -1060,7 +1075,7 @@ function MonitoringReviewsSection({
         <CardContent className="space-y-2 text-sm">
           {ended ? (
             <>
-              <Row k="Ended" v={monitoring.relationship_ended_at ? new Date(monitoring.relationship_ended_at).toLocaleDateString() : "—"} />
+              <Row k="Ended" v={monitoring.relationship_ended_at ? displayDate(monitoring.relationship_ended_at) : "—"} />
               {monitoring.relationship_end_reason && (
                 <div className="rounded bg-muted/40 p-2 text-xs">{monitoring.relationship_end_reason}</div>
               )}
@@ -1077,20 +1092,20 @@ function MonitoringReviewsSection({
                 v={
                   monitoring.next_periodic_review_at
                     ? <span className={monitoring.next_periodic_review_at < today ? "text-warning" : ""}>
-                        {new Date(monitoring.next_periodic_review_at).toLocaleDateString()}
+                        {displayDate(monitoring.next_periodic_review_at)}
                         {monitoring.next_periodic_review_at < today ? " · due" : ""}
                       </span>
                     : <span className="text-muted-foreground">Not scheduled</span>
                 }
               />
-              <Row k="Last review" v={monitoring.last_periodic_review_at ? new Date(monitoring.last_periodic_review_at).toLocaleDateString() : "—"} />
+              <Row k="Last review" v={monitoring.last_periodic_review_at ? displayDate(monitoring.last_periodic_review_at) : "—"} />
               <Row
                 k="Screening refresh"
                 v={
                   monitoring.rescreen_due_at
                     ? <span className={monitoring.rescreen_overdue ? "text-warning" : ""}>
                         {monitoring.rescreen_overdue ? "Overdue since " : "Due "}
-                        {new Date(monitoring.rescreen_due_at).toLocaleDateString()}
+                        {displayDate(monitoring.rescreen_due_at)}
                       </span>
                     : <span className="text-muted-foreground">No screening on record</span>
                 }
@@ -1195,7 +1210,7 @@ function MonitoringReviewsSection({
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {r.due_at ? `Due ${new Date(r.due_at).toLocaleDateString()}` : "No deadline"}
+                          {r.due_at ? `Due ${displayDate(r.due_at)}` : "No deadline"}
                           {overdue ? " · overdue" : ""}
                           {r.extension_count ? ` · extended ${r.extension_count}×` : ""}
                         </div>
@@ -1488,9 +1503,9 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
                   <div className="min-w-0">
                     <div className="truncate">{t.property_address ?? t.reference ?? t.kind}</div>
                     <div className="text-xs text-muted-foreground">
-                      {t.settlement_date ? `Settles ${new Date(t.settlement_date).toLocaleDateString()}` : "No settlement date"}
+                      {t.settlement_date ? `Settles ${displayDate(t.settlement_date)}` : "No settlement date"}
                       {t.original_settlement_date && t.settlement_date !== t.original_settlement_date &&
-                        ` (moved from ${new Date(t.original_settlement_date).toLocaleDateString()})`}
+                        ` (moved from ${displayDate(t.original_settlement_date)})`}
                       {t.purchase_price ? ` · ${Number(t.purchase_price).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : ""}
                     </div>
                   </div>
@@ -1527,7 +1542,7 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
                           variant="outline"
                           className={`h-5 px-1.5 text-[10px] ${cp.delayed_cdd_deadline < today ? "border-destructive/50 text-destructive" : "border-warning/50 text-warning"}`}
                         >
-                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${new Date(cp.delayed_cdd_deadline).toLocaleDateString()}`}
+                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${displayDate(cp.delayed_cdd_deadline)}`}
                         </Badge>
                       )}
                     </div>

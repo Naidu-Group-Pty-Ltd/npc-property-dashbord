@@ -536,7 +536,19 @@ Deno.serve(async (req) => {
     switch (op) {
       case 'overview': {
         const c = await resolveCase(body.case_id);
-        if (!c) return jsonResponse({ case: null, message: 'No AML onboarding case yet.' });
+        // The portal renders this string verbatim, so it must be the copy a
+        // client should read — not an API status line. "No AML onboarding case
+        // yet." rendered as the whole empty state and read like something had
+        // gone wrong; the reassuring sentence lives here rather than in the SPA
+        // so every consumer (portal, mobile) shows the same words.
+        if (!c) {
+          return jsonResponse({
+            case: null,
+            message:
+              'Your adviser hasn’t opened an identity and compliance case for you yet. '
+              + 'You’ll be notified when it’s ready — there is nothing for you to do now.',
+          });
+        }
         const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
             .select('section,status,updated_at,payload').eq('case_id', c.id),
