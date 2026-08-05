@@ -14,6 +14,7 @@
  * module has no colours in it and works for a vector PDF library and an HTML
  * document alike.
  */
+import { paragraphsFromWrapped } from './prose.pure.ts';
 
 /** Contact details as stored in `global_report_settings.contact_details`. */
 export interface CompanyContact {
@@ -136,9 +137,6 @@ export function disclaimerFontPt(size: string | null | undefined): number {
   return DISCLAIMER_FONT_PT[key as DisclaimerFontSize] ?? DISCLAIMER_FONT_PT.small;
 }
 
-/** A line that ends mid-sentence was wrapped by an editor, not ended by one. */
-const ENDS_A_SENTENCE = /[.!?:;)"'’”]\s*$/;
-
 /**
  * The disclaimer as paragraphs, or `[]` when it is disabled or empty.
  *
@@ -151,32 +149,16 @@ const ENDS_A_SENTENCE = /[.!?:;)"'’”]\s*$/;
  * off a real render; it is the last thing on the last page of every report this
  * repo produces, in nine formats.
  *
- * A blank line is always a paragraph break. A lone newline is one only when the
- * line before it *finished* — ended on sentence punctuation. Otherwise it is a
- * wrap and the two halves are joined with a space. That reads both shapes
- * correctly: the hard-wrapped paragraph, and the disclaimer written as
- * single-newline-separated sentences, which some tenants have.
+ * The rule that reads that correctly is `paragraphsFromWrapped`, and it now
+ * lives in `prose.pure.ts` because the converter needs the same judgement on
+ * transcribed text — and needed it in the *other* direction, which is what
+ * showed the rule written here was only half of one. See that module's header.
  */
 export function disclaimerParagraphs(
   disclaimer: CompanyDisclaimer | null | undefined,
 ): string[] {
   if (!disclaimer?.is_enabled) return [];
-  const cleaned = sanitizeReportText(disclaimer.text);
-  if (!cleaned) return [];
-
-  const out: string[] = [];
-  for (const block of cleaned.split(/\n\s*\n/)) {
-    let current = '';
-    for (const raw of block.split('\n')) {
-      const line = raw.trim();
-      if (!line) continue;
-      if (!current) { current = line; continue; }
-      if (ENDS_A_SENTENCE.test(current)) { out.push(current); current = line; continue; }
-      current = `${current} ${line}`;
-    }
-    if (current) out.push(current);
-  }
-  return out;
+  return paragraphsFromWrapped(sanitizeReportText(disclaimer.text));
 }
 
 /** Everything the closing page needs, resolved once. */

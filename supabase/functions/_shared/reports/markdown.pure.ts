@@ -334,6 +334,24 @@ export interface MarkdownOptions {
   landscapeWideTables?: boolean;
   /** Mark a row whose first cell is exactly "Total" with the primitive's rule. */
   detectTotalRow?: boolean;
+  /**
+   * What to caption a table that has no header row of its own.
+   *
+   * A GFM table whose header cells are all blank gets no `thead` at all
+   * (`primitives.pure.ts` drops it: an empty tinted band is not a header, and
+   * there is nothing for a screen reader or a tagged PDF to announce). That is
+   * right, and it costs the table the only per-page-repeating box the sheet has
+   * — so twelve rows of a key/value table transcribed out of a PDF landed on a
+   * fresh sheet identified by nothing but the 8.5pt running head.
+   *
+   * A caption is the honest half of the answer: it titles the table where it
+   * starts. It does **not** repeat per page — only `display: table-header-group`
+   * does that, and synthesising header labels the source never had would be
+   * inventing text on a client's document to solve a layout problem.
+   *
+   * Ignored when the table has real headers; they say what it is already.
+   */
+  headlessTableCaption?: string;
 }
 
 export interface MarkdownHeading {
@@ -642,6 +660,9 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   const idPrefix = (options.idPrefix ?? 'a').replace(/[^a-z0-9]+/gi, '').toLowerCase() || 'a';
   const landscape = options.landscapeWideTables !== false;
   const detectTotal = options.detectTotalRow !== false;
+  const headlessCaption = String(options.headlessTableCaption ?? '').trim();
+  /** Said once per run. See the table scanner. */
+  let headlessCaptionUsed = false;
 
   // ── Pass 0 ────────────────────────────────────────────────────────────────
   let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
@@ -999,8 +1020,37 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       return row;
     });
 
+    // See `headlessTableCaption`. Only when the table has no head of its own —
+    // a table with real column labels already says what it is.
+    // ── Caption the *first* headless table, and only when nothing else names it
+    //
+    // The first version captioned every headless table with the chapter title,
+    // and a chapter with two of them printed the chapter title twice — the
+    // second time directly under a subhead that had just said something else.
+    // Read off a render: `Capacity Breakdown` (34pt chapter title), the table,
+    // `Additional Assumptions` (17pt subhead), then `CAPACITY BREAKDOWN` again.
+    // Two competing labels for one table, 12pt apart, and the caption was the
+    // wrong one. Worse than the unlabelled table it replaced.
+    //
+    // So: a heading already standing over the table is the better label and the
+    // caption is suppressed, and after the first one the chapter title has been
+    // said and repeating it adds nothing.
+    //
+    // An empty `blocks` counts as named, and that is the case worth spelling
+    // out. It means the table is the first thing in the chapter body — so the
+    // chapter's own 34pt title is standing directly over it, and the caption is
+    // *that same title* (`converted/render.pure.ts` passes `chapter.title`).
+    // The first version of this guard tested `blocks.length > 0`, which excluded
+    // exactly the one arrangement where the caption is guaranteed to be a
+    // verbatim echo — and that is what both conversions then printed on their
+    // densest page.
+    const headless = !cols.some((c) => c.label);
+    const named = blocks.length === 0 || blocks[blocks.length - 1].kind === 'heading';
+    const wantsCaption = headless && headlessCaption && !named && !headlessCaptionUsed;
+    if (wantsCaption) headlessCaptionUsed = true;
     const table = renderDataTable(cols, rows, {
       signedKeys: cols.filter((c) => c.align === 'right').map((c) => c.key),
+      caption: wantsCaption ? headlessCaption : undefined,
     });
 
     const wide = width > MAX_PORTRAIT_TABLE_COLS;

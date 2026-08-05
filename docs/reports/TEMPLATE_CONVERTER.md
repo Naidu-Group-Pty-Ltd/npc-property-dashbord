@@ -387,6 +387,148 @@ never who it happened to.
 
 ---
 
+## The fourth round: reading the pages of eight formats
+
+All eight migrated formats became bindable, and the pages were read as images
+rather than as HTML. That found one defect in the new work — the pass-through
+binding made a chapter of *every* heading, so eight two-line `###` sub-headings
+became eight sheets; fixed above, 19 chapters to 8 and 23 pages to 14 — and four
+things that had been there all along and that nobody had looked for.
+
+Three claims made in the first write-up of this round were **wrong**, and are
+recorded here because each would otherwise have sent somebody after the wrong
+file:
+
+- The `(")` where the source says `(−$19,740 reduction)` is **not** repo code.
+  `calculate-borrowing-capacity/index.ts:311,326` writes U+2212 correctly, and
+  `neutraliseUrls`, `sanitiseGlyphs`, `normalizeDocumentText` and
+  `repairFloatArtefacts` were each executed against the string and left it
+  intact. `source_markdown` is produced by asking a model to transcribe the PDF
+  (`convert-template-document/index.ts:175-232`) — which is also why the two
+  occurrences broke *differently*. No regex does that. It is a transcription
+  artefact, and the durable fix is the one `borrowingCapacity/normalise.pure.ts`
+  already names: stop the engine formatting figures into prose.
+- The `$7`-for-7% audit rows are **not** this renderer.
+  `borrowingCapacity/render.pure.ts` already routes them through
+  `formatMeasure`, and `audit.pure.ts` already declares the `percent` unit. Only
+  the legacy jsPDF generator puts everything through one currency formatter, and
+  only it can produce `-$0`. The defect is baked into the uploaded PDF.
+- The closing-page wordmark splitting after "Consulting" is **deliberate** —
+  `splitCompanyName`'s doc comment records it as a lockup convention reproduced
+  from both prior implementations, two more renderers use it, and
+  `reportPrimitives.spec.ts` pins it.
+
+**F1 — an appendix chapter was indistinguishable from a chapter.** Page two said
+unmatched sections were "kept as an appendix"; the document then printed them in
+the main spine as `SECTION 05`…`SECTION 10`, same eyebrow, same rule, same 30pt
+serif, separated only by a 9pt italic dek. The cause was structural:
+`planConvertedChapters` numbered by array index over the whole list, `kind` was
+tested in one place (for `unfilled`), and it was dropped from the projection
+before `buildSpine` ever saw it. The two series are now numbered in one pass —
+`SECTION 05` / `APPENDIX A` — and `SpineEntry.number` carries the answer, so the
+contents page and the openers read one source instead of counting independently
+and agreeing by coincidence. No divider page: `borrowing-capacity` is on
+`SHORT_SLOTS`, so the `divider` slot is not permitted on the archetype most
+conversions bind to.
+
+**F2 — a subhead read as a chapter title.** `h1` and `h2` shared face, colour,
+weight, tracking and line-height and differed only in size, so an h2 was a
+chapter title set smaller. Invisible while a chapter title sits above it, and
+wrong the moment one does not — a chapter always breaks to a new page and
+`page-break-after: avoid` regularly puts an h2 at the top of a fresh sheet with
+nothing above it but the running head. h2 is now half the title's size rather
+than two-thirds, at a lighter weight, on its own `PRINT_SCALE.subhead` token —
+`h2` is also the size of a KPI figure and a chart's hero number, and those are
+not the same decision. It stays above 14pt at every `bodyScale`, which keeps it
+in the `display` contrast band.
+
+The first version drew an accent rule above the subhead as a third signal, and a
+render said what that costs: at the top of a sheet a full-measure hairline is
+indistinguishable from a header rule, so it separated the subhead from the page
+break rather than from the text above it — and eight subheads down two pages
+each with their own gold rule read as a rate card rather than as prose. Dropped.
+Two signals are enough.
+
+**And the first blast-radius check for this was worthless.** It rendered a native
+Borrowing Capacity Snapshot, which contains **zero** `<h2>` — that format emits
+its own subhead class — so it proved nothing while looking like a control. The
+formats actually at risk are the ones carrying model-authored Markdown through
+`markdown.pure.ts`: Report Q&A and Market Intelligence. A native Market
+Intelligence report with thirteen subheads across twenty-two pages is the check
+that means something, and it is the one this was judged on.
+
+**F3 — a headerless table crossed a page with no label.** A GFM table whose
+header cells are all blank has its `thead` dropped, deliberately: an empty tinted
+band is not a header and there is nothing for a screen reader or a tagged PDF to
+announce. That is right, and `display: table-header-group` is the only
+per-page-repeating box the sheet has, so the table lost its only continuation
+marker. It now carries a `caption` naming the chapter it sits in — **at most one
+per chapter, and never on a table a heading already stands over — including the
+chapter's own title, when the table is the first thing in the body.** Two rounds
+of reading pages to get that right. The first version captioned every headless
+table, so a chapter with two printed the chapter title twice, the second time
+directly under a subhead that had just said something else: `Capacity Breakdown` (34pt title), the table, `Additional
+Assumptions` (17pt subhead), then `CAPACITY BREAKDOWN` again. Two competing
+labels twelve points apart, and the caption was the wrong one — worse than the
+unlabelled table it replaced. The second version tested the *preceding* block,
+which excluded the one arrangement where the echo is guaranteed: a table opening
+the chapter body has no preceding block, and the chapter's own 34pt title
+standing over it. Both conversions then printed that stutter on their densest
+page. An empty block list counts as named. **The limit is
+stated rather than papered over**: a caption renders once, at the start. A true
+per-page "(continued)" would mean synthesising header labels the source never had
+— inventing text on a client's document to solve a layout problem.
+
+**F4 — a transcribed line break is not a space.** CommonMark says a lone newline
+is a space, which is right for the three formats carrying model-authored prose
+and wrong for text a model transcribed off a page: a KPI card printed as
+`BORROWING CAPACITY $856,932 Estimate` and six `Label: value` pairs as one
+unpunctuated sentence. Fixed at *extraction*, before the faithfulness snapshot is
+taken, for the same reason `repairFloatArtefacts` is — a change made later looks
+like the design pass inventing text.
+
+The rule itself is worth reading (`reportDesign/prose.pure.ts`), because the
+obvious version of it is wrong. `disclaimerParagraphs` already broke on a lone
+newline when the previous line *ended on sentence punctuation*, which reads a
+hard-wrapped paragraph correctly and reads a KPI card **exactly as wrongly as
+CommonMark does** — `BORROWING CAPACITY` ends on no punctuation, so it joins.
+Checked against the real transcription rather than assumed. So both ends of the
+join are now tested: a newline is a wrap only when the line before it did not
+finish *and* the line after it continues — begins lowercase, or on an opening
+bracket or quote. One rule, in one module, for both callers.
+
+A line opening on a figure is genuinely ambiguous — `9.44% over thirty years.`
+after `…a rate of` is a wrap, `$856,932` after `BORROWING CAPACITY` is not, and
+nothing in the text distinguishes them. It breaks, because in this corpus the
+second shape is the common one. Pinned in the spec so the choice is visible.
+
+Also: the first version separated *every* block with a blank line, which stopped
+every pipe table in the document being a table. Structural runs are now joined by
+single newlines and only prose is re-paragraphed.
+
+**F7 — an unfilled chapter said its own callout out loud, twice.** The chapter
+dek read *"Supplied by the live report"* in 12pt italic and the callout's eyebrow
+forty points below read `SUPPLIED BY THE LIVE REPORT` in 8.5pt mono. The same
+four words in two sizes on the same sheet, on the reader's first three pages of a
+cross-format conversion. The dek is gone; the callout already says it at length.
+
+**F6 — the disclaimer could vanish without a trace.** Pass five drops the
+template's own trailing contact/disclaimer section *because* `renderCompanyPage`
+prints the tenant's own — and the drop was unconditional. The tenant's can be
+absent five ways, two of which nobody chooses: an unreadable
+`global_report_settings` query, which the render routes warn about and swallow,
+and a settings row that was never written. Both arrive as `null`, and
+`auditSnapshot` guarded on `disclaimer &&`, so those two recorded no gap at all.
+The document ended on a page classed `page-disclaimer` with no disclaimer on it.
+
+Now the gap is recorded for absent and empty as well as disabled, and the render
+path keeps the template's own closing section when nothing will replace it — it
+comes through as an appendix chapter. Losing the tenant's wording in favour of
+the template's is a formatting preference; losing the disclaimer from a lending
+document is not.
+
+---
+
 ## Looking at the document, and widening what it can be
 
 The third round fixed everything that was visibly broken and the output still

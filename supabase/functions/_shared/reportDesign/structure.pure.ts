@@ -62,6 +62,18 @@ export interface SpineEntry {
   pageBudget: number;
   /** One line for the contents page. */
   note?: string;
+  /**
+   * What this chapter is numbered, when the caller numbers its own.
+   *
+   * Almost every format lets `contentsEntriesFor` count — `01`, `02`, `03` down
+   * the spine — and should keep doing so. The converter cannot: its document is
+   * the format's chapters *plus* an appendix of whatever the uploaded template
+   * had no home for, and those two are separate series (`SECTION 05` /
+   * `APPENDIX A`). Numbered here so the contents page and the chapter openers
+   * read the same source; they used to count independently and agreed only by
+   * coincidence.
+   */
+  number?: string;
 }
 
 export type ReportArchetypeId =
@@ -381,6 +393,8 @@ export interface ChapterInput {
   note?: string;
   /** Force this chapter onto the landscape page. */
   wide?: boolean;
+  /** Override the counted number. See `SpineEntry.number`. */
+  number?: string;
 }
 
 export interface BuildSpineInput {
@@ -439,6 +453,7 @@ export function buildSpine(input: BuildSpineInput): SpineEntry[] {
       title: c.title,
       pageBudget: c.pageBudget,
       note: c.note,
+      number: c.number,
     });
   }
 
@@ -462,6 +477,11 @@ export function spinePageBudget(spine: readonly SpineEntry[]): number {
  *
  * Derived from the spine rather than passed in separately, which is what stops
  * a contents page listing a section a trim pass removed.
+ *
+ * An entry that carries its own `number` keeps it, and does not consume one from
+ * the count — a document with two series (the converter's chapters and its
+ * appendix) numbers both itself, and its own chapters must not be renumbered by
+ * the appendix entries sitting between them.
  */
 export function contentsEntriesFor(
   spine: readonly SpineEntry[],
@@ -470,6 +490,7 @@ export function contentsEntriesFor(
   return spine
     .filter((e) => e.slot === 'chapter' || e.slot === 'wide-table')
     .map((e) => {
+      if (e.number) return { number: e.number, title: e.title, note: e.note };
       n += 1;
       return { number: String(n).padStart(2, '0'), title: e.title, note: e.note };
     });

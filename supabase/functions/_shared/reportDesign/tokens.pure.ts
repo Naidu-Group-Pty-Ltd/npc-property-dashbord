@@ -120,6 +120,17 @@ export const PRINT_SCALE = {
   body: 10.5,
   bodyLg: 11.5,
   h3: 14,
+  /**
+   * A subhead inside a chapter.
+   *
+   * Its own step rather than `h2`, because `h2` is also the size of a KPI
+   * figure and a chart's hero number and those are not the same decision. At
+   * 20pt — two-thirds of a chapter title, same face, same weight — a subhead
+   * landing at the top of a page read as a chapter title that had lost its
+   * eyebrow. Half the title is unmistakable, and it stays above 14pt at the
+   * minimum `bodyScale`, which keeps it in the `display` contrast band.
+   */
+  subhead: 17,
   h2: 20,
   h1: 34,
   pullQuote: 22,

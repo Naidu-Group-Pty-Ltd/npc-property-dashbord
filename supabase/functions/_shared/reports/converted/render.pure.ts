@@ -126,6 +126,16 @@ export interface PlannedConvertedChapter {
   packedSections?: number;
   lines: number;
   pages: number;
+  /**
+   * As printed on the chapter opener and in the contents — `05`, or `A`.
+   *
+   * Two series, because this document is two things: the format's own chapters,
+   * and an appendix of what the uploaded template had no home for. Numbered here
+   * so the opener, the contents page and the spine cannot disagree.
+   */
+  number: string;
+  /** The word before the number. `Section` for a chapter, `Appendix` for one. */
+  label: string;
 }
 
 /**
@@ -168,7 +178,8 @@ export function planConvertedChapters(
   plan: BindingPlan,
   enriched: EnrichedChapters = {},
 ): PlannedConvertedChapter[] {
-  const chapters: PlannedConvertedChapter[] = [];
+  /** Numbered in one pass at the end, so the two series are decided in one place. */
+  const chapters: Array<Omit<PlannedConvertedChapter, 'number' | 'label'>> = [];
 
   // Whatever the first chapter carries on top of its own content.
   const opening = OPENING_NOTICE_LINES
@@ -250,7 +261,12 @@ export function planConvertedChapters(
       id: `cv.${i}`,
       kind: 'unfilled',
       title: binding.chapter,
-      note: 'Supplied by the live report',
+      // No dek. The callout this chapter's body *is* carries the label
+      // `SUPPLIED BY THE LIVE REPORT`, and a 12pt italic dek saying the same
+      // four words 40pt above an 8.5pt mono eyebrow saying them again is the
+      // repetition E3 exists to stop — three pages of a real render opened on
+      // exactly that.
+      note: undefined,
       markdown: '',
       lines: unfilledLines,
       pages: pagesForLines(unfilledLines),
@@ -319,7 +335,45 @@ export function planConvertedChapters(
     });
   });
 
-  return chapters;
+  // ── Two series ────────────────────────────────────────────────────────────
+  //
+  // The document says on its second page that unmatched sections are "kept as
+  // an appendix", and then printed them in the main spine under `SECTION 05` …
+  // `SECTION 10` with the same eyebrow, the same rule and the same 30pt serif
+  // as the format's own chapters. The only marker was a 9pt italic dek, which
+  // nobody reads as a structural boundary — so the document contradicted itself
+  // on page two, and cross-format binding made it worse: a Borrowing Capacity
+  // template bound to Portfolio has six appendix chapters, not three.
+  //
+  // Letters rather than a continued count, because an appendix is not chapter
+  // eleven of a ten-chapter format. `contentsEntriesFor` reads these back off
+  // the spine, so the contents page and the openers cannot drift — they used to
+  // count independently and agreed only by coincidence.
+  // The format's own word for a chapter — `Chapter` for the Investment Compass,
+  // `Section` for the other nine. An appendix has only one word.
+  const chapterLabel = REPORT_ARCHETYPES[plan.format]?.chapterLabel ?? 'Section';
+  let section = 0;
+  let appendix = 0;
+  return chapters.map((chapter) => {
+    if (chapter.kind === 'appendix') {
+      appendix += 1;
+      return { ...chapter, number: appendixLetter(appendix), label: 'Appendix' };
+    }
+    section += 1;
+    return { ...chapter, number: String(section).padStart(2, '0'), label: chapterLabel };
+  });
+}
+
+/** `1 → A`, `26 → Z`, `27 → AA`. A template with 27 loose sections is not likely. */
+function appendixLetter(n: number): string {
+  let out = '';
+  let i = Math.max(1, n);
+  while (i > 0) {
+    const r = (i - 1) % 26;
+    out = String.fromCharCode(65 + r) + out;
+    i = Math.floor((i - 1) / 26);
+  }
+  return out;
 }
 
 export interface RenderConvertedInput {
@@ -408,7 +462,9 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
 
   const spine = buildSpine({
     archetype: input.plan.format,
-    chapters: chapters.map((c) => ({ id: c.id, title: c.title, pageBudget: c.pages, note: c.note })),
+    chapters: chapters.map((c) => ({
+      id: c.id, title: c.title, pageBudget: c.pages, note: c.note, number: c.number,
+    })),
     contentsPages: Math.max(1, Math.ceil(chapters.length / 22)),
   });
 
@@ -509,7 +565,7 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
   const composedFor = (id: string): readonly string[] => input.composed?.[id] ?? [];
 
   const body = chapters.map((chapter, index) => {
-    const number = String(index + 1).padStart(2, '0');
+    const number = chapter.number;
     // The opening lede describes the *conversion*, so it goes with the draft
     // furniture. A final document opens on its own first chapter.
     const opening = index === 0
@@ -552,10 +608,14 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
         // Every block refused by its primitive. Vanishingly unlikely — the
         // reader rejects degenerate input before it gets here — but a chapter
         // that prints nothing is worse than one that prints flat prose.
-        inner = renderMarkdown(chapter.markdown, { idPrefix }).html;
+        inner = renderMarkdown(chapter.markdown, {
+          idPrefix, headlessTableCaption: chapter.title,
+        }).html;
       }
     } else {
-      inner = renderMarkdown(chapter.markdown, { idPrefix }).html;
+      inner = renderMarkdown(chapter.markdown, {
+        idPrefix, headlessTableCaption: chapter.title,
+      }).html;
     }
 
     return openChapter(documentName, number, chapter.title)
@@ -563,9 +623,13 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
         number,
         title: chapter.title,
         // `From "Executive Summary"` is provenance — useful while somebody is
-        // checking the binding, noise on a document being sent out.
-        dek: final ? undefined : chapter.note,
-        label: archetype.chapterLabel,
+        // checking the binding, noise on a document being sent out. An appendix
+        // chapter keeps its note either way: on a *final* document it is the
+        // only thing on the page saying which of the template's sections this
+        // is, and `APPENDIX B` alone does not.
+        dek: final && chapter.kind !== 'appendix' ? undefined : chapter.note,
+        // `Appendix A` where the format's own chapters say `Section 05`.
+        label: chapter.label,
       })
       + `<div class="chapter-body">${opening}${inner}</div>`
       + closeChapter();

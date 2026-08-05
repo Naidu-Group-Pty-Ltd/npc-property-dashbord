@@ -334,8 +334,21 @@ export function auditSnapshot(
   if (!snapshot.company.email && !snapshot.company.phone) {
     gaps.push('no contact route on the closing page');
   }
-  if (disclaimer && !disclaimer.is_enabled) {
+  // Absent counts, not just disabled.
+  //
+  // This guarded on `disclaimer &&`, so the two ways it goes missing *without
+  // anybody choosing that* were the two it stayed silent about: an unreadable
+  // `global_report_settings` query, which the render routes warn and swallow,
+  // and a settings row that was never written. Both arrive here as `null` and
+  // both printed a closing page with no disclaimer and no gap recorded.
+  //
+  // A general-advice disclaimer is not decoration on a lending document.
+  if (!disclaimer) {
+    gaps.push('no professional disclaimer was found in the report settings');
+  } else if (!disclaimer.is_enabled) {
     gaps.push('the professional disclaimer is disabled');
+  } else if (!String(disclaimer.text ?? '').trim()) {
+    gaps.push('the professional disclaimer is enabled but empty');
   }
   return gaps;
 }
