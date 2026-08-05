@@ -583,10 +583,22 @@ function coverRules(
     line-height: 1.05;
     color: ${palette.accentOnField};
   }
+  /* The meta block runs to a second row rather than squeezing its columns.
+
+     One row of however many entries a format supplied sized its columns to
+     content, so a fourth entry took every column below its content width and
+     three of the four broke — including "04 August 2026", set as "04 August"
+     over "2026". A date that wraps is the kind of thing a reader registers as
+     sloppiness before they have read a word, and it is on the cover.
+
+     renderCover now chunks the entries into rows of at most three, balanced,
+     and the vertical border-spacing separates them. Still a table: the flat
+     sheet's layout model is tables rather than flexbox, for the reason this
+     file's header gives, and a cover is not the place to make an exception. */
   .report-cover .cover-meta {
     margin-top: 16mm;
     display: table;
-    border-spacing: 7mm 0;
+    border-spacing: 7mm 5mm;
     margin-left: -7mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro + 0.5)};
@@ -594,6 +606,7 @@ function coverRules(
     text-transform: uppercase;
     color: ${alpha(palette.onFieldInk, 0.78)};
   }
+  .report-cover .cover-meta .meta-row { display: table-row; }
   .report-cover .cover-meta .meta-item { display: table-cell; vertical-align: top; }
   .report-cover .cover-meta .lbl {
     display: block;

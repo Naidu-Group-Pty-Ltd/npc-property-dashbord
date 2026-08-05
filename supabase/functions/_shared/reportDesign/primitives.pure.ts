@@ -191,6 +191,37 @@ export interface CoverProps {
   footerRight?: string;
 }
 
+/**
+ * The most meta entries that fit across the cover on one row.
+ *
+ * Four broke three of the four values, including `04 August 2026` set as
+ * `04 August` over `2026`. Three is what the measure holds at this size.
+ */
+export const COVER_META_PER_ROW = 3;
+
+/**
+ * The cover's meta block, in balanced rows.
+ *
+ * Balanced rather than filled: four entries set 2 + 2 rather than 3 + 1,
+ * because a table row with one cell in a three-column table occupies one
+ * column and reads as a stray. Nothing is dropped — a cover that silently
+ * loses its fourth fact is a worse answer than one that runs to a second row.
+ */
+export function renderCoverMeta(meta: readonly CoverMetaItem[]): string {
+  if (!meta.length) return '';
+  const rows = Math.ceil(meta.length / COVER_META_PER_ROW);
+  const perRow = Math.ceil(meta.length / rows);
+  const chunks = Array.from({ length: rows }, (_, i) => meta.slice(i * perRow, (i + 1) * perRow));
+  return `<div class="cover-meta">${chunks.map((chunk) => `
+        <div class="meta-row">${chunk.map((m) => `
+          <div class="meta-item">
+            <span class="lbl">${escapeHtml(m.label)}</span>
+            <span class="val">${escapeHtml(m.value)}</span>
+          </div>`).join('')}
+        </div>`).join('')}
+      </div>`;
+}
+
 export function renderCover(p: CoverProps): string {
   const hero = p.heroDataUri
     ? `<div class="cover-hero" style="background-image:url('${cssUrl(p.heroDataUri)}')"></div>`
@@ -201,14 +232,7 @@ export function renderCover(p: CoverProps): string {
     ? `${escapeHtml(p.title)}<br><em>${escapeHtml(p.subtitle)}</em>`
     : escapeHtml(p.title);
 
-  const meta = (p.meta ?? []).length
-    ? `<div class="cover-meta">${(p.meta ?? []).map((m) => `
-          <div class="meta-item">
-            <span class="lbl">${escapeHtml(m.label)}</span>
-            <span class="val">${escapeHtml(m.value)}</span>
-          </div>`).join('')}
-        </div>`
-    : '';
+  const meta = renderCoverMeta(p.meta ?? []);
 
   const lockup = p.lockup
     ? `<div class="cover-lockup">${renderBrandLockup({ ...p.lockup, onField: true, large: true })}</div>`
@@ -589,7 +613,19 @@ export function renderCompanyPage(p: CompanyPageProps): string {
       }</div>`
     : '';
 
-  const lockup = p.lockup
+  // A wordmark-only lockup above the wordmark is the firm's name printed twice,
+  // 20mm apart, at two sizes. Read off a closing page: `TENANT ADVISORY` in
+  // small letterspaced caps, then `TENANT` over `ADVISORY` as the display
+  // lockup underneath it. When the lockup carries a mark the repetition earns
+  // its place — the image is the point and the text labels it — and when it
+  // does not, it is noise on the one page that is nothing but the brand.
+  const sameWords = (a: string, b: string) =>
+    a.toLowerCase().replace(/[^a-z0-9]/g, '') === b.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const wordmark = `${block.name.lead} ${block.name.tail ?? ''}`;
+  const lockupEchoes = Boolean(
+    p.lockup && !p.lockup.markDataUri && p.lockup.wordmark && sameWords(p.lockup.wordmark, wordmark),
+  );
+  const lockup = p.lockup && !lockupEchoes
     ? renderBrandLockup({ ...p.lockup, onField: true })
     : '';
 

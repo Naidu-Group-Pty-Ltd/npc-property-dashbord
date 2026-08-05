@@ -7,8 +7,6 @@
  * screen constructs looks correct in review and prints flat. The only way that
  * defect surfaces before a client sees it is a test that reads the CSS.
  */
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildReportCss } from '../css.pure';
 import { resolveReportPalette, type ReportPreset } from '../brandResolve.pure';
@@ -246,37 +244,15 @@ describe('buildReportCss — determinism', () => {
 });
 
 /**
- * The stylesheet is one template literal, so a backtick in a CSS comment ends
- * it.
+ * The stylesheet still parses, and produces a sheet.
  *
- * Nothing subtle about the failure — the module stops parsing and every spec
- * that imports it dies at transform time. What makes it worth a guard is how
- * easy it is to reintroduce: the house comment style quotes identifiers in
- * backticks everywhere else in the repo, and inside this one function that is a
- * syntax error rather than a style choice. It has been made three times.
+ * The guard against the way it stops parsing — a backtick inside a CSS comment,
+ * which closes the one template literal the whole sheet is written in — lives in
+ * `cssTemplateLiteral.spec.ts` rather than here. It has to, because this file
+ * imports `buildReportCss`: when the module will not parse, every test in this
+ * file dies at transform time, including the one written to name the mistake.
  */
 describe('the stylesheet is one template literal', () => {
-  const SOURCE = readFileSync(
-    resolve(__dirname, '../../../../supabase/functions/_shared/reportDesign/css.pure.ts'),
-    'utf8',
-  );
-
-  it('quotes nothing in backticks inside a CSS comment', () => {
-    // The literal runs from `return \`` to its closing line.
-    const body = SOURCE.slice(SOURCE.indexOf('\nfunction sheet('), SOURCE.length);
-    const offenders: string[] = [];
-    let inComment = false;
-    for (const line of body.split('\n')) {
-      if (line.includes('/*')) inComment = true;
-      if (inComment && line.includes('`')) offenders.push(line.trim());
-      if (line.includes('*/')) inComment = false;
-    }
-    expect(
-      offenders,
-      `a backtick in a CSS comment closes the stylesheet's template literal:\n${offenders.join('\n')}`,
-    ).toEqual([]);
-  });
-
   it('still parses and produces a sheet', () => {
     expect(buildReportCss({ palette: resolveReportPalette(), masthead: 'Acme' }).length)
       .toBeGreaterThan(1000);

@@ -82,11 +82,35 @@ export function sanitizeReportText(text: string | null | undefined): string {
 }
 
 /**
+ * The most characters the display lead may carry on one line.
+ *
+ * Measured off the closing page: the lead sets in the display face at the size
+ * `.company-page .company-name` gives it, and the content measure holds a little
+ * over sixteen uppercase characters of it before the line breaks.
+ */
+export const LOCKUP_LEAD_CHARS = 16;
+
+/**
  * Split a company name into a display lead and a smaller tail.
  *
  * "NPC Property Services" sets as **NPC PROPERTY** over a lighter *SERVICES* —
  * a lockup convention both existing implementations already use, reproduced here
  * so it survives the port. A single-word name has no tail.
+ *
+ * ## Why this counts characters rather than words
+ *
+ * The rule was "everything but the last word", which is right for the
+ * three-word name it was written for and wrong for a four-word one. On a real
+ * tenant's closing page, `NAIDU PROPERTY CONSULTING SERVICES` set
+ * `NAIDU PROPERTY CONSULTING` in gold across two display lines with `SERVICES`
+ * beneath it in small letterspaced caps — which does not read as a lockup, it
+ * reads as a title that ran out of room with a subtitle bolted on. It is the
+ * last page of the document and it was the second thing a reader saw.
+ *
+ * So the lead takes as many whole words as fit on one line and the tail takes
+ * the rest, however many words that is. Three-word names are unchanged, which
+ * is what keeps the existing convention: `NPC PROPERTY` is 12 characters and
+ * `TENANT` is 6.
  */
 export function splitCompanyName(name: string | null | undefined): {
   lead: string;
@@ -95,7 +119,15 @@ export function splitCompanyName(name: string | null | undefined): {
   const clean = sanitizeReportText(name) || FALLBACK_COMPANY_NAME;
   const parts = clean.toUpperCase().split(/\s+/).filter(Boolean);
   if (parts.length < 2) return { lead: parts[0] ?? FALLBACK_COMPANY_NAME.toUpperCase(), tail: null };
-  return { lead: parts.slice(0, -1).join(' '), tail: parts[parts.length - 1] };
+
+  // As many words as fit, and never fewer than one — a lead longer than the
+  // measure is still better than an empty one when the first word alone is long.
+  let take = 1;
+  while (take < parts.length - 1
+    && parts.slice(0, take + 1).join(' ').length <= LOCKUP_LEAD_CHARS) {
+    take += 1;
+  }
+  return { lead: parts.slice(0, take).join(' '), tail: parts.slice(take).join(' ') };
 }
 
 /**
