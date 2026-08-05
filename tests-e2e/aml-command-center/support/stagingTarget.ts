@@ -117,45 +117,24 @@ export function collectPageErrors(page: Page) {
 }
 
 /**
- * Portal shell session bootstrap.
+ * Portal shell chrome only. **No portal session is fulfilled locally.**
  *
- * `client-portal-verify` is NOT deployed on the preview branch: its session
- * select joins `public.clients`, a table the branch does not carry (the branch
- * was rebuilt with the AML + portal-session tables only, because the parent
- * migration ledger is not replayable — see
- * docs/aml/rollout/full-integration-progress.md). Fulfilling it locally lets
- * the portal shell mount so the AML surface can be exercised.
+ * This used to fulfil `client-portal-verify` because that function was not
+ * deployed on the branch — its session select embeds `clients:client_id`, and
+ * the branch carried neither the `clients` table nor the foreign key PostgREST
+ * needs to resolve the embed. Both are now materialised from the repository's
+ * own DDL and the function is deployed, so the bootstrap is a real call to the
+ * real backend: a live token returns `valid: true` with the client's name, and a
+ * revoked one returns a real 401. Nothing about the session is faked any more.
  *
- * This does NOT weaken the access-control assertions: `aml-client-portal`
- * performs its own independent session lookup against the real branch database
- * (that lookup was the subject of the 401 root-cause fix), so a revoked or
- * cross-client token is still refused by the real backend under test.
+ * What remains here is unrelated portal widgets whose tables are absent from the
+ * branch; they are answered empty so a 404 cascade cannot mask an AML assertion.
+ * Nothing matching `aml-` is ever intercepted.
  */
 export async function stubPortalShellSession(
   page: Page,
-  who: 'linked' | 'noCase' | 'revoked',
+  _who: 'linked' | 'noCase' | 'revoked',
 ) {
-  const profile = {
-    linked: { id: SYNTHETIC.linkedUserId, client_id: SYNTHETIC.linkedClientId, email: SYNTHETIC.linkedEmail, name: 'Synthetic Linked Client' },
-    noCase: { id: SYNTHETIC.noCaseUserId, client_id: SYNTHETIC.noCaseClientId, email: SYNTHETIC.noCaseEmail, name: 'Synthetic No-Case Client' },
-    revoked: { id: SYNTHETIC.revokedUserId, client_id: SYNTHETIC.revokedClientId, email: SYNTHETIC.revokedEmail, name: 'Synthetic Revoked Client' },
-  }[who];
-
-  await page.route('**/functions/v1/client-portal-verify', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        valid: true,
-        user: { ...profile, has_completed_onboarding: true, has_accepted_terms: true },
-        session_token: tokenFor(who),
-      }),
-    });
-  });
-
-  // Portal shell chrome (notifications, unrelated portal widgets) is not under
-  // test and its tables are absent from the branch; answer with empty sets so a
-  // 404 cascade cannot mask an AML assertion.
   for (const fn of ['client-portal-notifications', 'client-portal-data', 'client-portal-dashboard']) {
     await page.route(`**/functions/v1/${fn}`, (route) =>
       route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),

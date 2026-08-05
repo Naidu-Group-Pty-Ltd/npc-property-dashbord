@@ -25,7 +25,18 @@ import {
  *   AML_E2E=1 npx playwright test tests-e2e/aml-command-center/clientPortalAml.e2e.ts
  */
 
-const BASE = process.env.AML_E2E_BASE_URL || 'http://127.0.0.1:8080';
+/**
+ * The SPA must be reached on `http://localhost:8080`, not `http://127.0.0.1:8080`.
+ *
+ * The deployed functions build their CORS allow-list with `createCorsHeaders`,
+ * whose local entries are `http://localhost:5173` and `http://localhost:8080`.
+ * `127.0.0.1` is not among them, so a browser on that origin has its bootstrap
+ * response rejected and the portal falls back to the sign-in page. That was
+ * invisible while `client-portal-verify` was fulfilled locally — removing the
+ * stub is what surfaced it. Vite still binds 127.0.0.1; only the origin the
+ * browser uses matters.
+ */
+const BASE = process.env.AML_E2E_BASE_URL || 'http://localhost:8080';
 const SHOTS = process.env.AML_E2E_ARTIFACTS || 'test-results/aml-browser-evidence';
 
 test.skip(!process.env.AML_E2E, 'set AML_E2E=1 with the local SPA served against the staging branch');
