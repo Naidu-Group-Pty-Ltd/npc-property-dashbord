@@ -250,7 +250,7 @@ export default function AmlCasesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <AmlPageHeader
         title="Case register"
         description="Every customer compliance case — search, filter and continue the work."
@@ -278,7 +278,7 @@ export default function AmlCasesPage() {
       />
 
       {/* Saved views */}
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Saved views">
+      <div className="rounded-xl border border-border/60 bg-card/45 p-2 shadow-sm"><div className="flex flex-wrap gap-2" role="group" aria-label="Saved views">
         {SAVED_VIEWS.map((v) => (
           <Button
             key={v.key}
@@ -292,9 +292,10 @@ export default function AmlCasesPage() {
           </Button>
         ))}
       </div>
+      </div>
 
       {/* Search + filters as one toolbar */}
-      <div role="search" aria-label="Filter the case register" className="space-y-2">
+      <div role="search" aria-label="Filter the case register" className="rounded-xl border border-border/60 bg-card/45 p-3 shadow-sm space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
             <Input
@@ -367,8 +368,8 @@ export default function AmlCasesPage() {
         />
       )}
 
-      <Card>
-        <CardContent className="pt-6">
+      <Card className="overflow-hidden border-border/70 bg-card/50 shadow-md">
+        <CardContent className="p-0">
           {/* Skeleton whenever a load is in flight with nothing to show —
               a refetch from an empty result must never flash a false
               "no matches" for data that hasn't arrived yet. */}
@@ -399,9 +400,9 @@ export default function AmlCasesPage() {
           ) : (
             <>
               {/* Desktop: commercial data table (directive §10.1) */}
-              <div className="hidden md:block">
+              <div className="hidden max-h-[58vh] overflow-auto md:block">
                 <Table aria-label="Case register">
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                     <TableRow>
                       <TableHead scope="col">Client / subject</TableHead>
                       <TableHead scope="col">Reference</TableHead>
@@ -424,7 +425,7 @@ export default function AmlCasesPage() {
                           tabIndex={0}
                           role="link"
                           aria-label={`Open case ${c.case_reference} for ${c.subject_display_name}`}
-                          className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                          className="cursor-pointer border-l-2 border-l-transparent transition-colors hover:border-l-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                           onClick={() => openCase(c)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCase(c); }
@@ -471,7 +472,7 @@ export default function AmlCasesPage() {
                     <button
                       key={c.id}
                       onClick={() => openCase(c)}
-                      className="w-full rounded-lg border border-border bg-card p-3 text-left transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      className="w-full rounded-xl border border-border bg-card/60 p-3 text-left shadow-sm transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                       aria-label={`Open case ${c.case_reference} for ${c.subject_display_name}`}
                     >
                       <div className="flex items-start justify-between gap-2">

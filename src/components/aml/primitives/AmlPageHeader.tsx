@@ -39,19 +39,19 @@ export function AmlPageHeader({
 }: AmlPageHeaderProps) {
   const Heading = headingLevel;
   return (
-    <header className={cn("space-y-3", className)}>
+    <header className={cn("rounded-xl border border-border/60 bg-card/45 p-4 shadow-sm supports-[backdrop-filter]:bg-card/35 sm:p-5", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           {Icon && (
             <div
               aria-hidden="true"
-              className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary"
             >
               <Icon className="h-5 w-5" />
             </div>
           )}
           <div className="min-w-0">
-            <Heading className="text-xl font-semibold tracking-tight sm:text-2xl">
+            <Heading className="text-lg font-semibold tracking-tight sm:text-xl">
               {title}
             </Heading>
             {description && (

@@ -25,6 +25,7 @@ export interface AmlMetricCardProps {
   title: string;
   icon?: LucideIcon;
   state: "loading" | "ready" | "unavailable";
+  tone?: "neutral" | "healthy" | "attention" | "critical";
   value?: number | string | null;
   /** One-line qualifier under the value ("3 critical", "Rule engine backlog"). */
   hint?: string;
@@ -44,12 +45,24 @@ export function AmlMetricCard({
   unavailableHint = "Not available right now. Refresh to try again.",
   to,
   className,
+  tone = "neutral",
 }: AmlMetricCardProps) {
+  const numeric = typeof value === "number" ? value : Number(value ?? 0);
+  const resolvedTone = state === "unavailable" ? "unavailable" : state === "ready" && numeric === 0 ? "healthy" : tone;
+  const toneClass = resolvedTone === "critical"
+    ? "border-destructive/30 bg-destructive/5"
+    : resolvedTone === "attention"
+      ? "border-warning/35 bg-warning/5"
+      : resolvedTone === "healthy"
+        ? "border-success/25 bg-success/5"
+        : resolvedTone === "unavailable"
+          ? "border-dashed opacity-80"
+          : "border-border/70 bg-card/45";
   const body = (
     <Card
       className={cn(
-        "h-full",
-        to && "transition-colors hover:border-primary/40",
+        "h-full shadow-sm", toneClass,
+        to && "transition-colors hover:border-primary/40 hover:bg-primary/5",
         className,
       )}
     >
@@ -66,9 +79,9 @@ export function AmlMetricCard({
             <span className="sr-only">Loading {title}</span>
           </>
         ) : state === "unavailable" ? (
-          <div className="text-sm font-medium text-muted-foreground">Not available</div>
+          <div className="text-sm font-semibold text-muted-foreground">Not available</div>
         ) : (
-          <div className="text-3xl font-semibold tabular-nums">{value ?? 0}</div>
+          <div className="text-2xl font-semibold tabular-nums">{value ?? 0}</div>
         )}
         <p className="mt-1 text-xs text-muted-foreground">
           {state === "unavailable" ? unavailableHint : hint}
