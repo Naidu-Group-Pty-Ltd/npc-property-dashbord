@@ -206,20 +206,28 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
     );
   }, [rendered, sheetIndex, goToSheet]);
 
+  // Sized to the shape of each document rather than to the screen: a workbook
+  // sheet is wide, an A4 guide is narrow, and neither needs the whole viewport.
+  const isWorkbook = source?.kind === 'workbook';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* The size classes are written here, not only in `ci-pack-dialog`: the
-          dialog primitive's own `sm:max-w-lg` / `sm:max-h-[85dvh]` utilities sit
-          in a later cascade layer than the component class, so a component-layer
-          width was silently losing to them and the viewer opened tiny. */}
+      {/* Layout and size are written as utilities, not only in `ci-pack-dialog`:
+          the dialog primitive's own `grid gap-4 p-6 sm:max-w-lg` sit in a later
+          cascade layer than the component class, so a component-layer
+          flex/width was silently losing to them — which is what produced the
+          large empty band above the document. */}
       <DialogContent
         className={cn(
           'ci-pack-dialog',
-          'w-[96vw] max-w-none sm:w-[96vw] sm:max-w-none',
-          'h-[92dvh] max-h-[92dvh] sm:max-h-[92dvh]',
-          expanded && 'ci-pack-dialog-expanded w-[99vw] sm:w-[99vw] h-[97dvh] max-h-[97dvh] sm:max-h-[97dvh]',
+          'flex flex-col gap-0 p-0',
+          isWorkbook
+            ? 'w-[min(1320px,94vw)] max-w-none sm:max-w-none h-[86dvh] max-h-[86dvh] sm:max-h-[86dvh]'
+            : 'w-[min(940px,94vw)] max-w-none sm:max-w-none h-[88dvh] max-h-[88dvh] sm:max-h-[88dvh]',
+          expanded && 'ci-pack-dialog-expanded w-[98vw] max-w-none sm:max-w-none h-[96dvh] max-h-[96dvh] sm:max-h-[96dvh]',
         )}
       >
+
         <header className="ci-pack-header">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base">{title}</DialogTitle>
