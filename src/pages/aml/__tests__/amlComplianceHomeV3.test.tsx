@@ -89,7 +89,7 @@ beforeEach(() => {
 describe("Compliance Home V3 — operational dashboard", () => {
   it("keeps the required hierarchy: header, next best action, priority queue", async () => {
     setup();
-    expect(await screen.findByRole("heading", { name: "Compliance Home" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Attention, blocked work and programme health" })).toBeInTheDocument();
     // Next best action derives from the top of the priority queue.
     expect(await screen.findByText(/Awaiting decision — Urgent Client/)).toBeInTheDocument();
     expect(screen.getByText("Priority work queue")).toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("Compliance Home V3 — operational dashboard", () => {
   it("omits restricted monitoring metrics entirely for view-only users", async () => {
     mockRoles = new Set<AmlRole>(["auditor"]);
     setup();
-    await screen.findByRole("heading", { name: "Compliance Home" });
+    await screen.findByRole("heading", { name: "Attention, blocked work and programme health" });
     expect(screen.queryByText("Open alerts")).not.toBeInTheDocument();
     expect(screen.queryByText("Monitoring & finance operations")).not.toBeInTheDocument();
     expect(monitoringSummary).not.toHaveBeenCalled();

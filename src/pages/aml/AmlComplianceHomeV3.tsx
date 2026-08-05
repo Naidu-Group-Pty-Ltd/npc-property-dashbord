@@ -30,7 +30,6 @@ import {
   AmlEmptyState,
   AmlErrorState,
   AmlMetricCard,
-  AmlPageHeader,
   AmlPageSection,
   AmlRefreshButton,
   AmlRiskBadge,
@@ -341,54 +340,37 @@ export default function AmlComplianceHomeV3() {
   }
 
   return (
-    <div className="space-y-6">
-      <AmlPageHeader
-        title="Compliance Home"
-        description="What needs attention across customer compliance, monitoring and reporting — and what to do next."
-        icon={ShieldCheck}
-        actions={
-          <>
-            <span className="text-xs text-muted-foreground" aria-live="polite">
-              {lastRefreshed
-                ? `Updated ${lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                : ""}
-            </span>
-            <AmlRefreshButton onClick={refresh} loading={refreshing} />
-          </>
-        }
-      />
+    <div className="space-y-4">
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end" aria-labelledby="compliance-home-heading">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Operational overview</p>
+          <h2 id="compliance-home-heading" className="mt-1 text-xl font-semibold tracking-tight">Attention, blocked work and programme health</h2>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">One command view for customer compliance, monitoring queues and reporting handoffs.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span aria-live="polite">{lastRefreshed ? `Updated ${lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
+          <AmlRefreshButton onClick={refresh} loading={refreshing} />
+        </div>
+      </section>
 
       {/* Next best action — the one dominant panel. */}
       {nextBest && (
-        <Card className="border-primary/20 bg-primary/5">
-          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex items-center gap-3">
-              <div
-                aria-hidden="true"
-                className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary shrink-0"
-              >
-                <ListChecks className="h-5 w-5" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{nextBest.title}</div>
-                <div className="text-xs text-muted-foreground">{nextBest.detail}</div>
-              </div>
+        <Card className={queue.length > 0 ? "border-warning/35 bg-warning/5 shadow-md" : "border-success/25 bg-success/5 shadow-sm"}>
+          <CardContent className="grid gap-3 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
+            <div aria-hidden="true" className={queue.length > 0 ? "flex h-10 w-10 items-center justify-center rounded-xl border border-warning/30 bg-warning/10 text-warning" : "flex h-10 w-10 items-center justify-center rounded-xl border border-success/30 bg-success/10 text-success"}>
+              <ListChecks className="h-5 w-5" />
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button asChild size="sm">
-                <Link to={nextBest.to}>
-                  {nextBest.cta}
-                  <ArrowRight aria-hidden="true" className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              {canReport && nextBest.to !== "/admin/aml/austrac" && (
-                <Button asChild size="sm" variant="outline">
-                  <Link to="/admin/aml/austrac">
-                    Open AUSTRAC Hub
-                    <ArrowRight aria-hidden="true" className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-              )}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <span>{queue.length > 0 ? "Priority queue" : "Healthy queue"}</span>
+                <span className="rounded-full border border-border/60 px-2 py-0.5">{queue.length} actionable</span>
+              </div>
+              <div className="mt-0.5 truncate text-sm font-semibold">{nextBest.title}</div>
+              <div className="text-xs text-muted-foreground">{nextBest.detail}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <Button asChild size="sm"><Link to={nextBest.to}>{nextBest.cta}<ArrowRight aria-hidden="true" className="ml-2 h-4 w-4" /></Link></Button>
+              {canReport && nextBest.to !== "/admin/aml/austrac" && <Button asChild size="sm" variant="outline"><Link to="/admin/aml/austrac">AUSTRAC Hub<ArrowRight aria-hidden="true" className="ml-2 h-4 w-4" /></Link></Button>}
             </div>
           </CardContent>
         </Card>
@@ -404,8 +386,8 @@ export default function AmlComplianceHomeV3() {
       )}
 
       {/* Priority work queue — what requires attention, with a direct action. */}
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="overflow-hidden border-border/70 bg-card/50 shadow-md">
+        <CardHeader className="border-b border-border/60 bg-muted/25 pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">Priority work queue</CardTitle>
             <Button asChild size="sm" variant="outline">
@@ -430,14 +412,14 @@ export default function AmlComplianceHomeV3() {
           ) : (
             <ul className="divide-y divide-border/60 text-sm">
               {queue.map(({ caseRow: c, reason, action }) => (
-                <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <li key={c.id} className="grid gap-2 py-2.5 sm:grid-cols-[minmax(0,1.2fr)_auto] sm:items-center">
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{c.subject_display_name}</div>
                     <div className="text-xs text-muted-foreground">
                       {c.case_reference} · {reason}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <AmlStageBadge stage={caseStage(c)} />
                     <Button asChild size="sm" variant="outline">
                       <Link to={`/admin/aml/cases?open=${c.id}`}>{action}</Link>
@@ -464,6 +446,7 @@ export default function AmlComplianceHomeV3() {
             value={counts?.onboarding}
             hint="Clients currently completing onboarding."
             to="/admin/aml/cases?view=onboarding"
+            tone="neutral"
           />
           <AmlMetricCard
             title="Submissions to review"
@@ -472,6 +455,7 @@ export default function AmlComplianceHomeV3() {
             value={counts?.awaitingReview}
             hint="Client submissions awaiting staff review."
             to="/admin/aml/cases?view=awaiting_review"
+            tone="attention"
           />
           <AmlMetricCard
             title="Enhanced CDD"
@@ -480,6 +464,7 @@ export default function AmlComplianceHomeV3() {
             value={counts?.enhancedCdd}
             hint="Cases needing additional information."
             to="/admin/aml/cases?view=additional_info"
+            tone="attention"
           />
           <AmlMetricCard
             title="Awaiting decision"
@@ -488,6 +473,7 @@ export default function AmlComplianceHomeV3() {
             value={counts?.escalated}
             hint="Escalated cases awaiting a decision."
             to="/admin/aml/cases?view=awaiting_decision"
+            tone="critical"
           />
         </div>
       </AmlPageSection>
@@ -507,6 +493,7 @@ export default function AmlComplianceHomeV3() {
               value={monitoring?.open_alerts}
               hint={monitoring ? `${monitoring.critical_alerts} critical` : undefined}
               to="/admin/aml/monitoring"
+              tone="attention"
             />
             <AmlMetricCard
               title="Unprocessed events"
@@ -515,6 +502,7 @@ export default function AmlComplianceHomeV3() {
               value={monitoring?.unprocessed_events}
               hint="Rule engine backlog."
               to="/admin/aml/monitoring"
+              tone="attention"
             />
             <AmlMetricCard
               title="Reviews due"
@@ -523,6 +511,7 @@ export default function AmlComplianceHomeV3() {
               value={monitoring?.pending_reviews}
               hint={monitoring ? `${monitoring.overdue_reviews} overdue` : undefined}
               to="/admin/aml/monitoring"
+              tone="attention"
             />
             <AmlMetricCard
               title="Funding discrepancies"
@@ -531,6 +520,7 @@ export default function AmlComplianceHomeV3() {
               value={openDiscrepancies}
               hint="Open finance discrepancies to resolve."
               to="/admin/aml/finance"
+              tone="attention"
             />
           </div>
         </AmlPageSection>
@@ -541,8 +531,8 @@ export default function AmlComplianceHomeV3() {
       <PartnerOpsQueueStrip />
 
       {/* Action-led "Do next" — only capabilities the user actually holds. */}
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="overflow-hidden border-border/70 bg-card/50 shadow-md">
+        <CardHeader className="border-b border-border/60 bg-muted/25 pb-3">
           <CardTitle className="text-base">Your workspaces</CardTitle>
           <p className="text-xs text-muted-foreground">
             Areas available to you right now.
