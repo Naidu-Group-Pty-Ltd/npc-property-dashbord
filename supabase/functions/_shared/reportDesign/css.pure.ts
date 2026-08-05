@@ -733,6 +733,19 @@ export function buildReportCss(input: ReportCssInput): string {
     margin: ${pt(d.blockGapPt + 12)} 0 ${pt(d.paragraphGapPt + 3)};
   }
   h3 { font-size: ${pt(type.h3)}; margin: ${pt(d.blockGapPt)} 0 ${pt(d.paragraphGapPt - 1)}; }
+  /* A subhead must not open a section in the last inch of a page.
+     page-break-after:avoid on the heading only promises the *next* box, and
+     when every paragraph is one line the next box always fits — so a real
+     render opened a section and its single line at the very foot of a sheet
+     and put the rest of it overleaf. The orphans/widows properties cannot
+     help: they count lines inside one paragraph, and these are one line each.
+     Refusing a break after the first block as well keeps heading, first and
+     second together, which is the smallest unit that reads as a beginning. */
+  h2 + p, h2 + ul, h2 + ol, h2 + .table-block,
+  h3 + p, h3 + ul, h3 + ol, h3 + .table-block {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
   /* h4 is the mono micro-label, not a smaller heading — it is the same object
      as .eyebrow and shares its colour so the two never drift apart. */
   h4 {
@@ -976,6 +989,21 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
      kept its number and its note on page two and put its title alone on page
      three, so the contents listed a section with no name. */
   .contents .toc-row { display: table-row; break-inside: avoid; page-break-inside: avoid; }
+  /* A contents page must not end by stranding one entry on the next sheet.
+     Keeping a row whole fixed a title separated from its number and swapped in
+     a different fault: the fourteen-entry Market Intelligence contents put
+     thirteen rows on one page and the fourteenth alone on the next, at 0.2%
+     ink, on a named page that carries no running head — so page three of a
+     twenty-two page report was a single line floating under nothing, which
+     reads as a printing fault rather than as a contents page.
+
+     Refusing a break after each of the last three rows pulls the whole tail
+     over together. It is the table equivalent of widows, which does not apply
+     to rows. */
+  .contents .toc-row:nth-last-child(-n+4):not(:last-child) {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
   .contents .toc-row > * {
     display: table-cell;
     padding: ${pt(d.cellPadPt)} 0;

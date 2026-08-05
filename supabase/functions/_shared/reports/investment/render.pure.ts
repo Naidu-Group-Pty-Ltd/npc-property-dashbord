@@ -227,7 +227,11 @@ function chapterBody(
   if (chapter.kind === 'property') return charts + specTable(report);
 
   const prose = chapter.markdown
-    ? renderMarkdown(chapter.markdown, { idPrefix: chapter.id.replace(/[^a-z0-9]/gi, '') }).html
+    ? renderMarkdown(chapter.markdown, {
+      idPrefix: chapter.id.replace(/[^a-z0-9]/gi, ''),
+      // See `MarkdownOptions.chapterTitle` — model prose heads itself.
+      chapterTitle: chapter.title,
+    }).html
     : '';
   // Charts after the prose that introduces them, not before it. The section's
   // own first sentence says what the reader is about to look at.

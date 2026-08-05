@@ -253,21 +253,50 @@ export interface ContentsEntry {
   page?: string | number;
 }
 
-export function renderContentsPage(title: string, entries: ContentsEntry[]): string {
-  const rows = entries.map((e) => `
+export function renderContentsPage(
+  title: string,
+  entries: ContentsEntry[],
+  /**
+   * Entries per sheet, when the list is long enough to need more than one.
+   *
+   * Split here rather than left to the page breaker, because the breaker fills
+   * the first sheet and gives the remainder whatever is left: a fourteen-entry
+   * Market Intelligence contents put thirteen rows on one page and the
+   * fourteenth alone on the next, at 0.2% ink, on a named page that carries no
+   * running head — so page three of a twenty-two page report was one line
+   * floating under nothing. CSS cannot fix it: `break-after: avoid` is not
+   * honoured on table rows, which is where the first attempt went.
+   *
+   * Splitting evenly is also the only way the page count is *decided* rather
+   * than discovered, which is what lets a spine claim it.
+   */
+  perPage?: number,
+): string {
+  const cap = Math.max(1, Math.trunc(perPage ?? entries.length) || entries.length);
+  const sheets = Math.max(1, Math.ceil(entries.length / cap));
+  // Evenly, so two sheets are 7 and 7 rather than 13 and 1.
+  const size = Math.ceil(entries.length / sheets);
+
+  const sheet = (slice: ContentsEntry[]): string => {
+    const rows = slice.map((e) => `
       <div class="toc-row">
         <span class="toc-no">${escapeHtml(e.number ?? '')}</span>
         <span class="toc-title">${escapeHtml(e.title)}</span>
         <span class="toc-note">${escapeHtml(e.note ?? '')}</span>
         <span class="toc-page">${escapeHtml(e.page ?? '')}</span>
       </div>`).join('');
-  return `
+    return `
     <section class="page-contents">
       <div class="eyebrow">Contents</div>
       <h1>${escapeHtml(title)}</h1>
       <div class="contents">${rows}
       </div>
     </section>`;
+  };
+
+  const out: string[] = [];
+  for (let i = 0; i < entries.length; i += size) out.push(sheet(entries.slice(i, i + size)));
+  return out.join('') || sheet([]);
 }
 
 // ── Chapters ────────────────────────────────────────────────────────────────

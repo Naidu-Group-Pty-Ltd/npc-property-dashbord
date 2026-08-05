@@ -529,6 +529,71 @@ document is not.
 
 ---
 
+## The fifth round: where a page is allowed to break
+
+The fourth round's fixes were judged by reading pages, and reading them found
+five more — none in the words on the page, all in where the page ends. Four of
+the five are in shared print code, so they reach every format.
+
+**G1 — a contents page stranded its last entry.** Fourteen Market Intelligence
+entries put thirteen rows on one sheet and the fourteenth alone on the next, at
+0.2% ink, on a named page that carries no running head — page three of a
+twenty-two page report was one line floating under nothing, which reads as a
+printing fault rather than as a contents page.
+
+The first attempt was CSS: refuse a break after each of the last few rows, the
+table equivalent of `widows`. **It did nothing**, because `break-after` is not
+honoured on internal table boxes in WeasyPrint — worth writing down, because the
+rule looked right and the render was the only thing that said otherwise. So
+`renderContentsPage` now splits the entries evenly across sheets itself, from
+the same measurement `contentsPagesFor` costs the spine with, and each sheet
+carries its own heading. Seven and seven, not thirteen and one. Every other
+format passes no cap and is untouched.
+
+**G2 — a section opened two lines before the foot of a page.**
+`page-break-after: avoid` on a heading only promises the *next* box, and when
+every paragraph is one line the next box always fits — so `Capacity Derivation`
+and its single line sat at the very bottom of a sheet with the rest of the
+section overleaf. `orphans`/`widows` cannot see this: they count lines inside one
+paragraph. Refusing a break after the first block as well keeps heading, first
+and second together, which is the smallest unit that reads as a beginning.
+
+**G3 — a chapter printed its own title twice, four lines apart.** At 34pt as the
+chapter title and at 17pt as the first heading of its own prose. The natural way
+to write a section is to head it with its own name, so a model asked for the
+prose of *Executive Summary* opens with `## Executive Summary`. `MarkdownOptions`
+gains `chapterTitle`, and a **leading** heading that matches it is dropped —
+only the leading one, because the same name further down is a real subsection,
+and only for the formats that declare a chapter title separately from its prose.
+Report Q&A's body path is deliberately excluded: its chapters are *derived from*
+those headings, so removing one would change the document's structure.
+
+**G4 — an entire chapter that is one bullet.** A chapter is a sheet. For a
+declarative format that is fine, and for the appendix the packer added in E2
+already handles it; a pass-through format is the third case nobody had covered,
+because its chapters are whatever the uploaded template's top level happened to
+be. A two-bullet `Recommendations` and a one-bullet `Warnings` spent two sheets
+on three lines — 0.011 and 0.006 ink against a native document's 0.133–0.221.
+Consecutive chapters too thin to hold a page are now packed into one, each under
+its own heading, with the same rule and the same helper. The packed chapter keeps
+the *first section's* title rather than an invented one, for the reason C5
+records. An enriched chapter is never absorbed: its blocks are keyed by its own
+id, and a merge would render flat Markdown that the design pass had not costed.
+
+**G5 — a packed appendix dek listed the headings printed below it.**
+`From the template` / `Recommendations · Warnings`, and then `Recommendations`
+and `Warnings` as the only two headings on the page. The headings are the better
+label; the dek is dropped. Same family as E3 and F7.
+
+**And a guard for a mistake made three times.** `css.pure.ts` is one template
+literal, so a backtick in a CSS comment ends it — the module stops parsing and
+every spec that imports it dies at transform time. The house comment style quotes
+identifiers in backticks everywhere else in the repo, which is exactly why it
+keeps happening here. `reportCss.spec.ts` now fails on a backtick inside a CSS
+comment.
+
+---
+
 ## Looking at the document, and widening what it can be
 
 The third round fixed everything that was visibly broken and the output still

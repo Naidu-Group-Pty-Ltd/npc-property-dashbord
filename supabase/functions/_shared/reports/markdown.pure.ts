@@ -352,6 +352,20 @@ export interface MarkdownOptions {
    * Ignored when the table has real headers; they say what it is already.
    */
   headlessTableCaption?: string;
+  /**
+   * A chapter title this run sits under, so the run does not repeat it.
+   *
+   * The natural way to write a section is to head it with its own name, and a
+   * model asked for the prose of *Executive Summary* writes `## Executive
+   * Summary` as its first line. The renderer has already printed that as a 34pt
+   * chapter title, so the page reads the same words twice, four lines apart, at
+   * 34pt and 17pt. Seen on a Market Intelligence render on two consecutive
+   * chapters.
+   *
+   * Only the *leading* heading is dropped, and only when it matches. A heading
+   * of the same name later in the body is a real subsection.
+   */
+  chapterTitle?: string;
 }
 
 export interface MarkdownHeading {
@@ -661,6 +675,12 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   const landscape = options.landscapeWideTables !== false;
   const detectTotal = options.detectTotalRow !== false;
   const headlessCaption = String(options.headlessTableCaption ?? '').trim();
+  /** Compared ignoring case, punctuation and spacing — `Sources:` matches `Sources`. */
+  const sameWords = (a: string, b: string) => {
+    const key = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    return Boolean(key(a)) && key(a) === key(b);
+  };
+  const chapterTitle = String(options.chapterTitle ?? '').trim();
   /** Said once per run. See the table scanner. */
   let headlessCaptionUsed = false;
 
@@ -953,6 +973,11 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     const seen = idsUsed.get(stem) ?? 0;
     idsUsed.set(stem, seen + 1);
     const id = seen ? `${stem}-${seen + 1}` : stem;
+    // The chapter's own name, said again as its first heading. See
+    // `MarkdownOptions.chapterTitle`. Dropped only while nothing has been
+    // emitted yet — later on, a heading of the same name is a real subsection.
+    if (!blocks.length && chapterTitle && sameWords(plain, chapterTitle)) return true;
+
     const html = `<h${level} id="${id}">${renderInlineMarkdown(raw, notices)}</h${level}>`;
     const index = blocks.length;
     if (!push('heading', html, 2)) return false;

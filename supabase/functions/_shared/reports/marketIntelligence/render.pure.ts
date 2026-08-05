@@ -314,7 +314,13 @@ function sectionBody(
   if (section.kind === 'sources') return sourcesTable(report.citations);
 
   const prose = section.markdown
-    ? renderMarkdown(section.markdown, { idPrefix: section.id.replace(/[^a-z0-9]/gi, '') }).html
+    ? renderMarkdown(section.markdown, {
+      idPrefix: section.id.replace(/[^a-z0-9]/gi, ''),
+      // The model writes `## Executive Summary` as the first line of the
+      // section already titled that, and the page then says it twice four
+      // lines apart at 34pt and 17pt.
+      chapterTitle: section.title,
+    }).html
     : '';
 
   if (section.kind === 'next-steps') {
@@ -389,6 +395,13 @@ export function renderMarketIntelligenceBody(
   const contents = renderContentsPage(
     'Contents',
     contentsEntriesFor(spine).map((e) => ({ number: e.number, title: e.title, note: e.note })),
+    // This format is the only one whose contents outgrows a sheet — fourteen or
+    // fifteen entries, each with a note. Split evenly here rather than left to
+    // the page breaker, which fills the first sheet and strands the remainder:
+    // it put thirteen rows on one page and the fourteenth alone on the next.
+    // Derived from the same `contentsPagesFor` the spine is costed with, so the
+    // sheets the reader gets and the pages the spine claims cannot disagree.
+    Math.ceil(contentsEntriesFor(spine).length / Math.max(1, contentsPagesFor(sections))),
   );
 
   // Said on the page, not only in the ledger. A layer that was asked for and

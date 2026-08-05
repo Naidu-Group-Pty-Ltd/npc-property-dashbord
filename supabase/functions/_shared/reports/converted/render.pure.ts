@@ -61,7 +61,7 @@ import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
 import { chartContext } from '../../reportDesign/charts.pure.ts';
 import { pagesForLines, renderMarkdown } from '../markdown.pure.ts';
 import type { BindingPlan } from './binding.pure.ts';
-import { formatName } from './binding.pure.ts';
+import { formatName, isPassthroughFormat } from './binding.pure.ts';
 import { enrichedLines, type EnrichedBlock } from './enrich.pure.ts';
 import { renderEnrichedBlocks } from './renderBlocks.pure.ts';
 import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
@@ -323,9 +323,12 @@ export function planConvertedChapters(
       // A packed chapter names what it holds. "From the template" over "From
       // the uploaded template" is the same sentence twice in two sizes, which
       // is the thing this pass exists to stop doing.
-      note: group.length === 1
-        ? 'From the uploaded template'
-        : group.map((s) => s.title).join(' · '),
+      // A packed group prints `## <title>` for each section it holds, so a dek
+      // listing those same titles says the page's own headings back to it —
+      // `From the template` / `Recommendations · Warnings`, then
+      // `Recommendations` and `Warnings` as the only two headings below. The
+      // headings are the better label; the dek is dropped.
+      note: group.length === 1 ? 'From the uploaded template' : undefined,
       markdown,
       blocks: blocks?.length ? blocks : undefined,
       foldedSubsections: folded || undefined,
@@ -334,6 +337,23 @@ export function planConvertedChapters(
       pages: pagesForLines(lines),
     });
   });
+
+  // ── A pass-through chapter still has to earn its sheet ────────────────────
+  //
+  // A chapter is a sheet. For a declarative format that is fine — its chapters
+  // are the format's own and each is substantial — and for the appendix the
+  // packing above already handles it. A pass-through format is the third case:
+  // its chapters are whatever the uploaded template's top level happened to be,
+  // and a template with a two-bullet `Recommendations` and a one-bullet
+  // `Warnings` spent two sheets on three lines. Measured: 0.011 and 0.006 ink,
+  // against a native document's 0.133–0.221.
+  //
+  // The same rule and the same helper as the appendix: consecutive chapters
+  // that are each too thin to hold a page become one, each under its own
+  // heading. Nothing is lost and nothing is renamed — the packed chapter takes
+  // the first section's title, because for this format the template's own words
+  // are the chapter names and inventing one would be the C5 mistake again.
+  const packed = isPassthroughFormat(plan.format) ? packThin(chapters, enriched) : chapters;
 
   // ── Two series ────────────────────────────────────────────────────────────
   //
@@ -354,13 +374,59 @@ export function planConvertedChapters(
   const chapterLabel = REPORT_ARCHETYPES[plan.format]?.chapterLabel ?? 'Section';
   let section = 0;
   let appendix = 0;
-  return chapters.map((chapter) => {
+  return packed.map((chapter) => {
     if (chapter.kind === 'appendix') {
       appendix += 1;
       return { ...chapter, number: appendixLetter(appendix), label: 'Appendix' };
     }
     section += 1;
     return { ...chapter, number: String(section).padStart(2, '0'), label: chapterLabel };
+  });
+}
+
+/**
+ * Merge runs of chapters too thin to hold a page, each under its own heading.
+ *
+ * The appendix packer's rule, applied to a pass-through format's own chapters —
+ * see the call site. Costed on the *flat* Markdown, never the enriched blocks,
+ * for the reason the appendix packer records: this runs twice for one document
+ * and a grouping that moved between the two calls would re-key everything.
+ */
+function packThin(
+  chapters: ReadonlyArray<Omit<PlannedConvertedChapter, 'number' | 'label'>>,
+  enriched: EnrichedChapters,
+): Array<Omit<PlannedConvertedChapter, 'number' | 'label'>> {
+  const thin = (c: { markdown: string; id: string }): boolean =>
+    renderMarkdown(c.markdown, { idPrefix: `pk${c.id.replace(/[^a-z0-9]/gi, '')}` }).lines
+      + CHAPTER_FURNITURE_LINES < THIN_CHAPTER_LINES;
+
+  const groups: Array<Array<Omit<PlannedConvertedChapter, 'number' | 'label'>>> = [];
+  for (const chapter of chapters) {
+    const last = groups[groups.length - 1];
+    // Never absorb an enriched chapter: its blocks are keyed by its own id, and
+    // a merge would render the flat Markdown while the design pass was costed.
+    const mergeable = thin(chapter) && !enriched[chapter.id]?.length;
+    if (mergeable && last?.length && thin(last[last.length - 1]) && !enriched[last[0].id]?.length) {
+      last.push(chapter);
+    } else {
+      groups.push([chapter]);
+    }
+  }
+
+  return groups.map((group) => {
+    if (group.length === 1) return group[0];
+    const lead = group[0];
+    const markdown = group.map((c) => `## ${c.title}\n\n${c.markdown}`).join('\n\n');
+    const lines = renderMarkdown(markdown, { idPrefix: `pk${lead.id.replace(/[^a-z0-9]/gi, '')}` }).lines
+      + CHAPTER_FURNITURE_LINES;
+    return {
+      ...lead,
+      markdown,
+      blocks: undefined,
+      packedSections: group.length,
+      lines,
+      pages: pagesForLines(lines),
+    };
   });
 }
 
@@ -609,12 +675,12 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
         // reader rejects degenerate input before it gets here — but a chapter
         // that prints nothing is worse than one that prints flat prose.
         inner = renderMarkdown(chapter.markdown, {
-          idPrefix, headlessTableCaption: chapter.title,
+          idPrefix, headlessTableCaption: chapter.title, chapterTitle: chapter.title,
         }).html;
       }
     } else {
       inner = renderMarkdown(chapter.markdown, {
-        idPrefix, headlessTableCaption: chapter.title,
+        idPrefix, headlessTableCaption: chapter.title, chapterTitle: chapter.title,
       }).html;
     }
 
