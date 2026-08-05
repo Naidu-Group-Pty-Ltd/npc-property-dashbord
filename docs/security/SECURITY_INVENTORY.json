@@ -470,6 +470,7 @@
       "manage-bc-scenarios/index.ts",
       "manage-branding/index.ts",
       "manage-call-settings/index.ts",
+      "manage-ci-assessments/index.ts",
       "manage-commission-ledger/index.ts",
       "manage-compliance-records/index.ts",
       "manage-generated-documents/index.ts",

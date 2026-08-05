@@ -290,16 +290,33 @@ of plausible-looking wrong output; the cheapest fix is to not write one.
 
 ---
 
-## 8. To deploy
+## 8. Deployment, and what the first production click taught
 
-1. Apply `20260817000000_commercial_capacity_render_path.sql`.
-2. Deploy `render-commercial-capacity-pdf`.
+Steps 1 and 2 below were **done by hand on 2026-08-05** (migration applied via
+the management API; the function deployed as an esbuild bundle of the repo
+sources). They are recorded here because the *repo's* pipeline did not do them,
+and the way that failed is worth knowing: PR #1947 merged, the
+`deploy-supabase-functions` workflow fired — and stopped at its no-credential
+gate, green, because the `SUPABASE_ACCESS_TOKEN` secret has never been set. The
+first click on Generate report then hit a gateway 404 for a function that was
+never uploaded, which a browser reports as a **CORS error**, because a 404 from
+the gateway carries no CORS headers. Merging is not deploying; the workflow
+even prints what it would have shipped.
+
+1. Apply `20260817000000_commercial_capacity_render_path.sql`. **Done.**
+2. Deploy `render-commercial-capacity-pdf`. **Done** — via the Lovable
+   pipeline, from the repo's own sources on `main` (edit
+   `Deployed commercial PDF func`, commit 110d6a6c). Verified live: OPTIONS
+   preflight 200, unauthenticated POST 401 with the correct
+   `access-control-allow-origin` — the exact request shape the browser makes.
+   The next merge that touches it still needs the *repo's* pipeline: add
+   `SUPABASE_ACCESS_TOKEN` in Settings → Secrets → Actions, and every merge to
+   `main` deploys itself instead of stopping at the credential gate.
 3. Set `LOVABLE_API_KEY` if it is not already set for the project. Without it
    the report renders **without its analysis section** and says so in the
    response — it does not fail.
 
-Until 1 and 2 are done, both buttons report that the service is not deployed and
-name the two steps. There is deliberately no legacy fallback: what this replaces
-is `window.print()` on a print-styled results screen, and falling back to that
+There is deliberately no legacy fallback: what this replaces is
+`window.print()` on a print-styled results screen, and falling back to that
 would hand a client a screenshot of an application under the name of a finance
 report.

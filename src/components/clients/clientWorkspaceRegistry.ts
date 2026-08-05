@@ -42,6 +42,7 @@ export const CLIENT_TABS: readonly ClientTabDef[] = [
   { value: 'files', label: 'Files', capability: 'client.files' },
   { value: 'activity', label: 'Activity / Documents', capability: 'client.activity' },
   { value: 'borrowing', label: 'Borrowing Capacity', capability: 'client.borrowing_capacity' },
+  { value: 'commercial-industrial', label: 'Commercial / Industrial', capability: 'client.commercial_industrial' },
   { value: 'lenders', label: 'Lenders', capability: 'client.lenders' },
   { value: 'insights', label: 'AI', capability: 'client.ai' },
 ];

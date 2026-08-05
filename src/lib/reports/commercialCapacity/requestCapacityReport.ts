@@ -56,6 +56,13 @@ const NOT_DEPLOYED = [
   'requested function',
   'does not exist',
   'failed to send a request',
+  // `secureInvoke` reports an aborted fetch as "Network/CORS error calling
+  // <fn>". For a function the gateway has never heard of, that is exactly what
+  // the browser sees — a 404 with no CORS headers — and it is the message the
+  // first production click on Generate report actually produced. A deployed
+  // function that errors returns a readable status instead, so this needle
+  // does not swallow real failures.
+  'network/cors',
 ];
 
 /**
