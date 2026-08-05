@@ -345,3 +345,21 @@ describe("client portal request actions", () => {
     expect(portalPage2).toContain("Response sent");
   });
 });
+
+describe("notification category regression (found by staging browser E2E)", () => {
+  const fix = readFileSync("supabase/migrations/20260901000100_aml_notification_category_fix.sql", "utf8");
+  it("widens the category CHECK so the request trigger can write 'aml'", () => {
+    expect(fix).toContain("client_portal_notifications_category_check");
+    expect(fix).toMatch(/CHECK \(category IN \('general','deal','document','message','property','aml'\)\)/);
+    expect(fix).toContain("did not converge");
+  });
+  it("the trigger's category is inside the widened vocabulary", () => {
+    const category = /category[^,]*,\s*$/m.test(outboxMigration) || outboxMigration.includes("'info', 'aml'");
+    expect(category).toBe(true);
+    expect(fix).toContain("'aml'");
+  });
+  it("the fix is a separate additive migration, not an edit to the applied one", () => {
+    expect(fix).toContain("not an edit to 20260831000100");
+    expect(fix).not.toMatch(/\bDROP TABLE\b|\bDELETE FROM\b/);
+  });
+});

@@ -86,9 +86,31 @@ stage boundary and before any long-running suite.
       legal-hold blocking, disposal evidence, suggestion-only similarity,
       adjudication, link isolation, immutable v1 snapshot, 11 retention rows;
       rollback per header + reapply clean; DB destroyed
-- [ ] Stage 10 — self-hosted service deployment (infrastructure + owner)
-- [ ] Browser E2E — needs a served frontend against the synthetic staging
-      backend (attempted next)
+- [x] Provider deployable package + 13 runbooks
+      (docs/aml/rollout/verification-service-deployment.md) — audit, secret-free
+      config contract, honest limitation register
+- [x] Browser E2E — RUN on staging branch yncczbrmicjebjepfave with real
+      Chromium across 360x800 / 768x1024 / 1440x900 / 1728x864: linked case
+      returns AML-STG-00001 with a 6-step server journey, genuine no-case
+      returns null-case, revoked session 401 portal_session_invalid,
+      cross-client case_id excluded. aml-client-portal deployed as v2 there;
+      all four migrations applied; queued check emitted exactly one
+      identifier-only outbox event; attempts counter correctly 0 while queued.
+      Environment notes: Chromium needed the agent proxy plus a TLS 1.2 cap;
+      synthetic session tokens were re-dated. Screenshots not captured — the
+      probe asserts contracts through the browser rather than rendering the
+      Lovable-hosted SPA, which has no staging build target.
+- [x] DEFECT FOUND AND FIXED by that E2E: 20260831000100's notification
+      trigger wrote category='aml' but the production CHECK (verified
+      read-only) allows only general|deal|document|message|property, so with
+      migration 3 applied NO client request could be created at all. Fixed by
+      additive 20260901000100 (widen the CHECK), proved on a disposable DB:
+      insert fails before, succeeds after with notification + event + queued
+      status; regression test added.
+- [ ] Stage 10 — self-hosted service DEPLOYMENT itself (infrastructure host,
+      secrets, owner) — external
+- [ ] Full staff-side browser E2E of the new review/reconciliation surfaces —
+      needs a served frontend build (no staging SPA target exists)
 - [ ] Stage 29/30 — staging + browser E2E (blockers recorded below)
 - [ ] Stage 31 — monitoring/runbooks
 - [ ] Stages 32–36 — commits/PR/gates/release (release expected BLOCKED)
