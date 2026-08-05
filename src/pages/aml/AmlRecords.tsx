@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, ShieldOff, ShieldAlert, Search, PlusCircle, Loader2, PlayCircle, CheckCircle2, XCircle, Ban, Download, RefreshCw, Lock, LockOpen, FileWarning } from "lucide-react";
+import { Archive, ShieldAlert, Search, PlusCircle, PlayCircle, CheckCircle2, XCircle, Ban, Download, Lock, LockOpen } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,13 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import {
+  AmlAccessGate,
+  AmlPageHeader,
+  AmlRefreshButton,
+  AmlTableEmptyRow,
+  AmlTableLoadingRow,
+} from "@/components/aml/primitives";
 import {
   amlRecordsApi,
   type AmlLegalHold, type AmlPrivacyKind, type AmlPrivacyRequest, type AmlPrivacyStatus,
@@ -196,26 +203,21 @@ export default function AmlRecords() {
 
   if (!hasAnyRole) {
     return (
-      <Card>
-        <CardHeader><CardTitle>Records, Privacy & Retention</CardTitle></CardHeader>
-        <CardContent><p className="text-muted-foreground">You need an AML role to access this module.</p></CardContent>
-      </Card>
+      <AmlAccessGate
+        title="You don't have access to Records, Privacy & Retention yet"
+        body="Ask your compliance administrator to grant you AML access to this module."
+      />
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2"><Archive className="w-6 h-6 text-primary" /> Records, Privacy & Retention</h1>
-          <p className="text-muted-foreground text-sm max-w-2xl mt-1">
-            Retention schedules, legal holds, privacy requests, tipping-off controls and hash-chained records audit — Phase 11 (report §16).
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-          {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RefreshCw className="w-4 h-4 mr-2" />} Refresh
-        </Button>
-      </div>
+      <AmlPageHeader
+        title="Records, Privacy & Retention"
+        description="Retention schedules, legal holds, privacy requests, tipping-off controls and the hash-chained records audit."
+        icon={Archive}
+        actions={<AmlRefreshButton onClick={load} loading={loading} />}
+      />
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Tile label="Active schedules" value={summary?.schedules_active ?? 0} />
@@ -250,11 +252,11 @@ export default function AmlRecords() {
               )}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Retention schedules">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Entity</TableHead><TableHead>Years</TableHead><TableHead>Method</TableHead>
-                    <TableHead>Legal basis</TableHead><TableHead>Status</TableHead><TableHead className="w-24" />
+                    <TableHead scope="col">Entity</TableHead><TableHead scope="col">Years</TableHead><TableHead scope="col">Method</TableHead>
+                    <TableHead scope="col">Legal basis</TableHead><TableHead scope="col">Status</TableHead><TableHead scope="col" className="w-24"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -270,7 +272,9 @@ export default function AmlRecords() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {schedules.length === 0 && <TableRow><TableCell colSpan={6} className="text-muted-foreground text-center py-6">No schedules yet.</TableCell></TableRow>}
+                  {schedules.length === 0 && (loading
+                    ? <AmlTableLoadingRow colSpan={6} label="Loading retention schedules…" />
+                    : <AmlTableEmptyRow colSpan={6}>No retention schedules yet. Schedules created here govern when records become eligible for disposal.</AmlTableEmptyRow>)}
                 </TableBody>
               </Table>
             </CardContent>
@@ -289,12 +293,12 @@ export default function AmlRecords() {
               )}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Legal holds">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Entity</TableHead><TableHead>Reason</TableHead>
-                    <TableHead>Imposed by</TableHead><TableHead>Imposed at</TableHead>
-                    <TableHead>Status</TableHead><TableHead className="w-32" />
+                    <TableHead scope="col">Entity</TableHead><TableHead scope="col">Reason</TableHead>
+                    <TableHead scope="col">Imposed by</TableHead><TableHead scope="col">Imposed at</TableHead>
+                    <TableHead scope="col">Status</TableHead><TableHead scope="col" className="w-32"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -320,7 +324,9 @@ export default function AmlRecords() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {holds.length === 0 && <TableRow><TableCell colSpan={6} className="text-muted-foreground text-center py-6">No holds recorded.</TableCell></TableRow>}
+                  {holds.length === 0 && (loading
+                    ? <AmlTableLoadingRow colSpan={6} label="Loading legal holds…" />
+                    : <AmlTableEmptyRow colSpan={6}>No holds recorded. Apply a hold to protect records from disposal during litigation or an investigation.</AmlTableEmptyRow>)}
                 </TableBody>
               </Table>
             </CardContent>
@@ -335,12 +341,12 @@ export default function AmlRecords() {
               {canWrite && <Button size="sm" onClick={dryRun}><Search className="w-4 h-4 mr-2" /> New dry-run</Button>}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Retention disposal scans">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Created</TableHead><TableHead>Scope</TableHead><TableHead>Status</TableHead>
-                    <TableHead>Candidates</TableHead><TableHead>Held</TableHead><TableHead>Disposed</TableHead>
-                    <TableHead className="w-32" />
+                    <TableHead scope="col">Created</TableHead><TableHead scope="col">Scope</TableHead><TableHead scope="col">Status</TableHead>
+                    <TableHead scope="col">Candidates</TableHead><TableHead scope="col">Held</TableHead><TableHead scope="col">Disposed</TableHead>
+                    <TableHead scope="col" className="w-32"><span className="sr-only">Approved by</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -355,7 +361,9 @@ export default function AmlRecords() {
                       <TableCell className="text-right text-xs text-muted-foreground">{s.approved_by_label ? `by ${s.approved_by_label}` : ""}</TableCell>
                     </TableRow>
                   ))}
-                  {scans.length === 0 && <TableRow><TableCell colSpan={7} className="text-muted-foreground text-center py-6">No scans yet.</TableCell></TableRow>}
+                  {scans.length === 0 && (loading
+                    ? <AmlTableLoadingRow colSpan={7} label="Loading disposal scans…" />
+                    : <AmlTableEmptyRow colSpan={7}>No disposal scans yet. Start a dry-run to see which records are eligible for disposal.</AmlTableEmptyRow>)}
                 </TableBody>
               </Table>
             </CardContent>
@@ -370,11 +378,11 @@ export default function AmlRecords() {
               {canWrite && <Button size="sm" onClick={() => setPrivDraft({ kind: "access", status: "received", received_via: "email" })}><PlusCircle className="w-4 h-4 mr-2" /> Log request</Button>}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Privacy requests">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Received</TableHead><TableHead>Kind</TableHead><TableHead>Subject</TableHead>
-                    <TableHead>Status</TableHead><TableHead>Due</TableHead><TableHead className="w-40" />
+                    <TableHead scope="col">Received</TableHead><TableHead scope="col">Kind</TableHead><TableHead scope="col">Subject</TableHead>
+                    <TableHead scope="col">Status</TableHead><TableHead scope="col">Due</TableHead><TableHead scope="col" className="w-40"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -397,7 +405,9 @@ export default function AmlRecords() {
                       </TableRow>
                     );
                   })}
-                  {privacy.length === 0 && <TableRow><TableCell colSpan={6} className="text-muted-foreground text-center py-6">No privacy requests yet.</TableCell></TableRow>}
+                  {privacy.length === 0 && (loading
+                    ? <AmlTableLoadingRow colSpan={6} label="Loading privacy requests…" />
+                    : <AmlTableEmptyRow colSpan={6}>No privacy requests yet. Log requests as they arrive to track them against the 30-day SLA.</AmlTableEmptyRow>)}
                 </TableBody>
               </Table>
             </CardContent>
@@ -413,8 +423,8 @@ export default function AmlRecords() {
                 {isMlro && <Button size="sm" onClick={() => setRuleEdit({ surface: "client_portal", pattern: "", suppression_mode: "block", active: true })}><PlusCircle className="w-4 h-4 mr-2" /> New rule</Button>}
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader><TableRow><TableHead>Surface</TableHead><TableHead>Pattern</TableHead><TableHead>Mode</TableHead><TableHead className="w-32" /></TableRow></TableHeader>
+                <Table aria-label="Tipping-off suppression rules">
+                  <TableHeader><TableRow><TableHead scope="col">Surface</TableHead><TableHead scope="col">Pattern</TableHead><TableHead scope="col">Mode</TableHead><TableHead scope="col" className="w-32"><span className="sr-only">Actions</span></TableHead></TableRow></TableHeader>
                   <TableBody>
                     {rules.map((r) => (
                       <TableRow key={r.id}>
@@ -424,12 +434,14 @@ export default function AmlRecords() {
                         <TableCell className="text-right">
                           {isMlro && <>
                             <Button size="sm" variant="ghost" onClick={() => setRuleEdit(r)}>Edit</Button>
-                            <Button size="sm" variant="ghost" onClick={() => deleteRule(r)}><XCircle className="w-4 h-4" /></Button>
+                            <Button size="sm" variant="ghost" aria-label="Delete rule" onClick={() => deleteRule(r)}><XCircle aria-hidden="true" className="w-4 h-4" /></Button>
                           </>}
                         </TableCell>
                       </TableRow>
                     ))}
-                    {rules.length === 0 && <TableRow><TableCell colSpan={4} className="text-muted-foreground text-center py-6">No rules.</TableCell></TableRow>}
+                    {rules.length === 0 && (loading
+                      ? <AmlTableLoadingRow colSpan={4} label="Loading suppression rules…" />
+                      : <AmlTableEmptyRow colSpan={4}>No suppression rules yet. Rules added here block, redact or warn on customer-facing copy.</AmlTableEmptyRow>)}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -470,8 +482,8 @@ export default function AmlRecords() {
           <Card>
             <CardHeader><CardTitle>Records audit trail</CardTitle><CardDescription>Hash-chained — every schedule change, hold, scan, privacy action and tipping-off edit is preserved.</CardDescription></CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader><TableRow><TableHead>When</TableHead><TableHead>Category</TableHead><TableHead>Summary</TableHead><TableHead>Actor</TableHead><TableHead className="w-24">Hash</TableHead></TableRow></TableHeader>
+              <Table aria-label="Records audit trail">
+                <TableHeader><TableRow><TableHead scope="col">When</TableHead><TableHead scope="col">Category</TableHead><TableHead scope="col">Summary</TableHead><TableHead scope="col">Actor</TableHead><TableHead scope="col" className="w-24">Hash</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {audit.map((e) => (
                     <TableRow key={e.id}>
@@ -482,7 +494,9 @@ export default function AmlRecords() {
                       <TableCell className="text-xs font-mono text-muted-foreground">{e.row_hash.slice(0, 8)}…</TableCell>
                     </TableRow>
                   ))}
-                  {audit.length === 0 && <TableRow><TableCell colSpan={5} className="text-muted-foreground text-center py-6">No audit events yet.</TableCell></TableRow>}
+                  {audit.length === 0 && (loading
+                    ? <AmlTableLoadingRow colSpan={5} label="Loading audit trail…" />
+                    : <AmlTableEmptyRow colSpan={5}>No audit events yet. Every schedule change, hold, scan, privacy action and tipping-off edit is recorded here.</AmlTableEmptyRow>)}
                 </TableBody>
               </Table>
             </CardContent>
@@ -685,8 +699,8 @@ export default function AmlRecords() {
                 {!["completed","cancelled","failed","executing"].includes(scanDetail.scan.status) && canWrite && <Button size="sm" variant="ghost" onClick={() => cancel(scanDetail.scan!.id)}><Ban className="w-4 h-4 mr-1" /> Cancel</Button>}
               </div>
               <div className="max-h-[50vh] overflow-y-auto border rounded">
-                <Table>
-                  <TableHeader className="sticky top-0 bg-background"><TableRow><TableHead>Entity</TableHead><TableHead>Reference</TableHead><TableHead>Eligible since</TableHead><TableHead>Disposition</TableHead><TableHead>Method</TableHead></TableRow></TableHeader>
+                <Table aria-label="Retention scan candidates">
+                  <TableHeader className="sticky top-0 bg-background"><TableRow><TableHead scope="col">Entity</TableHead><TableHead scope="col">Reference</TableHead><TableHead scope="col">Eligible since</TableHead><TableHead scope="col">Disposition</TableHead><TableHead scope="col">Method</TableHead></TableRow></TableHeader>
                   <TableBody>
                     {scanDetail.items.map((it) => (
                       <TableRow key={it.id}>
@@ -697,7 +711,7 @@ export default function AmlRecords() {
                         <TableCell className="text-xs">{it.disposal_method ?? "—"}</TableCell>
                       </TableRow>
                     ))}
-                    {scanDetail.items.length === 0 && <TableRow><TableCell colSpan={5} className="text-muted-foreground text-center py-6">No candidates.</TableCell></TableRow>}
+                    {scanDetail.items.length === 0 && <AmlTableEmptyRow colSpan={5}>No candidates. Records eligible for disposal under the active schedules appear here.</AmlTableEmptyRow>}
                   </TableBody>
                 </Table>
               </div>

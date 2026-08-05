@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { Users, Building2, Search, Plus, Trash2, AlertTriangle, ShieldCheck, RefreshCw, ExternalLink } from "lucide-react";
+import { Users, Building2, Search, Plus, Trash2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AmlEmptyState,
+  AmlLoadingState,
+  AmlPageHeader,
+  AmlRefreshButton,
+} from "@/components/aml/primitives";
 import { toast } from "sonner";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import {
@@ -74,7 +80,7 @@ export default function AmlCounterparty() {
     }
   };
 
-  useEffect(() => { loadEntities(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { loadEntities(); }, []);
   useEffect(() => { if (selected) loadDetail(selected.id); else setDetail({ owners: [], reps: [], summary: null }); }, [selected?.id]);
 
   const filteredCounts = useMemo(() => {
@@ -85,27 +91,21 @@ export default function AmlCounterparty() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start gap-4">
-        <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Users className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-xl font-semibold tracking-tight">Counterparty & Structures</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Companies, trusts, SMSFs, beneficial owners and authorised representatives — the AUSTRAC "Know Your Customer" structural spine.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={loadEntities}>
-            <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-          </Button>
-          {canWrite && (
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" /> New entity
-            </Button>
-          )}
-        </div>
-      </div>
+      <AmlPageHeader
+        title="Counterparty & Structures"
+        description={'Companies, trusts, SMSFs, beneficial owners and authorised representatives — the AUSTRAC "Know Your Customer" structural spine.'}
+        icon={Users}
+        actions={
+          <>
+            <AmlRefreshButton onClick={loadEntities} loading={loading} />
+            {canWrite && (
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" /> New entity
+              </Button>
+            )}
+          </>
+        }
+      />
 
       <Card>
         <CardHeader className="pb-3">
@@ -132,14 +132,21 @@ export default function AmlCounterparty() {
         </CardHeader>
         <CardContent className="p-0">
           <div className="grid gap-0 md:grid-cols-[minmax(320px,420px)_1fr]">
-            <ScrollArea className="h-[560px] border-r border-border/60">
+            <ScrollArea className="h-[60vh] min-h-[320px] border-r border-border/60">
               <div className="divide-y divide-border/60">
                 {loading ? (
-                  <div className="space-y-2 p-3">
-                    {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
-                  </div>
+                  <AmlLoadingState variant="list" lines={6} label="Loading entities…" className="p-3" />
                 ) : entities.length === 0 ? (
-                  <div className="p-6 text-sm text-muted-foreground">No entities yet. Create one to start populating beneficial owners.</div>
+                  <AmlEmptyState
+                    className="m-3"
+                    icon={Building2}
+                    body="No entities yet. Create one to start populating beneficial owners."
+                    action={canWrite ? (
+                      <Button size="sm" onClick={() => setCreateOpen(true)}>
+                        <Plus className="mr-2 h-4 w-4" /> New entity
+                      </Button>
+                    ) : undefined}
+                  />
                 ) : entities.map((e) => (
                   <button key={e.id} onClick={() => setSelected(e)}
                     className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 ${
@@ -165,10 +172,12 @@ export default function AmlCounterparty() {
 
             <div className="p-4">
               {!selected ? (
-                <div className="flex h-[520px] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
-                  <Users className="h-8 w-8 opacity-40" />
-                  <p>Select an entity to inspect beneficial owners, authorised representatives and case links.</p>
-                </div>
+                <AmlEmptyState
+                  className="flex min-h-[320px] flex-col items-center justify-center"
+                  icon={Users}
+                  title="No entity selected"
+                  body="Select an entity to inspect beneficial owners, authorised representatives and case links."
+                />
               ) : (
                 <EntityDetail
                   entity={selected}
@@ -255,7 +264,7 @@ function EntityDetail({
         </TabsList>
 
         <TabsContent value="owners" className="mt-3 space-y-2">
-          {canWrite && (
+          {canWrite && owners.length > 0 && (
             <div className="flex justify-end">
               <Button size="sm" variant="outline" onClick={() => setNewOwner(true)}>
                 <Plus className="mr-1 h-4 w-4" /> Add owner
@@ -263,9 +272,14 @@ function EntityDetail({
             </div>
           )}
           {owners.length === 0 ? (
-            <p className="rounded-md border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
-              No beneficial owners captured. AUSTRAC requires all ≥25% owners and any person exercising control.
-            </p>
+            <AmlEmptyState
+              body="No beneficial owners captured. AUSTRAC requires all ≥25% owners and any person exercising control."
+              action={canWrite ? (
+                <Button size="sm" variant="outline" onClick={() => setNewOwner(true)}>
+                  <Plus className="mr-1 h-4 w-4" /> Add owner
+                </Button>
+              ) : undefined}
+            />
           ) : owners.map((o) => (
             <div key={o.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border/60 p-3">
               <ShieldCheck className={`h-4 w-4 ${o.verification_state === "verified" ? "text-success" : "text-muted-foreground"}`} />
@@ -295,7 +309,7 @@ function EntityDetail({
         </TabsContent>
 
         <TabsContent value="reps" className="mt-3 space-y-2">
-          {canWrite && (
+          {canWrite && reps.length > 0 && (
             <div className="flex justify-end">
               <Button size="sm" variant="outline" onClick={() => setNewRep(true)}>
                 <Plus className="mr-1 h-4 w-4" /> Add representative
@@ -303,9 +317,14 @@ function EntityDetail({
             </div>
           )}
           {reps.length === 0 ? (
-            <p className="rounded-md border border-dashed border-border/60 p-4 text-sm text-muted-foreground">
-              No authorised representatives yet. Directors, signatories and power-of-attorney holders should be recorded here.
-            </p>
+            <AmlEmptyState
+              body="No authorised representatives yet. Directors, signatories and power-of-attorney holders should be recorded here."
+              action={canWrite ? (
+                <Button size="sm" variant="outline" onClick={() => setNewRep(true)}>
+                  <Plus className="mr-1 h-4 w-4" /> Add representative
+                </Button>
+              ) : undefined}
+            />
           ) : reps.map((r) => (
             <div key={r.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border/60 p-3">
               <div className="min-w-0 flex-1">
@@ -354,11 +373,16 @@ function EntityDetail({
   );
 }
 
+/**
+ * Compact inline counter for the detail pane. Deliberately not AmlMetricCard:
+ * six of these sit in one row inside the pane, so they keep a tighter footprint
+ * but follow the same shape — title above, tabular value below.
+ */
 function SummaryTile({ label, value, warn }: { label: string; value: React.ReactNode; warn?: boolean }) {
   return (
     <div className={`rounded-md border p-2 text-center ${warn ? "border-warning/40 bg-warning/5" : "border-border/60"}`}>
-      <div className="text-lg font-semibold">{value}</div>
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="mt-0.5 text-lg font-semibold tabular-nums">{value}</div>
     </div>
   );
 }
@@ -423,15 +447,17 @@ function CreateEntityDialog({
             <Input type="date" value={form.incorporation_date ?? ""}
               onChange={(e) => setForm({ ...form, incorporation_date: e.target.value || null })} />
           </div>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={!!form.is_pep_linked} onChange={(e) => setForm({ ...form, is_pep_linked: e.target.checked })} />
-              PEP-linked
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={!!form.is_sanctioned} onChange={(e) => setForm({ ...form, is_sanctioned: e.target.checked })} />
-              Sanctioned
-            </label>
+          <div className="flex flex-wrap gap-4">
+            <div className="flex items-center gap-2">
+              <Checkbox id="entity-pep-linked" checked={!!form.is_pep_linked}
+                onCheckedChange={(v) => setForm({ ...form, is_pep_linked: v === true })} />
+              <Label htmlFor="entity-pep-linked" className="font-normal">PEP-linked</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="entity-sanctioned" checked={!!form.is_sanctioned}
+                onCheckedChange={(v) => setForm({ ...form, is_sanctioned: v === true })} />
+              <Label htmlFor="entity-sanctioned" className="font-normal">Sanctioned</Label>
+            </div>
           </div>
         </div>
         <DialogFooter>
@@ -486,10 +512,22 @@ function OwnerDialog({
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{VERIF_STATES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent>
             </Select></div>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form.is_ubo} onChange={(e) => setForm({ ...form, is_ubo: e.target.checked })} /> Ultimate beneficial owner</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form.is_pep} onChange={(e) => setForm({ ...form, is_pep: e.target.checked })} /> PEP</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form.is_sanctioned} onChange={(e) => setForm({ ...form, is_sanctioned: e.target.checked })} /> Sanctioned</label>
+          <div className="flex flex-wrap gap-4">
+            <div className="flex items-center gap-2">
+              <Checkbox id="owner-ubo" checked={!!form.is_ubo}
+                onCheckedChange={(v) => setForm({ ...form, is_ubo: v === true })} />
+              <Label htmlFor="owner-ubo" className="font-normal">Ultimate beneficial owner</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="owner-pep" checked={!!form.is_pep}
+                onCheckedChange={(v) => setForm({ ...form, is_pep: v === true })} />
+              <Label htmlFor="owner-pep" className="font-normal">PEP</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="owner-sanctioned" checked={!!form.is_sanctioned}
+                onCheckedChange={(v) => setForm({ ...form, is_sanctioned: v === true })} />
+              <Label htmlFor="owner-sanctioned" className="font-normal">Sanctioned</Label>
+            </div>
           </div>
           <div className="grid gap-2"><Label>Notes</Label>
             <Textarea rows={3} value={form.notes ?? ""} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
@@ -538,9 +576,17 @@ function RepDialog({
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{VERIF_STATES.map((s) => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent>
             </Select></div>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form.is_director} onChange={(e) => setForm({ ...form, is_director: e.target.checked })} /> Director</label>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form.is_signatory} onChange={(e) => setForm({ ...form, is_signatory: e.target.checked })} /> Signatory</label>
+          <div className="flex flex-wrap gap-4">
+            <div className="flex items-center gap-2">
+              <Checkbox id="rep-director" checked={!!form.is_director}
+                onCheckedChange={(v) => setForm({ ...form, is_director: v === true })} />
+              <Label htmlFor="rep-director" className="font-normal">Director</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="rep-signatory" checked={!!form.is_signatory}
+                onCheckedChange={(v) => setForm({ ...form, is_signatory: v === true })} />
+              <Label htmlFor="rep-signatory" className="font-normal">Signatory</Label>
+            </div>
           </div>
         </div>
         <DialogFooter>

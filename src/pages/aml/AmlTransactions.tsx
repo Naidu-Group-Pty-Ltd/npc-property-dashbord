@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AmlEmptyState, AmlPageHeader } from "@/components/aml/primitives";
 import { toast } from "sonner";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
@@ -27,6 +28,13 @@ const TX_STATUSES: AmlTransactionStatus[] = ["draft", "under_contract", "uncondi
 const PARTY_TYPES: AmlPartyType[] = ["buyer", "seller", "guarantor", "agent", "solicitor", "mortgagee", "beneficiary", "other"];
 const CP_REQUEST_TYPES = ["identity", "source_of_funds", "authority_docs", "trust_deed", "beneficial_ownership", "other"];
 const CP_REQ_STATUSES: AmlCpRequestStatus[] = ["pending", "sent", "awaiting_response", "resolved", "waived", "escalated"];
+
+const OBLIGATION_STATUS_TONE: Record<string, string> = {
+  pending: "border-destructive/40 text-destructive",
+  acknowledged: "border-warning/40 text-warning",
+  report_created: "border-success/40 text-success",
+  waived: "border-muted-foreground/40 text-muted-foreground",
+};
 
 function statusBadge(status: string) {
   const map: Record<string, string> = {
@@ -126,7 +134,14 @@ export default function AmlTransactions() {
   const currentCase = useMemo(() => cases.find((c) => c.id === caseId) ?? null, [cases, caseId]);
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[360px_1fr]">
+    <div className="space-y-6">
+      <AmlPageHeader
+        title="Transaction Compliance"
+        description="Case-linked transactions, settlement gate and reportable-obligation checks."
+        icon={FileWarning}
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[360px_1fr]">
       {/* LEFT: transactions list */}
       <div className="space-y-4">
         <Card>
@@ -134,8 +149,8 @@ export default function AmlTransactions() {
             <div className="flex items-center gap-2">
               <FileWarning className="h-4 w-4 text-primary" />
               <CardTitle className="text-base">Transactions</CardTitle>
-              <Button size="icon" variant="ghost" className="ml-auto" onClick={loadTransactions}>
-                <RefreshCw className="h-4 w-4" />
+              <Button size="icon" variant="ghost" className="ml-auto" aria-label="Refresh transactions" onClick={loadTransactions}>
+                <RefreshCw aria-hidden="true" className="h-4 w-4" />
               </Button>
             </div>
             <Select value={caseId} onValueChange={setCaseId}>
@@ -153,11 +168,13 @@ export default function AmlTransactions() {
             )}
           </CardHeader>
           <CardContent className="p-0">
-            <ScrollArea className="h-[540px]">
+            <ScrollArea className="h-[60vh] min-h-[320px]">
               {loading ? (
                 <div className="space-y-2 p-4">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
               ) : transactions.length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">No transactions captured yet for this case.</p>
+                <div className="p-4">
+                  <AmlEmptyState body="No transactions captured yet for this case. Use “New transaction” to record the first one." />
+                </div>
               ) : (
                 <ul className="divide-y">
                   {transactions.map((t) => (
@@ -215,7 +232,7 @@ export default function AmlTransactions() {
                   )}
                   {!gate.gate_enabled && (
                     <p className="text-xs text-muted-foreground">
-                      Feature flag <code>aml_settlement_gate</code> is disabled — this is advisory only.
+                      Settlement gate enforcement is switched off — this check is advisory only.
                     </p>
                   )}
                 </>
@@ -228,11 +245,10 @@ export default function AmlTransactions() {
       {/* RIGHT: detail */}
       <div className="min-w-0">
         {!selectedTx ? (
-          <Card>
-            <CardContent className="p-10 text-center text-sm text-muted-foreground">
-              Select or create a transaction to manage counterparty CDD and settlement events.
-            </CardContent>
-          </Card>
+          <AmlEmptyState
+            title="No transaction selected"
+            body="Select or create a transaction to manage counterparty CDD and settlement events."
+          />
         ) : (
           <Tabs defaultValue="parties" className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
@@ -283,7 +299,7 @@ export default function AmlTransactions() {
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {parties.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No parties captured for this transaction yet.</p>
+                    <AmlEmptyState body="No parties captured for this transaction yet. Record buyers, sellers and their representatives as they are identified." />
                   ) : parties.map((p) => (
                     <div key={p.id} className="flex items-center justify-between rounded-md border p-3">
                       <div>
@@ -315,7 +331,9 @@ export default function AmlTransactions() {
                   )}
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {cpCases.length === 0 && <p className="text-sm text-muted-foreground">No counterparty dossiers open.</p>}
+                  {cpCases.length === 0 && (
+                    <AmlEmptyState body="No counterparty dossiers open. Open one to run CDD on the other side of the transaction." />
+                  )}
                   {cpCases.map((c) => {
                     const requests = cpRequests.filter((r) => r.counterparty_case_id === c.id);
                     return (
@@ -386,7 +404,7 @@ export default function AmlTransactions() {
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {obligations.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No reportable obligations detected for this transaction.</p>
+                    <AmlEmptyState body="No reportable obligations detected for this transaction. Obligations are evaluated automatically on every save — use Re-evaluate to check again now." />
                   ) : obligations.map((o) => {
                     const kindLabel: Record<AmlObligationKind, string> = {
                       ttr: "TTR (Threshold Transaction Report)",
@@ -394,17 +412,11 @@ export default function AmlTransactions() {
                       smr_candidate: "SMR candidate (Suspicious Matter)",
                       structuring_suspected: "Structuring pattern suspected",
                     };
-                    const statusTone: Record<string, string> = {
-                      pending: "border-destructive/40 text-destructive",
-                      acknowledged: "border-warning/40 text-warning",
-                      report_created: "border-success/40 text-success",
-                      waived: "border-muted-foreground/40 text-muted-foreground",
-                    };
                     return (
                       <div key={o.id} className="rounded-md border p-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="font-medium">{kindLabel[o.kind] ?? o.kind}</p>
-                          <Badge variant="outline" className={`capitalize ${statusTone[o.status] ?? ""}`}>
+                          <Badge variant="outline" className={`capitalize ${OBLIGATION_STATUS_TONE[o.status] ?? ""}`}>
                             {o.status.replace(/_/g, " ")}
                           </Badge>
                           {o.observed_amount != null && (
@@ -462,7 +474,7 @@ export default function AmlTransactions() {
                 </CardHeader>
                 <CardContent>
                   {events.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No events yet.</p>
+                    <AmlEmptyState body="No events yet. Timeline entries are appended automatically as the transaction is created and updated." />
                   ) : (
                     <ol className="space-y-2">
                       {events.map((e) => (
@@ -482,6 +494,7 @@ export default function AmlTransactions() {
             </TabsContent>
           </Tabs>
         )}
+      </div>
       </div>
 
       {/* Transaction dialog */}

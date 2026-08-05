@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import {
   Gauge,
   ShieldCheck,
@@ -21,6 +20,17 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { suggestAmlLanding } from "@/lib/aml/defaultLanding";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { caseStage } from "@/lib/aml/caseDimensions";
+import {
+  AmlEmptyState,
+  AmlErrorState,
+  AmlMetricCard,
+  AmlPageHeader,
+  AmlPageSection,
+  AmlRefreshButton,
+  AmlRiskBadge,
+  AmlStageBadge,
+} from "@/components/aml/primitives";
 import AmlComplianceHomeV3 from "./AmlComplianceHomeV3";
 
 /**
@@ -120,43 +130,58 @@ function AmlOverviewV2() {
 
   const [monitoring, setMonitoring] = useState<AmlMonitoringSummary | null>(null);
   const [loadingMonitoring, setLoadingMonitoring] = useState(false);
+  const [monitoringSettled, setMonitoringSettled] = useState(false);
+
+  const loadCases = useCallback(async (alive: () => boolean) => {
+    try {
+      setLoadingCases(true);
+      setCaseError(null);
+      const res = await amlCasesApi.list({ limit: 5 });
+      if (!alive()) return;
+      setCases(res.cases ?? []);
+      setTotalCases(res.total ?? 0);
+    } catch (e: any) {
+      if (alive()) setCaseError(e?.message ?? "Unable to load cases");
+    } finally {
+      if (alive()) setLoadingCases(false);
+    }
+  }, []);
+
+  const loadMonitoring = useCallback(async (alive: () => boolean) => {
+    try {
+      setLoadingMonitoring(true);
+      const s = await amlMonitoringApi.summary();
+      if (alive()) setMonitoring(s);
+    } catch {
+      // tile shows its unavailable state
+      if (alive()) setMonitoring(null);
+    } finally {
+      if (alive()) {
+        setLoadingMonitoring(false);
+        setMonitoringSettled(true);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!canView) return;
     let alive = true;
-    (async () => {
-      try {
-        setLoadingCases(true);
-        const res = await amlCasesApi.list({ limit: 5 });
-        if (!alive) return;
-        setCases(res.cases ?? []);
-        setTotalCases(res.total ?? 0);
-      } catch (e: any) {
-        if (alive) setCaseError(e?.message ?? "Unable to load cases");
-      } finally {
-        if (alive) setLoadingCases(false);
-      }
-    })();
+    void loadCases(() => alive);
     return () => { alive = false; };
-  }, [canView]);
+  }, [canView, loadCases]);
 
   useEffect(() => {
     if (!canInvestigate) return;
     let alive = true;
-    (async () => {
-      try {
-        setLoadingMonitoring(true);
-        const s = await amlMonitoringApi.summary();
-        if (alive) setMonitoring(s);
-      } catch (e) {
-        // silent — tile shows unavailable state
-        if (alive) setMonitoring(null);
-      } finally {
-        if (alive) setLoadingMonitoring(false);
-      }
-    })();
+    void loadMonitoring(() => alive);
     return () => { alive = false; };
-  }, [canInvestigate]);
+  }, [canInvestigate, loadMonitoring]);
+
+  const refresh = () => {
+    const alive = () => true;
+    if (canView) void loadCases(alive);
+    if (canInvestigate) void loadMonitoring(alive);
+  };
 
   const openCount = useMemo(
     () => cases.filter((c) => !["cleared", "closed", "blocked"].includes(c.status)).length,
@@ -174,12 +199,22 @@ function AmlOverviewV2() {
     [roles],
   );
 
+  const caseMetricState = loadingCases ? "loading" : caseError ? "unavailable" : "ready";
+  const monitoringMetricState = loadingMonitoring
+    ? "loading"
+    : monitoringSettled && monitoring === null
+      ? "unavailable"
+      : "ready";
+
   // No access at all — actionable empty state.
   if (!accessLoading && roles.size === 0) {
     return (
       <div className="mx-auto max-w-2xl space-y-4 py-10">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          <div
+            aria-hidden="true"
+            className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground"
+          >
             <Lock className="h-5 w-5" />
           </div>
           <div>
@@ -204,6 +239,13 @@ function AmlOverviewV2() {
 
   return (
     <div className="space-y-6">
+      <AmlPageHeader
+        title="Compliance Home"
+        description="Your queues and case activity across the AML/CTF program."
+        icon={ShieldCheck}
+        actions={<AmlRefreshButton onClick={refresh} loading={loadingCases || loadingMonitoring} />}
+      />
+
       {/* Role-adaptive landing hint */}
       {landing && (
         <Card className="border-primary/20 bg-primary/5">
@@ -215,81 +257,81 @@ function AmlOverviewV2() {
             <Button asChild size="sm">
               <Link to={landing.path}>
                 {landing.label}
-                <ArrowRight className="ml-2 h-4 w-4" />
+                <ArrowRight aria-hidden="true" className="ml-2 h-4 w-4" />
               </Link>
             </Button>
           </CardContent>
         </Card>
       )}
 
+      {caseError && (
+        <AmlErrorState
+          title="Unable to load cases"
+          message={caseError}
+          onRetry={refresh}
+        />
+      )}
+
       {/* Case tiles — always visible for aml.view */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <MetricTile
-          title="Total cases"
-          icon={Users}
-          loading={loadingCases}
-          value={totalCases}
-          hint="Across all statuses in this tenant."
-        />
-        <MetricTile
-          title="Open (recent)"
-          icon={Gauge}
-          loading={loadingCases}
-          value={openCount}
-          hint={`Of the latest ${cases.length || 0} cases, still under investigation.`}
-        />
-        <MetricTile
-          title="Awaiting decision"
-          icon={ShieldCheck}
-          loading={loadingCases}
-          value={escalated}
-          hint="Escalated cases awaiting a decision."
-        />
-      </div>
+      <AmlPageSection title="Customer cases" description="Case volume and what is waiting on a decision.">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+          <AmlMetricCard
+            title="Total cases"
+            icon={Users}
+            state={caseMetricState}
+            value={totalCases}
+            hint="Across all statuses in this tenant."
+            to="/admin/aml/cases"
+          />
+          <AmlMetricCard
+            title="Open (recent)"
+            icon={Gauge}
+            state={caseMetricState}
+            value={openCount}
+            hint={`Of the latest ${cases.length || 0} cases, still under investigation.`}
+            to="/admin/aml/cases"
+          />
+          <AmlMetricCard
+            title="Awaiting decision"
+            icon={ShieldCheck}
+            state={caseMetricState}
+            value={escalated}
+            hint="Escalated cases awaiting a decision."
+            to="/admin/aml/cases?view=awaiting_decision"
+          />
+        </div>
+      </AmlPageSection>
 
       {/* Investigate-only tiles: monitoring queue snapshot */}
       {canInvestigate && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <MetricTile
-            title="Open alerts"
-            icon={Bell}
-            loading={loadingMonitoring}
-            value={monitoring?.open_alerts ?? "—"}
-            hint={
-              monitoring
-                ? `${monitoring.critical_alerts} critical`
-                : "Awaiting first data refresh."
-            }
-            to="/admin/aml/monitoring"
-          />
-          <MetricTile
-            title="Unprocessed events"
-            icon={Gauge}
-            loading={loadingMonitoring}
-            value={monitoring?.unprocessed_events ?? "—"}
-            hint="Rule engine backlog."
-            to="/admin/aml/monitoring"
-          />
-          <MetricTile
-            title="Periodic reviews"
-            icon={ShieldCheck}
-            loading={loadingMonitoring}
-            value={monitoring?.pending_reviews ?? "—"}
-            hint={
-              monitoring
-                ? `${monitoring.overdue_reviews} overdue`
-                : "Awaiting first data refresh."
-            }
-            to="/admin/aml/monitoring"
-          />
-        </div>
-      )}
-
-      {caseError && (
-        <Alert variant="destructive">
-          <AlertTitle>Unable to load cases</AlertTitle>
-          <AlertDescription>{caseError}</AlertDescription>
-        </Alert>
+        <AmlPageSection title="Monitoring" description="Alert triage and periodic review backlog.">
+          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+            <AmlMetricCard
+              title="Open alerts"
+              icon={Bell}
+              state={monitoringMetricState}
+              value={monitoring?.open_alerts}
+              hint={monitoring ? `${monitoring.critical_alerts} critical` : undefined}
+              to="/admin/aml/monitoring"
+            />
+            <AmlMetricCard
+              title="Unprocessed events"
+              icon={Gauge}
+              state={monitoringMetricState}
+              value={monitoring?.unprocessed_events}
+              hint="Rule engine backlog."
+              to="/admin/aml/monitoring"
+            />
+            <AmlMetricCard
+              title="Periodic reviews"
+              icon={ShieldCheck}
+              state={monitoringMetricState}
+              value={monitoring?.pending_reviews}
+              hint={monitoring ? `${monitoring.overdue_reviews} overdue` : undefined}
+              to="/admin/aml/monitoring"
+            />
+          </div>
+        </AmlPageSection>
       )}
 
       {/* Queue directory — only entries the user can reach */}
@@ -329,7 +371,7 @@ function AmlOverviewV2() {
       {/* Latest cases with actionable empty state */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">Latest cases</CardTitle>
             <Button asChild size="sm" variant="outline">
               <Link to="/admin/aml/cases">Open case register →</Link>
@@ -338,38 +380,32 @@ function AmlOverviewV2() {
         </CardHeader>
         <CardContent>
           {loadingCases ? (
-            <div className="space-y-2">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
+            <div className="space-y-2" role="status">
+              <span className="sr-only">Loading latest cases</span>
+              <Skeleton className="h-10 w-full" aria-hidden="true" />
+              <Skeleton className="h-10 w-full" aria-hidden="true" />
+              <Skeleton className="h-10 w-full" aria-hidden="true" />
             </div>
           ) : cases.length === 0 ? (
-            <div className="rounded-md border border-dashed border-border/60 p-4 text-center">
-              <p className="text-sm text-muted-foreground">
-                No cases yet. Cases are only created after a human-confirmed client
-                activation — nothing is auto-generated from marketing leads.
-              </p>
-              <Button asChild size="sm" variant="outline" className="mt-3">
-                <Link to="/admin/aml/cases">Go to Case register</Link>
-              </Button>
-            </div>
+            <AmlEmptyState
+              body="No cases yet. Cases are only created after a human-confirmed client activation — nothing is auto-generated from marketing leads."
+              action={
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/admin/aml/cases">Go to Case register</Link>
+                </Button>
+              }
+            />
           ) : (
             <ul className="divide-y divide-border/60 text-sm">
               {cases.map((c) => (
-                <li key={c.id} className="flex items-center justify-between py-2">
+                <li key={c.id} className="flex items-center justify-between gap-2 py-2">
                   <div className="min-w-0">
                     <div className="truncate font-medium">{c.subject_display_name}</div>
                     <div className="text-xs text-muted-foreground">{c.case_reference}</div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {c.risk_rating && (
-                      <Badge variant="outline" className="capitalize">
-                        {c.risk_rating}
-                      </Badge>
-                    )}
-                    <Badge variant="secondary" className="capitalize">
-                      {c.status.replace(/_/g, " ")}
-                    </Badge>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {c.risk_rating && <AmlRiskBadge risk={c.risk_rating} />}
+                    <AmlStageBadge stage={caseStage(c)} />
                   </div>
                 </li>
               ))}
@@ -385,49 +421,16 @@ function AmlOverviewV2() {
           Reporting and configuration surfaces are restricted and only appear for MLRO users.
         </p>
       )}
-      {(canReport || canConfigure) && (
+      {canConfigure && (
         <div className="flex flex-wrap gap-2">
-          {canConfigure && (
-            <Button asChild size="sm" variant="outline">
-              <Link to="/admin/aml/configuration">
-                <Settings2 className="mr-2 h-4 w-4" />
-                Configuration
-              </Link>
-            </Button>
-          )}
+          <Button asChild size="sm" variant="outline">
+            <Link to="/admin/aml/configuration">
+              <Settings2 aria-hidden="true" className="mr-2 h-4 w-4" />
+              Configuration
+            </Link>
+          </Button>
         </div>
       )}
     </div>
   );
-}
-
-interface MetricTileProps {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  loading: boolean;
-  value: number | string;
-  hint: string;
-  to?: string;
-}
-
-function MetricTile({ title, icon: Icon, loading, value, hint, to }: MetricTileProps) {
-  const body = (
-    <Card className={to ? "transition-colors hover:border-primary/40" : undefined}>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-xs uppercase tracking-wide text-muted-foreground">
-          {title}
-        </CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <Skeleton className="h-8 w-16" />
-        ) : (
-          <div className="text-3xl font-semibold">{value}</div>
-        )}
-        <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
-      </CardContent>
-    </Card>
-  );
-  return to ? <Link to={to} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">{body}</Link> : body;
 }
