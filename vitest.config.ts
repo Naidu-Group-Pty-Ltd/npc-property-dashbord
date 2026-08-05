@@ -5,7 +5,7 @@ import path from "path";
 
 export default defineConfig({
   plugins: [inlineXlsxPlugin(), react()],
-  assetsInclude: ["**/*.xlsx"],
+  assetsInclude: ["**/*.xlsx", "**/*.docx"],
   test: {
     environment: "jsdom",
     globals: true,

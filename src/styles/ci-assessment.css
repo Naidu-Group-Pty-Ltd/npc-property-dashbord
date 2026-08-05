@@ -248,6 +248,42 @@
    * example answer given more weight than the question that produced it —
    * the reader already knows what was asked, they came for the answer.
    * ---------------------------------------------------------------------- */
+  /* -------------------------------------------------------------------------
+   * Document viewer
+   *
+   * A reading surface for the real .xlsx and .docx. The stage scrolls, never
+   * the frame — see PackDocumentViewer for why that matters.
+   * ---------------------------------------------------------------------- */
+  .ci-pack-dialog {
+    @apply flex h-[88vh] w-[min(88rem,96vw)] max-w-none flex-col gap-0 overflow-hidden p-0;
+  }
+  .ci-pack-dialog-expanded { @apply h-[96vh] w-[98vw]; }
+  .ci-pack-header {
+    @apply flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5;
+  }
+  .ci-pack-toolbar { @apply flex shrink-0 flex-wrap items-center gap-2; }
+  .ci-pack-readonly {
+    @apply border-info/40 bg-info/10 text-[0.65rem] font-semibold uppercase tracking-wide text-info;
+  }
+  .ci-pack-pager { @apply flex items-center gap-0.5 rounded-md border border-border bg-card px-1 py-0.5; }
+
+  .ci-pack-tabs { @apply flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-1.5; }
+  .ci-pack-tab {
+    @apply shrink-0 rounded-md border border-transparent px-2.5 py-1 text-xs font-medium
+           text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  }
+  .ci-pack-tab-active { @apply border-primary/40 bg-primary/10 text-foreground; }
+
+  /* Neutral, light surround: these documents are white pages and a dark stage
+     around them would misrepresent how they print. */
+  .ci-pack-stage {
+    @apply relative min-h-0 flex-1 overflow-auto bg-muted/40 focus-visible:outline-none
+           focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring;
+  }
+  .ci-pack-frame { @apply block w-full border-0 bg-background; }
+  .ci-pack-state { @apply flex flex-col items-center justify-center gap-2 px-6 py-16 text-center; }
+
   .ci-example-callout {
     @apply flex flex-wrap items-start gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4 sm:flex-nowrap;
   }
