@@ -116,6 +116,43 @@ describe('workbook viewer', () => {
   });
 });
 
+describe('every sheet reports a size that can hold it', () => {
+  /**
+   * The reported defect, three times over: the frame was sized from the row
+   * heights stored in the file, and every sheet was clipped by between 53px and
+   * 362px because a browser wraps text where Excel did not.
+   *
+   * jsdom cannot lay the sheets out, so this pins the floor rather than the
+   * measurement: no sheet may report a size smaller than its own grid, and none
+   * may report zero — a frame of zero height shows nothing at all. The
+   * measurement proper is verified in Chromium.
+   */
+  it('never reports a size below the grid it contains', async () => {
+    const { sheets } = await renderWorkbookToHtml(bytes(EXAMPLE));
+
+    sheets.forEach((sheet) => {
+      const columns = (sheet.html.match(/<col style="width:(\d+)px">/g) ?? [])
+        .map((tag) => Number(/width:(\d+)px/.exec(tag)?.[1] ?? 0));
+      const rows = (sheet.html.match(/<tr style="height:(\d+)px">/g) ?? [])
+        .map((tag) => Number(/height:(\d+)px/.exec(tag)?.[1] ?? 0));
+
+      const gridWidth = columns.reduce((total, width) => total + width, 0);
+      const gridHeight = rows.reduce((total, height) => total + height, 0);
+
+      expect(sheet.width, `${sheet.name} width`).toBeGreaterThanOrEqual(gridWidth);
+      expect(sheet.height, `${sheet.name} height`).toBeGreaterThanOrEqual(gridHeight);
+    });
+  });
+
+  it('gives every sheet a usable size', async () => {
+    const { sheets } = await renderWorkbookToHtml(bytes(EXAMPLE));
+    sheets.forEach((sheet) => {
+      expect(sheet.width, `${sheet.name} width`).toBeGreaterThan(100);
+      expect(sheet.height, `${sheet.name} height`).toBeGreaterThan(100);
+    });
+  });
+});
+
 describe('worked example is fully fictional', () => {
   it('names the fictional firm, not the real one', async () => {
     const { sheets } = await renderWorkbookToHtml(bytes(EXAMPLE));
