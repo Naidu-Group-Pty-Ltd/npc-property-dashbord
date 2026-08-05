@@ -732,7 +732,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const fileName = convertedFileName(structure.title, request.format);
     const path = convertedStoragePath(request.conversionId, fileName);
 
-    const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/a-2b', tagged: true });
+    const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/ua-1', tagged: true });
 
     // `upsert: true`: re-rendering one conversion after changing its binding is
     // the normal way this screen is used, and each render is the current draft

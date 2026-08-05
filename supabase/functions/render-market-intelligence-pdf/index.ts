@@ -322,7 +322,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       .maybeSingle();
     renderId = (renderRow?.id as string) ?? null;
 
-    const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/a-2b', tagged: true });
+    const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/ua-1', tagged: true });
 
     // `upsert: true`, unlike every other format in the programme, and the stable
     // path above is why. `pdf_storage_path` names the current PDF for this

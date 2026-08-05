@@ -338,6 +338,11 @@ export function engineProbes(): Record<string, string> {
  */
 export const REQUIRED_OPTIONS: readonly string[] = [
   'pdf_variant',
+  // The colour space the file declares it was prepared for. The PDF/A variants
+  // set this themselves; `pdf/ua-1` does not, because accessibility says
+  // nothing about colour — so the switch to UA dropped the output intent from
+  // every report until the service began asking for it by name.
+  'output_intent',
   // The knob that actually produces `/StructTreeRoot`. The service read
   // `tagged` from the body and did not pass it for a while, so every report it
   // produced was untagged — valid, printable, and unnavigable to a screen

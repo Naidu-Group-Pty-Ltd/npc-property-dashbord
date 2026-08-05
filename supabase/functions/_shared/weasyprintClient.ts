@@ -17,13 +17,50 @@
  *    not look like the one that was approved.
  */
 
-/** PDF/A-2b is the archival default; 1.7 exists for cases that need features it forbids. */
-export type PdfVariant = 'pdf/a-2b' | 'pdf/a-3b' | 'pdf-1.7';
+/**
+ * What the file declares itself to be.
+ *
+ * `pdf/ua-1` is the default and every report route asks for it. The engine
+ * takes **one** variant, so this is a choice rather than a stack, and it was
+ * made against a validator rather than from the specification:
+ *
+ * | rendered as | PDF/UA-1 | PDF/A-2A | PDF/A-2B |
+ * | --- | --- | --- | --- |
+ * | `pdf/a-2b` (what shipped) | fail | fail | **pass** |
+ * | `pdf/a-2a` | fail | **pass** | **pass** |
+ * | `pdf/ua-1` | **pass** | fail | fail |
+ *
+ * The interesting row is the middle one. `pdf/a-2a` fails PDF/UA-1 on exactly
+ * **one** rule and one check — clause 5, the PDF/UA identification schema in
+ * the XMP. Everything structural passes: the tree, the heading levels, the
+ * alternative text, the language. So these documents already satisfy both
+ * standards' *content* rules and can only carry one standard's *declaration*.
+ *
+ * The declaration went to accessibility. A screen-reader user and a
+ * procurement accessibility requirement both need the file to say so; nothing
+ * asks these reports to be archival, and the substance of PDF/A survives the
+ * switch anyway — fonts stay embedded 168 of 168, and the output intent the
+ * A variant used to add for free is now asked for explicitly.
+ *
+ * `pdf-1.7` stays for cases that need features a conformance level forbids.
+ */
+export type PdfVariant = 'pdf/ua-1' | 'pdf/a-2b' | 'pdf/a-3b' | 'pdf-1.7';
 
-export const PDF_VARIANTS: readonly PdfVariant[] = ['pdf/a-2b', 'pdf/a-3b', 'pdf-1.7'];
+export const PDF_VARIANTS: readonly PdfVariant[] = ['pdf/ua-1', 'pdf/a-2b', 'pdf/a-3b', 'pdf-1.7'];
+
+/**
+ * The colour space the file declares it was prepared for.
+ *
+ * `srgb` is a keyword the engine resolves to its own bundled `sRGB2014.icc`,
+ * not a path — a path matches nothing and produces no intent at all. The
+ * PDF/A variants set this themselves; `pdf/ua-1` does not, because
+ * accessibility says nothing about colour, so it is asked for here or the
+ * switch drops it from every report.
+ */
+export type PdfOutputIntent = 'srgb' | 'device-cmyk';
 
 /** Coerce an untrusted string to a variant, defaulting rather than rejecting. */
-export function toPdfVariant(value: unknown, fallback: PdfVariant = 'pdf/a-2b'): PdfVariant {
+export function toPdfVariant(value: unknown, fallback: PdfVariant = 'pdf/ua-1'): PdfVariant {
   const raw = typeof value === 'string' ? value.toLowerCase().trim() : '';
   return (PDF_VARIANTS as readonly string[]).includes(raw) ? raw as PdfVariant : fallback;
 }
@@ -41,6 +78,8 @@ export const MAX_HTML_BYTES = 25 * 1024 * 1024;
 
 export interface WeasyPrintOptions {
   variant?: PdfVariant;
+  /** Defaults to `srgb`. See `PdfOutputIntent`. */
+  outputIntent?: PdfOutputIntent;
   /** Tagged PDF. On by default — an untagged report is not navigable. */
   tagged?: boolean;
   optimizeImages?: boolean;
@@ -164,7 +203,8 @@ export async function renderPdfWithDiagnostics(
       },
       body: JSON.stringify({
         html,
-        pdf_variant: options.variant ?? 'pdf/a-2b',
+        pdf_variant: options.variant ?? 'pdf/ua-1',
+        output_intent: options.outputIntent ?? 'srgb',
         tagged: options.tagged !== false,
         optimize_images: options.optimizeImages !== false,
         strict: options.strict === true,

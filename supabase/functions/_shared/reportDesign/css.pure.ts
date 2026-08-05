@@ -150,8 +150,22 @@ function pageRules(
   palette: ResolvedReportPalette,
   masthead: string,
   type: Record<string, number>,
+  pressMarks: boolean,
 ): string {
   const base = marginsFor('body');
+
+  /* Crop marks and a bleed-extended sheet, for a document going to a press.
+
+     On the base rule so every named page inherits it — a cover is the page
+     that most needs the bleed, and it is the one that declares its own margins.
+
+     3mm is the trade convention. The sheet becomes 216 x 303mm around a
+     210 x 297mm trim, and the field colour on a full-bleed page runs off the
+     edge instead of stopping at it. Off by default: crop marks on a document
+     sent to a client read as a proof nobody meant to send. */
+  const press = pressMarks
+    ? '    marks: crop cross;\n    bleed: 3mm;\n'
+    : '';
   const named = (Object.keys(NAMED_PAGES) as NamedPage[])
     .filter((p) => p !== 'body')
     .map((p) => namedPageRule(p, palette))
@@ -179,7 +193,7 @@ function pageRules(
     size: ${PAGE_SIZE.name};
     margin: ${base.top}mm ${base.right}mm ${base.bottom}mm ${base.left}mm;
     background: ${palette.paper};
-
+${press}
     @top-left {
       content: string(chapter-eyebrow);
       font-family: ${PRINT_STACK.mono};
@@ -703,7 +717,7 @@ export function buildReportCss(input: ReportCssInput): string {
   const d = DENSITY_METRICS[options.density];
   const i = intensity(options);
 
-  return `${pageRules(palette, input.masthead, type)}
+  return `${pageRules(palette, input.masthead, type, options.pressMarks)}
 
   /* ── Foundation ─────────────────────────────────────────────────────── */
   html, body {

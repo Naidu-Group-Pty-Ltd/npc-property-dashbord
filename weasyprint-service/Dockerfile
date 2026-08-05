@@ -120,6 +120,49 @@ RUN fc-cache -f \
     && fc-match "Playfair Display:italic" | grep -qi "playfair" \
        || { echo "FATAL: Playfair Display italic is not installed"; exit 1; }
 
+# veraPDF, the conformance validator.
+#
+# The reports claim PDF/UA-1, and a conformance claim that fails validation is
+# worse than no claim: it tells a procurement officer, a screen-reader user and
+# an accessibility auditor that the document is navigable, and none of them
+# finds out otherwise until they try. So the checker travels with the engine
+# that produces the file, and `selfcheck.py` runs it at build time on the
+# specimen — the same pattern as the font check above, and for the same reason.
+#
+# The first run of it said FAIL on a document this repo had been tagging as
+# accessible for months.
+#
+# Headless install via IzPack's auto-install descriptor. Only the CLI packs;
+# the GUI, the corpus and the sample plugins are 300 MB of things a container
+# never uses.
+ARG VERAPDF_VERSION=1.30.2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      default-jre-headless unzip curl \
+    && curl -sSL -o /tmp/verapdf.zip https://software.verapdf.org/releases/verapdf-installer.zip \
+    && unzip -q /tmp/verapdf.zip -d /tmp/vp \
+    && printf '%s\n' \
+      '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' \
+      '<AutomatedInstallation langpack="eng">' \
+      '  <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>' \
+      '  <com.izforge.izpack.panels.target.TargetPanel id="install_dir">' \
+      '    <installpath>/opt/verapdf</installpath>' \
+      '  </com.izforge.izpack.panels.target.TargetPanel>' \
+      '  <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">' \
+      '    <pack index="0" name="veraPDF GUI" selected="true"/>' \
+      '    <pack index="1" name="veraPDF Mac and *nix Scripts" selected="true"/>' \
+      '    <pack index="3" name="veraPDF Corpus and Tests" selected="false"/>' \
+      '    <pack index="4" name="veraPDF Documentation" selected="false"/>' \
+      '    <pack index="5" name="veraPDF Sample Plugins" selected="false"/>' \
+      '  </com.izforge.izpack.panels.packs.PacksPanel>' \
+      '  <com.izforge.izpack.panels.install.InstallPanel id="install"/>' \
+      '  <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>' \
+      '</AutomatedInstallation>' > /tmp/auto.xml \
+    && java -jar /tmp/vp/verapdf-greenfield-${VERAPDF_VERSION}/verapdf-izpack-installer-${VERAPDF_VERSION}.jar /tmp/auto.xml \
+    && /opt/verapdf/verapdf --version \
+    && rm -rf /tmp/verapdf.zip /tmp/vp /tmp/auto.xml \
+    && apt-get purge -y unzip curl && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
