@@ -280,10 +280,46 @@
   /* Neutral, light surround: these documents are white pages and a dark stage
      around them would misrepresent how they print. */
   .ci-pack-stage {
-    @apply relative min-h-0 flex-1 overflow-auto bg-muted/40 focus-visible:outline-none
+    @apply relative min-h-0 flex-1 overflow-auto bg-muted/40 p-4 focus-visible:outline-none
            focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring;
+    /* Firefox and the modern standard. Chromium needs the vendor rules below. */
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.48) hsl(var(--muted) / 0.54);
   }
-  .ci-pack-frame { @apply block w-full border-0 bg-background; }
+
+  /* The platform default here is a chunky light scrollbar with stepper arrows,
+     which reads as a browser chrome bolted onto a dark dialog. This follows the
+     same treatment as the other scrolling dialogs in the app. */
+  .ci-pack-stage::-webkit-scrollbar { width: 10px; height: 10px; }
+  .ci-pack-stage::-webkit-scrollbar-track { background: hsl(var(--muted) / 0.54); }
+  .ci-pack-stage::-webkit-scrollbar-thumb {
+    border: 2px solid hsl(var(--muted) / 0.54);
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.48);
+  }
+  .ci-pack-stage::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / 0.66); }
+  .ci-pack-stage::-webkit-scrollbar-corner { background: hsl(var(--muted) / 0.54); }
+
+  .dark .ci-pack-stage { scrollbar-color: hsl(var(--primary) / 0.52) hsl(0 0% 9%); }
+  .dark .ci-pack-stage::-webkit-scrollbar-track,
+  .dark .ci-pack-stage::-webkit-scrollbar-corner { background: hsl(0 0% 9%); }
+  .dark .ci-pack-stage::-webkit-scrollbar-thumb {
+    border-color: hsl(0 0% 9%);
+    background: hsl(var(--primary) / 0.52);
+  }
+
+  /* The sheet strip scrolls too when a workbook has a dozen tabs. */
+  .ci-pack-tabs { scrollbar-width: thin; scrollbar-color: hsl(var(--primary) / 0.4) transparent; }
+  .ci-pack-tabs::-webkit-scrollbar { height: 6px; }
+  .ci-pack-tabs::-webkit-scrollbar-track { background: transparent; }
+  .ci-pack-tabs::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.4);
+  }
+  /* The wrapper carries the scaled size; the frame inside it is unscaled and
+     never scrolls, so the stage is the only scroller in the dialog. */
+  .ci-pack-frame-box { @apply relative mx-auto block overflow-hidden; }
+  .ci-pack-frame { @apply block border-0 bg-background; }
   .ci-pack-state { @apply flex flex-col items-center justify-center gap-2 px-6 py-16 text-center; }
 
   .ci-example-callout {

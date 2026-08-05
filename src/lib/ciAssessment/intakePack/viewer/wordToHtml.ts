@@ -39,7 +39,17 @@ const RENDER_OPTIONS = {
   ignoreHeight: false,
   ignoreFonts: false,
   breakPages: true,
-  ignoreLastRenderedPageBreak: false,
+  /**
+   * Ignore Word's cached page-break hints. This must stay `true`.
+   *
+   * `w:lastRenderedPageBreak` records where Word *happened* to break the text
+   * the last time it laid the file out, with whatever fonts and printer driver
+   * were installed then. It is a stale hint, not an authored break. Honouring
+   * it alongside the document's 13 real breaks produced 31 break points and
+   * 27 pages, most of the extras empty — which is exactly the symptom that was
+   * reported. Ignoring them gives the 14 pages the document actually has.
+   */
+  ignoreLastRenderedPageBreak: true,
   experimental: false,
   trimXmlDeclaration: true,
   useBase64URL: true,
@@ -83,6 +93,34 @@ function documentShell(styles: string, body: string): string {
 }
 
 /**
+ * Drop pages with no body content.
+ *
+ * Ignoring the stale break hints removes almost all of them, but a document can
+ * still end on a break and leave a genuinely empty final page. Word would not
+ * show that page either, and a blank sheet in a reference document reads as
+ * something having failed to load.
+ *
+ * Headers and footers repeat on every page, so they are not content — a page
+ * carrying only those is empty. Exported so it can be tested against a built
+ * DOM rather than only through a full render.
+ */
+export function removeEmptyPages(container: HTMLElement): number {
+  let removed = 0;
+  Array.from(container.querySelectorAll<HTMLElement>('section.docx')).forEach((page) => {
+    const body = Array.from(page.children).filter(
+      (child) => !child.className.includes('header') && !child.className.includes('footer'),
+    );
+    const hasText = body.some((child) => (child.textContent ?? '').trim().length > 0);
+    const hasGraphics = body.some((child) => child.querySelector('img, svg, table') != null);
+    if (!hasText && !hasGraphics) {
+      page.remove();
+      removed += 1;
+    }
+  });
+  return removed;
+}
+
+/**
  * Render the document and measure its pages.
  *
  * Returns markup rather than a live node so the caller can put it in an iframe
@@ -94,6 +132,8 @@ export async function renderWordToHtml(data: ArrayBuffer): Promise<RenderedWordD
   const stage = createStage();
   try {
     await renderAsync(new Blob([data]), stage, undefined, RENDER_OPTIONS);
+
+    removeEmptyPages(stage);
 
     const pages = Array.from(stage.querySelectorAll<HTMLElement>('section.docx'));
     if (!pages.length) throw new Error('The document produced no pages.');
