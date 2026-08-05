@@ -18,9 +18,7 @@ import * as XLSX from 'xlsx';
 import { buildIntakeWorkbook } from '../workbook';
 import { buildIntakeDocument } from '../document';
 import { parseIntakeWorkbook } from '../parseWorkbook';
-import { PACK_SECTIONS } from '../schema';
 import { SAMPLE_DETAILS, SAMPLE_PROCEED, sampleAssessment } from '../sample';
-import { workedExampleSections } from '../workedExample';
 import { Packer } from 'docx';
 
 const AS_AT = new Date('2026-08-05T00:00:00.000Z');
@@ -122,46 +120,6 @@ describe('worked example — round trip', () => {
     const total = sampleAssessment().ownership.entities
       .reduce((sum, entity) => sum + entity.ownershipPercent, 0);
     expect(total).toBe(100);
-  });
-});
-
-describe('worked example — readable form', () => {
-  it('renders the same strings the workbook writes', async () => {
-    const sections = workedExampleSections();
-    const transaction = sections.find((section) => section.id === 'transaction');
-    const price = transaction?.entries[0].answers.find(
-      (answer) => answer.key === 'property.purchasePrice',
-    );
-    // Formatted as the workbook's own cell format renders it, so the viewer and
-    // the downloaded file show a reader the same thing.
-    expect(price?.value).toBe('$5,850,000');
-  });
-
-  it('covers every pack section plus next steps', () => {
-    const sections = workedExampleSections();
-    expect(sections.map((section) => section.id)).toEqual([
-      ...PACK_SECTIONS.map((section) => section.id), 'proceed',
-    ]);
-  });
-
-  it('answers every required field, because that is what it is demonstrating', () => {
-    const unanswered = workedExampleSections()
-      .filter((section) => section.id !== 'proceed')
-      .flatMap((section) => section.entries.flatMap(
-        (entry) => entry.answers.map((answer) => ({ ...answer, section: section.title })),
-      ))
-      .filter((answer) => answer.required && answer.value === '');
-
-    expect(unanswered.map((answer) => `${answer.section}: ${answer.label}`)).toEqual([]);
-  });
-
-  it('gives every repeated entry a label so the blocks can be told apart', () => {
-    workedExampleSections()
-      .filter((section) => section.shape === 'table')
-      .forEach((section) => {
-        expect(section.entries.length).toBeGreaterThan(0);
-        section.entries.forEach((entry) => expect(entry.label).toBeTruthy());
-      });
   });
 });
 

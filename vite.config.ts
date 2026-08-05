@@ -51,7 +51,7 @@ export default defineConfig(() => ({
     __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
   plugins: [inlineXlsxPlugin(), react(), mcpPlugin(), buildVersionManifest()],
-  assetsInclude: ["**/*.xlsx"],
+  assetsInclude: ["**/*.xlsx", "**/*.docx"],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
