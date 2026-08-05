@@ -22,6 +22,7 @@ import { ReportGenerationProgress } from "./components/reports/ReportGenerationP
 import { CallNotificationListener } from "./components/CallNotificationListener";
 import { Phase1NotificationListeners } from "./components/Phase1NotificationListeners";
 import { TokenEventsListener } from "@/components/billing/TokenEventsListener";
+import { PricingMockBanner } from "@/components/billing/PricingMockBanner";
 import { PushNotificationPrompt } from "./components/PushNotificationPrompt";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
@@ -330,6 +331,7 @@ const App = () => (
                   <CallNotificationListener />
                   <Phase1NotificationListeners />
                   <TokenEventsListener />
+                  <PricingMockBanner />
                   <PushNotificationPrompt />
                   <ComparisonProvider>
                     <SearchProvider>
