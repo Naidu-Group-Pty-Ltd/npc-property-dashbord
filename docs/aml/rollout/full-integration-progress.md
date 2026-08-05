@@ -620,6 +620,42 @@ Fresh disposable Postgres 16.14, destroyed afterwards.
 | WP-14 edge type-check | 418 errors vs baseline 420, `aml-records` 2 → 0, **no new errors** |
 | `npm run build` (default mode) | pass — **0** staging references, **no** STAGING banner |
 
+### A sixth inherited WP-14 failure, fixed at source
+
+While this round was finishing, `main` advanced twice more (#1945, then #1947).
+CI type-checks the PR **merge** commit, so #1947's two brand-new Edge Function
+files entered this PR's tree carrying five type errors, absent from the WP-14
+baseline and therefore counted as 0. The gate went red on files this PR does not
+own — the third time that has happened in this programme.
+
+Fixed at source, not by raising the baseline:
+
+| Error | Fix |
+| --- | --- |
+| `normalise.pure.ts` ×3 — `list()` returns `unknown[]`, so the `reduce` accumulator inferred `unknown` and every later use of the passing-rent total failed | `reduce<number>` |
+| `render-commercial-capacity-pdf` — `verifyAuth`'s body parameter is optional, not nullable | `?? undefined` |
+| `render-commercial-capacity-pdf` — `generateAnalysis` declared its client as `ReturnType<typeof createClient>`, which instantiates the generic from its CONSTRAINTS rather than its defaults, so nothing can be passed to it | `SupabaseClient` — the same root cause as the `listing-images` fix that landed via #1944 |
+
+WP-14 then reports **418 errors against baseline 420, no new errors**, with
+`aml-records` 2 → 0 still banked.
+
+This is the third distinct instance of the same pattern and worth stating plainly:
+**a floating `deno-version: v2.x` plus a per-file ratchet means any merge can turn
+this gate red on code the PR never touched.** Recorded for the owners; the pin is
+still deliberately unchanged.
+
+### Full-suite vitest failures are pre-existing on main
+
+Running the **entire** vitest suite (585 files) reports 34 failures across 25
+files — solicitor portal, finance portal, Google Maps proxies, the scenario delta
+engine, template builder, commercial/industrial calculators. None is AML.
+
+Three of those suites were re-run on a clean `origin/main` worktree at
+`89aa4ceb1`: **3 files, 9 tests, the same failures**. They are inherited, and they
+lie outside the `verify` job's configured scope (which runs the Template Builder
+surface, report token metering, the report design system, every report format and
+the page measurer — all green). Recorded rather than silently excluded.
+
 ## Known blockers (recorded, not stopping independent work)
 
 - **Human approval** for PRs #1946 and #1944 into `main`, and for #1939. Not
