@@ -334,87 +334,141 @@ PR #1944 for the owner of those functions.
 | E2E | client journey real against `aml-client-portal`; staff journey still fixture-backed |
 | Rehearsal | passed previously on a disposable production-shaped DB |
 
-### The `security` job has two independent failing steps
+### The `security` job was FOUR failures deep, not two
 
-Each of the two security PRs fixes exactly one. **Neither can show a green
-`security` job alone, and both must merge** before PR #1939 can reach fully-green
-CI.
+The earlier entry in this file said the job had "two independent failing steps".
+**That was wrong, and it was wrong in a way worth recording**: the job is a
+sequence of `bash -e` steps, so it only ever reports the *first* failure. Fixing
+one revealed the next, three times.
 
-| Step | Failing on main | Fixed by |
+| Layer | Step | Failure | Fixed by |
+| --- | --- | --- | --- |
+| 1 | Deno type-check every Edge Function entry point (WP-14) | `listing-images: 6 → 8` | PR #1944 |
+| 2 | Internal-auth legacy-fallback gate (WP-12) | 3 findings, `x-internal-edge-secret` read directly | PR #1946 |
+| 3 | Agent tool policy gate (WP-05A/05C) | **5 of its 18 scripts failing** — only the first was visible, because the whole step is one `bash -e` block | PR #1946 |
+| 4 | *(none — added)* | nothing verified that a repaired gate still bites | PR #1946 |
+
+All five in layer 3 were run against a clean `origin/main` worktree at
+`5fab4bbaf` and fail there identically. None is caused by the AML branch.
+
+#### Layer 3, diagnosed one at a time
+
+Four of the five were **assertion drift**, not missing controls: the gate greps
+for the exact line that implemented a property, the implementation was later
+hardened, and the literal stopped matching. In three of those four, satisfying
+the old literal would mean *reintroducing the weaker design*.
+
+| Gate | Was asserted | Actually implemented now | Nature |
+| --- | --- | --- | --- |
+| `check-agent-tool-policies` | a superadmin could opt into a cross-user `agent_action_log` view | opt-in removed; `activity_logs` module gate **plus** an explicit superadmin role check that 403s; per-user scoping now **unconditional** | drift — code is stricter |
+| `check-step-up-session-binding` | `bound_session_id: staffSession.id` | at assurance ≥ 2 the issuer **rotates** the staff session first, so the proof binds to the rotated id via `boundSessionId` | drift — old literal is now the bug |
+| `check-storage-upload-hardening` | human `upsert=true` is refused | the flag is **ignored** instead (refusing broke callers that passed it defensively); path is server-generated and unique, `upsert` forced false for non-internal | drift — property intact |
+| `check-market-digest-authz` | idempotency on `(period, period_start)` | key is `(period, period_key)`; early return narrowed to `status === 'published'` so a failed window is re-attempted; provider variable renamed, which had turned the ordering assertion into an **unconditional** failure | drift — property intact |
+| `check-csrf-coverage` | every `verifyAuth` function invokes `enforceCsrf` | **2 of 6 had no CSRF enforcement at all** | **a real defect** |
+
+The CSRF one was genuine. `agent-insights-runner` INSERTs into
+`agent_insights_feed` and `notifications` and accepts a cookie-carried staff
+session, so a cross-site POST was a cookie-authenticated **write**;
+`agent-models-read` dispatches reads over POST and was reachable the same way.
+
+Three others (`notifications-feed`, `notifications-feed-v2`,
+`market-updates-archive`) had a local `csrfCheck` that is **stricter** than the
+shared guard — smaller `EXACT_ORIGINS`, and no `CORS_ALLOW_LOVABLE_PREVIEW`
+suffix widening. Delegating to the shared guard would have *widened* the origins
+they accept, so the shared guard is composed **in front of** the local list as a
+floor. No origin refused before is accepted now.
+
+#### Layer 4 — the reason to believe layer 3
+
+Re-pointing a drifted gate and quietly loosening it produce similar diffs, and
+nothing in CI could tell them apart. `scripts/security/check-security-gate-negatives.mjs`
+now does: for each control it runs the gate against a symlink mirror of the tree
+with that control **removed**, and requires the gate to **fail**. Nine controls,
+nine gates. A case whose anchor is no longer present fails loudly rather than
+passing vacuously.
+
+CI output on the green run:
+
+```
+Security gate negative tests passed (9 controls removed, 9 gates failed as required).
+```
+
+### The `security` job is now GREEN on a real SHA
+
+Run [`31037583288`](https://github.com/lavan96/npc-property-dashbord/actions/runs/31037583288),
+head `58cb46556`, job `security`: **success**, with every step executing through
+to gitleaks (`no leaks found`) — not skipped. This is the first green `security`
+job in this programme.
+
+Because both fixes are needed together, **PR #1944 is merged into PR #1946**
+(authorship preserved) so the job could be demonstrated green on one SHA rather
+than argued about across two red PRs. #1944 stays open as the reviewed source of
+the `listing-images` change and becomes redundant once #1946 lands.
+
+### WP-14's counts are not deterministic — a new finding
+
+`ci.yml` pins `deno-version: v2.x`, which floats. **Two runs of identical code
+reached opposite verdicts:**
+
+| Run | Head | WP-14 reported |
 | --- | --- | --- |
-| WP-14 edge type-check (`listing-images` 6 → 8) | yes | **PR #1944** |
-| WP-12 internal-auth legacy fallback (3 findings) | yes, but was *masked* — step 12 reported `skipped` while WP-14 failed ahead of it | **PR #1946** |
+| `31035705138` | `07cf77b16` | `409 entry points, 0 errors (baseline 426)`, **130 files improved**, passed |
+| `31037067259` | `002015377` | `409 entry points, 426 errors (baseline 426)`, `listing-images: 6 → 8`, failed |
 
-#### PR #1946 — WP-12 fixed properly, not suppressed
+The second commit is a strict superset of the first and neither touches
+`listing-images`. Locally, Deno 2.9.4 reports 418 — a third reading. The ratchet
+only fails on increases, so the "everything improved" reading passes harmlessly,
+but the same mechanism can fail the gate on untouched files. **The pin was
+deliberately left alone** — narrowing it trades the flake for missing genuine new
+diagnostics, which is an owner decision, not a side effect of a security fix.
+Recorded as the likeliest future cause of a mysterious red `security` job.
 
-`send-web-push` and `dispatch-marketing-reports` both compared
-`x-internal-edge-secret` straight from the request headers. That credential is
-replayable, is not bound to the request body and carries no caller identity.
-Both now use `verifySignedInternal`, which verifies an HMAC over the method,
-target, body and declared caller, restricts the caller to an allow-list, and
-fails closed when `INTERNAL_EDGE_SECRET` is absent or too short.
+### AML branch state
 
-- `send-web-push`: the static branch is deleted. Every caller already sends the
-  envelope via `public.cron_signed_internal_headers(...)`, so this removed a
-  redundant weaker credential, not a capability. The retired header is also
-  dropped from the CORS allow-list.
-- `dispatch-marketing-reports`: the cron path uses `verifySignedInternal` against
-  a named `INTERNAL_DISPATCH_CALLERS` list. The authorisation shape is unchanged
-  — an internal caller may still only run `dispatch`; every other operation still
-  requires staff admin. The body is read once as text so the signature covers the
-  exact bytes.
-- **No ALLOWLIST entry and no baseline raised.** Both files sit exactly at their
-  existing WP-14 numbers (`send-web-push` 2 pre-existing, `dispatch-marketing-reports` 0).
-- 10 contract assertions added across both functions.
-- WP-12 gate: **exit 0 across 789 files.**
+`main` merged in (merge, never rebase) at `952521686`; **0 behind**. After the
+merge: AML vitest **749 passed / 44 files**, `tsc --noEmit` clean.
 
-### Function deployment — blocked on an organisation-owned credential
+### Correction: function deployment is NOT credential-blocked
 
-The repository's own deployment path is
-`.github/workflows/deploy-supabase-functions.yml`, which uses
-`supabase/setup-cli` with `secrets.SUPABASE_ACCESS_TOKEN`. That secret is **not
-present in this environment** (the workflow itself documents that without it the
-run "reports what it *would* deploy and stops"). No token exists in the
-environment, `~/.supabase`, or any config file, and the Supabase CLI is not
-installed.
+The earlier entry in this file said the only remaining path needed
+`SUPABASE_ACCESS_TOKEN` and that MCP deployment was out of reach. **The first
+half is right, the conclusion was too strong.** The Supabase MCP server *is*
+authenticated against the non-production branch `yncczbrmicjebjepfave`:
 
-The only remaining path is the MCP `deploy_edge_function` tool, which requires
-every file inlined in the request. The six required functions plus their
-transitive shared imports total **657 KB across 47 files** (`aml-cases` 140 KB,
-`aml-verification` 146 KB, `aml-risk` 93 KB, `aml-client-portal` 92 KB,
-`cross-portal-outbox-worker` 81 KB, `client-portal-verify` 44 KB) — beyond what a
-single session can carry alongside the verification and reporting work. Deploying
-a subset would leave the staff E2E fixture-backed anyway, since it needs
-`aml-cases` and `aml-verification` together.
+- `aml-client-portal` is deployed there at **version 2** (updated 2026-08-05);
+- the branch now carries **24 `aml.*` tables**.
 
-Consequently these remain open and are **not** claimed as done:
-staff-function deployment, the `aml-client-portal` redeploy carrying DEF-B1,
-`client-portal-verify` deployment, provider deployment, worker scheduling, and
+So there is a working deployment path. What remains is volume, not
+authorisation: `deploy_edge_function` needs every transitive file inlined per
+call, and the five outstanding functions plus shared imports are ~565 KB across
+~45 files.
+
+**Not claimed as done, and not claimed as blocked-by-credential:** deployment of
+`client-portal-verify`, `aml-cases`, `aml-verification`, `aml-risk` and
+`cross-portal-outbox-worker`; provider deployment; worker scheduling; and
 therefore the unfixtured staff E2E and fresh screenshots.
 
-**The staff E2E in PR #1939 is still fixture-backed and is not represented
-otherwise anywhere.**
-
-### Exact next action
-
-Obtain `SUPABASE_ACCESS_TOKEN` for the staging project (or run
-`supabase functions deploy` from an environment that has it), deploy the six
-functions in the manifest order, then run the unfixtured suites.
+**Two things are explicitly still unverified.** The staff E2E in PR #1939 is
+**fixture-backed** and is not represented otherwise anywhere. And although
+`aml-client-portal` is deployed at version 2, the deployed **body** has not been
+read back, so **DEF-B1 is not claimed as verified in a browser**.
 
 ## Known blockers (recorded, not stopping independent work)
 
-- No staging frontend exists (Lovable-hosted production frontend only);
-  browser E2E requires one — recorded for Stage 29/30.
-- Self-hosted verification service has no deployment target/owner; secrets
-  and provider approval are human decisions (Option A/B register on #1937).
+- **Human approval** for PRs #1946 and #1944 into `main`, and for #1939. Not
+  sought, not granted, never to be self-supplied.
+- Self-hosted verification service has no deployment target/owner; secrets and
+  provider approval are human decisions (Option A/B register on #1937).
 - Owner/sign-off register: all roles open; approvals must not be invented.
 - Production migration ledger not replayable on fresh DBs (branch
-  materialisation fails at ledger row 90/~600) — pre-existing platform
-  defect; rehearsal A documents it, rehearsal B covers the release set.
+  materialisation fails at ledger row ~90/600) — pre-existing platform defect;
+  rehearsal A documents it, rehearsal B covers the release set.
 
 ## Next action
 
-Repository work is complete for this round. What remains is external:
-human review of PR #1939, the verification service's deployment target and
-secrets, worker scheduling, a change window, and the security / privacy /
-MLRO / operations sign-offs. Release remains BLOCKED.
+Merge #1946 (with #1944 inside it) into `main` through the protected process,
+then merge `main` into the AML branch to clear its inherited red `security`
+check. Independently: continue inlining the five outstanding functions to the
+staging branch, then replace the fixture-backed staff E2E with an unfixtured run.
+
+Release remains **BLOCKED**.
