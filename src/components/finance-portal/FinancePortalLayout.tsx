@@ -20,7 +20,7 @@ import { FinanceCommandPalette } from './FinanceCommandPalette';
 import { QuickAddFab } from './QuickAddFab';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { FinanceOnboardingTour } from './FinanceOnboardingTour';
-import { bootFinanceAppearance } from '@/lib/finance-portal/theme';
+import { bootFinanceAppearance, clearFinanceAppearance } from '@/lib/finance-portal/theme';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -88,7 +88,15 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   // Batch 13 #66 — boot theme/density from cached prefs on mount.
-  useEffect(() => { bootFinanceAppearance(); }, []);
+  // The palette lives on <html>, so it is global state and has to be torn
+  // down on unmount: without the cleanup it follows the user out of the
+  // portal and the Command Centre inherits finance dark surfaces while its
+  // own light-mode rules still apply. The preference itself is kept in
+  // localStorage and restored on the next visit.
+  useEffect(() => {
+    bootFinanceAppearance();
+    return () => { clearFinanceAppearance(); };
+  }, []);
 
   const handleLogout = async () => {
     await signOut();

@@ -784,21 +784,30 @@
 
   /* Light-mode global contrast polish for dashboard controls only.
      Dark mode selectors below remain untouched; these rules intentionally scope
-     to :root:not(.dark) so low-contrast utility classes cannot leak into dark mode. */
-  :root:not(.dark) .luxury-button,
+     to :root:not(.dark) so low-contrast utility classes cannot leak into dark mode.
+
+     `.dark` alone is not a complete test for "this document is light". The
+     finance portal ships dark palettes that cannot set `.dark` — BrandProvider
+     owns that class — so they mark themselves `data-palette="dark"` instead
+     (src/lib/finance-portal/theme.ts). Any rule below keyed on a SHARED class
+     (`.luxury-*`) therefore has to exclude both, or it paints light borders on
+     a dark portal. Rules keyed on `.dashboard-shell` / `.dashboard-*` / `.ci-*`
+     do not need the guard: those classes only exist in the Command Centre,
+     which never runs a finance palette. */
+  :root:not(.dark):not([data-palette='dark']) .luxury-button,
   :root:not(.dark) .dashboard-shell button,
   :root:not(.dark) .dashboard-shell [role="button"] {
     font-weight: 650;
   }
 
-  :root:not(.dark) .luxury-button:not(:disabled):not([aria-disabled="true"]),
+  :root:not(.dark):not([data-palette='dark']) .luxury-button:not(:disabled):not([aria-disabled="true"]),
   :root:not(.dark) .dashboard-shell button:not(:disabled):not([aria-disabled="true"]),
   :root:not(.dark) .dashboard-shell [role="button"]:not([aria-disabled="true"]) {
     border-color: hsl(var(--dashboard-border-strong) / 0.72);
   }
 
-  :root:not(.dark) .luxury-button:disabled,
-  :root:not(.dark) .luxury-button[aria-disabled="true"],
+  :root:not(.dark):not([data-palette='dark']) .luxury-button:disabled,
+  :root:not(.dark):not([data-palette='dark']) .luxury-button[aria-disabled="true"],
   :root:not(.dark) .dashboard-shell button:disabled,
   :root:not(.dark) .dashboard-shell button[aria-disabled="true"] {
     cursor: not-allowed;
@@ -810,7 +819,7 @@
     filter: saturate(0.72);
   }
 
-  :root:not(.dark) .luxury-button.bg-primary,
+  :root:not(.dark):not([data-palette='dark']) .luxury-button.bg-primary,
   :root:not(.dark) .dashboard-shell .bg-primary,
   :root:not(.dark) .dashboard-shell [class*="data-[state=active]:bg-primary"][data-state="active"] {
     color: hsl(var(--primary-foreground));
@@ -819,7 +828,7 @@
   /* Tab weight only. The rail and the active chip are glass surfaces —
      see src/styles/glass.css. These used to paint a solid light-mode-only
      chip, which left the active tab looking different in light and dark. */
-  :root:not(.dark) .luxury-tabs-trigger,
+  :root:not(.dark):not([data-palette='dark']) .luxury-tabs-trigger,
   :root:not(.dark) .dashboard-shell [role="tab"] {
     font-weight: 700;
   }
@@ -832,7 +841,7 @@
 
   :root:not(.dark) .dashboard-shell input::placeholder,
   :root:not(.dark) .dashboard-shell textarea::placeholder,
-  :root:not(.dark) .luxury-input::placeholder {
+  :root:not(.dark):not([data-palette='dark']) .luxury-input::placeholder {
     color: hsl(var(--muted-foreground) / 0.78);
   }
 
@@ -842,7 +851,7 @@
     border-color: hsl(var(--primary) / 0.42);
   }
 
-  :root:not(.dark) .luxury-badge,
+  :root:not(.dark):not([data-palette='dark']) .luxury-badge,
   :root:not(.dark) .dashboard-shell .dashboard-status-chip,
   :root:not(.dark) .dashboard-shell .dashboard-trend-chip,
   :root:not(.dark) .dashboard-shell .ci-badge-soft,
