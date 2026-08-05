@@ -228,6 +228,80 @@ const CLIENT_ACTION_CODES = [
 ];
 
 /**
+ * Stage 22 — server-derived journey. The portal renders exactly what this
+ * returns; no completion claim is computed client-side. "Verified" appears
+ * only when every applicable party holds an authoritative electronic result
+ * or an accepted staff sighting — never from case status alone. Completion
+ * wording stays restrained: reuse claims belong to the passport/consent
+ * machinery, not this journey.
+ */
+function buildJourney(args: {
+  consentSatisfied: boolean;
+  activeSections: string[];
+  sectionMap: Map<string, any>;
+  requirements: any[];
+  parties: Array<{ status: string; can_attempt: boolean }>;
+  submissions: any[];
+  openRequestCount: number;
+  portalStatus: string;
+}) {
+  const sectionsDone = args.activeSections.every((sec) =>
+    ['submitted', 'accepted', 'complete'].includes(args.sectionMap.get(sec)?.status ?? ''));
+  const requiredReqs = args.requirements.filter((r: any) => r.required);
+  const docsDone = requiredReqs.length > 0 &&
+    requiredReqs.every((r: any) => ['uploaded', 'accepted'].includes(r.status));
+  const partiesResolved = args.parties.length > 0 &&
+    args.parties.every((pt) => pt.status === 'verified');
+  const verificationInFlight = args.parties.some((pt) => pt.status === 'in_review');
+  const submitted = (args.submissions ?? []).length > 0;
+  const complete = args.portalStatus === 'complete';
+
+  const step = (
+    key: string, status: 'complete' | 'in_progress' | 'action_required' | 'not_started' | 'blocked',
+    label: string, description: string, target: string, completedAt: string | null = null,
+  ) => ({
+    step: key, status, action_required: status === 'action_required',
+    safe_label: label, safe_description: description, target_step: target,
+    completed_at: completedAt,
+  });
+
+  return [
+    step('consent', args.consentSatisfied ? 'complete' : 'action_required',
+      'Consents', args.consentSatisfied
+        ? 'You have accepted the current consents.'
+        : 'Please review and accept the consents to continue.', 'consent'),
+    step('questionnaire', sectionsDone ? 'complete' : args.consentSatisfied ? 'action_required' : 'blocked',
+      'Your information', sectionsDone
+        ? 'All required sections are submitted.'
+        : 'Some sections still need to be completed.', 'questionnaire'),
+    step('documents', docsDone ? 'complete' : requiredReqs.length === 0 ? 'not_started' : 'action_required',
+      'Documents', docsDone
+        ? 'All requested documents are uploaded.'
+        : 'Some requested documents are outstanding.', 'documents'),
+    step('verification',
+      partiesResolved ? 'complete' : verificationInFlight ? 'in_progress' : 'action_required',
+      'Identity verification',
+      partiesResolved
+        ? 'You are verified.'
+        : verificationInFlight
+          ? 'We are checking your identity documents.'
+          : 'Identity verification is still to be completed.', 'verify'),
+    step('submission', submitted ? 'complete' : 'not_started',
+      'Review and submit', submitted
+        ? 'Your information has been submitted for review.'
+        : 'Submit your onboarding once everything above is complete.', 'review'),
+    step('review',
+      complete ? 'complete' : args.openRequestCount > 0 ? 'action_required' : submitted ? 'in_progress' : 'not_started',
+      complete ? 'Complete' : 'Adviser review',
+      complete
+        ? 'Your onboarding is complete.'
+        : args.openRequestCount > 0
+          ? 'Your adviser has asked for something — see your requests.'
+          : 'Your adviser is reviewing your information.', 'review'),
+  ];
+}
+
+/**
  * Attempts already CONSUMED by this party on the electronic path.
  *
  * The truth is aml.verification_attempts_used(): only rows whose provider
@@ -528,6 +602,16 @@ Deno.serve(async (req) => {
             due_at: r.due_at ?? null,
           })),
           recent_submissions: submissions ?? [],
+          journey: buildJourney({
+            consentSatisfied: consentState.satisfied,
+            activeSections: active,
+            sectionMap,
+            requirements: reqs,
+            parties: await verificationParties(admin, c.id),
+            submissions: submissions ?? [],
+            openRequestCount: (openRequests ?? []).length,
+            portalStatus,
+          }),
         });
       }
 

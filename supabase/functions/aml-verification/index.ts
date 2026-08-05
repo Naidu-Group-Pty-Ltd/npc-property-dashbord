@@ -742,6 +742,41 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({ syncs: data ?? [], entry_count: count ?? 0 });
       }
 
+      // Stage 9: authorised technical retry for canonical checks. Retries
+      // ONLY technical failures and dead-lettered jobs — an authoritative
+      // outcome is final here, and a retry never consumes a customer attempt
+      // (the worker's attempt accounting decides that on completion).
+      case "retry_verification_processing": {
+        if (!canWrite) return jr({ error: "Write role required" }, 403);
+        const checkId = String(body.verification_check_id ?? "");
+        if (!checkId) return jr({ error: "verification_check_id required" }, 400);
+        const { data: check } = await admin.schema("aml").from("verification_checks")
+          .select("id, case_id, processing_status, status, superseded_at")
+          .eq("id", checkId).maybeSingle();
+        if (!check) return jr({ error: "not found" }, 404);
+        if (check.superseded_at || check.status !== "pending"
+            || !["technical_failure", "dead_lettered"].includes(check.processing_status ?? "")) {
+          return jr({
+            error: "Only a technically-failed or dead-lettered check can be retried. Authoritative results are final; ask the client for a new capture instead.",
+            code: "retry_not_eligible",
+          }, 409);
+        }
+        const { error: requeueErr } = await admin.schema("aml").from("verification_checks")
+          .update({ processing_status: "queued", provider_error_category: null })
+          .eq("id", checkId).eq("processing_status", check.processing_status);
+        if (requeueErr) throw requeueErr;
+        await admin.from("integration_outbox").insert({
+          aggregate_type: "aml_verification_check", aggregate_id: checkId,
+          event_type: "aml.verification.requested", event_version: 1,
+          payload: { verification_check_id: checkId, case_id: check.case_id, retry: true },
+          idempotency_key: `aml-verify-retry-${checkId}-${Date.now()}`,
+        });
+        await appendCaseEvent(admin, check.case_id, "system",
+          "Verification processing retried by staff (technical failure — no customer attempt consumed)",
+          { verification_check_id: checkId }, userId, userEmail);
+        return jr({ requeued: true, verification_check_id: checkId });
+      }
+
       // Read-only provider readiness: what would actually run if staff asked
       // for a verification right now, and why. Booleans only for secrets —
       // never values. This is the operator preflight for the IDV workflow.
