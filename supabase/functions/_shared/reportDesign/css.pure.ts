@@ -758,6 +758,37 @@ export function buildReportCss(input: ReportCssInput): string {
     font-feature-settings: "kern" 1, "liga" 1, "case" 1;
   }
 
+  /* ── The document outline ─────────────────────────────────────────────
+
+     The bookmark properties appeared nowhere in this design system, so every
+     report it has ever produced opens with an empty bookmarks pane —
+     including a twenty-nine page one. The contents page tells a reader what
+     is in the document and gives them no way to get there; the outline is the
+     half a reader can actually use. It is also what a screen reader navigates
+     by, which makes it part of the accessibility claim rather than a
+     convenience.
+
+     Two levels, from the two headings that are structural. An h3 is a
+     sub-subhead inside a chapter and belongs in the prose, not in a pane.
+
+     The cover is excluded deliberately: its heading is the document's title,
+     so an outline that began with it would open on an entry pointing at the
+     page the reader is already looking at. WeasyPrint reads these from the
+     stylesheet — the technique is the one in
+     src/lib/reportTemplate/htmlRenderer.ts, which has used it since it was
+     written. */
+  .chapter-header h1,
+  .page-contents h1,
+  .company-page .company-name {
+    bookmark-level: 1;
+    bookmark-label: content(text);
+  }
+  .chapter-body h2 {
+    bookmark-level: 2;
+    bookmark-label: content(text);
+  }
+  .report-cover h1.cover-title { bookmark-level: none; }
+
   /* ── Typography ─────────────────────────────────────────────────────── */
   h1, h2, h3 {
     font-family: ${PRINT_STACK.display};
@@ -851,15 +882,17 @@ export function buildReportCss(input: ReportCssInput): string {
      around them, were the two places that could not break a word.
 
      The limits are what keep it from being the other kind of eyesore: never
-     break a word under six letters, never leave fewer than three before the
-     hyphen or three after it, and never let three lines in a row end in one.
+     break a word under six letters, and never leave fewer than three letters
+     before the hyphen or three after it. There is no limit on consecutive
+     hyphenated lines — hyphenate-limit-lines is an unknown property on the
+     pinned engine, which said so on stderr the first time it was asked. It is
+     recorded in UNSUPPORTED so it cannot come back silently.
 
      Not on headings, cover type, table cells or figure labels — those are set
      to be read at a glance and a hyphen in one reads as a typo. */
   p, li, .callout-body p, .decision-box p, .sidenote-body p {
     hyphens: auto;
     hyphenate-limit-chars: 6 3 3;
-    hyphenate-limit-lines: 2;
   }
   h1, h2, h3, h4, caption, th, td,
   .cover-title, .cover-eyebrow, .cover-meta, .chapter-header,
@@ -867,27 +900,25 @@ export function buildReportCss(input: ReportCssInput): string {
     hyphens: none;
   }
 
-  strong {
-    font-weight: 600;
-    color: ${palette.bodyInk};
-    /* Inter's 600 is a real cut and ships; this makes a missing one visible
-       rather than smeared. See the note on em. */
-    font-synthesis: none;
-  }
+  strong { font-weight: 600; color: ${palette.bodyInk}; }
   em {
     font-family: ${PRINT_STACK.accent};
     font-style: italic;
     font-size: 1.05em;
-    /* Only the 400 italic of the accent face ships. Inside an h1 (600) or an
-       h2 (500) this rule inherits the weight and asks for an italic at that
-       weight, which does not exist — so Pango emboldens the 400 synthetically
-       and nothing downstream can see that it did. The cover title already pins
-       400 for exactly this reason, which shows the hazard was known and handled
-       in one place only.
+    /* Pinned, because only the 400 italic of the accent face ships.
 
-       font-synthesis: none turns every remaining instance from a silent smear
-       into a visible fallback, which is a thing a person can find. */
-    font-synthesis: none;
+       Without a weight this rule inherits one, so inside an h1 (600) or an h2
+       (500) it asks for an italic at that weight. There is no such cut, and
+       Pango emboldens the 400 synthetically rather than refusing — a smeared
+       italic that nothing downstream can see. The cover title already pinned
+       400 for exactly this reason, which shows the hazard was known and
+       handled in one place only.
+
+       font-synthesis: none is the declaration that says "fall back visibly
+       rather than fake it", and it is an unknown property on the pinned
+       engine — asked, warned about on stderr, ignored. Pinning the weight is
+       what actually works: it requests the cut that exists. */
+    font-weight: 400;
   }
   a {
     color: ${palette.accentOnPaper};
@@ -940,7 +971,9 @@ ${options.showDropCaps
     font-size: ${pt(type.pullQuote)};
     line-height: 1.25;
     ${EDITORIAL_NUMERIC_FEATURES}
-    font-synthesis: none;
+    /* Same reason as em: pin the cut that ships rather than inherit a weight
+       there is no italic for. */
+    font-weight: 400;
     color: ${palette.bodyInk};
     margin: ${pt(d.blockGapPt + 4)} 0;
     padding: 0 0 0 14pt;
@@ -1268,7 +1301,7 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
     font-size: ${pt(type.bodyLg + 1)};
     line-height: 1.4;
     ${EDITORIAL_NUMERIC_FEATURES}
-    font-synthesis: none;
+    font-weight: 400;
     color: ${palette.mutedInk};
     margin-bottom: ${pt(d.blockGapPt)};
     text-align: left;

@@ -125,6 +125,30 @@ export const UNSUPPORTED: readonly EngineConstruct[] = [
       + 'a viewBox, which carries its ratio intrinsically.',
   },
   {
+    id: 'font-synthesis',
+    probe: 'font-synthesis: none',
+    pattern: /\bfont-synthesis\s*:/,
+    instead: 'pin font-weight to a cut that ships',
+    note:
+      'Unknown property. It is the declaration that says "fall back visibly '
+      + 'rather than fake it", and without it Pango emboldens or slants a face '
+      + 'that has no such cut — a smear nothing downstream can detect. Only the '
+      + '400 italic of the accent family ships, so every italic rule pins 400 '
+      + 'rather than inheriting a heading weight there is no italic for. Found '
+      + 'by rendering: the engine names it on stderr and renders on.',
+  },
+  {
+    id: 'hyphenate-limit-lines',
+    probe: 'hyphenate-limit-lines: 2',
+    pattern: /\bhyphenate-limit-lines\s*:/,
+    instead: 'nothing — the engine has no ladder control',
+    note:
+      'Unknown property, though `hyphenate-limit-chars` beside it is accepted. '
+      + 'So a run of consecutive hyphenated line-endings cannot be limited on '
+      + 'this engine; the character limits are what keep hyphenation from '
+      + 'becoming the other kind of eyesore.',
+  },
+  {
     id: 'mix-blend-mode',
     probe: 'mix-blend-mode: multiply',
     pattern: /\bmix-blend-mode\s*:/,
@@ -212,6 +236,27 @@ export const LOAD_BEARING: readonly EngineConstruct[] = [
     note:
       'Justified body copy at this measure rags badly without it. Needs the '
       + 'document lang as well, which renderDocument sets.',
+  },
+  {
+    id: 'hyphenate-limit-chars',
+    probe: 'hyphenate-limit-chars: 6 3 3',
+    pattern: /\bhyphenate-limit-chars\s*:/,
+    instead: '',
+    note:
+      'Without it, hyphenation breaks four-letter words and leaves a single '
+      + 'letter before the hyphen. Its sibling `hyphenate-limit-lines` is an '
+      + 'unknown property on this engine, so this is the only control there is.',
+  },
+  {
+    id: 'bookmark-level',
+    probe: 'bookmark-level: 1',
+    pattern: /\bbookmark-level\s*:/,
+    instead: '',
+    note:
+      'The PDF outline. Without it a twenty-nine page report opens with an '
+      + 'empty bookmarks pane, and a screen reader has no structure to '
+      + 'navigate by — which makes it part of the accessibility claim rather '
+      + 'than a convenience.',
   },
   {
     id: 'break-inside',

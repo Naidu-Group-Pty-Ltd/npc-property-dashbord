@@ -32,6 +32,7 @@ import {
   missingFamilies,
   shippedWeights,
 } from '../typography.pure';
+import { findUnsupportedCss } from '../engineSupport.pure';
 import { buildReportCss } from '../css.pure';
 import { resolveReportPalette } from '../brandResolve.pure';
 import {
@@ -341,15 +342,38 @@ describe('the OpenType features the sheet asks for', () => {
     expect(sheet.match(/font-feature-settings: "kern" 1, "case" 1;/g) ?? []).toHaveLength(2);
   });
 
-  it('refuses a synthesised italic and a synthesised bold', () => {
-    // `em` sets the accent family in italic and no weight, so inside an h1
-    // (600) or an h2 (500) it inherits the weight and asks for an italic at
-    // that weight. Only the 400 italic ships, so Pango emboldens it
-    // synthetically and nothing downstream can see that it did. The cover title
-    // already pins 400 for this reason — in one place only.
-    expect(sheet.match(/font-synthesis: none;/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
-    expect(sheet).toMatch(/em \{[^}]*font-synthesis: none;/);
-    expect(sheet).toMatch(/strong \{[^}]*font-synthesis: none;/);
+  it('pins every italic to the one weight the accent face ships', () => {
+    // `em` set the accent family in italic and no weight, so inside an h1 (600)
+    // or an h2 (500) it inherited the weight and asked for an italic at it.
+    // There is no such cut, and Pango emboldens the 400 synthetically rather
+    // than refusing — a smear nothing downstream can detect. The cover title
+    // already pinned 400 for this reason, in one place only.
+    //
+    // `font-synthesis: none` is the declaration that says "fall back visibly
+    // rather than fake it", and it was the first fix here. The engine's own
+    // stderr settled it: unknown property on the pinned version, asked and
+    // ignored. It is in `UNSUPPORTED` now, and the sheet pins the weight —
+    // which requests the cut that exists, and actually works.
+    // Through the module rather than a substring search: `findUnsupportedCss`
+    // strips comments, and the comment on the `em` rule names the property it
+    // is explaining. A raw search would fail on the explanation.
+    expect(findUnsupportedCss(sheet).map((f) => f.id)).not.toContain('font-synthesis');
+    for (const rule of [/em \{[^}]*font-weight: 400;/, /\.lede \{[^}]*font-weight: 400;/,
+      /\.pull-quote \{[^}]*font-weight: 400;/]) {
+      expect(sheet).toMatch(rule);
+    }
+  });
+
+  it('gives every report an outline, which none of them had', () => {
+    // `bookmark-level` appeared nowhere in this design system, so every report
+    // it produced opened with an empty bookmarks pane — including a 29-page
+    // one. Two levels: the chapter headers and the subheads inside them.
+    expect(sheet).toMatch(/\.chapter-header h1[\s\S]{0,120}bookmark-level: 1;/);
+    expect(sheet).toMatch(/\.chapter-body h2 \{[^}]*bookmark-level: 2;/);
+    expect(sheet).toContain('bookmark-label: content(text);');
+    // Not the cover: its heading is the document's title, so an outline
+    // starting there points at the page the reader is already looking at.
+    expect(sheet).toMatch(/\.report-cover h1\.cover-title \{ bookmark-level: none; \}/);
   });
 
   it('sets figures three ways, because a table is not a sentence', () => {
