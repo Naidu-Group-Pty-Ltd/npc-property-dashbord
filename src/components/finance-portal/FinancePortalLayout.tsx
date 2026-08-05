@@ -98,7 +98,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
   const initials = getInitials(user?.name, user?.email);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="finance-portal-theme flex min-h-screen flex-col">
       <FinancePortalOnboardingGate />
       <FinanceCommandPalette />
       <KeyboardShortcutsDialog />
@@ -110,7 +110,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
       {/* ── Desktop Layout ── */}
       <div className="flex-1 flex">
         {/* Sidebar */}
-        <aside className="hidden md:flex md:w-64 flex-col border-r border-border bg-card/60 backdrop-blur-sm">
+        <aside className="finance-portal-sidebar hidden md:flex md:w-64 flex-col border-r">
           {/* Branded Header */}
           <div className="p-5 pb-4">
             <Link to="/finance" className="flex items-center gap-3">
@@ -169,7 +169,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
         {/* Main column */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Top bar */}
-          <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+          <header className="finance-portal-topbar sticky top-0 z-30 border-b">
             <div className="flex h-14 items-center gap-3 px-4 md:px-6">
               {/* Mobile hamburger */}
               <Button variant="ghost" size="icon" className="md:hidden h-9 w-9" onClick={() => setMobileOpen(true)}>
@@ -242,7 +242,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto">
+          <main className="finance-portal-main flex-1 overflow-auto">
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}
@@ -264,7 +264,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
           <>
             {/* Backdrop */}
             <motion.div
-              className="md:hidden fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"
+              className="glass-scrim md:hidden fixed inset-0 z-40"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -273,7 +273,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
             />
             {/* Drawer panel with swipe-to-close */}
             <motion.div
-              className="md:hidden fixed inset-y-0 left-0 z-50 w-72 bg-card border-r border-border shadow-2xl flex flex-col touch-pan-y"
+              className="finance-portal-sidebar md:hidden fixed inset-y-0 left-0 z-50 w-72 border-r flex flex-col touch-pan-y"
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}

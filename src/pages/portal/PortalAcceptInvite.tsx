@@ -117,7 +117,7 @@ export default function PortalAcceptInvite() {
 
   if (validating) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">
           <Loader2 className="h-10 w-10 text-primary mx-auto animate-spin" />
           <p className="text-muted-foreground">Validating your invite...</p>
@@ -128,7 +128,7 @@ export default function PortalAcceptInvite() {
 
   if (!token || !inviteValid) {
     return (
-      <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="client-portal-theme min-h-screen flex items-center justify-center p-4">
         <Card className="client-portal-soft-panel w-full max-w-md overflow-hidden">
           <CardHeader className="border-b border-border/50 bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent text-center">
             <div className="flex justify-center mb-4">
@@ -153,7 +153,7 @@ export default function PortalAcceptInvite() {
 
   if (alreadyActive) {
     return (
-      <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="client-portal-theme min-h-screen flex items-center justify-center p-4">
         <Card className="client-portal-soft-panel w-full max-w-md overflow-hidden">
           <CardHeader className="border-b border-border/50 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent text-center">
             <div className="flex justify-center mb-4">
@@ -171,7 +171,7 @@ export default function PortalAcceptInvite() {
   }
 
   return (
-    <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="client-portal-theme min-h-screen flex items-center justify-center p-4">
       <Card className="client-portal-soft-panel w-full max-w-md overflow-hidden">
         <CardHeader className="space-y-2 text-center">
           <div className="flex justify-center mb-4">

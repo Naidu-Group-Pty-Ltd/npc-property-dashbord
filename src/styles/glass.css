@@ -16,7 +16,8 @@
      1. The field      the light everything refracts
      2. The recipe     the public .glass-* classes
      3. The re-skin    the existing taxonomy mapped onto the recipe
-     4. Guard rails    performance, motion, and containment notes
+     4. The portals    client / finance / solicitor / builder
+     5. Guard rails    performance, motion, and containment notes
 
    ── Rules for anyone extending it ─────────────────────────────────
    • Never write a colour here. Every value comes from the glass scale
@@ -434,12 +435,18 @@
     color: hsl(var(--foreground));
   }
 
+  /* The active tab is a lit chip, not a solid pill. It has to be
+     unmistakable at a glance, so it carries three cues at once rather
+     than relying on fill: a raised surface, a brand-coloured edge, and a
+     full-strength label. The label colour comes from the primitive's own
+     `data-[state=active]:text-foreground` against the inactive tabs'
+     muted-foreground — deliberately not set here, so the two do not
+     fight over it. */
   .luxury-tabs-trigger[data-state="active"] {
     border: 1px solid var(--glass-stroke-accent);
     background-color: var(--glass-fill-strong);
     background-image: var(--glass-sheen);
-    color: hsl(var(--foreground));
-    box-shadow: var(--glass-shadow-sm), var(--glass-inner);
+    box-shadow: var(--glass-shadow), var(--glass-inner);
   }
 
   /* ── Portalled overlays ───────────────────────────────────────────
@@ -692,7 +699,205 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════
-     4. GUARD RAILS
+     4. THE PORTALS
+
+     Four partner-facing surfaces — client, finance, solicitor, builder —
+     each rooted on its own `*-portal-theme` class. They are separate
+     applications with separate chrome, but they are the same product, so
+     they run the same material.
+
+     Written once as a shared selector list rather than four near-identical
+     blocks. The class names stay distinct, so any portal can still add its
+     own override; what they no longer have is four private copies of the
+     surface recipe that drift apart one bug fix at a time.
+
+     Note the finance portal's palettes (`finance-theme-midnight` /
+     `-graphite`) go on <html>, not on the portal root, and set dark
+     surfaces without `.dark` — tokens.css lists them next to `.dark` so
+     the glass scale follows them.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* The portal root stops painting its own opaque background so the
+     ambient field reads through, and contributes a brand-tinted wash of
+     its own on top. Each portal keeps its existing grid texture. */
+  .client-portal-theme,
+  .finance-portal-theme,
+  .solicitor-portal-theme,
+  .builder-portal-theme {
+    background-color: transparent;
+    background-image: radial-gradient(
+        circle at top left,
+        hsl(var(--primary) / 0.10),
+        transparent 28%
+      ),
+      radial-gradient(
+        circle at top right,
+        hsl(var(--primary) / 0.06),
+        transparent 24%
+      );
+  }
+
+  /* Portal chrome — one sidebar and one top bar per portal, so these
+     blur. Same role as the dashboard's topbar/sidebar surfaces. */
+  .client-portal-sidebar,
+  .client-portal-topbar,
+  .finance-portal-sidebar,
+  .finance-portal-topbar,
+  .solicitor-portal-sidebar,
+  .solicitor-portal-topbar,
+  .builder-portal-sidebar,
+  .builder-portal-topbar {
+    border-color: var(--glass-stroke-strong);
+    background-image: var(--glass-sheen);
+    background-color: var(--glass-fill-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur-lg))
+      saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-saturate));
+    box-shadow: var(--glass-shadow), var(--glass-inner);
+  }
+
+  /* Page headers are the portals' hero pane — one per route. */
+  .client-portal-page-header,
+  .finance-portal-page-header,
+  .solicitor-portal-page-header,
+  .builder-portal-page-header {
+    border-color: var(--glass-stroke-accent);
+    background-image: linear-gradient(
+        160deg,
+        var(--glass-specular) 0%,
+        hsl(0 0% 100% / 0) 44%
+      ),
+      linear-gradient(
+        145deg,
+        var(--glass-fill-accent),
+        hsl(var(--primary) / 0) 70%
+      );
+    background-color: var(--glass-fill-strong);
+    -webkit-backdrop-filter: blur(var(--glass-blur-lg))
+      saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-saturate));
+    box-shadow: var(--glass-shadow-lg), var(--glass-inner);
+  }
+
+  /* Panels and stat cards are repeated across a portal dashboard, so they
+     take the fill and the lit edge and skip the blur — same rule as the
+     Command Centre cards. */
+  .client-portal-soft-panel,
+  .client-portal-stat-card,
+  .finance-portal-soft-panel,
+  .finance-portal-stat-card,
+  .solicitor-portal-soft-panel,
+  .solicitor-portal-stat-card,
+  .builder-portal-soft-panel,
+  .builder-portal-stat-card {
+    border: 1px solid var(--glass-stroke);
+    background-image: var(--glass-sheen);
+    background-color: var(--glass-fill);
+    box-shadow: var(--glass-shadow), var(--glass-inner);
+  }
+
+  .client-portal-stat-card:hover,
+  .finance-portal-stat-card:hover,
+  .solicitor-portal-stat-card:hover,
+  .builder-portal-stat-card:hover {
+    border-color: var(--glass-stroke-accent);
+    background-color: var(--glass-fill-hover);
+    box-shadow: var(--glass-shadow-lg), var(--glass-inner);
+  }
+
+  /* The portals were built largely from bare Tailwind surface utilities
+     rather than named classes — roughly 350 of them across the four
+     trees. Rewriting each call site would be a very large, very
+     mechanical diff with a lot of room to break layout, so the surface
+     tokens are converted here instead, scoped to the portal roots.
+     Descendant-of-root is (0,2,0), which is what it takes to out-rank
+     Tailwind's own `.bg-card` — utilities are emitted after the
+     components layer.
+
+     Only the three *surface* tokens are caught. `bg-muted`, `bg-primary`
+     and the semantic fills are left alone: they are chips, filled
+     buttons and status colours, not panes. No blur, for the same reason
+     the cards do not blur — this selector cannot know how many elements
+     it will match. */
+  .client-portal-theme .bg-card,
+  .client-portal-theme .bg-background,
+  .client-portal-theme .bg-popover,
+  .finance-portal-theme .bg-card,
+  .finance-portal-theme .bg-background,
+  .finance-portal-theme .bg-popover,
+  .solicitor-portal-theme .bg-card,
+  .solicitor-portal-theme .bg-background,
+  .solicitor-portal-theme .bg-popover,
+  .builder-portal-theme .bg-card,
+  .builder-portal-theme .bg-background,
+  .builder-portal-theme .bg-popover {
+    background-color: var(--glass-fill);
+    background-image: var(--glass-sheen);
+  }
+
+  /* A bordered pane gets the glass edge too. */
+  .client-portal-theme .border.bg-card,
+  .finance-portal-theme .border.bg-card,
+  .solicitor-portal-theme .border.bg-card,
+  .builder-portal-theme .border.bg-card {
+    border-color: var(--glass-stroke);
+    box-shadow: var(--glass-shadow), var(--glass-inner);
+  }
+
+  /* Portal controls match the Command Centre's: recessed, not floating. */
+  .client-portal-theme input,
+  .client-portal-theme textarea,
+  .client-portal-theme button[role="combobox"],
+  .finance-portal-theme input,
+  .finance-portal-theme textarea,
+  .finance-portal-theme button[role="combobox"],
+  .solicitor-portal-theme input,
+  .solicitor-portal-theme textarea,
+  .solicitor-portal-theme button[role="combobox"],
+  .builder-portal-theme input,
+  .builder-portal-theme textarea,
+  .builder-portal-theme button[role="combobox"] {
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
+    background-image: none;
+    box-shadow: inset 0 1px 2px 0 hsl(var(--foreground) / 0.06),
+      inset 0 1px 0 0 var(--glass-specular-soft);
+  }
+
+  .client-portal-theme input:focus-visible,
+  .client-portal-theme textarea:focus-visible,
+  .client-portal-theme button[role="combobox"]:focus-visible,
+  .finance-portal-theme input:focus-visible,
+  .finance-portal-theme textarea:focus-visible,
+  .finance-portal-theme button[role="combobox"]:focus-visible,
+  .solicitor-portal-theme input:focus-visible,
+  .solicitor-portal-theme textarea:focus-visible,
+  .solicitor-portal-theme button[role="combobox"]:focus-visible,
+  .builder-portal-theme input:focus-visible,
+  .builder-portal-theme textarea:focus-visible,
+  .builder-portal-theme button[role="combobox"]:focus-visible {
+    outline: none;
+    border-color: var(--glass-stroke-accent);
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.22),
+      inset 0 1px 2px 0 hsl(var(--foreground) / 0.05);
+  }
+
+  /* Portal overlays. These are portalled to <body>, outside the portal
+     root, so they are matched on the popper wrapper rather than scoped —
+     the shared `.luxury-*` overlay rules above already cover the
+     primitives; this catches listbox/select content rendered by portal
+     code that does not go through them. */
+  [data-radix-popper-content-wrapper] [role="listbox"] {
+    border-color: var(--glass-stroke-strong);
+    background-color: var(--glass-fill-raised);
+    -webkit-backdrop-filter: blur(var(--glass-blur-lg))
+      saturate(var(--glass-saturate));
+    backdrop-filter: blur(var(--glass-blur-lg)) saturate(var(--glass-saturate));
+    box-shadow: var(--glass-shadow-lg), var(--glass-inner);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     5. GUARD RAILS
      ══════════════════════════════════════════════════════════════════ */
 
   /* Hover-lift is decoration. Anyone who asked for less motion keeps the
