@@ -7,9 +7,13 @@ import {
   Coins,
   Gavel,
   Settings2,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { useAmlTerminology } from "@/lib/aml/useAmlTerminology";
@@ -40,6 +44,17 @@ import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
  * Server-side permission checks continue to run inside each route via
  * `AmlGuard`; this shell only decides what appears in the primary and
  * secondary nav.
+ *
+ * Presentation notes (UI/UX enhancement — behaviour unchanged):
+ *  - Below `md` the two tab rows collapse into labelled Selects so the shell
+ *    stays usable at 320–360 px without wrapping into five rows of tabs and
+ *    without any horizontal-scroll-only interaction.
+ *  - The header shows a workspace › section context line so deep pages keep
+ *    their bearings; it never surfaces roles, capabilities or flag names.
+ *  - The header is deliberately NOT sticky: the case workspace pins its own
+ *    section nav and action panel (`lg:sticky lg:top-4`), and a sticky shell
+ *    header would stack with those and hide focused content on short
+ *    laptops.
  */
 
 interface SecondaryEntry {
@@ -290,28 +305,97 @@ export function AmlLayout() {
     hasAmlCapability(roles, s.capability),
   );
 
+  const activeSecondary = secondary?.find(
+    (s) =>
+      location.pathname === s.to || location.pathname.startsWith(s.to + "/"),
+  );
+
+  // Context line: where the user is within the module. On Compliance Home the
+  // strapline reads better than a one-crumb trail.
+  const showTrail = activeWorkspace && activeWorkspace.key !== "home";
+
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-border/60 bg-card/60 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-6 pt-6">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 pt-5 sm:px-6 sm:pt-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <div
+              aria-hidden="true"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+            >
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
               <h1 className="text-lg font-semibold tracking-tight">{t("AML/CTF Compliance")}</h1>
-              <p className="text-xs text-muted-foreground">
-                {t("Case-centred workspace for AUSTRAC-aligned KYC, screening, monitoring and reporting.")}
-              </p>
+              {showTrail ? (
+                <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                  <span className="truncate">{t(activeWorkspace.label)}</span>
+                  {activeSecondary && (
+                    <>
+                      <ChevronRight aria-hidden="true" className="h-3 w-3 shrink-0" />
+                      <span className="truncate font-medium text-foreground/80">
+                        {t(activeSecondary.label)}
+                      </span>
+                    </>
+                  )}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {t("Case-centred workspace for AUSTRAC-aligned KYC, screening, monitoring and reporting.")}
+                </p>
+              )}
             </div>
             {/* Role chips + module status intentionally removed per Version 2 spec.
                 Restricted capability is signalled where useful in secondary nav. */}
           </div>
 
+          {/* Mobile (<md): the two tab rows collapse into labelled Selects —
+              no wrapped tab stacks, no horizontal-only scrolling. */}
+          <div className="flex flex-col gap-2 pb-3 md:hidden">
+            <Select
+              value={activeWorkspace?.key}
+              onValueChange={(key) => {
+                const w = visibleWorkspaces.find((x) => x.key === key);
+                if (w) navigate(w.defaultPath);
+              }}
+            >
+              <SelectTrigger aria-label="AML workspace" className="w-full">
+                <SelectValue placeholder="Choose a workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {visibleWorkspaces.map((w) => (
+                  <SelectItem key={w.key} value={w.key}>
+                    {t(w.label)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {secondary && secondary.length > 1 && (
+              <Select
+                value={activeSecondary?.to ?? ""}
+                onValueChange={(to) => { if (to) navigate(to); }}
+              >
+                <SelectTrigger
+                  aria-label={`${activeWorkspace?.label ?? "Workspace"} section`}
+                  className="w-full"
+                >
+                  <SelectValue placeholder="Choose a section" />
+                </SelectTrigger>
+                <SelectContent>
+                  {secondary.map((s) => (
+                    <SelectItem key={s.to} value={s.to}>
+                      {t(s.label)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
           {/* Primary — five role-adaptive workspaces, no horizontal scroll. */}
           <nav
             aria-label="AML workspaces"
-            className="flex w-full flex-wrap gap-1 border-b border-border/40"
+            className="hidden w-full flex-wrap gap-1 border-b border-border/40 md:flex"
           >
             {visibleWorkspaces.map((w) => {
               const active = activeWorkspace?.key === w.key;
@@ -321,14 +405,14 @@ export function AmlLayout() {
                   key={w.key}
                   to={w.defaultPath}
                   className={cn(
-                    "inline-flex min-w-0 items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors",
+                    "inline-flex min-w-0 items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                     active
                       ? "border-primary text-primary"
                       : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                   aria-current={active ? "page" : undefined}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
                   <span className="truncate">{t(w.label)}</span>
                 </NavLink>
               );
@@ -340,7 +424,7 @@ export function AmlLayout() {
           {secondary && secondary.length > 0 && (
             <nav
               aria-label={`${activeWorkspace?.label} sections`}
-              className="flex flex-wrap gap-1 pb-3"
+              className="hidden flex-wrap gap-1 pb-3 md:flex"
             >
               {secondary.map((s) => {
                 const active =
@@ -352,9 +436,9 @@ export function AmlLayout() {
                     to={s.to}
                     end={s.end}
                     className={cn(
-                      "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-sm transition-colors",
+                      "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                       active
-                        ? "bg-primary/10 text-primary"
+                        ? "bg-primary/10 font-medium text-primary"
                         : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                     )}
                     aria-current={active ? "page" : undefined}
@@ -368,7 +452,7 @@ export function AmlLayout() {
         </div>
       </header>
 
-      <div className="mx-auto w-full max-w-[1600px] flex-1 px-6 py-6">
+      <div className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-5 sm:px-6 sm:py-6">
         <Outlet />
       </div>
     </div>
