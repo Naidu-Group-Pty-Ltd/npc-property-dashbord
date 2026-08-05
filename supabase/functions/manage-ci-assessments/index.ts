@@ -17,6 +17,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
 /**
@@ -24,11 +25,15 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
  * a client is reachable when the caller created it or is the assigned team
  * member.
  *
- * NOTE: the shared `clientAccess.ts` helper additionally grants superadmins
- * access to every client. That bypass is deliberately NOT implemented here —
- * this function fails closed, so a superadmin sees only clients they created
- * or are assigned to. Narrowing is safe; widening would not be. Wiring the
- * shared helper (and its role-resolution chain) is tracked as follow-up.
+ * This is the *fallback* scope, not the whole model. The platform's client
+ * tables are also reachable by staff holding view permission on the Clients
+ * module — that is the rule `render-borrowing-capacity-pdf` and the client
+ * workspace itself apply — and the first shipped version of this function
+ * omitted it, so the linking step showed each adviser only the clients they
+ * personally created. `resolveClientScope` below restores the platform rule:
+ * module-permission holders (and superadmins, inside `requireModulePermission`)
+ * see every client; everyone else falls back to ownership. Still fail-closed —
+ * a permission lookup that errors narrows to ownership, never widens.
  */
 const clientOwnershipFilter = (userId: string) =>
   `created_by.eq.${userId},assigned_team_user_id.eq.${userId}`;
@@ -37,7 +42,8 @@ type Operation =
   | 'list' | 'get' | 'create' | 'autosave' | 'update_section'
   | 'run_calculation' | 'list_calculations'
   | 'save_scenario' | 'list_scenarios'
-  | 'complete' | 'search_clients' | 'link_client' | 'unlink_client'
+  | 'complete' | 'search_clients' | 'create_client' | 'link_client' | 'unlink_client'
+  | 'client_workspace'
   | 'archive' | 'restore' | 'audit';
 
 const VALID_STATUSES = new Set([
@@ -212,6 +218,42 @@ Deno.serve(async (req) => {
       .eq('id', assessmentId)
       .eq('user_id', userId)
       .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  /**
+   * Whether this caller may reach every client, or only their own.
+   *
+   * Resolved at most once per request, and only on the operations that touch
+   * the clients table — `requireModulePermission` costs three reads and most
+   * operations never need it. A lookup failure resolves to the ownership
+   * scope: an errored permission check must narrow, never widen.
+   */
+  let clientScopeCache: 'all' | 'own' | null = null;
+  async function resolveClientScope(): Promise<'all' | 'own'> {
+    if (clientScopeCache) return clientScopeCache;
+    try {
+      const staff = await requireModulePermission(supabase, auth, 'clients', 'can_view');
+      clientScopeCache = staff.ok ? 'all' : 'own';
+    } catch {
+      clientScopeCache = 'own';
+    }
+    return clientScopeCache;
+  }
+
+  /**
+   * Load a client the caller may reach, or null.
+   *
+   * Null covers "does not exist" and "not yours" alike, deliberately — the
+   * distinction would confirm the existence of another user's record.
+   */
+  async function loadReachableClient(clientId: string, columns = 'id') {
+    let query = supabase.from('clients').select(columns).eq('id', clientId);
+    if (await resolveClientScope() === 'own') {
+      query = query.or(clientOwnershipFilter(userId));
+    }
+    const { data, error } = await query.maybeSingle();
     if (error) throw error;
     return data;
   }
@@ -579,8 +621,13 @@ Deno.serve(async (req) => {
         const term = String(body.search ?? '').trim().slice(0, 120);
         let query = supabase
           .from('clients')
-          .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at')
-          .or(clientOwnershipFilter(userId));
+          .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at');
+        // Staff holding Clients-module view permission search the whole book,
+        // which is the platform's rule everywhere else clients appear. Others
+        // see the clients they created or are assigned to.
+        if (await resolveClientScope() === 'own') {
+          query = query.or(clientOwnershipFilter(userId));
+        }
 
         // Filter in the database, not after a truncated fetch — filtering a
         // 25-row page in memory would hide any client outside that page.
@@ -600,6 +647,82 @@ Deno.serve(async (req) => {
       }
 
       // ---------------------------------------------------------------------
+      // Create a client from the linking step.
+      //
+      // A minimal person record, in the shape the platform's other creation
+      // paths write (`ai-dashboard-agent`, the CRM form): name, contact
+      // details, `pipeline_status: 'lead'`, owned by the creator. The caller
+      // prefill comes from the assessment payload, but nothing is written the
+      // user did not see on screen first — the UI shows an editable form, and
+      // this operation stores exactly what was submitted.
+      //
+      // Deliberately does NOT link. Creation and linking stay two audited
+      // steps, so a failed link never strands a half-made client, and the
+      // reconciliation flow runs identically for a new client and an old one.
+      case 'create_client': {
+        const firstName = String(body.firstName ?? '').trim().slice(0, 120);
+        const surname = String(body.surname ?? '').trim().slice(0, 120);
+        const email = String(body.email ?? '').trim().slice(0, 254);
+        const mobile = String(body.mobile ?? '').trim().slice(0, 40);
+
+        if (!firstName && !surname) {
+          return fail('A first name or surname is required', 400, corsHeaders, 'MISSING_NAME');
+        }
+        if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+          return fail('The email address is not valid', 400, corsHeaders, 'INVALID_EMAIL');
+        }
+
+        // Duplicate guard on exact email: creating "the same client twice"
+        // from the linking step is the likeliest mistake this screen invites,
+        // and the search a click away already finds the existing record.
+        if (email) {
+          const { data: existingClient, error: dupError } = await supabase
+            .from('clients')
+            .select('id, primary_first_name, primary_surname')
+            .ilike('primary_email', email)
+            .limit(1)
+            .maybeSingle();
+          if (dupError) throw dupError;
+          if (existingClient) {
+            return fail(
+              'A client with this email already exists — search for them instead.',
+              409, corsHeaders, 'DUPLICATE_EMAIL',
+            );
+          }
+        }
+
+        const { data: created, error: createError } = await supabase
+          .from('clients')
+          .insert({
+            primary_first_name: firstName || null,
+            primary_surname: surname || null,
+            primary_email: email || null,
+            primary_mobile: mobile || null,
+            pipeline_status: 'lead',
+            ghl_sync_status: 'pending',
+            created_by: userId,
+          })
+          .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at')
+          .single();
+        if (createError) throw createError;
+
+        // When the creation happened inside an assessment's linking step, the
+        // assessment's audit trail records it — a client record appearing out
+        // of a finance workflow is exactly what an audit trail is for.
+        if (typeof body.assessmentId === 'string' && body.assessmentId) {
+          const owned = await loadOwned(body.assessmentId);
+          if (owned) {
+            await writeAudit(owned.id, 'client_created', {
+              clientId: created.id,
+              source: 'ci_linking_step',
+            });
+          }
+        }
+
+        return json({ success: true, data: created }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
       // Linking is explicit, audited and never silent. The reconciliation
       // decision set is stored verbatim alongside what was actually applied.
       case 'link_client': {
@@ -616,16 +739,10 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Confirm the caller may reach this client. A client they cannot see is
-        // reported as not found, not as forbidden — the distinction would
-        // otherwise confirm the existence of another user's record.
-        const { data: client, error: clientError } = await supabase
-          .from('clients')
-          .select('id')
-          .eq('id', body.clientId)
-          .or(clientOwnershipFilter(userId))
-          .maybeSingle();
-        if (clientError) throw clientError;
+        // Confirm the caller may reach this client — their own, or any client
+        // when they hold Clients-module view permission. A client they cannot
+        // see is reported as not found, not as forbidden.
+        const client = await loadReachableClient(String(body.clientId));
         if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
 
         const reconciliationItems = Array.isArray(body.reconciliationItems)
@@ -702,6 +819,78 @@ Deno.serve(async (req) => {
 
         await writeAudit(existing.id, 'client_unlinked', { previousClientId: existing.client_id });
         return json({ success: true, data }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      // Everything Commercial & Industrial that touches one client, in one
+      // read: the linked assessments, their calculation runs, their generated
+      // report renders and the link history. Powers the client profile's
+      // Commercial / Industrial tab.
+      //
+      // Access follows the *client*, not assessment ownership. The tab lives
+      // on the client's profile, which the caller reached under the clients
+      // module's own rules — a colleague's assessment linked to a client you
+      // may see is part of that client's record, exactly as their reports and
+      // files tabs already behave. Assessment ownership still governs editing:
+      // every mutating operation in this function stays scoped by user_id.
+      case 'client_workspace': {
+        if (!body.clientId || typeof body.clientId !== 'string') {
+          return fail('clientId is required', 400, corsHeaders);
+        }
+        const client = await loadReachableClient(body.clientId);
+        if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
+
+        const { data: assessments, error: assessError } = await supabase
+          .from('commercial_industrial_assessments')
+          .select('id, user_id, reference, title, status, segment, assessment_type, requested_loan, maximum_indicative_loan, proposed_lvr, proposed_dscr, outcome, binding_constraint, current_calculation_id, linked_at, created_at, updated_at, archived_at')
+          .eq('client_id', body.clientId)
+          .order('updated_at', { ascending: false })
+          .limit(100);
+        if (assessError) throw assessError;
+
+        const ids = (assessments ?? []).map((row: { id: string }) => row.id);
+
+        let runs: unknown[] = [];
+        let renders: unknown[] = [];
+        let links: unknown[] = [];
+        if (ids.length) {
+          const [runsRes, rendersRes, linksRes] = await Promise.all([
+            supabase
+              .from('commercial_industrial_calculation_runs')
+              .select('id, assessment_id, scenario_key, outcome, binding_constraint, maximum_indicative_loan, engine_version, policy_version, created_at')
+              .in('assessment_id', ids)
+              .order('created_at', { ascending: false })
+              .limit(200),
+            supabase
+              .from('commercial_industrial_report_renders')
+              .select('id, assessment_id, status, file_name, page_count, bytes, has_analysis, analysis_note, created_at')
+              .in('assessment_id', ids)
+              .order('created_at', { ascending: false })
+              .limit(100),
+            supabase
+              .from('commercial_industrial_assessment_client_links')
+              .select('id, assessment_id, linked_at, unlinked_at, applied_changes')
+              .eq('client_id', body.clientId)
+              .order('linked_at', { ascending: false })
+              .limit(100),
+          ]);
+          if (runsRes.error) throw runsRes.error;
+          // The renders table postdates the assessments feature; a deployment
+          // that has not applied its migration yet should degrade to an empty
+          // list here, not take the whole tab down.
+          if (rendersRes.error) {
+            console.warn('[manage-ci-assessments] renders unreadable:', rendersRes.error.message);
+          }
+          if (linksRes.error) throw linksRes.error;
+          runs = runsRes.data ?? [];
+          renders = rendersRes.data ?? [];
+          links = linksRes.data ?? [];
+        }
+
+        return json({
+          success: true,
+          data: { assessments: assessments ?? [], runs, renders, links },
+        }, 200, corsHeaders);
       }
 
       // ---------------------------------------------------------------------

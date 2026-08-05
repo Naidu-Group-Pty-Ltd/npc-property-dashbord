@@ -67,6 +67,59 @@ export interface ClientSearchRow {
   updated_at: string | null;
 }
 
+/** One client's Commercial & Industrial records, as `client_workspace` returns them. */
+export interface ClientCiWorkspace {
+  assessments: Array<{
+    id: string;
+    user_id: string;
+    reference: string;
+    title: string;
+    status: string;
+    segment: 'commercial' | 'industrial';
+    assessment_type: string;
+    requested_loan: number | null;
+    maximum_indicative_loan: number | null;
+    proposed_lvr: number | null;
+    proposed_dscr: number | null;
+    outcome: string | null;
+    binding_constraint: string | null;
+    current_calculation_id: string | null;
+    linked_at: string | null;
+    created_at: string;
+    updated_at: string;
+    archived_at: string | null;
+  }>;
+  runs: Array<{
+    id: string;
+    assessment_id: string;
+    scenario_key: string;
+    outcome: string | null;
+    binding_constraint: string | null;
+    maximum_indicative_loan: number | null;
+    engine_version: string;
+    policy_version: string;
+    created_at: string;
+  }>;
+  renders: Array<{
+    id: string;
+    assessment_id: string;
+    status: 'running' | 'succeeded' | 'failed';
+    file_name: string;
+    page_count: number | null;
+    bytes: number | null;
+    has_analysis: boolean;
+    analysis_note: string | null;
+    created_at: string;
+  }>;
+  links: Array<{
+    id: string;
+    assessment_id: string;
+    linked_at: string;
+    unlinked_at: string | null;
+    applied_changes: unknown[];
+  }>;
+}
+
 export interface AuditEventRow {
   id: string;
   event_type: string;
@@ -158,6 +211,16 @@ export const ciAssessmentApi = {
 
   searchClients: (search: string) =>
     call<ClientSearchRow[]>('search_clients', { search }).then(unwrap),
+
+  createClient: (input: {
+    firstName: string; surname: string; email?: string; mobile?: string;
+    /** When set, the creation is written to this assessment's audit trail. */
+    assessmentId?: string;
+  }) =>
+    call<ClientSearchRow>('create_client', input).then(unwrap),
+
+  clientWorkspace: (clientId: string) =>
+    call<ClientCiWorkspace>('client_workspace', { clientId }).then(unwrap),
 
   linkClient: (input: {
     assessmentId: string; clientId: string;

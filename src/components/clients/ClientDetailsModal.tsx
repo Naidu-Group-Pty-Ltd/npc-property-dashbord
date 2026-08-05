@@ -64,6 +64,7 @@ import { ClientActivityTimeline } from './ClientActivityTimeline';
 import { ClientFiles } from './ClientFiles';
 import { ClientScoreCard } from './ClientScoreCard';
 import { BorrowingCapacityCard, BorrowingCapacityModal } from '@/components/borrowing-capacity';
+import { ClientCommercialIndustrialTab } from './ClientCommercialIndustrialTab';
 import { ClientAIInsights } from './ClientAIInsights';
 import { ClientFormaraUpload } from './ClientFormaraUpload';
 import { ClientFormaraForms } from './ClientFormaraForms';
@@ -996,6 +997,10 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
                 clientName={`${client.primary_first_name || ''} ${client.primary_surname || ''}`.trim()}
                 onOpenCalculator={() => setShowBorrowingCalculator(true)}
               />
+            </TabsContent>
+
+            <TabsContent value="commercial-industrial" className="mt-4 space-y-4">
+              <ClientCommercialIndustrialTab clientId={client.id} />
             </TabsContent>
 
             <TabsContent value="lenders" className="mt-4 space-y-4">
