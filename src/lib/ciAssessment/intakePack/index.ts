@@ -15,4 +15,4 @@ export * from './document';
 export * from './parseWorkbook';
 export * from './documentExtract';
 export * from './sample';
-export * from './workedExample';
+export * from './sourceDocuments';
