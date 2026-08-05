@@ -36,7 +36,7 @@ function brokenAssessment(): AssessmentPayload {
   payload.property.purchasePrice = -1;
   payload.property.currentValuation = -1;
   payload.property.depositOrContribution = -1;
-  payload.property.state = 'ZZ';
+  payload.property.state = 'ZZ' as never;
   payload.property.postcode = '21';
   payload.property.contractDate = '2026-07-15';
   payload.property.settlementDate = '2026-01-01';

@@ -37,6 +37,17 @@ export interface RenderedSheet {
   html: string;
   rows: number;
   columns: number;
+  /**
+   * Rendered size in CSS pixels.
+   *
+   * The frame is sandboxed and script-free, so it cannot report its own
+   * content height — but every width and height here is known at render time,
+   * so the caller can size the frame exactly. Without this the frame was given
+   * `height: 100%`, which left a band of dead space under short sheets and put
+   * a second scrollbar inside the frame on long ones.
+   */
+  width: number;
+  height: number;
 }
 
 export interface RenderedWorkbook {
@@ -46,6 +57,9 @@ export interface RenderedWorkbook {
 /** Excel's own conversion when a column has no explicit pixel width. */
 const DEFAULT_COLUMN_PX = 64;
 const DEFAULT_ROW_PX = 20;
+
+/** Breathing room around the grid. Mirrored in `documentShell`'s `.sheet`. */
+const SHEET_PADDING_PX = 20;
 
 function escapeHtml(value: string): string {
   return value
@@ -140,7 +154,7 @@ function documentShell(body: string): string {
           font-family:"Aptos Narrow","Calibri","Segoe UI",system-ui,sans-serif;
           font-size:11pt; color:#111827; -webkit-text-size-adjust:100%;
         }
-        .sheet { padding:20px; width:max-content; min-width:100%; box-sizing:border-box; }
+        .sheet { padding:${SHEET_PADDING_PX}px; width:max-content; min-width:100%; box-sizing:border-box; }
         table { border-collapse:collapse; table-layout:fixed; }
         td { padding:2px 5px; vertical-align:bottom; overflow:hidden; word-wrap:break-word; }
       </style></head><body>${body}</body></html>`;
@@ -176,7 +190,10 @@ function renderSheet(
 ): RenderedSheet {
   const reference = sheet['!ref'];
   if (!reference) {
-    return { name, html: documentShell('<div class="sheet"></div>'), rows: 0, columns: 0 };
+    return {
+      name, html: documentShell('<div class="sheet"></div>'),
+      rows: 0, columns: 0, width: 0, height: 0,
+    };
   }
 
   const range = XLSX.utils.decode_range(reference);
@@ -190,19 +207,23 @@ function renderSheet(
   const firstRow = 0;
 
   const widths: string[] = [];
+  let contentWidth = 0;
   for (let col = firstColumn; col <= range.e.c; col += 1) {
     const info = columnInfo[col];
     if (info?.hidden) { widths.push('<col style="width:0px">'); continue; }
-    const px = info?.wpx ?? (info?.wch ? Math.round(info.wch * 7 + 5) : DEFAULT_COLUMN_PX);
-    widths.push(`<col style="width:${Math.round(px)}px">`);
+    const px = Math.round(info?.wpx ?? (info?.wch ? info.wch * 7 + 5 : DEFAULT_COLUMN_PX));
+    contentWidth += px;
+    widths.push(`<col style="width:${px}px">`);
   }
 
   const rows: string[] = [];
+  let contentHeight = 0;
   for (let row = firstRow; row <= range.e.r; row += 1) {
     const info = rowInfo[row];
     if (info?.hidden) continue;
 
     const heightPx = Math.round(info?.hpx ?? DEFAULT_ROW_PX);
+    contentHeight += heightPx;
     const cells: string[] = [];
 
     for (let col = firstColumn; col <= range.e.c; col += 1) {
@@ -236,6 +257,10 @@ function renderSheet(
     html: documentShell(body),
     rows: range.e.r + 1,
     columns: range.e.c + 1,
+    // `SHEET_PADDING_PX` on each side, plus a little slack so the last row's
+    // bottom border is never clipped by a rounding difference.
+    width: contentWidth + SHEET_PADDING_PX * 2,
+    height: contentHeight + SHEET_PADDING_PX * 2 + 2,
   };
 }
 

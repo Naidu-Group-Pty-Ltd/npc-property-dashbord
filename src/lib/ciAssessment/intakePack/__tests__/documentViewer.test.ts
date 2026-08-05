@@ -116,6 +116,37 @@ describe('workbook viewer', () => {
   });
 });
 
+describe('worked example is fully fictional', () => {
+  it('names the fictional firm, not the real one', async () => {
+    const { sheets } = await renderWorkbookToHtml(bytes(EXAMPLE));
+    const start = sheets.find((sheet) => sheet.name === 'Start here')!;
+
+    expect(start.html).toContain('Meridian Commercial Advisory');
+    expect(start.html).toContain('meridiancommercial.example');
+    // A demonstration document shipped to every tenant must not carry one
+    // firm's real trading name, website or ABN.
+    expect(start.html).not.toContain('Naidu');
+    expect(start.html).not.toContain('npcservices');
+  });
+
+  it('leaves the borrower\'s own identifiers alone', async () => {
+    // The mock data gave the client the same ABN as the firm. Only the firm's
+    // contact row was rebranded; the borrowing entity is untouched.
+    const { sheets } = await renderWorkbookToHtml(bytes(EXAMPLE));
+    const ownership = sheets.find((sheet) => sheet.name === '3. Ownership')!;
+    expect(ownership.html).toContain('25 689 472 311');
+    expect(ownership.html).toContain('Asteron Industrial Holdings Pty Ltd');
+  });
+
+  it('keeps the real firm on the blank template', async () => {
+    // The template is the firm's own fact-find. It is the example that has to
+    // be generic, not the document they hand to a client.
+    const { sheets } = await renderWorkbookToHtml(bytes(BLANK));
+    const start = sheets.find((sheet) => sheet.name === 'Start here')!;
+    expect(start.html).not.toContain('Meridian Commercial Advisory');
+  });
+});
+
 describe('workbook styles', () => {
   it('resolves fonts, fills and alignment the other readers drop', async () => {
     const styles = await readWorkbookStyles(bytes(EXAMPLE));

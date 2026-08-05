@@ -255,33 +255,97 @@
    * the frame — see PackDocumentViewer for why that matters.
    * ---------------------------------------------------------------------- */
   .ci-pack-dialog {
-    @apply flex h-[88vh] w-[min(88rem,96vw)] max-w-none flex-col gap-0 overflow-hidden p-0;
+    @apply flex flex-col gap-0 overflow-hidden p-0;
   }
-  .ci-pack-dialog-expanded { @apply h-[96vh] w-[98vw]; }
+  .ci-pack-dialog-expanded { @apply p-0; }
+
   .ci-pack-header {
-    @apply flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5;
+    @apply flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-2.5 sm:px-5;
   }
+
   .ci-pack-toolbar { @apply flex shrink-0 flex-wrap items-center gap-2; }
   .ci-pack-readonly {
     @apply border-info/40 bg-info/10 text-[0.65rem] font-semibold uppercase tracking-wide text-info;
   }
   .ci-pack-pager { @apply flex items-center gap-0.5 rounded-md border border-border bg-card px-1 py-0.5; }
 
-  .ci-pack-tabs { @apply flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3 py-1.5; }
-  .ci-pack-tab {
-    @apply shrink-0 rounded-md border border-transparent px-2.5 py-1 text-xs font-medium
-           text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground
-           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  /* Worksheet strip.
+   *
+   * `pb-3` is load-bearing, not taste. This scrolls horizontally, so the
+   * scrollbar is laid inside the content box and eats the bottom padding —
+   * with the `py-1.5` this had, the 6px bar consumed all 6px of it and clipped
+   * the descenders off every tab label. The bottom padding now clears the bar
+   * with room to spare, and `scrollbar-gutter` keeps the strip from shifting
+   * when the bar appears and disappears at different dialog widths. */
+  .ci-pack-tabs {
+    @apply flex shrink-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden
+           border-b border-border bg-card/40 px-3 pb-3 pt-2;
+    scrollbar-gutter: stable;
   }
-  .ci-pack-tab-active { @apply border-primary/40 bg-primary/10 text-foreground; }
+
+  /* Same chip language as the assessment's own step navigation, so the two
+     read as one system rather than as a dialog with its own ideas. */
+  .ci-pack-tab {
+    @apply flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border
+           bg-card px-3 py-1.5 text-xs font-medium leading-5 text-muted-foreground
+           transition-colors hover:border-primary/50 hover:text-foreground
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+           focus-visible:ring-offset-1 focus-visible:ring-offset-background;
+  }
+
+  /* Solid, not a tint. At a dozen tabs a 10%-opacity fill is easy to lose,
+     and the whole complaint was that you could not tell where you were. */
+  .ci-pack-tab-active {
+    @apply border-primary bg-primary text-primary-foreground shadow-sm
+           hover:border-primary hover:text-primary-foreground;
+  }
 
   /* Neutral, light surround: these documents are white pages and a dark stage
      around them would misrepresent how they print. */
   .ci-pack-stage {
-    @apply relative min-h-0 flex-1 overflow-auto bg-muted/40 focus-visible:outline-none
+    @apply relative min-h-0 flex-1 overflow-auto bg-muted/40 p-4 focus-visible:outline-none
            focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring;
+    /* Firefox and the modern standard. Chromium needs the vendor rules below. */
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.48) hsl(var(--muted) / 0.54);
   }
-  .ci-pack-frame { @apply block w-full border-0 bg-background; }
+
+  /* The platform default here is a chunky light scrollbar with stepper arrows,
+     which reads as a browser chrome bolted onto a dark dialog. This follows the
+     same treatment as the other scrolling dialogs in the app. */
+  .ci-pack-stage::-webkit-scrollbar { width: 10px; height: 10px; }
+  .ci-pack-stage::-webkit-scrollbar-track { background: hsl(var(--muted) / 0.54); }
+  .ci-pack-stage::-webkit-scrollbar-thumb {
+    border: 2px solid hsl(var(--muted) / 0.54);
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.48);
+  }
+  .ci-pack-stage::-webkit-scrollbar-thumb:hover { background: hsl(var(--primary) / 0.66); }
+  .ci-pack-stage::-webkit-scrollbar-corner { background: hsl(var(--muted) / 0.54); }
+
+  .dark .ci-pack-stage { scrollbar-color: hsl(var(--primary) / 0.52) hsl(0 0% 9%); }
+  .dark .ci-pack-stage::-webkit-scrollbar-track,
+  .dark .ci-pack-stage::-webkit-scrollbar-corner { background: hsl(0 0% 9%); }
+  .dark .ci-pack-stage::-webkit-scrollbar-thumb {
+    border-color: hsl(0 0% 9%);
+    background: hsl(var(--primary) / 0.52);
+  }
+
+  /* The sheet strip scrolls too when a workbook has a dozen tabs. */
+  .ci-pack-tabs { scrollbar-width: thin; scrollbar-color: hsl(var(--primary) / 0.4) transparent; }
+  .ci-pack-tabs::-webkit-scrollbar { height: 6px; }
+  /* Keep the label baseline clear of the bar even where `scrollbar-gutter`
+     is unsupported and the browser overlays it. */
+  .ci-pack-tabs::-webkit-scrollbar-button { width: 0; height: 0; }
+  .ci-pack-tabs::-webkit-scrollbar-track { background: transparent; }
+  .ci-pack-tabs::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.4);
+  }
+  /* The wrapper carries the scaled size; the frame inside it is unscaled and
+     never scrolls, so the stage is the only scroller in the dialog. */
+  .ci-pack-frame-box { @apply relative mx-auto block overflow-hidden; }
+  .ci-pack-frame { @apply block border-0 bg-background; }
   .ci-pack-state { @apply flex flex-col items-center justify-center gap-2 px-6 py-16 text-center; }
 
   .ci-example-callout {

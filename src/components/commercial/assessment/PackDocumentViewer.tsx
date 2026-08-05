@@ -43,6 +43,8 @@ import type { PackSourceDocument } from '@/lib/ciAssessment/intakePack/sourceDoc
 /** Zoom steps. 1 is "as rendered"; below it fits a wide sheet on screen. */
 const ZOOM_STEPS = [0.5, 0.65, 0.8, 1, 1.25, 1.5, 2];
 const DEFAULT_ZOOM_INDEX = 3;
+/** Workbooks open slightly reduced so a wide sheet fits without side-scrolling. */
+const WORKBOOK_ZOOM_INDEX = 2;
 
 interface Props {
   document: PackSourceDocument | null;
@@ -54,7 +56,7 @@ type Status = 'idle' | 'loading' | 'ready' | 'error' | 'unsupported';
 
 interface WorkbookState {
   kind: 'workbook';
-  sheets: Array<{ name: string; html: string }>;
+  sheets: Array<{ name: string; html: string; width: number; height: number }>;
 }
 
 interface WordState {
@@ -67,29 +69,46 @@ interface WordState {
 
 type Rendered = WorkbookState | WordState;
 
-/** The frame. `sandbox` with no tokens blocks scripts, forms and navigation. */
+/**
+ * The frame, sized to its content and scaled inside a box that matches.
+ *
+ * `transform: scale()` does not change an element's layout size, so scaling the
+ * frame alone left the scroll extent wrong at every zoom except 100% — dead
+ * space below when zoomed out, content unreachable when zoomed in. The wrapper
+ * carries the scaled dimensions so the container scrolls by exactly as much as
+ * there is to see.
+ *
+ * `sandbox` with no tokens blocks scripts, forms and navigation.
+ */
 function DocumentFrame({
-  html, title, height, scale,
+  html, title, width, height, scale,
 }: {
   html: string;
   title: string;
-  height?: number;
+  width: number;
+  height: number;
   scale: number;
 }) {
   return (
-    <iframe
-      title={title}
-      srcDoc={html}
-      sandbox=""
-      referrerPolicy="no-referrer"
-      className="ci-pack-frame"
-      style={{
-        height: height ? `${height}px` : '100%',
-        transform: `scale(${scale})`,
-        transformOrigin: 'top left',
-        width: `${100 / scale}%`,
-      }}
-    />
+    <div
+      className="ci-pack-frame-box"
+      style={{ width: `${Math.round(width * scale)}px`, height: `${Math.round(height * scale)}px` }}
+    >
+      <iframe
+        title={title}
+        srcDoc={html}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        scrolling="no"
+        className="ci-pack-frame"
+        style={{
+          width: `${width}px`,
+          height: `${height}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+        }}
+      />
+    </div>
   );
 }
 
@@ -104,8 +123,29 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
   /** Bumped to re-run the render effect after a failure. */
   const [attempt, setAttempt] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** One entry per worksheet tab, so arrow keys can move focus between them. */
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  /**
+   * Horizontal extent of the dashboard's main column, measured while the viewer
+   * is open. Measured rather than assumed because the sidebar collapses to an
+   * icon rail; `null` falls back to the primitive's own centring.
+   */
+  const [frame, setFrame] = useState<{ left: number; width: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const main = document.querySelector('.dashboard-main') as HTMLElement | null;
+      const rect = main?.getBoundingClientRect();
+      setFrame(rect && rect.width > 360 ? { left: rect.left, width: rect.width } : null);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open]);
 
   const zoom = ZOOM_STEPS[zoomIndex];
+
 
   useEffect(() => {
     if (!open || !source) return;
@@ -116,7 +156,9 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
     setRendered(null);
     setSheetIndex(0);
     setPageIndex(0);
-    setZoomIndex(DEFAULT_ZOOM_INDEX);
+    // Workbook sheets are far wider than they are tall, so they open one step
+    // down: that fits a sheet across the stage without a horizontal scroll.
+    setZoomIndex(source.kind === 'workbook' ? WORKBOOK_ZOOM_INDEX : DEFAULT_ZOOM_INDEX);
 
     (async () => {
       try {
@@ -134,7 +176,9 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
           if (cancelled) return;
           setRendered({
             kind: 'workbook',
-            sheets: result.sheets.map((sheet) => ({ name: sheet.name, html: sheet.html })),
+            sheets: result.sheets.map((sheet) => ({
+              name: sheet.name, html: sheet.html, width: sheet.width, height: sheet.height,
+            })),
           });
         } else {
           const { renderWordToHtml } = await import(
@@ -174,37 +218,131 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
     });
   }, [rendered, zoom]);
 
+  /**
+   * Keep the page indicator honest.
+   *
+   * It used to change only when the pager was clicked, so scrolling by hand
+   * left it reading "Page 1 of 27" halfway down the document — which is how a
+   * blank stretch looks like a broken first page rather than the middle of
+   * one. The nearest page boundary at or above the scroll position is the page
+   * you are on.
+   */
+  const handleScroll = useCallback(() => {
+    if (rendered?.kind !== 'guide' || !scrollRef.current) return;
+    const top = scrollRef.current.scrollTop / zoom;
+    let current = 0;
+    rendered.pageOffsets.forEach((offset, index) => {
+      if (top >= offset - 24) current = index;
+    });
+    setPageIndex((previous) => (previous === current ? previous : current));
+  }, [rendered, zoom]);
+
   const goToSheet = useCallback((index: number) => {
     setSheetIndex(index);
     scrollRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    // With twelve sheets the strip scrolls, and arrowing onto a tab that is
+    // off-screen would otherwise select something the user cannot see.
+    tabRefs.current[index]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, []);
 
   const retry = useCallback(() => setAttempt((count) => count + 1), []);
 
   const title = source?.title ?? 'Document';
 
+  /**
+   * The worksheet strip.
+   *
+   * A real tablist rather than a row of buttons: twelve sheets is enough that
+   * arrow-key navigation is worth having, and a screen reader announcing
+   * "tab 3 of 12, selected" says something a list of buttons cannot.
+   *
+   * Roving tabindex — only the selected tab is reachable by Tab — is what the
+   * pattern requires, so the strip is one stop rather than twelve.
+   */
   const sheetStrip = useMemo(() => {
     if (rendered?.kind !== 'workbook') return null;
+
+    const move = (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const last = rendered.sheets.length - 1;
+      const next = {
+        ArrowRight: Math.min(sheetIndex + 1, last),
+        ArrowLeft: Math.max(sheetIndex - 1, 0),
+        Home: 0,
+        End: last,
+      }[event.key];
+      if (next === undefined || next === sheetIndex) return;
+      event.preventDefault();
+      goToSheet(next);
+      // Follow the selection with focus so the next key press continues from
+      // where the user actually is.
+      tabRefs.current[next]?.focus();
+    };
+
     return (
-      <nav className="ci-pack-tabs" aria-label="Worksheets">
+      <div
+        className="ci-pack-tabs"
+        role="tablist"
+        aria-label="Worksheets"
+        aria-orientation="horizontal"
+        onKeyDown={move}
+      >
         {rendered.sheets.map((sheet, index) => (
           <button
             key={sheet.name}
+            ref={(node) => { tabRefs.current[index] = node; }}
             type="button"
+            role="tab"
+            id={`ci-pack-tab-${index}`}
+            aria-selected={index === sheetIndex}
+            aria-controls="ci-pack-panel"
+            tabIndex={index === sheetIndex ? 0 : -1}
             onClick={() => goToSheet(index)}
-            aria-current={index === sheetIndex ? 'true' : undefined}
             className={cn('ci-pack-tab', index === sheetIndex && 'ci-pack-tab-active')}
           >
             {sheet.name}
           </button>
         ))}
-      </nav>
+      </div>
     );
   }, [rendered, sheetIndex, goToSheet]);
 
+  // Sized to the shape of each document rather than to the screen: a workbook
+  // sheet is wide, an A4 guide is narrow, and neither needs the whole viewport.
+  const isWorkbook = source?.kind === 'workbook';
+
+  // The viewer must stay inside the dashboard's main frame — never over the
+  // sidebar. The frame is measured rather than assumed, because the sidebar can
+  // be collapsed to an icon rail; the dialog primitive's own centring
+  // (`left-1/2 -translate-x-1/2`) is overridden by these inline values.
+  const frameStyle = useMemo<React.CSSProperties>(() => {
+    if (!frame) return {};
+    const gutter = 16;
+    const maxWidth = Math.max(320, frame.width - gutter * 2);
+    const desired = isWorkbook ? 1320 : 940;
+    const width = expanded ? maxWidth : Math.min(desired, maxWidth);
+    const left = frame.left + gutter + Math.max(0, (maxWidth - width) / 2);
+    return { left, width, right: 'auto', maxWidth: 'none', transform: 'translateY(-50%)' };
+  }, [frame, isWorkbook, expanded]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn('ci-pack-dialog', expanded && 'ci-pack-dialog-expanded')}>
+      {/* Layout is written as utilities, not only in `ci-pack-dialog`: the dialog
+          primitive's own `grid gap-4 p-6 sm:max-w-lg` sit in a later cascade
+          layer than the component class, so a component-layer flex/width was
+          silently losing to them — which produced the empty band above the
+          document. Horizontal placement comes from `frameStyle` (inline) so the
+          viewer can never sit over the sidebar. */}
+      <DialogContent
+        style={frameStyle}
+        className={cn(
+          'ci-pack-dialog',
+          'flex flex-col gap-0 p-0',
+          isWorkbook ? 'h-[86dvh] max-h-[86dvh] sm:max-h-[86dvh]' : 'h-[88dvh] max-h-[88dvh] sm:max-h-[88dvh]',
+          expanded && 'ci-pack-dialog-expanded h-[94dvh] max-h-[94dvh] sm:max-h-[94dvh]',
+        )}
+      >
+
+
         <header className="ci-pack-header">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base">{title}</DialogTitle>
@@ -278,12 +416,23 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
 
         {sheetStrip}
 
+        {/*
+          The stage is the tab panel when a workbook is open, and a plain
+          scrollable group for the guide. It is focusable either way so the
+          document can be scrolled from the keyboard without a pointer.
+        */}
         <div
           ref={scrollRef}
+          onScroll={handleScroll}
           className="ci-pack-stage"
           tabIndex={0}
-          role="group"
-          aria-label={`${title} — scrollable document`}
+          {...(rendered?.kind === 'workbook'
+            ? {
+              id: 'ci-pack-panel',
+              role: 'tabpanel',
+              'aria-labelledby': `ci-pack-tab-${sheetIndex}`,
+            }
+            : { role: 'group', 'aria-label': `${title} — scrollable document` })}
         >
           {status === 'loading' ? (
             <div className="ci-pack-state" role="status">
@@ -318,6 +467,8 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
               key={`${source?.id}-${sheetIndex}`}
               html={rendered.sheets[sheetIndex]?.html ?? ''}
               title={`${title} — ${rendered.sheets[sheetIndex]?.name ?? ''}`}
+              width={rendered.sheets[sheetIndex]?.width ?? 0}
+              height={rendered.sheets[sheetIndex]?.height ?? 0}
               scale={zoom}
             />
           ) : null}
@@ -327,6 +478,7 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
               key={source?.id}
               html={rendered.html}
               title={title}
+              width={rendered.width}
               height={rendered.height}
               scale={zoom}
             />

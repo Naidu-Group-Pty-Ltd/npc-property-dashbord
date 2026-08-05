@@ -1,5 +1,5 @@
 /**
- * The four source documents are approved artefacts and must not change.
+ * The four source documents are pinned artefacts and must not drift.
  *
  * "Must not change" is easy to say and easy to break — a well-meaning re-save
  * through Excel, a lint rule that normalises line endings, a build step that
@@ -7,8 +7,18 @@
  * longer the document that was approved, and nobody notices until it is in a
  * client's inbox.
  *
- * So the checksums below are the contract. If one of these fails, the fix is
- * to restore the file — not to update the hash.
+ * So the checksums below are the contract. If one fails, the fix is to restore
+ * the file — not to update the hash. A hash moves only alongside a deliberate,
+ * requested edit, and the only one so far is recorded here:
+ *
+ *  - **The two blank templates are byte-identical to what was supplied.** Their
+ *    hashes have never moved and must not.
+ *  - **The two MOCKDATA examples were edited once**, on request, to replace the
+ *    real adviser firm's name and contact details with a fictional firm
+ *    (Meridian Commercial Advisory). Nothing else was touched: a string
+ *    replacement inside the OOXML parts, leaving styles, layout, page breaks
+ *    and formulas alone. A demonstration document shipped to every tenant
+ *    should not carry one firm's real trading name, website and ABN.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -18,29 +28,29 @@ import { resolve } from 'node:path';
 
 const ASSET_DIR = resolve(__dirname, '../../../../assets/intakePack');
 
-/** SHA-256 of each approved file, as supplied. */
+/** SHA-256 of each file as it must be on disk. See the header for the one edit. */
 const APPROVED = {
   'CommercialIndustrialFinanceIntakeWorkbook.xlsx':
     'a0a6334b6044755e8c35d193b8e6eb4df7ff1b28bb88bed0d199c7e7786c05ec',
   'CommercialIndustrialFinanceIntakeWorkbookMOCKDATA.xlsx':
-    '88ad2542816b18e583cd87c86473366d7cc38b537006430eb5cb72187b24f99b',
+    '126da64431670d3984a527b38032d342126ea3afb4837e3f824251b4a5f48446',
   'CommercialIndustrialFinanceIntakePack.docx':
     '47062d81593cb377b062cb0d9be7067426d10b7ea4b1e1045009931236f732ae',
   'CommercialIndustrialFinanceIntakePackMOCKDATA.docx':
-    '20253a80bba8b0b32285350b97ca90a9f1264a1e3b33f3e91b73f2f2bf01edb2',
+    '8fd7e49419095dbf3c63fd859b1d82a1148301ac246736167aa441bf66ffc11e',
 } as const;
 
 /** Byte lengths, so a truncated file fails with a clearer message than a hash. */
 const SIZES = {
   'CommercialIndustrialFinanceIntakeWorkbook.xlsx': 43_724,
-  'CommercialIndustrialFinanceIntakeWorkbookMOCKDATA.xlsx': 35_091,
+  'CommercialIndustrialFinanceIntakeWorkbookMOCKDATA.xlsx': 35_019,
   'CommercialIndustrialFinanceIntakePack.docx': 52_511,
-  'CommercialIndustrialFinanceIntakePackMOCKDATA.docx': 51_743,
+  'CommercialIndustrialFinanceIntakePackMOCKDATA.docx': 51_920,
 } as const;
 
 describe('intake pack source documents', () => {
   Object.entries(APPROVED).forEach(([fileName, expected]) => {
-    it(`${fileName} is byte-for-byte as supplied`, () => {
+    it(`${fileName} matches its pinned checksum`, () => {
       const bytes = readFileSync(resolve(ASSET_DIR, fileName));
       expect(bytes.byteLength).toBe(SIZES[fileName as keyof typeof SIZES]);
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(expected);

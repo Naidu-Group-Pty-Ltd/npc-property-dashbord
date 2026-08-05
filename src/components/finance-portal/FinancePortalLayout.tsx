@@ -22,6 +22,7 @@ import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { FinanceOnboardingTour } from './FinanceOnboardingTour';
 import { bootFinanceAppearance, clearFinanceAppearance } from '@/lib/finance-portal/theme';
 import { cn } from '@/lib/utils';
+import { usePartnerWorkspaceEnabled } from '@/lib/aml/usePartnerWorkspaceFlags';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const NAV_ITEMS = [

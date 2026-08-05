@@ -66,7 +66,7 @@ describe("queues deep-link to their record sets (§8.1)", () => {
       ['"pending_review"', 'in("status", ["submitted", "under_review"])'],
       ['"awaiting_delivery"', 'in("status", ["approved", "partly_approved"])'],
     ]) {
-      expect(pure + registerOp).toContain(filterPair[0].replaceAll('"', '"'));
+      expect(pure + registerOp).toContain(filterPair[0]);
       expect(registerOp).toContain(filterPair[1]);
     }
   });
