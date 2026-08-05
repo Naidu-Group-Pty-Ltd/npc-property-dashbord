@@ -64,15 +64,21 @@ function resumeKey(caseId: string) { return `${RESUME_STORAGE_PREFIX}${caseId}`;
 export default function PortalAml() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AmlPortalOverview | null>(null);
+  // A failed load is NOT the same as "no case exists". Rendering the no-case
+  // empty state on error told clients their advisor had done nothing while
+  // the real problem was a broken call — keep the two states separate.
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadFailed(null);
     try {
       const res = await amlPortalApi.overview();
       setData(res);
     } catch (e: any) {
+      setLoadFailed(e?.message ?? 'Failed to load AML onboarding');
       toast.error(e?.message ?? 'Failed to load AML onboarding');
     } finally {
       setLoading(false);
@@ -160,6 +166,22 @@ export default function PortalAml() {
           <Skeleton className="h-24" />
           <Skeleton className="h-96" />
         </div>
+      ) : loadFailed ? (
+        <Card>
+          <CardContent className="py-16 text-center space-y-4">
+            <ShieldCheck className="h-10 w-10 text-muted-foreground/50 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              We couldn’t load your onboarding details just now. This doesn’t affect
+              anything your advisor has set up for you.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              Try again
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              If this keeps happening, please contact your adviser.
+            </p>
+          </CardContent>
+        </Card>
       ) : !caseObj ? (
         <Card>
           <CardContent className="py-16 text-center">

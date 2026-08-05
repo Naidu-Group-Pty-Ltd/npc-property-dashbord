@@ -344,20 +344,37 @@ Deno.serve(async (req) => {
       body?.session_token;
     if (!token) return jsonResponse({ error: 'Portal session token required' }, 401);
 
-    const { data: session } = await admin
+    // Session lookup mirrors get-portal-client-data (the proven production
+    // contract): select ONLY columns that exist on client_portal_users in
+    // every environment. This function once embedded a `full_name` column the
+    // production table does not have; PostgREST rejected the whole select,
+    // the error object was discarded, and every op answered 401 — which the
+    // portal then rendered as "no case yet". Never widen this select without
+    // checking the deployed schema, and never discard the error.
+    const { data: session, error: sessionError } = await admin
       .from('client_portal_sessions')
-      .select('user_id, expires_at, client_portal_users:user_id(id, client_id, email, full_name, status)')
+      .select('user_id, expires_at, revoked_at, client_portal_users:user_id(id, client_id, email, status)')
       .eq('session_token', token)
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
+    if (sessionError) {
+      console.error('aml-client-portal session lookup failed', sessionError.message);
+      return jsonResponse({
+        error: 'We could not confirm your session. Please sign in again.',
+        code: 'portal_session_lookup_failed',
+      }, 401);
+    }
 
     const portalUser = (session as any)?.client_portal_users;
-    if (!portalUser || portalUser.status !== 'active') {
-      return jsonResponse({ error: 'Invalid or expired session' }, 401);
+    if (!portalUser || portalUser.status !== 'active' || (session as any)?.revoked_at) {
+      return jsonResponse({
+        error: 'Invalid or expired session',
+        code: 'portal_session_invalid',
+      }, 401);
     }
     const clientId: string = portalUser.client_id;
     const portalUserId: string = portalUser.id;
-    const actorLabel: string = portalUser.full_name || portalUser.email || 'client-portal';
+    const actorLabel: string = portalUser.email || 'client-portal';
 
     const op = String(body?.op ?? '');
     if (!op) return jsonResponse({ error: 'op is required' }, 400);
