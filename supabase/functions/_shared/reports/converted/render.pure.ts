@@ -61,7 +61,7 @@ import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
 import { chartContext } from '../../reportDesign/charts.pure.ts';
 import { pagesForLines, renderMarkdown } from '../markdown.pure.ts';
 import type { BindingPlan } from './binding.pure.ts';
-import { formatName } from './binding.pure.ts';
+import { formatName, isPassthroughFormat } from './binding.pure.ts';
 import { enrichedLines, type EnrichedBlock } from './enrich.pure.ts';
 import { renderEnrichedBlocks } from './renderBlocks.pure.ts';
 import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
@@ -83,15 +83,26 @@ export const CHAPTER_FURNITURE_LINES = 3;
 /**
  * Below this an appendix section cannot hold a page on its own.
  *
- * A page is `LINES_PER_PAGE` (38). Twelve is a third of one — a heading, a
- * short paragraph and a couple of bullets. Above it a section has enough to
- * look deliberate alone; below it, it looks like a page somebody forgot to
- * finish, which is what a real render produced four of.
+ * A page is `LINES_PER_PAGE` (38), so this is half of one.
+ *
+ * It was twelve — a third of a page, reasoned from "a heading, a short
+ * paragraph and a couple of bullets" rather than measured. Then the document
+ * was rendered and the pages counted: an appendix section of three ordinary
+ * paragraphs costs fourteen estimated lines, cleared the threshold, and printed
+ * on a sheet of its own at **2.3% ink**. Three consecutive sheets did. The
+ * rubric's sparse floor is 8% and a natively designed page in this system
+ * measures 13.3% to 22.1%, so a third of a page is not the boundary between
+ * "deliberate" and "unfinished" — it is well inside "unfinished".
+ *
+ * Half a page is the boundary a render supports. Above it a section has enough
+ * to look composed alone; below it, it reads as a page somebody forgot to
+ * finish, and it is better off packed with its neighbours under their own
+ * headings.
  */
-export const THIN_CHAPTER_LINES = 12;
+export const THIN_CHAPTER_LINES = 19;
 
 /** What a packed run of thin sections calls itself. */
-export const APPENDIX_TITLE = 'From the template';
+export const APPENDIX_TITLE = 'Also in the uploaded template';
 
 /** An unfilled chapter is a header and one callout. */
 export const UNFILLED_CHAPTER_LINES = 10;
@@ -323,9 +334,12 @@ export function planConvertedChapters(
       // A packed chapter names what it holds. "From the template" over "From
       // the uploaded template" is the same sentence twice in two sizes, which
       // is the thing this pass exists to stop doing.
-      note: group.length === 1
-        ? 'From the uploaded template'
-        : group.map((s) => s.title).join(' · '),
+      // A packed group prints `## <title>` for each section it holds, so a dek
+      // listing those same titles says the page's own headings back to it —
+      // `From the template` / `Recommendations · Warnings`, then
+      // `Recommendations` and `Warnings` as the only two headings below. The
+      // headings are the better label; the dek is dropped.
+      note: group.length === 1 ? 'From the uploaded template' : undefined,
       markdown,
       blocks: blocks?.length ? blocks : undefined,
       foldedSubsections: folded || undefined,
@@ -334,6 +348,23 @@ export function planConvertedChapters(
       pages: pagesForLines(lines),
     });
   });
+
+  // ── A pass-through chapter still has to earn its sheet ────────────────────
+  //
+  // A chapter is a sheet. For a declarative format that is fine — its chapters
+  // are the format's own and each is substantial — and for the appendix the
+  // packing above already handles it. A pass-through format is the third case:
+  // its chapters are whatever the uploaded template's top level happened to be,
+  // and a template with a two-bullet `Recommendations` and a one-bullet
+  // `Warnings` spent two sheets on three lines. Measured: 0.011 and 0.006 ink,
+  // against a native document's 0.133–0.221.
+  //
+  // The same rule and the same helper as the appendix: consecutive chapters
+  // that are each too thin to hold a page become one, each under its own
+  // heading. Nothing is lost and nothing is renamed — the packed chapter takes
+  // the first section's title, because for this format the template's own words
+  // are the chapter names and inventing one would be the C5 mistake again.
+  const packed = isPassthroughFormat(plan.format) ? packThin(chapters, enriched) : chapters;
 
   // ── Two series ────────────────────────────────────────────────────────────
   //
@@ -354,7 +385,7 @@ export function planConvertedChapters(
   const chapterLabel = REPORT_ARCHETYPES[plan.format]?.chapterLabel ?? 'Section';
   let section = 0;
   let appendix = 0;
-  return chapters.map((chapter) => {
+  return packed.map((chapter) => {
     if (chapter.kind === 'appendix') {
       appendix += 1;
       return { ...chapter, number: appendixLetter(appendix), label: 'Appendix' };
@@ -362,6 +393,68 @@ export function planConvertedChapters(
     section += 1;
     return { ...chapter, number: String(section).padStart(2, '0'), label: chapterLabel };
   });
+}
+
+/**
+ * Merge runs of chapters too thin to hold a page, each under its own heading.
+ *
+ * The appendix packer's rule, applied to a pass-through format's own chapters —
+ * see the call site. Costed on the *flat* Markdown, never the enriched blocks,
+ * for the reason the appendix packer records: this runs twice for one document
+ * and a grouping that moved between the two calls would re-key everything.
+ */
+function packThin(
+  chapters: ReadonlyArray<Omit<PlannedConvertedChapter, 'number' | 'label'>>,
+  enriched: EnrichedChapters,
+): Array<Omit<PlannedConvertedChapter, 'number' | 'label'>> {
+  const thin = (c: { markdown: string; id: string }): boolean =>
+    renderMarkdown(c.markdown, { idPrefix: `pk${c.id.replace(/[^a-z0-9]/gi, '')}` }).lines
+      + CHAPTER_FURNITURE_LINES < THIN_CHAPTER_LINES;
+
+  const groups: Array<Array<Omit<PlannedConvertedChapter, 'number' | 'label'>>> = [];
+  for (const chapter of chapters) {
+    const last = groups[groups.length - 1];
+    // Never absorb an enriched chapter: its blocks are keyed by its own id, and
+    // a merge would render the flat Markdown while the design pass was costed.
+    const mergeable = thin(chapter) && !enriched[chapter.id]?.length;
+    if (mergeable && last?.length && thin(last[last.length - 1]) && !enriched[last[0].id]?.length) {
+      last.push(chapter);
+    } else {
+      groups.push([chapter]);
+    }
+  }
+
+  return groups.map((group) => {
+    if (group.length === 1) return group[0];
+    const lead = group[0];
+    const markdown = group.map((c) => `## ${c.title}\n\n${c.markdown}`).join('\n\n');
+    const lines = renderMarkdown(markdown, { idPrefix: `pk${lead.id.replace(/[^a-z0-9]/gi, '')}` }).lines
+      + CHAPTER_FURNITURE_LINES;
+    return {
+      ...lead,
+      // Named from the sections it holds, not from the first of them.
+      //
+      // Keeping the lead's title printed `Recommendations` at 34pt over
+      // `Recommendations` at 17pt — the echo this programme keeps removing —
+      // and implied the second section was subordinate to the first when the
+      // two were peers. Joining their own words names the chapter without
+      // inventing one, which is the line C5 draws.
+      title: joinTitles(group.map((c) => c.title)),
+      markdown,
+      blocks: undefined,
+      packedSections: group.length,
+      lines,
+      pages: pagesForLines(lines),
+    };
+  });
+}
+
+/** `[a, b]` → `a & b`; `[a, b, c]` → `a, b & c`. Trimmed to the cover measure. */
+function joinTitles(titles: readonly string[]): string {
+  const parts = titles.filter(Boolean);
+  if (parts.length < 2) return parts[0] ?? APPENDIX_TITLE;
+  const joined = `${parts.slice(0, -1).join(', ')} & ${parts[parts.length - 1]}`;
+  return joined.length <= 72 ? joined : `${parts[0]}, and ${parts.length - 1} more`;
 }
 
 /** `1 → A`, `26 → Z`, `27 → AA`. A template with 27 loose sections is not likely. */
@@ -506,9 +599,17 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     eyebrow: final ? documentName : `${documentName} · converted draft`,
     title: input.structure.title,
     masthead: input.masthead,
-    edition: input.systemName ? input.systemName.toUpperCase() : null,
+    // The design system's name is build vocabulary, not a co-brand.
+    //
+    // In the edition slot it sets top-right opposite the masthead, wrapped over
+    // two lines — so the first surface anyone sees carried our tooling's name
+    // beside the tenant's. It is genuinely useful while somebody is checking a
+    // draft, which is where it now lives: a meta row with the binding and the
+    // date, and nothing at all on a document marked final.
+    edition: null,
     meta: [
       { label: 'Bound to', value: formatName(input.plan.format) },
+      ...(final || !input.systemName ? [] : [{ label: 'Design system', value: input.systemName }]),
       { label: 'Prepared on', value: formatReportDate(input.preparedOn) },
       { label: 'Chapters', value: String(chapters.length) },
     ].filter((m) => m.value),
@@ -609,12 +710,20 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
         // reader rejects degenerate input before it gets here — but a chapter
         // that prints nothing is worse than one that prints flat prose.
         inner = renderMarkdown(chapter.markdown, {
-          idPrefix, headlessTableCaption: chapter.title,
+          idPrefix,
+          headlessTableCaption: chapter.title,
+          // Not on a packed chapter. Its body opens `## <first section>` and
+          // its title *is* that first section, so dropping the echo deleted a
+          // real heading: `Warnings` then read as a subsection of
+          // `Recommendations` when the two were peers.
+          chapterTitle: chapter.packedSections ? undefined : chapter.title,
         }).html;
       }
     } else {
       inner = renderMarkdown(chapter.markdown, {
-        idPrefix, headlessTableCaption: chapter.title,
+        idPrefix,
+        headlessTableCaption: chapter.title,
+        chapterTitle: chapter.packedSections ? undefined : chapter.title,
       }).html;
     }
 

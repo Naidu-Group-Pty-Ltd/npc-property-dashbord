@@ -513,6 +513,73 @@ The specimen is also the re-skin proof: the same content rendered with
 --chapter=opener_band` changes stock, rhythm, rules and every brand mark, while
 the negative figures stay the one red and the positives the one green.
 
+### Every format, rendered and read
+
+Until this table existed, **two of the ten formats had ever been rendered and
+looked at**: the Borrowing Capacity Snapshot, whose render spec wrote its HTML,
+and the converter, done by hand. The other eight were asserted with `toContain`
+against an in-memory string — which cannot see a page, and every real defect
+this programme has fixed was found by looking at one.
+
+```
+npx tsx scripts/reports/renderAll.mts
+```
+
+Renders all ten from their fixtures, measures each page with `measure_pages.py`,
+judges each with `judgeDocument`, and leaves the page images under
+`reports/pages/<format>/`. The ink column is the fastest signal: **a natively
+designed page in this system measures 0.133 to 0.221**, and a document whose
+body pages sit at 0.05 does not have one sparse page, it has no page economy.
+
+| format | pp | median body ink | in band | high | medium |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| borrowing-capacity | 11 | 0.151 | 3/9 | 0 | 2 |
+| cash-flow-projection | 10 | 0.167 | 5/8 | 0 | 1 |
+| cash-flow-comparison | 21 | 0.093 ↓ | 4/19 | 0 | 9 |
+| client-details | 14 | 0.119 ↓ | 5/12 | 0 | 4 |
+| investment-compass | 29 | 0.095 ↓ | 5/27 | 0 | 7 |
+| market-intelligence | 22 | 0.060 ↓ | 2/20 | 0 | 12 |
+| portfolio-performance | 25 | 0.180 | 5/23 | 0 | 5 |
+| property-comparison | 15 | 0.070 ↓ | 0/13 | 0 | 8 |
+| report-qa | 9 | 0.123 ↓ | 3/7 | 0 | 2 |
+| converted | 10 | 0.091 ↓ | 1/8 | 0 | 3 |
+
+**Zero `high` findings across all ten, and zero engine warnings.** The `medium`
+column is almost entirely `sparse-page`, and the `↓` on median ink is the page
+economy this programme has not finished with — several formats still spend a
+sheet on two-thirds of a sheet's content. That is the next thing to work on and
+it is stated here rather than left to be rediscovered.
+
+Three things this table taught, none of which was visible from the code:
+
+- **A section is not a chapter.** Investment gave each of the generator's 36
+  numbered prose sections its own chapter, `.chapter` carries
+  `page-break-before: always`, and a corpus section runs to about two
+  paragraphs. A full report was 46 sheets at 4.1% ink. The archetype band said
+  43–53 and the document sat inside it, which is what a band cannot tell you.
+- **The measurer was wrong twice**, both producing `high` findings on correct
+  documents — a trim band derived from the portrait constants on a landscape
+  sheet, and a full-bleed test that exempted a tinted page from the trim rule.
+  `scripts/reports/test_measure_pages.py` now guards both.
+- **The rubric's only `high` rule was fully occupied by fixture noise.** Every
+  `duplicate-block` finding across four formats came from a fixture repeating
+  itself, so the strongest check in the harness could not have caught a real
+  repetition on any of them.
+
+### What the engine says about the stylesheet
+
+Two declarations added on the strength of the specification alone are **unknown
+properties on WeasyPrint 69.0**, and only rendering found them:
+
+| declaration | what happens | what to write instead |
+| --- | --- | --- |
+| `font-synthesis: none` | ignored; the engine still emboldens a face with no such cut | pin `font-weight` to a cut that ships |
+| `hyphenate-limit-lines` | ignored; `hyphenate-limit-chars` beside it is accepted | nothing — this engine has no ladder control |
+
+Both are in `UNSUPPORTED` in `engineSupport.pure.ts` and in the container's
+`DEFAULT_PROBES`, so a reintroduction fails a test rather than a render whose
+stderr nobody reads.
+
 ## 10 · Known hazards
 
 1. ~~**Cinzel is not in the render container.**~~ **Resolved in Phase 4.** Cinzel

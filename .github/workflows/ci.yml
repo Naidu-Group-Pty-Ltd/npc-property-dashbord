@@ -92,19 +92,42 @@ jobs:
       - name: Unit tests (report design system)
         run: npx vitest run src/lib/reportDesign
 
-      # The first migrated format. Its payload contract is single-sourced the
-      # same way the design system is, and `audit.spec.ts` reads
-      # calculate-borrowing-capacity to check that every audit entry the engine
-      # emits has a known unit and polarity — a table keyed on strings written
-      # elsewhere goes stale silently.
-      - name: Unit tests (borrowing capacity payload)
-        run: npx vitest run src/lib/reports/borrowingCapacity
-
       # Renders the shipping generator and pins page count, sections, typeface
       # and the cover's identity. This is the reference the migration is
       # measured against; if it stops running, the diff stops meaning anything.
+      #
+      # It runs BEFORE the format tests, and that ordering is the whole point.
+      # `reports/` is gitignored, so on a fresh runner the golden PDF does not
+      # exist until this step writes it — and `goldenDiff.spec.ts` guards itself
+      # with `existsSync(GOLDEN_PDF) ? describe : describe.skip`. With the two
+      # steps the other way round, which is how they were written, the entire
+      # legacy-comparison half of the migration's evidence was silently skipped
+      # on every CI run there has ever been. It passed, and it proved nothing.
       - name: Golden capture (borrowing capacity snapshot)
         run: npx vitest run src/components/borrowing-capacity/__tests__
+
+      # Every migrated format, not one of them.
+      #
+      # This named `src/lib/reports/borrowingCapacity` and nothing else, so nine
+      # formats' specs had never run on a runner — including the contents-page,
+      # spine-legality and page-band assertions each migration was built around,
+      # and the render specs that write `reports/html/` for the whole set.
+      #
+      # `src/lib/reports` also picks up the shared markdown renderer, the
+      # critique rubric and the converter, all of which every format goes
+      # through.
+      - name: Unit tests (every report format)
+        run: npx vitest run src/lib/reports
+
+      # The measurer owns the pixels the critique rubric judges, and two of its
+      # three page-level judgements were wrong at once — a trim band derived
+      # from the portrait constants on a landscape sheet, and a full-bleed test
+      # that exempted a tinted page from the trim rule. Both produced `high`
+      # findings on correct documents, which is the severity that stops a gate.
+      - name: Unit tests (the page measurer)
+        run: |
+          python3 -m pip install --quiet --break-system-packages pillow
+          cd scripts/reports && python3 -m unittest test_measure_pages -v
 
       - name: Build
         run: npm run build
@@ -303,7 +326,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # Writes reports/html/borrowing-capacity-snapshot.html as a side effect.
+      # Writes reports/html/borrowing-capacity.html as a side effect.
       - name: Build the Borrowing Capacity Snapshot
         run: npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
 
@@ -317,8 +340,21 @@ jobs:
           done
           node -e '
             const fs = require("node:fs");
-            const html = fs.readFileSync("reports/html/borrowing-capacity-snapshot.html", "utf8");
-            fs.writeFileSync("/tmp/bc.json", JSON.stringify({ html, pdf_variant: "pdf/a-2b", tagged: true }));
+            const html = fs.readFileSync("reports/html/borrowing-capacity.html", "utf8");
+            // `strict: true` is the service turning any engine warning into a
+            // 422 with the warnings as JSON. It is off for client-facing
+            // renders — a dropped `text-wrap` is cosmetic and a person waiting
+            // on a report is not served by an error — and on here, where a
+            // dropped declaration is a design decision that did not reach the
+            // page and is exactly what this job exists to catch.
+            //
+            // Until now nothing anywhere set it. The service implemented it and
+            // tested it, `weasyprintClient.ts` offered it and documented it as
+            // being on "for CI", and every caller including this one left it
+            // false.
+            fs.writeFileSync("/tmp/bc.json", JSON.stringify({
+              html, pdf_variant: "pdf/a-2b", tagged: true, strict: true,
+            }));
           '
           curl -sf -X POST http://localhost:8081/render \
             -H "Authorization: Bearer ci-token" \
@@ -350,7 +386,7 @@ jobs:
           npx tsx scripts/reports/engineCheck.mts \
             --service http://localhost:8081 --token ci-token \
             --capabilities \
-            reports/html/borrowing-capacity-snapshot.html
+            reports/html/borrowing-capacity.html
           docker rm -f wp2
 
       - name: Assert the report's typography

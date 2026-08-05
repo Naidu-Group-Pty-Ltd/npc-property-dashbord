@@ -6,7 +6,8 @@
  * because an interface omits its field — and none of them are visible in the PDF
  * bytes. All of them are visible here.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildPropertyComparison } from '../normalise.pure';
 import { DOCUMENT_NAME, renderComparisonFromBrand } from '../render.pure';
 import { comparisonSections, comparisonSpine, validateComparisonSpine } from '../sections.pure';
@@ -71,6 +72,11 @@ const build = (over: Record<string, unknown> = {}) =>
 
 const render = (over: Record<string, unknown> = {}) =>
   renderComparisonFromBrand({ comparison: build(over), snapshot }).html;
+
+/** The document, on disk, for the eye. See `renderArtifact.ts`. */
+beforeAll(() => {
+  writeRenderArtifact('property-comparison', render());
+});
 
 describe('the contents page cannot claim something that was not printed', () => {
   it('lists exactly the sections the document builds, in printed order', () => {

@@ -6,7 +6,8 @@
  * with nothing to mark it, and the two audience panels the page estimate did not
  * know about.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildMarketIntelligenceReport } from '../normalise.pure';
 import { audiencePanels, renderMarketIntelligenceFromBrand } from '../render.pure';
 import { audiencePanelCount } from '../payload.pure';
@@ -39,6 +40,11 @@ const render = (row: unknown, audienceOverride?: string) => {
   if (built.ok === false) throw new Error(built.error);
   return renderMarketIntelligenceFromBrand({ report: built.report, snapshot });
 };
+
+/** The document, on disk, for the eye. See `renderArtifact.ts`. */
+beforeAll(() => {
+  writeRenderArtifact('market-intelligence', render(reportRow()).html);
+});
 
 describe('the spine', () => {
   it('is legal for its archetype', () => {

@@ -529,3 +529,49 @@ describe('contract', () => {
     expect(markdownToPlainText('short', 40)).toBe('short');
   });
 });
+
+/**
+ * A chapter's own name, said again as its first heading.
+ *
+ * The natural way to write a section is to head it with its own name, and a
+ * model asked for the prose of *Executive Summary* opens with `## Executive
+ * Summary`. The renderer has already printed that as a 34pt chapter title, so
+ * the page says the same words twice, four lines apart, at 34pt and 17pt — seen
+ * on two consecutive chapters of a Market Intelligence render.
+ */
+describe('a leading heading that repeats the chapter title', () => {
+  const render = (src: string, chapterTitle?: string) =>
+    renderMarkdown(src, chapterTitle ? { chapterTitle } : {}).html;
+
+  it('is dropped when it matches', () => {
+    expect(render('## Executive Summary\n\nThe body.', 'Executive Summary'))
+      .toBe('<p>The body.</p>');
+  });
+
+  it('ignores case, punctuation and spacing', () => {
+    expect(render('## Sources:\n\nThe body.', 'Sources')).toBe('<p>The body.</p>');
+    expect(render('## your 60-second briefing\n\nThe body.', 'Your 60-Second Briefing'))
+      .toBe('<p>The body.</p>');
+  });
+
+  it('keeps a heading of the same name further down, which is a real subsection', () => {
+    // Only the *leading* one is an echo of the title.
+    const html = render('Opening line.\n\n## Overview\n\nMore.', 'Overview');
+    expect(html).toContain('Overview</h2>');
+  });
+
+  it('keeps a leading heading that says something else', () => {
+    expect(render('## What moved\n\nThe body.', 'Executive Summary')).toContain('What moved</h2>');
+  });
+
+  it('changes nothing when no chapter title is given', () => {
+    expect(render('## Executive Summary\n\nThe body.')).toContain('Executive Summary</h2>');
+  });
+
+  it('does not renumber the headings it keeps', () => {
+    // The dropped heading must not consume an id slot, or two chapters that
+    // both open with their own title would collide on the ones below.
+    const { headings } = renderMarkdown('## Overview\n\n## What moved\n\nx', { chapterTitle: 'Overview' });
+    expect(headings.map((h) => h.text)).toEqual(['What moved']);
+  });
+});

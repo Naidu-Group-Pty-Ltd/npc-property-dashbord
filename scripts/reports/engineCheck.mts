@@ -159,7 +159,12 @@ async function renderOnService(html: string): Promise<RenderReport> {
 }
 
 /** Which of the probe declarations this engine dropped. */
-async function probe(): Promise<{ dropped: Record<string, boolean>; engine: string }> {
+async function probe(): Promise<{
+  dropped: Record<string, boolean>;
+  engine: string;
+  /** `write_pdf` keyword arguments the engine accepts. Null when not reported. */
+  options: string[] | null;
+}> {
   const probes = engineProbes();
   if (service) {
     const res = await fetch(`${service}/capabilities`, {
@@ -170,8 +175,15 @@ async function probe(): Promise<{ dropped: Record<string, boolean>; engine: stri
     if (!res.ok) {
       throw new Error(`${service} answered ${res.status}: ${(await res.text()).slice(0, 300)}`);
     }
-    const body = await res.json() as { dropped: Record<string, boolean>; weasyprint: string };
-    return { dropped: body.dropped, engine: body.weasyprint };
+    const body = await res.json() as {
+      dropped: Record<string, boolean>;
+      weasyprint: string;
+      options?: string[];
+    };
+    // `/capabilities` has returned this since it was written and nothing read
+    // it. Every option the service sends is a keyword argument, so one the
+    // engine has renamed is a TypeError on a production route.
+    return { dropped: body.dropped, engine: body.weasyprint, options: body.options ?? null };
   }
 
   const rules = Object.entries(probes)
@@ -188,6 +200,9 @@ async function probe(): Promise<{ dropped: Record<string, boolean>; engine: stri
       Object.entries(probes).map(([id, decl]) => [id, said.includes(decl.trim())]),
     ),
     engine: localEngine(),
+    // The local route renders through the CLI and cannot introspect the
+    // Python API's signature. Only `--service` can answer for options.
+    options: null,
   };
 }
 
@@ -212,12 +227,20 @@ async function main(): Promise<number> {
   let failed = false;
 
   if (wantCapabilities) {
-    const { dropped, engine } = await probe();
+    const { dropped, engine, options } = await probe();
     console.log(`engine ${engine}${service ? ` (via ${service})` : ''}`);
     for (const [id, isDropped] of Object.entries(dropped)) {
       console.log(`  ${isDropped ? 'dropped ' : 'rendered'}  ${id}`);
     }
-    const result = reconcileCapabilities(dropped);
+    if (options) {
+      console.log(`  ${options.length} write_pdf options reported`);
+    } else {
+      console.warn(
+        '! this route cannot report the engine\'s write_pdf options, so a renamed '
+        + 'one is unchecked. Use --service to ask the container itself.',
+      );
+    }
+    const result = reconcileCapabilities(dropped, options);
     if (capabilitiesAgree(result)) {
       console.log('\nengineSupport.pure.ts agrees with this engine.');
     } else {

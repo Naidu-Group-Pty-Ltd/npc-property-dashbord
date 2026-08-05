@@ -6,8 +6,9 @@
  * optional input is absent, a contents page that could list what was not built.
  * None of them are visible in the PDF bytes and all of them are visible here.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildComparison } from '../normalise.pure';
 import { DOCUMENT_NAME, renderComparisonFromBrand } from '../render.pure';
 import { comparisonSections, comparisonSpine, validateComparisonSpine } from '../sections.pure';
@@ -96,6 +97,11 @@ const FULL_ANALYSIS = {
   ],
   overallRecommendation: { bestProperty: { propertyNumber: 2, reason: 'It is the one.' } },
 };
+
+/** The document, on disk, for the eye — the fullest fixture. See `renderArtifact.ts`. */
+beforeAll(() => {
+  writeRenderArtifact('cash-flow-comparison', render(FULL_ANALYSIS));
+});
 
 describe('the contents page cannot claim something that was not printed', () => {
   it('lists exactly the sections the document builds, in printed order', () => {

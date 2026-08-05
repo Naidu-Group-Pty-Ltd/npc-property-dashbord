@@ -266,11 +266,16 @@ describe('layerSummary', () => {
   });
 
   it('skips the heading and takes the first line of prose', () => {
+    const body = layerBody(0);
     const summary = layerSummary({
-      key: 'layer1_rba', title: 'x', content: layerBody(0), citations: [], empty: false,
+      key: 'layer1_rba', title: 'x', content: body, citations: [], empty: false,
     });
     expect(summary.startsWith('#')).toBe(false);
-    expect(summary).toContain('cash rate');
+    // Read off the fixture rather than quoted from it: the fixture's prose
+    // varies per layer by design, and a quoted phrase makes this a test of the
+    // fixture's wording instead of the normaliser's behaviour.
+    const firstProseLine = body.split('\n').find((l) => l.trim() && !l.startsWith('#'));
+    expect(firstProseLine).toContain(summary.replace(/…$/, '').slice(0, 40));
   });
 
   it('ends on a word and says it was cut', () => {

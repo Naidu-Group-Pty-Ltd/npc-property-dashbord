@@ -122,12 +122,27 @@ withGolden('and against the captured golden', () => {
    * than "the new one is fine", because it fails if the old capture stops
    * exhibiting them and the comparison quietly becomes vacuous.
    */
-  it('drops the rate-as-currency rendering (F2)', () => {
-    // Same row, both documents. The shipping generator puts 6.15% → 8.65%
-    // through its currency formatter and prints "$6 → $9, +$3"; the rate
-    // itself never appears in its bytes.
+  /**
+   * F2 was fixed on **both** sides, so it is no longer a difference.
+   *
+   * The shipping generator used to put 6.15% → 8.65% through its currency
+   * formatter and print `$6 → $9, +$3`; the rate itself never appeared in its
+   * bytes. That was fixed in the legacy generator too — `AuditTrailPanel` and
+   * `BorrowingCapacityPDFReport` now go through `auditMeasures` and
+   * `formatMeasure` — which is the right outcome, because a client holding the
+   * legacy PDF should not be told a rate is seven dollars either.
+   *
+   * The assertion above it was `expect(golden).not.toContain('6.15%')`, written
+   * to fail if the old capture stopped exhibiting the defect and the comparison
+   * became vacuous. It did stop, the assertion did fail — and nobody saw it,
+   * because `reports/` is gitignored and the CI step that *writes* the golden
+   * ran after the one that reads it, so `existsSync` was false on every runner
+   * and this whole block was `describe.skip`. The guard worked; the gate was
+   * not running.
+   */
+  it('prints a rate as a rate, on both documents (F2)', () => {
     expect(golden).toContain('Interest Rate Override');
-    expect(golden).not.toContain('6.15%');
+    expect(golden).toContain('6.15%');
     expect(html).toContain('Interest Rate Override');
     expect(html).toContain('6.15%');
     expect(html).toContain('8.65%');

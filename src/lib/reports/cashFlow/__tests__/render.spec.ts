@@ -8,8 +8,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildProjection } from '../normalise.pure';
 import { DOCUMENT_NAME, formatPreparedOn, renderCashFlowBody, renderCashFlowDocument } from '../render.pure';
 import { resolveSnapshotBrand } from '@/lib/reportDesign/documentBrand.pure';
@@ -81,6 +82,11 @@ const render = (address = '14 Wattlebird Grove, Marsden Park NSW 2765') => {
     confidentiality: brand.confidentiality,
   });
 };
+
+/** The document, on disk, for the eye. See `renderArtifact.ts`. */
+beforeAll(() => {
+  writeRenderArtifact('cash-flow-projection', render());
+});
 
 describe('the cash flow document', () => {
   it('is one HTML document with a title naming the format and the property', () => {

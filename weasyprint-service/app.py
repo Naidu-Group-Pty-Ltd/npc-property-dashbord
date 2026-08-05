@@ -294,6 +294,17 @@ DEFAULT_PROBES = {
     "aspect-ratio": "aspect-ratio: 16 / 9",
     "mix-blend-mode": "mix-blend-mode: multiply",
     "writing-mode": "writing-mode: vertical-rl",
+    # Both found by rendering a report and reading the engine's stderr, which
+    # is the only place either announced itself. `font-synthesis` is the one
+    # that matters: without it the engine emboldens or slants a face that has
+    # no such cut, and the result is a smear nothing downstream can detect.
+    "font-synthesis": "font-synthesis: none",
+    # Its sibling `hyphenate-limit-chars` is accepted; this one is not.
+    "hyphenate-limit-lines": "hyphenate-limit-lines: 2",
+    # Load-bearing from here down in spirit, but probed as ordinary entries so
+    # the answer is recorded rather than assumed: every report's outline.
+    "hyphenate-limit-chars": "hyphenate-limit-chars: 6 3 3",
+    "bookmark-level": "bookmark-level: 1",
     # Supported here, and dropped by the version this service ran until now.
     # Probed so the answer is recorded rather than remembered.
     "calc-width": "width: calc(210mm - 44mm)",

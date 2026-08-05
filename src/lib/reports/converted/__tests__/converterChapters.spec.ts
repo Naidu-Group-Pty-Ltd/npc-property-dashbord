@@ -71,6 +71,7 @@ import {
   TABULAR_CHAPTERS,
 } from '../binding.pure';
 import { CONVERTED_REPORT_TYPES } from '../reportType';
+import { planConvertedChapters } from '../render.pure';
 import { getAdapter } from '@/lib/reportTemplate/adapters';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
 import type { ExtractedStructure } from '../structure.pure';
@@ -263,6 +264,37 @@ describe('report Q&A takes its chapters from the template', () => {
     const plan = proposeBinding('report-qa', orphan);
     expect(plan.bindings.map((b) => b.chapter)).toEqual(['Opening remarks', 'The conversation']);
     expect(plan.unbound).toEqual([]);
+  });
+
+  it('packs consecutive chapters too thin to hold a sheet', () => {
+    // A chapter is a sheet. For a declarative format that is fine and for the
+    // appendix the packer already handles it; a pass-through format is the
+    // third case, because its chapters are whatever the template's top level
+    // happened to be. A two-bullet `Recommendations` and a one-bullet
+    // `Warnings` spent two sheets on three lines — 0.011 and 0.006 ink against
+    // a native document's 0.133–0.221.
+    const thin = structure(['Recommendations', 'Warnings', 'Audit trail']);
+    const planned = planConvertedChapters(thin, proposeBinding('report-qa', thin));
+    expect(planned.length).toBeLessThan(thin.sections.length);
+    // Nothing is lost: every title still prints, as a heading inside the packed
+    // chapter rather than as a chapter of its own.
+    const printed = planned.map((c) => `${c.title}\n${c.markdown}`).join('\n');
+    for (const s of thin.sections) expect(printed, s.title).toContain(s.title);
+    // And it is named from the sections it holds, not from the first of them.
+    // Keeping the lead's title printed it at 34pt over the same words at 17pt,
+    // and implied the rest were subordinate to it when they were peers. Their
+    // own words, joined — not an invented name, which is the line C5 draws.
+    expect(planned[0].title).toBe('Recommendations, Warnings & Audit trail');
+  });
+
+  it('leaves a chapter that can hold a sheet alone', () => {
+    const fat = structure(['A substantial section', 'Another one']);
+    fat.sections.forEach((s) => {
+      (s as { markdown: string }).markdown = Array.from({ length: 20 }, (_, i) =>
+        `Paragraph ${i} of a section with enough in it to hold a page on its own.`).join('\n\n');
+    });
+    const planned = planConvertedChapters(fat, proposeBinding('report-qa', fat));
+    expect(planned.map((c) => c.title)).toEqual(['A substantial section', 'Another one']);
   });
 
   it('names the document what the cover will actually say', () => {

@@ -65,8 +65,20 @@ describe('report design system — single source of truth', () => {
   describe.each(pureModules(CANONICAL_DIR))('canonical %s', (file) => {
     const source = readFileSync(resolve(CANONICAL_DIR, file), 'utf8');
 
+    /**
+     * Anchored to the start of a line and to an `import`/`export` keyword.
+     *
+     * `/from '([^']+)'/` on its own matches ordinary prose: a comment whose
+     * line happens to end on the word "from" pairs with the opening quote of
+     * the next concatenated string, and the guard reports that a canonical
+     * module imports `\n      + `. It happened, on a sentence about
+     * hyphenation.
+     */
+    const importSpecs = (code: string): string[] =>
+      [...code.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom '([^']+)'/gm)].map((m) => m[1]);
+
     it('imports only sibling .pure modules, so Deno and Vite both resolve it', () => {
-      const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
+      const imports = importSpecs(source);
       for (const spec of imports) {
         expect(
           spec,
@@ -77,7 +89,7 @@ describe('report design system — single source of truth', () => {
     });
 
     it('uses explicit .ts extensions on relative imports (Deno requires them)', () => {
-      const relative = [...source.matchAll(/from '(\.[^']+)'/g)].map((m) => m[1]);
+      const relative = importSpecs(source).filter((spec) => spec.startsWith('.'));
       for (const spec of relative) expect(spec.endsWith('.ts')).toBe(true);
     });
   });

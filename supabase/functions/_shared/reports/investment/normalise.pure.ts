@@ -88,6 +88,18 @@ export type BuildResult =
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
+/**
+ * A literal, for use inside a constructed pattern.
+ *
+ * The version this replaced was written as a regex literal inside a template
+ * literal's interpolation and had lost a level of escaping in both the class
+ * and the replacement — it matched a metacharacter followed by two backslashes
+ * and a bracket, which is to say nothing. Harmless, because the only strings
+ * passed through it are `FURNITURE_HEADINGS`, which contain no metacharacter;
+ * a trap for the next heading added to that list.
+ */
+const escapeRegExp = (v: string): string => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 /** A finite number, or null. Strings are parsed; empty and `N/A` are null. */
@@ -134,6 +146,24 @@ function list(v: unknown, max: number, chars = 400): string[] {
  *
  * Matched on the heading text with any leading pictograph tolerated, because the
  * emoji is not stable across the corpus and the words are.
+ *
+ * ## The end of the block is the end of the *input*, not the end of a line
+ *
+ * The first render of this format put the model's disclaimer and its phone
+ * number in the body of chapter 37, under the heading "Demographic & Economic
+ * Data". The block's tail was written `[\s\S]*?(?=\n#{1,4}\s|$)` under the `m`
+ * flag — which `^` needs, to find a heading at the start of a line. Under `m`,
+ * `$` is the end of a *line*, and a lazy quantifier stops at the first position
+ * where its lookahead can match: the newline immediately after the heading. So
+ * the heading was removed and every word beneath it was kept, then swept into
+ * whichever section preceded it.
+ *
+ * `removed` was greater than zero throughout — it counted the heading — so
+ * nothing about the result looked wrong from the outside. It was found by
+ * rendering the document and reading page 48.
+ *
+ * `$(?![\s\S])` is end-of-line with nothing after it: the end of the input,
+ * under `m` or without it.
  */
 export function stripFurniture(markdown: string): { text: string; removed: number } {
   if (!markdown) return { text: '', removed: 0 };
@@ -141,7 +171,7 @@ export function stripFurniture(markdown: string): { text: string; removed: numbe
   for (const heading of FURNITURE_HEADINGS) {
     if (heading === 'REPORT TITLE') continue;
     const pattern = new RegExp(
-      `^#{1,4}\\s*[^\\n#]{0,8}?${heading.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b[\\s\\S]*?(?=\\n#{1,4}\\s|$)`,
+      `^#{1,4}\\s*[^\\n#]{0,8}?${escapeRegExp(heading)}\\b[\\s\\S]*?(?=\\n#{1,4}\\s|$(?![\\s\\S]))`,
       'gim',
     );
     out = out.replace(pattern, '');

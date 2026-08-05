@@ -58,7 +58,7 @@ import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
 import { renderMarkdown } from '../markdown.pure.ts';
 import { chartHasData, investmentChartContext, renderNamedChart } from './charts.pure.ts';
-import type { InvestmentReport } from './payload.pure.ts';
+import type { InvestmentReport, SectionChart } from './payload.pure.ts';
 import { scenarioSeries } from './normalise.pure.ts';
 import {
   chaptersFor,
@@ -212,7 +212,7 @@ function chapterBody(
   const scenarios = (field: 'propertyValue' | 'cumulativeCashFlow' | 'annualRent') =>
     scenarioSeries(projectionsRaw, field);
 
-  const charts = chapter.charts.map((name) => {
+  const drawCharts = (names: readonly SectionChart[]): string => names.map((name) => {
     // `chartHasData` is what the page planner charged for. Asking it first means
     // a chart that produces nothing anyway is counted the same way in both
     // modules; a chart that passes the check and *still* returns nothing is the
@@ -224,14 +224,28 @@ function chapterBody(
   }).join('');
 
   if (chapter.kind === 'sources') return sourcesTable(report.sources);
-  if (chapter.kind === 'property') return charts + specTable(report);
+  if (chapter.kind === 'property') return drawCharts(chapter.charts) + specTable(report);
 
-  const prose = chapter.markdown
-    ? renderMarkdown(chapter.markdown, { idPrefix: chapter.id.replace(/[^a-z0-9]/gi, '') }).html
-    : '';
-  // Charts after the prose that introduces them, not before it. The section's
-  // own first sentence says what the reader is about to look at.
-  return prose + charts;
+  // A prose chapter is its numbered sections, each under its own subhead, each
+  // followed by its own charts. Interleaved rather than prose-then-charts,
+  // because `SECTION_CHARTS` attaches an infographic to a section by number:
+  // rendering a chapter's prose and then all of its charts would put the
+  // sensitivity tornado four subheads below the sensitivity analysis.
+  return chapter.parts.map((part, i) => {
+    const idPrefix = `${chapter.id.replace(/[^a-z0-9]/gi, '')}p${i}`;
+    const heading = `<h2>${escapeHtml(part.title)}</h2>`;
+    const prose = part.markdown
+      ? renderMarkdown(part.markdown, {
+        idPrefix,
+        // See `MarkdownOptions.chapterTitle` — model prose heads itself, and
+        // the subhead above is now that title, so an echo must still be dropped.
+        chapterTitle: part.title,
+      }).html
+      : '';
+    // Charts after the prose that introduces them, not before it. The section's
+    // own first sentence says what the reader is about to look at.
+    return heading + prose + drawCharts(part.charts);
+  }).join('');
 }
 
 export function renderInvestmentBody(input: RenderInvestmentInput): InvestmentRenderPlan {
@@ -303,19 +317,25 @@ export function renderInvestmentBody(input: RenderInvestmentInput): InvestmentRe
     )
     : '';
 
-  const clipNotice = (chapter: PlannedChapter): string =>
-    chapter.clippedChars
-      ? renderCallout(
-        'caution',
-        'This chapter is shortened',
-        `<p>${escapeHtml(
-          // `formatMeasure(count(…))`, not `toLocaleString`: Deno and Node need
-          // not agree on ICU grouping and this string is asserted in a test.
-          `A further ${formatMeasure(count(chapter.clippedChars))} characters of this `
-          + 'chapter are not printed here. The full text is in the report record.',
-        )}</p>`,
-      )
-      : '';
+  // Clipping happens per section, so a chapter's shortfall is its sections'.
+  // Summed here rather than stored on the chapter, because the number a reader
+  // wants is "how much of this chapter is missing" and there is exactly one
+  // place that can answer it.
+  const clipNotice = (chapter: PlannedChapter): string => {
+    const clipped = (chapter.clippedChars ?? 0)
+      + chapter.parts.reduce((n, p) => n + (p.clippedChars ?? 0), 0);
+    if (!clipped) return '';
+    return renderCallout(
+      'caution',
+      'This chapter is shortened',
+      `<p>${escapeHtml(
+        // `formatMeasure(count(…))`, not `toLocaleString`: Deno and Node need
+        // not agree on ICU grouping and this string is asserted in a test.
+        `A further ${formatMeasure(count(clipped))} characters of this `
+        + 'chapter are not printed here. The full text is in the report record.',
+      )}</p>`,
+    );
+  };
 
   const strip = kpiCells(report);
   const body = chapters.map((chapter, index) => {
