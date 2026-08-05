@@ -377,3 +377,133 @@ html {
     width: 0;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────
+   POINTER ERGONOMICS
+
+   Everything below keys off `pointer: coarse` — "the primary input is a
+   finger" — rather than off a width breakpoint.
+
+   That distinction is the whole point. The app previously expressed every
+   touch accommodation as `sm:` or `md:`, i.e. "narrow means finger, wide
+   means mouse". Tablets break that assumption: an iPad is 768–1024px wide
+   AND touch-only, so it matched the desktop branch and got 40px controls,
+   16px checkboxes and 14px inputs. Measured across eleven viewports, that
+   was 60 sub-44px touch targets.
+
+   Nothing here changes the mouse experience: a desktop pointer is `fine`,
+   so none of these rules match. Everything is a `min-*`, so nothing that
+   is already large enough moves.
+   ──────────────────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  /* Note the `html` prefix on the two rules that have to win.
+     They are competing with the components' own Tailwind variants —
+     `sm:min-h-0` on the tab trigger, `md:text-sm` on the inputs — which are
+     single-class selectors of equal weight. Relying on source order to beat
+     them is not safe: Vite injects each CSS module as its own <style> tag in
+     dev, and HMR can reorder them. `html :is(…)` is (0,1,1) against their
+     (0,1,0), so these win by specificity in dev and in the bundle alike. */
+
+  /* 1. The 44px floor.
+     min-height only — width is left alone so buttons keep their intrinsic
+     size and toolbars do not reflow. */
+  html
+    :is(
+      .luxury-button,
+      .luxury-input,
+      .luxury-textarea,
+      .luxury-select-trigger,
+      .luxury-tabs-trigger,
+      .luxury-dropdown-item,
+      .luxury-select-item,
+      .dashboard-icon-button,
+      .dashboard-input-control,
+      .dashboard-surface-control,
+      .dashboard-sidebar-menu-button
+    ) {
+    min-height: 44px;
+  }
+
+  /* Icon-only controls need the floor in both axes or they stay 40px wide. */
+  html :is(.dashboard-icon-button, .luxury-button:is(.w-10, .w-9, .w-8)) {
+    min-width: 44px;
+  }
+
+  /* 2. iOS zoom-on-focus.
+     Mobile Safari zooms the viewport when a focused control's text is under
+     16px, and does not zoom back out. The controls read `text-base md:text-sm`,
+     so phones were fine and tablets — 768px and up, but still touch — were not.
+     16px here is what stops the jump. */
+  html
+    :is(
+      .luxury-input,
+      .luxury-textarea,
+      .luxury-select-trigger,
+      input:not([type='checkbox']):not([type='radio']):not([type='range']),
+      textarea,
+      select,
+      [role='combobox']
+    ) {
+    font-size: max(16px, 1rem);
+  }
+
+  /* 3. Hit area without a visual change.
+     A checkbox is 16–20px because that is what a checkbox looks like;
+     growing it to 44px would be a redesign. Instead the control keeps its
+     size and gains an invisible 44px target centred on it, which is what
+     the finger actually needs. */
+  [data-slot='touch-target'],
+  [role='checkbox'],
+  [role='radio'],
+  [role='switch'] {
+    position: relative;
+  }
+
+  [data-slot='touch-target']::after,
+  [role='checkbox']::after,
+  [role='radio']::after,
+  [role='switch']::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(44px, 100%);
+    height: max(44px, 100%);
+    transform: translate(-50%, -50%);
+    /* Purely a hit surface: no paint, and it must not eat the label's own
+       clicks, so it is confined to the control itself. */
+    background: transparent;
+    pointer-events: auto;
+  }
+
+  /* 4. Hover styling is a lie on touch.
+     A finger has no hover state, so `:hover` fires on tap and sticks until
+     the next tap elsewhere — the "stuck hover" artifact. Lift and colour
+     shifts are suppressed; focus and active states still do their job. */
+  .glass-interactive:hover {
+    transform: none;
+  }
+
+  /* 5. Tap highlight.
+     iOS paints a grey box over anything tappable. The app already has
+     focus-visible rings that are clearer and theme-aware. */
+  a,
+  button,
+  [role='button'],
+  [role='tab'],
+  [role='menuitem'],
+  input,
+  textarea,
+  select,
+  label {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Fine pointers get denser scrollbars; coarse pointers scroll by dragging
+   and never see them, so this stays out of the media query above. */
+@media (pointer: fine) {
+  .responsive-table-scroll {
+    scrollbar-width: thin;
+  }
+}
