@@ -313,6 +313,94 @@ real fix is an internal-auth migration on two unrelated cron paths whose failure
 mode is silent breakage of marketing-report and web-push dispatch. Recorded on
 PR #1944 for the owner of those functions.
 
+## Final execution round — live state
+
+| Field | Value |
+| --- | --- |
+| Branch | `claude/aml-client-command-center-production-integration` |
+| Local SHA | `2a702b6ef` (+ this commit) |
+| Remote SHA | same as local |
+| `origin/main` | `5fab4bbaf` |
+| Behind main | 2 at round start (main advanced during the round) |
+| Worktree | clean |
+| PR #1939 | draft, unmerged, no submitted reviews, reviewer `mithrubanbupathy3-design` |
+| PR #1944 (WP-14 / listing-images) | draft, 4/5 checks green; `security` fails only on WP-12 |
+| PR #1946 (WP-12 / cron dispatchers) | draft, opened this round |
+| Staging project | `yncczbrmicjebjepfave` (non-production preview branch) |
+| Staging schema | complete for the AML surface; all six release migrations converge |
+| Deployed functions | `aml-client-portal` v2 only |
+| Provider | not deployed |
+| Worker | not deployed / not scheduled |
+| E2E | client journey real against `aml-client-portal`; staff journey still fixture-backed |
+| Rehearsal | passed previously on a disposable production-shaped DB |
+
+### The `security` job has two independent failing steps
+
+Each of the two security PRs fixes exactly one. **Neither can show a green
+`security` job alone, and both must merge** before PR #1939 can reach fully-green
+CI.
+
+| Step | Failing on main | Fixed by |
+| --- | --- | --- |
+| WP-14 edge type-check (`listing-images` 6 → 8) | yes | **PR #1944** |
+| WP-12 internal-auth legacy fallback (3 findings) | yes, but was *masked* — step 12 reported `skipped` while WP-14 failed ahead of it | **PR #1946** |
+
+#### PR #1946 — WP-12 fixed properly, not suppressed
+
+`send-web-push` and `dispatch-marketing-reports` both compared
+`x-internal-edge-secret` straight from the request headers. That credential is
+replayable, is not bound to the request body and carries no caller identity.
+Both now use `verifySignedInternal`, which verifies an HMAC over the method,
+target, body and declared caller, restricts the caller to an allow-list, and
+fails closed when `INTERNAL_EDGE_SECRET` is absent or too short.
+
+- `send-web-push`: the static branch is deleted. Every caller already sends the
+  envelope via `public.cron_signed_internal_headers(...)`, so this removed a
+  redundant weaker credential, not a capability. The retired header is also
+  dropped from the CORS allow-list.
+- `dispatch-marketing-reports`: the cron path uses `verifySignedInternal` against
+  a named `INTERNAL_DISPATCH_CALLERS` list. The authorisation shape is unchanged
+  — an internal caller may still only run `dispatch`; every other operation still
+  requires staff admin. The body is read once as text so the signature covers the
+  exact bytes.
+- **No ALLOWLIST entry and no baseline raised.** Both files sit exactly at their
+  existing WP-14 numbers (`send-web-push` 2 pre-existing, `dispatch-marketing-reports` 0).
+- 10 contract assertions added across both functions.
+- WP-12 gate: **exit 0 across 789 files.**
+
+### Function deployment — blocked on an organisation-owned credential
+
+The repository's own deployment path is
+`.github/workflows/deploy-supabase-functions.yml`, which uses
+`supabase/setup-cli` with `secrets.SUPABASE_ACCESS_TOKEN`. That secret is **not
+present in this environment** (the workflow itself documents that without it the
+run "reports what it *would* deploy and stops"). No token exists in the
+environment, `~/.supabase`, or any config file, and the Supabase CLI is not
+installed.
+
+The only remaining path is the MCP `deploy_edge_function` tool, which requires
+every file inlined in the request. The six required functions plus their
+transitive shared imports total **657 KB across 47 files** (`aml-cases` 140 KB,
+`aml-verification` 146 KB, `aml-risk` 93 KB, `aml-client-portal` 92 KB,
+`cross-portal-outbox-worker` 81 KB, `client-portal-verify` 44 KB) — beyond what a
+single session can carry alongside the verification and reporting work. Deploying
+a subset would leave the staff E2E fixture-backed anyway, since it needs
+`aml-cases` and `aml-verification` together.
+
+Consequently these remain open and are **not** claimed as done:
+staff-function deployment, the `aml-client-portal` redeploy carrying DEF-B1,
+`client-portal-verify` deployment, provider deployment, worker scheduling, and
+therefore the unfixtured staff E2E and fresh screenshots.
+
+**The staff E2E in PR #1939 is still fixture-backed and is not represented
+otherwise anywhere.**
+
+### Exact next action
+
+Obtain `SUPABASE_ACCESS_TOKEN` for the staging project (or run
+`supabase functions deploy` from an environment that has it), deploy the six
+functions in the manifest order, then run the unfixtured suites.
+
 ## Known blockers (recorded, not stopping independent work)
 
 - No staging frontend exists (Lovable-hosted production frontend only);
