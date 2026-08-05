@@ -299,12 +299,88 @@ export function decodeDate(value: unknown): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : toIsoDate(parsed);
 }
 
+/**
+ * An ISO date as a real `Date`, for writing into a spreadsheet cell.
+ *
+ * Written as a string, a date is text: Excel left-aligns it, will not sort it,
+ * and the `dd/mm/yyyy` number format on the cell does nothing. Written as a
+ * Date it behaves like one. Midday UTC because a midnight value shifts to the
+ * previous day everywhere west of Greenwich, which for Australian users turns
+ * every settlement date into the day before.
+ */
+export function toSpreadsheetDate(value: unknown): Date | null {
+  const iso = decodeDate(value);
+  if (!iso) return null;
+  const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+}
+
+/**
+ * An encoded value formatted for a human to read.
+ *
+ * The workbook does not use this: there a money field has to stay a number so
+ * Excel can total it, and the `#,##0` format on the cell is what turns it into
+ * `5,850,000` on screen. The Word guide and the in-app viewer have no such
+ * layer, so a raw `5850000` printed on a client-facing page is just an
+ * unreadable string of digits. This applies the same formatting the spreadsheet
+ * would, so all three read alike.
+ */
+export function toDisplayValue(type: FieldType, value: string | number): string {
+  const text = String(value ?? '');
+  if (!text) return '';
+
+  switch (type) {
+    case 'date':
+      return toDisplayDate(text) || text;
+    case 'money': {
+      const numeric = typeof value === 'number' ? value : decodeNumber(value);
+      return numeric == null
+        ? text
+        : `$${numeric.toLocaleString('en-AU', { maximumFractionDigits: 0 })}`;
+    }
+    case 'percent': {
+      const numeric = typeof value === 'number' ? value : decodeNumber(value);
+      return numeric == null ? text : `${numeric.toLocaleString('en-AU')}%`;
+    }
+    case 'number': {
+      const numeric = typeof value === 'number' ? value : decodeNumber(value);
+      return numeric == null ? text : numeric.toLocaleString('en-AU');
+    }
+    default:
+      return text;
+  }
+}
+
+/** An ISO date as `dd/mm/yyyy`, for reading on a printed page. */
+export function toDisplayDate(value: unknown): string {
+  const iso = decodeDate(value);
+  if (!iso) return '';
+  const [year, month, day] = iso.split('-');
+  return `${day}/${month}/${year}`;
+}
+
 function toIsoDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+export interface EncodeOptions {
+  /**
+   * Write a genuine zero as `0` rather than leaving the cell blank.
+   *
+   * Off by default, because a pack pre-filled from an empty assessment would
+   * otherwise arrive at the client meeting sprayed with meaningless zeroes.
+   * On when the pack is generated from data somebody actually entered, where a
+   * zero is an answer: a guarantor holding 0% of the property, a refinance of
+   * nil, a residual of nil. Blanking those loses the fact that they were asked.
+   */
+  preserveZeroes?: boolean;
+}
+
 /** Encode an engine value for writing into a pack cell. */
-export function encodeValue(fieldKey: string, type: FieldType, value: unknown): string | number {
+export function encodeValue(
+  fieldKey: string, type: FieldType, value: unknown, options: EncodeOptions = {},
+): string | number {
   if (value == null || value === '') return '';
 
   const codec = FIELD_CODECS[fieldKey];
@@ -321,9 +397,9 @@ export function encodeValue(fieldKey: string, type: FieldType, value: unknown): 
     case 'percent':
     case 'number': {
       const numeric = typeof value === 'number' ? value : decodeNumber(value);
-      // A zero is written as blank so the pack reads as an empty form rather
-      // than one pre-filled with meaningless zeroes.
-      return numeric == null || numeric === 0 ? '' : numeric;
+      if (numeric == null) return '';
+      // See `EncodeOptions.preserveZeroes` for why a zero is usually blanked.
+      return numeric === 0 && !options.preserveZeroes ? '' : numeric;
     }
     case 'select':
       return String(value);

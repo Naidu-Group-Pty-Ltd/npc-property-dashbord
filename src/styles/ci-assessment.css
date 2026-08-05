@@ -240,4 +240,62 @@
   .ci-client-option-active { @apply border-primary bg-primary/5; }
 
   .ci-disclaimer { @apply rounded-lg border border-border bg-muted/25 px-4 py-3 text-xs leading-5 text-muted-foreground; }
+
+  /* -------------------------------------------------------------------------
+   * Worked example
+   *
+   * A reading surface, not a form: wider measure, generous leading, and the
+   * example answer given more weight than the question that produced it —
+   * the reader already knows what was asked, they came for the answer.
+   * ---------------------------------------------------------------------- */
+  .ci-example-callout {
+    @apply flex flex-wrap items-start gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4 sm:flex-nowrap;
+  }
+  .ci-example-dialog {
+    @apply flex max-h-[88vh] w-[min(64rem,95vw)] max-w-none flex-col gap-3 overflow-hidden;
+  }
+  .ci-example-fiction {
+    @apply border-warning/50 bg-warning/10 text-[0.65rem] font-semibold uppercase tracking-wide text-warning;
+  }
+
+  /* Nav across the top on narrow screens, down the side once there is room. */
+  .ci-example-body { @apply grid min-h-0 flex-1 gap-4 md:grid-cols-[13rem_minmax(0,1fr)]; }
+  .ci-example-nav {
+    @apply flex gap-1 overflow-x-auto pb-1 md:flex-col md:overflow-x-visible md:overflow-y-auto md:pb-0;
+  }
+  .ci-example-nav-item {
+    @apply flex shrink-0 items-center justify-between gap-2 rounded-md border border-transparent px-2.5 py-1.5
+           text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50
+           hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+           md:w-full md:shrink;
+  }
+  .ci-example-nav-item-active { @apply border-primary/40 bg-primary/10 text-foreground; }
+  .ci-example-nav-count {
+    @apply shrink-0 rounded-full bg-muted px-1.5 text-[0.65rem] font-semibold tabular-nums text-muted-foreground;
+  }
+
+  .ci-example-scroll { @apply min-h-0 rounded-lg border border-border bg-card; }
+  .ci-example-content { @apply space-y-5 p-4 sm:p-5; }
+
+  .ci-example-entry-label {
+    @apply mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-primary;
+  }
+  .ci-example-answers { @apply space-y-px overflow-hidden rounded-lg border border-border bg-border; }
+  .ci-example-answer { @apply grid gap-1 bg-card px-3 py-2.5 sm:grid-cols-[16rem_minmax(0,1fr)] sm:gap-4; }
+  .ci-example-question { @apply text-xs leading-5 text-muted-foreground; }
+  .ci-example-required { @apply font-semibold text-primary; }
+  .ci-example-value { @apply break-words text-sm leading-6 text-foreground; }
+  .ci-example-blank { @apply text-sm italic leading-6 text-muted-foreground; }
+  .ci-example-note {
+    @apply mt-1.5 flex items-start gap-1.5 rounded-md border border-info/30 bg-info/5 px-2 py-1.5
+           text-xs leading-5 text-muted-foreground;
+  }
+
+  .ci-example-outcome { @apply rounded-lg border border-primary/30 bg-primary/5 p-4; }
+  .ci-example-figures { @apply mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3; }
+  .ci-example-figures > div { @apply rounded-md border border-border bg-card px-2.5 py-2; }
+  .ci-example-figures dt {
+    @apply text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+  .ci-example-figures dd { @apply mt-0.5 text-sm font-semibold tabular-nums text-foreground; }
 }
