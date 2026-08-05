@@ -155,7 +155,7 @@ these documents satisfy both standards' content rules and can declare only one.
 cd weasyprint-service
 docker build -t weasyprint-service .
 docker run --rm -p 8080:8080 \
-  -e WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)=dev-token \
+  -e WEASYPRINT_SERVICE_TOKEN=dev-token \
   weasyprint-service
 curl -X POST http://localhost:8080/render \
   -H "Authorization: Bearer dev-token" \
@@ -202,12 +202,23 @@ for them. `WEASYPRINT_WARMUP=0` turns that off.
 
 ## Deploy — Google Cloud Run (recommended)
 
+> **Releasing a change rather than standing this up for the first time?** Use
+> [`docs/reports/CONTAINER_RELEASE.md`](../docs/reports/CONTAINER_RELEASE.md).
+> It carries the ordering constraint between this image and the render routes,
+> the no-traffic canary, the rollback, and what to check in the delivered PDF.
+> What follows is the first-deploy recipe.
+
 ```bash
 PROJECT_ID=your-gcp-project
 REGION=australia-southeast1
 TOKEN=$(openssl rand -hex 32)
 
-gcloud builds submit --tag gcr.io/$PROJECT_ID/weasyprint-service ./weasyprint-service
+# --timeout: the default is 10 minutes and the veraPDF layer alone fetches a
+# 33 MB installer and installs a JRE.
+gcloud builds submit \
+  --tag gcr.io/$PROJECT_ID/weasyprint-service \
+  --timeout=1800s \
+  ./weasyprint-service
 
 gcloud run deploy weasyprint-service \
   --image gcr.io/$PROJECT_ID/weasyprint-service \
@@ -217,20 +228,29 @@ gcloud run deploy weasyprint-service \
   --memory 2Gi --cpu 2 \
   --concurrency 4 --timeout 600 \
   --min-instances 0 --max-instances 10 \
-  --set-env-vars WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)=$TOKEN
+  --set-env-vars WEASYPRINT_SERVICE_TOKEN=$TOKEN
 
 # Note the deployed URL, then add these as Supabase Edge Function secrets:
 #   WEASYPRINT_SERVICE_URL   = https://weasyprint-service-xxxx.a.run.app
-#   WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY) = <the TOKEN you generated>
+#   WEASYPRINT_SERVICE_TOKEN = <the TOKEN you generated>
 ```
 
+`--allow-unauthenticated` is deliberate rather than an oversight: the service
+does its own bearer-token check and refuses every request when no token is set.
 Cloud Run scales to zero — typical cost is a few cents per thousand renders.
+
+> `WEASYPRINT_API_KEY` is accepted as a **legacy alias** for the token by
+> `app.py` and by `weasyprintClient.ts`, on both sides, so an environment that
+> already has it keeps working. Nothing writes it and nothing should: set
+> `WEASYPRINT_SERVICE_TOKEN`. The alias used to be spelled inline in these
+> commands — `WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)=$TOKEN` — which
+> made four lines of the one recipe here impossible to paste.
 
 ## Deploy — Fly.io / Railway / Render alternatives
 
 Any container host that runs the Dockerfile works. Set the same two env vars
-(`WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)` on the service, `WEASYPRINT_SERVICE_URL` +
-`WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)` on Supabase) and you're done.
+(`WEASYPRINT_SERVICE_TOKEN` on the service, `WEASYPRINT_SERVICE_URL` +
+`WEASYPRINT_SERVICE_TOKEN` on Supabase) and you're done.
 
 ## Edge function wiring
 

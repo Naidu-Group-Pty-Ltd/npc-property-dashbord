@@ -501,12 +501,25 @@ either impossible by construction or asserted by a test.
 | Running foot wrapped to two lines | The `@bottom-left` box is a third of the measure; company + document name does not fit in letterspaced mono | `mastheadFor()` returns the company name alone; the document name lives on the cover, in the PDF title and in the running head |
 | The drop cap printed on top of the words it opened | WeasyPrint places a floated `::first-letter` but does not shorten the first line box around it | Ships a raised initial instead; `reportCss.spec.ts` fails on `float: left` |
 
-One caveat on that render, stated because it bounds what it proves: it was
-produced by WeasyPrint 69 on this workspace, not by the container
-(`weasyprint-service` pins 62.3). **Phase 4 closed the font half of this
-caveat** — the faces are now installed and the specimen re-rendered with Inter,
-Playfair Display (upright and italic), Cinzel and IBM Plex Mono. What remains
-unverified is engine-version parity, which needs the container itself.
+That render was produced by WeasyPrint 69 on this workspace rather than by the
+container, and for a long time that was a real caveat: the container pinned
+**62.3**, and the two disagree — 62.3 rejects `width: calc(210mm - 44mm)`,
+drops the declaration and renders on, which is how the cover's masthead printed
+the classification and the reference as one word in every shipped copy with
+nothing red anywhere.
+
+**Both halves of that caveat are now closed.** The faces are installed in the
+image and the specimen re-renders with Inter, Playfair Display (upright and
+italic), Cinzel and IBM Plex Mono; and `weasyprint-service/requirements.txt`
+pins `weasyprint==69.0`, the version this workspace runs. The two cannot drift
+silently again — `PINNED_ENGINE` in `engineSupport.pure.ts` mirrors that line,
+`engineSupport.spec.ts` reads the requirements file and fails if they differ,
+and CI's `render-container` job asserts the installed version against the pin
+inside the built image.
+
+What that pin does **not** prove is which image is *deployed*. There is no
+deploy workflow; see [`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md), whose
+first step is asking the running service what engine it has.
 
 The specimen is also the re-skin proof: the same content rendered with
 `--preset=minimal_ink --brand='#00A3FF' --density=compact --table=ledger
@@ -892,3 +905,11 @@ lives in `weasyprint-service/` — veraPDF, `output_intent`, `custom_metadata` �
 reaches production only when somebody builds and deploys the image by hand. The
 document-side half (heading levels, tagged chart figures, `bookmark-level`,
 `pressMarks`) ships with the edge functions and does not wait for it.
+
+That split has an order to it, and getting it wrong is not cosmetic: the render
+routes ask for `pdf/ua-1`, an engine that does not have that variant raises
+`KeyError` and the service returns a 500 on **every** report. So the container
+goes first, and the first thing to do is ask the running service what engine it
+has. The whole procedure — canary, verification, rollback, the edge-function
+half, and what to look for inside a delivered PDF — is
+[`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md).

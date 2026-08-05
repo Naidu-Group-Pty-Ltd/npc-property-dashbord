@@ -139,12 +139,26 @@ function renderLocally(html: string, label: string): RenderReport {
   };
 }
 
-/** Render through a running container, and read the diagnostics it returns. */
+/**
+ * Render through a running container, and read the diagnostics it returns.
+ *
+ * The request is the one the nine render routes make, deliberately — variant,
+ * output intent and all. This script exists to find out what the deployed
+ * engine does to a *report*, and it spent a while asking about `pdf/a-2b`, a
+ * variant no report has used since the claim moved to PDF/UA-1. A gate that
+ * probes a path production does not take can pass while production is broken.
+ *
+ * `weasyprintClient.ts` is the source of truth for these; a spec asserts the
+ * two agree. Not imported: this is a build script and that module is Deno-side
+ * edge-function code.
+ */
 async function renderOnService(html: string): Promise<RenderReport> {
   const res = await fetch(`${service}/render`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ html, pdf_variant: 'pdf/a-2b', tagged: true }),
+    body: JSON.stringify({
+      html, pdf_variant: 'pdf/ua-1', output_intent: 'srgb', tagged: true,
+    }),
   });
   if (!res.ok) throw new Error(`${service} answered ${res.status}: ${(await res.text()).slice(0, 300)}`);
   await res.arrayBuffer();

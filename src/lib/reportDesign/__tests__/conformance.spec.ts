@@ -166,6 +166,19 @@ describe('the variant the request asks for', () => {
     expect(body.output_intent).toBe('srgb');
     expect(body.custom_metadata).toBe(true);
   });
+
+  it('is the same request the engine check probes with', async () => {
+    // `engineCheck.mts` is the gate that asks a deployed container whether it
+    // still does what `engineSupport.pure.ts` says it does — and it asked about
+    // `pdf/a-2b` for a while after the claim moved to PDF/UA-1. A gate that
+    // probes a path production does not take can pass while production is
+    // broken, so the two are pinned together here.
+    const script = readFileSync(resolve(REPO, 'scripts/reports/engineCheck.mts'), 'utf8');
+    const sent = await bodyOf({});
+    expect(script).toContain(`pdf_variant: '${sent.pdf_variant}'`);
+    expect(script).toContain(`output_intent: '${sent.output_intent}'`);
+    expect(script).not.toContain("pdf_variant: 'pdf/a-2b'");
+  });
 });
 
 describe('the document outline', () => {

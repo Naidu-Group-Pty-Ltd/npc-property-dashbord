@@ -135,10 +135,24 @@ RUN fc-cache -f \
 # Headless install via IzPack's auto-install descriptor. Only the CLI packs;
 # the GUI, the corpus and the sample plugins are 300 MB of things a container
 # never uses.
+#
+# ── One ARG pins the download, the directory and the jar ─────────────────────
+# The URL below was `releases/verapdf-installer.zip`, which is upstream's
+# *floating latest* — while the `java -jar` line four lines down unpacks a
+# `verapdf-greenfield-${VERAPDF_VERSION}` directory. Those two agree only for as
+# long as latest happens to be the pinned version. The day veraPDF ships 1.31
+# the zip contains `verapdf-greenfield-1.31/`, the path does not exist, and this
+# layer fails — a build broken by somebody else's release schedule, on a commit
+# that changed nothing.
+#
+# `${VERAPDF_VERSION%.*}` is POSIX parameter expansion and `RUN` is `/bin/sh`,
+# so 1.30.2 gives the 1.30 series directory this URL is filed under. Bumping the
+# ARG now moves all three together.
 ARG VERAPDF_VERSION=1.30.2
 RUN apt-get update && apt-get install -y --no-install-recommends \
       default-jre-headless unzip curl \
-    && curl -sSL -o /tmp/verapdf.zip https://software.verapdf.org/releases/verapdf-installer.zip \
+    && curl -sSL -o /tmp/verapdf.zip \
+         "https://software.verapdf.org/releases/${VERAPDF_VERSION%.*}/verapdf-greenfield-${VERAPDF_VERSION}-installer.zip" \
     && unzip -q /tmp/verapdf.zip -d /tmp/vp \
     && printf '%s\n' \
       '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' \
