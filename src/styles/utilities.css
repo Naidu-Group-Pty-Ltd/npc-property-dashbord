@@ -570,15 +570,21 @@ html {
 
 /* 2. A focus ring is drawn *outside* the control, so a scroll container
       holding focusable chips clips it — the tab rail and the pagination
-      row both did. `overflow: clip` accepts `overflow-clip-margin`, which
-      grants exactly enough room for the ring and nothing more, so the
-      rail still clips its content but the ring survives.
+      row both did.
 
-      The tab rail scrolls horizontally, so it keeps `auto` on that axis
-      and only gains the clip margin on the block axis. */
-.luxury-tabs-list,
-nav[aria-label='pagination'] > ul,
-.ci-tab-rail {
+      Padding is the fix, not `overflow-clip-margin`. Two reasons, both
+      confirmed by testing rather than assumed: a container that scrolls on
+      one axis has `clip` coerced back to `hidden` on the other, so the
+      margin never applies to a horizontal rail; and WebKit does not
+      support the property at all — verified in WebKit 26.5, where
+      `CSS.supports('overflow-clip-margin', '4px')` is false while Chromium
+      and Firefox both report true.
+
+      The margin is still declared for the containers that do not scroll,
+      where the two engines that support it get a slightly tighter result.
+      Nothing depends on it. */
+.ci-tab-rail,
+nav[aria-label='pagination'] > ul {
   overflow-clip-margin: 4px;
 }
 
