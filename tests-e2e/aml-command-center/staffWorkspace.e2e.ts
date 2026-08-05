@@ -169,6 +169,8 @@ test('the identity section is one canonical panel with a collapsed, labelled leg
   const legacyBody = page.locator('#legacy-verification-body');
   await expect(legacyBody).toBeVisible();
   await expect(legacyBody.getByRole('button', { name: /promote|make authoritative|use as evidence|retry/i })).toHaveCount(0);
+  // Legacy rows predate several timestamps; they must degrade to an em dash.
+  expect(await legacyBody.innerText()).not.toContain('Invalid Date');
 
   await shot(page, 'staff-06-identity-unified');
   net.check();
@@ -212,7 +214,9 @@ test('party screening renders every state, and a client detail never appears', a
   await expect(page.getByText('Synthetic Screened 1').first()).toBeVisible({ timeout: 15_000 });
 
   const text = (await page.locator('body').innerText()).toLowerCase();
-  for (const state of ['not screened', 'queued', 'clear', 'possible match', 'confirmed match', 'error', 'stale']) {
+  // The real aml.party_screening_subjects state vocabulary.
+  for (const state of ['not required', 'not started', 'queued', 'processing', 'completed',
+    'possible match', 'confirmed match', 'false positive', 'error']) {
     expect(text, `screening state ${state} must render`).toContain(state);
   }
   // Reviewer adjudication controls exist for a possible match.
@@ -311,6 +315,28 @@ for (const vp of VIEWPORTS) {
       return bad;
     });
     expect(unlabelled, `controls without an accessible name at ${vp.name}`).toEqual([]);
+
+    // No control may be clipped by its own box. A viewport-keyed grid inside
+    // the workspace's narrow middle column silently truncated every label and
+    // button in the party-verification form, at 1728px as well as 360px.
+    const clipped = await page.evaluate(() => {
+      const bad: string[] = [];
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>('button, label, [role="combobox"]'))) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (getComputedStyle(el).overflow === 'visible') continue;
+        if (el.scrollWidth > el.clientWidth + 1) {
+          bad.push(`${el.tagName} "${(el.textContent || '').trim().slice(0, 40)}" ${el.scrollWidth}>${el.clientWidth}`);
+        }
+      }
+      return bad;
+    });
+    expect(clipped, `clipped controls at ${vp.name}`).toEqual([]);
+
+    // No user-facing surface may render a failed date parse.
+    const pageText = await page.locator('body').innerText();
+    expect(pageText, `"Invalid Date" rendered at ${vp.name}`).not.toContain('Invalid Date');
+    expect(pageText, `"undefined" rendered at ${vp.name}`).not.toMatch(/\bundefined\b/);
 
     // Tab must reach a visible control.
     await page.keyboard.press('Tab');

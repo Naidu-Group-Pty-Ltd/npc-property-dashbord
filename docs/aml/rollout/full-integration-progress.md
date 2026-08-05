@@ -109,11 +109,111 @@ stage boundary and before any long-running suite.
       status; regression test added.
 - [ ] Stage 10 — self-hosted service DEPLOYMENT itself (infrastructure host,
       secrets, owner) — external
-- [ ] Full staff-side browser E2E of the new review/reconciliation surfaces —
-      needs a served frontend build (no staging SPA target exists)
+- [x] Full staff-side browser E2E of the new review/reconciliation surfaces —
+      RUN against the rendered SPA served locally in staging mode (24 specs,
+      four viewports); see the round record above for exactly what is real
 - [ ] Stage 29/30 — staging + browser E2E (blockers recorded below)
 - [ ] Stage 31 — monitoring/runbooks
 - [ ] Stages 32–36 — commits/PR/gates/release (release expected BLOCKED)
+
+## Repository-validation round (browser + rehearsal)
+
+Starting point: branch head `4d4efa3d6`; `origin/main` had advanced to
+`199485506`. Merged (not rebased) as `7fe648002`; the incoming diff touched only
+`package.json`/`package-lock.json`, `src/assets/intakePack/*` and
+`src/lib/ciAssessment/*` — no AML, portal, provider, migration, auth or storage
+surface. Worktree clean at each stage boundary.
+
+### Browser test environment
+
+- The SPA is served **locally** (`npx vite --mode staging --host 127.0.0.1
+  --port 8080`) with every Supabase literal retargeted at the non-production
+  preview branch `yncczbrmicjebjepfave` by `vite-staging-target.ts`. Zero
+  production references remain in any served module (asserted), a fixed STAGING
+  banner is injected, and both specs fail if the browser makes any request to
+  the production host.
+- Credentials live only in a git-ignored `.env.local`. Nothing is committed.
+- **Safety defect found in this tooling and fixed:** gating on the variables
+  alone was not enough, because `loadEnv` reads the dotenv *file* — a plain
+  `npm run build` on a machine with a `.env.local` produced a staging-pointing
+  bundle carrying a STAGING banner. Activation now also requires
+  `--mode staging`, and a default build is verified clean (0 staging refs, no
+  banner).
+- Client-portal journeys run against the **real** deployed `aml-client-portal`
+  on that branch. Only the portal shell's `client-portal-verify` bootstrap is
+  fulfilled locally, because its session select joins `public.clients`, a table
+  the branch does not carry. That does not weaken the access-control
+  assertions: `aml-client-portal` performs its own session lookup, so the
+  revoked-session refusal is still a real 401 from the real backend.
+- Staff journeys run against the **real rendered SPA** with the `aml-*` boundary
+  served from fixtures shaped to the response contracts in
+  `src/lib/aml/amlCasesApi.ts`. The staff functions are not deployed to the
+  branch and ~25 of the `aml.*` tables they query do not exist there (the parent
+  ledger is not replayable — see blockers). Staff *server* behaviour is covered
+  by the production-shaped rehearsal below and by the contract suite; what the
+  browser proves is the rendered UI, routing, dialogs, focus and layout.
+
+### Browser findings (all fixed, all with regression contracts)
+
+| Ref | Defect | Fix |
+| --- | --- | --- |
+| DEF-B1 | The portal's no-case empty state rendered the API status line "No AML onboarding case yet.", which reads like a fault | Client-facing copy returned by the server so every consumer shows the same words |
+| DEF-B2 | A terminology payload without `terminology_overrides` flowed into state as `undefined`, so the next `t()` threw and AmlLayout's ErrorBoundary replaced the **whole Command Centre** with "Something went wrong" | Coerced at the boundary (`asOverrideMap`), `t` defensive |
+| DEF-B3 / B7 | Absent timestamps rendered the literal "Invalid Date" to compliance staff, in the workspace header and the legacy verification history | One shared `displayDate`/`displayDateTime` helper; every date render in the six touched surfaces goes through it |
+| DEF-B4 | An absent attempt number printed "attempt undefined of 3" | Clause omitted unless the number is finite |
+| DEF-B5 | **Material.** `processing_status`, `attempt_consumed`, `provider_error_category` and the `retry_verification_processing` op existed server-side and were already on the wire, but no staff UI read them: a check stranded in `technical_failure` rendered as "Awaiting adjudication" and could not be retried at all | Processing state shown beside the identity outcome, attempt accounting stated, simulation labelled, provider readiness surfaced, **Retry processing** offered only for `technical_failure`/`dead_lettered` with the vocabulary shared so the client cannot drift from the server |
+| DEF-B6 | Five icon-only shell controls (menu, search, theme, account, notification bell) had no accessible name at 360x800 | `aria-label` on each |
+| DEF-B8 | The party-verification form's viewport-keyed 4-up grid clipped every label, the party-type value and the button text — at 1728px as well as 360px, because the panel sits in the workspace's narrow middle column | One column by default, two-up only when the panel is wide, action on its own row; a clipping assertion now runs at all four viewports |
+| DEF-B10 | The party-type picker offered `beneficiary`, which `aml.party_verification_links_party_type_check` rejects — picking it produced a server error | Picker reduced to exactly the nine types the CHECK allows |
+
+### Rehearsal finding (blocking, fixed)
+
+| Ref | Defect | Fix |
+| --- | --- | --- |
+| DEF-B9 | **Blocking.** `attempt_number` was doing two incompatible jobs — row identity (`uq_aml_verification_attempt`) and the allowance ceiling (`CHECK BETWEEN 1 AND 3`). Deriving it from the consumed-attempt count made the next capture reuse the previous number, so 23505 fired and the portal answered "your verification is already being checked": **a client whose first capture was unreadable could never recapture.** Deriving it from the row count instead hit the 1..3 cap after three captures even when none consumed an attempt. Both reachable in normal operation | New additive migration `20260901000200_aml_capture_row_identity.sql` moves row identity to `capture_sequence`, lifts the cap to `>= 1`, and backfills; the portal derives the row sequence from rows and only reports `already_processing` on a genuine idempotency-key collision |
+
+### Production-shaped rehearsal (disposable Postgres 16, destroyed)
+
+65 migrations applied in order on a fresh database, then the sixth release
+migration; 16 behaviour proofs, each of which raises on failure rather than
+reporting success:
+
+1. pre-fix probe: with `20260831000100` applied and the category fix absent, the
+   AFTER-INSERT notification trigger aborts the whole insert — **zero** client
+   requests creatable (the defect, reproduced).
+2. request + notification + outbox event + `notification_status='queued'`, all in
+   the insert's transaction.
+3. event payload carries identifiers only — no name, no message body.
+4. action-code CHECK closed.
+5. exactly one identifier-only verification event; a duplicate capture raises
+   23505.
+6. attempt accounting: outage, unusable capture and simulation consume nothing;
+   `attempts_used = 1` from the one authoritative outcome.
+7. a superseded authoritative outcome stops counting.
+8. `processing_status` CHECK closed.
+9. five consecutive unusable captures then a sixth recapture, all with
+   `attempts_used = 0` — and the old `used + 1` formula still collides, so the
+   defect is genuinely reproduced rather than assumed.
+10. document rejection/replacement lineage over two cycles; client-safe reason
+    and internal note kept apart; no version removed.
+11. P3 evidence reference; a legal hold blocks disposal
+    (`blocked_by_hold`); disposal writes evidence; the classification
+    vocabulary is closed to P3/P6.
+12. similarity is suggestion-only — resolution stays `open` until confirmed.
+13. necessity-based retention (`years = 0`) registered for raw ID copies and
+    biometrics.
+14. `review_status` closed; a superseded submission snapshot is unchanged.
+15. party verification links stay inside their case.
+16. screening adjudication recorded with a note.
+
+Rollback was then executed from the six migration headers **verbatim**. Two
+statements refused — restoring the 1..3 `attempt_number` cap and narrowing the
+notification category — which is exactly the precondition each header
+documents ("only safe once no party holds more than three capture rows" /
+"only safe once no row uses category='aml'"). With those preconditions met the
+same statements succeeded, leaving a fully rolled-back schema. All six
+migrations then **reapplied cleanly** and every convergence check passed;
+the 16 proofs were re-run green after the reapply. The database was destroyed.
 
 ## Known blockers (recorded, not stopping independent work)
 
@@ -128,8 +228,7 @@ stage boundary and before any long-running suite.
 
 ## Next action
 
-Build the remaining staff surfaces (Stage 15 submission review, Stage 23
-unified verification UI, Stage 16 rejection loop), Stage 17 evidence
-references and Stage 20 screening orchestration; then staging deploy +
-browser E2E once a staging frontend and provider deployment exist
-(blockers above). Release remains BLOCKED pending approvals.
+Repository work is complete for this round. What remains is external:
+human review of PR #1939, the verification service's deployment target and
+secrets, worker scheduling, a change window, and the security / privacy /
+MLRO / operations sign-offs. Release remains BLOCKED.

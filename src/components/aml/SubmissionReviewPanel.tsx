@@ -22,6 +22,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { AlertTriangle, CheckCircle2, FileText, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlSubmissionReview } from "@/lib/aml/amlCasesApi";
+import { displayDateTime } from "@/lib/aml/displayDate";
 
 type ActionKind = "accept" | "changes" | "document" | "clarification" | "escalate" | "supersede";
 
@@ -164,7 +165,7 @@ export function SubmissionReviewPanel({
                 Submission v{s.version_number} <StatusBadge status={s.review_status} />
               </CardTitle>
               <CardDescription>
-                Submitted {new Date(s.submitted_at).toLocaleString()} by {s.submitted_by_type ?? "client"} ·
+                Submitted {displayDateTime(s.submitted_at)} by {s.submitted_by_type ?? "client"} ·
                 questionnaire v{s.questionnaire_version ?? "—"} · consent v{s.consent_version ?? "—"}
               </CardDescription>
             </div>
@@ -296,7 +297,7 @@ export function SubmissionReviewPanel({
                   <li key={`${c.kind}-${c.version}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1">
                     <span>{c.kind.replaceAll("_", " ")} · v{c.version}</span>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(c.accepted_at).toLocaleString()}
+                      {displayDateTime(c.accepted_at)}
                       {c.document_hash && <> · hash {c.document_hash.slice(0, 12)}…</>}
                     </span>
                   </li>

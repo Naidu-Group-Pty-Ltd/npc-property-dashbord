@@ -52,10 +52,11 @@ export default defineConfig(({ mode }) => ({
     __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
   plugins: [
-    // Inert unless STAGING_SUPABASE_URL/_ANON_KEY are set locally; see
-    // vite-staging-target.ts. Runs before everything else so the retarget
-    // applies to source, not to already-transformed output.
-    stagingTargetPlugin(loadEnv(mode, process.cwd(), ["STAGING_"])),
+    // Inert unless run with `--mode staging` AND the local staging variables
+    // are set; see vite-staging-target.ts. Gating on the mode is what stops a
+    // default build being retargeted by a `.env.local` on disk. Runs before
+    // everything else so the retarget applies to source, not to output.
+    stagingTargetPlugin(mode, loadEnv(mode, process.cwd(), ["STAGING_"])),
     inlineXlsxPlugin(),
     react(),
     mcpPlugin(),

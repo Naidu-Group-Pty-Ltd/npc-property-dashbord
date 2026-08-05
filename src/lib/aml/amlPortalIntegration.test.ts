@@ -390,15 +390,40 @@ describe("browser-journey regressions (found by real Chromium against staging)",
     expect(terminology).toContain("asOverrideMap(JSON.parse(raw))");
   });
 
-  // DEF-B3 — "Invalid Date" was rendered to compliance staff.
-  it("every workspace date render goes through displayDate", () => {
-    expect(workspace).toContain("function displayDate");
-    const executable = workspace
-      .split("\n")
-      .filter((line) => !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//"))
-      .join("\n");
-    // The only remaining toLocaleDateString call is inside displayDate itself.
-    expect(executable.match(/toLocaleDateString\(\)/g) ?? []).toHaveLength(1);
+  // DEF-B3 / DEF-B7 — "Invalid Date" was rendered to compliance staff, in the
+  // workspace header and in the legacy verification history.
+  it("date formatting lives in one shared helper that never returns Invalid Date", () => {
+    const helper = readFileSync("src/lib/aml/displayDate.ts", "utf8");
+    expect(helper).toContain("export function displayDate");
+    expect(helper).toContain("export function displayDateTime");
+    expect(helper).toContain("Number.isNaN(parsed.getTime())");
+    // A bad value degrades to the fallback, never to the literal string: the
+    // helper must not construct that text itself.
+    const executableHelper = helper
+      .split("\n").filter((l) => !l.trimStart().startsWith("*") && !l.trimStart().startsWith("/*")).join("\n");
+    expect(executableHelper).not.toContain("Invalid Date");
+  });
+  it("every AML surface this change touches uses the helper, not raw Date formatting", () => {
+    const files = [
+      "src/pages/aml/AmlCaseWorkspace.tsx",
+      "src/components/aml/LegacyVerificationHistoryPanel.tsx",
+      "src/components/aml/PartyVerificationPanel.tsx",
+      "src/components/aml/PartyScreeningPanel.tsx",
+      "src/components/aml/SubmissionReviewPanel.tsx",
+      "src/components/aml/VerificationSection.tsx",
+    ];
+    for (const file of files) {
+      const src = readFileSync(file, "utf8");
+      const executable = src
+        .split("\n")
+        .filter((line) => !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//"))
+        .join("\n");
+      expect(src, `${file} must import the shared helper`)
+        .toContain('from "@/lib/aml/displayDate"');
+      expect(executable, `${file} must not format a date directly`)
+        .not.toMatch(/new Date\([^)]*\)\.toLocale(Date)?String\(\)/);
+    }
+    void workspace;
   });
 
   // DEF-B4 — "attempt undefined of 3".
@@ -444,5 +469,93 @@ describe("browser-journey regressions (found by real Chromium against staging)",
     }
     expect(bell).toContain("aria-label={unreadCount > 0 ?");
     expect(bell).toContain("'Notifications'");
+  });
+});
+
+describe("capture-row identity regression (found by the production-shaped DB rehearsal)", () => {
+  const migration = readFileSync(
+    "supabase/migrations/20260901000200_aml_capture_row_identity.sql", "utf8");
+  const portalFn = readFileSync("supabase/functions/aml-client-portal/index.ts", "utf8");
+  const partyPanel = readFileSync("src/components/aml/PartyVerificationPanel.tsx", "utf8");
+
+  it("row identity moves to capture_sequence and the attempt_number cap is lifted", () => {
+    expect(migration).toContain("DROP INDEX IF EXISTS aml.uq_aml_verification_attempt");
+    expect(migration).toContain("uq_aml_verification_capture");
+    expect(migration).toMatch(/CHECK \(attempt_number >= 1\)/);
+    expect(migration).toMatch(/CHECK \(capture_sequence >= 1\)/);
+    // The allowance must not move back onto a column CHECK. Assert on the
+    // executable statements only — the ROLLBACK header quotes the old cap.
+    const executableDdl = migration
+      .split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+    expect(executableDdl).not.toMatch(/attempt_number <= \d/);
+  });
+  it("it backfills capture_sequence rather than deleting or rewriting rows", () => {
+    expect(migration).toContain("row_number() OVER");
+    const executable = migration
+      .split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+    expect(executable).not.toMatch(/\bDROP TABLE\b|\bDELETE FROM\b|\bTRUNCATE\b/);
+  });
+  it("it carries a rollback block and converges", () => {
+    expect(migration).toContain("ROLLBACK:");
+    expect(migration).toContain("did not converge");
+  });
+
+  it("the portal derives the capture row number from rows, not from consumed attempts", () => {
+    expect(portalFn).toContain("async function nextCaptureSequence");
+    expect(portalFn).toContain("const captureSequence = await nextCaptureSequence(");
+    expect(portalFn).toContain("attempt_number: captureSequence");
+    expect(portalFn).toContain("capture_sequence: captureSequence");
+    // The defective formula must be gone from the submission path.
+    expect(portalFn).not.toContain("attempt_number: used + 1");
+    expect(portalFn).not.toContain("capture_sequence: used + 1");
+  });
+  it("only an idempotency-key collision reports already_processing", () => {
+    expect(portalFn).toContain("const onIdempotencyKey = /idempotency/i.test(");
+    expect(portalFn).toContain("const retrySequence = await nextCaptureSequence(");
+    // The allowance still comes from the consumed-attempt counter.
+    expect(portalFn).toContain("attempts_remaining: MAX_VERIFICATION_ATTEMPTS - used");
+  });
+
+  it("the party-type picker offers exactly the nine types the CHECK allows", () => {
+    const list = partyPanel.slice(
+      partyPanel.indexOf("const PARTY_TYPES = ["),
+      partyPanel.indexOf("];", partyPanel.indexOf("const PARTY_TYPES = [")),
+    );
+    for (const t of ["case_subject", "co_purchaser", "director", "trustee", "beneficial_owner",
+      "authorised_representative", "donor", "private_lender", "other"]) {
+      expect(list).toContain(t);
+    }
+    // "beneficiary" is not in the CHECK — offering it produced a server error.
+    expect(list).not.toContain("beneficiary");
+  });
+});
+
+describe("staging-retarget tooling safety", () => {
+  const plugin = readFileSync("vite-staging-target.ts", "utf8");
+  const config = readFileSync("vite.config.ts", "utf8");
+
+  it("only `--mode staging` can retarget, so a .env.local cannot alter a default build", () => {
+    // Gating on the variables alone was not enough: loadEnv reads the dotenv
+    // FILE, so a plain build on a machine with a .env.local produced a
+    // staging-pointing bundle carrying a STAGING banner.
+    expect(plugin).toContain('export const STAGING_MODE = "staging"');
+    expect(plugin).toContain("if (mode !== STAGING_MODE)");
+    expect(config).toContain("stagingTargetPlugin(mode,");
+  });
+  it("it refuses to run rather than silently target production", () => {
+    expect(plugin).toContain("points at the production project");
+    expect(plugin).toContain("Refusing to start");
+    // A staging mode with no configuration must throw, not fall through.
+    expect(plugin).toContain("Refusing to start rather than");
+  });
+  it("a retargeted page carries a visible STAGING indicator and a machine marker", () => {
+    expect(plugin).toContain("npc-staging-banner");
+    expect(plugin).toContain("not production");
+    expect(plugin).toContain("window.__SUPABASE_TARGET__");
+  });
+  it("no staging credential is committed", () => {
+    expect(plugin).not.toContain("yncczbrmicjebjepfave");
+    const gitignore = readFileSync(".gitignore", "utf8");
+    expect(gitignore).toContain(".env.*");
   });
 });

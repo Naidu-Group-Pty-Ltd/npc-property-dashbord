@@ -10,6 +10,7 @@ import {
   type AmlVerificationCheck, type AmlBiometricAccessEntry, type ProviderReadiness,
 } from "@/lib/aml/amlVerificationApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
+import { displayDateTime } from "@/lib/aml/displayDate";
 
 /**
  * Identity verification — command-centre surface for the self-hosted stack.
@@ -428,7 +429,7 @@ export function VerificationSection({
                     {a.reason && <span className="text-muted-foreground"> · {a.reason}</span>}
                   </span>
                   <span className="shrink-0 text-muted-foreground">
-                    {new Date(a.created_at).toLocaleString()}
+                    {displayDateTime(a.created_at)}
                   </span>
                 </li>
               ))}

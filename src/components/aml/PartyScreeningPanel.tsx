@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, PlayCircle, Gavel } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlPartyScreeningSubject } from "@/lib/aml/amlCasesApi";
+import { displayDate } from "@/lib/aml/displayDate";
 
 const STATE_TONE: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   not_required: "secondary", not_started: "outline", queued: "outline", processing: "outline",
@@ -90,8 +91,8 @@ export function PartyScreeningPanel({
                   <div className="font-medium">{s.screened_name}</div>
                   <div className="text-xs text-muted-foreground">
                     {s.party_type.replaceAll("_", " ")}
-                    {s.last_screened_at && <> · last screened {new Date(s.last_screened_at).toLocaleDateString()}</>}
-                    {s.refresh_due_at && <> · refresh due {new Date(s.refresh_due_at).toLocaleDateString()}</>}
+                    {s.last_screened_at && <> · last screened {displayDate(s.last_screened_at)}</>}
+                    {s.refresh_due_at && <> · refresh due {displayDate(s.refresh_due_at)}</>}
                     {s.adjudication_note && <> · adjudicated</>}
                   </div>
                 </div>

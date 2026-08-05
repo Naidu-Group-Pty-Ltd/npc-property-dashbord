@@ -15,10 +15,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2, Link2, Unlink } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlPartyVerificationLink } from "@/lib/aml/amlCasesApi";
+import { displayDate } from "@/lib/aml/displayDate";
 
+/**
+ * Exactly `aml.party_verification_links_party_type_check`.
+ *
+ * This list used to carry "beneficiary", which that CHECK does not allow: a
+ * staff member who picked it got a constraint error from the server instead of
+ * a link. Found by the production-shaped database rehearsal. Keep this in step
+ * with the migration — the database is the authority, not the picker.
+ */
 const PARTY_TYPES = [
   "case_subject", "co_purchaser", "director", "trustee", "beneficial_owner",
-  "beneficiary", "authorised_representative", "donor", "private_lender", "other",
+  "authorised_representative", "donor", "private_lender", "other",
 ];
 
 export function PartyVerificationPanel({
@@ -94,7 +103,7 @@ export function PartyVerificationPanel({
                 <div className="min-w-0">
                   <div className="font-medium">{l.party_type.replaceAll("_", " ")}</div>
                   <div className="text-xs text-muted-foreground">
-                    {l.relationship.replaceAll("_", " ")} · linked {new Date(l.linked_at).toLocaleDateString()}
+                    {l.relationship.replaceAll("_", " ")} · linked {displayDate(l.linked_at)}
                     {l.metadata?.linked_status ? <> · {String(l.metadata.linked_status)}</> : null}
                   </div>
                 </div>
@@ -113,8 +122,13 @@ export function PartyVerificationPanel({
           </ul>
         )}
 
+        {/* One column by default: this panel lives in the workspace's narrow
+            middle column, so a viewport-keyed 4-up grid gave every control ~55px
+            and clipped the labels, the party-type value and the button text at
+            every viewport — including 1728px. Two-up only once the panel itself
+            is wide, with the action on its own full-width row. */}
         {canWrite && (
-          <div className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-3 sm:grid-cols-4">
+          <div className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-3 lg:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-type" className="text-xs">Party type</Label>
               <Select value={partyType} onValueChange={setPartyType}>
@@ -126,7 +140,7 @@ export function PartyVerificationPanel({
             </div>
             <div className="space-y-1">
               <Label htmlFor="pv-party" className="text-xs">Canonical party id (optional)</Label>
-              <Input id="pv-party" value={partyId} onChange={(e) => setPartyId(e.target.value)} placeholder="for owners/representatives" />
+              <Input id="pv-party" value={partyId} onChange={(e) => setPartyId(e.target.value)} placeholder="Owners and representatives only" />
             </div>
             <div className="space-y-1">
               <Label htmlFor="pv-check" className="text-xs">Canonical check</Label>
@@ -141,7 +155,7 @@ export function PartyVerificationPanel({
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end lg:col-span-2">
               <Button size="sm" onClick={() => void link()} disabled={busy} className="w-full">
                 {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Link2 className="mr-1.5 h-3.5 w-3.5" />}
                 Link evidence

@@ -16,7 +16,12 @@ import type { Plugin } from "vite";
  * occurrence is the staging project or the plugin is inert.
  *
  * Activation is explicit and fails closed:
- *   - inert unless BOTH `STAGING_SUPABASE_URL` and `STAGING_SUPABASE_ANON_KEY`
+ *   - inert unless the Vite mode is exactly `staging` (`--mode staging`). This
+ *     matters: `loadEnv` reads the dotenv FILE, so gating on the variables
+ *     alone meant a plain `npm run build` on a machine that happened to have a
+ *     `.env.local` produced a staging-pointing bundle carrying a STAGING
+ *     banner. A default build must never be retargetable by a file on disk;
+ *   - and inert unless BOTH `STAGING_SUPABASE_URL` and `STAGING_SUPABASE_ANON_KEY`
  *     are set (put them in a local, git-ignored `.env.local` — never commit
  *     them);
  *   - throws if the configured URL is the production project, so a misconfigured
@@ -39,13 +44,27 @@ function projectRefOf(url: string): string {
   return new URL(url).hostname.split(".")[0];
 }
 
-export function stagingTargetPlugin(env: Record<string, string> = {}): Plugin {
+/** The only mode that may retarget. Anything else is inert. */
+export const STAGING_MODE = "staging";
+
+export function stagingTargetPlugin(
+  mode: string,
+  env: Record<string, string> = {},
+): Plugin {
+  if (mode !== STAGING_MODE) {
+    return { name: "npc-staging-target-inert" } as Plugin;
+  }
+
   const read = (key: string) => (env[key] ?? process.env[key] ?? "").trim();
   const url = read("STAGING_SUPABASE_URL");
   const anonKey = read("STAGING_SUPABASE_ANON_KEY");
 
   if (!url || !anonKey) {
-    return { name: "npc-staging-target-inert" } as Plugin;
+    throw new Error(
+      "[staging-target] --mode staging was requested but STAGING_SUPABASE_URL / "
+        + "STAGING_SUPABASE_ANON_KEY are unset. Refusing to start rather than "
+        + "silently serving the production project under a staging label.",
+    );
   }
 
   if (url === PRODUCTION_URL || projectRefOf(url) === PRODUCTION_REF) {

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { amlVerificationApi, type IdentityCheck } from "@/lib/aml/amlVerificationApi";
+import { displayDateTime } from "@/lib/aml/displayDate";
 
 function legacyLabel(r: IdentityCheck): { label: string; tone: "secondary" | "destructive" | "outline" | "default" } {
   if (r.execution_mode === "simulation" || r.provider === "simulator") {
@@ -69,7 +70,7 @@ export function LegacyVerificationHistoryPanel({ caseId }: { caseId: string }) {
                     <div className="min-w-0">
                       <div className="font-medium">{r.subject_label}</div>
                       <div className="text-xs text-muted-foreground">
-                        legacy · {r.provider} · {r.method} · {new Date(r.requested_at).toLocaleString()}
+                        legacy · {r.provider} · {r.method} · {displayDateTime(r.requested_at)}
                         {r.environment && <> · {r.environment}</>}
                         {r.authoritative === false && <> · non-authoritative</>}
                       </div>

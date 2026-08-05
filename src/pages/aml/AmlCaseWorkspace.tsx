@@ -35,6 +35,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
 import { amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import {
@@ -148,20 +149,6 @@ const isKnownSection = (value: string | null): value is SectionKey =>
   !!value &&
   SECTION_GROUPS.some((g) => g.sections.some((s) => s.key === value));
 
-/**
- * A date for display, or an em dash.
- *
- * Formatting a missing timestamp directly renders the literal string
- * "Invalid Date", which the workspace header was showing to compliance staff
- * whenever a timestamp was absent — the workflow-dimension columns are
- * explicitly nullable until backfilled, so this is reachable on real cases.
- * Found by the staff browser journey.
- */
-function displayDate(value: string | null | undefined): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "—" : parsed.toLocaleDateString();
-}
 
 export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
@@ -648,7 +635,7 @@ function ConsentEvidenceCard({ caseId }: { caseId: string }) {
                     {d.accepted_at ? (
                       <>
                         <div className="text-success">
-                          {new Date(d.accepted_at).toLocaleString()}
+                          {displayDateTime(d.accepted_at)}
                         </div>
                         {d.accepted_by && (
                           <div className="text-muted-foreground">{d.accepted_by}</div>
@@ -833,7 +820,7 @@ function DocumentsEvidenceSection({
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{d.filename}</div>
                     <div className="text-xs text-muted-foreground">
-                      Uploaded {new Date(d.uploaded_at).toLocaleString()}
+                      Uploaded {displayDateTime(d.uploaded_at)}
                       {d.rejection_reason ? ` · rejected: ${d.rejection_reason}` : ""}
                     </div>
                   </div>
@@ -1890,7 +1877,7 @@ function ActionPanel({
               {events.slice(0, 5).map((e) => (
                 <li key={e.id}>
                   <div className="line-clamp-2">{e.summary}</div>
-                  <div className="text-muted-foreground">{new Date(e.created_at).toLocaleString()}</div>
+                  <div className="text-muted-foreground">{displayDateTime(e.created_at)}</div>
                 </li>
               ))}
             </ul>

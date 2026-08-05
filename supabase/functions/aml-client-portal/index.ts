@@ -329,6 +329,36 @@ async function verificationAttemptsUsed(
 }
 
 /**
+ * The next per-party capture row number.
+ *
+ * `uq_aml_verification_attempt` is unique on
+ * `(case_id, coalesce(party_id, case_id), check_type, attempt_number)`, so
+ * `attempt_number` identifies a ROW, not a consumed attempt. Deriving it from
+ * the consumed-attempt count meant a capture that consumed nothing — an
+ * unusable capture, a provider outage, a cancelled run — left the counter at
+ * its previous value, so the next capture reused the same `attempt_number`,
+ * hit 23505, and the client was told "your verification is already being
+ * checked" forever. A client whose first capture was unreadable could never
+ * recapture. Found by the production-shaped database rehearsal.
+ *
+ * The customer's ALLOWANCE stays on `aml.verification_attempts_used()` — that
+ * is what gates exhaustion and what `attempts_remaining` reports. This is only
+ * the row sequence.
+ */
+async function nextCaptureSequence(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<number> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('attempt_number')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv');
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.order('attempt_number', { ascending: false }).limit(1);
+  if (error) throw error;
+  return Number((data ?? [])[0]?.attempt_number ?? 0) + 1;
+}
+
+/**
  * An in-flight electronic check for this party (submitted/queued/processing/
  * retry_scheduled). A second submission while one is processing would burn
  * provider work and confuse the journey — the portal refuses it safely.
@@ -862,12 +892,17 @@ Deno.serve(async (req) => {
         // a genuinely new submission.
         const idempotencyKey = 'portal-idv-' + await sha256Hex(`${c.id}|${partyId ?? 'subject'}|${documentPath}|${selfiePath}`);
 
+        // Row sequence, NOT the consumed-attempt count — see
+        // nextCaptureSequence(). Using `used + 1` here stranded any client
+        // whose previous capture consumed no attempt.
+        const captureSequence = await nextCaptureSequence(admin, c.id, partyId);
+
         const baseRow = {
           case_id: c.id,
           party_id: partyId,
           party_label: partyLabel,
           check_type: 'electronic_idv',
-          attempt_number: used + 1,
+          attempt_number: captureSequence,
           status: 'pending',
           provider: 'selfhosted',
           biometric_kind: 'face_image',
@@ -885,7 +920,7 @@ Deno.serve(async (req) => {
           .from('verification_checks').insert({
             ...baseRow,
             processing_status: 'queued',
-            capture_sequence: used + 1,
+            capture_sequence: captureSequence,
             attempt_consumed: false,
             execution_mode: 'live',
             idempotency_key: idempotencyKey,
@@ -901,13 +936,35 @@ Deno.serve(async (req) => {
             }, 409);
           }
           if (insErr.code === '23505') {
-            // Same captures already submitted — idempotent success.
-            return jsonResponse({
-              submitted: true, status: 'processing', code: 'already_processing',
-              message: 'Your verification is already being checked. We will update you shortly.',
-            });
+            const onIdempotencyKey = /idempotency/i.test(
+              `${insErr.message ?? ''} ${(insErr as any).details ?? ''}`);
+            if (onIdempotencyKey) {
+              // Genuinely the same captures again — idempotent success.
+              return jsonResponse({
+                submitted: true, status: 'processing', code: 'already_processing',
+                message: 'Your verification is already being checked. We will update you shortly.',
+              });
+            }
+            // Attempt-number collision: another submission for this party
+            // landed between the sequence read and the insert. Re-sequence and
+            // retry once. Reporting "already processing" here was what stranded
+            // a client after an unusable capture.
+            const retrySequence = await nextCaptureSequence(admin, c.id, partyId);
+            const retry = await admin.schema('aml').from('verification_checks').insert({
+              ...baseRow,
+              attempt_number: retrySequence,
+              processing_status: 'queued',
+              capture_sequence: retrySequence,
+              attempt_consumed: false,
+              execution_mode: 'live',
+              idempotency_key: idempotencyKey,
+            }).select('*').single();
+            if (retry.error) throw retry.error;
+            created = retry.data;
+            insErr = null;
+          } else {
+            throw insErr;
           }
-          throw insErr;
         }
 
         // Adjudication happens staff-side. The portal deliberately does not

@@ -36,20 +36,27 @@ export interface OpLog {
 const nowIso = (offsetDays = 0) =>
   new Date(Date.UTC(2026, 6, 20 + offsetDays, 3, 0, 0)).toISOString();
 
-/** Nine party types the reconciliation and verification surfaces must handle. */
+/**
+ * The nine party types the model actually supports — exactly
+ * `aml.party_verification_links_party_type_check`. An earlier fixture invented
+ * 'individual', 'settlor', 'partner', 'shareholder' and 'signatory', none of
+ * which the database accepts.
+ */
 export const PARTY_TYPES = [
-  'individual', 'beneficial_owner', 'authorised_representative', 'director',
-  'trustee', 'settlor', 'partner', 'shareholder', 'signatory',
+  'case_subject', 'co_purchaser', 'director', 'trustee', 'beneficial_owner',
+  'authorised_representative', 'donor', 'private_lender', 'other',
 ] as const;
 
 function reconciliationItems() {
+  // Exactly the change_kind and resolution_status CHECK vocabularies.
   const kinds = ['new', 'changed', 'removed', 'role_changed', 'unchanged'];
+  const statuses = ['open', 'linked', 'created', 'manual_only', 'rejected', 'superseded', 'conflict'];
   return PARTY_TYPES.map((partyType, i) => ({
     id: `re000000-0000-4000-8000-0000000000${String(i + 10).padStart(2, '0')}`,
     declared_role: partyType,
     declared_name: `Synthetic Party ${i + 1}`,
     change_kind: kinds[i % kinds.length],
-    resolution_status: i === 0 ? 'resolved' : 'unresolved',
+    resolution_status: statuses[i % statuses.length],
     resolved_party_type: i === 0 ? partyType : null,
     resolved_party_id: i === 0 ? `pa000000-0000-4000-8000-0000000000${String(i + 30).padStart(2, '0')}` : null,
     verification_required: i % 2 === 0,
@@ -68,7 +75,14 @@ function reconciliationItems() {
 }
 
 function screeningSubjects() {
-  const states = ['not_screened', 'queued', 'clear', 'possible_match', 'confirmed_match', 'error', 'stale'];
+  // Exactly aml.party_screening_subjects_state_check, verified against the
+  // constraint on the rehearsal database. An earlier fixture invented 'clear'
+  // and 'stale', so the panel was being asserted against states that cannot
+  // exist.
+  const states = [
+    'not_required', 'not_started', 'queued', 'processing', 'completed',
+    'possible_match', 'confirmed_match', 'false_positive', 'error',
+  ];
   return states.map((state, i) => ({
     id: `sc000000-0000-4000-8000-0000000000${String(i + 10).padStart(2, '0')}`,
     case_id: STAFF_CASE_ID,
@@ -77,11 +91,11 @@ function screeningSubjects() {
     screened_name: `Synthetic Screened ${i + 1}`,
     required: true,
     state,
-    last_screened_at: state === 'not_screened' ? null : nowIso(-3),
-    refresh_due_at: state === 'stale' ? nowIso(-1) : nowIso(30),
+    last_screened_at: state === 'not_started' || state === 'not_required' ? null : nowIso(-3),
+    refresh_due_at: state === 'completed' ? nowIso(-1) : nowIso(30),
     adjudicated_at: state === 'confirmed_match' ? nowIso(-1) : null,
     adjudication_note: state === 'confirmed_match' ? 'Synthetic adjudication note' : null,
-    screening_check_id: state === 'not_screened' ? null : `ch000000-0000-4000-8000-0000000000${String(i + 50).padStart(2, '0')}`,
+    screening_check_id: state === 'not_started' || state === 'not_required' ? null : `ch000000-0000-4000-8000-0000000000${String(i + 50).padStart(2, '0')}`,
     error_category: state === 'error' ? 'provider_unavailable' : null,
   }));
 }
@@ -247,11 +261,11 @@ export async function installStaffBackend(
         case 'list_party_reconciliation':
           return { items: reconciliationItems() };
         case 'resolve_party_reconciliation':
-          return { item: { ...reconciliationItems()[0], resolution_status: 'resolved', resolution_rationale: body?.rationale ?? null } };
+          return { item: { ...reconciliationItems()[0], resolution_status: 'linked', resolution_rationale: body?.rationale ?? null } };
         case 'list_party_verification_links':
           return {
             links: [
-              { id: 'pl000000-0000-4000-8000-000000000001', case_id: STAFF_CASE_ID, party_type: 'individual', party_id: 'pa000000-0000-4000-8000-000000000030', verification_check_id: 'vc000000-0000-4000-8000-000000000001', relationship: 'subject', authoritative: true, linked_at: nowIso(-4), unlinked_at: null, unlink_reason: null },
+              { id: 'pl000000-0000-4000-8000-000000000001', case_id: STAFF_CASE_ID, party_type: 'case_subject', party_id: 'pa000000-0000-4000-8000-000000000030', verification_check_id: 'vc000000-0000-4000-8000-000000000001', relationship: 'subject', authoritative: true, linked_at: nowIso(-4), unlinked_at: null, unlink_reason: null },
             ],
             // Only authoritative, non-simulated checks may be offered.
             eligible_checks: verificationRows().filter((v) => v.authoritative && v.execution_mode !== 'simulation'),
@@ -259,7 +273,7 @@ export async function installStaffBackend(
         case 'link_party_verification':
           return { link: { id: 'pl000000-0000-4000-8000-000000000002', case_id: STAFF_CASE_ID, party_type: body?.party_type, party_id: body?.party_id ?? null, verification_check_id: body?.verification_check_id, relationship: 'subject', authoritative: true, linked_at: nowIso(), unlinked_at: null, unlink_reason: null } };
         case 'unlink_party_verification':
-          return { link: { id: body?.link_id, case_id: STAFF_CASE_ID, party_type: 'individual', party_id: null, verification_check_id: 'vc000000-0000-4000-8000-000000000001', relationship: 'subject', authoritative: true, linked_at: nowIso(-4), unlinked_at: nowIso(), unlink_reason: body?.reason ?? null } };
+          return { link: { id: body?.link_id, case_id: STAFF_CASE_ID, party_type: 'case_subject', party_id: null, verification_check_id: 'vc000000-0000-4000-8000-000000000001', relationship: 'subject', authoritative: true, linked_at: nowIso(-4), unlinked_at: nowIso(), unlink_reason: body?.reason ?? null } };
         case 'list_party_screening':
           return { subjects: screeningSubjects() };
         case 'queue_party_screening':
