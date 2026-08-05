@@ -22,6 +22,7 @@
  */
 
 import { orderImagesPhotosFirst } from './listingImageOrder.pure.ts';
+import { looksLikeChromeUrl } from './listingImageChrome.pure.ts';
 
 export interface ScrapedListing {
   imageUrls: string[];
@@ -72,55 +73,6 @@ const EXTENSIONLESS_IMAGE_HOSTS = [
   'pushcreative.com.au',
 ];
 
-/**
- * Path fragments that mark an image as page furniture.
- *
- * Every one of these was observed on a real listing page: the agency logo, the
- * agent's scanned signature, social icons, and the "UNDER OFFER" / "SOLD"
- * overlay stickers that sit in the markup of every listing whether or not they
- * apply. Harvesting them would put a letterhead on the card where the house
- * should be, and because the same file appears on every listing the library
- * would fill with a dozen images repeated a thousand times.
- */
-const BOILERPLATE = [
-  'logo',
-  'signature',
-  'sig-',
-  'socialicon',
-  'social-icon',
-  'sticker',
-  'watermark',
-  'spacer',
-  'pixel',
-  'tracking',
-  'open.gif',
-  '1x1',
-  'facebook',
-  'twitter',
-  'instagram',
-  'linkedin',
-  'youtube',
-  'tiktok',
-  'icon',
-  'avatar',
-  'headshot',
-  'profile-',
-  'staff',
-  'agent-photo',
-  'banner',
-  'footer',
-  'header-',
-  'button',
-  'arrow',
-  'divider',
-  'placeholder',
-  'default-',
-  'no-image',
-  'unsubscribe',
-  'favicon',
-  'apple-touch',
-];
-
 const IMAGE_EXTENSION = /\.(?:jpe?g|png|webp|avif)(?:$|[?#])/i;
 
 /** Whether a URL looks like a photograph of the property rather than page chrome. */
@@ -133,8 +85,13 @@ export function isPropertyImageUrl(url: string): boolean {
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
 
+  // The furniture list moved to `listingImageChrome.pure.ts`, because filtering
+  // here protected only what this scraper produced. Images reaching the library
+  // from Airtable or replayed by the browser never passed through it, which is
+  // how a 680-byte bed glyph became the hero image on 44 listings.
+  if (looksLikeChromeUrl(url)) return false;
+
   const haystack = `${parsed.hostname}${parsed.pathname}`.toLowerCase();
-  if (BOILERPLATE.some((hint) => haystack.includes(hint))) return false;
 
   // SVGs are icons and logos on these sites, never photographs.
   if (/\.svg(?:$|[?#])/i.test(parsed.pathname)) return false;

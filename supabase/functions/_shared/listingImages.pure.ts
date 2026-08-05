@@ -22,6 +22,7 @@
  */
 
 import { orderImagesPhotosFirst } from './listingImageOrder.pure.ts';
+import { looksLikeChromeUrl } from './listingImageChrome.pure.ts';
 
 /** Where a candidate came from, best-quality origin first. */
 export type ImageOrigin = 'airtable' | 'listing_url' | 'scraped' | 'street_view';
@@ -199,6 +200,11 @@ function bestAirtableUrl(attachment: AirtableAttachmentLike): {
  */
 export function toImageCandidate(raw: unknown, origin: ImageOrigin): ImageCandidate | null {
   if (isFetchableImageUrl(raw)) {
+    // Page furniture never becomes a candidate, whichever door it came in
+    // through. The scraper had this test; the Airtable column and the browser
+    // replay did not, so the bed/bath/car spec glyphs walked straight past it
+    // and took the hero slot on every listing from that agency.
+    if (looksLikeChromeUrl(raw.trim())) return null;
     return { url: raw.trim(), origin };
   }
 
@@ -206,6 +212,7 @@ export function toImageCandidate(raw: unknown, origin: ImageOrigin): ImageCandid
     const attachment = raw as AirtableAttachmentLike;
     const best = bestAirtableUrl(attachment);
     if (!best.url) return null;
+    if (looksLikeChromeUrl(best.url)) return null;
     return {
       url: best.url,
       // A candidate that already knows where it came from keeps that answer.

@@ -36,6 +36,10 @@ import {
   type HeldImage,
   type Reconciliation,
 } from '../_shared/listingImageReconcile.pure.ts';
+import {
+  isPlausiblePhotographSize,
+  looksLikeChromeUrl,
+} from '../_shared/listingImageChrome.pure.ts';
 import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
 
 /**
@@ -190,6 +194,8 @@ async function storagePathFor(
 async function fetchImageBytes(
   candidate: ImageCandidate,
 ): Promise<{ bytes: Uint8Array; contentType: string } | { error: string }> {
+  if (looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };
+
   let safeUrl: URL;
   try {
     safeUrl = await assertPublicUrl(candidate.url, dnsResolver);
@@ -232,6 +238,15 @@ async function fetchImageBytes(
   const bytes = new Uint8Array(buffer);
   if (bytes.byteLength > MAX_IMAGE_BYTES) return { error: 'too_large' };
   if (bytes.byteLength < MIN_IMAGE_BYTES) return { error: 'too_small' };
+  /*
+   * The size test no URL rule can replace.
+   *
+   * A spec-row glyph is 680 bytes; the smallest genuine photograph in this
+   * corpus is 6,517. The old floor of 512 admitted every icon on every agency
+   * template, and they sorted to position 0 because the spec row appears above
+   * the gallery in the markup.
+   */
+  if (!isPlausiblePhotographSize(bytes.byteLength)) return { error: 'not_a_photograph' };
 
   return { bytes, contentType };
 }
