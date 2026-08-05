@@ -26,6 +26,7 @@ import {
   DISCOURAGED,
   LOAD_BEARING,
   PINNED_ENGINE,
+  REQUIRED_OPTIONS,
   UNSUPPORTED,
   capabilitiesAgree,
   describeEngineFindings,
@@ -276,6 +277,70 @@ describe('reconciling against a deployed engine', () => {
     const result = reconcileCapabilities({ grid: false });
     expect(result.unanswered).toContain('box-shadow');
     expect(capabilitiesAgree(result)).toBe(false);
+  });
+
+  /**
+   * The other half of what an engine can do.
+   *
+   * The three lists are CSS declarations, so an upgrade that renamed or removed
+   * a `write_pdf` **option** was invisible here — and every option the service
+   * sends is a keyword argument, which makes a renamed one a `TypeError` on a
+   * production route rather than a warning on stderr. `/capabilities` has
+   * returned `sorted(DEFAULT_OPTIONS)` since it was written, and until now
+   * nothing read it.
+   */
+  describe('the options, not just the declarations', () => {
+    const clean = drops(UNSUPPORTED.map((r) => r.id));
+
+    it('agrees with an engine that accepts everything the render path sends', () => {
+      const result = reconcileCapabilities(clean, [...REQUIRED_OPTIONS, 'dpi', 'jpeg_quality']);
+      expect(result.missingOptions).toEqual([]);
+      expect(result.unansweredOptions).toBe(false);
+      expect(capabilitiesAgree(result)).toBe(true);
+    });
+
+    it('fails when the engine has dropped one this repo sends', () => {
+      const result = reconcileCapabilities(
+        clean,
+        REQUIRED_OPTIONS.filter((o) => o !== 'pdf_variant'),
+      );
+      expect(result.missingOptions).toEqual(['pdf_variant']);
+      expect(capabilitiesAgree(result)).toBe(false);
+      expect(describeReconciliation(result)).toContain('TypeError');
+    });
+
+    it('says nothing rather than claiming an option is missing, when unanswered', () => {
+      // An older container reports no options at all — and the local route
+      // cannot report them either, because it renders through the CLI and
+      // cannot introspect a Python signature. That is a different fact from
+      // "the engine dropped four of them", and reporting it as the latter would
+      // send somebody looking for a break that is not there. It is flagged on
+      // the result for `engineCheck.mts` to note, and it is not a disagreement.
+      const result = reconcileCapabilities(clean);
+      expect(result.missingOptions).toEqual([]);
+      expect(result.unansweredOptions).toBe(true);
+      expect(describeReconciliation(result)).toBe('');
+      expect(capabilitiesAgree(result)).toBe(true);
+    });
+
+    it('names only options the render path actually sends', () => {
+      // Not all nineteen the engine has. A gate on an option nothing uses is a
+      // gate that fails for a change nobody made.
+      const client = readFileSync(
+        resolve(__dirname, '../../../../supabase/functions/_shared/weasyprintClient.ts'),
+        'utf8',
+      );
+      const app = readFileSync(
+        resolve(__dirname, '../../../../weasyprint-service/app.py'),
+        'utf8',
+      );
+      for (const option of REQUIRED_OPTIONS) {
+        expect(
+          client.includes(option) || app.includes(option),
+          `${option} is required of the engine but nothing sends it`,
+        ).toBe(true);
+      }
+    });
   });
 });
 

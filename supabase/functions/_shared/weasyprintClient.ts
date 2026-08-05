@@ -48,9 +48,20 @@ export interface WeasyPrintOptions {
   /**
    * Refuse a document the engine could not render whole.
    *
-   * Off for client-facing renders: a dropped `text-wrap` is cosmetic and a
-   * person waiting on a report is not served by a 422. On for CI and for
-   * `scripts/reports/engineCheck.mts`, where a warning is the whole point.
+   * Off for client-facing renders, and all nine production routes leave it
+   * that way: a dropped `text-wrap` is cosmetic and a person waiting on a
+   * report is not served by a 422.
+   *
+   * On in CI, where a dropped declaration is a design decision that did not
+   * reach the page. It took a while to become true — this comment used to
+   * claim CI and `engineCheck.mts` both set it and neither did, so the
+   * setting was implemented, documented, tested in `test_app.py`, and never
+   * once switched on by anything.
+   *
+   * Not in `engineCheck.mts`, and that is deliberate rather than an omission:
+   * that script probes constructs precisely to find which ones the engine
+   * drops, so warnings are its input. Refusing on one would make it refuse
+   * every run.
    */
   strict?: boolean;
 }
