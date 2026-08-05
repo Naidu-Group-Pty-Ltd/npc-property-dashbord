@@ -21,7 +21,8 @@ import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ciAssessmentApi, useCiAssessment } from '@/hooks/useCiAssessments';
 import { runAssessment, type AssessmentResult } from '@/lib/ciAssessment/engine';
-import { validateAssessment } from '@/lib/ciAssessment/validation';
+import { validateAssessment, type ValidationIssue } from '@/lib/ciAssessment/validation';
+import { focusAssessmentFieldWhenReady } from '@/components/commercial/assessment/fieldFocus';
 import { ASSESSMENT_STATUS_LABELS, assessmentTypeDefinition, type AssessmentPayload } from '@/lib/ciAssessment/types';
 import { StepAssessmentType } from '@/components/commercial/assessment/StepAssessmentType';
 import { IntakePackPanel } from '@/components/commercial/assessment/IntakePackPanel';
@@ -52,6 +53,14 @@ const STEPS = [
 ] as const;
 
 type StepKey = (typeof STEPS)[number]['key'];
+
+/** Stable identity so the memoised issue index does not rebuild on every render. */
+const EMPTY_ISSUES: ValidationIssue[] = [];
+
+/** How many issues the summary lists before collapsing behind "show all". */
+const SUMMARY_LIMIT = 6;
+
+const STEP_LABELS = new Map<string, string>(STEPS.map((step) => [step.key, step.label]));
 
 function SaveIndicator({ state, savedAt }: { state: string; savedAt: string | null }) {
   if (state === 'saving') {
@@ -101,19 +110,22 @@ export default function CommercialAssessmentWorkspace() {
 
   const [calculating, setCalculating] = useState(false);
   const [savedResult, setSavedResult] = useState<AssessmentResult | null>(null);
+  const [showAllErrors, setShowAllErrors] = useState(false);
 
   const stepParam = searchParams.get('step') as StepKey | null;
   const activeStep: StepKey = STEPS.some((step) => step.key === stepParam) ? stepParam! : 'type';
   const activeIndex = STEPS.findIndex((step) => step.key === activeStep);
 
-  const goToStep = useCallback((key: StepKey) => {
+  const goToStep = useCallback((key: StepKey, options?: { scrollToTop?: boolean }) => {
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set('step', key);
       return next;
     }, { replace: true });
-    // Focus lands at the top of the new step rather than wherever the click was.
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Focus lands at the top of the new step rather than wherever the click was
+    // — unless the caller is about to scroll to a specific field, in which case
+    // two competing smooth scrolls would fight each other.
+    if (options?.scrollToTop !== false) window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [setSearchParams]);
 
   /**
@@ -142,6 +154,41 @@ export default function CommercialAssessmentWorkspace() {
     () => (validation ? [...validation.errors, ...validation.warnings] : []),
     [validation],
   );
+
+  const errors = validation?.errors ?? EMPTY_ISSUES;
+
+  /**
+   * Errors per step, keyed by the step the user has to visit to fix them.
+   *
+   * `issue.section` is a stable key rather than a position. It used to be a
+   * number resolved as `STEPS[step - 1]`, which meant inserting the Intake pack
+   * chip shifted every issue one step short — a Loan structure error marked the
+   * Lease income chip and opened the wrong panel.
+   */
+  const errorsByStep = useMemo(() => {
+    const index = new Map<string, ValidationIssue[]>();
+    for (const issue of errors) {
+      const bucket = index.get(issue.section);
+      if (bucket) bucket.push(issue);
+      else index.set(issue.section, [issue]);
+    }
+    return index;
+  }, [errors]);
+
+  /**
+   * Open the step an issue belongs to, then scroll to and ring the field.
+   *
+   * Landing on the right step is not enough on a step with forty inputs: the
+   * summary has to put the user on the actual control. Fields that are not
+   * rendered — an add-back orphaned from a deleted period, say — simply leave
+   * the user at the top of the right step, which is still the correct place.
+   */
+  const goToIssue = useCallback((issue: ValidationIssue) => {
+    if (issue.section !== activeStep) {
+      goToStep(issue.section, { scrollToTop: false });
+    }
+    focusAssessmentFieldWhenReady(issue.field);
+  }, [activeStep, goToStep]);
 
   useEffect(() => {
     if (error && saveState !== 'conflict') {
@@ -336,21 +383,30 @@ export default function CommercialAssessmentWorkspace() {
           <ol className="ci-steps">
             {STEPS.map((step, index) => {
               const isActive = step.key === activeStep;
-              const stepIssues = issues.filter((issue) => issue.step === index + 1 && issue.severity === 'error');
+              const stepErrors = errorsByStep.get(step.key) ?? EMPTY_ISSUES;
               return (
                 <li key={step.key}>
                   <button
                     type="button"
-                    onClick={() => goToStep(step.key)}
+                    // Clicking a chip that carries errors goes straight to the
+                    // first of them, so the marker and the fix are one action
+                    // apart rather than two.
+                    onClick={() => (stepErrors.length ? goToIssue(stepErrors[0]) : goToStep(step.key))}
                     aria-current={isActive ? 'step' : undefined}
-                    className={cn('ci-step-chip', isActive && 'ci-step-chip-active')}
+                    className={cn(
+                      'ci-step-chip',
+                      isActive && 'ci-step-chip-active',
+                      stepErrors.length > 0 && 'ci-step-chip-error',
+                    )}
                   >
                     <span className="ci-step-index" aria-hidden="true">{index + 1}</span>
                     <span>{step.label}</span>
-                    {stepIssues.length ? (
+                    {stepErrors.length ? (
                       <>
-                        <AlertCircle className="h-3 w-3 text-destructive" aria-hidden="true" />
-                        <span className="sr-only">{stepIssues.length} error(s)</span>
+                        <span className="ci-step-error-count" aria-hidden="true">{stepErrors.length}</span>
+                        <span className="sr-only">
+                          {stepErrors.length} field{stepErrors.length === 1 ? '' : 's'} need attention
+                        </span>
                       </>
                     ) : null}
                   </button>
@@ -363,26 +419,47 @@ export default function CommercialAssessmentWorkspace() {
 
       <div className="ci-workspace-body">
         <main className="ci-workspace-main">
-          {validation && validation.errors.length && activeStep !== 'results' ? (
+          {/*
+            The error summary. Shown on every step — including Results and Save
+            & link — because an error found at the end is exactly the one a user
+            needs a way back to. Each row navigates to its step and rings the
+            field it names.
+          */}
+          {errors.length ? (
             <div className="ci-warning-row ci-warning-critical" role="alert">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
-              <div>
+              <div className="min-w-0">
                 <p className="font-semibold text-foreground">
-                  {validation.errors.length} field{validation.errors.length === 1 ? '' : 's'} need attention
+                  {errors.length} field{errors.length === 1 ? '' : 's'} need attention
+                  <span className="ml-1.5 font-normal text-muted-foreground">
+                    — select one to jump to it.
+                  </span>
                 </p>
-                <ul className="mt-1 space-y-0.5 text-sm">
-                  {validation.errors.slice(0, 5).map((issue) => (
+                <ul className="mt-1.5 space-y-1 text-sm">
+                  {(showAllErrors ? errors : errors.slice(0, SUMMARY_LIMIT)).map((issue) => (
                     <li key={`${issue.field}-${issue.message}`}>
                       <button
                         type="button"
-                        className="text-left underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        onClick={() => goToStep(STEPS[Math.min(issue.step - 1, STEPS.length - 1)].key)}
+                        className="ci-issue-link"
+                        onClick={() => goToIssue(issue)}
                       >
-                        Step {issue.step}: {issue.message}
+                        <ArrowRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        <span className="ci-issue-step">{STEP_LABELS.get(issue.section) ?? issue.section}</span>
+                        <span>{issue.message}</span>
                       </button>
                     </li>
                   ))}
                 </ul>
+                {errors.length > SUMMARY_LIMIT ? (
+                  <Button
+                    variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs"
+                    onClick={() => setShowAllErrors((current) => !current)}
+                  >
+                    {showAllErrors
+                      ? 'Show fewer'
+                      : `Show all ${errors.length}`}
+                  </Button>
+                ) : null}
               </div>
             </div>
           ) : null}

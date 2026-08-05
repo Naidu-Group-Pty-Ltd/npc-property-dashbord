@@ -130,6 +130,13 @@ export function StepPortfolio({ payload, onChange, issues, disabled }: Props) {
     issues.find((issue) => issue.field === field && issue.severity === 'warning')?.message;
   const errorFor = (field: string) =>
     issues.find((issue) => issue.field === field && issue.severity === 'error')?.message;
+  /**
+   * Errors win over warnings on the same field — a negative balance matters more
+   * than the fact that it also exceeds its limit. Both are surfaced through the
+   * one slot so every path validation can report on has somewhere to land when
+   * the error summary scrolls to it.
+   */
+  const messageFor = (field: string) => errorFor(field) ?? warningFor(field);
 
   return (
     <div className="ci-step-panel space-y-6">
@@ -195,13 +202,14 @@ export function StepPortfolio({ payload, onChange, issues, disabled }: Props) {
                     <TextField
                       label="Address" value={asset.address}
                       onChange={(value) => updateAsset(asset.id, { address: value })} disabled={disabled}
-                      error={warningFor(`portfolio.assets.${index}.address`)}
+                      error={messageFor(`portfolio.assets.${index}.address`)}
+                      fieldPath={`portfolio.assets.${index}.address`}
                     />
                   </div>
                   <SelectField label="Type" value={asset.assetType} onChange={(value) => updateAsset(asset.id, { assetType: value })} options={ASSET_TYPES} disabled={disabled} />
-                  <PercentField label="Ownership" value={asset.ownershipPercent} onChange={(value) => updateAsset(asset.id, { ownershipPercent: value })} disabled={disabled} error={errorFor(`portfolio.assets.${index}.ownershipPercent`)} />
+                  <PercentField label="Ownership" value={asset.ownershipPercent} onChange={(value) => updateAsset(asset.id, { ownershipPercent: value })} disabled={disabled} error={errorFor(`portfolio.assets.${index}.ownershipPercent`)} fieldPath={`portfolio.assets.${index}.ownershipPercent`} />
                   <MoneyField label="Current value" value={asset.currentValue} onChange={(value) => updateAsset(asset.id, { currentValue: value })} disabled={disabled} />
-                  <MoneyField label="Loan balance" value={asset.currentBalance} onChange={(value) => updateAsset(asset.id, { currentBalance: value })} disabled={disabled} error={warningFor(`portfolio.assets.${index}.currentBalance`)} />
+                  <MoneyField label="Loan balance" value={asset.currentBalance} onChange={(value) => updateAsset(asset.id, { currentBalance: value })} disabled={disabled} error={messageFor(`portfolio.assets.${index}.currentBalance`)} fieldPath={`portfolio.assets.${index}.currentBalance`} />
                   <PercentField label="Interest rate" value={asset.interestRate} onChange={(value) => updateAsset(asset.id, { interestRate: value })} disabled={disabled} max={30} />
                   <MoneyField label="Annual rent" value={asset.annualRent} onChange={(value) => updateAsset(asset.id, { annualRent: value })} disabled={disabled} />
                 </div>
@@ -274,7 +282,7 @@ export function StepPortfolio({ payload, onChange, issues, disabled }: Props) {
                 <div className="ci-field-grid sm:grid-cols-2 lg:grid-cols-4">
                   <TextField label="Description" value={liability.description} onChange={(value) => updateLiability(liability.id, { description: value })} disabled={disabled} />
                   <SelectField label="Type" value={liability.liabilityType} onChange={(value) => updateLiability(liability.id, { liabilityType: value })} options={LIABILITY_TYPES} disabled={disabled} />
-                  <MoneyField label="Balance" value={liability.balance} onChange={(value) => updateLiability(liability.id, { balance: value })} disabled={disabled} error={errorFor(`portfolio.liabilities.${index}.balance`)} />
+                  <MoneyField label="Balance" value={liability.balance} onChange={(value) => updateLiability(liability.id, { balance: value })} disabled={disabled} error={messageFor(`portfolio.liabilities.${index}.balance`)} fieldPath={`portfolio.liabilities.${index}.balance`} />
                   <MoneyField
                     label="Limit" value={liability.limit}
                     onChange={(value) => updateLiability(liability.id, { limit: value })} disabled={disabled}
