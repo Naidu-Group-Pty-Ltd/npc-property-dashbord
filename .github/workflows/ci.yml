@@ -414,6 +414,54 @@ jobs:
             echo "unexpected page count:"; pdfinfo /tmp/bc.pdf | grep Pages; exit 1;
           }
 
+      # The same proof for the second migrated format. It is a separate render
+      # rather than a loop because the two assert different page counts, and a
+      # page count is the only check that sees a section quietly disappearing.
+      - name: Build the Commercial & Industrial Capacity Report
+        run: npx vitest run src/lib/reports/commercialCapacity/__tests__/render.spec.ts
+
+      - name: Render it in the container and assert its typography and length
+        run: |
+          docker run -d --name wp3 -p 8082:8080 \
+            -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8082/healthz >/dev/null && break
+            sleep 2
+          done
+          node -e '
+            const fs = require("node:fs");
+            const html = fs.readFileSync("reports/html/commercial-capacity.html", "utf8");
+            fs.writeFileSync("/tmp/cc.json", JSON.stringify({
+              html, pdf_variant: "pdf/a-2b", tagged: true, strict: true,
+            }));
+          '
+          curl -sf -X POST http://localhost:8082/render \
+            -H "Authorization: Bearer ci-token" \
+            -H "Content-Type: application/json" \
+            -D /tmp/cc.headers \
+            --data @/tmp/cc.json -o /tmp/cc.pdf
+          cat /tmp/cc.headers
+          docker logs wp3
+          docker rm -f wp3
+          head -c 5 /tmp/cc.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          grep -qi '^x-weasyprint-warning-count: *0' /tmp/cc.headers || {
+            echo "the engine did not render the report whole:"
+            grep -i '^x-weasyprint-warnings:' /tmp/cc.headers
+            exit 1
+          }
+          pdffonts /tmp/cc.pdf
+          EMBEDDED=$(pdffonts /tmp/cc.pdf | tr -d '[:punct:][:space:]' | tr '[:upper:]' '[:lower:]')
+          for face in cinzel playfairdisplay inter ibmplexmono; do
+            printf '%s' "$EMBEDDED" | grep -q "$face" \
+              || { echo "$face not embedded in the report"; exit 1; }
+          done
+          # Seventeen, measured. The fixture turns on every conditional section;
+          # a section that stops building changes nothing a unit test sees, and
+          # changes this.
+          pdfinfo /tmp/cc.pdf | grep -E '^Pages: +17$' || {
+            echo "unexpected page count:"; pdfinfo /tmp/cc.pdf | grep Pages; exit 1;
+          }
+
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
   # Fails on unaccepted high/critical dependency vulnerabilities and publishes a
   # CycloneDX SBOM artifact for each build.

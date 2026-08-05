@@ -2324,6 +2324,13 @@
       "reviewed": true,
       "reviewed_in": "borrowing-capacity-render-path"
     },
+    "render-commercial-capacity-pdf": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "commercial-capacity-render-path"
+    },
     "render-template-pdf": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",

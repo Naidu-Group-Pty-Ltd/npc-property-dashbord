@@ -83,6 +83,7 @@ export type ReportArchetypeId =
   | 'cash-flow-comparison'
   | 'market-intelligence'
   | 'borrowing-capacity'
+  | 'commercial-capacity'
   | 'client-details'
   | 'portfolio-performance'
   | 'property-comparison'
@@ -263,6 +264,37 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     contents: false,
     note: 'Serviceability and capacity. Implemented three times in the codebase '
       + 'today; one archetype so the three converge rather than diverge further.',
+  },
+  'commercial-capacity': {
+    id: 'commercial-capacity',
+    documentName: 'Commercial & Industrial Capacity Report',
+    chapterLabel: 'Section',
+    // A contents page, where `borrowing-capacity` has none. The two formats
+    // differ in kind here rather than in degree: the residential Snapshot is
+    // one argument told in order, and a reader goes through it. This one is a
+    // credit pack — a transaction, its income, eight independent tests, a
+    // portfolio position, a compliance classification — and a reader arrives at
+    // it wanting the constraints table, or the tenancies. That is what a
+    // contents page is for.
+    slots: FULL_SLOTS,
+    // Measured against real renders rather than summed from the section
+    // budgets, for the reason `market-intelligence` records: a section that
+    // claims two pages and fills one and a half is not an error, and a band
+    // built by adding claims up is a band nothing can satisfy.
+    //
+    // The floor is a linked assessment with no portfolio, no tenancy schedule,
+    // no business income and no analysis — cover, contents, capacity,
+    // constraints, compliance, closing. The ceiling is the full document with
+    // every conditional section on, a twelve-tenancy schedule and a method
+    // trail of thirty steps.
+    pageBudget: [6, 30],
+    contents: true,
+    note: 'The commercial and industrial counterpart to the Borrowing Capacity '
+      + 'Snapshot. What separates them is the binding constraint: a household '
+      + 'is bound by its surplus, a commercial facility by whichever of LVR, '
+      + 'DSCR, ICR and debt yield bites first — so this format is built around '
+      + 'saying which one, and by how much. It is also the first format whose '
+      + 'analysis is model-authored under a fixed schema.',
   },
   'client-details': {
     id: 'client-details',

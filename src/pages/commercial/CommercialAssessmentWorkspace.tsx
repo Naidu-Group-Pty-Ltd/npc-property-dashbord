@@ -20,6 +20,7 @@ import { toast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { usePermissions } from '@/hooks/usePermissions';
 import { ciAssessmentApi, useCiAssessment } from '@/hooks/useCiAssessments';
+import { useCapacityReport } from '@/hooks/useCapacityReport';
 import { runAssessment, type AssessmentResult } from '@/lib/ciAssessment/engine';
 import { validateAssessment, type ValidationIssue } from '@/lib/ciAssessment/validation';
 import { focusAssessmentFieldWhenReady } from '@/components/commercial/assessment/fieldFocus';
@@ -198,6 +199,8 @@ export default function CommercialAssessmentWorkspace() {
 
   const readOnly = record ? !['draft', 'data_entry', 'ready_to_calculate', 'calculated', 'requires_review'].includes(record.status) : false;
 
+  const { generatingId, generate } = useCapacityReport();
+
   const setPayload = useCallback((next: AssessmentPayload) => {
     update(next, STEPS[activeIndex]?.section);
   }, [update, activeIndex]);
@@ -302,13 +305,25 @@ export default function CommercialAssessmentWorkspace() {
     goToStep('link');
   }, [id, reload, goToStep]);
 
+  /**
+   * Generate the Capacity Report.
+   *
+   * This used to be `window.print()`. That was never a document — it was a
+   * screenshot of an application, carrying the app's own typography and
+   * whatever the browser decided to do with a flex layout at A4, and it changed
+   * every time the results screen did.
+   *
+   * It is now `render-commercial-capacity-pdf`: the tenant's brand, the
+   * report design system, and the figures from the *saved* calculation run
+   * rather than from the live working data on screen. Those two can differ —
+   * that is exactly what the banner above the results warns about — and a
+   * report has to state the figures that were recorded, not the ones currently
+   * being typed.
+   */
   const generateReport = useCallback(() => {
-    if (!liveResult) return;
-    // Report generation reuses the platform's print path: the results view is
-    // print-styled, so the browser's own renderer produces the PDF without a
-    // second layout that could drift from the screen.
-    window.print();
-  }, [liveResult]);
+    if (!id) return;
+    void generate(id);
+  }, [id, generate]);
 
   if (loading) {
     return (
@@ -519,7 +534,19 @@ export default function CommercialAssessmentWorkspace() {
                 onRecalculate={calculate}
                 onGenerateReport={generateReport}
                 calculating={calculating}
-                canGenerateReport={Boolean(record.current_calculation_id)}
+                // Completion, not just a saved calculation. The report states
+                // the figures of the run the assessment points at, and until it
+                // is completed that run is still moving — a PDF of it would be
+                // a document that was true for as long as it took to download.
+                // The route enforces the same rule, so a stale tab cannot get
+                // round it.
+                canGenerateReport={record.status === 'completed' || record.status === 'linked'}
+                generatingReport={generatingId === record.id}
+                reportBlockedReason={
+                  record.current_calculation_id
+                    ? 'Complete the assessment to generate its report — the report is produced from the completed calculation run.'
+                    : 'Run a calculation and complete the assessment to generate its report.'
+                }
               />
               {record.status !== 'completed' && record.status !== 'linked' ? (
                 <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-4">

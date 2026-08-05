@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, FileText, Info, RefreshCw, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatMoney, formatMultiple, formatRatioPercent, toCents } from '@/lib/ciAssessment/money';
@@ -45,6 +45,16 @@ interface Props {
   onGenerateReport: () => void;
   calculating?: boolean;
   canGenerateReport: boolean;
+  /** True while the server is rendering the document. */
+  generatingReport?: boolean;
+  /**
+   * Why the report cannot be generated yet, when it cannot.
+   *
+   * Said in words next to the button rather than left to a disabled state. A
+   * greyed-out control with no explanation is the commonest way a user decides
+   * a feature is broken — and here the reason is a step they can take.
+   */
+  reportBlockedReason?: string | null;
 }
 
 /**
@@ -57,6 +67,7 @@ interface Props {
  */
 export function StepResults({
   payload, result, onRecalculate, onGenerateReport, calculating, canGenerateReport,
+  generatingReport, reportBlockedReason,
 }: Props) {
   const { summary, serviceability, portfolioImpact, propertyIncome, businessIncome, compliance } = result;
 
@@ -80,11 +91,22 @@ export function StepResults({
               <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', calculating && 'animate-spin')} aria-hidden="true" />
               {calculating ? 'Recalculating…' : 'Recalculate'}
             </Button>
-            <Button size="sm" onClick={onGenerateReport} disabled={!canGenerateReport}>
-              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Generate report
+            <Button
+              size="sm"
+              onClick={onGenerateReport}
+              disabled={!canGenerateReport || generatingReport}
+              title={canGenerateReport ? undefined : reportBlockedReason ?? undefined}
+            >
+              {generatingReport
+                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                : <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+              {generatingReport ? 'Generating…' : 'Generate report'}
             </Button>
           </div>
         </div>
+        {!canGenerateReport && reportBlockedReason ? (
+          <p className="mt-2 text-xs text-muted-foreground">{reportBlockedReason}</p>
+        ) : null}
       </section>
 
       {/* ---- Headline numbers ------------------------------------------ */}
