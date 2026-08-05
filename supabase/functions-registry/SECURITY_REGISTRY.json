@@ -2719,13 +2719,6 @@
       "owner": "commercial-industrial-assessments",
       "reviewed": true
     },
-    "aml-reliance": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true,
-      "reviewed_in": "wp14-registry-backfill"
-    },
     "convert-template-document": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",

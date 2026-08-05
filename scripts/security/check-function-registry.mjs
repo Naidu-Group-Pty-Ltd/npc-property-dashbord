@@ -22,7 +22,22 @@ const exposureClasses = new Set([
   'webhook-clientstate', 'superadmin-only',
 ]);
 
-const registry = JSON.parse(readFileSync(registryPath, 'utf8')).functions;
+const registryRaw = readFileSync(registryPath, 'utf8');
+const registry = JSON.parse(registryRaw).functions;
+
+// JSON.parse keeps the LAST of two identically-named keys and discards the
+// first without complaint, so a duplicated function entry is invisible to
+// every check below — they only ever see the survivor. That is not
+// hypothetical: "aml-reliance" was declared twice, once by hand with the
+// correct verify_jwt and once by a later bulk backfill with the wrong one,
+// and the gate reported drift against config.toml while the file it was
+// reading looked correct to a human scrolling to the first match.
+//
+// The raw text is rescanned here because the parsed object cannot show it.
+const registryKeys = [...registryRaw.matchAll(/^ {4}"([^"]+)":\s*\{/gm)].map((m) => m[1]);
+const duplicateRegistryEntries = [
+  ...new Set(registryKeys.filter((k, i) => registryKeys.indexOf(k) !== i)),
+];
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
 if (!Array.isArray(baseline.needs_review_functions) || !Array.isArray(baseline.unreviewed_functions)) {
   throw new Error('Invalid needs-review baseline: expected needs_review_functions and unreviewed_functions arrays.');
@@ -48,6 +63,9 @@ for (const [name, entry] of Object.entries(registry)) {
   if (typeof entry.owner !== 'string' || entry.owner.trim() === '') errors.push(`Function "${name}" has an empty owner.`);
   if (typeof entry.verify_jwt !== 'boolean') errors.push(`Function "${name}" must record verify_jwt as a boolean.`);
   if (onDisk.includes(name) && entry.verify_jwt !== (declared.get(name) ?? true)) errors.push(`verify_jwt drift for "${name}": registry says ${entry.verify_jwt}, config.toml resolves to ${declared.get(name) ?? true}.`);
+}
+for (const name of duplicateRegistryEntries) {
+  errors.push(`Function "${name}" is declared more than once in the registry; JSON.parse silently keeps only the last.`);
 }
 const needsReview = Object.entries(registry).filter(([, entry]) => entry.exposure_class === 'needs-review').map(([name]) => name).sort();
 const unreviewed = Object.entries(registry).filter(([, entry]) => entry.reviewed !== true).map(([name]) => name).sort();
