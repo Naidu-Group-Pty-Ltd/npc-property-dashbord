@@ -200,9 +200,11 @@ function AmlOverviewV2() {
   );
 
   const caseMetricState = loadingCases ? "loading" : caseError ? "unavailable" : "ready";
-  const monitoringMetricState = loadingMonitoring
+  // "loading" until the fetch has actually settled — never a fabricated zero
+  // in the paint before the effect runs.
+  const monitoringMetricState = !monitoringSettled || loadingMonitoring
     ? "loading"
-    : monitoringSettled && monitoring === null
+    : monitoring === null
       ? "unavailable"
       : "ready";
 

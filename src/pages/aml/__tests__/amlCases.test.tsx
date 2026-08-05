@@ -95,11 +95,14 @@ describe("AmlCases — register shell", () => {
     expect(screen.queryByText("kyc_complete")).not.toBeInTheDocument();
   });
 
-  it("applies a saved view from the ?view= deep link", async () => {
+  it("applies a saved view from the ?view= deep link with a single filtered fetch", async () => {
     setup("/admin/aml/cases?view=awaiting_decision");
     await waitFor(() => {
       expect((list.mock.calls.at(-1)?.[0] as any)?.status).toBe("escalated_mlro");
     });
+    // The view seeds the initial filter state, so the mount never issues an
+    // unfiltered request that could race the filtered one.
+    expect(list).toHaveBeenCalledTimes(1);
     const chip = screen.getByRole("button", { name: "Awaiting decision" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
   });
@@ -160,6 +163,22 @@ describe("AmlCases — register shell", () => {
     setup();
     expect(await screen.findByText("The case register could not be loaded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Try again/ }));
+    expect(await screen.findByText("1 case")).toBeInTheDocument();
+  });
+
+  it("shows a skeleton, not a false empty state, while refetching from an empty result", async () => {
+    // First load: genuinely empty register.
+    list.mockResolvedValueOnce({ cases: [], total: 0 });
+    setup();
+    expect(await screen.findByText("No cases yet")).toBeInTheDocument();
+    // Switching to a view whose fetch is still in flight must not claim
+    // "no matches" for data that hasn't arrived.
+    let resolveNext: (v: unknown) => void = () => {};
+    list.mockImplementationOnce(() => new Promise((r) => { resolveNext = r; }));
+    fireEvent.click(screen.getByRole("button", { name: "High risk" }));
+    expect(await screen.findByText("Loading the case register")).toBeInTheDocument();
+    expect(screen.queryByText("No cases match the current filters")).not.toBeInTheDocument();
+    resolveNext({ cases: [baseCase()], total: 1 });
     expect(await screen.findByText("1 case")).toBeInTheDocument();
   });
 

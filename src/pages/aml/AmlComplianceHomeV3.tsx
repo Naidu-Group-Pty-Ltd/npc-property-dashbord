@@ -294,16 +294,18 @@ export default function AmlComplianceHomeV3() {
   }, [queue, landing]);
 
   // Case metrics: loading → skeleton; API failure → "Not available";
-  // otherwise the real number (including a real zero).
+  // otherwise the real number (including a real zero). Monitoring tiles are
+  // "loading" until their fetch has actually settled — never a fabricated
+  // zero in the paint before the effect runs.
   const caseMetricState = loadingCases ? "loading" : caseError ? "unavailable" : "ready";
-  const monitoringMetricState = loadingMonitoring
+  const monitoringMetricState = !monitoringSettled || loadingMonitoring
     ? "loading"
-    : monitoringSettled && monitoring === null
+    : monitoring === null
       ? "unavailable"
       : "ready";
-  const discrepancyMetricState = loadingMonitoring
+  const discrepancyMetricState = !monitoringSettled || loadingMonitoring
     ? "loading"
-    : monitoringSettled && openDiscrepancies === null
+    : openDiscrepancies === null
       ? "unavailable"
       : "ready";
 

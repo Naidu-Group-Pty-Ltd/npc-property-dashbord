@@ -104,6 +104,18 @@ describe("Compliance Home V3 — operational dashboard", () => {
     expect(within(tile as HTMLElement).queryByText("—")).not.toBeInTheDocument();
   });
 
+  it("keeps monitoring tiles in a loading state until their fetch settles — never a fabricated zero", async () => {
+    let resolveSummary: (v: unknown) => void = () => {};
+    monitoringSummary.mockImplementation(() => new Promise((r) => { resolveSummary = r; }));
+    listDiscrepancies.mockImplementation(() => new Promise(() => {}));
+    setup();
+    await screen.findByText(/Awaiting decision — Urgent Client/);
+    const alerts = screen.getByText("Open alerts").closest("a")!;
+    expect(within(alerts as HTMLElement).queryByText("0")).not.toBeInTheDocument();
+    expect(within(alerts as HTMLElement).getByText("Loading Open alerts")).toBeInTheDocument();
+    resolveSummary(null);
+  });
+
   it("shows an explicit unavailable state when monitoring data cannot load", async () => {
     monitoringSummary.mockRejectedValue(new Error("boom"));
     listDiscrepancies.mockRejectedValue(new Error("boom"));
