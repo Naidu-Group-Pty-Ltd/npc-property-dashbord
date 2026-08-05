@@ -204,7 +204,18 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn('ci-pack-dialog', expanded && 'ci-pack-dialog-expanded')}>
+      {/* The size classes are written here, not only in `ci-pack-dialog`: the
+          dialog primitive's own `sm:max-w-lg` / `sm:max-h-[85dvh]` utilities sit
+          in a later cascade layer than the component class, so a component-layer
+          width was silently losing to them and the viewer opened tiny. */}
+      <DialogContent
+        className={cn(
+          'ci-pack-dialog',
+          'w-[96vw] max-w-none sm:w-[96vw] sm:max-w-none',
+          'h-[92dvh] max-h-[92dvh] sm:max-h-[92dvh]',
+          expanded && 'ci-pack-dialog-expanded w-[99vw] sm:w-[99vw] h-[97dvh] max-h-[97dvh] sm:max-h-[97dvh]',
+        )}
+      >
         <header className="ci-pack-header">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base">{title}</DialogTitle>
