@@ -164,7 +164,8 @@
       "verify_jwt": false,
       "exposure_class": "public-auth",
       "owner": "security-remediation-program",
-      "reviewed": true
+      "reviewed": true,
+      "reviewed_in": "aml-post-merge-validation"
     },
     "aml-reporting": {
       "verify_jwt": false,
