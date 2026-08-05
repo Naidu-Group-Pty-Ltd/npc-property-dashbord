@@ -77,7 +77,6 @@ export default function AmlCasesPage() {
   const [cases, setCases] = useState<AmlCase[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [loadedOnce, setLoadedOnce] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   // Saved-view deep link: ?view=<key> seeds the initial filters
@@ -197,10 +196,7 @@ export default function AmlCasesPage() {
       if (seq !== loadSeq.current) return;
       setLoadError(e?.message ?? "The case register could not be loaded.");
     } finally {
-      if (seq === loadSeq.current) {
-        setLoading(false);
-        setLoadedOnce(true);
-      }
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
@@ -373,7 +369,10 @@ export default function AmlCasesPage() {
 
       <Card>
         <CardContent className="pt-6">
-          {loading && !loadedOnce ? (
+          {/* Skeleton whenever a load is in flight with nothing to show —
+              a refetch from an empty result must never flash a false
+              "no matches" for data that hasn't arrived yet. */}
+          {loading && cases.length === 0 ? (
             <div className="space-y-2" role="status">
               <span className="sr-only">Loading the case register</span>
               {Array.from({ length: 6 }).map((_, i) => (

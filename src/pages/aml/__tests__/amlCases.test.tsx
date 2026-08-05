@@ -166,6 +166,22 @@ describe("AmlCases — register shell", () => {
     expect(await screen.findByText("1 case")).toBeInTheDocument();
   });
 
+  it("shows a skeleton, not a false empty state, while refetching from an empty result", async () => {
+    // First load: genuinely empty register.
+    list.mockResolvedValueOnce({ cases: [], total: 0 });
+    setup();
+    expect(await screen.findByText("No cases yet")).toBeInTheDocument();
+    // Switching to a view whose fetch is still in flight must not claim
+    // "no matches" for data that hasn't arrived.
+    let resolveNext: (v: unknown) => void = () => {};
+    list.mockImplementationOnce(() => new Promise((r) => { resolveNext = r; }));
+    fireEvent.click(screen.getByRole("button", { name: "High risk" }));
+    expect(await screen.findByText("Loading the case register")).toBeInTheDocument();
+    expect(screen.queryByText("No cases match the current filters")).not.toBeInTheDocument();
+    resolveNext({ cases: [baseCase()], total: 1 });
+    expect(await screen.findByText("1 case")).toBeInTheDocument();
+  });
+
   it("offers a next action in the filtered empty state", async () => {
     list.mockResolvedValue({ cases: [], total: 0 });
     setup("/admin/aml/cases?view=cleared");
