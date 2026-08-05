@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ChevronRight, Loader2, Plus, Search, ShieldAlert, ShieldCheck } from "lucide-react";
 
@@ -79,10 +79,19 @@ export default function AmlCasesPage() {
   const [loading, setLoading] = useState(false);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>("all");
-  const [risk, setRisk] = useState<string>("all");
-  const [assignedToMe, setAssignedToMe] = useState(false);
-  const [view, setView] = useState("all");
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Saved-view deep link: ?view=<key> seeds the initial filters
+  // synchronously, so a deep-linked mount issues exactly one fetch with the
+  // right parameters — never an unfiltered fetch racing the filtered one.
+  const [initialViewFilters] = useState(() => {
+    const v = searchParams.get("view");
+    const preset = SAVED_VIEWS.find((s) => s.key === v) ?? SAVED_VIEWS[0];
+    return { key: preset.key, ...preset.filters };
+  });
+  const [status, setStatus] = useState<string>(initialViewFilters.status ?? "all");
+  const [risk, setRisk] = useState<string>(initialViewFilters.risk ?? "all");
+  const [assignedToMe, setAssignedToMe] = useState(Boolean(initialViewFilters.assignedToMe));
+  const [view, setView] = useState(initialViewFilters.key);
   const [search, setSearch] = useState("");
   const [appliedSearch, setAppliedSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -93,7 +102,9 @@ export default function AmlCasesPage() {
   const [activateClientId, setActivateClientId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [initialTab, setInitialTab] = useState<string | undefined>(undefined);
-  const [searchParams, setSearchParams] = useSearchParams();
+  // Guards against out-of-order responses when filters change in quick
+  // succession: only the newest request may write state.
+  const loadSeq = useRef(0);
 
   const applyView = (key: string) => {
     const v = SAVED_VIEWS.find((s) => s.key === key);
@@ -143,16 +154,6 @@ export default function AmlCasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Saved-view deep link: ?view=<key> selects the matching preset, so metric
-  // tiles land on the queue their count was computed from.
-  useEffect(() => {
-    const viewParam = searchParams.get("view");
-    if (viewParam && SAVED_VIEWS.some((v) => v.key === viewParam)) {
-      applyView(viewParam);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Activation handoff from the client record: ?activateClientId=<client-id>
   // opens the activation dialog preselected on that exact client. The server
   // validates the ID and supplies name/status; an invalid or inaccessible ID
@@ -177,6 +178,7 @@ export default function AmlCasesPage() {
 
   const load = async (opts?: { searchOverride?: string }) => {
     const q = opts?.searchOverride ?? search;
+    const seq = ++loadSeq.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -187,14 +189,18 @@ export default function AmlCasesPage() {
         search: q || undefined,
         limit: PAGE_LIMIT,
       });
+      if (seq !== loadSeq.current) return;
       setCases(res.cases);
       setTotal(res.total);
       setAppliedSearch(q);
     } catch (e: any) {
+      if (seq !== loadSeq.current) return;
       setLoadError(e?.message ?? "The case register could not be loaded.");
     } finally {
-      setLoading(false);
-      setLoadedOnce(true);
+      if (seq === loadSeq.current) {
+        setLoading(false);
+        setLoadedOnce(true);
+      }
     }
   };
 

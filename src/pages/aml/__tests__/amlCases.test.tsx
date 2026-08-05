@@ -95,11 +95,14 @@ describe("AmlCases — register shell", () => {
     expect(screen.queryByText("kyc_complete")).not.toBeInTheDocument();
   });
 
-  it("applies a saved view from the ?view= deep link", async () => {
+  it("applies a saved view from the ?view= deep link with a single filtered fetch", async () => {
     setup("/admin/aml/cases?view=awaiting_decision");
     await waitFor(() => {
       expect((list.mock.calls.at(-1)?.[0] as any)?.status).toBe("escalated_mlro");
     });
+    // The view seeds the initial filter state, so the mount never issues an
+    // unfiltered request that could race the filtered one.
+    expect(list).toHaveBeenCalledTimes(1);
     const chip = screen.getByRole("button", { name: "Awaiting decision" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
   });
