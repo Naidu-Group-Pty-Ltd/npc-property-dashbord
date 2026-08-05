@@ -32,6 +32,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
+import { enforceCsrf } from '../_shared/csrfGuard.ts';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -62,6 +63,14 @@ function originAllowed(origin: string | null): boolean {
 }
 
 function csrfCheck(req: Request): { ok: boolean; reason?: string; origin?: string | null } {
+  // The shared guard is the floor: whatever it rejects is rejected here. The
+  // local list below is then applied on top because it is deliberately
+  // STRICTER than the shared one — it carries a smaller EXACT_ORIGINS set and
+  // does not honour the CORS_ALLOW_LOVABLE_PREVIEW suffix widening. Delegating
+  // outright would widen the accepted origins for this function, so the two
+  // are composed rather than swapped.
+  const shared = enforceCsrf(req);
+  if (!shared.ok) return shared;
   if (SAFE_METHODS.has(req.method.toUpperCase())) return { ok: true };
   if (!req.headers.get('cookie')) return { ok: true };
   const origin = req.headers.get('origin');
