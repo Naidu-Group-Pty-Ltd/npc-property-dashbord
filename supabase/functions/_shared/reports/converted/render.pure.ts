@@ -91,7 +91,7 @@ export const CHAPTER_FURNITURE_LINES = 3;
 export const THIN_CHAPTER_LINES = 12;
 
 /** What a packed run of thin sections calls itself. */
-export const APPENDIX_TITLE = 'From the template';
+export const APPENDIX_TITLE = 'Also in the uploaded template';
 
 /** An unfilled chapter is a header and one callout. */
 export const UNFILLED_CHAPTER_LINES = 10;
@@ -421,6 +421,14 @@ function packThin(
       + CHAPTER_FURNITURE_LINES;
     return {
       ...lead,
+      // Named from the sections it holds, not from the first of them.
+      //
+      // Keeping the lead's title printed `Recommendations` at 34pt over
+      // `Recommendations` at 17pt — the echo this programme keeps removing —
+      // and implied the second section was subordinate to the first when the
+      // two were peers. Joining their own words names the chapter without
+      // inventing one, which is the line C5 draws.
+      title: joinTitles(group.map((c) => c.title)),
       markdown,
       blocks: undefined,
       packedSections: group.length,
@@ -428,6 +436,14 @@ function packThin(
       pages: pagesForLines(lines),
     };
   });
+}
+
+/** `[a, b]` → `a & b`; `[a, b, c]` → `a, b & c`. Trimmed to the cover measure. */
+function joinTitles(titles: readonly string[]): string {
+  const parts = titles.filter(Boolean);
+  if (parts.length < 2) return parts[0] ?? APPENDIX_TITLE;
+  const joined = `${parts.slice(0, -1).join(', ')} & ${parts[parts.length - 1]}`;
+  return joined.length <= 72 ? joined : `${parts[0]}, and ${parts.length - 1} more`;
 }
 
 /** `1 → A`, `26 → Z`, `27 → AA`. A template with 27 loose sections is not likely. */
@@ -572,9 +588,17 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     eyebrow: final ? documentName : `${documentName} · converted draft`,
     title: input.structure.title,
     masthead: input.masthead,
-    edition: input.systemName ? input.systemName.toUpperCase() : null,
+    // The design system's name is build vocabulary, not a co-brand.
+    //
+    // In the edition slot it sets top-right opposite the masthead, wrapped over
+    // two lines — so the first surface anyone sees carried our tooling's name
+    // beside the tenant's. It is genuinely useful while somebody is checking a
+    // draft, which is where it now lives: a meta row with the binding and the
+    // date, and nothing at all on a document marked final.
+    edition: null,
     meta: [
       { label: 'Bound to', value: formatName(input.plan.format) },
+      ...(final || !input.systemName ? [] : [{ label: 'Design system', value: input.systemName }]),
       { label: 'Prepared on', value: formatReportDate(input.preparedOn) },
       { label: 'Chapters', value: String(chapters.length) },
     ].filter((m) => m.value),
@@ -675,12 +699,20 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
         // reader rejects degenerate input before it gets here — but a chapter
         // that prints nothing is worse than one that prints flat prose.
         inner = renderMarkdown(chapter.markdown, {
-          idPrefix, headlessTableCaption: chapter.title, chapterTitle: chapter.title,
+          idPrefix,
+          headlessTableCaption: chapter.title,
+          // Not on a packed chapter. Its body opens `## <first section>` and
+          // its title *is* that first section, so dropping the echo deleted a
+          // real heading: `Warnings` then read as a subsection of
+          // `Recommendations` when the two were peers.
+          chapterTitle: chapter.packedSections ? undefined : chapter.title,
         }).html;
       }
     } else {
       inner = renderMarkdown(chapter.markdown, {
-        idPrefix, headlessTableCaption: chapter.title, chapterTitle: chapter.title,
+        idPrefix,
+        headlessTableCaption: chapter.title,
+        chapterTitle: chapter.packedSections ? undefined : chapter.title,
       }).html;
     }
 

@@ -114,6 +114,33 @@ def measure_image(path: Path) -> dict:
         for x in range(0, w, step):
             sample[px[x, y]] += 1
     paper, paper_n = sample.most_common(1)[0]
+
+    # A page can be *mostly* card.
+    #
+    # A Market Intelligence page of twelve tinted callouts had the card fill as
+    # its modal colour by 241,794 pixels to the paper's 234,409 — so the
+    # measurer took the cards for paper, counted the paper as ink, and reported
+    # 0.515 coverage and a full-bleed box touching all four trim edges. Every
+    # one of those numbers was inverted, and an empty page under a >50% fill
+    # would have read as 100% ink and passed the rubric in silence.
+    #
+    # The corners settle it. A card is inset by the page margin; whatever the
+    # sheet is, it is what the corners are made of. Only consulted when the two
+    # leading colours are close enough for the count to be a coin toss.
+    ranked = sample.most_common(2)
+    if len(ranked) > 1 and ranked[1][1] > ranked[0][1] * 0.8:
+        inset = max(1, step)
+        corners = Counter(
+            px[x, y]
+            for x in (inset, w - 1 - inset)
+            for y in (inset, h - 1 - inset)
+        )
+        corner_colour = corners.most_common(1)[0][0]
+        for colour, n in ranked:
+            if colour == corner_colour:
+                paper, paper_n = colour, n
+                break
+
     modal_share = paper_n / max(1, sum(sample.values()))
 
     mx = int(round(w * MARGIN_MM / PAGE_W_MM))

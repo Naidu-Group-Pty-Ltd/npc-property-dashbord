@@ -733,19 +733,20 @@ export function buildReportCss(input: ReportCssInput): string {
     margin: ${pt(d.blockGapPt + 12)} 0 ${pt(d.paragraphGapPt + 3)};
   }
   h3 { font-size: ${pt(type.h3)}; margin: ${pt(d.blockGapPt)} 0 ${pt(d.paragraphGapPt - 1)}; }
-  /* A subhead must not open a section in the last inch of a page.
-     page-break-after:avoid on the heading only promises the *next* box, and
-     when every paragraph is one line the next box always fits — so a real
-     render opened a section and its single line at the very foot of a sheet
-     and put the rest of it overleaf. The orphans/widows properties cannot
-     help: they count lines inside one paragraph, and these are one line each.
-     Refusing a break after the first block as well keeps heading, first and
-     second together, which is the smallest unit that reads as a beginning. */
-  h2 + p, h2 + ul, h2 + ol, h2 + .table-block,
-  h3 + p, h3 + ul, h3 + ol, h3 + .table-block {
-    break-after: avoid;
-    page-break-after: avoid;
-  }
+  /* ── Why there is no keep-together beyond the heading ──────────────────
+     A subhead can still open a section in the last inch of a page:
+     page-break-after:avoid promises only the *next* box, and when every
+     paragraph is one line the next box always fits. Refusing a break after the
+     first block as well was tried, and a render said what it costs — it turned
+     a bad break into a worse page. The group it creates is often a chapter's
+     tail, and a tail that no longer fits moves to a sheet of its own: a subhead
+     and two lines alone at 1.1% ink, which is more visible than the fault it
+     was fixing.
+
+     The condition that separates the two cases is "unless this would strand
+     the group", and CSS cannot express it — there is no way to ask whether the
+     receiving page would be empty. So the heading keeps its own rule and
+     nothing more. Recorded rather than left to be rediscovered. */
   /* h4 is the mono micro-label, not a smaller heading — it is the same object
      as .eyebrow and shares its colour so the two never drift apart. */
   h4 {

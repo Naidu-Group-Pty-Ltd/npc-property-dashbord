@@ -49,22 +49,19 @@ describe('a contents page does not strand its last entry', () => {
   });
 });
 
-describe('a subhead does not open a section at the foot of a page', () => {
-  it('keeps the heading with its first two blocks', () => {
-    // `page-break-after: avoid` on the heading only promises the *next* box,
-    // and when every paragraph is one line the next box always fits — so a
-    // section opened two lines before the footer and continued overleaf. The
-    // orphans/widows properties count lines inside one paragraph and cannot see
-    // this at all.
+describe('there is no keep-together beyond the heading', () => {
+  it('does not group a heading with its first two blocks', () => {
+    // Tried, and reverted on the evidence of a render: the group it creates is
+    // often a chapter's tail, and a tail that no longer fits moves to a sheet
+    // of its own — a subhead and two lines alone at 1.1% ink, more visible than
+    // the late-opening section it was fixing. The condition that separates the
+    // two cases is "unless this would strand the group", which CSS cannot ask.
     const css = sheet();
-    expect(css).toMatch(/h2 \+ p[^{]*\{[^}]*break-after: avoid/);
-    expect(css).toMatch(/h3 \+ p[^{]*\{[^}]*break-after: avoid/);
+    expect(css).not.toMatch(/h2 \+ p[^{]*\{[^}]*break-after: avoid/);
   });
 
-  it('covers the block kinds a section actually opens with', () => {
-    const css = sheet();
-    for (const opener of ['h2 + ul', 'h2 + ol', 'h2 + .table-block']) {
-      expect(css, opener).toContain(opener);
-    }
+  it('still keeps a heading with the box after it', () => {
+    // The pre-existing rule, and the one that pays for itself.
+    expect(sheet()).toMatch(/h1, h2, h3 \{[^}]*page-break-after: avoid/);
   });
 });

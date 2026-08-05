@@ -594,6 +594,58 @@ comment.
 
 ---
 
+## The sixth round: two of the fifth round's five were wrong
+
+Reading the pages again. Three of the five landed clean; **two did not**, and
+both were made worse by the fix than by the defect.
+
+**G2 is reverted.** Keeping a heading with its first two blocks did stop a
+section opening at the foot of a page — and turned that into a near-empty sheet.
+The group it creates is often a chapter's *tail*, and a tail that no longer fits
+moves to a page of its own: a subhead and two lines at 1.1% ink, more visible
+than the late-opening section it was fixing. The condition that separates the two
+cases is "unless this would strand the group", and CSS cannot ask whether the
+receiving page would be empty. So the heading keeps its own rule and nothing
+more, and the reason is written into the stylesheet where the next person will
+look for it.
+
+**G3 and G4 collided, and deleted a heading.** `packThin` builds its body as
+`## <title>` per section and returned the first section's title as the chapter's
+— and G3 drops a leading heading that matches the chapter title. So the first
+member of every packed group lost its heading: `Recommendations` printed at 34pt
+with its bullets bare underneath, then `Warnings` at 17pt, which reads as
+*Warnings is a subsection of Recommendations* when the two were peers. The
+comment claiming "each under its own heading, nothing renamed" was false for the
+first one.
+
+Two changes, because there were two faults. `chapterTitle` is not passed for a
+packed chapter — its body opens on a real heading, not an echo. And the packed
+chapter is named from **all** the sections it holds rather than the first
+(`Recommendations & Warnings`), which stops the 34pt title repeating the 17pt
+heading below it and stops the first section looking like the parent of the rest.
+Their own words joined is not an invented name, which is the line C5 draws.
+
+Three smaller ones from the same read:
+
+- **`From the template` was a machine label on a client-facing chapter opener.**
+  Now `Also in the uploaded template` — the same fact in the firm's voice.
+- **The cover named the design system opposite the masthead**, wrapped over two
+  lines, where it reads as a co-brand on the first surface anyone sees. It is
+  build vocabulary and genuinely useful on a draft, so it moved into the meta
+  block beside `Bound to` and `Prepared on`, and is absent entirely on a document
+  marked final.
+- **The page measurer inverted on a page that is mostly card.** A Market
+  Intelligence sheet of twelve tinted callouts had the card fill as its modal
+  colour by 241,794 pixels to the paper's 234,409, so `measure_pages.py` took the
+  cards for paper and the paper for ink: 0.515 coverage and a full-bleed box on
+  a page that is neither. An empty page under a >50% fill would have read as 100%
+  ink and passed the rubric in silence. The corners settle it — a card is inset
+  by the page margin, so whatever the sheet is, it is what the corners are made
+  of — and they are only consulted when the two leading colours are close enough
+  for the count to be a coin toss.
+
+---
+
 ## Looking at the document, and widening what it can be
 
 The third round fixed everything that was visibly broken and the output still

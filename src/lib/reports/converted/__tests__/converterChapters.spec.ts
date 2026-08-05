@@ -280,9 +280,11 @@ describe('report Q&A takes its chapters from the template', () => {
     // chapter rather than as a chapter of its own.
     const printed = planned.map((c) => `${c.title}\n${c.markdown}`).join('\n');
     for (const s of thin.sections) expect(printed, s.title).toContain(s.title);
-    // And the packed chapter keeps the first section's name — inventing one
-    // would be the mistake this module's header is about.
-    expect(planned[0].title).toBe('Recommendations');
+    // And it is named from the sections it holds, not from the first of them.
+    // Keeping the lead's title printed it at 34pt over the same words at 17pt,
+    // and implied the rest were subordinate to it when they were peers. Their
+    // own words, joined — not an invented name, which is the line C5 draws.
+    expect(planned[0].title).toBe('Recommendations, Warnings & Audit trail');
   });
 
   it('leaves a chapter that can hold a sheet alone', () => {
