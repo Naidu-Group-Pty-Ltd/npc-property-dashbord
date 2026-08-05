@@ -218,6 +218,13 @@ jobs:
           node scripts/security/check-dependency-gate-level.mjs
           node scripts/security/test-registry-launch-gates.mjs
 
+      # The gates above assert their properties by matching source literals, so
+      # a legitimate refactor can make one stop matching and a careless repair
+      # can loosen it until it passes. This removes each control from a
+      # throwaway mirror of the tree and requires the gate to fail.
+      - name: Security gate negative tests
+        run: node scripts/security/check-security-gate-negatives.mjs
+
       # WP-15: launch-gate aggregator (registry clean + WP-15 artefacts present).
       - name: WP-15 launch-gate aggregator
         run: node scripts/security/wp15-launch-gate.mjs

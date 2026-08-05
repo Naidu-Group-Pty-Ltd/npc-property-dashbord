@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import {
   verifyAuth,
   createForbiddenResponse,
@@ -41,6 +41,21 @@ import {
   looksLikeChromeUrl,
 } from '../_shared/listingImageChrome.pure.ts';
 import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
+
+/**
+ * The client type these helpers actually receive.
+ *
+ * They used to say `ReturnType<typeof createClient>`, which looks equivalent but
+ * is not: `createClient` is generic, and `ReturnType` instantiates a generic
+ * function's type parameters from their CONSTRAINTS, not their defaults.
+ * `SchemaName extends string & keyof Database` with `Database` unresolved
+ * collapses to `never`, so the parameter type became
+ * `SupabaseClient<unknown, never, GenericSchema>` while every call site passes
+ * the inferred `SupabaseClient<any, 'public', any>`. `'public'` is not
+ * assignable to `never`, which was the TS2345 reported at each of the seven
+ * call sites. Naming the type directly picks up the intended defaults.
+ */
+type ListingImagesClient = SupabaseClient;
 
 /**
  * Listing image library.
@@ -159,7 +174,12 @@ function epochMs(value: unknown): number | null {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  // `BufferSource` requires a view over a plain ArrayBuffer. A `Uint8Array` is
+  // generic over its backing buffer, which may be a `SharedArrayBuffer`, so the
+  // unnarrowed type is not assignable. Copying into a fresh view both satisfies
+  // the contract and guarantees the digest reads a non-shared buffer.
+  const view = new Uint8Array(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', view);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
@@ -268,7 +288,7 @@ interface HarvestOutcome {
  * only when `reconcile` is `'full'`; see `Reconciliation`.
  */
 async function harvestListing(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   listingId: string,
   candidates: ImageCandidate[],
   listedAt: number | null,
@@ -524,7 +544,7 @@ async function harvestListing(
  * the whole batch.
  */
 async function storedIdentities(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   listingIds: string[],
 ): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();
@@ -544,7 +564,7 @@ async function storedIdentities(
 
 /** Signs every stored image for the requested listings. */
 async function signStoredImages(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   listingIds: string[],
 ): Promise<Record<string, Array<Record<string, unknown>>>> {
   const out: Record<string, Array<Record<string, unknown>>> = {};
@@ -669,7 +689,7 @@ async function readAirtableImages(
  * the point of enriching it. Airtable caps a batch at 10 records.
  */
 async function syncAirtable(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   config: AirtableConfig,
   listingIds: string[],
 ): Promise<{ synced: number; error: string | null }> {

@@ -6,6 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -132,6 +133,13 @@ async function runForUser(sb: any, userId: string) {
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  // This runner INSERTS into agent_insights_feed and notifications, and it
+  // accepts a cookie-carried staff session through verifyAuth — so a
+  // cross-site POST was a cookie-authenticated write. enforceCsrf lets
+  // GET/HEAD/OPTIONS and header-only (no-cookie) callers through untouched,
+  // so the pg_cron caller is unaffected.
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   try {
     const body = await req.json().catch(() => ({}));
