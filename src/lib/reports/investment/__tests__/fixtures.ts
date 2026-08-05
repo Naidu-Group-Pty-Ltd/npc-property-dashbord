@@ -30,20 +30,57 @@ export const GENERATED_AT = '2026-07-28T04:15:00.000Z';
 export const REPORT_ID = '7f3c1d2e-9a4b-4c1e-8f6a-2b5d9e0c7a41';
 export const ADDRESS = '18 Marlowe Parade, Kirribeck NSW 2287';
 
-/** One paragraph of body prose, long enough to set a measure and wrap. */
+/**
+ * One paragraph of body prose, long enough to set a measure and wrap.
+ *
+ * No two calls produce the same text, and that is the point rather than a
+ * nicety. The first version of this cycled three clauses out of a pool of six,
+ * so a 46-page render repeated itself on 33 pages and the critique rubric's
+ * only `high` rule — `duplicate-block` — fired 33 times on the fixture and
+ * could not have seen a real one. A fixture that repeats itself makes the
+ * strongest check in the harness useless for the document it is checking.
+ *
+ * The three slots are drawn from three lists of different, coprime lengths, so
+ * the combination does not recur until far beyond any document this format can
+ * produce.
+ */
+const OBSERVED = [
+  'the catchment absorbed 240 new dwellings without a measurable rise in days on market',
+  'rents cleared the suburb median at each of the last four renewals',
+  'the vacancy rate has held under one per cent for six consecutive quarters',
+  'building approvals in the twelve months to June are down 18% on the prior year',
+  'the two nearest comparable sales settled above their guides',
+  'the station upgrade is funded and scheduled for the 2028 financial year',
+  'the median holding period in this postcode is eight years and lengthening',
+  'three of the last five listings sold before their first open',
+  'the rental pool has shifted toward families and away from share households',
+  'land values rose faster than improved values in each of the last three assessments',
+  'the council has not varied the height limit on this street since 2011',
+];
+
+const WHY = [
+  'a four-bedroom house here competes with very little of the same shape',
+  'the loan on a property of this price is serviceable at the buffer rate',
+  'a tenant in this catchment has few alternatives inside the same school zone',
+  'the yield gap against the metropolitan median has narrowed to 40 basis points',
+  'the cost of holding has risen faster than rent in every year since 2023',
+  'stock at this price point turns over roughly twice a decade',
+  'insurance in this postcode reprices annually and has risen three years running',
+];
+
+const CAVEAT = [
+  'None of this is a forecast; it is what the sources at the back of this report held on the day it was generated.',
+  'These are recorded figures, not projections, and they describe the past rather than the year ahead.',
+  'The measurement is as good as its source, and the sources are named at the back.',
+  'Read this as the position on the date of generation; nothing here anticipates a policy change.',
+  'This is what the data showed. What it will show next quarter is not knowable from it.',
+];
+
 const para = (seed: number): string => {
-  const clauses = [
-    'the catchment has absorbed new stock without a measurable rise in days on market',
-    'rents cleared the suburb median at each of the last four renewals',
-    'the vacancy rate has held under one per cent for six consecutive quarters',
-    'approvals lodged in the twelve months to June are down on the prior year',
-    'the two nearest comparable sales settled above the guide',
-    'infrastructure funded in the last state budget lands inside the five-year horizon',
-  ];
-  const picked = [0, 1, 2].map((i) => clauses[(seed + i) % clauses.length]);
-  return `On the evidence available, ${picked[0]}. That matters here because ${picked[1]}, `
-    + `and the same records show ${picked[2]}. None of this is a forecast; it is what the `
-    + 'sources listed at the back of this report contained on the date it was generated.';
+  const n = Math.abs(seed);
+  return `On the evidence available, ${OBSERVED[n % OBSERVED.length]}. That matters here `
+    + `because ${WHY[n % WHY.length]}, and the same records show `
+    + `${OBSERVED[(n * 3 + 5) % OBSERVED.length]}. ${CAVEAT[n % CAVEAT.length]}`;
 };
 
 /** The 36-section prose skeleton, as the model writes it. */
@@ -95,8 +132,14 @@ const SECTION_TITLES: ReadonlyArray<[number, string]> = [
  */
 export function reportContent(sections = SECTION_TITLES.length): string {
   const body = SECTION_TITLES.slice(0, sections).map(([n, title]) => {
+    // Five seeds per section, never shared with a neighbour. Two paragraphs and
+    // three bullets drawn from `n + 3` gave section n's second paragraph to
+    // section n + 3's first, so a third of the document repeated the page three
+    // sheets back — the same class of noise the pooled clauses caused, arriving
+    // by a different route.
+    const s = n * 5;
     const extra = n === 21 || n === 31 || n === 35
-      ? `\n\n- ${para(n + 1).slice(0, 90)}\n- ${para(n + 2).slice(0, 90)}\n- ${para(n + 3).slice(0, 90)}`
+      ? `\n\n- ${para(s + 2).slice(0, 90)}\n- ${para(s + 3).slice(0, 90)}\n- ${para(s + 4).slice(0, 90)}`
       : '';
     const table = n === 18
       ? '\n\n| Address | Sold | Price |\n| --- | --- | ---: |\n'
@@ -104,7 +147,7 @@ export function reportContent(sections = SECTION_TITLES.length): string {
         + '| 21 Cardigan Street | Feb 2026 | $874,500 |\n'
         + '| 9 Marlowe Parade | Dec 2025 | $918,000 |'
       : '';
-    return `# ${n}. ${title}\n\n${para(n)}\n\n${para(n + 3)}${extra}${table}`;
+    return `# ${n}. ${title}\n\n${para(s)}\n\n${para(s + 1)}${extra}${table}`;
   }).join('\n\n');
 
   return `# REPORT TITLE\n\nInvestment Location & Property Fit — ${ADDRESS}\n\n${body}\n\n`

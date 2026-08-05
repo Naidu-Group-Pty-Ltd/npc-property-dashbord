@@ -57,8 +57,78 @@ const conv = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const pair = (i: number, answer = ANSWER, over: Record<string, unknown> = {}) => [
-  { id: mid(i * 2), role: 'user', content: `Is ${12 + i} Mariners Quay worth pursuing?`, created_at: at(i * 2) },
+/**
+ * A five-exchange transcript answers five different questions.
+ *
+ * Every exchange used to carry `ANSWER` verbatim, so a five-exchange render
+ * printed the same executive summary, the same two-row table and the same pull
+ * quote on four consecutive sheets — and fired the critique rubric's only
+ * `high` rule four times on the fixture, which meant it could not have caught a
+ * document that really did repeat itself.
+ */
+const QUESTIONS = [
+  'Is 12 Mariners Quay worth pursuing at the guide?',
+  'What happens to the position if rates rise another 1%?',
+  'How does the body corporate schedule compare to the precinct?',
+  'Would a two-year fixed rate be the better structure here?',
+  'What would have to be true for this to be a mistake?',
+];
+
+const ANSWERS = [
+  ANSWER,
+  `## The short answer
+
+At **+1%** the position moves from marginally negative to about **-$9,400** a year before tax.
+
+### Where it lands
+
+| Scenario | Annual position |
+| --- | ---: |
+| Today | -$2,180 |
+| Rates +1% | -$9,420 |
+
+The buffer covers it for eleven months, which is the number that matters.`,
+  `## Against the precinct
+
+Fees run **$6,840** a year against a precinct median of $5,200 for comparable stock.
+
+### Why the gap
+
+- The building carries a lift and a pool, and the sinking fund reflects both
+- Two of the four lots are owner-occupied, which historically resists fee restraint
+
+> The premium is real, and it is priced into the rent only in part.`,
+  `## On structure
+
+A two-year fix at the current sheet rate costs about **$1,900** more over the term than staying variable.
+
+### What you are buying
+
+- Certainty across the two years the buffer is thinnest
+- The right to walk at the end without a break cost
+
+The alternative is a split, which halves both the cost and the certainty.`,
+  `## What would make this wrong
+
+Three things, in the order they would show.
+
+### The list
+
+| Signal | Where to watch it |
+| --- | --- |
+| Vacancy above 3% | Quarterly rental report |
+| A second fee rise | The AGM minutes |
+
+> If two of the three appear inside a year, revisit rather than hold.`,
+];
+
+const pair = (i: number, answer = ANSWERS[i % ANSWERS.length], over: Record<string, unknown> = {}) => [
+  {
+    id: mid(i * 2),
+    role: 'user',
+    content: QUESTIONS[i % QUESTIONS.length],
+    created_at: at(i * 2),
+  },
   {
     id: mid(i * 2 + 1), role: 'assistant', content: answer, created_at: at(i * 2 + 1),
     model_provider: 'openai', model_version: 'gpt-5.2', ...over,
@@ -136,8 +206,8 @@ describe('the spine', () => {
 
   it('opens a chapter per exchange up to the threshold and folds the rest', () => {
     const few = render({ messages: Array.from({ length: 4 }, (_, i) => pair(i)).flat() });
-    expect(few.sections.filter((s) => s.startsWith('Is '))).toHaveLength(4);
-    const many = render({ messages: Array.from({ length: 40 }, (_, i) => pair(i)).flat() });
+    expect(few.sections.filter((s) => QUESTIONS.includes(s))).toHaveLength(4);
+    const many = render({ messages: Array.from({ length: 60 }, (_, i) => pair(i)).flat() });
     expect(many.sections.some((s) => /^Exchanges \d+ to \d+$/.test(s))).toBe(true);
     expect(many.sections.length).toBeLessThanOrEqual(MAX_TRANSCRIPT_CHAPTERS + 2);
   });
@@ -152,7 +222,7 @@ describe('what the reader is told', () => {
    * by looking at the page.
    */
   it('gives one exchange count, not two', () => {
-    const out = render({ messages: Array.from({ length: 40 }, (_, i) => pair(i)).flat() });
+    const out = render({ messages: Array.from({ length: 60 }, (_, i) => pair(i)).flat() });
     expect(out.truncated).toBe(true);
     const counts = [...out.bodyHtml.matchAll(/(\d+) of (\d+) exchanges/g)].map((m) => m[0]);
     expect(counts.length).toBeGreaterThanOrEqual(2);
@@ -161,7 +231,7 @@ describe('what the reader is told', () => {
   });
 
   it('says on the page when it is not the whole conversation', () => {
-    const out = render({ messages: Array.from({ length: 40 }, (_, i) => pair(i)).flat() });
+    const out = render({ messages: Array.from({ length: 60 }, (_, i) => pair(i)).flat() });
     expect(out.bodyHtml).toContain('Not the whole conversation');
     expect(out.bodyHtml).toContain('Markdown and plain-text exports');
   });
@@ -173,7 +243,7 @@ describe('what the reader is told', () => {
   it('prints the question above a single answer', () => {
     const out = render({ subject: 'answer', messageId: mid(1) });
     expect(out.bodyHtml).toContain('Asked');
-    expect(out.bodyHtml).toContain('Is 12 Mariners Quay worth pursuing?');
+    expect(out.bodyHtml).toContain(QUESTIONS[0]);
   });
 
   it('prints how each answer was produced', () => {

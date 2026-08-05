@@ -21,20 +21,70 @@ export const LAYER_KEYS = [
 export const REPORT_ID = '33333333-3333-4333-8333-333333333333';
 export const PREPARED_ON = '2026-08-03T00:00:00.000Z';
 
-/** Enough prose to clear `MIN_SECTION_CHARS`, in the model's own register. */
+/**
+ * Enough prose to clear `MIN_SECTION_CHARS`, in the model's own register.
+ *
+ * No two calls produce the same paragraph. The version this replaced varied one
+ * decimal — `3.60%`, `3.70%`, `3.80%` — inside an otherwise identical sentence,
+ * so a twenty-two page render carried the same two paragraphs on nine
+ * consecutive sheets. That is not a rendering fault, but it makes the document
+ * impossible to read for one, and it fired the critique rubric's only `high`
+ * rule seven times on the fixture, which meant the rule could not have caught a
+ * real repetition.
+ */
+const OPENERS = [
+  'The cash rate held through the quarter, with the board’s statement noting trimmed-mean inflation inside the target band.',
+  'Housing credit grew faster than at any point since 2022, and investor lending took a decade-high share of new commitments.',
+  'Consumer sentiment recovered four points off its March low, though it remains below the long-run average.',
+  'The prudential regulator left the serviceability buffer unchanged and signalled no review before the new year.',
+  'Dwelling approvals fell for a third consecutive month, with the decline concentrated in attached housing.',
+  'Unemployment ticked up a tenth while participation held, which the board read as a loosening rather than a weakening.',
+  'Advertised rents rose across every capital, with the steepest movement in the smaller markets.',
+  'Fixed-rate expiries peaked in the December quarter and the arrears data has not yet moved with them.',
+];
+
+const SECONDS = [
+  'What that means for a buyer here is narrow: it changes the price of debt, not the supply of houses.',
+  'The effect on this market is second-order, arriving through borrowing capacity rather than through demand.',
+  'Local stock levels are the binding constraint, and nothing in the quarter’s data moved them.',
+  'It matters more to a seller deciding when to list than to a buyer deciding whether to.',
+  'For a leveraged holder the sensitivity runs through the loan, and the loan reprices before the rent does.',
+];
+
 export function prose(seed = 0, paragraphs = 2): string {
-  return Array.from({ length: paragraphs }, (_, i) =>
-    `The cash rate held at **${(3.6 + (i + seed) * 0.1).toFixed(2)}%** through the quarter, with the `
-    + `board's statement noting trimmed-mean inflation at ${(2.8 + i * 0.1).toFixed(1)}% against a `
-    + 'target band of 2-3%. Housing credit grew faster than at any point since 2022, and investor '
-    + 'lending accounted for a decade-high share of new commitments.').join('\n\n');
+  const n = Math.abs(seed);
+  return Array.from({ length: paragraphs }, (_, i) => {
+    const k = n + i * 3;
+    return `${OPENERS[k % OPENERS.length]} ${SECONDS[k % SECONDS.length]} `
+      + `The figure to watch is **${(3.6 + (k % 9) * 0.15).toFixed(2)}%**, which is where the `
+      + 'series sat when this report was assembled.';
+  }).join('\n\n');
 }
 
+const MOVED = [
+  'Housing credit growth accelerated for the fourth month',
+  'Investor share of new lending reached a decade high',
+  'Days on market shortened by six across the capitals',
+  'Auction clearance held above 65% for eight consecutive weekends',
+  'New listings ran 12% below the five-year average for the month',
+  'Rental vacancy fell below 1.2% in every mainland capital',
+  'Approvals for attached dwellings fell to a nine-year low',
+  'Fixed-rate expiries passed their peak without a rise in arrears',
+  'The gap between advertised and achieved rent narrowed to 1.8%',
+  'First-home buyer share of new lending rose two points',
+];
+
 export function layerBody(seed = 0): string {
-  return `## Overview\n\n${prose(seed)}\n\n### What moved\n\n`
-    + '- Housing credit growth accelerated for the fourth month\n'
-    + '- Investor share of new lending reached a decade high\n\n'
-    + `### What it means\n\n${prose(seed + 3, 1)}`;
+  // Spread, so that layer 3's first paragraph is not layer 0's second. A layer
+  // draws three paragraphs at `n`, `n + 3` and `n + 5`; consecutive seeds
+  // overlap on two of the three, which is how eight layers produced seven
+  // duplicate-block findings. The offset keeps them clear of the prose blocks
+  // outside the layers, which use small seeds.
+  const n = 100 + Math.abs(seed) * 11;
+  return `## Overview\n\n${prose(n)}\n\n### What moved\n\n`
+    + `- ${MOVED[n % MOVED.length]}\n`
+    + `- ${MOVED[(n * 3 + 4) % MOVED.length]}\n\n`
+    + `### What it means\n\n${prose(n + 5, 1)}`;
 }
 
 export function events(n: number): Array<Record<string, unknown>> {

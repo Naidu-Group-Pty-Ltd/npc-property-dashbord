@@ -23,6 +23,34 @@ import {
 
 export type ChapterKind = 'property' | 'prose' | 'sources';
 
+/**
+ * One of the generator's numbered sections, inside the chapter that carries it.
+ *
+ * Sections are not chapters here, and the first render of this format is why.
+ * The corpus's prose runs to 37,270 characters across 36 sections — about a
+ * thousand characters each, which is two paragraphs. Given a chapter apiece,
+ * and `page-break-before: always` on `.chapter`, that produced forty-six sheets
+ * at 4.1% ink: a display title low on the page, two paragraphs, and half a page
+ * of nothing, thirty-six times. No format in the programme was further from the
+ * 13.3–22.1% a natively designed page in this system measures.
+ *
+ * So the sections are grouped, and a section becomes a subhead inside its
+ * group. Its charts stay with it — that is the whole reason a part exists
+ * rather than a concatenated string. `SECTION_CHARTS` attaches an infographic
+ * to a section *by its number*, and rendering a group's prose and then all of
+ * its charts would put the sensitivity tornado four subheads below the
+ * sensitivity analysis.
+ */
+export interface ChapterPart {
+  /** The generator's own number, when the heading had one. */
+  number: number | null;
+  title: string;
+  markdown: string;
+  charts: readonly SectionChart[];
+  lines: number;
+  clippedChars?: number;
+}
+
 export interface PlannedChapter {
   id: string;
   kind: ChapterKind;
@@ -33,10 +61,38 @@ export interface PlannedChapter {
   dek?: string;
   markdown: string;
   charts: readonly SectionChart[];
+  /** The numbered sections this chapter carries, in order. Prose chapters only. */
+  parts: readonly ChapterPart[];
   lines: number;
   pages: number;
   clippedChars?: number;
 }
+
+/**
+ * The four parts of an investment report, by the section numbers in each.
+ *
+ * Read off the skeleton the generator writes, which `payload.pure.ts` records:
+ * sections 1-19 are locality and market, 20-28 are the financial model, 29-31
+ * are the score, and 32-36 are risk, structuring and what to do next. The
+ * boundaries are the generator's own, not an editorial invention — 19 is the
+ * last locality section and 20 is `Base Assumptions`, 28 is the last financial
+ * one and 29 is `Investment Score`.
+ *
+ * A report with no financial model still gets the group; it simply has no
+ * sections in it, and an empty group is not printed.
+ */
+export const PROSE_GROUPS: ReadonlyArray<{
+  id: string;
+  title: string;
+  note: string;
+  /** The last section number in this group. */
+  through: number;
+}> = [
+  { id: 'locality', title: 'Location & Market', note: 'Where it is and what is around it', through: 19 },
+  { id: 'numbers', title: 'The Numbers', note: 'Yield, costs, loan and projections', through: 28 },
+  { id: 'score', title: 'The Score', note: 'How it rates, and against what', through: 31 },
+  { id: 'outlook', title: 'Risk, Tax & Next Steps', note: 'What to watch and what to do', through: 99 },
+];
 
 /**
  * Lines a chapter costs before a word of it is set.
@@ -112,32 +168,61 @@ const chartLines = (charts: readonly SectionChart[], report: InvestmentReport): 
  */
 export function planChapters(report: InvestmentReport): {
   chapters: PlannedChapter[];
-  dropped: PlannedChapter[];
+  dropped: ChapterPart[];
   charsOmitted: number;
 } {
-  const all: PlannedChapter[] = [];
   let clipped = 0;
 
-  const push = (c: Omit<PlannedChapter, 'lines' | 'pages' | 'clippedChars'> & { lines: number }) => {
-    const cut = clip(c.markdown);
+  // ── The prose, as parts, in the generator's own numbering ──
+  const parts: ChapterPart[] = report.sections.map((section, index): ChapterPart => {
+    const cut = clip(section.markdown);
     clipped += cut.omitted;
-    const lines = cut.omitted
-      ? proseLines(cut.text, c.id.replace(/[^a-z0-9]/gi, '')) + chartLines(c.charts, report) + CHAPTER_FURNITURE_LINES
-      : c.lines;
-    all.push({
-      ...c,
+    return {
+      number: section.number,
+      title: section.title,
       markdown: cut.text,
-      lines,
-      pages: pagesForLines(lines),
+      charts: section.charts,
+      // A subhead rather than a chapter header, so no `CHAPTER_FURNITURE_LINES`.
+      lines: proseLines(cut.text, `inv${index}`) + chartLines(section.charts, report) + 1,
       clippedChars: cut.omitted || undefined,
-    });
+    };
+  });
+
+  // ── The document budget, applied to parts ──
+  //
+  // Before the grouping this ran over chapters, which is the same list under a
+  // different name; running it over parts keeps a long report shedding its
+  // least-load-bearing *sections* rather than a whole quarter of the document.
+  /** Sections a reader opens the document for, by their stable number. */
+  const KEEP_NUMBERS = new Set([29, 30, 31, 34]);
+  const kept: ChapterPart[] = [];
+  const dropped: ChapterPart[] = [];
+  let lines = 0;
+
+  for (const part of parts) {
+    if (part.number !== null && KEEP_NUMBERS.has(part.number)) {
+      kept.push(part);
+      lines += part.lines;
+      continue;
+    }
+    if (lines + part.lines > MAX_DOCUMENT_LINES) {
+      dropped.push(part);
+      continue;
+    }
+    kept.push(part);
+    lines += part.lines;
+  }
+
+  // ── The chapters ──
+  const chapters: PlannedChapter[] = [];
+
+  const push = (c: Omit<PlannedChapter, 'pages'>) => {
+    chapters.push({ ...c, pages: pagesForLines(c.lines) });
   };
 
-  // ── The property, synthesised ──
-  //
-  // Every row in the corpus has `property_specs` and no prose section covers
-  // it, so without this the document opens on a locality overview and never
-  // says what was actually assessed.
+  // The property, synthesised. Every row in the corpus has `property_specs` and
+  // no prose section covers it, so without this the document opens on a
+  // locality overview and never says what was actually assessed.
   push({
     id: 'inv.property',
     kind: 'property',
@@ -146,31 +231,45 @@ export function planChapters(report: InvestmentReport): {
     dek: report.meta.propertyAddress,
     markdown: '',
     charts: ['property-tiles'],
+    parts: [],
     lines: chartLines(['property-tiles'], report) + CHAPTER_FURNITURE_LINES,
   });
 
-  // ── The prose, in the generator's own numbering ──
-  report.sections.forEach((section, index) => {
+  // An unnumbered section belongs with whatever was numbered before it — 256
+  // reports carry `## Location Overview` and `## Current Market Performance`
+  // between the numbered ones, and they are real content.
+  let group = 0;
+  const grouped: ChapterPart[][] = PROSE_GROUPS.map(() => []);
+  for (const part of kept) {
+    if (part.number !== null) {
+      while (group < PROSE_GROUPS.length - 1 && part.number > PROSE_GROUPS[group].through) group += 1;
+    }
+    grouped[group].push(part);
+  }
+
+  PROSE_GROUPS.forEach((definition, i) => {
+    const members = grouped[i];
+    if (!members.length) return;
+    const charted = members.reduce((n, p) => n + p.charts.length, 0);
     push({
-      id: `inv.s${section.number ?? `x${index}`}`,
+      id: `inv.${definition.id}`,
       kind: 'prose',
-      title: section.title,
-      // The contents gloss names the charts the chapter carries, which is the
-      // one thing a reader scanning a 36-entry contents page cannot see from a
-      // title. No standfirst: the prose opens with its own topic sentence, and
-      // the Market Intelligence render showed a gloss set above an identical
-      // first line reads as a rendering fault.
-      note: section.charts.length
-        ? `${section.charts.length} ${section.charts.length === 1 ? 'chart' : 'charts'}`
-        : undefined,
-      markdown: section.markdown,
-      charts: section.charts,
-      lines: proseLines(section.markdown, `inv${index}`)
-        + chartLines(section.charts, report) + CHAPTER_FURNITURE_LINES,
+      title: definition.title,
+      // The gloss says what the chapter covers and how many charts are in it —
+      // the two things a reader scanning the contents cannot see from a title.
+      // No standfirst: the prose opens with its own topic sentence, and the
+      // Market Intelligence render showed a gloss set above an identical first
+      // line reads as a rendering fault.
+      note: charted
+        ? `${definition.note} · ${charted} ${charted === 1 ? 'chart' : 'charts'}`
+        : definition.note,
+      markdown: '',
+      charts: [],
+      parts: members,
+      lines: members.reduce((n, p) => n + p.lines, 0) + CHAPTER_FURNITURE_LINES,
     });
   });
 
-  // ── Sources ──
   if (report.sources.length) {
     push({
       id: 'inv.sources',
@@ -180,36 +279,12 @@ export function planChapters(report: InvestmentReport): {
       dek: `${report.sources.length} cited`,
       markdown: '',
       charts: [],
+      parts: [],
       lines: report.sources.length * LINES_PER_SOURCE + CHAPTER_FURNITURE_LINES,
     });
   }
 
-  // ── The document budget ──
-  const KEEP = new Set<ChapterKind>(['property', 'sources']);
-  /** Prose chapters a reader opens the document for, by their stable number. */
-  const KEEP_NUMBERS = new Set([29, 30, 31, 34]);
-  const chapters: PlannedChapter[] = [];
-  const dropped: PlannedChapter[] = [];
-  let lines = 0;
-
-  for (const chapter of all) {
-    const protectedNumber = /^inv\.s(\d+)$/.exec(chapter.id);
-    const keep = KEEP.has(chapter.kind)
-      || (protectedNumber ? KEEP_NUMBERS.has(Number(protectedNumber[1])) : false);
-    if (keep) {
-      chapters.push(chapter);
-      lines += chapter.lines;
-      continue;
-    }
-    if (lines + chapter.lines > MAX_DOCUMENT_LINES) {
-      dropped.push(chapter);
-      continue;
-    }
-    chapters.push(chapter);
-    lines += chapter.lines;
-  }
-
-  const charsOmitted = dropped.reduce((n, c) => n + c.markdown.length, 0) + clipped;
+  const charsOmitted = dropped.reduce((n, p) => n + p.markdown.length, 0) + clipped;
   return { chapters, dropped, charsOmitted };
 }
 

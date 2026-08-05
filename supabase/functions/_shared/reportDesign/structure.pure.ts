@@ -114,21 +114,30 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     documentName: 'Investment Location & Property Fit Report',
     chapterLabel: 'Chapter',
     slots: FULL_SLOTS,
-    // Re-pinned by render when the format was finally implemented. Both figures
-    // were wrong, and the note was wrong about the document.
+    // Re-pinned twice. The figures below are the second set, and the first set
+    // is worth keeping in mind: they measured a document that was wrong.
     //
-    // Seven shapes rendered through WeasyPrint, claimed against actual: a full
-    // report with every column populated 53/50, one with no financial model
-    // 47/48, one with no score 50/47, a location-only report 43/44, a minimal
-    // one whose prose is a single section 5/6, a report with a runaway appendix
-    // 61/55, and a payload where all 40 sections sit at the section cap 90/66 —
-    // that last one dropping 28 chapters to the document budget and saying so.
+    // Until this format was rendered and looked at, each of the generator's 36
+    // numbered prose sections was its own chapter. `.chapter` carries
+    // `page-break-before: always`, and a corpus section averages about a
+    // thousand characters — two paragraphs. So a full report was 46 sheets at
+    // 4.1% ink: a display title low on the page, two paragraphs, and half a page
+    // of nothing, thirty-six times over. The band said 43-53 and the document
+    // sat inside it, which is what a band cannot tell you.
     //
-    // So a real report is 43 to 53 pages. The ceiling is set by what the caps
-    // permit rather than by what the corpus contains, for the reason the Market
-    // Intelligence band records: the render route treats a band violation as
-    // fatal, and a correctly clipped document should not be thrown away for
-    // being long. The floor is the arithmetic minimum, confirmed by render.
+    // The sections are now grouped into four chapters and set as subheads
+    // inside them (`investment/sections.pure.ts`, `PROSE_GROUPS`). Six shapes
+    // rendered through WeasyPrint, claimed against actual: a full report with
+    // every column populated 32/29, one with no financial model 28, one with no
+    // score 30, a location-only report 13, a minimal one whose prose is a single
+    // section 5, and a payload carrying 40 further sections at the section cap
+    // 58 — that last one shedding sections to the document budget and saying so.
+    //
+    // So a real report is 13 to 32 pages, against 43 to 53 before. The ceiling
+    // stays where it is: it is set by what the caps permit rather than by what
+    // the corpus contains, for the reason the Market Intelligence band records
+    // — the render route treats a band violation as fatal, and a correctly
+    // clipped document should not be thrown away for being long.
     pageBudget: [5, 92],
     contents: true,
     // The original note claimed this document "carries no financial modelling —
@@ -139,9 +148,10 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     // archetype's name rather than from the artefact, which is the same hazard
     // the market-intelligence archetype carried.
     note: 'The locality and property-fit document, and the largest in the '
-      + 'programme: a 36-section prose skeleton with up to sixteen infographics '
-      + 'attached to it by section number. Carries financial modelling when the '
-      + 'row has any — only 15% do, and the document says so when it does not.',
+      + 'programme: a 36-section prose skeleton, grouped into four chapters, '
+      + 'with up to sixteen infographics attached to it by section number. '
+      + 'Carries financial modelling when the row has any — only 15% do, and '
+      + 'the document says so when it does not.',
   },
   'financial-analysis': {
     id: 'financial-analysis',

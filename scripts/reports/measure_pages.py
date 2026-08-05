@@ -49,9 +49,11 @@ MARGIN_MM = 18.0
 # muted caption at ~60.
 INK_DISTANCE = 32
 
-# A page whose modal colour covers less than this is a full-bleed field — a
-# cover or a closing page — rather than paper with type on it.
-FULL_BLEED_MODAL = 0.55
+# A sheet whose three channels sum below this is a field, not paper: a cover or
+# a closing page printed on obsidian. The design system's paper stocks run ivory
+# (250,247,239 → 736) through near-white; its fields run near 40. Nothing in it
+# sits between, which is what makes a single threshold honest here.
+FIELD_CHANNEL_SUM = 240
 
 # Points. Above this, text on a page is display type rather than body copy.
 HEADING_PT = 15.0
@@ -143,8 +145,19 @@ def measure_image(path: Path) -> dict:
 
     modal_share = paper_n / max(1, sum(sample.values()))
 
-    mx = int(round(w * MARGIN_MM / PAGE_W_MM))
-    my = int(round(h * MARGIN_MM / PAGE_H_MM))
+    # The trim band is 18mm of *this* sheet, whichever way round it is.
+    #
+    # Derived from the portrait constants regardless of orientation, the band on
+    # a landscape sheet came out 72px wide against a true 51px — reaching 21mm
+    # into a page whose content box starts at 18mm, so the first column of every
+    # wide table read as ink in the trim. Cash Flow page 6 and Portfolio page 7
+    # were both reported as `high` trim-bleed, and both are correct documents.
+    # A false high is worse than no rule: it is the one severity that stops a
+    # gate, so it trains a reader to ignore the gate.
+    long_mm, short_mm = max(PAGE_W_MM, PAGE_H_MM), min(PAGE_W_MM, PAGE_H_MM)
+    page_w_mm, page_h_mm = (long_mm, short_mm) if w > h else (short_mm, long_mm)
+    mx = int(round(w * MARGIN_MM / page_w_mm))
+    my = int(round(h * MARGIN_MM / page_h_mm))
 
     ink = 0
     margin_ink = 0
@@ -167,7 +180,28 @@ def measure_image(path: Path) -> dict:
     return {
         'inkCoverage': round(ink / max(1, total), 4),
         'marginInk': round(margin_ink / max(1, margin_px), 4),
-        'fullBleed': modal_share < FULL_BLEED_MODAL or sum(paper) < 240,
+        # The sheet colour every other number on this page is relative to.
+        # Reported because when a measurement looks wrong this is the first
+        # thing to check, and reading it back out of the image by hand is what
+        # a reviewer had to do the last time one did.
+        'paper': list(paper),
+        'modalShare': round(modal_share, 4),
+        # A full-bleed page is one printed on a field rather than on paper — a
+        # cover, a closing page. `critique.pure.ts` exempts one from the trim
+        # rule and judges it on line count instead, so a page wrongly called
+        # full-bleed cannot be caught overflowing its box.
+        #
+        # This used to also fire when the modal colour covered less than 55% of
+        # the sheet, which was a proxy for "the field is not the paper" written
+        # before the corner tiebreak above existed. Now that the paper is
+        # established rather than guessed, the proxy only misfires: a Market
+        # Intelligence page of tinted callouts, correct paper and all, came out
+        # at 47% modal share and was exempted from the trim rule for it.
+        #
+        # What is left is the direct question. The design system's fields are
+        # obsidian; paper stock in it is ivory through near-white, and nothing
+        # sits between.
+        'fullBleed': sum(paper) < FIELD_CHANNEL_SUM,
     }
 
 

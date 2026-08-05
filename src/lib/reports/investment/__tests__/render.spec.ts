@@ -20,7 +20,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildInvestmentReport } from '../normalise.pure';
 import { DOCUMENT_NAME, kpiCells, renderInvestmentFromBrand } from '../render.pure';
-import { planChapters } from '../sections.pure';
+import { planChapters, PROSE_GROUPS } from '../sections.pure';
 import { SECTION_CHARTS } from '../payload.pure';
 import { buildReportBrandSnapshot } from '@/lib/reportDesign/snapshot.pure';
 import { contentsEntriesFor, REPORT_ARCHETYPES } from '@/lib/reportDesign/structure.pure';
@@ -260,6 +260,54 @@ describe('the format refuses rather than sending an empty document', () => {
       preparedOn: PREPARED_ON,
     });
     expect(out).toEqual({ ok: false, error: 'this report has no content to typeset' });
+  });
+});
+
+describe('a section is not a chapter', () => {
+  /**
+   * The finding this pins, from the format's first render: 36 numbered prose
+   * sections, one chapter each, `page-break-before: always` on every chapter,
+   * and a corpus section that runs to about two paragraphs. Forty-six sheets at
+   * 4.1% ink — a title low on the page, two paragraphs, half a page of nothing,
+   * thirty-six times. A natively designed page in this system measures 13.3% to
+   * 22.1%.
+   */
+  it('groups the 36 sections into four chapters', () => {
+    const { chapters } = planChapters(build(reportRow()));
+    const prose = chapters.filter((c) => c.kind === 'prose');
+    expect(prose.map((c) => c.title)).toEqual(PROSE_GROUPS.map((g) => g.title));
+  });
+
+  it('keeps every section, as a part of the chapter that carries it', () => {
+    const report = build(reportRow());
+    const { chapters } = planChapters(report);
+    const parts = chapters.flatMap((c) => c.parts);
+    expect(parts.map((p) => p.title)).toEqual(report.sections.map((s) => s.title));
+  });
+
+  it('puts each section under its own subhead, in order', () => {
+    const html = render().html;
+    const at = (title: string) => html.indexOf(`<h2>${title}</h2>`);
+    expect(at('Yield Calculations')).toBeGreaterThan(0);
+    expect(at('Annual Holding Costs')).toBeGreaterThan(at('Yield Calculations'));
+    expect(at('Loan Structure')).toBeGreaterThan(at('Annual Holding Costs'));
+  });
+
+  it('keeps a chart with the section that earned it, not at the end of the chapter', () => {
+    // `SECTION_CHARTS` attaches a chart to a section by number. Rendering a
+    // chapter's prose and then all of its charts would put the sensitivity
+    // tornado four subheads below the sensitivity analysis.
+    const html = render().html;
+    const tornado = html.indexOf('One variable at a time');
+    expect(tornado).toBeGreaterThan(0);
+    expect(tornado).toBeGreaterThan(html.indexOf('<h2>Sensitivity Analysis</h2>'));
+    expect(tornado).toBeLessThan(html.indexOf('<h2>Property Value Projections</h2>'));
+  });
+
+  it('claims a page count the render bears out', () => {
+    // 32 claimed against 29 actual, measured through WeasyPrint. Held loosely
+    // — the point is that it is not 46.
+    expect(render().pageBudget).toBeLessThan(40);
   });
 });
 

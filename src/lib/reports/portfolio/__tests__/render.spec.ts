@@ -79,6 +79,39 @@ const render = (p: ReturnType<typeof review>) =>
  * capacity, a review with scores and scenarios, and enough actions to push the
  * plan across a page break.
  */
+const HOLDING_STRENGTHS = [
+  'Rent has risen at each of the last four renewals.',
+  'Vacancy in the immediate catchment is under one per cent.',
+  'The lot is the only four-bedroom in the complex.',
+  'Land value has outrun the improved value three years running.',
+  'The tenant has renewed twice without an incentive.',
+  'A school catchment change lands inside the horizon.',
+  'Holding costs are the lowest in the portfolio per dollar of value.',
+];
+
+const HOLDING_CONCERNS = [
+  'Body corporate fees are above the precinct median.',
+  'Yield is below the portfolio average.',
+  'The roof is at the end of its documented life.',
+  'The loan reverts from interest-only in fourteen months.',
+  'Insurance has risen at each of the last three renewals.',
+];
+
+const HOLDING_VERDICTS = [
+  'Hold.',
+  'Hold, and review at the next lease expiry.',
+  'Hold; revisit if the fee rise carries a second year.',
+  'Hold, and bring the loan onto the same expiry as the others.',
+];
+
+const HOLDING_OUTLOOKS = [
+  'Rents in the catchment have risen for four consecutive quarters and vacancy is under 1%.',
+  'Stock of this shape turns over about twice a decade here, which supports the price rather than the yield.',
+  'The precinct has one approved development of scale and it is outside the immediate comparison set.',
+  'Days on market lengthened by nine over the year, which is a softening rather than a fall.',
+  'Rent and value have moved together here, which is unusual in this portfolio and worth watching.',
+];
+
 const FULL_ANALYSIS: Record<string, unknown> = {
   executiveSummary: {
     overallHealth: 'Good',
@@ -155,19 +188,22 @@ const FULL_ANALYSIS: Record<string, unknown> = {
       'Bring the two coastal insurance policies onto one renewal date.',
     ],
   },
+  // Ten holdings, ten different verdicts. Repeating one sentence across all ten
+  // put the same paragraph on six consecutive sheets and fired the critique
+  // rubric's only `high` rule five times on the fixture — which is to say the
+  // rule could not have caught a document that really did repeat itself.
   propertyRankings: Array.from({ length: 10 }, (_, i) => ({
     address: `${i + 1} Wattle Street, Example Bay, QLD 4000`,
     rank: i + 1,
     performanceRating: i < 3 ? 'Strong' : i < 7 ? 'Good' : 'Watch',
-    strengths: ['Rent has risen at each renewal.', 'Low vacancy in the immediate area.'],
-    concerns: i < 7 ? ['Body corporate fees are above the median.'] : ['Yield is below the portfolio average.'],
-    recommendation: i < 7 ? 'Hold.' : 'Hold, and review at the next lease expiry.',
+    strengths: [HOLDING_STRENGTHS[i % HOLDING_STRENGTHS.length], HOLDING_STRENGTHS[(i * 3 + 4) % HOLDING_STRENGTHS.length]],
+    concerns: [HOLDING_CONCERNS[i % HOLDING_CONCERNS.length]],
+    recommendation: HOLDING_VERDICTS[i % HOLDING_VERDICTS.length],
   })),
   propertyStrategicContext: Array.from({ length: 10 }, (_, i) => ({
     address: `${i + 1} Wattle Street, Example Bay, QLD 4000`,
     strategicRole: i < 3 ? 'Growth' : 'Yield',
-    individualOutlook:
-      'Rents in the catchment have risen for four consecutive quarters and the vacancy rate is under 1%.',
+    individualOutlook: HOLDING_OUTLOOKS[i % HOLDING_OUTLOOKS.length],
   })),
   projections: {
     years: 5,
@@ -230,8 +266,8 @@ const FULL_REVIEW: Record<string, unknown> = {
     address: `${i + 1} Wattle Street, Example Bay, QLD 4000`,
     overallScore: 80 - i * 3,
     classification: i < 3 ? 'Core' : i < 7 ? 'Satellite' : 'Review',
-    strengths: ['Consistent tenancy.', 'Rent above the suburb median.'],
-    concerns: ['Holding costs have risen faster than rent.'],
+    strengths: [HOLDING_STRENGTHS[(i * 2 + 1) % HOLDING_STRENGTHS.length]],
+    concerns: [HOLDING_CONCERNS[(i * 2 + 3) % HOLDING_CONCERNS.length]],
   })),
   scenarios: [
     {
