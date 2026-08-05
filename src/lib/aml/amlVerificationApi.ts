@@ -11,6 +11,32 @@ export interface IdentityCheck {
   provider_reference: string | null; method: string; status: IdvStatus;
   overall_score: number | null; result_payload: any; requested_at: string;
   completed_at: string | null; mc_job_id: string | null; mc_tokens_committed: number | null;
+  /** Present once the execution-mode migration is applied. */
+  execution_mode?: "live" | "simulation";
+  authoritative?: boolean;
+  environment?: string | null;
+}
+
+export type ProviderReadinessState =
+  | "ready_live" | "simulator_non_production" | "not_configured"
+  | "misconfigured" | "unavailable" | "unknown";
+
+export interface CapabilityReadiness {
+  capability: string;
+  configured_provider: string | null;
+  mode: "simulator" | "live";
+  adapter_wired: boolean;
+  secrets_present: Record<string, boolean>;
+  last_health: { at: string | null; status: string | null; message: string | null } | null;
+  state: ProviderReadinessState;
+}
+
+export interface ProviderReadiness {
+  environment: string;
+  simulator_blocked: boolean;
+  note: string;
+  idv: CapabilityReadiness;
+  screening: CapabilityReadiness;
 }
 
 export interface ScreeningCheck {
@@ -32,6 +58,7 @@ async function invoke<T = any>(payload: Record<string, unknown>): Promise<T> {
 }
 
 export const amlVerificationApi = {
+  providerReadiness: () => invoke<ProviderReadiness>({ op: "provider_readiness" }),
   initiateIdv: (case_id: string, method?: string, metadata?: Record<string, any>) =>
     invoke<{ identity_check: IdentityCheck; result: any }>({ op: "initiate_idv", case_id, method, metadata }),
   getIdv: (id: string) => invoke<{ identity_check: IdentityCheck; documents: any[] }>({ op: "get_idv", id }),
