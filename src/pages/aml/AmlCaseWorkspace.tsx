@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardList,
+  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardCheck, ClipboardList,
   FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, Radar,
   ScanSearch, Scale, User, Wallet, History,
 } from "lucide-react";
@@ -46,6 +46,10 @@ import {
 } from "@/lib/aml/amlMonitoringApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { VerificationSection } from "@/components/aml/VerificationSection";
+import { SubmissionReviewPanel } from "@/components/aml/SubmissionReviewPanel";
+import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificationHistoryPanel";
+import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
+import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import {
@@ -92,7 +96,7 @@ const GATE_LABELS: Record<string, string> = {
 
 type SectionKey =
   | "overview" | "identity" | "ownership"
-  | "counterparty" | "finance" | "documents"
+  | "counterparty" | "finance" | "documents" | "submission-review"
   | "risk" | "monitoring" | "requests" | "timeline";
 
 interface SectionDef {
@@ -117,6 +121,7 @@ const SECTION_GROUPS: Array<{ group: string; sections: SectionDef[] }> = [
       { key: "counterparty", label: "Purchase & Counterparty", icon: Handshake, visible: (a) => a.canInvestigate },
       { key: "finance", label: "Funding & Finance", icon: Wallet, visible: (a) => a.canInvestigate },
       { key: "documents", label: "Documents & Evidence", icon: FileText, visible: () => true },
+      { key: "submission-review", label: "Submission Review", icon: ClipboardCheck, visible: () => true },
     ],
   },
   {
@@ -384,12 +389,25 @@ export default function AmlCaseWorkspace() {
           )}
           {section === "identity" && (
             <div className="space-y-4">
-              {/* Self-hosted verification: per-party attempts, document
-                  sightings and audited biometric access. */}
+              {/* ONE canonical identity-verification surface: per-party
+                  attempts, processing state, document sightings and audited
+                  biometric access. The legacy identity_checks history lives
+                  in its own collapsed read-only panel below — there are no
+                  two competing primary actions. */}
               <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
-              <VerificationTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <PartyVerificationPanel caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <PartyScreeningPanel caseId={caseRow.id} canWrite={canWrite} canAdjudicate={access.isMlro || access.roles.has("reviewer")} onChanged={load} />
+              <LegacyVerificationHistoryPanel caseId={caseRow.id} />
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
             </div>
+          )}
+          {section === "submission-review" && (
+            <SubmissionReviewPanel
+              caseId={caseRow.id}
+              canWrite={canWrite}
+              canDecide={access.isMlro || access.roles.has("reviewer")}
+              onChanged={load}
+            />
           )}
           {section === "ownership" && <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />}
           {section === "counterparty" && canInvestigate && (
@@ -1755,7 +1773,7 @@ function ActionPanel({
   if (openRequests.length > 0) blockers.push(`${openRequests.length} client request${openRequests.length === 1 ? "" : "s"} awaiting a response.`);
 
   const nextAction =
-    stage === "client_submitted" ? { label: "Review the client submission", section: "documents" as SectionKey }
+    stage === "client_submitted" ? { label: "Review the client submission", section: "submission-review" as SectionKey }
     : stage === "decision_pending" ? { label: "Record the decision", section: "risk" as SectionKey }
     : stage === "enhanced_cdd" ? { label: "Work the additional-information items", section: "requests" as SectionKey }
     : stage === "client_in_progress" ? { label: "Check portal progress and chase requirements", section: "documents" as SectionKey }
