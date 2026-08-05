@@ -10774,6 +10774,7 @@ export type Database = {
       }
       commercial_industrial_calculation_runs: {
         Row: {
+          analysis: Json | null
           assessment_id: string
           binding_constraint: string | null
           created_at: string
@@ -10790,6 +10791,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          analysis?: Json | null
           assessment_id: string
           binding_constraint?: string | null
           created_at?: string
@@ -10806,6 +10808,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          analysis?: Json | null
           assessment_id?: string
           binding_constraint?: string | null
           created_at?: string
@@ -10872,6 +10875,98 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      commercial_industrial_report_renders: {
+        Row: {
+          analysis_note: string | null
+          assessment_id: string
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          calculation_run_id: string | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          has_analysis: boolean
+          id: string
+          page_count: number | null
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          user_id: string
+        }
+        Insert: {
+          analysis_note?: string | null
+          assessment_id: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          calculation_run_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_analysis?: boolean
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          user_id: string
+        }
+        Update: {
+          analysis_note?: string | null
+          assessment_id?: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          calculation_run_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_analysis?: boolean
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_report_renders_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_industrial_report_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_industrial_report_renders_calculation_run_id_fkey"
+            columns: ["calculation_run_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_calculation_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_industrial_report_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       commercial_leases: {
         Row: {
