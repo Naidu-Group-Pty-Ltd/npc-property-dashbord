@@ -144,7 +144,7 @@ describe("the partner export guard (§7.10)", () => {
       "arrangement_assessment_record", "suspicious_matter_material", "biometric_raw_capture",
     ]);
     expect(decision.ok).toBe(false);
-    if (!decision.ok) {
+    if (decision.ok === false) {
       expect(decision.blocked.map((b) => b.classification).sort()).toEqual(["P4", "P5", "P6"]);
     }
     expect(evaluatePartnerExport(["legal_hold_record"]).ok).toBe(false);
@@ -153,7 +153,7 @@ describe("the partner export guard (§7.10)", () => {
   it("blocks unknown codes — vocabulary cannot be invented to reach a record", () => {
     const decision = evaluatePartnerExport(["cases_table_dump"]);
     expect(decision.ok).toBe(false);
-    if (!decision.ok) expect(decision.blocked[0].classification).toBe("unknown");
+    if (decision.ok === false) expect(decision.blocked[0].classification).toBe("unknown");
   });
 });
 
