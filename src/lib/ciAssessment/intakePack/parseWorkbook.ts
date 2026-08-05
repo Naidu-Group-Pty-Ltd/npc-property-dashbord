@@ -20,6 +20,7 @@ import {
 } from './schema';
 import { decodeValue } from './values';
 import { INSTRUCTIONS_SHEET, PACK_MAGIC } from './workbook';
+import { SINGLE_ANSWER_COL } from './layout';
 import {
   emptyAssessmentPayload, hydrateAssessmentPayload,
   type AssessmentPayload, type FieldProvenance,
@@ -68,6 +69,9 @@ export interface ParsedPack {
 }
 
 const MAX_TABLE_ROWS = 250;
+
+/** Zero-based column holding the answer on a key/value sheet in the current format. */
+const SINGLE_ANSWER_INDEX = SINGLE_ANSWER_COL - 1;
 
 // ---------------------------------------------------------------------------
 // Heading fallback matching
@@ -191,17 +195,24 @@ function parseSingleSheet(
   const rows = sheetRows(workbook, sheetName);
   const seenFields = new Set<string>();
   rows.forEach((row) => {
-    const key = String(row?.[0] ?? '').trim();
     let field: PackField | undefined;
     let raw: unknown;
 
-    if (key && ALL_PACK_FIELDS.has(key)) {
-      const entry = ALL_PACK_FIELDS.get(key)!;
-      // Only accept keys that belong to this sheet, so a stray paste of another
-      // sheet's rows cannot inject values under the wrong section.
-      if (entry.section.id !== section.id) return;
-      field = entry.field;
-      raw = row?.[2];
+    // Find the field key wherever it sits. It moved: packs up to format 2 put
+    // it in column A with the answer in C, and from format 3 it is a hidden
+    // column D with the answer in B. Locating it by content rather than by
+    // position means both import, and a future move costs nothing.
+    const keyColumn = (row ?? []).findIndex((cell) => {
+      const candidate = String(cell ?? '').trim();
+      return Boolean(candidate) && ALL_PACK_FIELDS.get(candidate)?.section.id === section.id;
+    });
+
+    if (keyColumn !== -1) {
+      field = ALL_PACK_FIELDS.get(String(row?.[keyColumn]).trim())!.field;
+      // Column A holding the key is the old layout, where the answer sat in C.
+      // Anywhere else is the current one, where the question leads and the
+      // answer is beside it.
+      raw = keyColumn === 0 ? row?.[2] : row?.[SINGLE_ANSWER_INDEX];
     } else {
       // Fallback: the key column is gone, but the question or label wording
       // survived. Match the first two cells against this section's headings
