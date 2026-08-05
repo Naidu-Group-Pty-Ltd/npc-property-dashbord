@@ -97,6 +97,20 @@ tokens. Edit the voice, then run `npm run templates:library:seed`. Never hand-ed
 the generated migration. See
 [`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
 
+## Mobile (Flutter) translation
+The four portals are being translated into one cross-platform Flutter app.
+[`mobile/plan.md`](./mobile/plan.md) is the master plan — architecture
+decisions, the server-side prerequisites in this repo (bearer auth for the
+cookie portals, a native Turnstile replacement, the missing account-deletion
+flow), and the store verification rule catalog for the App Store, Google
+Play **and Huawei AppGallery** (HMS devices have no Google services — the
+push/attestation abstractions are three-platform by rule). Per-portal plans
+live in `mobile/portals/*/plan.md`; listing/launch practice for all three
+stores is `mobile/store-listing/plan.md`. Two generated artefacts feed the
+Flutter workspace and must never be hand-edited: `mobile/design-tokens.json`
+(`npm run mobile:tokens`) and `mobile/api-surface.json`
+(`npm run mobile:api`); both have `:check` drift modes.
+
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.
 2. Build shadcn-first; use **@21st-dev/magic** for net-new components, then adapt to
