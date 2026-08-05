@@ -33,25 +33,42 @@ stage boundary and before any long-running suite.
 - [x] Stage 3 — integration matrix (imported; updated as stages complete)
 - [x] Stage 4/5 — canonical model + migrations 20260831000000/000100
       (imported; schema verified against production before they were written)
-- [ ] Stage 6 — attempt accounting in portal ops (uses
-      aml.verification_attempts_used(); fallback for unmigrated schema)
-- [ ] Stage 7 — transactional portal submission (idempotency, readiness gate)
-- [ ] Stage 8 — verification outbox consumer (recovered file under review)
-- [ ] Stage 9 — canonical provider-processing op (worker + staff retry share)
-- [ ] Stage 10 — self-hosted service audit/config docs
-- [ ] Stage 11 — client-safe readiness in portal
-- [ ] Stage 12/13/14 — actionable requests, notifications, response contract
-- [ ] Stage 15 — submission review workspace
-- [ ] Stage 16 — document rejection loop
-- [ ] Stage 17 — IDV evidence references
-- [ ] Stage 18/19 — party reconciliation + verification links
-- [ ] Stage 20 — party-scoped screening
-- [ ] Stage 21 — canonical risk inputs
-- [ ] Stage 22 — server-derived journey
-- [ ] Stage 23 — unified staff surface
-- [ ] Stage 24–26 — state consistency, security proofs, retention links
-- [ ] Stage 27 — automated tests
-- [ ] Stage 28 — database rehearsals (A fresh-ledger, B production-shaped)
+- [x] Stage 6 — attempt accounting (RPC-first with legacy fallback; commit 94430b470)
+- [x] Stage 7 — transactional portal submission (readiness gate, in-flight
+      dedupe, per-capture idempotency, trigger-emitted event; 94430b470)
+- [x] Stage 8 — verification outbox consumer wired into the platform worker
+      (claim guards, eligibility, technical/unusable/authoritative
+      classification; 843f05aab)
+- [x] Stage 9 — staff technical retry (retry_verification_processing;
+      57c8be6a1); runProviderForCheck is the shared processing body
+- [x] Stage 11 — client-safe readiness (available / temporarily_unavailable /
+      manual_verification_required; selfie collection gated; 94430b470)
+- [x] Stage 12/13/14 — closed action vocabulary + safe projection,
+      transactional request notifications (trigger), v1 response contract
+      (94430b470 + migration 20260831000100)
+- [x] Stage 21 — canonical risk inputs + staleness (907fae425)
+- [x] Stage 22 — server-derived journey in overview (57c8be6a1)
+- [x] Stage 27 — 24 integration contracts added; AML glob 703/703; registry
+      PASS; WP-14 ratchet unchanged (f0dffc93b)
+- [x] Stage 28B — production-shaped rehearsal: three migrations applied,
+      trigger emits identifier-only events once, duplicate capture raises
+      23505 (portal maps to already_processing), attempts fn counts only
+      authoritative outcomes with case isolation, request notification +
+      event transactional, action-code CHECK enforced, rollback per headers
+      + reapply clean; DB destroyed
+- [x] Stage 28A — fresh-ledger rehearsal: NOT replayable (documented
+      pre-existing failure at parent-ledger row 90/~600; platform issue)
+- [ ] Stage 10 — self-hosted service deployment (infrastructure + owner)
+- [ ] Stage 15 — submission review workspace (staff UI)
+- [ ] Stage 16 — document rejection loop (staff UI + portal replace)
+- [ ] Stage 17 — IDV evidence references (retention link table)
+- [ ] Stage 18/19 UI — reconciliation work-items + link management surfaces
+      (party_verification_links table shipped in 20260831000000)
+- [ ] Stage 20 — party-scoped screening orchestration
+- [ ] Stage 23 — unified staff verification surface (merge
+      VerificationSection/VerificationTab + collapsed legacy history)
+- [ ] Stage 24–26 — full transition matrix doc, security proof suite pass,
+      retention classes for new tables
 - [ ] Stage 29/30 — staging + browser E2E (blockers recorded below)
 - [ ] Stage 31 — monitoring/runbooks
 - [ ] Stages 32–36 — commits/PR/gates/release (release expected BLOCKED)
@@ -69,5 +86,8 @@ stage boundary and before any long-running suite.
 
 ## Next action
 
-Wire `verificationConsumer.ts` into the worker dispatch, deno-check both,
-commit as `feat(aml): add idempotent verification worker`.
+Build the remaining staff surfaces (Stage 15 submission review, Stage 23
+unified verification UI, Stage 16 rejection loop), Stage 17 evidence
+references and Stage 20 screening orchestration; then staging deploy +
+browser E2E once a staging frontend and provider deployment exist
+(blockers above). Release remains BLOCKED pending approvals.
