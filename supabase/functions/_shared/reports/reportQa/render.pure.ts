@@ -213,7 +213,15 @@ function turnBody(turn: ReportQaDocument['turns'][number], idPrefix: string): {
       lines: 6,
     };
   }
-  const parsed = renderMarkdown(turn.answer, { idPrefix: `${idPrefix}t${turn.index}`, baseHeadingLevel: 3 });
+  // `baseHeadingLevel: 2`, not 3.
+  //
+  // Three assumed the question above the answer was a heading. It is not — it
+  // is a callout, `Asked`, and always has been. So an answer's shallowest
+  // heading landed at `h3` directly under the chapter's `h1`, with nothing at
+  // level 2 anywhere in the document, and PDF/UA 7.4.2 failed on five checks
+  // for a skipped level. The visual difference is a subhead set at the size
+  // the design system drew a subhead at.
+  const parsed = renderMarkdown(turn.answer, { idPrefix: `${idPrefix}t${turn.index}`, baseHeadingLevel: 2 });
   return { html: asked + provenance(turn) + parsed.html, lines: parsed.lines + 6 };
 }
 

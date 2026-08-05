@@ -107,7 +107,21 @@ export function formatReportDate(iso: string): string {
 // ── Small helpers ───────────────────────────────────────────────────────────
 
 const p = (t: string) => (t ? `<p>${escapeHtml(t)}</p>` : '');
-const h3 = (t: string) => `<h3>${escapeHtml(t)}</h3>`;
+/**
+ * A subhead inside a chapter.
+ *
+ * `h2`, not `h3`. Six of these formats grew their own `const h3` helper for
+ * "a subhead" while the design system's actual subhead — `h2` at 17pt, whose
+ * rule in `css.pure.ts` carries a paragraph explaining that it is a different
+ * object from a chapter title — went unused in every one of them. A chapter
+ * title is an `h1`, so an `h3` under it skips a level, and PDF/UA 7.4.2 fails
+ * on exactly that: "heading level 2 is skipped in a descending sequence".
+ *
+ * Seven of the ten documents failed the same rule and no other. Named
+ * `subhead` rather than `h2` so the next person reaches for the level the
+ * design system defines instead of inventing one.
+ */
+const subhead = (text: string) => `<h2>${escapeHtml(text)}</h2>`;
 
 function renderList(items: readonly string[]): string {
   if (!items.length) return '';
@@ -295,7 +309,7 @@ function rankingSection(cf: PropertyComparison): string {
   return cf.ranked
     .filter((r) => r.strengths.length || r.concerns.length || r.bestSuitedFor || r.risk)
     .map((r) => {
-      const heading = h3(`${r.rank !== null ? `${r.rank}. ` : ''}${r.property.address}`);
+      const heading = subhead(`${r.rank !== null ? `${r.rank}. ` : ''}${r.property.address}`);
       const score = r.score
         ? p(`Scored ${scoreText(r)}${r.risk?.level ? `, with risk assessed as ${r.risk.level.toLowerCase()}` : ''}.`)
         : '';
@@ -330,7 +344,7 @@ function renderAxisGroup(group: AxisGroup): string {
 
   const detail = group.winners
     .filter((w) => w.reason)
-    .map((w) => h3(w.label) + p(w.reason))
+    .map((w) => subhead(w.label) + p(w.reason))
     .join('');
 
   return renderDataTable(cols, rows, { caption: 'Who the analysis named on each' })
@@ -342,7 +356,7 @@ function riskSection(cf: PropertyComparison): string {
   const axes = axisSection(cf, 'risk');
   const perProperty = cf.risks
     .filter((r) => r.specificRisks.length || r.level)
-    .map((r) => h3(r.property.address)
+    .map((r) => subhead(r.property.address)
       + (r.level ? p(`Assessed ${r.level}.`) : '')
       + renderList(r.specificRisks))
     .join('');
@@ -365,7 +379,7 @@ function flagsSection(cf: PropertyComparison): string {
 /** Who each property suits — the section the legacy has never rendered. */
 function matchesSection(cf: PropertyComparison): string {
   return cf.matches
-    .map((m) => h3(m.property ? m.property.address : 'Across the comparison')
+    .map((m) => subhead(m.property ? m.property.address : 'Across the comparison')
       + (m.investorTypes.length ? p(m.investorTypes.join(' · ')) : '')
       + p(m.reasoning))
     .join('');
@@ -374,7 +388,7 @@ function matchesSection(cf: PropertyComparison): string {
 /** What sets each apart. Salvaged records only — see `payload.pure.ts`. */
 function advantagesSection(cf: PropertyComparison): string {
   return cf.advantages
-    .map((a) => h3(a.property ? a.property.address : 'Across the comparison')
+    .map((a) => subhead(a.property ? a.property.address : 'Across the comparison')
       + renderList(a.advantages))
     .join('');
 }
@@ -396,7 +410,7 @@ function timingSection(cf: PropertyComparison): string {
       { caption: 'How long the analysis suggests holding each' },
     )
     + t.holdingPeriods.filter((h) => h.reason)
-      .map((h) => h3(h.property ? h.property.shortAddress : 'Across the comparison') + p(h.reason))
+      .map((h) => subhead(h.property ? h.property.shortAddress : 'Across the comparison') + p(h.reason))
       .join('')
     : '';
   return namedBlock('Buy first', t.buyFirst) + periods;
@@ -408,15 +422,15 @@ function planSection(cf: PropertyComparison): string {
   if (!r) return '';
 
   const runners = r.runners.length
-    ? h3('Runners-up')
+    ? subhead('Runners-up')
       + r.runners.map((n) => p(`${n.property ? `${n.property.address}. ` : ''}${n.reason}`)).join('')
     : '';
   const avoid = r.avoid.length
-    ? h3('What to avoid')
+    ? subhead('What to avoid')
       + r.avoid.map((n) => p(`${n.property ? `${n.property.address}. ` : ''}${n.reason}`)).join('')
     : '';
   const scenarios = r.alternativeScenarios.length
-    ? h3('If the brief were different')
+    ? subhead('If the brief were different')
       + r.alternativeScenarios
         .map((s) => renderSidenote(
           s.scenario || 'Another way to read it',

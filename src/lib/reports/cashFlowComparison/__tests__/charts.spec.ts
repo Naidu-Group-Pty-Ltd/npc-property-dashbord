@@ -9,11 +9,19 @@ import { describe, expect, it } from 'vitest';
 
 import { buildComparison } from '../normalise.pure';
 import {
-  categoryWinsChart,
-  cumulativeCashFlowChart,
+  categoryWinsChart as rawCategoryWinsChart,
+  cumulativeCashFlowChart as rawCumulativeCashFlowChart,
   MIN_DONUT_SEGMENTS,
-  rankedReturnChart,
+  rankedReturnChart as rawRankedReturnChart,
 } from '../charts.pure';
+import { decodedChart } from '@/lib/reportDesign/__tests__/chartSvg';
+
+// The drawing is base64 inside an `img`, because that is the only form the
+// engine tags as a figure with alternative text — see `chartFigure`. These
+// assertions are about the SVG, and the SVG is one decode away.
+const categoryWinsChart = decodedChart(rawCategoryWinsChart);
+const cumulativeCashFlowChart = decodedChart(rawCumulativeCashFlowChart);
+const rankedReturnChart = decodedChart(rawRankedReturnChart);
 import { buildReportBrandSnapshot } from '@/lib/reportDesign/snapshot.pure';
 import { resolveSnapshotBrand } from '@/lib/reportDesign/documentBrand.pure';
 

@@ -22,6 +22,7 @@ import { buildInvestmentReport } from '../normalise.pure';
 import { DOCUMENT_NAME, kpiCells, renderInvestmentFromBrand } from '../render.pure';
 import { planChapters, PROSE_GROUPS } from '../sections.pure';
 import { SECTION_CHARTS } from '../payload.pure';
+import { withDecodedCharts } from '@/lib/reportDesign/__tests__/chartSvg';
 import { buildReportBrandSnapshot } from '@/lib/reportDesign/snapshot.pure';
 import { contentsEntriesFor, REPORT_ARCHETYPES } from '@/lib/reportDesign/structure.pure';
 import { assertSafeRenderResources } from '../../../../../supabase/functions/_shared/renderResourcePolicy.pure';
@@ -131,9 +132,11 @@ describe('a chart is drawn only when there is data behind it', () => {
     // the moderate case throws away the range, which is the point of a
     // projection — see `normalise.pure.ts`.
     expect(PROJECTIONS.conservative.length).toBe(10);
-    const out = render();
+    // Through the decoder: the scenario names are drawn inside the chart, and
+    // the chart is base64 in an `img` so the engine tags it as a figure.
+    const drawn = withDecodedCharts(render().html);
     for (const label of ['Conservative', 'Moderate', 'Optimistic']) {
-      expect(out.html).toContain(label);
+      expect(drawn).toContain(label);
     }
   });
 });
@@ -297,7 +300,7 @@ describe('a section is not a chapter', () => {
     // `SECTION_CHARTS` attaches a chart to a section by number. Rendering a
     // chapter's prose and then all of its charts would put the sensitivity
     // tornado four subheads below the sensitivity analysis.
-    const html = render().html;
+    const html = withDecodedCharts(render().html);
     const tornado = html.indexOf('One variable at a time');
     expect(tornado).toBeGreaterThan(0);
     expect(tornado).toBeGreaterThan(html.indexOf('<h2>Sensitivity Analysis</h2>'));

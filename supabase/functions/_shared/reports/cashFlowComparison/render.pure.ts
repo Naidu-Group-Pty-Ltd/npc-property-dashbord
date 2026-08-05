@@ -19,7 +19,7 @@
  * ## Every model-authored string is escaped, and never as HTML
  *
  * `renderCallout`, `renderDecisionBox` and `renderSidenote` all take **raw
- * HTML** for their bodies. Model text reaches them only through `p()`, `h3()` or
+ * HTML** for their bodies. Model text reaches them only through `p()`, `subhead()` or
  * `renderList()` below, each of which escapes. Passing a model string straight
  * into a `bodyHtml` parameter is the one mistake in this file that would not
  * show up on a page until it did.
@@ -104,7 +104,21 @@ export function formatPreparedOn(iso: string): string {
 // ── Escaping helpers ────────────────────────────────────────────────────────
 
 const p = (t: string) => (t ? `<p>${escapeHtml(t)}</p>` : '');
-const h3 = (t: string) => `<h3>${escapeHtml(t)}</h3>`;
+/**
+ * A subhead inside a chapter.
+ *
+ * `h2`, not `h3`. Six of these formats grew their own `const h3` helper for
+ * "a subhead" while the design system's actual subhead — `h2` at 17pt, whose
+ * rule in `css.pure.ts` carries a paragraph explaining that it is a different
+ * object from a chapter title — went unused in every one of them. A chapter
+ * title is an `h1`, so an `h3` under it skips a level, and PDF/UA 7.4.2 fails
+ * on exactly that: "heading level 2 is skipped in a descending sequence".
+ *
+ * Seven of the ten documents failed the same rule and no other. Named
+ * `subhead` rather than `h2` so the next person reaches for the level the
+ * design system defines instead of inventing one.
+ */
+const subhead = (text: string) => `<h2>${escapeHtml(text)}</h2>`;
 
 function renderList(items: readonly string[]): string {
   const kept = items.filter(Boolean);
@@ -253,14 +267,14 @@ function verdictSection(cf: CashFlowComparison, palette: ResolvedReportPalette):
   );
 
   const summary = cf.analysis?.summary
-    ? h3('What the analysis said') + p(cf.analysis.summary)
+    ? subhead('What the analysis said') + p(cf.analysis.summary)
     : '';
 
   return renderLede(cf.narrative)
     + renderKpiStrip(kpis)
     + rankTable
     + rankedReturnChart(cf, palette)
-    + h3('Who leads on what')
+    + subhead('Who leads on what')
     + winsTable
     + categoryWinsChart(cf, palette)
     + summary
@@ -465,7 +479,7 @@ function measuresSection(cf: CashFlowComparison, palette: ResolvedReportPalette)
 
   return returns
     + position
-    + h3('When each property stops costing money')
+    + subhead('When each property stops costing money')
     + timing
     + renderCallout(
       'neutral',
@@ -494,7 +508,7 @@ function analysisSection(cf: CashFlowComparison): string {
   if (!a) return '';
 
   const trajectory = a.trajectory
-    ? h3('Cash flow')
+    ? subhead('Cash flow')
       + note('Reaches positive cash flow first', a.trajectory.fastestPositive)
       + note('Strongest growth in cash flow', a.trajectory.strongestGrowth)
       + (a.trajectory.concerns.length
@@ -507,7 +521,7 @@ function analysisSection(cf: CashFlowComparison): string {
     : '';
 
   const growth = a.capitalGrowth
-    ? h3('Capital growth')
+    ? subhead('Capital growth')
       + note('Strongest equity position', a.capitalGrowth.strongestEquity)
       + note('Best wealth builder', a.capitalGrowth.wealthBuilder)
       + (a.capitalGrowth.endingValues.length
@@ -529,7 +543,7 @@ function analysisSection(cf: CashFlowComparison): string {
     : '';
 
   const yields = a.yields
-    ? h3('Yield and return')
+    ? subhead('Yield and return')
       + note('Best gross yield', a.yields.bestGross)
       + note('Best net yield', a.yields.bestNet)
       + note('Best return over the term', a.yields.bestRoi)
@@ -577,7 +591,7 @@ function eachPropertySection(cf: CashFlowComparison): string {
           + 'attached to a column in the tables above.'),
       );
 
-    return h3(heading)
+    return subhead(heading)
       + unmatched
       + score
       + p(r.verdict)
@@ -594,7 +608,7 @@ function suitsSection(cf: CashFlowComparison): string {
   return p(`This comparison was run for a ${cf.meta.investorProfileLabel.toLowerCase()}. `
     + 'The analysis was asked what it would recommend to each of the four profiles, '
     + 'and its answers are below.')
-    + matches.map((m) => h3(m.label) + p(m.note.reason || m.note.detail)).join('')
+    + matches.map((m) => subhead(m.label) + p(m.note.reason || m.note.detail)).join('')
     + renderSidenote(
       'Why all four are printed',
       p('The profile a comparison is run under changes what the analysis recommends, '
@@ -629,7 +643,7 @@ function riskSection(cf: CashFlowComparison): string {
     : '';
 
   const recommendation = rec
-    ? h3('The recommendation')
+    ? subhead('The recommendation')
       + note('Best overall', rec.best)
       + (rec.avoid.length
         ? renderCallout('caution', 'Would avoid', renderList(rec.avoid.map((x) => x.reason || x.detail)))
@@ -647,7 +661,7 @@ function basisSection(cf: CashFlowComparison): string {
   const perProperty = cf.properties.map((x) => {
     const rows = x.projection.assumptions.map((a) => ({ item: a.label, value: a.value }));
     if (!rows.length) return '';
-    return h3(x.address)
+    return subhead(x.address)
       + renderDataTable(
         [
           { key: 'item', label: 'Assumption', align: 'left' },

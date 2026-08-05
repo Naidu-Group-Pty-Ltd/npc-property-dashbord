@@ -8,11 +8,17 @@ import { describe, expect, it } from 'vitest';
 
 import { buildClientDetails } from '../normalise.pure';
 import {
-  expenseCompositionChart,
-  incomeAgainstCommitmentsChart,
+  expenseCompositionChart as rawExpenseCompositionChart,
+  incomeAgainstCommitmentsChart as rawIncomeAgainstCommitmentsChart,
   MIN_DONUT_SEGMENTS,
-  valueAgainstDebtChart,
+  valueAgainstDebtChart as rawValueAgainstDebtChart,
 } from '../charts.pure';
+import { decodedChart } from '@/lib/reportDesign/__tests__/chartSvg';
+
+// See the note in the sibling cash-flow-comparison spec.
+const expenseCompositionChart = decodedChart(rawExpenseCompositionChart);
+const incomeAgainstCommitmentsChart = decodedChart(rawIncomeAgainstCommitmentsChart);
+const valueAgainstDebtChart = decodedChart(rawValueAgainstDebtChart);
 import { buildReportBrandSnapshot } from '@/lib/reportDesign/snapshot.pure';
 import { resolveSnapshotBrand } from '@/lib/reportDesign/documentBrand.pure';
 

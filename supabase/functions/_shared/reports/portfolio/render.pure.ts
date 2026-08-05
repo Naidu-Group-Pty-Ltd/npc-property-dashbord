@@ -110,7 +110,21 @@ export function formatReportDate(iso: string): string {
 // ── Small helpers ───────────────────────────────────────────────────────────
 
 const p = (t: string) => (t ? `<p>${escapeHtml(t)}</p>` : '');
-const h3 = (t: string) => `<h3>${escapeHtml(t)}</h3>`;
+/**
+ * A subhead inside a chapter.
+ *
+ * `h2`, not `h3`. Six of these formats grew their own `const h3` helper for
+ * "a subhead" while the design system's actual subhead — `h2` at 17pt, whose
+ * rule in `css.pure.ts` carries a paragraph explaining that it is a different
+ * object from a chapter title — went unused in every one of them. A chapter
+ * title is an `h1`, so an `h3` under it skips a level, and PDF/UA 7.4.2 fails
+ * on exactly that: "heading level 2 is skipped in a descending sequence".
+ *
+ * Seven of the ten documents failed the same rule and no other. Named
+ * `subhead` rather than `h2` so the next person reaches for the level the
+ * design system defines instead of inventing one.
+ */
+const subhead = (text: string) => `<h2>${escapeHtml(text)}</h2>`;
 
 function renderList(items: readonly string[]): string {
   if (!items.length) return '';
@@ -143,12 +157,12 @@ function renderNarrative(b: NarrativeBlock | null): string {
       short.map((f) => ({ item: f.label, value: f.value })),
     )
     : '';
-  const expanded = long.map((f) => h3(f.label) + p(f.value)).join('');
+  const expanded = long.map((f) => subhead(f.label) + p(f.value)).join('');
 
   // Each group under its own heading. Concatenated, a risk section prints its
   // risks and the answers to them as one undifferentiated list, and a growth
   // section runs four different questions together.
-  const bullets = b.bullets.map((g) => h3(g.label) + renderList(g.items)).join('');
+  const bullets = b.bullets.map((g) => subhead(g.label) + renderList(g.items)).join('');
 
   return prose + table + expanded + bullets;
 }
@@ -333,7 +347,7 @@ function performanceSection(cf: PortfolioReview, palette: ResolvedReportPalette)
   const detail = detailed
     .filter((v) => v.strengths.length || v.concerns.length || v.recommendation
       || v.strategicRole || v.review)
-    .map((v) => h3(v.address)
+    .map((v) => subhead(v.address)
       + (v.strategicRole ? p(v.strategicRole) : '')
       + (v.strengths.length ? renderSidenote('Working', renderList(v.strengths)) : '')
       + (v.concerns.length ? renderSidenote('Watch', renderList(v.concerns)) : '')
@@ -426,7 +440,7 @@ function outlookSection(cf: PortfolioReview): string {
   ];
 
   return market
-    + h3(`If the assumptions hold — ${formatMeasure(pr.years)}`)
+    + subhead(`If the assumptions hold — ${formatMeasure(pr.years)}`)
     + (pr.summary ? p(pr.summary) : '')
     + renderDataTable(
       [{ key: 'item', label: 'Projected', align: 'left' }, { key: 'value', label: 'Amount', align: 'right' }],
@@ -468,7 +482,7 @@ function planSection(cf: PortfolioReview): string {
   // inside it.
   const detail = cf.actions
     .filter((a) => a.detail || a.steps.length)
-    .map((a) => h3(a.title) + p(a.detail) + renderList(a.steps))
+    .map((a) => subhead(a.title) + p(a.detail) + renderList(a.steps))
     .join('');
 
   return growth

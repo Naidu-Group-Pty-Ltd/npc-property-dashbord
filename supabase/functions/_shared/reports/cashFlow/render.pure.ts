@@ -79,7 +79,21 @@ export function formatPreparedOn(iso: string): string {
 // ── Section renderers ───────────────────────────────────────────────────────
 
 const p = (t: string) => (t ? `<p>${escapeHtml(t)}</p>` : '');
-const h3 = (t: string) => `<h3>${escapeHtml(t)}</h3>`;
+/**
+ * A subhead inside a chapter.
+ *
+ * `h2`, not `h3`. Six of these formats grew their own `const h3` helper for
+ * "a subhead" while the design system's actual subhead — `h2` at 17pt, whose
+ * rule in `css.pure.ts` carries a paragraph explaining that it is a different
+ * object from a chapter title — went unused in every one of them. A chapter
+ * title is an `h1`, so an `h3` under it skips a level, and PDF/UA 7.4.2 fails
+ * on exactly that: "heading level 2 is skipped in a descending sequence".
+ *
+ * Seven of the ten documents failed the same rule and no other. Named
+ * `subhead` rather than `h2` so the next person reaches for the level the
+ * design system defines instead of inventing one.
+ */
+const subhead = (text: string) => `<h2>${escapeHtml(text)}</h2>`;
 
 function renderList(items: readonly string[]): string {
   if (!items.length) return '';
@@ -151,7 +165,7 @@ function positionSection(cf: CashFlowProjection): string {
       { caption: 'The purchase' },
     )
     + costs
-    + h3('Year one, line by line')
+    + subhead('Year one, line by line')
     + renderDataTable(
       [{ key: 'item', label: 'Line', align: 'left' }, { key: 'value', label: `Amount ${perYear}`, align: 'right' }],
       yearOne,

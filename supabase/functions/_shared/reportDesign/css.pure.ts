@@ -1278,7 +1278,11 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
   /* The SVG carries its own viewBox and scales to the measure; the width here
      is what fixes the printed size, and therefore what the point sizes in
      charts.pure.ts are computed against. */
-  .chart-figure svg { display: block; width: 100%; height: auto; }
+  /* A chart is an img carrying a data-URI SVG, so that the engine tags it as a
+     figure with alternative text — see chartFigure in charts.pure.ts. The
+     inline svg case remains for a figure with nothing to describe it by. */
+  .chart-figure svg,
+  .chart-figure .chart-img { display: block; width: 100%; height: auto; }
   .chart-figure figcaption {
     margin-top: 6pt;
     font-family: ${PRINT_STACK.mono};
