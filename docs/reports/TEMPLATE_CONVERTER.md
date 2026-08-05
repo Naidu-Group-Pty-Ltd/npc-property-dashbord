@@ -463,13 +463,18 @@ band is not a header and there is nothing for a screen reader or a tagged PDF to
 announce. That is right, and `display: table-header-group` is the only
 per-page-repeating box the sheet has, so the table lost its only continuation
 marker. It now carries a `caption` naming the chapter it sits in — **at most one
-per chapter, and never on a table a heading already stands over.** The first
-version captioned every headless table, so a chapter with two printed the chapter
-title twice, the second time directly under a subhead that had just said
-something else: `Capacity Breakdown` (34pt title), the table, `Additional
+per chapter, and never on a table a heading already stands over — including the
+chapter's own title, when the table is the first thing in the body.** Two rounds
+of reading pages to get that right. The first version captioned every headless
+table, so a chapter with two printed the chapter title twice, the second time
+directly under a subhead that had just said something else: `Capacity Breakdown` (34pt title), the table, `Additional
 Assumptions` (17pt subhead), then `CAPACITY BREAKDOWN` again. Two competing
 labels twelve points apart, and the caption was the wrong one — worse than the
-unlabelled table it replaced. **The limit is
+unlabelled table it replaced. The second version tested the *preceding* block,
+which excluded the one arrangement where the echo is guaranteed: a table opening
+the chapter body has no preceding block, and the chapter's own 34pt title
+standing over it. Both conversions then printed that stutter on their densest
+page. An empty block list counts as named. **The limit is
 stated rather than papered over**: a caption renders once, at the start. A true
 per-page "(continued)" would mean synthesising header labels the source never had
 — inventing text on a client's document to solve a layout problem.

@@ -1035,8 +1035,17 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     // So: a heading already standing over the table is the better label and the
     // caption is suppressed, and after the first one the chapter title has been
     // said and repeating it adds nothing.
+    //
+    // An empty `blocks` counts as named, and that is the case worth spelling
+    // out. It means the table is the first thing in the chapter body — so the
+    // chapter's own 34pt title is standing directly over it, and the caption is
+    // *that same title* (`converted/render.pure.ts` passes `chapter.title`).
+    // The first version of this guard tested `blocks.length > 0`, which excluded
+    // exactly the one arrangement where the caption is guaranteed to be a
+    // verbatim echo — and that is what both conversions then printed on their
+    // densest page.
     const headless = !cols.some((c) => c.label);
-    const named = blocks.length > 0 && blocks[blocks.length - 1].kind === 'heading';
+    const named = blocks.length === 0 || blocks[blocks.length - 1].kind === 'heading';
     const wantsCaption = headless && headlessCaption && !named && !headlessCaptionUsed;
     if (wantsCaption) headlessCaptionUsed = true;
     const table = renderDataTable(cols, rows, {

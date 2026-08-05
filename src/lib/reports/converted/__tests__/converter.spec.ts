@@ -358,29 +358,62 @@ describe('the converted document', () => {
     );
   });
 
-  it('titles a headerless table with the chapter it sits in', () => {
-    // A GFM table whose header cells are all blank gets no `thead` — right,
-    // and it costs the table the only per-page-repeating box the sheet has, so
-    // twelve rows of a key/value table landed on a fresh sheet identified by
-    // nothing but the 8.5pt running head. A caption is the honest half: it
-    // titles the table where it starts. It does not repeat, and synthesising
-    // header labels the source never had would be inventing text.
-    const headless = extractStructure([
-      '# Assessment',
-      '## Existing Liabilities\n\n| | |\n|---|---|\n| Vehicle | $18,400 |\n| Card | $4,000 |',
-    ].join('\n\n'));
-    const { html } = renderConvertedDocument({
-      structure: headless,
-      plan: proposeBinding('borrowing-capacity', headless),
+  /** A converted document from one section of Markdown, for the caption cases. */
+  const renderSection = (markdown: string) => {
+    const s = extractStructure(`# Assessment\n\n${markdown}`);
+    return renderConvertedDocument({
+      structure: s,
+      plan: proposeBinding('borrowing-capacity', s),
       palette,
       company: COMPANY,
       masthead: 'Harbour & Vale',
       systemName: 'Harbour Editorial',
       preparedOn: '2026-08-04T00:00:00.000Z',
-    });
+    }).html;
+  };
+
+  it('titles a headerless table that nothing else names', () => {
+    // A GFM table whose header cells are all blank gets no `thead` — right, and
+    // it costs the table the only per-page-repeating box the sheet has, so
+    // twelve rows of a key/value table landed on a fresh sheet identified by
+    // nothing but the 8.5pt running head. A caption is the honest half: it
+    // titles the table where it starts. It does not repeat, and synthesising
+    // header labels the source never had would be inventing text.
+    const html = renderSection(
+      '## Existing Liabilities\n\nWhat is owed, and what it costs to hold.\n\n'
+      + '| | |\n|---|---|\n| Vehicle | $18,400 |\n| Card | $4,000 |',
+    );
     expect(html).toContain('<caption>Existing Liabilities</caption>');
-    // And a table that says what it is already does not get one.
-    expect(render().html).not.toMatch(/<caption>[^<]*<\/caption>[\s\S]*?<thead>/);
+  });
+
+  it('says nothing when the chapter title is already standing over the table', () => {
+    // The caption *is* the chapter title, so a table that opens the chapter body
+    // has that title 34pt above it — and both real conversions printed the
+    // stutter on their densest page. The first version of the guard tested the
+    // preceding block and so excluded the one arrangement where the echo is
+    // guaranteed, because there is no preceding block.
+    const html = renderSection(
+      '## Existing Liabilities\n\n| | |\n|---|---|\n| Vehicle | $18,400 |\n| Card | $4,000 |',
+    );
+    expect(html).not.toContain('<caption>');
+  });
+
+  it('says it once per chapter, not once per table', () => {
+    // Two headless tables under one chapter printed the chapter title twice,
+    // the second time directly under a subhead that had just said something
+    // else — two competing labels 12pt apart, and the caption was the wrong one.
+    const html = renderSection(
+      '## Existing Liabilities\n\nWhat is owed.\n\n'
+      + '| | |\n|---|---|\n| Vehicle | $18,400 |\n\n'
+      + 'And the assumptions behind it.\n\n'
+      + '| | |\n|---|---|\n| Buffer | 3.0% |',
+    );
+    expect([...html.matchAll(/<caption>/g)]).toHaveLength(1);
+  });
+
+  it('leaves a table with real column labels alone', () => {
+    // It says what it is already.
+    expect(render().html).not.toContain('<caption>');
   });
 
   it('prints the same numbers on the contents page as on the openers', () => {
