@@ -334,6 +334,24 @@ export interface MarkdownOptions {
   landscapeWideTables?: boolean;
   /** Mark a row whose first cell is exactly "Total" with the primitive's rule. */
   detectTotalRow?: boolean;
+  /**
+   * What to caption a table that has no header row of its own.
+   *
+   * A GFM table whose header cells are all blank gets no `thead` at all
+   * (`primitives.pure.ts` drops it: an empty tinted band is not a header, and
+   * there is nothing for a screen reader or a tagged PDF to announce). That is
+   * right, and it costs the table the only per-page-repeating box the sheet has
+   * — so twelve rows of a key/value table transcribed out of a PDF landed on a
+   * fresh sheet identified by nothing but the 8.5pt running head.
+   *
+   * A caption is the honest half of the answer: it titles the table where it
+   * starts. It does **not** repeat per page — only `display: table-header-group`
+   * does that, and synthesising header labels the source never had would be
+   * inventing text on a client's document to solve a layout problem.
+   *
+   * Ignored when the table has real headers; they say what it is already.
+   */
+  headlessTableCaption?: string;
 }
 
 export interface MarkdownHeading {
@@ -642,6 +660,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   const idPrefix = (options.idPrefix ?? 'a').replace(/[^a-z0-9]+/gi, '').toLowerCase() || 'a';
   const landscape = options.landscapeWideTables !== false;
   const detectTotal = options.detectTotalRow !== false;
+  const headlessCaption = String(options.headlessTableCaption ?? '').trim();
 
   // ── Pass 0 ────────────────────────────────────────────────────────────────
   let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
@@ -999,8 +1018,12 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       return row;
     });
 
+    // See `headlessTableCaption`. Only when the table has no head of its own —
+    // a table with real column labels already says what it is.
+    const headless = !cols.some((c) => c.label);
     const table = renderDataTable(cols, rows, {
       signedKeys: cols.filter((c) => c.align === 'right').map((c) => c.key),
+      caption: headless && headlessCaption ? headlessCaption : undefined,
     });
 
     const wide = width > MAX_PORTRAIT_TABLE_COLS;

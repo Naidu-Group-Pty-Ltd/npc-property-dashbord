@@ -287,4 +287,27 @@ describe('auditSnapshot', () => {
     expect(auditSnapshot(snapshot, { is_enabled: false, text: 'x' }).join('\n'))
       .toContain('disclaimer is disabled');
   });
+
+  it('flags an absent disclaimer, not only a disabled one', () => {
+    // This guarded on `disclaimer &&`, so the two ways it goes missing without
+    // anybody choosing that — an unreadable `global_report_settings` query,
+    // which the render routes warn about and swallow, and a settings row that
+    // was never written — were the two it stayed silent about. Both arrive as
+    // `null`, and both printed a closing page with no disclaimer and no gap.
+    const { snapshot } = buildReportBrandSnapshot(fullInput());
+    expect(auditSnapshot(snapshot, null).join('\n')).toContain('no professional disclaimer');
+    expect(auditSnapshot(snapshot).join('\n')).toContain('no professional disclaimer');
+  });
+
+  it('flags a disclaimer that is enabled and empty', () => {
+    const { snapshot } = buildReportBrandSnapshot(fullInput());
+    expect(auditSnapshot(snapshot, { is_enabled: true, text: '   ' } as never).join('\n'))
+      .toContain('enabled but empty');
+  });
+
+  it('says nothing about a disclaimer that is there', () => {
+    const { snapshot } = buildReportBrandSnapshot(fullInput());
+    expect(auditSnapshot(snapshot, { is_enabled: true, text: 'General advice only.' } as never)
+      .join('\n')).not.toContain('disclaimer');
+  });
 });

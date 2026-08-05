@@ -27,6 +27,7 @@
  */
 import { markdownToPlainText, renderMarkdown } from '../markdown.pure.ts';
 import { neutraliseUrls, repairFloatArtefacts } from '../text.pure.ts';
+import { rewrapMarkdownProse } from '../../reportDesign/prose.pure.ts';
 
 /** No template in the record has more than this many sections worth binding. */
 export const MAX_SECTIONS = 80;
@@ -143,7 +144,31 @@ const CLOSING_FURNITURE =
  * template, and one the caller has to be able to show the user rather than
  * discover as an empty document.
  */
-export function extractStructure(markdown: string, fallbackTitle = ''): ExtractedStructure {
+export interface ExtractOptions {
+  /**
+   * Keep the template's own contact / disclaimer sections instead of dropping
+   * them.
+   *
+   * The drop (pass five) is right *because* `renderCompanyPage` prints the
+   * tenant's own closing page — and it was unconditional, so when the tenant's
+   * disclaimer was missing the document lost both. A settings row that was
+   * never written, or a query the render route warns about and swallows, both
+   * arrive as `null`, and the page then carried `class="page-disclaimer"` with
+   * no disclaimer on it.
+   *
+   * Losing the tenant's wording in favour of the template's is a formatting
+   * preference. Losing the disclaimer from a lending document is not. So the
+   * render path sets this when nothing will replace what it is about to delete,
+   * and the section comes through as an appendix chapter.
+   */
+  keepClosingFurniture?: boolean;
+}
+
+export function extractStructure(
+  markdown: string,
+  fallbackTitle = '',
+  options: ExtractOptions = {},
+): ExtractedStructure {
   // Float artefacts are repaired here, at the door, so that everything
   // downstream — the sections, the faithfulness snapshot, the enrichment prompt
   // and the printed page — is looking at the same string. See
@@ -261,7 +286,20 @@ export function extractStructure(markdown: string, fallbackTitle = ''): Extracte
   }
 
   const push = (depth: 1 | 2, sectionTitle: string, bodyLines: string[]) => {
-    const body = bodyLines.join('\n').trim();
+    // ── Where a transcribed line becomes a paragraph ────────────────────────
+    //
+    // The source of this Markdown is a model reading a PDF, so a newline in it
+    // is a line somebody laid out — a KPI card's label over its value, a run of
+    // `Label: value` pairs. CommonMark says a lone newline is a space, which is
+    // right for the three formats carrying model-authored prose and wrong here:
+    // it printed `BORROWING CAPACITY $856,932 Estimate` as body copy, and six
+    // key-value pairs as one unpunctuated sentence.
+    //
+    // Repaired at extraction rather than at render, for the reason
+    // `repairFloatArtefacts` is: the faithfulness snapshot is taken from this
+    // string, so a change made later would look like the design pass inventing
+    // text. `rewrapMarkdownProse` leaves tables, lists and headings alone.
+    const body = rewrapMarkdownProse(bodyLines.join('\n')).trim();
     const capped = body.length > MAX_SECTION_CHARS ? body.slice(0, MAX_SECTION_CHARS) : body;
     notices.charsOmitted += body.length - capped.length;
     if (capped.length < MIN_SECTION_CHARS) { notices.tooShort += 1; return; }
@@ -317,7 +355,9 @@ export function extractStructure(markdown: string, fallbackTitle = ''): Extracte
   // to be at the end. A "Contact" section in the middle of a template is
   // content. The count goes into `notices` so the review screen can say what
   // happened rather than leaving somebody to notice an absence.
-  while (sections.length) {
+  //
+  // Unless nothing will replace it — see `ExtractOptions.keepClosingFurniture`.
+  while (!options.keepClosingFurniture && sections.length) {
     const last = sections[sections.length - 1];
     if (!CLOSING_FURNITURE.test(last.title)) break;
     sections.pop();

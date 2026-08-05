@@ -330,6 +330,72 @@ describe('the converted document', () => {
     expect(chapters.slice(-appendix.length).every((c) => c.kind === 'appendix')).toBe(true);
   });
 
+  it('numbers the appendix as its own series, so the page says which it is', () => {
+    // The document told the reader on page two that unmatched sections were
+    // "kept as an appendix" and then printed them as SECTION 05…10 with the
+    // format's own eyebrow, rule and 30pt serif. The only marker was a 9pt
+    // italic dek. Read off a real render: the document contradicted itself.
+    const chapters = planConvertedChapters(structure, plan);
+    const own = chapters.filter((c) => c.kind !== 'appendix');
+    const appendix = chapters.filter((c) => c.kind === 'appendix');
+
+    expect(own.map((c) => c.number)).toEqual(own.map((_, i) => String(i + 1).padStart(2, '0')));
+    expect(own.every((c) => c.label === 'Section')).toBe(true);
+
+    const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+    expect(appendix.length).toBeGreaterThan(1);
+    expect(appendix.map((c) => c.number)).toEqual(LETTERS.slice(0, appendix.length));
+    expect(appendix.every((c) => c.label === 'Appendix')).toBe(true);
+  });
+
+  it('does not let the appendix renumber the format\'s own chapters', () => {
+    // The two series are counted independently, so an appendix entry sitting in
+    // the spine must not consume a number from the chapters around it.
+    const chapters = planConvertedChapters(structure, plan);
+    const lastOwn = [...chapters].reverse().find((c) => c.kind !== 'appendix');
+    expect(lastOwn?.number).toBe(
+      String(chapters.filter((c) => c.kind !== 'appendix').length).padStart(2, '0'),
+    );
+  });
+
+  it('titles a headerless table with the chapter it sits in', () => {
+    // A GFM table whose header cells are all blank gets no `thead` — right,
+    // and it costs the table the only per-page-repeating box the sheet has, so
+    // twelve rows of a key/value table landed on a fresh sheet identified by
+    // nothing but the 8.5pt running head. A caption is the honest half: it
+    // titles the table where it starts. It does not repeat, and synthesising
+    // header labels the source never had would be inventing text.
+    const headless = extractStructure([
+      '# Assessment',
+      '## Existing Liabilities\n\n| | |\n|---|---|\n| Vehicle | $18,400 |\n| Card | $4,000 |',
+    ].join('\n\n'));
+    const { html } = renderConvertedDocument({
+      structure: headless,
+      plan: proposeBinding('borrowing-capacity', headless),
+      palette,
+      company: COMPANY,
+      masthead: 'Harbour & Vale',
+      systemName: 'Harbour Editorial',
+      preparedOn: '2026-08-04T00:00:00.000Z',
+    });
+    expect(html).toContain('<caption>Existing Liabilities</caption>');
+    // And a table that says what it is already does not get one.
+    expect(render().html).not.toMatch(/<caption>[^<]*<\/caption>[\s\S]*?<thead>/);
+  });
+
+  it('prints the same numbers on the contents page as on the openers', () => {
+    // They used to count independently — the body by array index, the contents
+    // by its own counter — and agreed only because every chapter was one kind.
+    const { html } = render();
+    const openers = [...html.matchAll(/class="chapter-no">([^<]+)</g)].map((m) => m[1]);
+    const contents = [...html.matchAll(/class="toc-no">([^<]+)</g)].map((m) => m[1]);
+    // Borrowing Capacity declares `contents: false`, so this render has no
+    // contents page — the assertion is that when there is one, it agrees.
+    if (contents.length) expect(contents).toEqual(openers.map((o) => o.split(' ')[1]));
+    expect(openers.some((o) => o.startsWith('APPENDIX'))).toBe(true);
+    expect(openers.some((o) => o.startsWith('SECTION'))).toBe(true);
+  });
+
   it('folds an unbound sub-section into its parent instead of giving it a page', () => {
     // The defect that made a 14-page draft come out at 27. A transcription of a
     // Snapshot returned 20 sections, 12 of them `###` sub-headings inside *How
@@ -770,6 +836,25 @@ describe('the document stops repeating itself', () => {
     ].join('\n\n'));
     expect(s.sections.map((x) => x.title)).not.toContain('Contact Us');
     expect(s.notices.furnitureDropped).toBe(1);
+  });
+
+  it('keeps the template\'s own closing section when nothing will replace it', () => {
+    // The drop is right *because* `renderCompanyPage` prints the tenant's own.
+    // It was unconditional, so when the tenant's was missing — a settings row
+    // never written, or a query the render route warns about and swallows —
+    // the document lost both and ended on a page classed `page-disclaimer`
+    // with no disclaimer on it. Losing the tenant's wording is a preference;
+    // losing the disclaimer from a lending document is not.
+    const source = [
+      '# Assessment',
+      `## Household Income\n\n${table}`,
+      `## Disclaimer\n\n${prose()}`,
+    ].join('\n\n');
+    expect(extractStructure(source).sections.map((x) => x.title)).not.toContain('Disclaimer');
+
+    const kept = extractStructure(source, '', { keepClosingFurniture: true });
+    expect(kept.sections.map((x) => x.title)).toContain('Disclaimer');
+    expect(kept.notices.furnitureDropped).toBe(0);
   });
 
   it('keeps a contact section that is not at the end', () => {

@@ -705,7 +705,33 @@ export function buildReportCss(input: ReportCssInput): string {
     page-break-after: avoid;
   }
   h1 { font-size: ${pt(type.h1)}; }
-  h2 { font-size: ${pt(type.h2)}; margin: ${pt(d.blockGapPt + 10)} 0 ${pt(d.paragraphGapPt + 3)}; }
+  /* ── A subhead is a different object from a chapter title ──────────────
+     h1 and h2 shared face, colour, weight, tracking and line-height, and
+     differed only in size and margin — so an h2 was a chapter title set
+     smaller. That is invisible while a chapter title sits above it and wrong
+     the moment one does not: a chapter always breaks to a new page, and
+     page-break-after:avoid regularly puts an h2 at the top of a fresh sheet
+     with nothing above it but the running head. A 20pt Playfair heading
+     opening a blank page reads as a chapter opener that lost its eyebrow and
+     its rule. Read off a real render, in the converter and in the declarative
+     formats alike.
+
+     Three signals, none subtle enough to be missed: half the title's size
+     rather than two-thirds, a lighter weight, and an accent rule above it —
+     the mark of a division *within* running text, which is what it is. It
+     stays above 14pt so it remains in the display contrast band (see
+     tokens.pure.ts), and it keeps bodyInk, because a heading a reader has to
+     work at is not an improvement on one they misread. */
+  h2 {
+    font-size: ${pt(type.h1 / 2)};
+    font-weight: 500;
+    margin: ${pt(d.blockGapPt + 12)} 0 ${pt(d.paragraphGapPt + 3)};
+    padding-top: ${pt(d.paragraphGapPt + 2)};
+    border-top: 0.6pt solid ${palette.accentOnPaper};
+  }
+  /* A subhead that opens a chapter body sits directly under the chapter
+     header's own hairline; a second rule 12pt below it is a double line. */
+  .chapter-body > h2:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
   h3 { font-size: ${pt(type.h3)}; margin: ${pt(d.blockGapPt)} 0 ${pt(d.paragraphGapPt - 1)}; }
   /* h4 is the mono micro-label, not a smaller heading — it is the same object
      as .eyebrow and shares its colour so the two never drift apart. */
