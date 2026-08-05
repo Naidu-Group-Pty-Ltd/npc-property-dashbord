@@ -102,8 +102,11 @@ The four portals are being translated into one cross-platform Flutter app.
 [`mobile/plan.md`](./mobile/plan.md) is the master plan — architecture
 decisions, the server-side prerequisites in this repo (bearer auth for the
 cookie portals, a native Turnstile replacement, the missing account-deletion
-flow), and the App Store / Play Store verification rule catalog. Per-portal
-plans live in `mobile/portals/*/plan.md`. Two generated artefacts feed the
+flow), and the store verification rule catalog for the App Store, Google
+Play **and Huawei AppGallery** (HMS devices have no Google services — the
+push/attestation abstractions are three-platform by rule). Per-portal plans
+live in `mobile/portals/*/plan.md`; listing/launch practice for all three
+stores is `mobile/store-listing/plan.md`. Two generated artefacts feed the
 Flutter workspace and must never be hand-edited: `mobile/design-tokens.json`
 (`npm run mobile:tokens`) and `mobile/api-surface.json`
 (`npm run mobile:api`); both have `:check` drift modes.

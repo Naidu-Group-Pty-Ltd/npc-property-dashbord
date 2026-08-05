@@ -17,6 +17,12 @@ Read this file first. Then the portal plan for the surface you are building:
 
 The staff Command Centre is **not** part of this app (see R-ARCH-2).
 
+Distribution targets **three stores**: Apple App Store, Google Play, and
+Huawei AppGallery (Huawei devices ship without Google services — see the
+AppGallery rules in Part 3, which reshape two server prerequisites).
+How the app is *listed, launched and maintained* on all three is its own
+playbook: [`store-listing/plan.md`](./store-listing/plan.md).
+
 ## Generated inputs — regenerate, never hand-edit
 
 | Artefact | Generator | What it is |
@@ -105,7 +111,11 @@ attestation — App Attest / DeviceCheck on iOS, Play Integrity on Android —
 as the human signal for mobile logins, keeping Turnstile for web; or
 (b) render Turnstile inside an in-app WebView on the login screen only.
 (a) is stronger and removes the WebView from the auth path; it needs a
-server-side verifier and a registry entry.
+server-side verifier and a registry entry. **The verifier must accept more
+than Play Integrity**: Huawei devices have no Google services, so the
+attestation path is per-platform — App Attest (iOS), Play Integrity (GMS
+Android), Huawei's device attestation `[re-verify current kit]` on HMS
+Android — behind one server endpoint.
 
 **S-3 · Account deletion, in-app and by URL. [blocking — confirmed absent]**
 A codebase search finds **no account-deletion flow for any portal**. Apple
@@ -129,16 +139,20 @@ fingerprints. Template + gate here so it is not forgotten.
 
 **S-5 · Native push registration.**
 Web push is service-worker based (`src/lib/pushNotifications.ts`); native
-needs APNs/FCM token registration endpoints and a send path keyed by device
-token. Push must never gate a core flow (R-BOTH-6).
+needs token registration endpoints and a send path keyed by device token —
+for **three transports**: APNs (iOS), FCM (GMS Android), HMS Push Kit
+(Huawei). The client hides all three behind one push abstraction
+(R-HAG-3); the server stores `(device, transport, token)`. Push must never
+gate a core flow (R-BOTH-6).
 
 **S-6 · Review sandbox accounts. [blocking for review, easy to forget]**
 Every portal is invite-gated. App Review cannot create an account, and
 "we couldn't log in" is a same-day rejection (Apple 2.1 / Play App Access).
 Required: one standing, seeded, non-production demo account **per portal
-mode**, with instructions in App Review notes / Play App Access, kept alive
-by a scheduled check — a dead demo account rejects an otherwise perfect
-submission.
+mode**, with instructions in App Review notes / Play App Access / the
+AppGallery review remarks, kept alive by a scheduled check — a dead demo
+account rejects an otherwise perfect submission on any of the three
+stores.
 
 ## Part 3 — Store-verification prerequisite rules
 
@@ -219,7 +233,54 @@ portal modes documented). *Verify:* Play Console App Access section.
 **R-GPL-6 · IARC content rating** completed (finance category, no user-
 generated public content, no gambling). *Verify:* rating certificate issued.
 
-### Both stores
+### Huawei AppGallery
+
+Huawei devices have shipped without Google Mobile Services since 2019, so
+AppGallery is not "Play with a different console" — it is a third platform
+target whose constraints reach back into the architecture. The web recon
+already established one good fact: nothing in this product depends on
+Google services (the listings map is Leaflet + OSM tiles, not Google Maps),
+so the Flutter app can honour R-HAG-3 from day one instead of retrofitting.
+
+**R-HAG-1 · Global AppGallery only; mainland China excluded in v1.**
+Distribute to the regions where NPC's clients and partners are (AU first).
+Mainland China distribution requires a local entity and ICP filing
+`[re-verify]` — a business decision, not an engineering one; excluded until
+someone makes it.
+
+**R-HAG-2 · Huawei enterprise developer account** (D-U-N-S verified),
+seller name = the AML-supervised entity — same identity rule as R-APL-1.
+*Verify:* AGC account type + seller name.
+
+**R-HAG-3 · Zero-GMS rule.** The app must be fully functional on a device
+with no Google services: push through the S-5 abstraction (HMS Push Kit on
+Huawei), attestation through the S-2 per-platform verifier, maps via
+`flutter_map` + OSM tiles (already GMS-free), and **no transitive
+Play-Services dependency** in the Android build. *Verify:* dependency
+audit of the lockfile + a full app walkthrough on an HMS-only device or
+Huawei cloud-test device farm.
+
+**R-HAG-4 · AppGallery review parity.** AppGallery's review requires the
+same fundamentals the other stores do: privacy policy linked, permissions
+declared and justified, account deletion available (S-3 covers all three
+stores), review credentials supplied (S-6). The three-store data/privacy
+mapping table is one table — AGC's privacy declarations are generated from
+the same source as Apple's labels and Play's data safety form (R-APL-3 /
+R-GPL-2). *Verify:* AGC declaration screenshots archived with the release.
+
+**R-HAG-5 · Packaging and signing per current AGC requirements**
+`[re-verify]` (AAB supported; AGC manages signing). Huawei Flutter plugins
+(e.g. `huawei_push`) pinned and audited like any other dependency.
+*Verify:* AGC upload validation + release build smoke test.
+
+**R-HAG-6 · No Huawei IAP obligations** — the app sells nothing (R-APL-5's
+posture applies storewide), so AppGallery's payment-kit requirements for
+digital goods are never triggered. *Verify:* same grep gate as R-APL-5.
+
+### All stores
+
+These rules apply on Apple, Google **and** Huawei alike (ids keep the
+R-BOTH prefix for continuity with the portal plans).
 
 **R-BOTH-1 · Login-wall completeness:** every pre-auth screen (login, invite
 acceptance, forgot/change password — all four portals have them) works
@@ -285,9 +346,13 @@ retired without stranding sessions.
    workspace PR.
 2. **Phase 1:** Workspace + packages; client portal + finance portal modes;
    all Part-3 rules gated in the release checklist; TestFlight / internal
-   track with review-sandbox accounts.
+   track with review-sandbox accounts. **The push and attestation
+   abstractions are built three-platform from the start** (APNs/FCM/HMS —
+   R-HAG-3): retrofitting HMS into a GMS-shaped abstraction later is the
+   expensive path.
 3. **Phase 2:** Solicitor + builder modes (their plans note the deltas);
-   store submission.
+   App Store + Play submission; **AppGallery submission** follows once the
+   HMS transport is exercised on real Huawei hardware.
 4. **Phase 3 (optional, separate product):** staff Command Centre.
 
 ## Part 6 — Pre-submission gate (run in full, every release)
@@ -300,4 +365,6 @@ retired without stranding sessions.
 [ ] Demo accounts logged into from a clean device, all four portal modes
 [ ] Airplane-mode pass, denied-permissions pass, screen-reader pass
 [ ] Performance overlay pass on mid-range Android hardware
+[ ] Zero-GMS walkthrough on an HMS-only device (R-HAG-3), before any AppGallery release
+[ ] Listing pre-flight from store-listing/plan.md §9 completed for every store shipping
 ```
