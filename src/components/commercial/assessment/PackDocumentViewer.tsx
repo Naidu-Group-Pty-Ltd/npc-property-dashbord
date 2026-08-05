@@ -210,23 +210,38 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
   // sheet is wide, an A4 guide is narrow, and neither needs the whole viewport.
   const isWorkbook = source?.kind === 'workbook';
 
+  // The viewer must stay inside the dashboard's main frame — never over the
+  // sidebar. The frame is measured rather than assumed, because the sidebar can
+  // be collapsed to an icon rail; the dialog primitive's own centring
+  // (`left-1/2 -translate-x-1/2`) is overridden by these inline values.
+  const frameStyle = useMemo<React.CSSProperties>(() => {
+    if (!frame) return {};
+    const gutter = 16;
+    const maxWidth = Math.max(320, frame.width - gutter * 2);
+    const desired = isWorkbook ? 1320 : 940;
+    const width = expanded ? maxWidth : Math.min(desired, maxWidth);
+    const left = frame.left + gutter + Math.max(0, (maxWidth - width) / 2);
+    return { left, width, right: 'auto', maxWidth: 'none', transform: 'translateY(-50%)' };
+  }, [frame, isWorkbook, expanded]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* Layout and size are written as utilities, not only in `ci-pack-dialog`:
-          the dialog primitive's own `grid gap-4 p-6 sm:max-w-lg` sit in a later
-          cascade layer than the component class, so a component-layer
-          flex/width was silently losing to them — which is what produced the
-          large empty band above the document. */}
+      {/* Layout is written as utilities, not only in `ci-pack-dialog`: the dialog
+          primitive's own `grid gap-4 p-6 sm:max-w-lg` sit in a later cascade
+          layer than the component class, so a component-layer flex/width was
+          silently losing to them — which produced the empty band above the
+          document. Horizontal placement comes from `frameStyle` (inline) so the
+          viewer can never sit over the sidebar. */}
       <DialogContent
+        style={frameStyle}
         className={cn(
           'ci-pack-dialog',
           'flex flex-col gap-0 p-0',
-          isWorkbook
-            ? 'w-[min(1320px,94vw)] max-w-none sm:max-w-none h-[86dvh] max-h-[86dvh] sm:max-h-[86dvh]'
-            : 'w-[min(940px,94vw)] max-w-none sm:max-w-none h-[88dvh] max-h-[88dvh] sm:max-h-[88dvh]',
-          expanded && 'ci-pack-dialog-expanded w-[98vw] max-w-none sm:max-w-none h-[96dvh] max-h-[96dvh] sm:max-h-[96dvh]',
+          isWorkbook ? 'h-[86dvh] max-h-[86dvh] sm:max-h-[86dvh]' : 'h-[88dvh] max-h-[88dvh] sm:max-h-[88dvh]',
+          expanded && 'ci-pack-dialog-expanded h-[94dvh] max-h-[94dvh] sm:max-h-[94dvh]',
         )}
       >
+
 
         <header className="ci-pack-header">
           <div className="min-w-0">
