@@ -233,6 +233,86 @@ same statements succeeded, leaving a fully rolled-back schema. All six
 migrations then **reapplied cleanly** and every convergence check passed;
 the 16 proofs were re-run green after the reapply. The database was destroyed.
 
+## Staging backend materialisation round (Stage 4)
+
+Live state at the start of this round, verified against GitHub rather than
+assumed: branch head `8d8ee61b7` (matches the expected SHA), remote branch head
+identical, `origin/main` at `0e0961968`, worktree clean, **0 commits behind main
+and 28 ahead**, PR #1939 draft, `mergeable_state: unstable` (checks, not
+conflicts), reviewer `mithrubanbupathy3-design` requested, **no submitted
+reviews**.
+
+### Correction to an earlier claim
+
+The PR body previously said "~25 of the `aml.*` tables the staff functions query
+do not exist" on the staging branch. **That was an unverified estimate and it was
+wrong.** Measured: the staff functions reference 16 `aml.*` tables, of which 13
+already existed. The real gap was **3** `aml` tables and **7** `public` tables.
+
+### What was materialised (non-production branch `yncczbrmicjebjepfave`)
+
+DDL copied verbatim from the production migration that owns each object, so the
+staging shape matches production instead of being invented:
+
+| Object | Source migration |
+| --- | --- |
+| `aml.aml_role`, `aml.event_category`, `aml.role_assignments`, `aml.case_events`, `public.has_any_aml_role`, `public.has_aml_role` | `20260716170455_b7407ffa…` |
+| `aml.risk_assessments` | `20260716180637_ab42e934…` |
+| `aml.plan_tiers`, `aml.tenant_settings` | `20260716194926_1979ae2f…` |
+| `public.integration_delivery_attempts`, `public.integration_dead_letters` | `20260730220000_field_ownership_outbox_projections_phase6` |
+
+`public.clients` is created as the **functional subset** the AML surface reads —
+`CLIENT_SEARCH_SELECT` plus `is_active` plus the four columns
+`client-portal-verify` joins — with each column's type taken from the production
+definition. It is explicitly *not* a replica of the production table, which also
+carries GHL-sync, address and financial columns no AML op touches.
+`public.purchase_files` is id-only: `aml.cases.purchase_file_id` is nullable and
+no staging scenario sets it.
+
+### A second divergence found and fixed
+
+`aml.verification_checks` on the staging branch was **not production-shaped**:
+seven columns were missing — `requested_at`, `completed_at`, `updated_at`,
+`provider_reference`, `failure_reason`, `verified_by`, `verified_by_type`.
+Migration `20260901000200` orders its `capture_sequence` backfill by
+`requested_at`, so it failed outright on staging. The table was aligned to the
+production definition (`20260728120000_aml_verification_checks.sql`) rather than
+weakening the migration for staging.
+
+### All six release migrations now converge on staging
+
+| Migration | Convergence check |
+| --- | --- |
+| `20260830000000_aml_check_execution_mode` | `identity_checks.execution_mode` present |
+| `20260831000000_aml_canonical_verification_model` | `verification_checks.processing_status` + `aml.verification_attempts_used()` present |
+| `20260831000100_aml_verification_outbox_and_request_notifications` | `client_requests.action_code` + both triggers (`trg_aml_verification_outbox`, `trg_aml_client_request_notify`) present |
+| `20260901000000_aml_integration_completion` | `aml.idv_evidence_references` present, 11 retention rows |
+| `20260901000100_aml_notification_category_fix` | category CHECK includes `'aml'` |
+| `20260901000200_aml_capture_row_identity` | `uq_aml_verification_capture` present, `uq_aml_verification_attempt` gone, cap lifted |
+
+24 `aml` tables now exist on the branch.
+
+### The main-side `security` job needs TWO fixes, not one
+
+`fix/listing-images-wp14-edge-typecheck` → **PR #1944** fixes the WP-14 failure
+at source (not by moving the baseline): the seven `TS2345` from
+`ReturnType<typeof createClient>` instantiating generics from their constraints
+rather than their defaults, and one from `crypto.subtle.digest` requiring an
+`ArrayBuffer`-backed view. `deno check` on that file goes 8 errors → 0 and the
+baseline entry is lowered 6 → 0. **CI confirms WP-14 now passes.**
+
+That unmasked a second pre-existing failure in the same job: step 12, the WP-12
+internal-auth legacy-fallback gate, had been reported `skipped` because WP-14
+failed ahead of it. It now runs and fails on three pre-existing violations in
+`dispatch-marketing-reports` and `send-web-push` (both read
+`x-internal-edge-secret` directly instead of routing through
+`verifySignedInternal`). Confirmed 3 violations on a clean `origin/main` tree.
+Not fixed here: the scanner's ALLOWLIST is for shared modules that *define* the
+legacy surface, so adding two ordinary functions would be suppression; and the
+real fix is an internal-auth migration on two unrelated cron paths whose failure
+mode is silent breakage of marketing-report and web-push dispatch. Recorded on
+PR #1944 for the owner of those functions.
+
 ## Known blockers (recorded, not stopping independent work)
 
 - No staging frontend exists (Lovable-hosted production frontend only);
