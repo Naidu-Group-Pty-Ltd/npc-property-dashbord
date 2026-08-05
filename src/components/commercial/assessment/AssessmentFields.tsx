@@ -97,17 +97,24 @@ interface FieldShellProps {
   required?: boolean;
   /** Where the value came from, when it was imported rather than typed. */
   provenance?: string;
+  /**
+   * Dot path into the payload, e.g. `loan.residualBalloonAmount`. Rendered as a
+   * DOM attribute so the error summary can scroll straight to this field and
+   * flash it, rather than dropping the user at the top of a long step and
+   * leaving them to hunt for what is wrong.
+   */
+  fieldPath?: string;
   children: (ids: { inputId: string; describedBy: string | undefined; invalid: boolean }) => ReactNode;
 }
 
-function FieldShell({ label, help, error, required, provenance, children }: FieldShellProps) {
+function FieldShell({ label, help, error, required, provenance, fieldPath, children }: FieldShellProps) {
   const inputId = useId();
   const helpId = `${inputId}-help`;
   const errorId = `${inputId}-error`;
   const describedBy = [help ? helpId : null, error ? errorId : null].filter(Boolean).join(' ') || undefined;
 
   return (
-    <div className="ci-field">
+    <div className="ci-field" data-ci-field={fieldPath} data-ci-invalid={error ? 'true' : undefined}>
       <div className="flex items-baseline justify-between gap-2">
         <Label htmlFor={inputId} className="ci-field-label">
           {label}
@@ -144,6 +151,8 @@ export interface BaseFieldProps {
   required?: boolean;
   provenance?: string;
   disabled?: boolean;
+  /** Dot path into the payload; makes the field a scroll-and-highlight target. */
+  fieldPath?: string;
 }
 
 export function TextField({
@@ -355,18 +364,20 @@ export function TextAreaField({
 }
 
 export function SwitchField({
-  value, onChange, label, help, disabled,
+  value, onChange, label, help, disabled, fieldPath,
 }: {
   value: boolean;
   onChange: (value: boolean) => void;
   label: string;
   help?: string;
   disabled?: boolean;
+  /** See `FieldShellProps.fieldPath` — the scroll-and-highlight target. */
+  fieldPath?: string;
 }) {
   const inputId = useId();
   const helpId = `${inputId}-help`;
   return (
-    <div className="ci-switch-field">
+    <div className="ci-switch-field" data-ci-field={fieldPath}>
       <Switch
         id={inputId}
         checked={value}
@@ -387,12 +398,14 @@ export function SwitchField({
  * meaningful answer — collapsing it to false would silently assert something.
  */
 export function TriStateField({
-  value, onChange, label, help,
+  value, onChange, label, help, fieldPath,
 }: {
   value: boolean | null;
   onChange: (value: boolean | null) => void;
   label: string;
   help?: string;
+  /** See `FieldShellProps.fieldPath` — the scroll-and-highlight target. */
+  fieldPath?: string;
 }) {
   const options = [
     { key: 'yes', label: 'Yes', value: true },
@@ -402,7 +415,7 @@ export function TriStateField({
   const groupId = useId();
 
   return (
-    <div className="ci-field" role="radiogroup" aria-labelledby={`${groupId}-label`}>
+    <div className="ci-field" role="radiogroup" aria-labelledby={`${groupId}-label`} data-ci-field={fieldPath}>
       <span id={`${groupId}-label`} className="ci-field-label">{label}</span>
       <div className="ci-tristate">
         {options.map((option) => (
