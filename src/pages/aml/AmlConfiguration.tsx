@@ -15,8 +15,14 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { toast } from "sonner";
 import {
   Settings2, ShieldCheck, Palette, Package, Plug, Activity, Trash2, Plus, HeartPulse,
-  AlertTriangle, Info, DollarSign, Lock,
+  AlertTriangle, Info, DollarSign, Lock, Loader2,
 } from "lucide-react";
+import {
+  AmlErrorState,
+  AmlLoadingState,
+  AmlMetricCard,
+  AmlPageHeader,
+} from "@/components/aml/primitives";
 import {
   amlTenantApi, AML_PROVIDER_CAPABILITIES,
   type AmlTenantSummary, type AmlPlanTier, type AmlProviderConfig,
@@ -44,13 +50,16 @@ export default function AmlConfiguration() {
   const { metricsRelocation, orgSettings } = useAmlV3Flags();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<AmlTenantSummary | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const s = await amlTenantApi.summary();
       setSummary(s);
     } catch (e: any) {
+      setLoadError(e.message ?? "Failed to load configuration");
       toast.error(e.message ?? "Failed to load configuration");
     } finally {
       setLoading(false);
@@ -58,45 +67,52 @@ export default function AmlConfiguration() {
   };
   useEffect(() => { reload(); }, []);
 
-  if (loading || !summary) {
+  if (loading) {
     return (
       <div className="space-y-4">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-64 w-full" />
+        <Skeleton className="h-8 w-64" aria-hidden="true" />
+        <AmlLoadingState variant="block" label="Loading configuration…" />
+        <Skeleton className="h-64 w-full" aria-hidden="true" />
       </div>
+    );
+  }
+
+  if (!summary) {
+    return (
+      <AmlErrorState
+        title="Configuration failed to load"
+        message={loadError ?? "The configuration summary could not be loaded."}
+        onRetry={reload}
+      />
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Settings2 className="h-6 w-6 text-primary" />
-            {orgSettings ? "Organisation Settings" : "AML Configuration"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {orgSettings
-              ? "Tenant-wide organisation settings for AML/CTF: branding link, activation program, providers, and (when relocated) metrics. Plan sales moved to the Aurixa billing portal."
-              : metricsRelocation
-                ? "White-label branding, plan entitlements, and provider selection. Provider cost & failure metrics have moved to the Integration Health workspace."
-                : "White-label branding, plan entitlements, provider selection, and 30-day cost & failure metrics."}
-          </p>
-        </div>
-        {!isMlro && (
-          <Alert className="max-w-md">
-            <Lock className="h-4 w-4" />
-            <AlertTitle>Read-only</AlertTitle>
-            <AlertDescription>Only the MLRO can change configuration.</AlertDescription>
-          </Alert>
-        )}
-      </div>
+      <AmlPageHeader
+        title={orgSettings ? "Organisation Settings" : "AML Configuration"}
+        description={
+          orgSettings
+            ? "Tenant-wide organisation settings for AML/CTF: branding link, activation program, providers, and (when relocated) metrics. Plan sales moved to the Aurixa billing portal."
+            : metricsRelocation
+              ? "White-label branding, plan entitlements, and provider selection. Provider cost & failure metrics have moved to the Integration Health workspace."
+              : "White-label branding, plan entitlements, provider selection, and 30-day cost & failure metrics."
+        }
+        icon={Settings2}
+      />
+
+      {!isMlro && (
+        <Alert className="max-w-md">
+          <Lock className="h-4 w-4" />
+          <AlertTitle>Read-only</AlertTitle>
+          <AlertDescription>Only the MLRO can change configuration.</AlertDescription>
+        </Alert>
+      )}
 
       <SummaryTiles summary={summary} hideMetrics={metricsRelocation} />
 
       <Tabs defaultValue="branding" className="w-full">
-        <TabsList>
+        <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="branding"><Palette className="h-4 w-4 mr-1.5" />Branding</TabsTrigger>
           <TabsTrigger value="activation"><ShieldCheck className="h-4 w-4 mr-1.5" />Activation</TabsTrigger>
           {!orgSettings && (
@@ -146,34 +162,34 @@ export default function AmlConfiguration() {
 
 /* -------------------- summary tiles -------------------- */
 
-function SummaryTiles({ summary, hideMetrics = false }: { summary: AmlTenantSummary; hideMetrics?: boolean }) {
-  const activeProviders = summary.providers.filter((p) => p.active).length;
-  const failureRate = summary.metrics_30d.calls > 0
-    ? (summary.metrics_30d.failures / summary.metrics_30d.calls) * 100 : 0;
-  const plan = summary.plans.find((p) => p.key === summary.settings?.plan_tier_key);
+function SummaryTiles({ summary, hideMetrics = false }: { summary: AmlTenantSummary | null; hideMetrics?: boolean }) {
+  const state = summary ? ("ready" as const) : ("loading" as const);
+  const activeProviders = summary?.providers.filter((p) => p.active).length ?? 0;
+  const calls = summary?.metrics_30d.calls ?? 0;
+  const failures = summary?.metrics_30d.failures ?? 0;
+  const failureRate = calls > 0 ? (failures / calls) * 100 : 0;
+  const plan = summary?.plans.find((p) => p.key === summary?.settings?.plan_tier_key);
 
   const tiles = [
-    { label: "Plan", value: plan?.label ?? "—", icon: Package, sub: plan?.description ?? "" },
-    { label: "Active providers", value: String(activeProviders), icon: Plug, sub: `${summary.providers.length} total` },
+    { label: "Plan", value: plan?.label ?? "—", icon: Package, sub: plan?.description || undefined },
+    { label: "Active providers", value: String(activeProviders), icon: Plug, sub: `${summary?.providers.length ?? 0} total` },
     ...(hideMetrics ? [] : [
-      { label: "30-day calls", value: summary.metrics_30d.calls.toLocaleString(), icon: Activity, sub: `${failureRate.toFixed(1)}% failure` },
-      { label: "30-day cost", value: fmtMoney(summary.metrics_30d.cost_cents), icon: DollarSign, sub: "across all providers" },
+      { label: "30-day calls", value: calls.toLocaleString(), icon: Activity, sub: `${failureRate.toFixed(1)}% failure` },
+      { label: "30-day cost", value: fmtMoney(summary?.metrics_30d.cost_cents ?? 0), icon: DollarSign, sub: "across all providers" },
     ]),
   ];
   const cols = tiles.length >= 4 ? "md:grid-cols-4" : tiles.length === 3 ? "md:grid-cols-3" : "md:grid-cols-2";
   return (
     <div className={`grid gap-3 ${cols}`}>
       {tiles.map((t) => (
-        <Card key={t.label} className="border-border/60 bg-card/60">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>{t.label}</span>
-              <t.icon className="h-3.5 w-3.5" />
-            </div>
-            <div className="mt-1 text-xl font-semibold">{t.value}</div>
-            {t.sub && <div className="text-[11px] text-muted-foreground truncate">{t.sub}</div>}
-          </CardContent>
-        </Card>
+        <AmlMetricCard
+          key={t.label}
+          title={t.label}
+          icon={t.icon}
+          state={state}
+          value={t.value}
+          hint={t.sub}
+        />
       ))}
     </div>
   );
@@ -1009,14 +1025,10 @@ function ActivationProgramPanel({ canWrite }: { canWrite: boolean }) {
 
         <div className="flex justify-end">
           <Button onClick={save} disabled={!canWrite || saving}>
-            {saving ? <Loader2Icon /> : null} Save activation program
+            {saving ? <Loader2 aria-hidden="true" className="mr-2 h-4 w-4 animate-spin" /> : null} Save activation program
           </Button>
         </div>
       </CardContent>
     </Card>
   );
-}
-
-function Loader2Icon() {
-  return <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />;
 }
