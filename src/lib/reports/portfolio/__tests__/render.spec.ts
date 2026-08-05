@@ -7,7 +7,8 @@
  * index, a cover that is a raster of our letterhead on a tenant's report. None
  * of those are visible in the PDF bytes and all of them are visible here.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildPortfolioReview } from '../normalise.pure';
 import { renderPortfolioFromBrand, DOCUMENT_NAME } from '../render.pure';
 import { portfolioSections, portfolioSpine, validatePortfolioSpine, DETAIL_CAP } from '../sections.pure';
@@ -36,7 +37,11 @@ const holding = (n: number) => ({
   isOwnerOccupied: false,
 });
 
-const review = (count = 3, analysis: Record<string, unknown> = {}) => buildPortfolioReview({
+const review = (
+  count = 3,
+  analysis: Record<string, unknown> = {},
+  reviewRow: Record<string, unknown> | null = null,
+) => buildPortfolioReview({
   report: {
     id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
     created_at: '2026-05-01T00:00:00.000Z',
@@ -47,7 +52,7 @@ const review = (count = 3, analysis: Record<string, unknown> = {}) => buildPortf
       analysis,
     },
   },
-  review: null,
+  review: reviewRow as never,
   clientName: 'Sample Client',
   now: NOW,
 });
@@ -62,6 +67,203 @@ const { snapshot } = buildReportBrandSnapshot({
 
 const render = (p: ReturnType<typeof review>) =>
   renderPortfolioFromBrand({ review: p, snapshot }).html;
+
+/**
+ * Every branch of the format at once, at the size the archetype's page band
+ * assumes.
+ *
+ * The assertions above run against three holdings and an empty analysis, which
+ * is the smallest document this format can produce and tells you nothing about
+ * how it paginates. This fixture is the one that gets rendered and looked at:
+ * ten holdings, every narrative block populated, a projection, a borrowing
+ * capacity, a review with scores and scenarios, and enough actions to push the
+ * plan across a page break.
+ */
+const FULL_ANALYSIS: Record<string, unknown> = {
+  executiveSummary: {
+    overallHealth: 'Good',
+    healthScore: 72,
+    keyStrengths: [
+      'Equity of $1.6M across ten holdings, none above 85% LVR.',
+      'Net cash flow is positive in nine of the ten properties.',
+      'Geographic spread across three states limits single-market exposure.',
+    ],
+    keyConcerns: [
+      'Six of the ten holdings sit in south-east Queensland.',
+      'Two loans revert from interest-only within eighteen months.',
+      'No offset balance is recorded against the largest loan.',
+    ],
+    primaryRecommendation:
+      'Refinance the two reverting loans before the interest-only period ends, and hold the remainder.',
+  },
+  compositionAnalysis: {
+    propertyMixAssessment:
+      'Ten investment holdings and no owner-occupied property. Eight houses and two units, which is a defensible mix for a portfolio at this stage.',
+    assetAllocation:
+      'By value the portfolio is 62% Queensland, 24% Victoria and 14% South Australia. The Queensland weighting is the single largest structural exposure.',
+    recommendations: [
+      'Direct the next purchase outside south-east Queensland.',
+      'Retain the two units; they carry the strongest yields.',
+      'Review the body corporate schedule on the Newstead unit at renewal.',
+    ],
+  },
+  financialHealth: {
+    analysis:
+      'The portfolio services itself. Rental income of $240,000 covers interest of $186,000 and holding costs of $41,000 with $13,000 to spare, before tax and before depreciation.',
+    cashflowStatus: 'Positive',
+    equityPosition: 'Strong',
+    lvrRisk: 'Moderate',
+    debtServiceability: 'Comfortable',
+  },
+  riskAssessment: {
+    overallRiskLevel: 'Moderate',
+    concentrationRisk: 'High',
+    vacancyRisk: 'Low',
+    interestRateSensitivity: 'Moderate',
+    marketRisks: [
+      'A south-east Queensland correction would move 62% of the portfolio at once.',
+      'Two loans revert to principal and interest within eighteen months.',
+      'Insurance premiums in the coastal holdings have risen for three consecutive renewals.',
+    ],
+    mitigationStrategies: [
+      'Fix the two reverting loans for three years at the current rate.',
+      'Build the offset balance to six months of holding costs.',
+      'Stagger the remaining lease expiries so no two fall in the same quarter.',
+    ],
+  },
+  marketConditions: {
+    marketCycleSummary:
+      'The Queensland market has run for eleven quarters and the rate of growth is slowing rather than reversing. Victoria has been flat for six.',
+    clientPositioning:
+      'Holding through the slowdown is the reasonable position; nothing in this portfolio needs to be sold to fund anything else.',
+    lendingEnvironment: 'Tightening',
+    rbaOutlook: 'On hold',
+  },
+  growthOpportunities: {
+    nextPurchaseRecommendations: [
+      'A three-bedroom house in outer western Melbourne, at or under $650,000.',
+      'A townhouse in Adelaide’s inner north, if the yield clears 4.5%.',
+    ],
+    equityReleaseOptions: [
+      'The Wattle Street holdings support a combined release of about $180,000 at 80% LVR.',
+    ],
+    refinancingOpportunities: [
+      'Loans 3 and 7 are 0.6% above the current market rate for their LVR band.',
+    ],
+    optimizationStrategies: [
+      'Move the offset to the highest-rate loan.',
+      'Bring the two coastal insurance policies onto one renewal date.',
+    ],
+  },
+  propertyRankings: Array.from({ length: 10 }, (_, i) => ({
+    address: `${i + 1} Wattle Street, Example Bay, QLD 4000`,
+    rank: i + 1,
+    performanceRating: i < 3 ? 'Strong' : i < 7 ? 'Good' : 'Watch',
+    strengths: ['Rent has risen at each renewal.', 'Low vacancy in the immediate area.'],
+    concerns: i < 7 ? ['Body corporate fees are above the median.'] : ['Yield is below the portfolio average.'],
+    recommendation: i < 7 ? 'Hold.' : 'Hold, and review at the next lease expiry.',
+  })),
+  propertyStrategicContext: Array.from({ length: 10 }, (_, i) => ({
+    address: `${i + 1} Wattle Street, Example Bay, QLD 4000`,
+    strategicRole: i < 3 ? 'Growth' : 'Yield',
+    individualOutlook:
+      'Rents in the catchment have risen for four consecutive quarters and the vacancy rate is under 1%.',
+  })),
+  projections: {
+    years: 5,
+    projectedPortfolioValue: 6_400_000,
+    projectedEquity: 2_900_000,
+    projectedMonthlyCashflow: 4_200,
+    plainEnglishSummary:
+      'On 4% growth and 3% rent growth, the portfolio is worth $6.4M in five years with $2.9M of equity behind it.',
+    assumptions: [
+      'Capital growth of 4% a year, compounding.',
+      'Rent growth of 3% a year.',
+      'Interest at 6.15%, unchanged.',
+      'No further purchases and no disposals.',
+    ],
+  },
+  borrowingCapacityUtilisation: {
+    estimatedCapacity: 4_800_000,
+    totalDebtDeployed: 4_000_000,
+    availableCapacity: 800_000,
+    utilisationPercentage: 83.3,
+    commentary:
+      'At 83% of assessed capacity there is room for one more purchase at the price band recommended above, and none beyond it without a release.',
+  },
+  strategicRecommendations: {
+    priorityActions: [
+      'Refinance loans 3 and 7 before the interest-only period ends.',
+      'Confirm the insurance sums insured against current replacement cost.',
+    ],
+    shortTerm: ['Bring the offset balance to $60,000.', 'Request a rent review on holdings 8 and 9.'],
+    mediumTerm: ['Purchase outside Queensland.', 'Reassess the unit holdings at the twelve-month mark.'],
+    longTerm: ['Reduce the Queensland weighting below 50% by value.'],
+  },
+  actionPlan: {
+    twelveMonthActions: [
+      'Complete the two refinances.',
+      'Settle one additional property.',
+      'Review every lease at expiry rather than rolling it.',
+    ],
+  },
+};
+
+const FULL_REVIEW: Record<string, unknown> = {
+  status: 'final',
+  review_date: '2026-05-14',
+  next_review_due: '2026-11-14',
+  overall_score: 74,
+  portfolio_health: 71,
+  cash_flow_score: 68,
+  growth_potential: 79,
+  data_completeness_score: 92,
+  risk_level: 'moderate',
+  executive_summary:
+    'A well-serviced portfolio with one structural exposure worth acting on and two loans that need attention inside eighteen months.',
+  key_findings: [
+    'Nine of the ten holdings are cash-flow positive.',
+    'Queensland is 62% of the portfolio by value.',
+    'Two loans revert from interest-only within eighteen months.',
+  ],
+  property_scores: Array.from({ length: 10 }, (_, i) => ({
+    address: `${i + 1} Wattle Street, Example Bay, QLD 4000`,
+    overallScore: 80 - i * 3,
+    classification: i < 3 ? 'Core' : i < 7 ? 'Satellite' : 'Review',
+    strengths: ['Consistent tenancy.', 'Rent above the suburb median.'],
+    concerns: ['Holding costs have risen faster than rent.'],
+  })),
+  scenarios: [
+    {
+      name: 'Rates rise 1%',
+      description: 'Every loan reprices at the next review.',
+      impact: { cashFlowChange: -3_300, newNetCashflow: -2_200 },
+    },
+    {
+      name: 'Rents rise 5%',
+      description: 'Applied at each lease renewal over twelve months.',
+      impact: { cashFlowChange: 1_000, newNetCashflow: 2_100 },
+    },
+    {
+      name: 'One holding vacant for a quarter',
+      description: 'The weakest-yielding property sits empty for thirteen weeks.',
+      impact: { cashFlowChange: -1_450, newNetCashflow: -350 },
+    },
+  ],
+  recommendations: [
+    {
+      title: 'Refinance the two reverting loans',
+      detail: 'Both revert to principal and interest within eighteen months, adding about $2,900 a month.',
+      priority: 'high',
+      steps: ['Obtain three quotes.', 'Compare against the existing lender’s retention offer.', 'Settle before the reversion date.'],
+    },
+  ],
+};
+
+/** The document, on disk, for the eye. See `renderArtifact.ts`. */
+beforeAll(() => {
+  writeRenderArtifact('portfolio-performance', render(review(10, FULL_ANALYSIS, FULL_REVIEW)));
+});
 
 describe('the contents page cannot claim something that was not printed', () => {
   it('lists exactly the sections the document builds, in printed order', () => {

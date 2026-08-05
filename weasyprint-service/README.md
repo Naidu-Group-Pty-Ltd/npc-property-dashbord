@@ -149,7 +149,7 @@ whatever `weasyprint` is on your PATH:
 ```bash
 npx tsx scripts/reports/engineCheck.mts \
   --service http://localhost:8080 --token dev-token \
-  --capabilities reports/html/borrowing-capacity-snapshot.html
+  --capabilities reports/html/borrowing-capacity.html
 ```
 
 ## The image

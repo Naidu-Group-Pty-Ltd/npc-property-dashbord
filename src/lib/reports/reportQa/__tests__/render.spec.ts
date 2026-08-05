@@ -8,7 +8,8 @@
  *
  * Fixtures are fictional and sized from the record.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildReportQaDocument } from '../normalise.pure';
 import { renderReportQaFromBrand, formatReportDate, DOCUMENT_NAME } from '../render.pure';
 import { chapterLevelOf, LINES_PER_PAGE, MAX_TRANSCRIPT_CHAPTERS } from '../sections.pure';
@@ -81,6 +82,17 @@ const SUBJECTS = [
     messages: Array.from({ length: 5 }, (_, i) => pair(i)).flat(),
   }],
 ] as const;
+
+/**
+ * The document, on disk, for the eye — the five-exchange transcript, which is
+ * the only fixture here long enough to paginate. See `renderArtifact.ts`.
+ */
+beforeAll(() => {
+  writeRenderArtifact('report-qa', render({
+    subject: 'transcript',
+    messages: Array.from({ length: 5 }, (_, i) => pair(i)).flat(),
+  } as never).html);
+});
 
 describe('the contents page cannot claim something that was not printed', () => {
   it.each(SUBJECTS)('lists exactly the sections built, in order — %s', (_label, over) => {

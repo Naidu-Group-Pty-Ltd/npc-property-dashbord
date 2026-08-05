@@ -5,8 +5,9 @@
  * to happen is a contents page listing something that was not built — and that
  * is invisible in the PDF bytes and visible here.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { buildClientDetails } from '../normalise.pure';
 import { DOCUMENT_NAME, renderClientDetailsFromBrand } from '../render.pure';
 import {
@@ -72,6 +73,11 @@ describe('the contents page cannot claim something that was not printed', () => 
     expect(contentsEntriesFor(clientDetailsSpine(p)).map((e) => e.title))
       .toEqual(clientDetailsSections(p).map((s) => s.title));
   });
+});
+
+/** The document, on disk, for the eye — the fullest fixture. See `renderArtifact.ts`. */
+beforeAll(() => {
+  writeRenderArtifact('client-details', render(FULL));
 });
 
 describe('the 97% case is a finished document', () => {

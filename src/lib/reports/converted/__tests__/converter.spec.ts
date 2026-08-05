@@ -6,7 +6,8 @@
  * binding is one-to-one, that a weak match is *offered but flagged* rather than
  * silently accepted, and that nothing a person uploaded disappears.
  */
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import { describeStructure, extractStructure, MAX_BIND_DEPTH } from '../structure.pure';
 import {
   bindableFormats,
@@ -313,6 +314,11 @@ describe('the converted document', () => {
     masthead: 'Harbour & Vale',
     systemName: 'Harbour Editorial',
     preparedOn: '2026-08-04T00:00:00.000Z',
+  });
+
+  /** The document, on disk, for the eye. See `renderArtifact.ts`. */
+  beforeAll(() => {
+    writeRenderArtifact('converted', render().html);
   });
 
   it('prints the format\'s chapters in the format\'s order', () => {

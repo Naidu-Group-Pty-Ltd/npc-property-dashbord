@@ -303,7 +303,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # Writes reports/html/borrowing-capacity-snapshot.html as a side effect.
+      # Writes reports/html/borrowing-capacity.html as a side effect.
       - name: Build the Borrowing Capacity Snapshot
         run: npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
 
@@ -317,7 +317,7 @@ jobs:
           done
           node -e '
             const fs = require("node:fs");
-            const html = fs.readFileSync("reports/html/borrowing-capacity-snapshot.html", "utf8");
+            const html = fs.readFileSync("reports/html/borrowing-capacity.html", "utf8");
             fs.writeFileSync("/tmp/bc.json", JSON.stringify({ html, pdf_variant: "pdf/a-2b", tagged: true }));
           '
           curl -sf -X POST http://localhost:8081/render \
@@ -350,7 +350,7 @@ jobs:
           npx tsx scripts/reports/engineCheck.mts \
             --service http://localhost:8081 --token ci-token \
             --capabilities \
-            reports/html/borrowing-capacity-snapshot.html
+            reports/html/borrowing-capacity.html
           docker rm -f wp2
 
       - name: Assert the report's typography
