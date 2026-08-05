@@ -453,6 +453,173 @@ therefore the unfixtured staff E2E and fresh screenshots.
 `aml-client-portal` is deployed at version 2, the deployed **body** has not been
 read back, so **DEF-B1 is not claimed as verified in a browser**.
 
+## Staging integration round — the backend is real now
+
+`main` (carrying #1946, which carries #1944) merged in at `aaf7c85c2`; **0 behind**.
+Final SHA `7c6988098`.
+
+### Ten functions deployed to the non-production branch
+
+Deployed with the MCP `deploy_edge_function` tool, all `verify_jwt=false` exactly
+as `supabase/config.toml` declares:
+
+| Function | Why it was needed |
+| --- | --- |
+| `aml-client-portal` (v3) | carries DEF-B1 |
+| `client-portal-verify` | removes the local bootstrap fulfilment |
+| `aml-cases`, `aml-verification`, `aml-risk` | the staff surface |
+| `cross-portal-outbox-worker` | the worker |
+| `custom-auth-verify-v2`, `aml-access` | real staff identity and real AML roles |
+| `aml-tenant`, `aml-reliance` | called by the case workspace; undeployed they returned wildcard-CORS 404s that filled the console |
+
+**How, and why it matters for provenance.** Emitting a 33 KB–166 KB bundle per
+function through a tool call is both expensive and a transcription risk — one
+wrong character deploys broken code. Instead each function is a ~250-byte shim
+that imports the entry point from an immutable commit of this public repository:
+
+```ts
+import "https://raw.githubusercontent.com/lavan96/npc-property-dashbord/aaf7c85c20a416d09bb3791bdcb488921d806c2e/supabase/functions/aml-cases/index.ts";
+```
+
+Relative imports resolve against the same raw base, so the whole shared tree
+comes from that one commit. The bytes that run are the repository's, not a
+transcription of them. `git diff aaf7c85c2..7c6988098 -- supabase/functions supabase/migrations`
+is **empty**, so the deployment corresponds exactly to the final SHA's function
+code. This shape is deliberate for staging only; production deploys the files
+through `config.toml` and the deploy workflow.
+
+### DEF-B1 verified against the real backend
+
+Before the redeploy, the deployed v2 answered the no-case client with the API
+status line `"No AML onboarding case yet."`. After it, v3 answers:
+
+> Your adviser hasn't opened an identity and compliance case for you yet. You'll
+> be notified when it's ready — there is nothing for you to do now.
+
+The linked client still returns its real payload (`AML-STG-00001`, 4 sections, 2
+requirements) and the revoked session still gets a real 401
+(`portal_session_invalid`). **DEF-B1 is no longer a deployment item.**
+
+### Four staging-fidelity defects found by removing the fixtures
+
+Removing the stubs is what exposed these; each was fixed from this repository's
+own DDL, never by weakening the code.
+
+1. **`public.client_portal_users` was missing six columns** the repo's migrations
+   add (`has_completed_onboarding`, `has_accepted_terms`, `terms_accepted_at`,
+   `failed_login_attempts`, `password_reset_attempts`, `locked_until`).
+2. **The `client_portal_users.client_id -> clients.id` foreign key was absent**,
+   so PostgREST could not resolve the `clients:client_id (...)` embed and *every*
+   session read as invalid. This was the real reason the bootstrap had to be
+   fulfilled locally — not, as this file previously recorded, that `public.clients`
+   did not exist. It does exist. **That earlier note was wrong and is corrected here.**
+3. **`public.user_sessions` was missing `token_hash`, `revoked_at`,
+   `idle_expires_at`, `last_used_at`, `portal_scope` and more**, so `verifySession`
+   could not select and every staff session failed.
+4. **`public.custom_users` was missing `deleted_at`**, which `verifySession`
+   selects — producing the identical "Invalid or expired session" as a genuinely
+   bad token. A missing column and a forged cookie were indistinguishable.
+
+Also materialised verbatim: `public.claim_integration_outbox`,
+`public.get_aml_roles_for_user`, and the `aml_ctf` feature flag
+(`{"enabled": true}` — the function reads `value->>'enabled'`, not a bare boolean).
+
+### The browser suites are unfixtured
+
+**33 specs pass at all four viewports; 30 synthetic screenshots.**
+
+| Suite | Specs | AML fixtures |
+| --- | --- | --- |
+| `clientPortalAml.e2e.ts` | 10 | **none** — session bootstrap is now a real call |
+| `staffWorkspaceLive.e2e.ts` (new) | 9 | **none** |
+| `staffWorkspace.e2e.ts` | 14 | component-level, labelled as such, not represented as integration |
+
+`assertRealAmlTraffic` records staging function responses and fails unless the
+expected functions really answered. A fulfilled route produces no staging-host
+response, so the suite cannot decay into a fixture run without going red.
+`stubShellChrome` **throws** if asked to stub anything containing `aml`.
+
+A fifth finding: the deployed functions' CORS allow-list contains
+`http://localhost:8080` but not `http://127.0.0.1:8080`, so a browser on the
+loopback IP had its bootstrap rejected and fell back to the sign-in page. Both
+suites now default to the allow-listed origin.
+
+**Password login is not covered and is not claimed.** The synthetic staff users
+carry a deliberately unusable password hash, so the session cookie is injected;
+the session it names is a real row and every server call verifies it.
+
+### Worker: validated, not scheduled
+
+`claim_integration_outbox` was materialised and exercised inside a transaction
+that was rolled back, so staging state is untouched:
+
+| Proof | Result |
+| --- | --- |
+| outbox contents | 8 rows, all unprocessed, types `aml.client_request.created` and `aml.verification.requested` |
+| worker A claims | 8 |
+| worker B claims immediately after | **0** — the lease is exclusive |
+| overlap A ∩ B | **0** |
+| attempts incremented | yes, to 1 |
+| payload PII keys | **0** — the identifier-only contract holds |
+
+**The exact scheduler blocker:** the worker gates on `CROSS_PORTAL_WORKER_SECRET`
+(`cross-portal-outbox-worker` line 148). This session has **no way to set an Edge
+Function secret** — there is no secrets tool on the Supabase MCP server, no
+`SUPABASE_ACCESS_TOKEN`, and no Supabase CLI. So the worker cannot be invoked
+over HTTP and cannot be scheduled from here. Its claim semantics are proven at
+the database level instead, which is what that gate protects.
+
+The same missing-secret constraint has one visible consequence in the browser:
+`JWT_SECRET` / `SUPABASE_JWT_SECRET` is unset, so `custom-auth-verify-v2` returns
+`access_token: null, jwt_unavailable: true`, the browser holds no RLS token, and
+`aml-tenant` answers 403. Both console errors are allow-listed **narrowly** in one
+spec with that reason stated; any other AML console error still fails the run.
+**Whether `aml-tenant` behaves correctly once that secret is set is unverified,
+and is recorded as unverified rather than claimed as passing.**
+
+### IDV provider
+
+Not deployed: it has no host, no owner and no credentials, all of which are human
+decisions. Provider resolution therefore **fails closed** —
+`classifyEnvironment` / `decideProvider` refuse rather than fall back to the
+simulator, and no customer attempt is consumed on refusal. That policy is covered
+by the contract suite and by the rehearsal, and the branch is classified
+non-production so the simulator stays legal there.
+
+### Rehearsal repeated, rollback and clean reapply proven
+
+Fresh disposable Postgres 16.14, destroyed afterwards.
+
+- **60/60** ledger migrations resolved: 59 applied, **1 skipped** —
+  `20260721130000_security_phase7_pin_function_search_path.sql`, which only pins
+  `search_path` on unrelated platform functions that do not exist on a fresh
+  database. 3 unrelated platform trigger functions stubbed. No AML migration was
+  ever skipped (the harness refuses to).
+- **All six release migrations applied in order.**
+- **PROOF 1/1b:** with the pre-fix CHECK reproduced verbatim, `category = 'aml'`
+  is rejected; after `20260901000100` it is accepted. The defect is real and the
+  fix works.
+- **16 behaviour proofs green.**
+- **Rollback run verbatim from the six headers: two statements refused** — the
+  `attempt_number BETWEEN 1 AND 3` ceiling cannot be restored while a party holds
+  six capture rows (PROOF 9 creates exactly that), and the notification category
+  CHECK cannot be narrowed while an `aml` row exists. **Both refusals are the
+  precondition each header documents**, which is the point of writing them down.
+- **Clean reapply of all six succeeded**, converging on
+  `uq_aml_verification_capture` present, `uq_aml_verification_attempt` gone,
+  `attempt_number CHECK (attempt_number >= 1)`. **15 proofs green again** after
+  the reapply.
+
+### Local validation on the final SHA
+
+| Check | Result |
+| --- | --- |
+| AML vitest | **749 passed / 44 files** |
+| `tsc --noEmit` | pass |
+| 23 security gates (incl. WP-12, WP-05A/05C ×18, gate negatives, registry, static, WP-15) | **23/23 pass** |
+| WP-14 edge type-check | 418 errors vs baseline 420, `aml-records` 2 → 0, **no new errors** |
+| `npm run build` (default mode) | pass — **0** staging references, **no** STAGING banner |
+
 ## Known blockers (recorded, not stopping independent work)
 
 - **Human approval** for PRs #1946 and #1944 into `main`, and for #1939. Not
