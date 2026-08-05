@@ -50,7 +50,7 @@ describe('validateAssessment issue routing', () => {
     // A deliberately broken payload, wide enough to trip rules in every section.
     const payload = baseAssessment();
     payload.property.purchasePrice = -1;
-    payload.property.state = 'ZZ';
+    payload.property.state = 'ZZ' as never;
     payload.property.postcode = '21';
     payload.ownership.entities[0].ownershipPercent = 40;
     payload.ownership.entities[0].entityName = '';

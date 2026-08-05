@@ -119,15 +119,17 @@ describe('PackDocumentViewer', () => {
 
   it('zooms in and out within bounds', async () => {
     render(<PackDocumentViewer document={WORKBOOK} open onOpenChange={() => {}} />);
-    await screen.findByText('100%');
+    // Workbooks open one step down so a wide sheet fits without side-scrolling.
+    await screen.findByText('80%');
 
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
-    expect(screen.getByText('125%')).toBeInTheDocument();
+    expect(screen.getByText('100%')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
-    expect(screen.getByText('80%')).toBeInTheDocument();
+    expect(screen.getByText('65%')).toBeInTheDocument();
   });
+
 
   it('offers a full-screen toggle', async () => {
     render(<PackDocumentViewer document={WORKBOOK} open onOpenChange={() => {}} />);

@@ -25,7 +25,7 @@ describe("the evidence-object channel serves exactly the closed P3 catalogue", (
     for (const code of ["legal_hold_record", "arrangement_assessment_record"]) {
       const d = evaluateEvidenceObjectDelivery(code, REQUESTABLE_RECORD_CLASSES);
       expect(d.ok).toBe(false);
-      if (!d.ok) expect(d.code).toBe("classification_not_deliverable");
+      if (d.ok === false) expect(d.code).toBe("classification_not_deliverable");
     }
   });
 
@@ -33,7 +33,7 @@ describe("the evidence-object channel serves exactly the closed P3 catalogue", (
     for (const code of ["suspicious_matter_material", "biometric_raw_capture"]) {
       const d = evaluateEvidenceObjectDelivery(code, REQUESTABLE_RECORD_CLASSES);
       expect(d.ok).toBe(false);
-      if (!d.ok) expect(d.code).toBe("classification_not_deliverable");
+      if (d.ok === false) expect(d.code).toBe("classification_not_deliverable");
     }
   });
 
@@ -41,7 +41,7 @@ describe("the evidence-object channel serves exactly the closed P3 catalogue", (
     for (const code of ["partner_case_link_record", "compliance_attestation_record", "refresh_obligation_record"]) {
       const d = evaluateEvidenceObjectDelivery(code, REQUESTABLE_RECORD_CLASSES);
       expect(d.ok).toBe(false);
-      if (!d.ok) expect(d.code).toBe("classification_not_deliverable");
+      if (d.ok === false) expect(d.code).toBe("classification_not_deliverable");
     }
   });
 
@@ -49,7 +49,7 @@ describe("the evidence-object channel serves exactly the closed P3 catalogue", (
     for (const code of ["aml.cases", "storage/v1/object/x", "risk_rating", "screening_matches", ""]) {
       const d = evaluateEvidenceObjectDelivery(code, REQUESTABLE_RECORD_CLASSES);
       expect(d.ok).toBe(false);
-      if (!d.ok) expect(d.code).toBe("record_code_unknown");
+      if (d.ok === false) expect(d.code).toBe("record_code_unknown");
     }
   });
 });

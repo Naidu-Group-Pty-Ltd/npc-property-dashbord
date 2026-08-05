@@ -43,6 +43,8 @@ import type { PackSourceDocument } from '@/lib/ciAssessment/intakePack/sourceDoc
 /** Zoom steps. 1 is "as rendered"; below it fits a wide sheet on screen. */
 const ZOOM_STEPS = [0.5, 0.65, 0.8, 1, 1.25, 1.5, 2];
 const DEFAULT_ZOOM_INDEX = 3;
+/** Workbooks open slightly reduced so a wide sheet fits without side-scrolling. */
+const WORKBOOK_ZOOM_INDEX = 2;
 
 interface Props {
   document: PackSourceDocument | null;
@@ -116,7 +118,9 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
     setRendered(null);
     setSheetIndex(0);
     setPageIndex(0);
-    setZoomIndex(DEFAULT_ZOOM_INDEX);
+    // Workbook sheets are far wider than they are tall, so they open one step
+    // down: that fits a sheet across the stage without a horizontal scroll.
+    setZoomIndex(source.kind === 'workbook' ? WORKBOOK_ZOOM_INDEX : DEFAULT_ZOOM_INDEX);
 
     (async () => {
       try {
@@ -204,7 +208,18 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn('ci-pack-dialog', expanded && 'ci-pack-dialog-expanded')}>
+      {/* The size classes are written here, not only in `ci-pack-dialog`: the
+          dialog primitive's own `sm:max-w-lg` / `sm:max-h-[85dvh]` utilities sit
+          in a later cascade layer than the component class, so a component-layer
+          width was silently losing to them and the viewer opened tiny. */}
+      <DialogContent
+        className={cn(
+          'ci-pack-dialog',
+          'w-[96vw] max-w-none sm:w-[96vw] sm:max-w-none',
+          'h-[92dvh] max-h-[92dvh] sm:max-h-[92dvh]',
+          expanded && 'ci-pack-dialog-expanded w-[99vw] sm:w-[99vw] h-[97dvh] max-h-[97dvh] sm:max-h-[97dvh]',
+        )}
+      >
         <header className="ci-pack-header">
           <div className="min-w-0">
             <DialogTitle className="truncate text-base">{title}</DialogTitle>
