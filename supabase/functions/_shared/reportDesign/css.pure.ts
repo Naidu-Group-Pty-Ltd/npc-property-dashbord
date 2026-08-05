@@ -713,25 +713,25 @@ export function buildReportCss(input: ReportCssInput): string {
      page-break-after:avoid regularly puts an h2 at the top of a fresh sheet
      with nothing above it but the running head. A 20pt Playfair heading
      opening a blank page reads as a chapter opener that lost its eyebrow and
-     its rule. Read off a real render, in the converter and in the declarative
-     formats alike.
+     its rule.
 
-     Three signals, none subtle enough to be missed: half the title's size
-     rather than two-thirds, a lighter weight, and an accent rule above it —
-     the mark of a division *within* running text, which is what it is. It
-     stays above 14pt so it remains in the display contrast band (see
-     tokens.pure.ts), and it keeps bodyInk, because a heading a reader has to
-     work at is not an improvement on one they misread. */
+     Two signals, not three. The first version also drew an accent rule above
+     the subhead, and a render said what that costs: at the top of a sheet a
+     full-measure 0.6pt hairline is indistinguishable from a header rule, so it
+     separated the subhead from the page break rather than from the text above
+     it — and eight subheads down two pages, each with its own gold rule at
+     ~55pt intervals, read as a rate card rather than as prose. Half the
+     title's size at a lighter weight is enough; a native Borrowing Capacity
+     page sets its subheads at this size with no rule and reads correctly.
+
+     subhead is its own token rather than a ratio of h1, so a brand design
+     system that moves it moves it. It stays above 14pt at every bodyScale,
+     which keeps it in the display contrast band (see tokens.pure.ts). */
   h2 {
-    font-size: ${pt(type.h1 / 2)};
+    font-size: ${pt(type.subhead)};
     font-weight: 500;
     margin: ${pt(d.blockGapPt + 12)} 0 ${pt(d.paragraphGapPt + 3)};
-    padding-top: ${pt(d.paragraphGapPt + 2)};
-    border-top: 0.6pt solid ${palette.accentOnPaper};
   }
-  /* A subhead that opens a chapter body sits directly under the chapter
-     header's own hairline; a second rule 12pt below it is a double line. */
-  .chapter-body > h2:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
   h3 { font-size: ${pt(type.h3)}; margin: ${pt(d.blockGapPt)} 0 ${pt(d.paragraphGapPt - 1)}; }
   /* h4 is the mono micro-label, not a smaller heading — it is the same object
      as .eyebrow and shares its colour so the two never drift apart. */

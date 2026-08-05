@@ -437,17 +437,39 @@ chapter title set smaller. Invisible while a chapter title sits above it, and
 wrong the moment one does not — a chapter always breaks to a new page and
 `page-break-after: avoid` regularly puts an h2 at the top of a fresh sheet with
 nothing above it but the running head. h2 is now half the title's size rather
-than two-thirds, at a lighter weight, with an accent rule above it. It stays
-above 14pt to remain in the `display` contrast band. This is shared CSS — all ten
-formats — so it was judged by rendering a converted document *and* a native
-Borrowing Capacity Snapshot and reading both.
+than two-thirds, at a lighter weight, on its own `PRINT_SCALE.subhead` token —
+`h2` is also the size of a KPI figure and a chart's hero number, and those are
+not the same decision. It stays above 14pt at every `bodyScale`, which keeps it
+in the `display` contrast band.
+
+The first version drew an accent rule above the subhead as a third signal, and a
+render said what that costs: at the top of a sheet a full-measure hairline is
+indistinguishable from a header rule, so it separated the subhead from the page
+break rather than from the text above it — and eight subheads down two pages
+each with their own gold rule read as a rate card rather than as prose. Dropped.
+Two signals are enough.
+
+**And the first blast-radius check for this was worthless.** It rendered a native
+Borrowing Capacity Snapshot, which contains **zero** `<h2>` — that format emits
+its own subhead class — so it proved nothing while looking like a control. The
+formats actually at risk are the ones carrying model-authored Markdown through
+`markdown.pure.ts`: Report Q&A and Market Intelligence. A native Market
+Intelligence report with thirteen subheads across twenty-two pages is the check
+that means something, and it is the one this was judged on.
 
 **F3 — a headerless table crossed a page with no label.** A GFM table whose
 header cells are all blank has its `thead` dropped, deliberately: an empty tinted
 band is not a header and there is nothing for a screen reader or a tagged PDF to
 announce. That is right, and `display: table-header-group` is the only
 per-page-repeating box the sheet has, so the table lost its only continuation
-marker. It now carries a `caption` naming the chapter it sits in. **The limit is
+marker. It now carries a `caption` naming the chapter it sits in — **at most one
+per chapter, and never on a table a heading already stands over.** The first
+version captioned every headless table, so a chapter with two printed the chapter
+title twice, the second time directly under a subhead that had just said
+something else: `Capacity Breakdown` (34pt title), the table, `Additional
+Assumptions` (17pt subhead), then `CAPACITY BREAKDOWN` again. Two competing
+labels twelve points apart, and the caption was the wrong one — worse than the
+unlabelled table it replaced. **The limit is
 stated rather than papered over**: a caption renders once, at the start. A true
 per-page "(continued)" would mean synthesising header labels the source never had
 — inventing text on a client's document to solve a layout problem.
@@ -478,6 +500,12 @@ second shape is the common one. Pinned in the spec so the choice is visible.
 Also: the first version separated *every* block with a blank line, which stopped
 every pipe table in the document being a table. Structural runs are now joined by
 single newlines and only prose is re-paragraphed.
+
+**F7 — an unfilled chapter said its own callout out loud, twice.** The chapter
+dek read *"Supplied by the live report"* in 12pt italic and the callout's eyebrow
+forty points below read `SUPPLIED BY THE LIVE REPORT` in 8.5pt mono. The same
+four words in two sizes on the same sheet, on the reader's first three pages of a
+cross-format conversion. The dek is gone; the callout already says it at length.
 
 **F6 — the disclaimer could vanish without a trace.** Pass five drops the
 template's own trailing contact/disclaimer section *because* `renderCompanyPage`

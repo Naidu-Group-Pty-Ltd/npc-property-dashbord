@@ -661,6 +661,8 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   const landscape = options.landscapeWideTables !== false;
   const detectTotal = options.detectTotalRow !== false;
   const headlessCaption = String(options.headlessTableCaption ?? '').trim();
+  /** Said once per run. See the table scanner. */
+  let headlessCaptionUsed = false;
 
   // ── Pass 0 ────────────────────────────────────────────────────────────────
   let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
@@ -1020,10 +1022,26 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
 
     // See `headlessTableCaption`. Only when the table has no head of its own —
     // a table with real column labels already says what it is.
+    // ── Caption the *first* headless table, and only when nothing else names it
+    //
+    // The first version captioned every headless table with the chapter title,
+    // and a chapter with two of them printed the chapter title twice — the
+    // second time directly under a subhead that had just said something else.
+    // Read off a render: `Capacity Breakdown` (34pt chapter title), the table,
+    // `Additional Assumptions` (17pt subhead), then `CAPACITY BREAKDOWN` again.
+    // Two competing labels for one table, 12pt apart, and the caption was the
+    // wrong one. Worse than the unlabelled table it replaced.
+    //
+    // So: a heading already standing over the table is the better label and the
+    // caption is suppressed, and after the first one the chapter title has been
+    // said and repeating it adds nothing.
     const headless = !cols.some((c) => c.label);
+    const named = blocks.length > 0 && blocks[blocks.length - 1].kind === 'heading';
+    const wantsCaption = headless && headlessCaption && !named && !headlessCaptionUsed;
+    if (wantsCaption) headlessCaptionUsed = true;
     const table = renderDataTable(cols, rows, {
       signedKeys: cols.filter((c) => c.align === 'right').map((c) => c.key),
-      caption: headless && headlessCaption ? headlessCaption : undefined,
+      caption: wantsCaption ? headlessCaption : undefined,
     });
 
     const wide = width > MAX_PORTRAIT_TABLE_COLS;

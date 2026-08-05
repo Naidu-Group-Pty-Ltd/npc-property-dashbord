@@ -261,7 +261,12 @@ export function planConvertedChapters(
       id: `cv.${i}`,
       kind: 'unfilled',
       title: binding.chapter,
-      note: 'Supplied by the live report',
+      // No dek. The callout this chapter's body *is* carries the label
+      // `SUPPLIED BY THE LIVE REPORT`, and a 12pt italic dek saying the same
+      // four words 40pt above an 8.5pt mono eyebrow saying them again is the
+      // repetition E3 exists to stop — three pages of a real render opened on
+      // exactly that.
+      note: undefined,
       markdown: '',
       lines: unfilledLines,
       pages: pagesForLines(unfilledLines),
