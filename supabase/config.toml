@@ -892,6 +892,10 @@ request_timeout = 1500
 verify_jwt = false
 request_timeout = 1500
 
+[functions.render-commercial-capacity-pdf]
+verify_jwt = false
+request_timeout = 1500
+
 [functions.figma-template-sync]
 verify_jwt = false
 request_timeout = 1500

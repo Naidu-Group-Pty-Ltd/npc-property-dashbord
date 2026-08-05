@@ -58,6 +58,7 @@ const FORMATS: ReadonlyArray<{ id: string; spec: string }> = [
   { id: 'cash-flow-projection', spec: 'src/lib/reports/cashFlow/__tests__/render.spec.ts' },
   { id: 'cash-flow-comparison', spec: 'src/lib/reports/cashFlowComparison/__tests__/render.spec.ts' },
   { id: 'client-details', spec: 'src/lib/reports/clientDetails/__tests__/render.spec.ts' },
+  { id: 'commercial-capacity', spec: 'src/lib/reports/commercialCapacity/__tests__/render.spec.ts' },
   { id: 'investment-compass', spec: 'src/lib/reports/investment/__tests__/render.spec.ts' },
   { id: 'market-intelligence', spec: 'src/lib/reports/marketIntelligence/__tests__/render.spec.ts' },
   { id: 'portfolio-performance', spec: 'src/lib/reports/portfolio/__tests__/render.spec.ts' },

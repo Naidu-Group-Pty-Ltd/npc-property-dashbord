@@ -53,18 +53,29 @@ being resumed — by the browser, the bulk worker, or a cron watchdog. Read
 [`docs/reports/INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
 before changing the section loop, its timeouts, or anything that claims a report.
 
-Eight formats have been migrated onto it, and each carries its own contract:
+Nine formats have been migrated onto it, and each carries its own contract:
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
 [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md),
 [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md),
 [`COMPARISON.md`](./docs/reports/COMPARISON.md),
 [`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md),
 [`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md),
-[`QA.md`](./docs/reports/QA.md) and
-[`MARKET_INTELLIGENCE.md`](./docs/reports/MARKET_INTELLIGENCE.md). Read the
-relevant one before touching that format — all eight record defects that only a
-render against production data revealed, and all eight name the legacy generators
+[`QA.md`](./docs/reports/QA.md),
+[`MARKET_INTELLIGENCE.md`](./docs/reports/MARKET_INTELLIGENCE.md) and
+[`COMMERCIAL_CAPACITY.md`](./docs/reports/COMMERCIAL_CAPACITY.md). Read the
+relevant one before touching that format — each records defects that only a
+render against production data revealed, and each names the legacy generators
 that must stay.
+
+**Commercial & Industrial Capacity** is the newest, and the one to read before
+adding a format whose prose a model writes. Its figures come from the stored
+calculation run and never from a recomputation; its analysis section is
+model-authored under a tool schema that contains **no numeric field at all**,
+persisted against the run so a re-issued report says what the first one said,
+and labelled as model-written on the page. It is also the format whose first
+render found a live bug in `measure.pure.ts` — `formatDelta` reported "no
+change" for every `rate` that changed, which had been silently wrong in the
+Borrowing Capacity Snapshot's audit table.
 
 Two of the eight carry model-authored Markdown rather than typed figures, and
 they share the programme's only Markdown renderer,

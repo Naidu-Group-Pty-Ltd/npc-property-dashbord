@@ -237,7 +237,15 @@ export function formatAmount(m: Measure, emDash = '—'): string {
 export function formatDelta(m: Measure, emDash = '—'): string {
   if (m.unit === 'none' || !Number.isFinite(m.value)) return emDash;
   const p = precisionOf(m);
-  if (Number(Math.abs(m.value).toFixed(p)) === 0) return emDash;
+  // Rounded on the **rendered** scale, not the stored one.
+  //
+  // A `rate` is a 0–1 fraction that prints ×100, so a portfolio LVR moving
+  // from 56.5% to 64.1% is a stored delta of 0.0762 — and `0.0762.toFixed(0)`
+  // is `0`. This branch reported "did not move" for every rate change smaller
+  // than half of one, which is every rate change there is. Found by reading a
+  // rendered page: the LVR column said 57% → 64%, change "—".
+  const scaled = m.unit === 'rate' ? m.value * 100 : m.value;
+  if (Number(Math.abs(scaled).toFixed(p)) === 0) return emDash;
   const rendered = formatMeasure(m, emDash);
   return m.value > 0 ? `+${rendered}` : rendered;
 }
