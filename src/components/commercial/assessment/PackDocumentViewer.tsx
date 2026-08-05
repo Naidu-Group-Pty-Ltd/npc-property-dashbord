@@ -107,7 +107,26 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
   const [attempt, setAttempt] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Horizontal extent of the dashboard's main column, measured while the viewer
+   * is open. Measured rather than assumed because the sidebar collapses to an
+   * icon rail; `null` falls back to the primitive's own centring.
+   */
+  const [frame, setFrame] = useState<{ left: number; width: number } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const measure = () => {
+      const main = document.querySelector('.dashboard-main') as HTMLElement | null;
+      const rect = main?.getBoundingClientRect();
+      setFrame(rect && rect.width > 360 ? { left: rect.left, width: rect.width } : null);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [open]);
+
   const zoom = ZOOM_STEPS[zoomIndex];
+
 
   useEffect(() => {
     if (!open || !source) return;
