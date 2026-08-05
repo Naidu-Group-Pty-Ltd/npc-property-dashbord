@@ -122,7 +122,25 @@ Starting point: branch head `4d4efa3d6`; `origin/main` had advanced to
 `199485506`. Merged (not rebased) as `7fe648002`; the incoming diff touched only
 `package.json`/`package-lock.json`, `src/assets/intakePack/*` and
 `src/lib/ciAssessment/*` — no AML, portal, provider, migration, auth or storage
-surface. Worktree clean at each stage boundary.
+surface. `main` then advanced a further 17 commits during the round and was
+merged again as `42a19dcbd` (commercial/industrial finance redesign and the
+intake-pack viewer, plus five AML *test* files where `if (!d.ok)` became
+`if (d.ok === false)` — type narrowing only). AML vitest 749 passed after that
+merge. Worktree clean and pushed at each stage boundary.
+
+### GitHub CI
+
+Real PR checks ran on `b37941021`: `GitGuardian Security Checks`, `verify`,
+`supply-chain`, `render-container`, `pdf-import-release-gate` and
+`pdf-import-regression` all green; `security` failed on
+`supabase/functions/listing-images/index.ts: 6 → 8` (WP-14 edge-typecheck
+ratchet). **That failure is identical on `main`** at `199485506` — this PR's
+merge base — and on the commits after it (run 31021092008, job 92357669102).
+`listing-images` is not touched by this branch; the change that raised its
+count, `1c2fcee14`, is on `main`. The base branch is red and this PR inherits
+it. The baseline update belongs with that change, not absorbed into an AML PR,
+so the PR is being left **draft** while it stands, with a human reviewer
+requested so review can proceed regardless.
 
 ### Browser test environment
 
