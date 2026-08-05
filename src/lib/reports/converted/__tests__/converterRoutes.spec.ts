@@ -35,6 +35,7 @@ import {
   MAX_SOURCE_BYTES,
   parseConvertRequest,
   pdfExtractionPrompt,
+  readDesignSystemRow,
   sourceKindFor,
   STORAGE_BUCKET,
   TEXT_SUFFIXES,
@@ -45,7 +46,11 @@ import { planConvertedChapters, renderConvertedDocument } from '../render.pure';
 import { extractJsonObject, MIN_BRIEF_CHARS, parseBrandRequest } from '../../../brandDesign/route.pure';
 import { MAX_IMPORT_CHARS } from '../../../brandDesign/import.pure';
 import { REPORT_ARCHETYPES } from '../../../reportDesign/structure.pure';
-import { resolveReportPalette } from '../../../../../supabase/functions/_shared/reportDesign/brandResolve.pure';
+import {
+  auditPaletteContrast,
+  resolveReportPalette,
+} from '../../../../../supabase/functions/_shared/reportDesign/brandResolve.pure';
+import { DEFAULT_REPORT_DESIGN_OPTIONS } from '../../../../../supabase/functions/_shared/reportDesign/options.pure';
 import { resolveCompanyBlock } from '../../../../../supabase/functions/_shared/reportDesign/companyBlock.pure';
 
 const FORMAT = bindableFormats()[0];
@@ -510,6 +515,235 @@ describe('source of truth', () => {
     for (const rel of ['reports/converted/requestTemplateConversion.ts', 'brandDesign/requestBrandDesignSystem.ts']) {
       const source = bridge(rel);
       expect(source, rel).not.toMatch(/from ['"](jspdf|pdf-lib|html2canvas)/);
+    }
+  });
+});
+
+describe('the design system a render is given', () => {
+  /**
+   * The six systems that are actually seeded, with the grounds they actually
+   * carry — copied out of `brand_design_systems` rather than invented, because
+   * the defect this pins is that these values existed in the column and never
+   * reached the page.
+   */
+  const SEEDED = [
+    {
+      name: 'NPC Services Design System', brand_hex: '#D9A520',
+      neutrals: {
+        paper: '#FAF7EF', paperAlt: '#F2EBDE', paperBright: '#FFFDFA',
+        field: '#251F18', rule: '#DDD1C0', bodyInk: '#312A21', mutedInk: '#6E6253',
+      },
+    },
+    {
+      name: 'Chancery', brand_hex: '#D9A521',
+      neutrals: {
+        paper: '#FFFDFA', paperAlt: '#F2EBDE', paperBright: '#FFFDFA',
+        field: '#251F18', rule: '#DDD1C0', bodyInk: '#312A21', mutedInk: '#6E6253',
+      },
+    },
+    {
+      name: 'Broadsheet', brand_hex: '#D9A521',
+      neutrals: {
+        paper: '#FAF7EF', paperAlt: '#F7F0E4', paperBright: '#FFFDFA',
+        field: '#251F18', rule: '#DDD1C0', bodyInk: '#312A21', mutedInk: '#6E6253',
+      },
+    },
+    {
+      name: 'Slip', brand_hex: '#D9A521',
+      neutrals: {
+        paper: '#FFFFFF', paperAlt: '#F5F3EF', paperBright: '#FFFFFF',
+        field: '#312A21', rule: '#E4E0D8', bodyInk: '#312A21', mutedInk: '#6E6253',
+      },
+    },
+    {
+      name: 'Marque', brand_hex: '#D9A521',
+      neutrals: {
+        paper: '#FAF7EF', paperAlt: '#F8EED3', paperBright: '#FFFDFA',
+        field: '#251F18', rule: '#DDD1C0', bodyInk: '#312A21', mutedInk: '#6E6253',
+      },
+    },
+    {
+      name: 'Cadastre', brand_hex: '#D9A521',
+      neutrals: {
+        paper: '#FFFDFA', paperAlt: '#EEF1F4', paperBright: '#FFFDFA',
+        field: '#251F18', rule: '#D5DCE3', bodyInk: '#312A21', mutedInk: '#6E6253',
+      },
+    },
+  ];
+
+  /** What the route does with the row, in one place, as index.ts does it. */
+  const paletteFor = (row: unknown) => {
+    const choice = readDesignSystemRow(row);
+    return {
+      choice,
+      palette: resolveReportPalette({
+        preset: choice.options.preset,
+        brandHex: choice.brandHex,
+        neutrals: choice.neutrals,
+      }),
+    };
+  };
+
+  it('prints on the design system\'s own paper, not the preset\'s', () => {
+    // The defect, stated directly. The route used to select four columns —
+    // `id, name, brand_hex, options` — so `neutrals` never left the database.
+    // Every conversion resolved to `PRESET_NEUTRALS`, and the four presets are
+    // permutations of the same three constants, so an imported system showed
+    // its real stock in the specimen gallery and printed on ours.
+    const row = {
+      name: 'Cadastre', brand_hex: '#D9A521',
+      options: { preset: 'signature' },
+      neutrals: SEEDED[5].neutrals,
+    };
+    const { palette } = paletteFor(row);
+    expect(palette.paperAlt).toBe('#EEF1F4');
+    expect(palette.rule).toBe('#D5DCE3');
+
+    // And it is genuinely different from what the preset alone would give.
+    const presetOnly = resolveReportPalette({ preset: 'signature', brandHex: '#D9A521' });
+    expect(presetOnly.paperAlt).not.toBe(palette.paperAlt);
+  });
+
+  it('resolves every seeded system to a legible document', () => {
+    for (const row of SEEDED) {
+      const { choice, palette } = paletteFor({ ...row, options: { preset: 'signature' } });
+      expect(choice.neutrals, row.name).not.toBeNull();
+      expect(palette.paper, row.name).toBe(row.neutrals.paper);
+      expect(palette.field, row.name).toBe(row.neutrals.field);
+      expect(auditPaletteContrast(palette), row.name).toEqual([]);
+    }
+  });
+
+  it('falls back to the preset whole when the grounds are unreadable', () => {
+    // All seven or none. A half-read set would put somebody else's obsidian
+    // cover on our ivory, which reads as a deliberate choice rather than as the
+    // parse failure it is.
+    const partial = { ...SEEDED[0].neutrals } as Record<string, unknown>;
+    delete partial.mutedInk;
+    for (const bad of [partial, { ...SEEDED[0].neutrals, rule: 'ivory' }, null, 'nope', 42]) {
+      const { choice, palette } = paletteFor({
+        name: 'Something', brand_hex: '#D9A521', options: { preset: 'signature' }, neutrals: bad,
+      });
+      expect(choice.neutrals, JSON.stringify(bad)).toBeNull();
+      expect(palette.paper, JSON.stringify(bad))
+        .toBe(resolveReportPalette({ preset: 'signature' }).paper);
+      expect(auditPaletteContrast(palette)).toEqual([]);
+    }
+  });
+
+  it('reads a missing row as the house default, exactly as before', () => {
+    // `designSystemId: null` is the commonest case by far and must not move.
+    for (const nothing of [null, undefined, 'row', 7]) {
+      const choice = readDesignSystemRow(nothing);
+      expect(choice.systemName, String(nothing)).toBe('House design');
+      expect(choice.brandHex, String(nothing)).toBeNull();
+      expect(choice.neutrals, String(nothing)).toBeNull();
+      expect(choice.options, String(nothing)).toEqual(DEFAULT_REPORT_DESIGN_OPTIONS);
+    }
+  });
+
+  it('normalises the options column rather than trusting it', () => {
+    const choice = readDesignSystemRow({
+      name: '  Harbour Editorial  ',
+      brand_hex: '#1F4E79',
+      options: { preset: 'not_a_preset', density: 'compact' },
+    });
+    expect(choice.systemName).toBe('Harbour Editorial');
+    expect(choice.brandHex).toBe('#1F4E79');
+    expect(choice.options.density).toBe('compact');
+    expect(choice.options.preset).toBe(DEFAULT_REPORT_DESIGN_OPTIONS.preset);
+  });
+
+  it('corrects the accent against the imported stock, not against ours', () => {
+    // What makes an import safe rather than merely possible. The same brand
+    // colour resolves differently on different paper, because it has to.
+    const onWhite = paletteFor({
+      name: 'Slip', brand_hex: '#D9A521', options: { preset: 'signature' },
+      neutrals: SEEDED[3].neutrals,
+    }).palette;
+    const onIvory = paletteFor({
+      name: 'NPC', brand_hex: '#D9A521', options: { preset: 'signature' },
+      neutrals: SEEDED[0].neutrals,
+    }).palette;
+    expect(auditPaletteContrast(onWhite)).toEqual([]);
+    expect(auditPaletteContrast(onIvory)).toEqual([]);
+  });
+});
+
+describe('the seeded design systems are not each other', () => {
+  /**
+   * Read against the migrations rather than a fixture.
+   *
+   * The seeded systems exist only as SQL — there is no const to import — so a
+   * fixture here would be a second copy of the rows and would drift from
+   * production the first time either moved. Parsing the migration is the only
+   * way this assertion is about what is actually in the database.
+   */
+  const migration = (name: string) =>
+    readFileSync(resolve(__dirname, '..', '..', '..', '..', '..', 'supabase', 'migrations', name), 'utf8');
+
+  const SEED = '20260825000100_seed_house_design_systems.sql';
+  const CHANCERY_FIX = '20260826000000_chancery_is_not_the_house_system.sql';
+
+  /**
+   * The seeded rows, by slug.
+   *
+   * Keyed on the slug rather than matched by value, which is the whole point:
+   * two rows carrying the *same* options string is the defect, so any parse
+   * that dedupes or matches on the string cannot see it. (My first version of
+   * this test did exactly that and reported a second duplicate that was its own
+   * substitution.)
+   */
+  const seededRows = (): Array<{ slug: string; options: string; neutrals: string }> =>
+    [...migration(SEED).matchAll(
+      /'([a-z-]+)',\s*'[^']*',\s*'(#[0-9A-Fa-f]{6})',\s*'(\{"preset":[^']+\})'::jsonb,\s*'(\{"paper":[^']+\})'::jsonb/g,
+    )].map((m) => ({ slug: m[1], options: m[3], neutrals: m[4] }));
+
+  it('gives no two systems the same set of design decisions', () => {
+    // The defect. Chancery's options were byte-identical to the NPC Services
+    // row's — every axis, every flag — so the only thing between them was three
+    // units of lightness on the paper, and picking one over the other changed
+    // nothing anybody could see. It was reported as the design system having no
+    // effect, which is exactly what it was.
+    const rows = seededRows();
+    expect(rows.map((r) => r.slug)).toContain('chancery');
+    expect(rows.length).toBeGreaterThanOrEqual(6);
+
+    // In the seed as it stands, before the fix.
+    const npc = rows.find((r) => r.slug === 'npc-services-design-system')!;
+    const chancery = rows.find((r) => r.slug === 'chancery')!;
+    expect(chancery.options).toBe(npc.options);
+
+    const [next] = [...migration(CHANCERY_FIX).matchAll(/'(\{"preset":[^']+\})'::jsonb/g)].map((m) => m[1]);
+    const applied = rows.map((r) => (r.slug === 'chancery' ? next : r.options));
+    expect(new Set(applied).size).toBe(applied.length);
+  });
+
+  it('leaves a system somebody has edited alone', () => {
+    // The WHERE clause is the whole safety of an UPDATE against seeded data. It
+    // has to match the seed byte for byte or it silently updates nothing, and it
+    // has to be there at all or it overwrites somebody's work.
+    const sql = migration(CHANCERY_FIX);
+    const matched = [...sql.matchAll(/'(\{"preset":[^']+\})'::jsonb/g)].map((m) => m[1]);
+    expect(matched).toHaveLength(2);
+    expect(seededRows().find((r) => r.slug === 'chancery')!.options).toBe(matched[1]);
+    expect(sql).toContain("WHERE slug = 'chancery'");
+  });
+
+  it('resolves every seeded palette to a legible document', () => {
+    // Options are only half of a system. The grounds have to clear the contrast
+    // floor too, and a new row added to the seed without checking is how an
+    // illegible document ships.
+    for (const row of seededRows()) {
+      const choice = readDesignSystemRow({
+        name: row.slug, brand_hex: '#D9A521',
+        options: JSON.parse(row.options), neutrals: JSON.parse(row.neutrals),
+      });
+      expect(choice.neutrals, row.slug).not.toBeNull();
+      const palette = resolveReportPalette({
+        preset: choice.options.preset, brandHex: choice.brandHex, neutrals: choice.neutrals,
+      });
+      expect(auditPaletteContrast(palette), row.slug).toEqual([]);
     }
   });
 });

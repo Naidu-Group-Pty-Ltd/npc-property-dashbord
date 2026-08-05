@@ -40,6 +40,7 @@ import {
   type AmlProviderMetricRollup,
 } from "@/lib/aml/amlTenantApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { PartnerEventsOpsCard } from "@/components/aml/PartnerEventsOpsCard";
 
 const DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
 
@@ -357,6 +358,10 @@ export default function AmlIntegrationHealth() {
           )}
         </CardContent>
       </Card>
+
+      {/* Partner compliance events (Phase 6): outbox backlog, refresh
+          obligations and arrangement reviews for the reliance domain. */}
+      <PartnerEventsOpsCard />
 
       {/* Daily call timeline (sparkline-style bars, no chart lib dep) */}
       <Card>

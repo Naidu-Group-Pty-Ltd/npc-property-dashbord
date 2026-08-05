@@ -130,14 +130,29 @@ export const INTAKE_FIELDS = {
   summary: 'Summary',
 
   /* -- Links and media ----------------------------------------------------
-   * All four attachment columns are empty on every one of the 1,441 records.
-   * They are named here so the enrichment write-back has a target, not because
-   * reading them currently yields anything.
+   * The four attachment columns were empty on every one of the 1,441 records,
+   * because the intake scenario never wrote to them: its image branch dropped
+   * every `image/jpeg` attachment on a case-sensitive filter, and its web-scrape
+   * branch asked the model for HTML while reading markdown, so it extracted
+   * nothing at all. Both are fixed upstream; see
+   * `docs/integrations/NPC_EMAIL_1_AUDIT.md`.
+   *
+   * `listingImageUrls` is the column that matters most here. Airtable attachment
+   * URLs expire within hours and portal hotlinks rot, so intake records the
+   * *source* URLs newest-first and the image library copies the bytes into our
+   * own bucket. `imagesCapturedAt` is what makes "most recent photos" answerable
+   * at all: `Created Time` says when the record arrived, which is a different
+   * question from when its photos were last taken or re-scraped.
    */
   webLink: 'Web Link',
   sourceWebLink: 'Source Web Link',
   alternateWebLinks: 'Alternate Web Links',
   listingImages: 'Listing Images',
+  listingImageUrls: 'Listing Image URLs',
+  primaryImageUrl: 'Primary Image URL',
+  imagesCapturedAt: 'Images Captured At',
+  imageCount: 'Image Count',
+  imageSource: 'Image Source',
   floorplan: 'Floorplan',
   brochure: 'Brochure',
   additionalAttachments: 'Additional Attachments',

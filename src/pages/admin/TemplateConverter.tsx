@@ -47,6 +47,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -79,7 +80,8 @@ import {
   formatName,
   WEAK_MATCH,
 } from '@/lib/reports/converted/binding.pure';
-import { DEFAULT_FIDELITY, type ConversionFidelity } from '@/lib/reports/converted/enrich.pure';
+import { CONVERTED_REPORT_TYPES } from '@/lib/reports/converted/reportType';
+import { type ConversionFidelity } from '@/lib/reports/converted/enrich.pure';
 import { FIDELITY_CHOICES, fidelityLabel } from '@/lib/reports/converted/fidelityChoices';
 import { BRAND_SYSTEMS_PATH } from '@/lib/reportTemplate/templateStartRoutes';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
@@ -88,15 +90,6 @@ const ACCEPT = [...TEXT_SUFFIXES, '.pdf'].join(',');
 /** The dropdown value for "no section", since a Select cannot hold empty. */
 const NONE = '__none__';
 
-/**
- * The adapter key an editable copy is filed under.
- *
- * Matches the archetype the converter binds to today
- * (`adapters/index.ts` registers `borrowing_capacity`), so the template lands
- * in the list under the report type it is actually about. When a second format
- * becomes bindable this needs a map rather than a constant.
- */
-const CONVERTED_REPORT_TYPE = 'borrowing_capacity';
 
 
 export default function TemplateConverter() {
@@ -115,7 +108,12 @@ export default function TemplateConverter() {
   const [extracted, setExtracted] = useState<ConvertExtractResponse | null>(null);
   const [plan, setPlan] = useState<BindingPlan | null>(null);
   const [designSystemId, setDesignSystemId] = useState<string | null>(null);
-  const [fidelity, setFidelity] = useState<ConversionFidelity>(DEFAULT_FIDELITY);
+  // Not `DEFAULT_FIDELITY`. That constant is the *parse* fallback — what an
+  // unrecognised or absent field on a request means — and it stays conservative
+  // for that job. What a person gets without choosing is a separate question,
+  // and the strict answer produced a document that read as a transcript.
+  const [fidelity, setFidelity] = useState<ConversionFidelity>('connective');
+  const [final, setFinal] = useState(false);
   const [systemDialogOpen, setSystemDialogOpen] = useState(false);
   const [result, setResult] = useState<ConvertRenderResponse | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -258,7 +256,7 @@ export default function TemplateConverter() {
     if (!extracted || !result) return;
     setMaterialising(true);
     try {
-      const { chapters, title, formatName: boundName } =
+      const { chapters, title, format: boundFormat, formatName: boundName } =
         await conversionChapters(extracted.conversionId);
 
       const schema = buildConvertedTemplate({
@@ -279,7 +277,10 @@ export default function TemplateConverter() {
         name: `${title} (converted)`.slice(0, 120),
         description: `Converted from ${extracted.sections.length} sections of an uploaded template, `
           + `bound to ${boundName}.`,
-        report_type: CONVERTED_REPORT_TYPE,
+        // The *stored* bound format, not the picker's current value — this is
+        // asked for after a render, and the copy has to be filed under the
+        // format the document was actually produced as.
+        report_type: CONVERTED_REPORT_TYPES[boundFormat],
         schema,
       });
 
@@ -305,6 +306,7 @@ export default function TemplateConverter() {
         binding: plan,
         designSystemId,
         fidelity,
+        final,
       });
       setResult(delivered);
       setPreviewUrl((old) => {
@@ -617,9 +619,14 @@ export default function TemplateConverter() {
               {/* The design pass, beside the design system, because they are
                   the two halves of one answer: the system decides how a KPI
                   strip looks and this decides whether the chapter has one.
-                  Defaulting to "Keep the words" is deliberate — a converter
-                  that quietly rewrites somebody's template is not a converter,
-                  and nobody has said otherwise yet. */}
+
+                  It opens on "Write the connective tissue" rather than the
+                  strictest setting. Under Keep the words the model may not
+                  write a single new sentence, so a source line like
+                  "Stressed: $787,477" survives verbatim under a sentence that
+                  already said it, and a real conversion read as a transcript
+                  rather than a report. Keep the words is still one click away
+                  and is still what an unrecognised request falls back to. */}
               <div className="space-y-1.5">
                 <Label htmlFor="converter-fidelity">Design pass</Label>
                 <Select
@@ -635,6 +642,21 @@ export default function TemplateConverter() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Draft furniture is right up to the moment somebody has decided
+                  the binding is correct, and wrong from then on. The default is
+                  off, because the safe reading of an unset flag on a document
+                  that might reach a client is the loud one. */}
+              <div className="flex items-center gap-2 self-end pb-2">
+                <Switch
+                  id="converter-final"
+                  checked={final}
+                  onCheckedChange={(v) => { setFinal(v); setResult(null); }}
+                />
+                <Label htmlFor="converter-final" className="cursor-pointer">
+                  Print as a finished document
+                </Label>
               </div>
 
               <Button variant="outline" onClick={() => setSystemDialogOpen(true)}>

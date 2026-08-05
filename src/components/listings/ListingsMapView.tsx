@@ -87,6 +87,7 @@ import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.pure';
 import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPostcodeGeo.pure';
 import { installClusterAnchorPatch } from '@/lib/leafletClusterAnchor';
+import { BUILD_ID } from '@/lib/buildVersion';
 import type { StoredListingImage } from '@/lib/listingImages';
 
 /**
@@ -160,6 +161,18 @@ interface ListingsMapViewProps {
 interface ListingMarker {
   listing: PropertyListing;
   point: GeoPoint;
+  /**
+   * The SAME tuple instance across rebuilds while the coordinates are
+   * unchanged. react-leaflet compares `position` by reference and answers
+   * every "new" reference with `marker.setLatLng()`; Leaflet fires `move`
+   * even for identical values; and leaflet.markercluster answers every child
+   * move by REMOVING the marker from the cluster tree and re-adding it. An
+   * inline `[lat, lng]` therefore rebuilt the entire clustering, marker by
+   * marker, on every render — cluster bubbles reshuffled "without direction"
+   * on every filter tick, image wave and hover. A stable tuple makes all of
+   * that simply not happen.
+   */
+  position: [number, number];
   /** Geocoder location_type for the point, when the lookup reported one. */
   precision?: string | null;
 }
@@ -933,7 +946,7 @@ const ListingMarkers = memo(function ListingMarkers({
       iconCreateFunction={iconFactory}
       polygonOptions={{ opacity: 0, fillOpacity: 0 }}
     >
-      {markers.map(({ listing, point, precision }) => {
+      {markers.map(({ listing, position, precision }) => {
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
         const glyph = propertyGlyph(listing.propertyType);
@@ -951,7 +964,7 @@ const ListingMarkers = memo(function ListingMarkers({
           <Marker
             key={listing.id}
             ref={(instance) => registerMarker(listing.id, instance)}
-            position={[point.lat, point.lng]}
+            position={position}
             icon={pinIcon(variant, tier, glyph, label, pinState, approx)}
             // Lift the open (or peeked) listing clear of its neighbours so the
             // highlighted pin is never buried under the ones around it.
@@ -1334,6 +1347,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mapFrameRef = useRef<HTMLDivElement | null>(null);
+  const [frameHeight, setFrameHeight] = useState(0);
   const popupRef = useRef<L.Popup | null>(null);
   const markersRef = useRef<ListingMarker[]>([]);
   const markerIndexRef = useRef(new Map<string, L.Marker>());
@@ -1351,6 +1365,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   // pin, not into a cluster centroid, not into the heat surface. It joins the
   // unmapped list with its reason, which is the honest outcome — a pin in the
   // Southern Ocean is not "mapped", it is wrong with confidence.
+  const positionCache = useRef(new Map<string, [number, number]>());
   const { markers, unmapped } = useMemo(() => {
     const rows: ListingMarker[] = [];
     const held: Array<{ listing: PropertyListing; reason: 'no_coordinates' | 'failed_check' }> =
@@ -1371,7 +1386,14 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
         held.push({ listing, reason: 'failed_check' });
         continue;
       }
-      rows.push({ listing, point, precision: resolved?.precision ?? null });
+      const cache = positionCache.current;
+      const prior = cache.get(listing.id);
+      const position: [number, number] =
+        prior && prior[0] === point.lat && prior[1] === point.lng
+          ? prior
+          : [point.lat, point.lng];
+      cache.set(listing.id, position);
+      rows.push({ listing, point, position, precision: resolved?.precision ?? null });
     }
     return { markers: rows, unmapped: held };
   }, [listings, points]);
@@ -1403,6 +1425,17 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   const selected = useMemo(
     () => markers.find((m) => m.listing.id === selectedId) ?? null,
     [markers, selectedId],
+  );
+
+  // By value, not by render: `position={[lat, lng]}` inline hands react-leaflet
+  // a new array every render, and it responds to every "new" position with
+  // popup.setLatLng — which re-runs Leaflet's auto-pan every time. A popup
+  // that pans on every unrelated re-render is the spasm a screenshot caught.
+  const selectedLat = selected?.point.lat;
+  const selectedLng = selected?.point.lng;
+  const popupPosition = useMemo<[number, number] | null>(
+    () => (selectedLat !== undefined && selectedLng !== undefined ? [selectedLat, selectedLng] : null),
+    [selectedLat, selectedLng],
   );
 
   const markerSignature = useMemo(
@@ -1450,7 +1483,21 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
       if (rows.length < IN_VIEW_LIMIT) rows.push(m);
     }
     setInViewCount(count);
-    setInViewRows(rows);
+    // Same rows → same state object, so a settle pan that changes nothing
+    // causes no re-render. This matters more than it looks: recount runs on
+    // every moveend, and a re-render while the popup is open used to hand the
+    // popup a fresh position array, which re-ran Leaflet's auto-pan, which
+    // fired another moveend — the popup visibly spasming in a loop of its own
+    // making. Each leg of that loop is now cut independently.
+    setInViewRows((prior) => {
+      if (
+        prior.length === rows.length &&
+        prior.every((row, i) => row.listing.id === rows[i].listing.id)
+      ) {
+        return prior;
+      }
+      return rows;
+    });
     setZoom(instance.getZoom());
   }, [map]);
 
@@ -1501,7 +1548,11 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   // frame while leaving the shell exactly the same size.
   useEffect(() => {
     if (!map || !mapFrameRef.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
+    const observer = new ResizeObserver((entries) => {
+      map.invalidateSize({ animate: false });
+      const height = entries[0]?.contentRect?.height;
+      if (typeof height === 'number' && height > 0) setFrameHeight(Math.round(height));
+    });
     observer.observe(mapFrameRef.current);
     return () => observer.disconnect();
   }, [map]);
@@ -1796,11 +1847,11 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
             </>
           ) : null}
 
-          {selected ? (
+          {selected && popupPosition ? (
             <Popup
               key={selected.listing.id}
               ref={popupRef}
-              position={[selected.point.lat, selected.point.lng]}
+              position={popupPosition}
               maxWidth={320}
               minWidth={268}
               // Bounded so the card can never outgrow the frame it sits in:
@@ -1811,7 +1862,10 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
               // a target — the card is still deliberately compact, and anything
               // richer belongs on the property page rather than in a popup that
               // has to sit inside the viewport with its own marker visible.
-              maxHeight={440}
+              // Never taller than the frame can actually show: a popup that
+              // cannot fully fit gives Leaflet's auto-pan an unsatisfiable
+              // goal, and an unsatisfiable auto-pan is a pan on every update.
+              maxHeight={frameHeight > 0 ? Math.max(240, Math.min(440, frameHeight - 140)) : 440}
               autoPanPadding={L.point(32, 44)}
               className="listings-map__popup"
             >
@@ -1835,7 +1889,14 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
             aria-live="polite"
           >
             <MapPin className="h-3.5 w-3.5 text-primary" />
-            <span className="tabular-nums">{plottedSummary}</span>
+            {/*
+              The chip's tooltip carries the running build id. Three rounds of
+              map debugging were spent against screenshots of a build that
+              predated every fix — undetectably, because nothing on screen said
+              which build produced it. Now any screenshot of this map
+              self-identifies: hover the chip, read the build.
+            */}
+            <span className="tabular-nums" title={`Build ${BUILD_ID}`}>{plottedSummary}</span>
             {isResolving && (
               <Loader2
                 className="h-3 w-3 animate-spin text-muted-foreground motion-reduce:animate-none"

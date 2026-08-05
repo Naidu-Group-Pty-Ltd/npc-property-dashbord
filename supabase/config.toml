@@ -54,6 +54,12 @@ verify_jwt = false
 [functions.aml-launch-ops]
 verify_jwt = false
 
+# Compliance passport: staff ops verify their own session in-function;
+# partner ops authenticate with a hashed grant token minted by grant_access
+# (finance handoff-token pattern) and cannot carry a Supabase JWT.
+[functions.aml-reliance]
+verify_jwt = false
+
 [functions.finance-email-track-pixel]
 verify_jwt = false
 
@@ -244,6 +250,10 @@ verify_jwt = false
 request_timeout = 1500
 
 [functions.resume-bulk-generation]
+request_timeout = 1500
+
+[functions.resume-investment-reports]
+verify_jwt = false
 request_timeout = 1500
 
 [functions.abs-data-service]

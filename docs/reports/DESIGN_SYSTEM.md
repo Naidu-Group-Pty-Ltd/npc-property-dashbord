@@ -530,7 +530,14 @@ the negative figures stay the one red and the positives the one green.
    Api2PDF fallback is disabled when WeasyPrint is configured, so a render failure
    is user-visible. The README is stale.
 4. **PDF/A + tagged output** constrain markup: heading levels must be semantically
-   correct, and external references are forbidden.
+   correct, and external references are forbidden. ~~And the output was tagged.~~
+   **It was not.** The service read `tagged` from the request body, defaulted it
+   to true, and never passed anything to the engine — the option that writes a
+   structure tree is `pdf_tags`, and it does not exist before WeasyPrint 63.
+   Every report the programme shipped was untagged: valid, printable, and
+   unnavigable to a screen reader. Fixed with the engine upgrade; asserted by
+   `X-Pdf-Tagged` in CI and by a service test that renders uncompressed and
+   looks for `/StructTreeRoot`.
 5. **Three divergent `InvestmentReport` types** bridged by a hand-maintained
    `overrideMapping` table. The system needs one payload contract or it inherits
    the drift.
@@ -555,3 +562,138 @@ the negative figures stay the one red and the positives the one green.
    keyword, and one trailing byte makes a deflate stream fail outright rather
    than inflate what it can — so the dictionary's `/Length` is used when it has
    one. That single byte is why the first attempt at the fix also counted zero.
+
+---
+
+## 11 · The render engine
+
+Everything above assumes the stylesheet reaches the page. It does not
+automatically, and the ways it fails to are all silent.
+
+### 11.1 The version split
+
+The stylesheet was written and visually reviewed against WeasyPrint **69**, on a
+developer machine. `weasyprint-service` pinned **62.3**. Those two do not agree,
+and the disagreement was invisible in exactly the way that costs the most:
+
+```
+WARNING: Ignored `width: calc(210mm - 44mm)` at 665:5, invalid value.
+```
+
+62.3 rejects `calc()` in a width. The declaration was dropped, the cover's
+masthead row had no width for its `table-layout: fixed` to fix to, the row
+auto-sized to its content, and the classification and the document reference
+printed as **one word**. The fix for that had shipped a day earlier and been
+verified — against 69. The render succeeded. Nothing was red.
+
+The container is now on 69.0, and the pin is mirrored by `PINNED_ENGINE` in
+`reportDesign/engineSupport.pure.ts` with a spec that reads
+`requirements.txt` and fails on drift. The `calc()` itself is gone regardless:
+every length in the sheet derives from a constant TypeScript already holds, so
+`calc()` buys nothing and costs a dependency on which engine is installed.
+
+### 11.2 Three lists, and where each is checked
+
+`engineSupport.pure.ts` carries them:
+
+| List | Meaning | Checked by |
+| --- | --- | --- |
+| `UNSUPPORTED` | the engine drops it | a spec sweeping all 1,296 generatable stylesheets |
+| `DISCOURAGED` | it renders, and must not be written anyway (`calc()`) | the same sweep |
+| `LOAD_BEARING` | the engine **must** render it — flex, grid, radius, gradients, hyphens, `break-inside`, `string()` | the container's own answer |
+
+The nine unsupported constructs were found by rendering probes, not by reading a
+support table: `box-shadow`, `filter`, `backdrop-filter`,
+`word-break: break-word`, `position: sticky`, `text-wrap`, `aspect-ratio`,
+`mix-blend-mode`, `writing-mode`.
+
+### 11.3 The list cannot rot
+
+A list of what an engine cannot do goes stale the moment the engine moves, and a
+stale one gets worked around rather than updated. So the engine grades the list,
+not the reverse: `POST /capabilities` answers, for a supplied set of probe
+declarations, which ones it ignored. `reconcileCapabilities` compares that to
+the three lists and distinguishes **broken** (a load-bearing construct dropped —
+the reports will not lay out) from **stale** (something listed as unsupported
+that now renders — news, and a prompt to move the entry).
+
+```bash
+npm run reportkit:engine:capabilities                    # the local binary
+npx tsx scripts/reports/engineCheck.mts \
+  --service $URL --token $TOKEN --capabilities *.html    # the deployed one
+```
+
+### 11.4 What is not on any list
+
+The defect that started this was not on a list, because nobody had met it yet.
+So `/render` returns the engine's warnings —
+`X-WeasyPrint-Warnings`, `X-WeasyPrint-Warning-Count` — and CI fails the
+Borrowing Capacity render if the count is not zero. `strict: true` turns any
+warning into a 422 for callers that want it. Before this, every one of those
+lines went to a container's stderr and no caller ever saw one.
+
+Two things the engine does **not** warn about, and how each is caught instead:
+
+- **A `font-family` naming nothing installed.** No log line at all. Caught by
+  the Dockerfile's build-time `fc-list` assertion, by CI's `pdffonts` check on a
+  real report, and now at runtime by `/capabilities`, which asks fontconfig as
+  the unprivileged user that actually renders — a face root can see and uid
+  10001 cannot is a substitution that happens only in production.
+- **A page that is technically correct and badly composed.** Nothing mechanical
+  sees it. That is what `critique.pure.ts`, `measure_pages.py` and the
+  `report-critic` agent are for.
+
+### 11.5 A typographic decision made by an omission
+
+`Cinzel-Bold.ttf` was the only weight of the brand cover face in the image, so
+the cover title and the closing wordmark were both set Bold — and
+`typography.pure.ts` recorded the face as "confined to the two places set large
+and short" *because of it*. That reads as a design rule. It was a Dockerfile.
+
+Cinzel is an inscriptional roman cut after Trajan-column capitals, and those are
+light. At 34pt the Bold reads as blunt rather than grand, and it blooms on the
+obsidian ground a cover is set on, because light-on-dark type optically gains
+weight. Regular and SemiBold were sitting unused in
+`public/fonts/Cinzel_Playfair_Display.zip` — the same committed archive the Bold
+came from — the whole time.
+
+The cover title is now **Regular**, the closing wordmark **SemiBold**, and Bold
+is gone: `reportTypography.spec.ts` fails on a shipped file nothing requests,
+and inventing a use to keep 77KB would be the same mistake in the other
+direction.
+
+Two things now hold that open:
+
+- **`PROVENANCE.md`'s hashes are checked.** A font is a binary in a repository:
+  nothing about it is reviewable in a diff, and it is copied into the image that
+  renders every client's document. The table used to claim a SHA-256 per file
+  and nothing verified it. The spec now hashes each file, fails on a mismatch,
+  and fails on a file the table does not record.
+- **`selfcheck.py` proves resolution, not just presence.** It walks the font
+  directory, reads each file's own family, weight and italic flag out of its
+  `name` and `OS/2` tables, asks the engine for exactly that, and checks the face
+  that came back is the file that asked. Shipping a file is not the same as being
+  able to reach it: `Cinzel SemiBold` answers to `font-family: Cinzel;
+  font-weight: 600` only because it carries a typographic-family record, and when
+  that resolution fails fontconfig returns the nearest weight in silence. There is
+  no manifest to keep in step — the fonts are the source of truth about themselves.
+
+### 11.6 Render options: what was measured, and what not to change
+
+Measured against the real eleven-page Borrowing Capacity Snapshot, so these are
+numbers rather than opinions. Recorded because each one looks like an easy
+quality win and is not.
+
+| Option | Measured | Verdict |
+| --- | --- | --- |
+| `optimize_images` | 157,498 vs 157,502 bytes | **Irrelevant.** The reports embed *no raster images at all* — every figure is SVG. `jpeg_quality` and `dpi` are moot for the same reason. |
+| `full_fonts` | 157KB → **1.69MB** | No. Subsetting does not change how a glyph draws; this is 10× the file for nothing a reader can see. |
+| `hinting` | +7KB (4.5%) | No. Modern viewers rasterise with their own hinting and ignore the embedded instructions. |
+| `pdf_variant: pdf/a-2b` | **pixel-identical** to plain across all 11 pages | Keep. It costs nothing visually and the archival claim is worth having. |
+
+One artefact worth not chasing: under `pdf/a-2b`, poppler prints `Bad color
+space 'srgb'` ten times. WeasyPrint defines a named `/srgb` colour space in the
+page resources and its transparency-group XObjects reference it from their own
+resource dictionaries, where it is not defined. It is upstream, it affects
+nothing — the pixel diff above was taken with those warnings present — and the
+only way to avoid it would be to stop emitting SVG.

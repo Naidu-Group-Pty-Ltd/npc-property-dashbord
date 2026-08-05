@@ -39,6 +39,8 @@ import {
   renderCover,
   renderDocument,
   renderLede,
+  renderSheet,
+  renderSidenote,
   type BrandLockupProps,
 } from '../../reportDesign/primitives.pure.ts';
 import type { CompanyBlock, CompanyDisclaimer } from '../../reportDesign/companyBlock.pure.ts';
@@ -62,7 +64,7 @@ import type { BindingPlan } from './binding.pure.ts';
 import { formatName } from './binding.pure.ts';
 import { enrichedLines, type EnrichedBlock } from './enrich.pure.ts';
 import { renderEnrichedBlocks } from './renderBlocks.pure.ts';
-import type { ExtractedStructure } from './structure.pure.ts';
+import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
 
 /**
  * Enriched blocks for the chapters that got them, by chapter id.
@@ -77,6 +79,19 @@ export type EnrichedChapters = Readonly<Record<string, readonly EnrichedBlock[]>
 
 /** Lines a chapter costs before a word of it is set. Pinned by the programme. */
 export const CHAPTER_FURNITURE_LINES = 3;
+
+/**
+ * Below this an appendix section cannot hold a page on its own.
+ *
+ * A page is `LINES_PER_PAGE` (38). Twelve is a third of one — a heading, a
+ * short paragraph and a couple of bullets. Above it a section has enough to
+ * look deliberate alone; below it, it looks like a page somebody forgot to
+ * finish, which is what a real render produced four of.
+ */
+export const THIN_CHAPTER_LINES = 12;
+
+/** What a packed run of thin sections calls itself. */
+export const APPENDIX_TITLE = 'From the template';
 
 /** An unfilled chapter is a header and one callout. */
 export const UNFILLED_CHAPTER_LINES = 10;
@@ -105,11 +120,49 @@ export interface PlannedConvertedChapter {
   markdown: string;
   /** Present only when this chapter was enriched. Rendered instead of `markdown`. */
   blocks?: readonly EnrichedBlock[];
+  /** Sub-sections folded into this chapter rather than given one of their own. */
+  foldedSubsections?: number;
+  /** Thin appendix sections packed into this one chapter. Absent when 1. */
+  packedSections?: number;
   lines: number;
   pages: number;
 }
 
-/** Plan the document from the binding, in the format's own chapter order. */
+/**
+ * A sub-section's content, put back under a heading.
+ *
+ * `ExtractedSection.markdown` has its own heading stripped — the spine printed
+ * it — so folding one into a parent has to put it back or the reader gets two
+ * subjects run together with nothing between them. `depth + 1` matches what
+ * `extractStructure` already does for headings too deep to bind.
+ */
+function asNestedMarkdown(section: ExtractedSection): string {
+  return `${'#'.repeat(section.depth + 1)} ${section.title}\n\n${section.markdown}`;
+}
+
+/**
+ * Plan the document from the binding, in the format's own chapter order.
+ *
+ * ## Sub-sections belong to their parent, not to the appendix
+ *
+ * This function used to ignore `depth` entirely: every section the binding did
+ * not want became its own appendix chapter, with an eyebrow, a header and a
+ * page break. That is right for a top-level section the format has no place
+ * for, and wrong for a `###` inside one.
+ *
+ * Measured on a real conversion: a Snapshot transcribed into 20 sections, of
+ * which 12 were `depth: 2` sub-headings inside *How This Was Calculated* —
+ * `DTI Ratio` at 61 characters, `Serviceability Band` at 55, `Stress Test` at
+ * 78. Each got a full page. The document came out at 27 pages where the same
+ * source with a flatter transcription came out at 14, and the back half read as
+ * a list of stubs rather than a report.
+ *
+ * So an unbound sub-section is folded into the chapter its parent produced —
+ * whether that parent was bound to a format chapter or is itself an appendix
+ * entry. A sub-section the binding *did* want still becomes a chapter, because
+ * somebody chose it. Nothing is dropped either way; the appendix keeps its job
+ * of losing nothing, and stops being a page per paragraph.
+ */
 export function planConvertedChapters(
   structure: ExtractedStructure,
   plan: BindingPlan,
@@ -120,6 +173,38 @@ export function planConvertedChapters(
   // Whatever the first chapter carries on top of its own content.
   const opening = OPENING_NOTICE_LINES
     + (structure.notices.unstructured ? UNSTRUCTURED_NOTICE_LINES : 0);
+
+  // ── Fold unbound sub-sections into their parent ───────────────────────────
+  //
+  // The parent is the nearest preceding section one level shallower. A
+  // sub-section with no parent — a document that opens at `##` — has nothing to
+  // fold into and keeps its own chapter.
+  const bound = new Set(
+    plan.bindings.map((b) => b.sectionIndex).filter((i): i is number => i !== null),
+  );
+  const foldedInto = new Map<number, ExtractedSection[]>();
+  const absorbed = new Set<number>();
+
+  for (const section of structure.sections) {
+    if (section.depth === 1 || bound.has(section.index)) continue;
+    let parent: ExtractedSection | null = null;
+    for (let i = section.index - 1; i >= 0; i -= 1) {
+      const candidate = structure.sections[i];
+      if (candidate && candidate.depth < section.depth) { parent = candidate; break; }
+    }
+    if (!parent) continue;
+    const list = foldedInto.get(parent.index) ?? [];
+    list.push(section);
+    foldedInto.set(parent.index, list);
+    absorbed.add(section.index);
+  }
+
+  /** A section's own Markdown plus whatever folded into it, in source order. */
+  const bodyOf = (section: ExtractedSection): string => {
+    const children = foldedInto.get(section.index);
+    if (!children?.length) return section.markdown;
+    return [section.markdown, ...children.map(asNestedMarkdown)].join('\n\n');
+  };
 
   // Enriched blocks and flat Markdown cost different numbers of lines — a KPI
   // strip is four where the table it replaced was nine — so the budget has to
@@ -144,14 +229,17 @@ export function planConvertedChapters(
     if (section) {
       const id = `cv.${i}`;
       const blocks = enriched[id];
-      const lines = costOf(id, section.markdown, `cv${i}`);
+      const markdown = bodyOf(section);
+      const lines = costOf(id, markdown, `cv${i}`);
+      const folded = foldedInto.get(section.index)?.length ?? 0;
       chapters.push({
         id,
         kind: 'bound',
         title: binding.chapter,
         note: section.title === binding.chapter ? undefined : `From "${section.title}"`,
-        markdown: section.markdown,
+        markdown,
         blocks: blocks?.length ? blocks : undefined,
+        foldedSubsections: folded || undefined,
         lines,
         pages: pagesForLines(lines),
       });
@@ -169,19 +257,63 @@ export function planConvertedChapters(
     });
   });
 
-  plan.unbound.forEach((index, n) => {
+  // ── Pack the thin appendix sections ──────────────────────────────────────
+  //
+  // A chapter is a page: `.chapter { page-break-before: always }` is global to
+  // all nine formats and stays that way. So a two-bullet `Warnings` section
+  // promoted to a chapter costs a whole sheet, and a real render came back with
+  // four of its seventeen pages carrying one to three lines each.
+  //
+  // Consecutive appendix sections that are each too small to hold a page are
+  // packed into one chapter, each under its own heading — the same shape D1's
+  // folding produces, and the same helper. A section big enough to carry a page
+  // keeps its own title, because the appendix's job is that nothing an uploader
+  // wrote disappears, and losing the name of a substantial section is a way of
+  // disappearing it.
+  //
+  // The decision is taken on the *flat* Markdown cost, never on the enriched
+  // one. `planConvertedChapters` runs twice for one document — once to choose
+  // what to send the model, once to render what came back — and a grouping that
+  // moved between those two calls would re-key the whole appendix.
+  const thin = (markdown: string, idPrefix: string): boolean =>
+    renderMarkdown(markdown, { idPrefix }).lines + CHAPTER_FURNITURE_LINES < THIN_CHAPTER_LINES;
+
+  const groups: ExtractedSection[][] = [];
+  for (const index of plan.unbound) {
     const section = structure.sections[index];
-    if (!section) return;
+    if (!section || absorbed.has(index)) continue;
+    const last = groups[groups.length - 1];
+    const small = thin(bodyOf(section), `cvpack${index}`);
+    if (small && last && last.length && thin(bodyOf(last[last.length - 1]), `cvpack${last[last.length - 1].index}`)) {
+      last.push(section);
+    } else {
+      groups.push([section]);
+    }
+  }
+
+  groups.forEach((group, n) => {
     const id = `cv.a${n}`;
     const blocks = enriched[id];
-    const lines = costOf(id, section.markdown, `cva${n}`);
+    const lead = group[0];
+    const markdown = group.length === 1
+      ? bodyOf(lead)
+      : group.map((s) => `## ${s.title}\n\n${bodyOf(s)}`).join('\n\n');
+    const lines = costOf(id, markdown, `cva${n}`);
+    const folded = group.reduce((t, s) => t + (foldedInto.get(s.index)?.length ?? 0), 0);
     chapters.push({
       id,
       kind: 'appendix',
-      title: section.title,
-      note: 'From the uploaded template',
-      markdown: section.markdown,
+      title: group.length === 1 ? lead.title : APPENDIX_TITLE,
+      // A packed chapter names what it holds. "From the template" over "From
+      // the uploaded template" is the same sentence twice in two sizes, which
+      // is the thing this pass exists to stop doing.
+      note: group.length === 1
+        ? 'From the uploaded template'
+        : group.map((s) => s.title).join(' · '),
+      markdown,
       blocks: blocks?.length ? blocks : undefined,
+      foldedSubsections: folded || undefined,
+      packedSections: group.length > 1 ? group.length : undefined,
       lines,
       pages: pagesForLines(lines),
     });
@@ -206,6 +338,21 @@ export interface RenderConvertedInput {
   reference?: string | null;
   /** Enriched blocks, by chapter id. Absent chapters render as flat Markdown. */
   enriched?: EnrichedChapters;
+  /**
+   * Composed sheets by chapter id — model-authored, already sanitised.
+   *
+   * Wins over `enriched` for a chapter that has both, which cannot happen: a
+   * conversion asks for one or the other. Each sheet is one printed page.
+   */
+  composed?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Print it as a document rather than as a draft.
+   *
+   * Drops the caution block, the `converted draft` on the cover and the
+   * `From "…"` deks. Defaults to false, so a caller that has not thought about
+   * it gets the warning. See `RenderRequest.final`.
+   */
+  final?: boolean;
 }
 
 export interface ConvertedRenderPlan {
@@ -216,8 +363,10 @@ export interface ConvertedRenderPlan {
   boundCount: number;
   unfilledCount: number;
   appendixCount: number;
-  /** Chapters that printed enriched blocks rather than flat Markdown. */
+  /** Chapters that printed designed output rather than flat Markdown. */
   enrichedCount: number;
+  /** Of those, the ones the model composed as pages. */
+  composedCount: number;
   /** Every block kind printed across the document, counted. For the ledger. */
   blockCounts: Record<string, number>;
   problems: string[];
@@ -295,8 +444,10 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
   const unfilled = chapters.filter((c) => c.kind === 'unfilled').length;
   const appendix = chapters.filter((c) => c.kind === 'appendix').length;
 
+  const final = input.final === true;
+
   const cover = renderCover({
-    eyebrow: `${documentName} · converted draft`,
+    eyebrow: final ? documentName : `${documentName} · converted draft`,
     title: input.structure.title,
     masthead: input.masthead,
     edition: input.systemName ? input.systemName.toUpperCase() : null,
@@ -323,9 +474,15 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
   // A converted document looks exactly like a finished one — same cover, same
   // typography, same closing page — and it is not. Somebody will send it to a
   // client by accident unless the document itself says what it is.
-  const draftNotice = renderCallout(
-    'caution',
-    'This is a converted draft, not a client document',
+  //
+  // A `sidenote` rather than a `caution` callout, and only when the render is
+  // not final. The caution block is the design system's loudest primitive —
+  // tinted panel, coloured rule, full measure — and putting it at the top of
+  // chapter one made the first thing anybody read a warning about the document
+  // instead of the document. It said the right thing at the wrong volume; the
+  // sidenote says the same thing beside the text.
+  const draftNotice = final ? '' : renderSidenote(
+    'Converted draft — not a client document',
     `<p>${escapeHtml(
       `The structure of "${input.structure.title}" has been converted onto the ${
         formatName(input.plan.format)
@@ -348,15 +505,19 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
 
   const blockCounts: Record<string, number> = {};
   let enrichedCount = 0;
+  let composedCount = 0;
+  const composedFor = (id: string): readonly string[] => input.composed?.[id] ?? [];
 
   const body = chapters.map((chapter, index) => {
     const number = String(index + 1).padStart(2, '0');
+    // The opening lede describes the *conversion*, so it goes with the draft
+    // furniture. A final document opens on its own first chapter.
     const opening = index === 0
-      ? renderLede(
+      ? (final ? '' : renderLede(
         `A converted draft of "${input.structure.title}", bound to the ${
           formatName(input.plan.format)
         } format.`,
-      ) + draftNotice + unstructured
+      )) + draftNotice + unstructured
       : '';
 
     const idPrefix = chapter.id.replace(/[^a-z0-9]/gi, '');
@@ -371,6 +532,13 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
           + 'is empty in the draft and will fill itself when the format renders for real.',
         )}</p>`,
       );
+    } else if (composedFor(chapter.id).length) {
+      // Composed: the model chose what fills each page, so the renderer stops
+      // flowing and starts placing. `renderSheet` uses `min-height`, so an
+      // over-full page grows rather than clipping.
+      const sheets = composedFor(chapter.id);
+      composedCount += 1;
+      inner = sheets.map((html) => renderSheet(html)).join('');
     } else if (chapter.blocks?.length) {
       // Designed. `renderEnrichedBlocks` returns the primitives' own output —
       // KPI strips, data tables, charts — rather than the paragraph soup that
@@ -394,7 +562,9 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
       + renderChapterHeader({
         number,
         title: chapter.title,
-        dek: chapter.note,
+        // `From "Executive Summary"` is provenance — useful while somebody is
+        // checking the binding, noise on a document being sent out.
+        dek: final ? undefined : chapter.note,
         label: archetype.chapterLabel,
       })
       + `<div class="chapter-body">${opening}${inner}</div>`
@@ -411,7 +581,8 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     boundCount: bound,
     unfilledCount: unfilled,
     appendixCount: appendix,
-    enrichedCount,
+    enrichedCount: enrichedCount + composedCount,
+    composedCount,
     blockCounts,
     problems,
     bandNote,
@@ -425,7 +596,12 @@ export function renderConvertedDocument(
   return {
     ...plan,
     html: renderDocument({
-      title: `${input.structure.title} — converted draft`,
+      // The PDF's own title, which is what a viewer shows in its tab and what a
+      // file manager indexes — so it carries the draft mark too, and drops it
+      // for the same reason the cover does.
+      title: input.final === true
+        ? input.structure.title
+        : `${input.structure.title} — converted draft`,
       author: input.masthead,
       subject: formatName(input.plan.format),
       css: buildReportCss({
@@ -451,6 +627,10 @@ export interface RenderConvertedFromBrandInput {
   preparedOn: string;
   reference?: string | null;
   enriched?: EnrichedChapters;
+  /** See `RenderConvertedInput.composed`. */
+  composed?: Readonly<Record<string, readonly string[]>>;
+  /** See `RenderConvertedInput.final`. */
+  final?: boolean;
 }
 
 export interface ConvertedRenderResult extends ConvertedRenderPlan {
@@ -489,6 +669,8 @@ export function renderConvertedFromBrand(
     preparedOn: input.preparedOn,
     reference: input.reference ?? null,
     enriched: input.enriched,
+    composed: input.composed,
+    final: input.final,
   });
 
   return { ...rendered, gaps: brand.gaps };

@@ -73,6 +73,7 @@ import { UserGuideAssistant } from '@/components/user-guide/UserGuideAssistant';
 import { ADDITIONAL_GUIDE_SECTIONS } from '@/lib/userGuideSections';
 import { filterEntitledSections, lockedSections } from '@/lib/userGuideEntitlements';
 import { usePlanEntitlements } from '@/hooks/usePlanEntitlements';
+import { usePermissions } from '@/hooks/usePermissions';
 
 /**
  * Icons for the data-defined sections. `userGuideSections.ts` names its icon as
@@ -118,6 +119,7 @@ interface GuideItem {
 
 export default function UserGuide() {
   const { planSlug, addonSlugs, loading: planLoading } = usePlanEntitlements();
+  const { isSuperadmin } = usePermissions();
   const accordionRef = useRef<string[]>([]);
   
   const handleNavigateToSection = useCallback((sectionId: string) => {
@@ -1461,16 +1463,25 @@ export default function UserGuide() {
   // An unknown or still-loading plan shows everything — the same asymmetry
   // planEntitlements.ts takes. Showing a section someone cannot use is an
   // annoyance; hiding one they pay for is a fault.
-  const entitlementCtx = { planSlug: planLoading ? null : planSlug, addonSlugs };
+  //
+  // A superadministrator reads the whole guide. They reach every available
+  // module through the operator override, so a locked walkthrough for a page
+  // they can open is the same "broken product" impression pointed the wrong
+  // way.
+  const entitlementCtx = {
+    planSlug: planLoading ? null : planSlug,
+    addonSlugs,
+    isPlatformOperator: isSuperadmin,
+  };
   const sections = useMemo(
     () => filterEntitledSections(allSections, entitlementCtx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [planSlug, addonSlugs, planLoading],
+    [planSlug, addonSlugs, planLoading, isSuperadmin],
   );
   const locked = useMemo(
     () => lockedSections(allSections, entitlementCtx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [planSlug, addonSlugs, planLoading],
+    [planSlug, addonSlugs, planLoading, isSuperadmin],
   );
 
   const quickTips = [

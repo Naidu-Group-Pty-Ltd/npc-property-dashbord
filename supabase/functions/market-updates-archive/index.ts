@@ -14,6 +14,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 const ARCHIVE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,citation_urls,status,publication_reason,ai_status,dedupe_hash,visibility,created_at,updated_at,archived_at,archived_by,pre_archive_status';
 
@@ -92,6 +93,10 @@ Deno.serve(async (req) => {
     let auth = await verifyAuth(sb, req.headers, {});
     if (auth.error || !auth.userId) auth = await verifyAuth(sb, req.headers, body as { session_token?: string });
     if (auth.error || !auth.userId || auth.userId === 'service_role') return json({ok:false,error:{code:'AUTHENTICATION_REQUIRED',message:'Authentication is required.'},correlationId},401);
+
+    // Market News Feed is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(sb, auth, 'market-updates');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, cors);
 
     const view = await requireModulePermission(sb, { userId: auth.userId, authMethod: auth.authMethod }, 'market_updates', 'can_view');
     if (!view.ok) return json({ok:false,error:{code:'MARKET_UPDATES_VIEW_REQUIRED',message:'Market News Feed view permission is required.'},correlationId},403);

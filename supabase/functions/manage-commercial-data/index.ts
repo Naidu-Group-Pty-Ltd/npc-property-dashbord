@@ -4,6 +4,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 type TableName = 'commercial_properties' | 'commercial_leases' | 'commercial_dcf_runs' | 'commercial_capex' | 'commercial_financing';
@@ -64,6 +65,11 @@ Deno.serve(async (req) => {
     return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
   }
   const userId = auth.userId;
+
+  // Commercial & Industrial is a Scale-or-add-on capability — enforced
+  // server-side, not just hidden in the UI.
+  const entitlement = await requireWorkspaceCapability(supabase, auth, 'commercial-industrial');
+  if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
   if (!body.operation || !body.table) {
     return new Response(JSON.stringify({ error: 'operation and table are required' }), {

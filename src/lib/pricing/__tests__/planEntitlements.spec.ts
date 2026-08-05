@@ -84,25 +84,27 @@ describe("module inclusion by tier", () => {
     expect(Object.keys(MODULE_TIERS)).toHaveLength(23);
   });
 
-  it("includes Deal Pipeline and Market Updates from Growth up", () => {
+  it("includes Deal Pipeline from Growth up", () => {
     expect(planIncludesModule("launch", "deal-pipeline")).toBe(false);
     expect(planIncludesModule("growth", "deal-pipeline")).toBe(true);
-    expect(planIncludesModule("launch", "market-updates")).toBe(false);
-    expect(planIncludesModule("scale", "market-updates")).toBe(true);
   });
 
-  it("does not withhold AML/CTF, which every tier's headline price pays for", () => {
-    // This assertion used to be the other way round, on the reasoning that
-    // AML/CTF is the $195 separating a tier's two prices so a tier does not
-    // buy it. The price list settled that question the other way: every tier
-    // is titled with its WITH-AML figure — $699, $1,055, $2,210 — and that is
-    // the amount Stripe charges. The without-AML figures are the documented
-    // alternative, not the default.
-    //
-    // So a workspace on Launch has paid for compliance, and a gate that denied
-    // it would withhold a module they are being billed for.
+  it("bundles Market News Feed into Scale only — Launch and Growth need the add-on", () => {
+    expect(planIncludesModule("launch", "market-updates", [])).toBe(false);
+    expect(planIncludesModule("growth", "market-updates", [])).toBe(false);
+    expect(planIncludesModule("scale", "market-updates", [])).toBe(true);
+    expect(planIncludesModule("launch", "market-updates", ["market-updates"])).toBe(true);
+    expect(planIncludesModule("growth", "market-updates", ["market-updates"])).toBe(true);
+  });
+
+  it("ties AML/CTF to the purchased SKU, not to tier membership", () => {
+    // AML/CTF belongs to no tier list. Every tier's HEADLINE SKU includes it,
+    // and the snapshot normaliser (src/lib/entitlements/snapshot.ts) turns
+    // that into the `aml-ctf` add-on slug — so entitlement arrives through
+    // purchasedAddons, and a without-AML SKU simply never carries the slug.
     for (const plan of ["launch", "growth", "scale"]) {
-      expect(planIncludesModule(plan, "aml-ctf")).toBe(true);
+      expect(planIncludesModule(plan, "aml-ctf", ["aml-ctf"])).toBe(true);
+      expect(planIncludesModule(plan, "aml-ctf", [])).toBe(false);
     }
   });
 
@@ -133,6 +135,7 @@ describe("GST is contained in the price, not added to it", () => {
 
 describe("a module no tier includes defers to the user permission gate", () => {
   const ADD_ONS = [
+    "aml-ctf",
     "intelligence-hub",
     "email-copilot",
     "call-logs",

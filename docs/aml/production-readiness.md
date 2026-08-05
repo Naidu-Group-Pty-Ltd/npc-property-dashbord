@@ -225,3 +225,21 @@ transcription error there would have taken the AML command centre down. The
 pipeline deploys from committed sources with no transcription step, and the
 byte comparison above confirms the deployed bundle matches the merged source
 exactly.
+
+---
+
+## Phase 9 release-candidate status (controlled rollout)
+
+The partner/reliance domain (Phases 1–8 + pre-rollout remediation) is
+**source implemented and locally tested** on branch
+`claude/aml-ctf-remediation-and-controlled-rollout`: record classifications
+corrected (raw ID copy P3, legal hold P4, SMR P5 seeded), controlled
+expiring audited P3 evidence access completed, action-level write flags
+added (all default false; service/settlement blocking reserved and
+enforced nowhere). The 60-migration chain, behaviour battery, rollback
+rehearsal and flag dependency order were proven on a disposable local
+Postgres (`supabase/tests/aml-local-rehearsal/`). **Staging is not
+deployed, staging is not verified, production is not deployed** — no
+statement in this document may be read as claiming otherwise. The rollout
+sequence, evidence sheets, UAT plan, sign-off register (no sign-offs
+obtained) and open legal/MLRO decisions live in `docs/aml/rollout/`.

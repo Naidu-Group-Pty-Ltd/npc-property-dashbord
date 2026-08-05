@@ -85,14 +85,15 @@ export function marketPresence(
 }
 
 /**
- * Semantic-token classes per presence, in one place so the card, the modal and
- * the detail page cannot disagree about what "sold" looks like.
+ * Semantic-token classes per presence. These are intentionally high-contrast,
+ * solid badges — they must remain legible on top of busy property photographs
+ * and across light/dark themes.
  */
 export const MARKET_PRESENCE_TONE: Record<MarketPresence, string> = {
-  'on-market': 'border-success/40 bg-success/10 text-success',
-  'off-market': 'border-brand-400/50 bg-brand-50 text-brand-700 dark:bg-brand-400/10 dark:text-brand-200',
-  'coming-soon': 'border-info/40 bg-info/10 text-info',
-  'under-offer': 'border-warning/40 bg-warning/10 text-warning',
-  sold: 'border-border bg-muted text-muted-foreground',
-  leased: 'border-border bg-muted text-muted-foreground',
+  'on-market': 'bg-success text-success-foreground border-success shadow-sm',
+  'off-market': 'bg-brand text-brand-foreground border-brand shadow-sm',
+  'coming-soon': 'bg-info text-info-foreground border-info shadow-sm',
+  'under-offer': 'bg-warning text-warning-foreground border-warning shadow-sm',
+  sold: 'bg-muted text-muted-foreground border-border shadow-sm',
+  leased: 'bg-muted text-muted-foreground border-border shadow-sm',
 };

@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { createCorsHeaders, verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkModuleView } from '../_shared/permissions.ts';
 import { isSuperadmin, rateLimit, redactUpstreamError } from '../_shared/wp08Guards.ts';
@@ -52,6 +53,11 @@ Deno.serve(async (req) => {
     if (auth.error || !auth.userId) {
       return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
     }
+
+    // The Airtable listings intake data proxied here is the Property
+    // Marketplace dataset — a Scale-or-add-on capability, enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabaseAuthClient, auth, 'opportunity-marketplace');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     // WP-08 — module gate: requires `listings` module view. Superadmin bypasses.
     const moduleCheck = await checkModuleView(supabaseAuthClient, auth.userId, 'listings', auth.authMethod);

@@ -61,22 +61,22 @@ export function ClientFilters({ filters, onFiltersChange }: ClientFiltersProps) 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-11 gap-2 rounded-xl border-brand-500/25 bg-background/70 px-4 font-semibold text-muted-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-400/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-brand-300/55 data-[state=open]:bg-brand-500/15 data-[state=open]:text-brand-100">
-          <Filter className="h-4 w-4 text-brand-200/80" />
+        <Button variant="outline" className="h-10 gap-2 rounded-xl px-4">
+          <Filter className="h-4 w-4" aria-hidden="true" />
           Filters
           {activeFilterCount > 0 && (
-            <Badge variant="secondary" className="flex h-5 min-w-5 items-center justify-center rounded-full border border-brand-300/25 bg-brand-400 px-1.5 text-xs font-bold text-black shadow-sm shadow-brand-500/20">
+            <Badge variant="secondary" className="flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs tabular-nums">
               {activeFilterCount}
             </Badge>
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-80 rounded-2xl border-brand-500/20 bg-card/95 shadow-2xl shadow-sm dark:shadow-black/30 backdrop-blur" align="start">
+      <PopoverContent className="w-80 rounded-xl" align="start">
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h4 className="font-medium">Filters</h4>
             {activeFilterCount > 0 && (
-              <Button variant="ghost" size="sm" onClick={handleReset} className="h-8 rounded-lg px-2 text-xs transition-colors hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/35">
+              <Button variant="ghost" size="sm" onClick={handleReset} className="h-8 rounded-lg px-2 text-xs">
                 <X className="h-3 w-3 mr-1" />
                 Clear all
               </Button>

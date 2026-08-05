@@ -12,6 +12,8 @@
  *   list_privacy_requests | create_privacy_request | update_privacy_request | export_privacy_bundle
  *   list_tipping_off_rules | upsert_tipping_off_rule | delete_tipping_off_rule | evaluate_tipping_off
  *   list_scans | get_scan | dry_run_scan | request_approval | approve_scan | execute_scan | cancel_scan
+ *   record_retention_trigger | sync_case_triggers | sync_partner_triggers (Phase 7, flag-gated)
+ *   list_retention_records | list_record_classes
  *   audit_timeline
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -19,6 +21,10 @@ import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import {
+  RETENTION_TRIGGER_KIND_LABELS,
+  partnerDependencyBlockers,
+} from "../_shared/aml/partnerRetention.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -62,7 +68,43 @@ const SCAN_SOURCES: Record<string, { table: string; timestampCol: string; refCol
   // pointer columns; the check itself is a compliance record and survives on
   // its own clock. See disposeBiometric below.
   biometric:    { table: "verification_checks", timestampCol: "completed_at", caseIdCol: "case_id" },
+  // Phase 7 — partner/reliance domain. Only classes whose disposal method is
+  // actually executable are enumerated with a source: the three soft-delete
+  // classes carry updated_at, and partner notifications are hard-deleted
+  // fixed-copy rows. Attestations, grants, manifests and evidence-delivery
+  // read models are deliberately NOT here — they are evidence, their scan
+  // items dispose as recorded_only, and their rows survive with the case
+  // file. Triggers for them exist regardless; the clock is never skipped.
+  partner_case_link:          { table: "partner_case_links",          timestampCol: "ended_at",    caseIdCol: "case_id" },
+  partner_records_request:    { table: "partner_records_requests",    timestampCol: "reviewed_at", caseIdCol: "case_id" },
+  partner_refresh_obligation: { table: "partner_refresh_obligations", timestampCol: "completed_at", caseIdCol: "case_id" },
+  partner_notification:       { table: "partner_notifications",       timestampCol: "created_at" },
 };
+
+/** Phase 7 feature flag — gates ONLY the partner-domain retention
+ * extension (partner trigger kinds/entity types, partner dependency
+ * blockers, partner metadata in privacy exports). Tolerates both flag value
+ * shapes used in this repo. Existing behaviour is unchanged while off. */
+async function flagEnabled(admin: any, key: string): Promise<boolean> {
+  const { data } = await admin.from("feature_flags")
+    .select("value").eq("key", key).maybeSingle();
+  const v = data?.value;
+  if (v === true || v === "true") return true;
+  if (v && typeof v === "object" && (v as any).enabled === true) return true;
+  return false;
+}
+
+const PARTNER_ENTITY_TYPES = new Set([
+  "partner_case_link", "partner_records_request", "partner_evidence_delivery",
+  "partner_refresh_obligation", "partner_notification", "attestation",
+  "reliance_grant", "disclosure_manifest", "arrangement_assessment",
+  "partner_organisation", "raw_id_document_copy",
+]);
+const PHASE7_TRIGGER_KINDS = new Set([
+  "record_created", "client_transaction_record_received", "cdd_arrangement_end",
+  "partner_relationship_end", "evidence_delivery_end", "raw_id_copy_necessity_end",
+  "biometric_necessity_end", "audit_obligation_end",
+]);
 
 /**
  * Destroy a retained biometric.
@@ -126,7 +168,8 @@ async function disposeBiometric(
 
 // Phase 11 (§18): the retention clock starts at a recorded trigger event, not
 // at upload. A record with no operative trigger has not started its clock and
-// is never disposal-eligible.
+// is never disposal-eligible. Phase 7 widened the kinds (partner-domain and
+// necessity-end clocks) via the shared catalogue — a superset of these.
 const RETENTION_TRIGGER_KINDS: Record<string, string> = {
   relationship_end: "Business relationship ended",
   occasional_transaction_complete: "Occasional transaction completed",
@@ -135,6 +178,7 @@ const RETENTION_TRIGGER_KINDS: Record<string, string> = {
   investigation_complete: "Investigation completed",
   report_complete: "Regulatory report completed",
   legal_hold_release: "Legal hold released",
+  ...RETENTION_TRIGGER_KIND_LABELS,
 };
 
 function addYears(from: Date, years: number): Date {
@@ -155,9 +199,37 @@ function addYears(from: Date, years: number): Date {
  */
 async function dependencyBlockersFor(
   admin: any, entityType: string, entityId: string, caseId: string | null,
+  partnerChecks = false,
 ): Promise<string[]> {
   const aml = admin.schema("aml");
   const blockers: string[] = [];
+
+  // Phase 7 (§7.6): live partner-domain facts block disposal. The counting
+  // happens here; the DECISION lives in the pure partnerDependencyBlockers
+  // so dry run and execution apply identical rules. Gated by the Phase 7
+  // flag at the call sites — while off, behaviour is byte-identical.
+  if (partnerChecks && caseId) {
+    const nowIso = new Date().toISOString();
+    const [links, grants, requests, deliveries, obligations] = await Promise.all([
+      aml.from("partner_case_links").select("id", { count: "exact", head: true })
+        .eq("case_id", caseId).eq("state", "active"),
+      aml.from("reliance_grants").select("id", { count: "exact", head: true })
+        .eq("case_id", caseId).is("revoked_at", null).gt("expires_at", nowIso),
+      aml.from("partner_records_requests").select("id", { count: "exact", head: true })
+        .eq("case_id", caseId).in("status", ["submitted", "under_review", "approved", "partly_approved"]),
+      aml.from("partner_evidence_deliveries").select("id", { count: "exact", head: true })
+        .eq("case_id", caseId).is("revoked_at", null).gt("expires_at", nowIso),
+      aml.from("partner_refresh_obligations").select("id", { count: "exact", head: true })
+        .eq("case_id", caseId).eq("status", "open"),
+    ]);
+    blockers.push(...partnerDependencyBlockers({
+      activePartnerLinks: links.count ?? 0,
+      activeGrants: grants.count ?? 0,
+      openRecordsRequests: requests.count ?? 0,
+      liveEvidenceDeliveries: deliveries.count ?? 0,
+      openRefreshObligations: obligations.count ?? 0,
+    }));
+  }
 
   // A record that still supports an unfinished regulatory report cannot go.
   if (caseId) {
@@ -399,6 +471,30 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           if (verifs.error) return jr({ error: verifs.error.message }, 400);
           if (screening.error) return jr({ error: screening.error.message }, 400);
           bundle.subject = { cases: cases.data ?? [], verifications: verifs.data ?? [], screening: screening.data ?? [] };
+
+          // Phase 7 (§7.10): what was SHARED about the subject under CDD
+          // arrangements — links, requests and delivery metadata only.
+          // Reviewer/MLRO-restricted classes (P4/P5/P6 in the record-class
+          // catalogue) never enter an export bundle.
+          if (caseIds.length && await flagEnabled(admin, "aml_partner_records_retention")) {
+            const [links, requests, deliveries] = await Promise.all([
+              aml.from("partner_case_links")
+                .select("id, case_id, portal_type, relationship_role, legal_route, state, linked_at, ended_at, partner_organisations:partner_org_id(legal_name)")
+                .in("case_id", caseIds),
+              aml.from("partner_records_requests")
+                .select("id, case_id, requested_record_codes, status, requested_at, reviewed_at, approved_record_codes, denied_record_codes")
+                .in("case_id", caseIds),
+              aml.from("partner_evidence_deliveries")
+                .select("id, case_id, record_code, safe_label, delivered_at, expires_at, revoked_at")
+                .in("case_id", caseIds),
+            ]);
+            bundle.subject.partner_sharing = {
+              note: "Information shared with partner organisations under written CDD arrangements, with the client's sharing consent.",
+              links: links.data ?? [],
+              records_requests: requests.data ?? [],
+              evidence_deliveries: deliveries.data ?? [],
+            };
+          }
         }
         const hash = await sha256Hex(JSON.stringify(bundle));
         await audit(admin, "privacy", `Privacy bundle exported`, { request_id: id, content_hash: hash }, userId, userLabel);
@@ -489,6 +585,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!entityType || !entityId) return jr({ error: "entity_type and entity_id required" }, 400);
         if (!RETENTION_TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
         if (Number.isNaN(triggerDate.getTime())) return jr({ error: "trigger_date must be a valid date" }, 400);
+        // Phase 7 vocabulary is flag-gated; the pre-existing kinds and
+        // entity types behave exactly as before while the flag is off.
+        if ((PHASE7_TRIGGER_KINDS.has(triggerKind) || PARTNER_ENTITY_TYPES.has(entityType))
+          && !(await flagEnabled(admin, "aml_partner_records_retention"))) {
+          return jr({
+            error: "Partner-domain retention is not enabled (aml_partner_records_retention).",
+            code: "partner_retention_disabled",
+          }, 409);
+        }
 
         const { data: sched } = await aml.from("retention_schedules")
           .select("*").eq("entity_type", entityType).eq("active", true).maybeSingle();
@@ -613,6 +718,117 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({ created_count: created.length, created });
       }
 
+      // Phase 7 (§7.5): derive partner-domain retention triggers from state
+      // the domain has already recorded — ended links, expired/revoked
+      // deliveries, discharged obligations, transient notifications. Same
+      // ensure-style idempotency as sync_case_triggers: an operative trigger
+      // is never touched, so re-running changes nothing. Every clock starts
+      // at the recorded trigger event, never at row creation — the single
+      // exception is partner_notification, whose class explicitly uses
+      // creation date (record_created).
+      case "sync_partner_triggers": {
+        if (!canInvestigate) return jr({ error: "Investigator role required" }, 403);
+        if (!(await flagEnabled(admin, "aml_partner_records_retention"))) {
+          return jr({
+            error: "Partner-domain retention is not enabled (aml_partner_records_retention).",
+            code: "partner_retention_disabled",
+          }, 409);
+        }
+        const caseId = String(body.case_id ?? "");
+        if (!caseId) return jr({ error: "case_id required" }, 400);
+
+        const { data: schedules } = await aml.from("retention_schedules").select("*").eq("active", true);
+        const schedFor = (t: string) => (schedules ?? []).find((s: any) => s.entity_type === t);
+        const created: Array<{ entity_type: string; entity_id: string; trigger_kind: string }> = [];
+        const nowIso = new Date().toISOString();
+
+        const ensure = async (
+          entityType: string, entityId: string, kind: string, date: string, category: string,
+        ) => {
+          const { data: existing } = await aml.from("retention_triggers")
+            .select("id").eq("entity_type", entityType).eq("entity_id", entityId)
+            .is("superseded_at", null).limit(1).maybeSingle();
+          if (existing) return;
+          const sched = schedFor(entityType);
+          const years = Number(sched?.retention_years ?? 7);
+          const basis = String(sched?.legal_basis ?? "AML/CTF Act 2006 s107 — 7 year minimum");
+          await aml.from("retention_triggers").insert({
+            entity_type: entityType, entity_id: entityId, case_id: caseId,
+            record_category: category, trigger_kind: kind, trigger_date: date,
+            legal_basis: basis, retention_years: years,
+            minimum_retention_date: addYears(new Date(date), years).toISOString(),
+            disposal_method: String(sched?.disposal_method ?? "soft_delete"),
+            source_note: "Derived from recorded partner-domain state",
+            recorded_by: userId, recorded_by_label: userLabel,
+          });
+          created.push({ entity_type: entityType, entity_id: entityId, trigger_kind: kind });
+        };
+
+        const { data: endedLinks } = await aml.from("partner_case_links")
+          .select("id, ended_at").eq("case_id", caseId).eq("state", "ended")
+          .not("ended_at", "is", null).limit(200);
+        for (const l of endedLinks ?? []) {
+          await ensure("partner_case_link", l.id, "partner_relationship_end",
+            l.ended_at, "Partner-case link and legal route");
+        }
+
+        const { data: deadDeliveries } = await aml.from("partner_evidence_deliveries")
+          .select("id, expires_at, revoked_at").eq("case_id", caseId)
+          .or(`revoked_at.not.is.null,expires_at.lt.${nowIso}`).limit(500);
+        for (const d of deadDeliveries ?? []) {
+          await ensure("partner_evidence_delivery", d.id, "evidence_delivery_end",
+            d.revoked_at ?? d.expires_at, "Evidence delivery read model");
+        }
+
+        const { data: reviewedRequests } = await aml.from("partner_records_requests")
+          .select("id, reviewed_at").eq("case_id", caseId)
+          .not("reviewed_at", "is", null)
+          .in("status", ["denied", "delivered", "expired", "cancelled"]).limit(200);
+        for (const r of reviewedRequests ?? []) {
+          await ensure("partner_records_request", r.id, "evidence_delivery_end",
+            r.reviewed_at, "Controlled partner records request");
+        }
+
+        const { data: closedObligations } = await aml.from("partner_refresh_obligations")
+          .select("id, completed_at, cancelled_at, status").eq("case_id", caseId)
+          .in("status", ["completed", "cancelled", "expired"]).limit(200);
+        for (const o of closedObligations ?? []) {
+          const date = o.completed_at ?? o.cancelled_at;
+          if (!date) continue;
+          await ensure("partner_refresh_obligation", o.id, "audit_obligation_end",
+            date, "Partner refresh obligation");
+        }
+
+        // Transient fixed-copy rows — the ONE class whose clock is creation.
+        const { data: linkRows } = await aml.from("partner_case_links")
+          .select("id").eq("case_id", caseId).limit(200);
+        const linkIds = (linkRows ?? []).map((l: any) => l.id);
+        if (linkIds.length > 0) {
+          const { data: notifications } = await aml.from("partner_notifications")
+            .select("id, created_at").in("partner_case_link_id", linkIds).limit(500);
+          for (const n of notifications ?? []) {
+            await ensure("partner_notification", n.id, "record_created",
+              n.created_at, "Partner-safe notification");
+          }
+        }
+
+        if (created.length > 0) {
+          await audit(admin, "retention", `Partner-domain retention triggers derived (${created.length})`,
+            { case_id: caseId, created }, userId, userLabel);
+        }
+        return jr({ created_count: created.length, created });
+      }
+
+      // Phase 7 (§7.2/§7.3): the controlled record-class catalogue —
+      // family, P1–P6 classification, storage zone, trigger kind, disposal
+      // rule and export standing per class. Read-only.
+      case "list_record_classes": {
+        const { data, error } = await aml.from("record_class_catalogue")
+          .select("*").order("family").order("record_code");
+        if (error) return jr({ error: error.message }, 400);
+        return jr({ record_classes: data ?? [] });
+      }
+
       // §18 display contract for retained records.
       case "list_retention_records": {
         const caseId = body.case_id ? String(body.case_id) : null;
@@ -656,6 +872,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       case "dry_run_scan": {
         if (!canInvestigate) return jr({ error: "Investigator role required" }, 403);
         const scope = (body.scope ?? "all").toString();
+        const partnerChecks = await flagEnabled(admin, "aml_partner_records_retention");
         const { data: scan, error: sErr } = await aml.from("retention_scans").insert({
           scope, status: "dry_run", requested_by: userId, requested_by_label: userLabel,
         }).select("*").single();
@@ -687,14 +904,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             const { data: row } = await aml.from(src.table)
               .select(`id${src.refCol ? `, ${src.refCol}` : ""}`).eq("id", t.entity_id).maybeSingle();
             if (!row) continue;
-            t.__reference_label = src.refCol ? row[src.refCol] : null;
+            t.__reference_label = src.refCol ? (row as unknown as Record<string, unknown>)[src.refCol] : null;
           }
 
           candidates++;
           perType[t.entity_type] = (perType[t.entity_type] ?? 0) + 1;
 
           const holdId = await activeHoldFor(admin, t.entity_type, t.entity_id, caseId);
-          const blockers = await dependencyBlockersFor(admin, t.entity_type, t.entity_id, caseId);
+          const blockers = await dependencyBlockersFor(admin, t.entity_type, t.entity_id, caseId, partnerChecks);
           let disposition = "pending";
           if (holdId) { disposition = "held"; held++; }
           else if (blockers.length > 0) { disposition = "blocked"; blocked++; }
@@ -773,6 +990,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (scan.status !== "approved") return jr({ error: "Scan must be approved before execution" }, 400);
 
         await aml.from("retention_scans").update({ status: "executing" }).eq("id", id);
+        const partnerChecksAtExecution = await flagEnabled(admin, "aml_partner_records_retention");
         const { data: items } = await aml.from("retention_scan_items").select("*").eq("scan_id", id).eq("disposition", "approved").limit(2000);
         let disposed = 0, skipped = 0;
         for (const it of (items ?? [])) {
@@ -783,7 +1001,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             const { data: sourceRecord, error: sourceRecordError } = await aml.from(src.table)
               .select(src.caseIdCol).eq("id", it.entity_id).maybeSingle();
             if (sourceRecordError) throw sourceRecordError;
-            caseId = sourceRecord?.[src.caseIdCol] ?? null;
+            caseId = (sourceRecord as Record<string, unknown> | null)?.[src.caseIdCol] as string | null ?? null;
           }
           const holdId = await activeHoldFor(admin, it.entity_type, it.entity_id, caseId);
           if (holdId) {
@@ -795,7 +1013,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           // §18 dependency check, re-run at execution: dependencies can appear
           // between approval and disposal, and an approved item must not be
           // disposed of once something else relies on it.
-          const blockers = await dependencyBlockersFor(admin, it.entity_type, it.entity_id, caseId);
+          const blockers = await dependencyBlockersFor(admin, it.entity_type, it.entity_id, caseId, partnerChecksAtExecution);
           if (blockers.length > 0) {
             await aml.from("retention_scan_items").update({
               disposition: "blocked", dependency_blockers: blockers,

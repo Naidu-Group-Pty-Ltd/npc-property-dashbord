@@ -140,7 +140,11 @@ document's chapters are editorial sentences and the list was functional labels.
 `scoreMatch` had been inert since it was written. Nothing failed loudly — the
 review screen showed a plausible binding of the wrong things, which is the
 failure mode this whole feature is designed around. Fixed, and locked by
-`converterChapters.spec.ts` importing `snapshotSections`.
+`converterChapters.spec.ts` importing `snapshotSections` — now one row per
+declarative format, each against the maximal payload that makes that format
+print everything it can. The seven rows were written before the seven lists and
+watched to fail; three of them did, on fixtures that were not yet maximal, which
+is the only evidence that a guard guards anything.
 
 **C6 — the heading hierarchy arrived inverted.** Our chapters print a small
 `SECTION 01` eyebrow above a large title. A model transcribing that page maps
@@ -169,6 +173,401 @@ the lede and the draft notice inside the first chapter's body; `planConvertedCha
 charged nothing for them. Read off a real fifteen-page render, this was one of
 the two pages the budget was missing. `OPENING_NOTICE_LINES` now charges it, and
 the remaining gap is a single page from `pagesForLines`' own ±1.
+
+---
+
+## The second round: what the design pass got wrong
+
+The design pass shipped, ran in production, and produced a 27-page draft of a
+document that should be about fifteen. It was tempting to read that as WeasyPrint
+refusing something, and it was not: the run's ledger row records
+`enrichment_model: claude-opus-4-8`, `binding_source: model`, an imported design
+system with its own paper and ink, 53 designed blocks
+(`{kpi:10, bars:5, table:9, callout:11, sidenote:3, lede:13, prose:4}`), and an
+empty `error`. Everything ran. Four things about *what* it ran were wrong, and
+all four are recorded here because none of them failed loudly.
+
+**D1 — sub-sections became appendix chapters.** `planConvertedChapters` never
+read `depth`. Every section the binding did not want became its own appendix
+chapter with an eyebrow, a header and a page break — correct for a top-level
+section the format has no place for, wrong for a `###` inside one. The run
+transcribed into 20 sections, of which 12 were `depth: 2` sub-headings inside
+*How This Was Calculated*: `DTI Ratio` at 61 characters, `Serviceability Band` at
+55, `Stress Test` at 78. Each got a page, and the back half of the document read
+as a list of stubs.
+
+An unbound sub-section is now folded into the chapter its parent produced —
+bound or appendix — with its heading put back at `depth + 1`, since
+`ExtractedSection.markdown` has its own heading stripped. A sub-section the
+binding *did* want still becomes a chapter, because somebody chose it. Nothing
+is dropped either way. One subtlety worth keeping: the appendix counter now
+counts *chapters*, not unbound sections. A folded section that consumed an id
+would shift every `cv.aN` after it between the planning call that decides what
+to ask the model about and the planning call that renders the answers, and every
+block would land on the wrong chapter.
+
+Measured on the real source, rendered through WeasyPrint: **26 pages → 16**, with
+`DTI Ratio`, `Stress Test` and `Serviceability Band` now sub-headings inside
+*How this was calculated* where they belong.
+
+**D2 — the faithfulness guard was deleting the flagship chapter.** The run's
+notes carry, twice:
+
+> `Capacity at a glance: rejected: it contains 1 figure the chapter does not: 100`
+
+The chapter says "76% utilisation" and contains no `100`. The model had done
+exactly the right thing — a `bullet` with `value: 76, max: 100`, the
+*Proposed loan 76%* case the feature was built for — and `enrichedText`
+stringified `max` into the prose figure check, where `BARE_INTEGER_FLOOR = 12`
+made it read as an invented figure. Rejected, retried, rejected again, fallen
+back to flat prose: the most important chapter in the report, destroyed by its
+own guard, for the axis of a chart.
+
+`max` is now the one exclusion in `enrichedText`. It is the chart's scale, not a
+claim about anybody's finances. `value` and `target` stay checked, because those
+are assertions about the client — a wrong `max` mis-scales one bar, a wrong
+`value` misstates a figure, and only the second is worth throwing a chapter away
+for.
+
+**D3 — callouts were dropped whole for a missing label.** `readBlock` required
+both a label and a body; the model routinely returned a body with no label, and
+the notes filled with `block 0: a callout missing its label or body`. The label
+now defaults from the tone — `caution` → "Caution", `negative` → "Shortfall",
+`positive` → "Worth knowing" — and a sidenote defaults to "Note". A callout with
+a label and *no body* is still refused, because that renders as an empty box.
+
+**D4 — enrichment ran on 55-character stubs.** All 20 sections went to the model,
+so roughly fourteen calls per conversion were spent on fragments with nothing to
+design, which is where most of the `the model returned no blocks` notes came
+from. `MIN_ENRICH_CHARS = 220` is a floor on whether the question is worth
+putting, not a quality bar; it sits just above the longest fragment that run
+produced. Fixing D1 removes most of these anyway — this catches the genuinely
+tiny top-level section, like a two-line `Warnings`.
+
+The partition lives in `enrich.pure.ts` as `partitionForEnrichment`, not inline
+in `enrich.ts`, for one reason: `enrich.ts` reads `Deno.env` at module scope, so
+no spec can import it, and a floor that decides how much a conversion costs
+should not be a rule nobody can run. Skipped chapters are *reported*
+(`tooShortNote`) rather than silently dropped — "4 of 6 designed" with nothing
+else said reads as two failures, and they were never asked.
+
+**D5 — the chosen design system's paper and ink never reached the page.** The
+render branch selected `id, name, brand_hex, options` and called
+`resolveReportPalette({ preset, brandHex })`. `neutrals` was never selected and
+never passed, so every conversion resolved to `PRESET_NEUTRALS` — and the four
+presets are permutations of the same three constants. A design system imported
+from a Claude Design project showed its real ivory, porcelain, obsidian and
+hairline in the specimen gallery, which reads the column, and printed on ours.
+
+Nothing failed. The ledger row recorded that a system had been *chosen*, which
+is not the same as its grounds having been used, and the two are
+indistinguishable from the outside — which is why this survived a round of
+diagnosis that had the row open in front of it.
+
+`readDesignSystemRow` in `route.pure.ts` now reads the row and the route passes
+all three of `preset`, `brandHex` and `neutrals`. It is a second reader beside
+`readBrandDesignSystem` because they take different shapes — Postgres returns
+snake_case, a browser or a model sends camelCase — and it is *only* a second
+reader: `normalizeReportDesignOptions` and `readReportNeutrals` are shared, so
+the two cannot drift on what an option or a ground is. It is in `route.pure.ts`
+rather than inline for the same reason as D4's partition: index.ts is an edge
+function no spec can import, and this decides what colour a client document
+prints in.
+
+The behaviour that was already right stays right. A null row is the house
+default with "House design" on the cover, exactly as `designSystemId: null` has
+always meant, and an unreadable `neutrals` falls back to the preset whole rather
+than half-applying. The six seeded systems are held in
+`converterRoutes.spec.ts` with the grounds they actually carry in the database —
+copied, not invented, because the defect was that those exact values existed and
+went nowhere.
+
+---
+
+## The third round: it worked, and it did not look designed
+
+D1–D5 fixed the pipeline. A render of the same document came back at 17 pages
+with the flagship chapter designed, every callout labelled and the sub-sections
+folded — and was still reported as "not using Claude Design at all", because the
+first page showed the *uploaded filename* running off the edge of the paper.
+
+Worth stating plainly, because it is the lesson rather than the defect: the
+programme had been measuring block counts and page counts, and a document is not
+either of those. Everything below was visible in any render and needed no ledger
+row to find.
+
+**E1 — the cover printed the filename, off the page.** `extractStructure` did
+`let title = clean(fallbackTitle)`, seeding the title with the uploaded file's
+name, so every `if (!title)` after it — including the rule that reads the
+document's own top-level heading — was dead code whenever a filename existed,
+which is always. The return already ended `title || clean(fallbackTitle)`, so
+the seed was pure damage.
+
+Then the second half: a filename is one unbreakable token, underscores are not a
+break opportunity, and `max-width` cannot clip what cannot wrap. At 56pt it blew
+`.report-cover` past the trim, and the masthead and footer — both positioned
+`right: 22mm` against that stretched box — went off the sheet with it. One
+unbreakable word, three broken things: the wrong title, `SERVICESCHANCERY`, and
+`PRIVATE AND CONFIDENTIALAE8DDE86`.
+
+The fix is `overflow-wrap: anywhere` plus `table-layout: fixed` on both cover
+tables, and `coverTitleFit` — a character count in `typography.pure.ts` that
+steps the size down in four stops, because CSS cannot measure a string and a
+title is somebody else's. (`word-break: break-word` was tried and WeasyPrint
+rejects it as an invalid value; `overflow-wrap` is what does the work.) The
+62/38 split on the masthead is not decoration: an even split wrapped a long
+company name onto a second line that landed on the cover rule.
+
+**E2 — every chapter took a page, including the two-line ones.**
+`.chapter { page-break-before: always }` is global to all nine formats and stays
+that way, so a `Warnings` section of one bullet cost a whole sheet. Four of
+seventeen pages carried one to three lines. Consecutive appendix sections under
+`THIN_CHAPTER_LINES` are now packed into one chapter, each under its own
+heading, and the packed chapter names what it holds. A section big enough to
+hold a page keeps its own title — the appendix exists so nothing an uploader
+wrote disappears, and losing the name of a substantial section is a way of
+disappearing it. The decision is taken on the **flat** Markdown cost, never the
+enriched one, for the same id-stability reason as D1.
+
+**E3 — the document said things twice.** Three separate repetitions:
+
+- A `lede` restating the chapter title — *How the capacity is built* as a header
+  and again immediately beneath it. `dropRedundantLede` drops an opening lede
+  that matches the title word for word; one that expands on it stays.
+- The disclaimer as a column of ragged half-lines. `disclaimerParagraphs` split
+  on `/\n\s*\n|\n/`, so every newline of hard-wrapped text started a paragraph.
+  It now breaks on blank lines, and on a lone newline only when the line before
+  it ended on sentence punctuation — which reads both the wrapped paragraph and
+  the sentence-per-line disclaimer correctly. **This is the closing page of
+  every report the repo produces, in nine formats.**
+- The template's own `Contact Us` block printed as a chapter, one page before
+  the design system printed its own closing page. A *trailing* section whose
+  title reads as closing furniture is now dropped and counted in
+  `notices.furnitureDropped`. This is the one place the converter deliberately
+  loses something, and it is narrow on purpose: a "Contact" in the middle of a
+  template is content.
+
+**E4 — it read as a warning about a document rather than as a document.**
+`RenderRequest.final` drops the draft callout, the `converted draft` cover
+eyebrow and mark, the PDF's own title suffix, and the `From "…"` deks. Absent
+means draft, because the safe reading of an unset flag on something that might
+reach a client is the loud one. When it *is* a draft the notice is now a
+`sidenote` rather than a `caution` callout — the same words at a volume that
+does not own the top third of page one.
+
+**E5 — two of the six seeded design systems were the same design system.**
+Chancery's `options` were byte-identical to the NPC Services row's: same preset,
+density, `bodyScale`, `coverStyle`, `tableStyle`, `chapterStyle`,
+`visualIntensity`, every flag. The only thing between them was `neutrals`, and
+until D5 that never reached the render. So somebody picking Chancery got the
+house design and concluded the design system had no effect — correctly.
+`20260826000000_chancery_is_not_the_house_system.sql` gives it the ledger table,
+a compact measure and 98% type, matched on the seeded options so an edited row
+is left alone. `converterRoutes.spec.ts` now parses the migrations and asserts
+no two systems resolve to the same set of decisions.
+
+**E6 — the strict setting was the default, and floats leaked.** The converter
+screen opened on `restructure`, under which the model may not write a single new
+sentence, so a source line like `Stressed: $787,477` survived verbatim beneath a
+sentence that already said it. The screen now opens on `connective`;
+`DEFAULT_FIDELITY` stays `restructure` as the *parse* fallback, which is a
+different question. And `repairFloatArtefacts` rewrites `9.440000000000001%` —
+which a real Snapshot printed in its assumptions table — at **extraction**,
+before the faithfulness snapshot, so the guard and the page compare the same
+string. Normalising later would make the design pass look as though it had
+invented a figure.
+
+### One rule this pass added
+
+**Nothing in `css.pure.ts` may name a company or a client.** Those comments ship
+inside every tenant's PDF; `documentBrand.spec.ts` scans the whole document for
+our own name and caught a comment of mine, and a second comment named a real
+client. Explanatory comments in the stylesheet describe the shape of a failure,
+never who it happened to.
+
+---
+
+## Looking at the document, and widening what it can be
+
+The third round fixed everything that was visibly broken and the output still
+did not look like a designed report beside one generated natively. Three things
+came out of comparing them, and the first is a method rather than a fix.
+
+### The rubric, and why it is measured against a real document
+
+`_shared/reports/critique.pure.ts` judges a *rendered* document: near-empty
+pages, ink outside the trim, a heading echoed as body copy on the same page, a
+block of lines printed on two pages, a page budget that missed.
+`scripts/reports/measure_pages.py` produces the measurements from a real
+WeasyPrint render — it samples the paper colour rather than assuming one, so a
+dark cover does not read as 100% ink — and `scripts/reports/critique.mts` is the
+loop:
+
+```
+npx tsx scripts/reports/critique.mts <file.html|file.pdf> --keep <dir>
+```
+
+The thresholds are calibrated between two real documents rather than invented. A
+natively designed report of the same figures measures **0.133–0.221 ink on every
+body page and produces zero findings**; the converter's draft had five pages
+between 0.017 and 0.053. `SPARSE_PAGE_INK` sits at 0.08, clear of both.
+
+On its first run against a real render it found a defect nobody had spotted: the
+"Supplied by the live report" callout printing its own label as its body.
+
+The rubric is a floor, not a standard — it cannot tell you a cover is ugly. The
+`report-critic` agent (`.claude/agents/report-critic.md`) runs it and then
+*looks at the page images*, which is what actually found every defect in rounds
+two and three.
+
+### The vocabulary was nine words in front of thirty primitives
+
+`reportDesign/` ships around twenty primitives and twelve chart types.
+`ENRICHMENT_JSON_SCHEMA` named nine of them, and `renderGrid12`, `renderTwoCol`,
+`renderWaterfall`, `renderGauge`, `renderDecisionBox` and `renderPullQuote` were
+used almost nowhere in the repo.
+
+That was a deliberate decision, recorded in `enrich.pure.ts` as "why the
+vocabulary is small", and the natively designed report settled the argument: it
+put three headline cards **across** the page, built the capacity up as a
+waterfall, and set two note boxes side by side. Every one of those primitives
+already existed and no model could ask for one.
+
+The vocabulary now covers what the design system can draw, plus **`row`** — the
+one *layout* kind, mapping two or three blocks onto the twelve-column grid. A
+chart inside a column is given a context at the column's width, because a chart
+drawn for the full measure and scaled into a third of it prints an axis label
+four points tall. Rows do not nest: two levels is a layout engine, and nobody
+can budget the pages for one.
+
+The original worry — that offering richer shapes invites a model to invent the
+data that justifies one — stands, and is answered by the guards rather than by
+the omission. A waterfall whose steps do not add up fails `checkFaithful`
+exactly as an invented figure in a sentence does. What stays excluded is
+anything needing data a transcription cannot carry: heatmaps, calendars,
+micro-maps and score wheels want coordinates, dates and dimensions no uploaded
+template supplies.
+
+### `surfaceStyle` — ink on paper, or content in containers
+
+A new axis on `ReportDesignOptions`, orthogonal to preset and neutrals. `raised`
+gives KPI **cards** rather than a strip, a shell around a table with a tinted
+header inside it, callouts and sidenotes as cards, an accent bar beside the
+section head, and a faint grid on the paper.
+
+**It defaults to `flat`**, which is every rule the first nine formats shipped
+with. Eight of them have golden renders taken against it. Opting in is a
+per-design-system decision — `20260827000000` turns it on for NPC Services and
+Chancery only, and deliberately not for the other four voices, because six
+systems that all print in cards would be one system again.
+
+### What WeasyPrint can and cannot do, tested rather than assumed
+
+The suspicion was that the renderer was the ceiling. It is not. Built as a page
+and run through WeasyPrint 69:
+
+| | |
+| --- | --- |
+| flexbox, **CSS Grid**, `border-radius`, pill shapes | ✅ |
+| `linear-gradient` fills, the repeating-gradient paper texture | ✅ |
+| rounded table shell via `overflow: hidden`, layered progress bars | ✅ |
+| `box-shadow` | ❌ unknown property |
+| `filter: blur()` | ❌ unknown property |
+| SVG `feGaussianBlur` as a substitute | ❌ also ignored |
+
+Two decorative effects out of everything on a browser-designed reference page.
+The soft glow under a card is genuinely unavailable; a gradient fill and a
+hairline ring stand in for it. Nothing else needed the renderer changed.
+
+Two things the texture cost, both found by rendering rather than reasoning: a
+section's background paints its own box and stops, so the grid must go on the
+page box — and the root element's background is propagated to the canvas and
+painted *over* that box, so `html, body` must be cleared or the grid survives
+only in the margins and reads as a printing fault. And an empty `thead`, which a
+key/value table transcribed out of a PDF always has, was invisible until the
+header carried a tint and then became a blank band; `renderDataTable` now omits
+a header row whose labels are all blank.
+
+---
+
+## Compose: the model lays out the page
+
+The typed vocabulary says *what a passage is* and the design system decides what
+that looks like. That split is what makes brand and contrast guarantees rather
+than hopes, and it stays. What it cannot express is **composition** — which
+things sit beside which, and what fills one page. `row` bought two or three
+across; it did not buy a model deciding that page three is a table with a
+callout and a sidenote stacked beside it and a decision box across the foot.
+
+`compose: true` on a render request is the other mode. The model writes HTML.
+
+### The bargain
+
+`composeHtml.pure.ts` is the boundary, and it is narrow on purpose:
+
+| | |
+| --- | --- |
+| tags | a closed list — no `img`, `a`, `svg`, form or media elements |
+| classes | a closed list, every one of which `css.pure.ts` defines |
+| `style` | **refused, not filtered** |
+| colour, size, font, spacing | not expressible at all |
+| `src`, `href`, `url()` | nothing may point at anything |
+| `<script>`, `<style>`, `<iframe>` | dropped **with their contents** |
+
+Everything else is *unwrapped* rather than dropped — a `<b>` becomes its words —
+because losing a paragraph because it was tagged wrongly loses client content,
+which is worse than losing its emphasis. What was stripped is reported in the
+run's notes.
+
+So the model gains layout and gains nothing else. Every colour still comes from
+the resolved palette, every size from the type scale, and the contrast floors
+hold. The widest thing a confused or hostile answer can do is arrange the right
+components badly, which looks wrong and is not dangerous.
+
+It is written by hand rather than reached for off the shelf: `dompurify` and
+`jsdom` are dependencies of the *browser* bundle, this runs in Deno on the
+render path, and what is needed is not a general sanitiser but a very narrow
+one — a dozen tags and thirty classes. Small enough to read in one sitting,
+which matters more than generality for output that is stored, signed and sent
+to a client.
+
+### Two guards, adapted
+
+**Faithfulness is stronger here than for blocks.** `enrichedText` is a switch
+somebody has to remember to extend; `htmlText` takes the words out of the markup
+and is therefore, by construction, everything that reaches the page. The
+sanitiser runs *first*, so both guards read what will actually print.
+
+**The quota becomes `composedIsDesigned`.** A model asked for a laid-out page
+can satisfy the letter of the request with a stack of `<p>`s — which is exactly
+the flat output the feature replaces. A sheet that uses no design-system class
+is rejected and retried once.
+
+### The sheet is a page because it ends, not because it is tall
+
+`renderSheet` emits `<section class="sheet">` and the rule is
+`break-after: page`. The obvious implementation — give the sheet the height of
+the content box so it *occupies* a page — was tried and is wrong twice over: a
+chapter header sits above the first sheet, so a full-height box no longer fitted
+beside it and the contents were pushed onto the next page under a sheet of blank
+paper; and a run of them turned a two-chapter document into ten pages, six empty.
+
+It also must not claim a named page. `.page-body + .page-body { break-before:
+page }` exists to separate *sibling* named pages, and a sheet nested inside a
+chapter that already is one triggered it — a break before every sheet on top of
+the one after it.
+
+Whether a sheet *fills* its page is a question about the composition, not about
+the box, and it is answered where it can be: `judgeDocument` measures the ink on
+the rendered page.
+
+### Which mode to use
+
+`compose` is absent by default, which means blocks — the path with three rounds
+of production behind it. A chapter appears in exactly one of `enriched` and
+`composed`, or in neither, in which case it renders as flat Markdown exactly as
+the converter always did. The failure of either mode is still the output the
+converter produced before any of this existed.
 
 ---
 
@@ -346,10 +745,11 @@ work.
 `resolveReportPalette` gained one optional input, `neutrals`, and everything
 downstream is unchanged — the worst-ground search, the accent correction and the
 frozen Category B spread now all run against the *imported* grounds, which is
-what makes an import safe rather than merely possible. All nine render routes
-pass `{ preset, brandHex }` and none passes `neutrals`, so their behaviour is
-byte-identical; `printContrast.spec.ts` asserts that over every preset and every
-tenant brand rather than assuming it.
+what makes an import safe rather than merely possible. The converter's render
+route passes it (see **D5**); the other eight pass `{ preset, brandHex }` and
+cannot pick a design system at all, so their behaviour is byte-identical —
+`printContrast.spec.ts` asserts that over every preset and every tenant brand
+rather than assuming it.
 
 It is read **all seven or none**. A half-read set would print somebody else's
 obsidian cover on our ivory, which looks like a deliberate choice and is a parse
@@ -624,21 +1024,85 @@ Template Builder's start menu with a sentence each saying which is which.
 
 ## Formats it can bind to
 
-`FORMAT_CHAPTERS` currently declares one: the **Borrowing Capacity Snapshot** —
-*Capacity at a glance*, *Income and commitments*, *How the capacity is built*,
-*How this was calculated*, *Audit trail*, *Scenario comparison*. The last three
-are conditional in the real document (the renderer emits them only when the
-payload carries an explanation, an audit or scenarios); the converter offers all
-six and the unmatched ones simply go unfilled, which is a state the document
-already handles.
+All eight formats migrated onto the report design system can be bound to.
+`bindableFormats()` is the list, and it drives the route's validation, the
+`chapters` action's gate and the page's dropdown alike — there is no second
+place a format has to be registered.
 
-These are the renderer's own titles and `converterChapters.spec.ts` proves it,
-by importing `snapshotSections` and asserting the two lists are identical. That
-spec exists because the first version of this list was not: see **C5** below.
+Seven of the eight **declare** their chapters in `FORMAT_CHAPTERS`:
 
-Adding a format is one entry in `FORMAT_CHAPTERS`; `bindableFormats()` drives
-both the route's validation and the page's dropdown, so nothing else has to
-change. Add the drift-guard spec at the same time.
+| Format | Chapters |
+|---|---|
+| Borrowing Capacity Snapshot | 6 |
+| 10 Year Cash Flow Analysis | 4 |
+| Cash Flow Comparison Analysis | 10 |
+| Client Details | 8 |
+| Portfolio Performance Review | 9 |
+| Property Comparison Analysis | 12 |
+| Market Intelligence Report | 15 |
+
+Each list is the **longest** the format can print. Most of these formats emit a
+section only when the payload has something to put in it — Borrowing Capacity's
+last three need an explanation, an audit or scenarios; Client Details omits
+*Where they live* for a renter — and the converter offers every one regardless.
+An unfilled chapter is a state the document already handles, and a template that
+*does* carry an audit section should be able to bind it.
+
+Three things are worth knowing about how those lists were arrived at:
+
+- **They are the renderers' own titles, and a spec proves it.**
+  `converterChapters.spec.ts` imports each format's section function, builds a
+  payload that makes it print everything it can (`formatPayloads.ts`), and
+  asserts the two lists are equal in the same order. That spec exists because the
+  first version of this list was invented: see **C5** below.
+- **Market Intelligence is imported, not retyped.** Its layer titles come from
+  `LAYER_TITLES` in `marketIntelligence/payload.pure.ts`, read in `LAYER_ORDER`.
+  Eight strings copied by hand is eight chances to make the C5 mistake.
+- **Two Cash Flow titles interpolate the projection's term** — *The 10-year
+  projection*. A converted template has no payload and so no term; the literal
+  is ten, the catalogue standard, and the spec's payload is built at ten so the
+  choice is checked. It never affects matching: `tokens()` discards anything two
+  characters or shorter, so `10` never reaches the scorer.
+
+**Report Q&A is the eighth, and it has no list.** Not an oversight:
+`planFromTurns` titles each chapter with the client's own question and
+`planFromMarkdown` uses whatever headings the answer carries, so there is no set
+of strings that could be written down and be true. Writing one anyway is exactly
+C5. Instead it is a **pass-through** format (`PASSTHROUGH` in `binding.pure.ts`):
+the archetype contributes the spine, the page band, the chapter label and the
+document name, and the uploaded template supplies the chapters. They are bound
+in order, at full confidence, and nothing goes to the appendix. The plan is
+rebuilt from the structure rather than read back — rows are matched by chapter
+title, and a template with two sections called *Notes* would otherwise collapse
+to one row and silently unbind the other.
+
+**The chapters are the template's *top-level* sections, not every section.** The
+first version bound all of them, and a render said what that costs: a Snapshot
+whose 19 sections are 8 `##` and 11 two-line `###` came out as 19 chapters, so
+fourteen of its twenty-one body pages carried a heading and one to three lines —
+page 11 at 0.6% ink. `.chapter { page-break-before: always }` is global, so a
+chapter is a sheet, and eight two-line sub-headings became eight sheets. It is
+the same defect **D1** records fixing, arriving by a different door:
+`planConvertedChapters` folds a sub-section into its parent only when the binding
+did not want it, and a pass-through binding wanted everything. Fixing it took the
+document from 19 chapters to 8 and from 23 pages to 14, still with nothing
+unfilled and nothing in the appendix. The real Report Q&A renderer already agreed
+— `planFromMarkdown` picks one heading level with `chapterLevelOf`. A sub-section
+with *no* shallower section before it still becomes a chapter, because it has no
+parent to fold into and `unbound` is empty for this format, so dropping it would
+lose it.
+
+Adding a format is one entry in `FORMAT_CHAPTERS` (or one in `PASSTHROUGH`).
+Three other places may need a line at the same time:
+
+- `TABULAR_CHAPTERS`, if any of its chapters is characteristically a table —
+  the shape signal in `scoreMatch` is keyed off the real titles.
+- `CONVERTED_REPORT_TYPES` in `src/lib/reports/converted/reportType.ts`, which
+  files an editable copy under an adapter key. That map is exhaustive over the
+  archetype union, so a new archetype fails the compiler here rather than
+  quietly inheriting the wrong report type.
+- The drift-guard row in `converterChapters.spec.ts`, with the maximal payload
+  it needs.
 
 ---
 
@@ -649,9 +1113,24 @@ change. Add the drift-guard spec at the same time.
 2. Apply `20260824000000_converter_enrichment.sql`. Additive only — six
    nullable-or-defaulted columns recording the design pass.
    Then `20260825000000_brand_system_neutrals.sql` (a design system's own paper
-   and ink) and `20260825000100_seed_house_design_systems.sql` (the house
-   system and the five voices; idempotent on `slug`).
+   and ink), `20260825000100_seed_house_design_systems.sql` (the house system
+   and the five voices; idempotent on `slug`) and
+   `20260826000000_chancery_is_not_the_house_system.sql` (E5 — a single UPDATE
+   guarded on the seeded options, so an edited row is untouched) and
+   `20260827000000_raised_surfaces_for_the_house_systems.sql` (the raised
+   surface style, guarded on the *absence* of the key rather than on the whole
+   blob, because the migration before it rewrote one of the two rows).
 3. Deploy `convert-template-document` and `generate-brand-design-system`.
+   D1–D5 need no migration; D1–D4 are in `_shared` and D5 spans `_shared` and
+   the function, so all five reach production only on a redeploy. E1–E4 and E6
+   are `_shared` too and land the same way; only E5 carries a migration.
+
+   **`.github/workflows/deploy-supabase-functions.yml` will not do this until
+   `SUPABASE_ACCESS_TOKEN` is set.** Without the secret it reports what it would
+   have deployed and stops — by design, so that adding the file did not start
+   pushing code to anyone's project. The consequence is that it is green and a
+   no-op, which is the same silent failure the workflow was written to prevent,
+   one level up. Check the run's `Deploy` step: `skipped` means nothing shipped.
 4. `ANTHROPIC_API_KEY` must be set for PDF sources, for the design pass, for the
    binding proposal and for drafting a design system from a brief. Without it,
    `.md`/`.txt` sources still convert, the binding falls back to the word-overlap

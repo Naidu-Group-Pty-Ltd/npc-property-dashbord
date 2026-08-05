@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { useSearchParams } from 'react-router-dom';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,18 +9,20 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
-import { 
-  Users, 
-  Upload, 
-  Search, 
-  Building2, 
-  DollarSign, 
+import { Skeleton } from '@/components/ui/skeleton';
+import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import { cn } from '@/lib/utils';
+import {
+  Users,
+  Upload,
+  Search,
+  Building2,
+  DollarSign,
   TrendingUp,
   RefreshCw,
   Loader2,
   Download,
   Trash2,
-  Clock,
   Zap,
   Star,
   ExternalLink,
@@ -36,7 +37,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ExcelDropzone } from '@/components/clients/ExcelDropzone';
 import { ClientCard } from '@/components/clients/ClientCard';
 import { ClientDetailsModal } from '@/components/clients/ClientDetailsModal';
@@ -73,6 +73,9 @@ interface Client {
   total_debt: number;
   net_monthly_cash_flow: number;
   created_at: string;
+  /** Real active status (clients.is_active) — set via AML/CTF activation. */
+  is_active?: boolean | null;
+  /** Starred/favourite flag — a separate concept from active status. */
   is_favorite?: boolean;
   client_properties?: { id: string }[];
   pipeline_status?: string | null;
@@ -83,6 +86,40 @@ interface Client {
 }
 
 const AUTO_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * KPI tones.
+ *
+ * Semantic tokens only — the dashboard is white-labelled, so a tile has to
+ * re-colour with the brand rather than carry a palette of its own.
+ */
+const KPI_TONE = {
+  accent: {
+    icon: 'border-primary/25 bg-primary/10 text-primary',
+    bar: 'from-primary/70 via-primary/25 to-transparent',
+    value: 'text-foreground',
+  },
+  info: {
+    icon: 'border-info/25 bg-info/10 text-info',
+    bar: 'from-info/70 via-info/25 to-transparent',
+    value: 'text-foreground',
+  },
+  success: {
+    icon: 'border-success/25 bg-success/10 text-success',
+    bar: 'from-success/70 via-success/25 to-transparent',
+    value: 'text-foreground',
+  },
+  warning: {
+    icon: 'border-warning/30 bg-warning/10 text-warning',
+    bar: 'from-warning/70 via-warning/25 to-transparent',
+    value: 'text-warning',
+  },
+  neutral: {
+    icon: 'border-border/70 bg-muted/50 text-muted-foreground',
+    bar: 'from-muted-foreground/30 via-muted-foreground/10 to-transparent',
+    value: 'text-foreground',
+  },
+} as const;
 
 // Smart capitalization for names from GHL (often lowercase)
 function smartCapitalize(name: string | null | undefined): string {
@@ -132,7 +169,7 @@ export default function ClientManagement() {
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
-  const [showActiveOnly, setShowActiveOnly] = useState(false);
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [showAddClientModal, setShowAddClientModal] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const queryClient = useQueryClient();
@@ -354,8 +391,10 @@ export default function ClientManagement() {
 
   // Apply filters
   const filteredClients = clients.filter(client => {
-    // Active clients filter - use is_favorite (star icon) as active status
-    if (showActiveOnly && !client.is_favorite) return false;
+    // Starred filter — is_favorite is the star flag only; it is NOT the
+    // client's active status (that is clients.is_active, set via AML/CTF
+    // activation and shown on the client record).
+    if (showStarredOnly && !client.is_favorite) return false;
 
     // Search filter
     const searchLower = searchQuery.toLowerCase();
@@ -431,8 +470,8 @@ export default function ClientManagement() {
     secondary_surname: smartCapitalize(client.secondary_surname),
   }));
 
-  // Count active clients for the button badge - use is_favorite (star icon)
-  const activeClientCount = clients.filter(c => c.is_favorite).length;
+  // Count starred clients for the button badge (is_favorite — not is_active)
+  const starredClientCount = clients.filter(c => c.is_favorite).length;
 
   // Calculate summary stats
   const totalClients = clients.length;
@@ -562,49 +601,36 @@ export default function ClientManagement() {
   const kpiCards = [
     {
       label: 'Total Clients',
-      value: totalClients,
+      value: totalClients.toLocaleString(),
+      hint: `${starredClientCount.toLocaleString()} starred`,
       icon: Users,
-      accent: 'text-brand-200',
-      iconSurface: 'border-brand-300/25 bg-brand-400/10',
-      glow: 'from-brand-500/20',
-      valueClassName: 'text-foreground',
-      barClassName: 'from-brand-300 via-brand-400 to-transparent',
+      tone: 'accent' as const,
     },
     {
       label: 'Total Properties',
-      value: totalProperties,
+      value: totalProperties.toLocaleString(),
+      hint: 'Across all client portfolios',
       icon: Building2,
-      accent: 'text-brand-100',
-      iconSurface: 'border-brand-300/20 bg-brand-300/10',
-      glow: 'from-brand-500/15',
-      valueClassName: 'text-foreground',
-      barClassName: 'from-brand-300 via-brand-400 to-transparent',
+      tone: 'info' as const,
     },
     {
       label: 'Portfolio Value',
       value: formatCurrency(totalPortfolioValue),
+      hint: 'Combined value under management',
       icon: DollarSign,
-      accent: 'text-brand-50',
-      iconSurface: 'border-brand-200/35 bg-brand-300/15 shadow-brand-500/10',
-      glow: 'from-brand-400/25',
-      valueClassName: 'bg-gradient-to-r from-brand-100 via-brand-300 to-brand-500 bg-clip-text text-transparent',
-      barClassName: 'from-brand-200 via-brand-400 to-transparent',
+      tone: 'success' as const,
     },
     {
       label: 'Pending GHL Sync',
-      value: pendingSyncCount,
+      value: pendingSyncCount.toLocaleString(),
+      hint: pendingSyncCount > 0 ? 'Awaiting push to GoHighLevel' : 'Everything is up to date',
       icon: TrendingUp,
-      accent: 'text-brand-200',
-      iconSurface: 'border-brand-300/30 bg-brand-500/15',
-      glow: 'from-brand-600/25',
-      valueClassName: pendingSyncCount > 0 ? 'text-brand-200' : 'text-foreground',
-      barClassName: 'from-brand-300 via-warning to-transparent',
+      tone: pendingSyncCount > 0 ? ('warning' as const) : ('neutral' as const),
     },
   ];
 
   return (
-    <div className="client-management-page relative -mx-3 space-y-5 overflow-hidden px-3 pb-20 md:mx-0 md:px-0 md:pb-0">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-72 rounded-[2rem] bg-[radial-gradient(circle_at_top_left,rgba(234,179,8,0.16),transparent_34%),linear-gradient(135deg,rgba(15,23,42,0.94),rgba(3,7,18,0.98))]" />
+    <DashboardThemeFrame as="main" variant="page" className="client-management-page space-y-5 pb-20 md:pb-0">
       <GHLExportDialog
         open={showExportDialog}
         onOpenChange={setShowExportDialog}
@@ -618,146 +644,148 @@ export default function ClientManagement() {
       />
 
       {/* Header */}
-      <section className="relative overflow-visible rounded-3xl border border-brand-500/20 bg-white dark:bg-[linear-gradient(135deg,rgba(20,20,20,0.94),rgba(3,7,18,0.9))] p-4 shadow-xl shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30 backdrop-blur md:p-5">
-        <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/70 to-transparent" />
-        <div className="pointer-events-none absolute -right-14 -top-20 h-44 w-44 rounded-full bg-brand-400/10 blur-3xl" />
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <DashboardThemeFrame as="header" variant="hero">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 space-y-2">
-            <div className="inline-flex items-center rounded-full border border-brand-500/25 bg-brand-50 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-brand-700 dark:bg-brand-500/10 dark:text-brand-200">Premium client workspace</div>
-            <h1 className="bg-gradient-to-r from-card dark:from-background via-brand-700 to-brand-500 bg-clip-text pb-1 text-[clamp(2rem,3vw,2.875rem)] font-semibold leading-[1.12] tracking-[-0.035em] text-transparent dark:from-white dark:via-brand-100 dark:to-brand-300">Client Management</h1>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground md:text-[15px]">
-              Manage clients, properties, and sync with GoHighLevel
+            <p className="dashboard-eyebrow">Client workspace</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">Client Management</h1>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+              Manage clients, properties, and sync with GoHighLevel.
             </p>
-            <p className="text-xs text-muted-foreground">Last auto-sync: {formatLastSync(lastSyncTime)}</p>
-          </div>
-          <div className="flex w-full flex-col items-stretch gap-2 rounded-2xl border border-border/60 bg-background/70 p-1 shadow-inner shadow-[0_12px_32px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-black/30 dark:shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30 backdrop-blur sm:flex-row sm:flex-wrap sm:items-center lg:w-auto lg:justify-end">
-          {/* Auto-sync toggle - compact on mobile */}
-          <div className={`flex min-h-10 items-center justify-between gap-2 rounded-2xl border px-3 py-1.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 focus-within:ring-2 focus-within:ring-brand-300/30 sm:justify-start ${autoSyncEnabled ? 'border-brand-300/35 bg-brand-400/10 shadow-brand-950/20' : 'border-border/60 bg-background/60 dark:border-white/10 dark:bg-white/[0.04]'}`}>
-            {isAutoSyncing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-            ) : (
-              <Zap className={`h-3.5 w-3.5 ${autoSyncEnabled ? 'text-primary' : 'text-muted-foreground'}`} />
-            )}
-            <span className={`text-xs font-semibold ${autoSyncEnabled ? 'text-brand-800 dark:text-brand-100' : 'text-muted-foreground'}`}>Auto-sync</span>
-            <Switch
-              checked={autoSyncEnabled}
-              onCheckedChange={setAutoSyncEnabled}
-              className="scale-90 data-[state=checked]:bg-brand-400"
-            />
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+              {isAutoSyncing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" aria-hidden="true" />
+              ) : (
+                <Zap className={cn('h-3.5 w-3.5', autoSyncEnabled ? 'text-primary' : 'text-muted-foreground')} aria-hidden="true" />
+              )}
+              {isAutoSyncing ? 'Auto-sync running…' : `Last auto-sync: ${formatLastSync(lastSyncTime)}`}
+            </p>
           </div>
 
-          <Button 
-            onClick={() => handleImportFromGHL(false)} 
-            variant="default" 
-            size="sm"
-            disabled={isImportingFromGHL}
-            className="h-10 flex-1 rounded-xl border border-brand-300/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.18),rgba(120,53,15,0.12))] px-4 text-xs font-bold text-brand-100 shadow-lg shadow-brand-950/25 transition-all hover:-translate-y-0.5 hover:border-brand-200/55 hover:bg-brand-500/25 hover:text-brand-50 hover:shadow-[0_14px_38px_rgba(245,158,11,0.18)] focus-visible:ring-2 focus-visible:ring-brand-300/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:text-sm"
-          >
-            {isImportingFromGHL ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            <span className="hidden sm:inline">
-              {isImportingFromGHL && importProgress
-                ? `Importing... (${importProgress.imported.toLocaleString()})`
-                : 'Import from GHL'}
-            </span>
-            <span className="sm:hidden">Import</span>
-          </Button>
-          <Button
-            onClick={() => setShowExportDialog(true)}
-            variant="outline"
-            size="sm"
-            className="h-10 flex-1 rounded-xl border-border/60 bg-background/70 px-4 text-xs font-semibold text-foreground dark:border-white/15 dark:bg-white/[0.04] dark:text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:text-sm"
-            disabled={displayClients.length === 0}
-          >
-            <Download className="h-3.5 w-3.5 mr-1.5" />
-            <span className="hidden sm:inline">Export</span>
-            <span className="sm:hidden">Export</span>
-          </Button>
-          {canEditClients && (
-            <Button 
-              onClick={() => setShowAddClientModal(true)} 
-              variant="default" 
-              size="sm"
-              className="h-11 flex-1 rounded-xl border border-brand-200/50 bg-gradient-to-r from-brand-300 via-brand-400 to-brand-500 px-4 text-xs font-bold text-black shadow-xl shadow-brand-500/30 transition-all hover:-translate-y-0.5 hover:from-brand-200 hover:via-brand-300 hover:to-brand-400 hover:shadow-[0_18px_46px_rgba(251,191,36,0.32)] focus-visible:ring-2 focus-visible:ring-brand-200/75 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex-none sm:text-sm"
+          <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
+            <label className="dashboard-input-control flex h-10 w-full items-center justify-between gap-2 px-3 text-xs font-semibold text-muted-foreground sm:w-auto sm:justify-start">
+              <span>Auto-sync</span>
+              <Switch
+                checked={autoSyncEnabled}
+                onCheckedChange={setAutoSyncEnabled}
+                aria-label="Automatically sync clients from GoHighLevel"
+              />
+            </label>
+
+            <Button
+              onClick={() => handleImportFromGHL(false)}
+              variant="outline"
+              disabled={isImportingFromGHL}
+              className="h-10 flex-1 basis-[9rem] rounded-xl px-4 sm:basis-auto sm:flex-none"
             >
-              <UserPlus className="h-3.5 w-3.5 mr-1.5" />
-              <span className="hidden sm:inline">Add Client</span>
-              <span className="sm:hidden">Add</span>
-            </Button>
-          )}
-          
-          {/* More actions in dropdown on mobile */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-10 flex-1 rounded-xl border-border/60 bg-background/70 px-3 text-foreground dark:border-white/15 dark:bg-white/[0.04] dark:text-foreground transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-brand-300/50 data-[state=open]:bg-brand-500/15 data-[state=open]:text-brand-100 sm:flex-none" aria-label="More actions">
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-56 rounded-2xl border-brand-500/20 bg-popover dark:bg-[linear-gradient(145deg,rgba(24,24,27,0.98),rgba(3,7,18,0.96))] p-2 shadow-2xl shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30">
-              <DropdownMenuItem onClick={handleClearAndReimport} disabled={isImportingFromGHL} className="rounded-xl text-destructive transition-colors focus:bg-destructive/10 focus:text-destructive dark:text-destructive dark:focus:text-destructive-foreground disabled:opacity-50">
-                <Trash2 className="h-4 w-4 mr-2 text-destructive dark:text-destructive" />
-                Clear & Reimport
-              </DropdownMenuItem>
-              {pendingSyncCount > 0 && (
-                <DropdownMenuItem onClick={handleSyncAllPending} disabled={isSyncingAll} className="rounded-xl transition-colors focus:bg-brand-500/10 focus:text-brand-100 disabled:opacity-50">
-                  <RefreshCw className="h-4 w-4 mr-2 text-brand-300" />
-                  Sync All ({pendingSyncCount})
-                </DropdownMenuItem>
+              {isImportingFromGHL ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-1.5 h-4 w-4" />
               )}
-              <DropdownMenuItem onClick={() => refetch()} className="rounded-xl transition-colors focus:bg-brand-500/10 focus:text-brand-100">
-                <RefreshCw className="h-4 w-4 mr-2 text-muted-foreground dark:text-foreground" />
-                Refresh
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => window.location.href = '/client-tracker'} className="rounded-xl transition-colors focus:bg-brand-500/10 focus:text-brand-100">
-                <Target className="h-4 w-4 mr-2 text-muted-foreground dark:text-foreground" />
-                Client Tracker
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+              <span className="hidden sm:inline">
+                {isImportingFromGHL && importProgress
+                  ? `Importing… (${importProgress.imported.toLocaleString()})`
+                  : 'Import from GHL'}
+              </span>
+              <span className="sm:hidden">Import</span>
+            </Button>
+
+            <Button
+              onClick={() => setShowExportDialog(true)}
+              variant="outline"
+              className="h-10 flex-1 basis-[9rem] rounded-xl px-4 sm:basis-auto sm:flex-none"
+              disabled={displayClients.length === 0}
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Export
+            </Button>
+
+            {canEditClients && (
+              <Button
+                onClick={() => setShowAddClientModal(true)}
+                className="h-10 flex-1 basis-[9rem] rounded-xl px-4 sm:basis-auto sm:flex-none"
+              >
+                <UserPlus className="mr-1.5 h-4 w-4" />
+                <span className="hidden sm:inline">Add Client</span>
+                <span className="sm:hidden">Add</span>
+              </Button>
+            )}
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-10 w-10 rounded-xl" aria-label="More client actions">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-56 rounded-xl p-1.5">
+                <DropdownMenuItem onClick={() => refetch()} className="rounded-lg">
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Refresh
+                </DropdownMenuItem>
+                {pendingSyncCount > 0 && (
+                  <DropdownMenuItem onClick={handleSyncAllPending} disabled={isSyncingAll} className="rounded-lg">
+                    <RefreshCw className={cn('mr-2 h-4 w-4', isSyncingAll && 'animate-spin')} />
+                    Sync all ({pendingSyncCount})
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => window.location.href = '/client-tracker'} className="rounded-lg">
+                  <Target className="mr-2 h-4 w-4" />
+                  Client Tracker
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleClearAndReimport}
+                  disabled={isImportingFromGHL}
+                  className="rounded-lg text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Clear &amp; reimport
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-        </div>
-      </section>
+      </DashboardThemeFrame>
 
       {/* Summary Stats */}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {kpiCards.map(({ label, value, icon: Icon, accent, iconSurface, glow, valueClassName, barClassName }) => (
-          <Card
-            key={label}
-            className="group relative overflow-hidden rounded-2xl border border-border/70 bg-[linear-gradient(145deg,hsl(var(--card))_0%,hsl(var(--muted)/0.22)_100%)] dark:bg-[linear-gradient(145deg,rgba(24,24,27,0.92),rgba(3,7,18,0.88))] shadow-lg shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:shadow-black/25 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-300/45 hover:shadow-xl hover:shadow-brand-950/35"
-          >
-            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${glow} via-transparent to-transparent opacity-75 transition-opacity duration-300 group-hover:opacity-100`} />
-            <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/65 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-            <CardHeader className="relative flex flex-row items-start justify-between space-y-0 pb-2">
-              <CardTitle className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground/90">{label}</CardTitle>
-              <div className={`rounded-xl border p-2 shadow-inner transition-transform duration-300 group-hover:scale-105 ${iconSurface}`}>
-                <Icon className={`h-[17px] w-[17px] ${accent}`} />
-              </div>
-            </CardHeader>
-            <CardContent className="relative space-y-3 pt-0">
-              <div className={`text-[34px] font-semibold leading-none tracking-tight md:text-[38px] ${valueClassName}`}>{value}</div>
-              <div className="h-px w-full bg-gradient-to-r from-white/10 via-white/5 to-transparent" />
-              <div className={`h-1 w-20 rounded-full bg-gradient-to-r ${barClassName} opacity-90 shadow-[0_0_22px_rgba(245,158,11,0.22)] transition-all duration-300 group-hover:w-28 group-hover:opacity-100`} />
-            </CardContent>
-          </Card>
-        ))}
+        {kpiCards.map(({ label, value, hint, icon: Icon, tone }) => {
+          const t = KPI_TONE[tone];
+          return (
+            <Card key={label} className="dashboard-kpi-card group min-w-0">
+              <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r', t.bar)} aria-hidden="true" />
+              <CardHeader className="relative flex flex-row items-start justify-between space-y-0 pb-2">
+                {/* Utilities, not `.dashboard-kpi-title`: CardTitle's own `text-2xl`
+                    is a utility and would out-rank the components layer. */}
+                <CardTitle className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</CardTitle>
+                <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border', t.icon)}>
+                  <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
+                </span>
+              </CardHeader>
+              <CardContent className="relative space-y-1 pt-0">
+                <p className={cn('truncate text-[28px] font-semibold leading-none tracking-tight tabular-nums md:text-[32px]', t.value)} title={String(value)}>
+                  {value}
+                </p>
+                <p className="text-xs text-muted-foreground">{hint}</p>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {/* Main Content */}
-      <Tabs defaultValue="clients" className="space-y-4 rounded-2xl border border-border/70 bg-card/70 p-2.5 shadow-xl shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 backdrop-blur md:p-3">
+      <Tabs defaultValue="clients" className="space-y-4">
         <div className="-mx-3 overflow-x-auto px-3 pb-1 md:mx-0 md:px-0">
-          <TabsList aria-label="Client management sections" className="inline-flex h-auto min-h-11 w-auto min-w-max gap-1 rounded-2xl border border-brand-500/20 bg-muted p-1 shadow-inner shadow-foreground/70 backdrop-blur dark:bg-[linear-gradient(135deg,rgba(24,24,27,0.86),rgba(3,7,18,0.78))] dark:shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30">
-            <TabsTrigger value="clients" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Clients</TabsTrigger>
-            <TabsTrigger value="portfolio-reports" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Portfolio</TabsTrigger>
-            <TabsTrigger value="analytics" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Analytics</TabsTrigger>
-            <TabsTrigger value="compare" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Compare</TabsTrigger>
-            <TabsTrigger value="import" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Import</TabsTrigger>
+          <TabsList aria-label="Client management sections" className="inline-flex w-auto min-w-max gap-1 rounded-xl p-1">
+            <TabsTrigger value="clients" className="rounded-lg px-4 text-[13px] font-semibold">Clients</TabsTrigger>
+            <TabsTrigger value="portfolio-reports" className="rounded-lg px-4 text-[13px] font-semibold">Portfolio</TabsTrigger>
+            <TabsTrigger value="analytics" className="rounded-lg px-4 text-[13px] font-semibold">Analytics</TabsTrigger>
+            <TabsTrigger value="compare" className="rounded-lg px-4 text-[13px] font-semibold">Compare</TabsTrigger>
+            <TabsTrigger value="import" className="rounded-lg px-4 text-[13px] font-semibold">Import</TabsTrigger>
           </TabsList>
         </div>
 
-        <TabsContent value="clients" className="space-y-5 rounded-xl border border-border/60 bg-background/35 p-3 md:p-4">
+        <TabsContent value="clients" className="space-y-4">
           {/* Bulk Actions Bar */}
           <ClientBulkActions
             selectedClients={selectedClients}
@@ -767,39 +795,37 @@ export default function ClientManagement() {
           />
 
           {/* Search & Filters */}
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-brand-500/15 bg-muted dark:bg-[linear-gradient(135deg,rgba(24,24,27,0.76),rgba(3,7,18,0.62))] p-3 shadow-inner shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-black/25 backdrop-blur">
+          <DashboardThemeFrame variant="toolbar" className="gap-2 p-2">
             <div className="relative min-w-full flex-1 sm:min-w-[240px] md:max-w-md">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-200/70" />
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <Input
-                placeholder="Search clients..."
+                placeholder="Search clients…"
                 aria-label="Search clients"
+                type="search"
+                autoComplete="off"
+                spellCheck={false}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-11 rounded-xl border-brand-500/20 bg-background/75 pl-10 pr-4 text-sm shadow-sm shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/75 transition-all hover:border-brand-400/35 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-400/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="h-10 rounded-xl pl-10 pr-4 text-sm"
               />
             </div>
             <Button
-              variant={showActiveOnly ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowActiveOnly(!showActiveOnly)}
-              aria-pressed={showActiveOnly}
-              className={`h-11 gap-2 rounded-xl px-4 font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
-                showActiveOnly
-                  ? 'border-brand-300/40 bg-brand-400 text-black shadow-brand-500/20 hover:bg-brand-300 hover:text-black'
-                  : 'border-brand-500/25 bg-background/70 text-muted-foreground hover:bg-brand-500/10 hover:text-brand-100'
-              }`}
+              variant={showStarredOnly ? 'default' : 'outline'}
+              onClick={() => setShowStarredOnly(!showStarredOnly)}
+              aria-pressed={showStarredOnly}
+              className="h-10 gap-2 rounded-xl px-4"
             >
-              <Star className={`h-4 w-4 ${showActiveOnly ? 'fill-current' : ''}`} />
-              Active Clients
-              {activeClientCount > 0 && (
-                <Badge variant={showActiveOnly ? "secondary" : "default"} className={`ml-1 rounded-full px-2 font-bold ${showActiveOnly ? 'bg-background dark:bg-black/15 text-black' : 'bg-brand-500/15 text-brand-100 border border-brand-500/25'}`}>
-                  {activeClientCount}
+              <Star className={cn('h-4 w-4', showStarredOnly && 'fill-current')} />
+              Starred
+              {starredClientCount > 0 && (
+                <Badge variant="secondary" className="ml-1 rounded-full px-2 tabular-nums">
+                  {starredClientCount}
                 </Badge>
               )}
             </Button>
             <ClientFilters filters={filters} onFiltersChange={setFilters} />
             {filteredClients.length > 0 && (
-              <div className="flex min-h-10 items-center gap-2 rounded-xl border border-border/60 bg-background/55 px-3 text-sm shadow-sm transition-all hover:border-brand-500/35 hover:bg-brand-500/5 focus-within:border-brand-300/50 focus-within:ring-2 focus-within:ring-brand-300/25">
+              <label className="dashboard-input-control flex h-10 cursor-pointer items-center gap-2 px-3 text-sm text-muted-foreground">
                 <Checkbox
                   checked={allSelected}
                   ref={(ref) => {
@@ -808,136 +834,130 @@ export default function ClientManagement() {
                     }
                   }}
                   onCheckedChange={handleSelectAll}
-                  className="border-brand-500/40 data-[state=checked]:bg-brand-500 data-[state=checked]:text-black"
+                  aria-label={`Select all ${filteredClients.length} clients`}
                 />
-                <span className="text-sm font-medium text-muted-foreground">
-                  Select all ({filteredClients.length})
-                </span>
-              </div>
+                <span className="font-medium">Select all ({filteredClients.length})</span>
+              </label>
             )}
-          </div>
+          </DashboardThemeFrame>
+
+          <p className="px-1 text-xs text-muted-foreground" aria-live="polite">
+            {isLoading
+              ? 'Loading clients…'
+              : `Showing ${displayClients.length.toLocaleString()} of ${totalClients.toLocaleString()} clients`}
+          </p>
 
           {/* Client List */}
           {isLoading ? (
-            <div className="grid items-stretch gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <Card key={i} className="relative min-h-[22rem] overflow-hidden rounded-3xl border-brand-300/15 bg-[linear-gradient(145deg,hsl(var(--card))_0%,hsl(var(--muted)/0.22)_100%)] dark:bg-[linear-gradient(145deg,rgba(24,24,27,0.86),rgba(3,7,18,0.72))] shadow-xl shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20">
-                  <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/50 to-transparent" />
-                  <CardContent className="space-y-5 p-5">
+                <Card key={i} className="dashboard-theme-premium-card min-w-0 rounded-2xl border">
+                  <CardContent className="space-y-4 p-5">
                     <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 animate-pulse rounded-2xl bg-brand-300/15" />
+                      <Skeleton className="h-11 w-11 rounded-xl" />
                       <div className="flex-1 space-y-2">
-                        <div className="h-4 w-2/3 animate-pulse rounded-full bg-card/10 dark:bg-white/10" />
-                        <div className="h-3 w-1/2 animate-pulse rounded-full bg-card/5 dark:bg-white/5" />
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-3 w-1/2" />
                       </div>
                     </div>
-                    <div className="grid gap-3">
-                      <div className="h-16 animate-pulse rounded-2xl bg-muted/55 dark:bg-white/[0.045]" />
-                      <div className="h-16 animate-pulse rounded-2xl bg-muted/45 dark:bg-white/[0.035]" />
-                      <div className="h-16 animate-pulse rounded-2xl bg-muted/40 dark:bg-white/[0.03]" />
+                    <Skeleton className="h-14 w-full rounded-xl" />
+                    <div className="grid grid-cols-3 gap-2">
+                      <Skeleton className="h-16 rounded-xl" />
+                      <Skeleton className="h-16 rounded-xl" />
+                      <Skeleton className="h-16 rounded-xl" />
                     </div>
-                    <div className="flex items-center gap-2 text-xs font-semibold text-brand-100/70">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Loading client records...
-                    </div>
+                    <Skeleton className="h-6 w-full rounded-full" />
                   </CardContent>
                 </Card>
               ))}
             </div>
           ) : displayClients.length === 0 ? (
-            <Card className="relative overflow-hidden rounded-3xl border-dashed border-brand-300/20 bg-[radial-gradient(circle_at_top,hsl(var(--primary)/0.10),transparent_35%),linear-gradient(145deg,hsl(var(--card)),hsl(var(--muted)/0.22))] dark:bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.1),transparent_35%),linear-gradient(145deg,rgba(24,24,27,0.78),rgba(3,7,18,0.62))] shadow-xl shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20">
-              <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/55 to-transparent" />
-              <CardContent className="flex flex-col items-center justify-center px-6 py-16 text-center">
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl border border-brand-300/20 bg-brand-300/10 text-brand-100 shadow-lg shadow-brand-950/20">
-                  {searchQuery || filters !== defaultFilters || showActiveOnly ? (
-                    <Search className="h-7 w-7" />
-                  ) : (
-                    <Users className="h-7 w-7" />
-                  )}
-                </div>
-                <h3 className="text-xl font-bold tracking-tight text-foreground dark:text-white">
-                  {showActiveOnly
-                    ? 'No active clients found'
+            <div className="dashboard-empty-state">
+              <span className="dashboard-empty-icon">
+                {searchQuery || filters !== defaultFilters || showStarredOnly ? (
+                  <Search className="h-6 w-6" aria-hidden="true" />
+                ) : (
+                  <Users className="h-6 w-6" aria-hidden="true" />
+                )}
+              </span>
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                  {showStarredOnly
+                    ? 'No starred clients found'
                     : searchQuery || filters !== defaultFilters
                       ? 'No clients match your filters'
                       : 'No clients found'
                   }
                 </h3>
-                <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground dark:text-muted-foreground">
-                  {searchQuery || filters !== defaultFilters || showActiveOnly
-                    ? 'Try adjusting your filters'
-                    : 'Import clients using the Import tab'}
+                <p className="mx-auto max-w-md text-sm leading-6 text-muted-foreground">
+                  {searchQuery || filters !== defaultFilters || showStarredOnly
+                    ? 'Try adjusting your search or filters.'
+                    : 'Import clients using the Import tab.'}
                 </p>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           ) : (
-            <div className="grid items-stretch gap-5 lg:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
               {displayClients.map((client) => (
-              <ClientCard
-                    key={client.id}
-                    client={client}
-                    ghlLocationId={ghlLocationId}
-                    onView={() => handleViewClient(client)}
-                    onDelete={canDeleteClients ? () => handleDeleteClient(client) : undefined}
-                    onSyncComplete={() => refetch()}
-                    isSelected={selectedClients.includes(client.id)}
-                    onSelect={(checked) => handleSelectClient(client.id, !!checked)}
-                  />
+                <ClientCard
+                  key={client.id}
+                  client={client}
+                  ghlLocationId={ghlLocationId}
+                  onView={() => handleViewClient(client)}
+                  onDelete={canDeleteClients ? () => handleDeleteClient(client) : undefined}
+                  onSyncComplete={() => refetch()}
+                  isSelected={selectedClients.includes(client.id)}
+                  onSelect={(checked) => handleSelectClient(client.id, !!checked)}
+                />
               ))}
             </div>
           )}
         </TabsContent>
 
-        <TabsContent value="analytics" className="space-y-4 rounded-xl border border-border/60 bg-background/35 p-3 md:p-4">
+        <TabsContent value="analytics" className="space-y-4">
           <ClientAnalyticsDashboard clients={clients} />
         </TabsContent>
 
-        <TabsContent value="compare" className="space-y-4 rounded-xl border border-border/60 bg-background/35 p-3 md:p-4">
+        <TabsContent value="compare" className="space-y-4">
           <ClientComparison clients={clients} />
         </TabsContent>
 
-        <TabsContent value="portfolio-reports" className="space-y-5 rounded-2xl border border-brand-400/15 bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.09),transparent_34%),linear-gradient(180deg,rgba(15,15,18,0.78),rgba(0,0,0,0.48))] p-2.5 shadow-xl shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 md:p-5">
-          <div className="relative overflow-hidden rounded-3xl border border-brand-300/20 bg-[linear-gradient(135deg,hsl(var(--card)),hsl(var(--muted)/0.22))] dark:bg-[linear-gradient(135deg,rgba(24,24,27,0.94),rgba(3,7,18,0.86))] p-5 shadow-lg shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:shadow-black/25">
-            <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/60 to-transparent" />
+        <TabsContent value="portfolio-reports" className="space-y-4">
+          <DashboardThemeFrame variant="sectionAccent">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="max-w-3xl space-y-2">
-                <div className="inline-flex items-center gap-2 rounded-full border border-brand-300/20 bg-brand-400/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-brand-100">
-                  Portfolio Intelligence
-                </div>
-                <h2 className="text-2xl font-bold tracking-tight text-foreground dark:text-white">Portfolio Performance Reports</h2>
-                <p className="text-sm leading-6 text-muted-foreground dark:text-muted-foreground">
-                Quick view of recent portfolio analysis reports — open the full page for search, stats, and bulk actions
+              <div className="max-w-3xl space-y-1.5">
+                <p className="dashboard-eyebrow">Portfolio intelligence</p>
+                <h2 className="text-xl font-semibold tracking-tight text-foreground">Portfolio Performance Reports</h2>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Quick view of recent portfolio analysis reports — open the full page for search, stats, and bulk actions.
                 </p>
               </div>
               <Button
-                variant="default"
-                size="sm"
                 onClick={() => window.location.href = '/portfolio-reports'}
-                className="h-11 rounded-2xl bg-gradient-to-r from-brand-300 to-brand-500 px-5 font-semibold text-black shadow-lg shadow-brand-950/25 transition-all duration-200 hover:-translate-y-0.5 hover:from-brand-200 hover:to-brand-400 hover:shadow-brand-500/20 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="h-10 shrink-0 rounded-xl px-4"
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
                 Full Reports Page
               </Button>
             </div>
-          </div>
+          </DashboardThemeFrame>
           <PortfolioAnalysisReportsList showHeader={false} />
         </TabsContent>
 
-        <TabsContent value="import" className="space-y-4 rounded-xl border border-border/60 bg-background/35 p-3 md:p-4">
-          <Card className="relative overflow-hidden rounded-3xl border-brand-500/20 bg-[radial-gradient(circle_at_top_right,hsl(var(--primary)/0.12),transparent_34%),linear-gradient(145deg,hsl(var(--card)),hsl(var(--muted)/0.22))] dark:bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.12),transparent_34%),linear-gradient(145deg,rgba(24,24,27,0.94),rgba(3,7,18,0.86))] shadow-2xl shadow-[0_16px_44px_rgba(15,23,42,0.10)] dark:shadow-black/25 transition-colors hover:border-brand-400/40">
-            <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/60 to-transparent" />
-            <CardHeader className="border-b border-border/60 dark:border-white/10 pb-4">
-              <CardTitle className="flex items-center gap-3 text-xl font-bold tracking-tight text-foreground dark:text-white sm:text-2xl">
-                <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-brand-300/25 bg-brand-300/15 text-brand-100 shadow-lg shadow-brand-950/20">
-                  <Upload className="h-5 w-5" />
+        <TabsContent value="import" className="space-y-4">
+          <Card className="dashboard-theme-premium-card min-w-0 overflow-hidden rounded-2xl border">
+            <CardHeader className="pb-4">
+              <CardTitle className="flex items-center gap-3 text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+                  <Upload className="h-5 w-5" aria-hidden="true" />
                 </span>
                 Import Clients from Excel
               </CardTitle>
-              <CardDescription className="max-w-2xl text-sm leading-6 text-muted-foreground dark:text-muted-foreground">
+              <CardDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
                 Drag and drop your client intake form Excel file to import clients and their properties into the dashboard.
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-4 sm:p-6">
+            <CardContent className="p-4 sm:p-6 sm:pt-0">
               <ExcelDropzone onImportComplete={() => refetch()} />
             </CardContent>
           </Card>
@@ -1001,7 +1021,7 @@ export default function ClientManagement() {
               {isImportingFromGHL ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Importing...
+                  Importing…
                 </>
               ) : (
                 'Clear & Reimport'
@@ -1016,6 +1036,6 @@ export default function ClientManagement() {
         open={showAddClientModal}
         onOpenChange={setShowAddClientModal}
       />
-    </div>
+    </DashboardThemeFrame>
   );
 }

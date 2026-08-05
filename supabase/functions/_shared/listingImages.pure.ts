@@ -21,6 +21,8 @@
  * normalisation, fingerprinting and refresh scheduling can be unit tested.
  */
 
+import { orderImagesPhotosFirst } from './listingImageOrder.pure.ts';
+
 /** Where a candidate came from, best-quality origin first. */
 export type ImageOrigin = 'airtable' | 'listing_url' | 'scraped' | 'street_view';
 
@@ -56,6 +58,9 @@ interface AirtableAttachmentThumbnail {
 
 interface AirtableAttachmentLike {
   id?: unknown;
+  /** Set when the object is one of our own candidates round-tripping. */
+  externalId?: unknown;
+  origin?: unknown;
   url?: unknown;
   filename?: unknown;
   size?: unknown;
@@ -110,9 +115,21 @@ function shortString(value: unknown, max = 200): string | undefined {
  * Strips the query string for identity purposes.
  *
  * Airtable re-signs an attachment on every read, so the same photo arrives with
- * a different `?ts=…&sig=…` each time. Keyed on the full URL, every poll would
- * look like a brand-new image and the library would re-download the entire set
- * forever. The path alone is stable.
+ * a different link each time. Keyed on the full URL, every poll would look like
+ * a brand-new image and the library would re-download the entire set forever.
+ *
+ * Dropping the query string is **not** sufficient, which this used to claim.
+ * An Airtable attachment URL looks like
+ * `https://v5.airtableusercontent.com/v3/u/56/56/<epoch-ms>/<sig>/<sig>`, and
+ * the signature and expiry sit in the **path**. Every re-sign produced a fresh
+ * identity, so a single photograph accumulated one row per poll — 4,076 of the
+ * 7,524 rows in the library were re-signed copies of something already held,
+ * nine URLs deep on some listings, each pass retiring the batch before it.
+ *
+ * `externalId` — the Airtable attachment id — is the stable key and is used
+ * whenever the caller has one. When it does not, no URL-derived key can be
+ * trusted for these hosts, so the duplicate is caught after download instead,
+ * by content checksum, in `harvestListing`. See `isVolatileSignedUrl`.
  */
 export function imageIdentity(candidate: ImageCandidate): string {
   if (candidate.externalId) return `att:${candidate.externalId}`;
@@ -121,6 +138,23 @@ export function imageIdentity(candidate: ImageCandidate): string {
     return `url:${url.origin}${url.pathname}`;
   } catch {
     return `url:${candidate.url}`;
+  }
+}
+
+/**
+ * Hosts whose URL path carries a rotating signature, so no part of the URL
+ * identifies the photograph across two reads.
+ *
+ * Nothing may key on these. A caller that has an attachment id should use it;
+ * otherwise the only reliable identity is the content itself.
+ */
+const VOLATILE_URL_HOSTS = /(^|\.)airtableusercontent\.com$/i;
+
+export function isVolatileSignedUrl(url: string): boolean {
+  try {
+    return VOLATILE_URL_HOSTS.test(new URL(url).hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -174,8 +208,14 @@ export function toImageCandidate(raw: unknown, origin: ImageOrigin): ImageCandid
     if (!best.url) return null;
     return {
       url: best.url,
-      origin,
-      externalId: shortString(attachment.id, 64),
+      // A candidate that already knows where it came from keeps that answer.
+      // The resolve endpoint used to call `normaliseImageCandidates(payload,
+      // 'airtable')` over candidates the client had already classified, which
+      // relabelled a Street View fallback as an agent's own photograph and made
+      // the origin ranking — the thing that decides which shot leads the card —
+      // a no-op on the only path that renders.
+      origin: isImageOrigin(attachment.origin) ? attachment.origin : origin,
+      externalId: shortString(attachment.id ?? attachment.externalId, 64),
       filename: shortString(attachment.filename, 200),
       contentType: shortString(attachment.type, 100),
       width: best.width,
@@ -185,6 +225,34 @@ export function toImageCandidate(raw: unknown, origin: ImageOrigin): ImageCandid
   }
 
   return null;
+}
+
+export function isImageOrigin(value: unknown): value is ImageOrigin {
+  return typeof value === 'string' && value in IMAGE_ORIGIN_RANK;
+}
+
+/**
+ * Splits a free-text column of image URLs into candidates.
+ *
+ * The intake scenario writes one URL per line, but "one per line" survives a
+ * round trip through Airtable, a CSV export and a hand edit only by accident,
+ * so this accepts newlines, commas, semicolons and bare whitespace alike. Order
+ * is preserved: intake writes newest-first and the first URL is the hero.
+ */
+export function parseImageUrlList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => parseImageUrlList(entry));
+  }
+  if (typeof value !== 'string') return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const piece of value.split(/[\s,;]+/)) {
+    const trimmed = piece.trim().replace(/[),.]+$/, '');
+    if (!isFetchableImageUrl(trimmed) || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /**
@@ -212,6 +280,32 @@ export function normaliseImageCandidates(
   }
 
   return Array.from(byIdentity.values());
+}
+
+/**
+ * Orders a candidate set for display: best source first, plans last.
+ *
+ * Kept separate from `normaliseImageCandidates`, which must not reorder — its
+ * contract is "preserve the agent's ordering, because the first photo is the
+ * hero shot", and that is still right *within* one source.
+ *
+ * Across sources it is not. A listing that has been geocoded but never
+ * photographed picks up a Street View frame; when the agent's own photographs
+ * arrive later they are appended, so insertion order puts a picture of the
+ * kerb at position 0 and the house at position 4. `position` is what the
+ * harvest writes and what `pickHeroImage` reads, so the kerb stays the hero
+ * forever. Sorting by origin first fixes that, and the sort is stable, so
+ * within a single origin the agent's own ordering is untouched.
+ */
+export function orderCandidatesForDisplay(candidates: ImageCandidate[]): ImageCandidate[] {
+  const byOrigin = candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((a, b) => {
+      const rank = IMAGE_ORIGIN_RANK[a.candidate.origin] - IMAGE_ORIGIN_RANK[b.candidate.origin];
+      return rank !== 0 ? rank : a.index - b.index;
+    })
+    .map((entry) => entry.candidate);
+  return orderImagesPhotosFirst(byOrigin, (candidate) => candidate.url);
 }
 
 /**

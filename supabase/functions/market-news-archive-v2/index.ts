@@ -5,6 +5,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 
@@ -58,6 +59,10 @@ Deno.serve(async (req) => {
   if (auth.error || !auth.userId || auth.userId === 'service_role') {
     return json({ error: 'Authentication required', code: 'auth_required', retryable: false }, 401);
   }
+
+  // Market News Feed is a Scale-or-add-on capability — enforced server-side.
+  const entitlement = await requireWorkspaceCapability(sb, auth, 'market-updates');
+  if (!entitlement.ok) return entitlementDeniedResponse(entitlement, cors);
 
   const viewPermission = await requireModulePermission(
     sb,

@@ -27,6 +27,15 @@
  * The cost is a request-size ceiling, and `MAX_SOURCE_BYTES` is it.
  */
 import type { ReportArchetypeId } from '../../reportDesign/structure.pure.ts';
+import {
+  readReportNeutrals,
+  type ReportNeutrals,
+} from '../../reportDesign/brandResolve.pure.ts';
+import {
+  DEFAULT_REPORT_DESIGN_OPTIONS,
+  normalizeReportDesignOptions,
+  type ReportDesignOptions,
+} from '../../reportDesign/options.pure.ts';
 import { bindableFormats } from './binding.pure.ts';
 import { readFidelity, type ConversionFidelity } from './enrich.pure.ts';
 
@@ -94,6 +103,39 @@ export interface RenderRequest {
    * less than asked.
    */
   fidelity: ConversionFidelity;
+  /**
+   * Print it as a document rather than as a draft.
+   *
+   * A converted draft carries furniture that exists to stop somebody sending it
+   * to a client by accident: a caution block at the top of the first chapter, a
+   * `converted draft` mark on the cover, and a `From "…"` dek under every
+   * chapter title saying which uploaded section it came from. All three are
+   * right for a draft and wrong for the thing a person converts *in order to
+   * send*, and a first render read as more warning than report.
+   *
+   * So the warning stays, and stops being permanent. Absent — which is every
+   * request written before this existed — means draft, because the safe reading
+   * of an unset flag on a document that might reach a client is the loud one.
+   */
+  final: boolean;
+  /**
+   * Let the model compose the pages instead of picking typed blocks.
+   *
+   * The typed vocabulary says *what a passage is* and the design system decides
+   * what that looks like. It cannot say what sits beside what, or what fills one
+   * page — and composition is most of the difference between a document that
+   * reads as designed and one that reads as generated.
+   *
+   * Under `compose` the model writes HTML against the design system's own class
+   * vocabulary. `composeHtml.pure.ts` is the boundary: a closed list of tags and
+   * classes, no style attribute, no colour, no size, no reference to anything.
+   * So the model gains layout and gains nothing else — every colour still comes
+   * from the resolved palette and the contrast floors still hold.
+   *
+   * Absent means blocks, which is the path with three rounds of production
+   * behind it. This is the newer one.
+   */
+  compose: boolean;
 }
 
 /**
@@ -233,6 +275,11 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
         binding: b.binding ?? null,
         designSystemId: rawSystem || null,
         fidelity: readFidelity(b.fidelity),
+        // Strictly `=== true`. A truthy string from a hand-rolled request must
+        // not be what silently strips a document's "not a client document"
+        // warning.
+        final: b.final === true,
+        compose: b.compose === true,
       },
     };
   }
@@ -240,6 +287,61 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
   return {
     ok: false,
     error: `unknown action "${action.slice(0, 40)}" — expected extract, propose, render, list or chapters`,
+  };
+}
+
+// ── The chosen design system ────────────────────────────────────────────────
+
+/** A `brand_design_systems` row, read into what the renderer needs from it. */
+export interface DesignSystemChoice {
+  systemName: string;
+  options: ReportDesignOptions;
+  brandHex: string | null;
+  /** All seven grounds or none. Null means "use the preset's". */
+  neutrals: ReportNeutrals | null;
+}
+
+/**
+ * Read the design system somebody picked.
+ *
+ * ## The defect this exists to close
+ *
+ * The render branch used to inline this, and it read four columns:
+ * `id, name, brand_hex, options`. `neutrals` was never selected and never
+ * passed, so `resolveReportPalette` fell back to `PRESET_NEUTRALS` every time —
+ * and the four presets are permutations of the same three constants. A design
+ * system imported from a Claude Design project showed its real ivory,
+ * porcelain, obsidian and hairline in the specimen gallery, which reads the
+ * column, and printed on ours. The document was in the wrong design, silently,
+ * with the ledger row recording only that a system had been *chosen*.
+ *
+ * ## Why it takes the row rather than the API shape
+ *
+ * `readBrandDesignSystem` in `brandDesign/system.pure.ts` does the same job for
+ * the camelCase object a browser or a model sends. This one takes the
+ * snake_case row Postgres returns. Two shapes, two readers, one set of rules
+ * underneath — `normalizeReportDesignOptions` and `readReportNeutrals` are
+ * shared, so neither can drift from the other on what an option or a ground is.
+ *
+ * A null row is the house default, which is what `designSystemId: null` has
+ * always meant: the preset's paper, the tenant's brand from the snapshot, and
+ * "House design" on the cover.
+ */
+export function readDesignSystemRow(row: unknown): DesignSystemChoice {
+  const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>;
+  const name = typeof r.name === 'string' ? r.name.trim() : '';
+  const brandHex = typeof r.brand_hex === 'string' && r.brand_hex.trim() ? r.brand_hex : null;
+  return {
+    systemName: name || 'House design',
+    options: normalizeReportDesignOptions(
+      (r.options && typeof r.options === 'object' ? r.options : DEFAULT_REPORT_DESIGN_OPTIONS) as
+        Record<string, unknown>,
+    ),
+    brandHex,
+    // All seven or none. A half-read set would print somebody else's obsidian
+    // cover on our ivory, which looks like a deliberate choice rather than a
+    // parse failure.
+    neutrals: readReportNeutrals(r.neutrals),
   };
 }
 

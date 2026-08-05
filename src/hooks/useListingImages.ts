@@ -4,6 +4,8 @@ import type { PropertyListing } from '@/lib/airtable';
 import {
   imageSetFingerprint,
   normaliseImageCandidates,
+  orderCandidatesForDisplay,
+  type ImageCandidate,
   type ImageOrigin,
   type StoredListingImage,
 } from '@/lib/listingImages';
@@ -37,6 +39,24 @@ interface ListingImagePayload {
   id: string;
   images: Array<{ url: string; origin: ImageOrigin; externalId?: string }>;
   listedAt: string | number | null;
+  /** When intake last captured this set; drives how soon it is re-verified. */
+  capturedAt: string | null;
+}
+
+/**
+ * The candidates to harvest for one listing.
+ *
+ * `imageCandidates` is what the projection resolved — the `Listing Images`
+ * attachments *and* the scraped `Listing Image URLs` column, ordered
+ * best-source-first. The fallback to `images` covers callers that hand this
+ * hook a listing built somewhere other than the projection (the map popup
+ * builds one from cached fields, for instance).
+ */
+function candidatesFor(listing: PropertyListing): ImageCandidate[] {
+  if (Array.isArray(listing.imageCandidates) && listing.imageCandidates.length > 0) {
+    return listing.imageCandidates;
+  }
+  return orderCandidatesForDisplay(normaliseImageCandidates(listing.images));
 }
 
 interface ResolveResponse {
@@ -98,7 +118,12 @@ export function useListingImages(listings: PropertyListing[]) {
   const fingerprints = useMemo(() => {
     const map = new Map<string, string>();
     for (const listing of listings) {
-      map.set(listing.id, imageSetFingerprint(normaliseImageCandidates(listing.images)));
+      // Fingerprinted over the same set that gets sent, which now includes the
+      // scraped URL column. Fingerprinting attachments alone would have left
+      // every listing looking unchanged the moment a scrape added photos —
+      // the cache would answer from a stale entry and the new set would never
+      // be requested.
+      map.set(listing.id, imageSetFingerprint(candidatesFor(listing)));
     }
     return map;
   }, [listings]);
@@ -140,12 +165,17 @@ export function useListingImages(listings: PropertyListing[]) {
           id: listing.id,
           // Only the candidates are sent, never the whole record — the function
           // has no business seeing price or vendor details to fetch a photo.
-          images: normaliseImageCandidates(listing.images).map((candidate) => ({
+          images: candidatesFor(listing).map((candidate) => ({
             url: candidate.url,
             origin: candidate.origin,
             externalId: candidate.externalId,
           })),
           listedAt: listing.listingDate || null,
+          // Sent alongside `listedAt` rather than instead of it: the refresh
+          // tiers are keyed on how recently the *images* changed, and a set
+          // re-scraped yesterday deserves the fast tier even when the record
+          // itself is a year old.
+          capturedAt: listing.imagesCapturedAt ?? null,
         })),
     [listings],
   );

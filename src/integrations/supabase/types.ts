@@ -19158,6 +19158,9 @@ export type Database = {
           report_scope: string | null
           report_tier: string
           report_variant: string
+          resume_attempts: number
+          resume_claimed_at: string | null
+          resume_worker_id: string | null
           sources_content: string | null
           status: string
           total_sections: number | null
@@ -19197,6 +19200,9 @@ export type Database = {
           report_scope?: string | null
           report_tier?: string
           report_variant?: string
+          resume_attempts?: number
+          resume_claimed_at?: string | null
+          resume_worker_id?: string | null
           sources_content?: string | null
           status?: string
           total_sections?: number | null
@@ -19236,6 +19242,9 @@ export type Database = {
           report_scope?: string | null
           report_tier?: string
           report_variant?: string
+          resume_attempts?: number
+          resume_claimed_at?: string | null
+          resume_worker_id?: string | null
           sources_content?: string | null
           status?: string
           total_sections?: number | null
@@ -21873,7 +21882,9 @@ export type Database = {
           precision: string | null
           provider: string
           resolved_at: string
+          state: string | null
           status: string
+          suburb: string | null
         }
         Insert: {
           lat?: number | null
@@ -21882,7 +21893,9 @@ export type Database = {
           precision?: string | null
           provider?: string
           resolved_at?: string
+          state?: string | null
           status?: string
+          suburb?: string | null
         }
         Update: {
           lat?: number | null
@@ -21891,7 +21904,9 @@ export type Database = {
           precision?: string | null
           provider?: string
           resolved_at?: string
+          state?: string | null
           status?: string
+          suburb?: string | null
         }
         Relationships: []
       }
@@ -33916,6 +33931,10 @@ export type Database = {
           role_name: string
         }[]
       }
+      aml_activate_client_open_case: {
+        Args: { p_case: Json; p_client_id: string }
+        Returns: Json
+      }
       append_migration_upload_chunk: {
         Args: {
           _chunk_index: number
@@ -36323,6 +36342,16 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      claim_stalled_investment_reports: {
+        Args: { p_limit?: number; p_worker?: string }
+        Returns: {
+          id: string
+          last_completed_section: number
+          property_address: string
+          resume_attempts: number
+          total_sections: number
+        }[]
+      }
       cleanup_expired_census_cache: { Args: never; Returns: undefined }
       cleanup_expired_climate_cache: { Args: never; Returns: undefined }
       cleanup_expired_crime_cache: { Args: never; Returns: undefined }
@@ -36558,6 +36587,7 @@ export type Database = {
         Returns: undefined
       }
       extract_email_address: { Args: { raw_text: string }; Returns: string }
+      fail_abandoned_investment_reports: { Args: never; Returns: number }
       finalize_ghl_cutover: { Args: { p_job_id: string }; Returns: Json }
       finalize_migration_upload: {
         Args: { _upload_id: string }
@@ -37205,6 +37235,10 @@ export type Database = {
           _document_version_id: string
         }
         Returns: Json
+      }
+      release_investment_report_resume: {
+        Args: { p_made_progress?: boolean; p_report_id: string }
+        Returns: undefined
       }
       release_migration_job_lock: {
         Args: { p_job_id: string }

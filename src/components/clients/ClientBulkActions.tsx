@@ -232,8 +232,10 @@ export function ClientBulkActions({
 
   return (
     <>
-      <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg border">
-        <Badge variant="secondary" className="font-medium">
+      {/* Same rail as the search/filter toolbar above it — one bar language per page.
+          No `bg-*` utility: it would paint over the glass (see src/styles/glass.css). */}
+      <div className="glass-rail flex flex-wrap items-center gap-2 rounded-2xl p-2">
+        <Badge variant="secondary" className="font-medium tabular-nums">
           {selectedCount} selected
         </Badge>
         <div className="flex-1" />

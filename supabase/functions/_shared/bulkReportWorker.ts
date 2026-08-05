@@ -10,7 +10,12 @@ const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim()
 // - On failure, items below `max_attempts` are returned to `pending` for
 //   the cron to pick up; otherwise marked `failed`.
 
-const REPORT_TIMEOUT_MS = 8 * 60 * 1000; // 8 min per property
+// Both of these used to exceed the edge runtime's own ~150s ceiling, so neither
+// could ever fire — the platform killed the worker first. They are now sized to
+// live inside one invocation, and anything left over is picked up by the next
+// cron tick.
+const REPORT_TIMEOUT_MS = 130 * 1000; // hard stop for one property's resume chain
+const DRAIN_BUDGET_MS = 100 * 1000;   // stop claiming new items past this
 const HEARTBEAT_INTERVAL_MS = 30 * 1000; // 30s
 const BATCH_SIZE = 2; // concurrent properties per worker invocation
 
@@ -80,46 +85,91 @@ async function ensureReportRow(
   return data.id;
 }
 
+/**
+ * Drive one report to completion.
+ *
+ * A 17-section report needs ~425s of model time and the edge runtime kills an
+ * invocation at ~150s, so a single call can never finish one. This used to be a
+ * single fire wrapped in an 8-minute AbortController — a timeout that could
+ * never be reached, because the inner function died at the platform ceiling
+ * first. The call then threw (or worse, the item was marked completed against a
+ * report truncated at ~6 sections).
+ *
+ * The generator now stops at its own wall-clock budget and returns
+ * `resumeRequired: true`, so we call it repeatedly with `continueFrom: true`
+ * until it reports completion. Returns false when the round ran out of budget
+ * with sections still outstanding — the caller must leave the item resumable.
+ */
 async function callInvestmentReport(
   reportId: string,
   property: { address: string; suburb?: string; state?: string; zipCode?: string },
   signal: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
-  const serviceRoleKey = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
   const anonKey = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
 
-  const response = await fetch(
-    `${supabaseUrl}/functions/v1/generate-investment-report`,
-    {
-      method: 'POST',
-      signal,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
-        'apikey': anonKey,
-      },
-      body: JSON.stringify({
-        reportId,
-        propertyAddress: property.address,
-        propertyDetails: {
-          suburb: property.suburb,
-          state: property.state,
-          zipCode: property.zipCode,
-          queryType: 'address',
-        },
-      }),
-    },
-  );
+  // Bounds the resume chain so a report that never advances cannot spin here.
+  // 17 sections at ~4 per budgeted call needs ~5; the rest is headroom.
+  const MAX_RESUME_ROUNDS = 12;
+  let lastSectionCompleted = -1;
+  let stalledRounds = 0;
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`);
+  for (let round = 0; round < MAX_RESUME_ROUNDS; round++) {
+    const response = await fetch(
+      `${supabaseUrl}/functions/v1/generate-investment-report`,
+      {
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
+          'apikey': anonKey,
+        },
+        body: JSON.stringify({
+          reportId,
+          propertyAddress: property.address,
+          propertyDetails: {
+            suburb: property.suburb,
+            state: property.state,
+            zipCode: property.zipCode,
+            queryType: 'address',
+          },
+          // Round 0 starts the report; every later round resumes it. Without
+          // continueFrom a resume would discard the banked sections and start
+          // over, and the report could never converge.
+          ...(round > 0 ? { continueFrom: true } : {}),
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`);
+    }
+    const json = await response.json();
+    if (!json?.success) {
+      throw new Error(json?.error || 'Inner function returned success=false');
+    }
+
+    // A run that finished post-processing reports success with no resume flag.
+    if (json.isComplete === true || !json.resumeRequired) return true;
+
+    const sectionCompleted = typeof json.sectionCompleted === 'number' ? json.sectionCompleted : -1;
+    if (sectionCompleted <= lastSectionCompleted) {
+      // Two rounds without a new section: something is wrong with this report
+      // specifically. Stop burning API credits and let the watchdog decide.
+      if (++stalledRounds >= 2) {
+        console.warn(`[bulkWorker] ${property.address}: no progress past section ${sectionCompleted}, deferring`);
+        return false;
+      }
+    } else {
+      stalledRounds = 0;
+      lastSectionCompleted = sectionCompleted;
+    }
   }
-  const json = await response.json();
-  if (!json?.success) {
-    throw new Error(json?.error || 'Inner function returned success=false');
-  }
+
+  console.warn(`[bulkWorker] ${property.address}: still incomplete after ${MAX_RESUME_ROUNDS} rounds, deferring`);
+  return false;
 }
 
 async function processOneItem(
@@ -136,13 +186,36 @@ async function processOneItem(
   let reportId: string | null = null;
   try {
     reportId = await ensureReportRow(supabase, item, userId, jobId);
-    await callInvestmentReport(
+    const finished = await callInvestmentReport(
       reportId,
       { address: item.property_address },
       controller.signal,
     );
 
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
+
+    if (!finished) {
+      // The report made progress but is not done. Marking the item 'completed'
+      // here is what used to ship half-written reports to clients — the item
+      // read as finished while the report sat truncated at ~6 of 17 sections.
+      // Return it to 'pending' (without consuming an attempt, since nothing
+      // failed) so the bulk cron picks it up; the investment-report watchdog
+      // will also drive it independently.
+      await supabase
+        .from('bulk_generation_items')
+        .update({
+          status: 'pending',
+          heartbeat_at: null,
+          claimed_at: null,
+          worker_id: null,
+          attempts: Math.max(0, item.attempts - 1),
+        })
+        .eq('id', item.id);
+
+      console.log(`[bulkWorker] ⏸️ ${item.property_address} incomplete after ${elapsed}s — requeued for resume`);
+      return { success: false, error: 'incomplete — requeued for resume' };
+    }
+
     await supabase
       .from('bulk_generation_items')
       .update({
@@ -240,8 +313,17 @@ export async function drainJob(
   maxIterations = 50,
 ): Promise<{ processed: number; succeeded: number; failed: number }> {
   let processed = 0, succeeded = 0, failed = 0;
+  // This runs inside an edge invocation, so iteration count alone was never a
+  // real bound — the platform could kill us mid-property regardless. Stop
+  // claiming new work once we are close to the ceiling; unclaimed items simply
+  // wait for the next cron tick.
+  const drainStartedAt = Date.now();
 
   for (let iter = 0; iter < maxIterations; iter++) {
+    if (Date.now() - drainStartedAt > DRAIN_BUDGET_MS) {
+      console.log(`[bulkWorker] job ${jobId} drain budget reached after ${iter} iteration(s); deferring the rest`);
+      break;
+    }
     // Claim up to BATCH_SIZE items
     const claims: ClaimedItem[] = [];
     for (let i = 0; i < BATCH_SIZE; i++) {

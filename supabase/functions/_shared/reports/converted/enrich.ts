@@ -27,15 +27,29 @@
  */
 import {
   checkQuota,
+  dropRedundantLede,
   ENRICHMENT_JSON_SCHEMA,
   enrichedText,
   enrichmentPrompt,
   enrichmentRetryPrompt,
   parseEnrichment,
+  partitionForEnrichment,
+  tooShortNote,
+  FIDELITY_RULE_FOR,
+  FIGURE_RULE,
   type ConversionFidelity,
   type EnrichedBlock,
 } from './enrich.pure.ts';
 import { checkFaithful } from './faithfulness.pure.ts';
+import {
+  COMPOSE_JSON_SCHEMA,
+  composePrompt,
+  composedIsDesigned,
+  htmlText,
+  MAX_SHEETS,
+  sanitiseComposedHtml,
+} from './composeHtml.pure.ts';
+
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
@@ -65,6 +79,8 @@ export interface ChapterToEnrich {
 export interface ChapterEnrichment {
   id: string;
   blocks: EnrichedBlock[];
+  /** Composed sheets, when the chapter was asked for pages rather than blocks. */
+  sheets?: string[];
   /** Empty when the chapter enriched cleanly on the first attempt. */
   notes: string[];
   attempts: number;
@@ -73,6 +89,13 @@ export interface ChapterEnrichment {
 export interface EnrichmentRun {
   /** Only the chapters that produced blocks. */
   enriched: Record<string, EnrichedBlock[]>;
+  /**
+   * Composed sheets by chapter id, when `compose` was asked for.
+   *
+   * A chapter appears in exactly one of `enriched` and `composed`, or in
+   * neither — in which case it renders as flat Markdown, as it always has.
+   */
+  composed: Record<string, string[]>;
   /** Every note from every chapter, prefixed with the chapter's title. */
   notes: string[];
   /** Null when nothing was attempted — no key, or nothing to enrich. */
@@ -95,7 +118,15 @@ interface ToolAnswer {
  * all. Same shape as `generate-brand-design-system`, deliberately — there are
  * now two model calls in this feature and they should fail identically.
  */
-async function askForBlocks(apiKey: string, prompt: string): Promise<ToolAnswer> {
+async function askForBlocks(
+  apiKey: string,
+  prompt: string,
+  tool: { name: string; description: string; schema: unknown } = {
+    name: 'chapter_blocks',
+    description: 'The chapter, laid out as designed blocks.',
+    schema: ENRICHMENT_JSON_SCHEMA,
+  },
+): Promise<ToolAnswer> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ENRICHMENT_TIMEOUT_MS);
 
@@ -112,11 +143,11 @@ async function askForBlocks(apiKey: string, prompt: string): Promise<ToolAnswer>
         model: ENRICHMENT_MODEL,
         max_tokens: 8_000,
         tools: [{
-          name: 'chapter_blocks',
-          description: 'The chapter, laid out as designed blocks.',
-          input_schema: ENRICHMENT_JSON_SCHEMA,
+          name: tool.name,
+          description: tool.description,
+          input_schema: tool.schema,
         }],
-        tool_choice: { type: 'tool', name: 'chapter_blocks' },
+        tool_choice: { type: 'tool', name: tool.name },
         messages: [{ role: 'user', content: prompt }],
       }),
       signal: controller.signal,
@@ -135,9 +166,9 @@ async function askForBlocks(apiKey: string, prompt: string): Promise<ToolAnswer>
   const message = await response.json().catch(() => null) as
     | { content?: Array<{ type?: string; name?: string; input?: unknown }> }
     | null;
-  const tool = (Array.isArray(message?.content) ? message!.content : [])
-    .find((b) => b?.type === 'tool_use' && b?.name === 'chapter_blocks');
-  if (tool?.input && typeof tool.input === 'object') return { ok: true, raw: tool.input };
+  const used = (Array.isArray(message?.content) ? message!.content : [])
+    .find((b) => b?.type === 'tool_use' && b?.name === tool.name);
+  if (used?.input && typeof used.input === 'object') return { ok: true, raw: used.input };
   return { ok: false, error: 'the design service returned no blocks' };
 }
 
@@ -165,8 +196,11 @@ async function enrichChapter(
       return { id: chapter.id, blocks: [], notes, attempts: attempt };
     }
 
-    const { blocks, notes: readNotes } = parseEnrichment(answer.raw);
+    const { blocks: read, notes: readNotes } = parseEnrichment(answer.raw);
     notes.push(...readNotes);
+    // Done here rather than in the reader because the reader is handed one
+    // chapter's blocks and knows nothing about the header printed above them.
+    const blocks = dropRedundantLede(read, chapter.title);
     if (!blocks.length) {
       if (attempt === 2) return { id: chapter.id, blocks: [], notes, attempts: attempt };
       prompt = enrichmentRetryPrompt(
@@ -199,6 +233,93 @@ async function enrichChapter(
 }
 
 /**
+ * Compose one chapter as pages.
+ *
+ * The same shape as `enrichChapter` and the same guards, over a different
+ * output. Two differences worth stating:
+ *
+ * **The sanitiser runs before anything else looks at the answer.** Faithfulness
+ * and the quota both read the *sanitised* markup, so neither can be satisfied
+ * by something that will not survive to the page.
+ *
+ * **The figure check is stronger here than for blocks.** `enrichedText` is a
+ * switch somebody has to remember to extend; `htmlText` is by construction
+ * every word that reaches the page.
+ */
+async function composeChapter(
+  apiKey: string,
+  chapter: ChapterToEnrich,
+  fidelity: ConversionFidelity,
+): Promise<ChapterEnrichment> {
+  const notes: string[] = [];
+  const base = composePrompt(
+    chapter.title, chapter.markdown, FIDELITY_RULE_FOR(fidelity), FIGURE_RULE,
+  );
+  let prompt = base;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const answer = await askForBlocks(apiKey, prompt, {
+      name: 'chapter_sheets',
+      description: 'The chapter, composed as printed pages.',
+      schema: COMPOSE_JSON_SCHEMA,
+    });
+    if (!answer.ok) {
+      notes.push(answer.error ?? 'the design service failed');
+      return { id: chapter.id, blocks: [], notes, attempts: attempt };
+    }
+
+    const raw = (answer.raw ?? {}) as { sheets?: Array<{ html?: unknown }> };
+    const dropped = new Set<string>();
+    const sheets = (Array.isArray(raw.sheets) ? raw.sheets : [])
+      .slice(0, MAX_SHEETS)
+      .map((s) => {
+        const clean = sanitiseComposedHtml(s?.html);
+        for (const d of clean.dropped) dropped.add(d);
+        return clean.html;
+      })
+      .filter((html) => html.trim());
+
+    if (dropped.size) {
+      // Reported rather than fatal. A model that reached for a Tailwind class
+      // has still composed the page correctly underneath it.
+      notes.push(`stripped from the composition: ${[...dropped].slice(0, 12).join(', ')}`);
+    }
+
+    const retry = (why: string): string =>
+      `${base}\n\nYour previous answer was rejected because ${why}. Correct it and return the whole chapter again.`;
+
+    if (!sheets.length) {
+      if (attempt === 2) return { id: chapter.id, blocks: [], notes, attempts: attempt };
+      prompt = retry('it produced no usable pages');
+      continue;
+    }
+
+    const all = sheets.join('\n');
+    const faithful = checkFaithful(chapter.markdown, htmlText(all));
+    if (!faithful.ok) {
+      notes.push(`rejected: ${faithful.reason}`);
+      if (attempt === 2) return { id: chapter.id, blocks: [], notes, attempts: attempt };
+      prompt = retry(faithful.reason);
+      continue;
+    }
+
+    if (!sheets.some(composedIsDesigned)) {
+      // The composed equivalent of the content quota: a page of nothing but
+      // paragraphs is exactly the flat output this replaces.
+      const why = 'no page used a design-system component — it came back as plain paragraphs';
+      notes.push(`rejected: ${why}`);
+      if (attempt === 2) return { id: chapter.id, blocks: [], notes, attempts: attempt };
+      prompt = retry(why);
+      continue;
+    }
+
+    return { id: chapter.id, blocks: [], sheets, notes, attempts: attempt };
+  }
+
+  return { id: chapter.id, blocks: [], notes, attempts: 2 };
+}
+
+/**
  * Enrich every chapter that has content, `ENRICHMENT_CONCURRENCY` at a time.
  *
  * Never throws. A chapter that ends with no blocks simply has no entry in
@@ -208,12 +329,22 @@ export async function enrichChapters(
   apiKey: string | null | undefined,
   chapters: readonly ChapterToEnrich[],
   fidelity: ConversionFidelity,
+  /** Ask for composed pages instead of typed blocks. See `composeHtml.pure.ts`. */
+  compose = false,
 ): Promise<EnrichmentRun> {
-  const work = chapters.filter((c) => c.markdown.trim().length > 0);
+  // Chapters worth asking about, and the ones that are too small to be worth
+  // eleven seconds. `skipped` is reported rather than silently dropped: a
+  // person looking at "4 of 6 designed" deserves to know the other two were not
+  // attempted rather than assume they failed.
+  const { work, skipped } = partitionForEnrichment(chapters);
+
   if (!apiKey || !work.length) {
     return {
       enriched: {},
-      notes: apiKey ? [] : ['ANTHROPIC_API_KEY is not configured, so no chapter was designed'],
+      composed: {},
+      notes: apiKey
+        ? skipped.map(tooShortNote)
+        : ['ANTHROPIC_API_KEY is not configured, so no chapter was designed'],
       model: null,
       chaptersAttempted: 0,
       chaptersEnriched: 0,
@@ -225,7 +356,9 @@ export async function enrichChapters(
     const batch = work.slice(i, i + ENRICHMENT_CONCURRENCY);
     const done = await Promise.all(batch.map(async (c) => {
       try {
-        return await enrichChapter(apiKey, c, fidelity);
+        return compose
+          ? await composeChapter(apiKey, c, fidelity)
+          : await enrichChapter(apiKey, c, fidelity);
       } catch (e) {
         // The catch that makes the promise above unable to reject. Enrichment
         // throwing must not take a render with it.
@@ -236,18 +369,23 @@ export async function enrichChapters(
   }
 
   const enriched: Record<string, EnrichedBlock[]> = {};
+  const composedSheets: Record<string, string[]> = {};
   const notes: string[] = [];
   const titleOf = new Map(work.map((c) => [c.id, c.title]));
   for (const r of results) {
     if (r.blocks.length) enriched[r.id] = r.blocks;
+    if (r.sheets?.length) composedSheets[r.id] = r.sheets;
     for (const note of r.notes) notes.push(`${titleOf.get(r.id) ?? r.id}: ${note}`);
   }
 
+  for (const c of skipped) notes.push(tooShortNote(c));
+
   return {
     enriched,
+    composed: composedSheets,
     notes,
     model: ENRICHMENT_MODEL,
     chaptersAttempted: work.length,
-    chaptersEnriched: Object.keys(enriched).length,
+    chaptersEnriched: Object.keys(enriched).length + Object.keys(composedSheets).length,
   };
 }

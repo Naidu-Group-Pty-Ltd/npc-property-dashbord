@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { listingFreshness } from './listingDisplay';
+import { listingFreshness, photoFreshness } from './listingDisplay';
 
 const NOW = Date.parse('2026-08-04T12:00:00Z');
 const daysAgo = (n: number) => new Date(NOW - n * 86_400_000).toISOString();
@@ -54,5 +54,45 @@ describe('listingFreshness', () => {
   it('accepts a Date as readily as a string', () => {
     expect(listingFreshness(listing({ receivedAt: new Date(NOW - 86_400_000) }), NOW)?.label)
       .toBe('Added yesterday');
+  });
+});
+
+describe('photoFreshness', () => {
+  it.each([
+    [0, 'Photos updated today'],
+    [1, 'Photos updated yesterday'],
+    [4, 'Photos updated 4 days ago'],
+    [9, 'Photos updated last week'],
+    [21, 'Photos updated 3 weeks ago'],
+    [60, 'Photos updated 2 months ago'],
+    [400, 'Photos over a year old'],
+  ])('reads %s days as "%s"', (days, expected) => {
+    expect(photoFreshness(listing({ imagesCapturedAt: daysAgo(days) }), NOW)?.label).toBe(expected);
+  });
+
+  it('answers about the photographs, not about the record', () => {
+    // The case this exists for: a record that arrived months ago whose gallery
+    // was re-scraped yesterday. Reading the record's own date would call those
+    // photographs months old.
+    const l = listing({ receivedAt: daysAgo(120), imagesCapturedAt: daysAgo(1) });
+    expect(photoFreshness(l, NOW)?.label).toBe('Photos updated yesterday');
+    expect(listingFreshness(l, NOW)?.label).toBe('Added over a month ago');
+  });
+
+  it('is silent when no capture was ever recorded', () => {
+    // Absent means "we do not know". Falling back to the record's timestamp
+    // would claim the photos are as recent as the record.
+    expect(photoFreshness(listing({ receivedAt: daysAgo(1) }), NOW)).toBeNull();
+    expect(photoFreshness(listing({ imagesCapturedAt: 'not a date' }), NOW)).toBeNull();
+  });
+
+  it('treats a future stamp as a clock problem, not a prediction', () => {
+    expect(photoFreshness(listing({ imagesCapturedAt: daysAgo(-3) }), NOW)).toBeNull();
+  });
+
+  it('flags the first week as recent and carries the source through', () => {
+    const l = listing({ imagesCapturedAt: daysAgo(5), imageSource: 'Web Scrape' });
+    expect(photoFreshness(l, NOW)).toMatchObject({ isRecent: true, source: 'Web Scrape' });
+    expect(photoFreshness(listing({ imagesCapturedAt: daysAgo(8) }), NOW)?.isRecent).toBe(false);
   });
 });

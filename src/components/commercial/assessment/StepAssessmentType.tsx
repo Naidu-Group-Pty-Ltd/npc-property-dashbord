@@ -1,6 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
 import { Building2, Factory, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TextField } from './AssessmentFields';
+
 import {
   ASSESSMENT_TYPE_DEFINITIONS,
   type AssessmentPayload,
@@ -24,6 +26,36 @@ interface Props {
  * each option states its own consequence rather than just naming itself.
  */
 export function StepAssessmentType({ payload, title, onTitleChange, onChange, disabled }: Props) {
+  /**
+   * The title is persisted through an autosave + reload round-trip, so writing
+   * on every keystroke made the field feel frozen (each character raced the
+   * reload that replaced it). Keep a local draft, commit it on a debounce and
+   * on blur, and only accept the incoming value when the field is idle.
+   */
+  const [draftTitle, setDraftTitle] = useState(title);
+  const dirtyRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!dirtyRef.current) setDraftTitle(title);
+  }, [title]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  const commitTitle = (next: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = null;
+    dirtyRef.current = false;
+    if (next !== title) onTitleChange(next);
+  };
+
+  const handleTitleChange = (next: string) => {
+    dirtyRef.current = true;
+    setDraftTitle(next);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => commitTitle(next), 800);
+  };
+
   const select = (type: AssessmentType) => {
     const definition = ASSESSMENT_TYPE_DEFINITIONS.find((entry) => entry.key === type);
     onChange({
@@ -47,13 +79,15 @@ export function StepAssessmentType({ payload, title, onTitleChange, onChange, di
       <div className="mb-6 max-w-xl">
         <TextField
           label="Assessment name"
-          value={title}
-          onChange={onTitleChange}
+          value={draftTitle}
+          onChange={handleTitleChange}
+          onBlur={() => commitTitle(draftTitle)}
           disabled={disabled}
           placeholder="e.g. 45 Industrial Drive — Wetherill Park"
           help="How this assessment appears in your list. You can change it at any time."
         />
       </div>
+
 
       <div
         role="radiogroup"
