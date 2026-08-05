@@ -19,6 +19,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
 import {
+  diffSubmissions, submissionDiffIsMaterial,
+  CLIENT_SAFE_REJECTION_REASONS, CLIENT_SAFE_REJECTION_COPY, isClientSafeRejectionReason,
+} from "../_shared/aml/submissionReview.ts";
+import {
   CLIENT_SEARCH_SELECT,
   buildClientSearchOrFilter,
   sanitizeClientSearchQuery,
@@ -1087,6 +1091,503 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq('id', body.request_id).select('*').single();
         if (error) throw error;
         return jsonResponse({ request: data });
+      }
+
+      /* ═══════════ Submission review (Stage 3) ═══════════ */
+      case 'get_submission_review': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('*').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        const { data: versions } = await admin.schema('aml').from('submission_versions')
+          .select('*').eq('case_id', caseId).order('version_number', { ascending: false });
+        const all = versions ?? [];
+        const requested = body.version_number ? Number(body.version_number) : null;
+        const current = requested ? all.find((v: any) => v.version_number === requested) : all[0];
+        if (!current) {
+          return jsonResponse({ submission: null, versions: [], message: 'No client submission yet.' });
+        }
+        const previous = all.find((v: any) => v.version_number < current.version_number) ?? null;
+
+        const snap = (current.snapshot ?? {}) as any;
+        const prevSnap = (previous?.snapshot ?? {}) as any;
+        const diff = diffSubmissions(snap.sections ?? [], prevSnap.sections ?? []);
+
+        const [{ data: reqs }, { data: docs }, { data: consents }, { data: recon },
+               { data: checks }, { data: screening }, { data: openReqs }, { data: assessment }] = await Promise.all([
+          admin.schema('aml').from('document_requirements').select('*').eq('case_id', caseId),
+          admin.schema('aml').from('documents')
+            .select('id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, reviewed_at, client_safe_rejection_reason, internal_review_note, version_number, previous_document_id, replacement_document_id')
+            .eq('case_id', caseId).order('uploaded_at', { ascending: false }),
+          admin.schema('aml').from('consents').select('kind, version, accepted_at, document_hash').eq('case_id', caseId),
+          admin.schema('aml').from('party_reconciliation_items').select('*').eq('case_id', caseId),
+          admin.schema('aml').from('verification_checks')
+            .select('id, party_id, party_label, check_type, status, processing_status, attempt_consumed, authoritative, execution_mode, provider, completed_at, provider_error_category')
+            .eq('case_id', caseId).order('created_at', { ascending: false }),
+          admin.schema('aml').from('party_screening_subjects').select('*').eq('case_id', caseId),
+          admin.schema('aml').from('client_requests').select('id, kind, subject, status, action_code, created_at')
+            .eq('case_id', caseId).in('status', ['open', 'responded']),
+          admin.schema('aml').from('risk_assessments').select('id, created_at, rating, score')
+            .eq('case_id', caseId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        ]);
+
+        // Risk staleness: any canonical verification outcome or reconciliation
+        // change after the latest assessment makes it stale, with reasons.
+        const staleReasons: string[] = [];
+        if (assessment?.created_at) {
+          const since = new Date(assessment.created_at).getTime();
+          if ((checks ?? []).some((c: any) => c.completed_at && new Date(c.completed_at).getTime() > since)) staleReasons.push('verification_changed');
+          if ((recon ?? []).some((r: any) => new Date(r.updated_at ?? r.created_at).getTime() > since)) staleReasons.push('party_reconciliation_changed');
+          if ((screening ?? []).some((s: any) => s.adjudicated_at && new Date(s.adjudicated_at).getTime() > since)) staleReasons.push('screening_adjudicated');
+          if (new Date(current.submitted_at).getTime() > since) staleReasons.push('new_submission');
+          if (submissionDiffIsMaterial(diff)) staleReasons.push('material_information_changed');
+        } else {
+          staleReasons.push('no_assessment');
+        }
+
+        const missing: string[] = [];
+        for (const r of (reqs ?? [])) {
+          if (r.required && !['uploaded', 'accepted'].includes(r.status)) missing.push(`document:${r.code}`);
+        }
+        for (const r of (recon ?? [])) {
+          if (r.resolution_status === 'open') missing.push(`party_reconciliation:${r.declared_name}`);
+        }
+        for (const s of (screening ?? [])) {
+          if (s.required && ['not_started', 'possible_match'].includes(s.state)) missing.push(`screening:${s.screened_name}`);
+        }
+
+        return jsonResponse({
+          case: {
+            id: caseRow.id, reference: caseRow.case_reference, subject: caseRow.subject_display_name,
+            status: caseRow.status, case_stage: caseRow.case_stage,
+            client_portal_status: caseRow.client_portal_status,
+            // Read-only context: acceptance never moves the gate.
+            service_gate_status: caseRow.service_gate_status,
+          },
+          submission: {
+            id: current.id, version_number: current.version_number,
+            review_status: current.review_status ?? 'submitted',
+            submitted_at: current.submitted_at, submitted_by_type: current.submitted_by_type,
+            submitted_by: current.submitted_by,
+            review_reason: current.review_reason ?? null,
+            reviewed_at: current.review_decided_at ?? current.reviewed_at ?? null,
+            questionnaire_version: snap.questionnaire_version ?? null,
+            consent_version: snap.consent_version ?? null,
+            applicable_sections: snap.applicable_sections ?? [],
+            sections: snap.sections ?? [],
+            superseded_at: current.superseded_at ?? null,
+          },
+          previous_version: previous ? { id: previous.id, version_number: previous.version_number, submitted_at: previous.submitted_at } : null,
+          differences: diff,
+          differences_material: submissionDiffIsMaterial(diff),
+          versions: all.map((v: any) => ({
+            id: v.id, version_number: v.version_number, submitted_at: v.submitted_at,
+            review_status: v.review_status ?? 'submitted',
+          })),
+          consent_evidence: (consents ?? []).map((c: any) => ({
+            kind: c.kind, version: c.version, accepted_at: c.accepted_at, document_hash: c.document_hash,
+          })),
+          related_parties: (recon ?? []).map((r: any) => ({
+            id: r.id, declared_role: r.declared_role, declared_name: r.declared_name,
+            change_kind: r.change_kind, resolution_status: r.resolution_status,
+            resolved_party_type: r.resolved_party_type, resolved_party_id: r.resolved_party_id,
+            verification_required: r.verification_required, screening_required: r.screening_required,
+            conflicts: r.conflicts ?? [], similarity_candidates: r.similarity_candidates ?? [],
+            exact_candidate_id: r.exact_candidate_id, exact_candidate_type: r.exact_candidate_type,
+          })),
+          requirements: reqs ?? [],
+          documents: (docs ?? []).map((d: any) => ({
+            ...d,
+            // Internal reviewer reasoning is staff-only; auditors and analysts
+            // may read it, but it never leaves this staff response.
+            internal_review_note: canWrite || roles.has('auditor') ? d.internal_review_note : null,
+          })),
+          verification: (checks ?? []).map((c: any) => ({
+            id: c.id, party_id: c.party_id, party_label: c.party_label, check_type: c.check_type,
+            status: c.status, processing_status: c.processing_status,
+            authoritative: c.authoritative, execution_mode: c.execution_mode,
+            attempt_consumed: c.attempt_consumed, provider: c.provider,
+            completed_at: c.completed_at, provider_error_category: c.provider_error_category,
+          })),
+          screening: screening ?? [],
+          open_requests: openReqs ?? [],
+          missing_mandatory: missing,
+          risk: { latest_assessment_at: assessment?.created_at ?? null, stale: staleReasons.length > 0, stale_reasons: staleReasons },
+        });
+      }
+
+      case 'accept_submission':
+      case 'request_submission_changes':
+      case 'request_submission_document':
+      case 'request_submission_clarification':
+      case 'escalate_submission':
+      case 'supersede_submission': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const needsReviewer = op === 'accept_submission' || op === 'escalate_submission';
+        if (needsReviewer && !(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const submissionId = String(body.submission_id ?? '');
+        const reason = String(body.reason ?? '').trim();
+        if (!submissionId) return jsonResponse({ error: 'submission_id required' }, 400);
+        if (op !== 'accept_submission' && reason.length < 10) {
+          return jsonResponse({ error: 'A reason of at least 10 characters is required' }, 400);
+        }
+        const { data: sub } = await admin.schema('aml').from('submission_versions')
+          .select('*, cases:case_id(id, status, case_stage)').eq('id', submissionId).maybeSingle();
+        if (!sub) return jsonResponse({ error: 'Submission not found' }, 404);
+        if (body.case_id && String(body.case_id) !== String(sub.case_id)) {
+          return jsonResponse({ error: 'Submission does not belong to that case' }, 403);
+        }
+
+        const nextStatus = op === 'accept_submission' ? 'accepted'
+          : op === 'escalate_submission' ? 'escalated'
+          : op === 'supersede_submission' ? 'superseded'
+          : 'changes_requested';
+
+        const patch: Record<string, unknown> = {
+          review_status: nextStatus,
+          review_decided_by: userId,
+          review_decided_at: new Date().toISOString(),
+          review_reason: reason || null,
+        };
+        if (op === 'supersede_submission') {
+          patch.superseded_at = new Date().toISOString();
+          patch.superseded_reason = reason;
+        }
+        // The snapshot column is NEVER written here: prior submitted content
+        // is immutable by contract.
+        const { data: updated, error: upErr } = await admin.schema('aml').from('submission_versions')
+          .update(patch).eq('id', submissionId).select('*').single();
+        if (upErr) throw upErr;
+
+        // Client-safe workflow state. The service gate is deliberately absent:
+        // only an authorised reviewer/MLRO decision moves it, elsewhere.
+        const casePatch: Record<string, unknown> = {};
+        if (op === 'accept_submission') {
+          casePatch.client_portal_status = 'under_review';
+          casePatch.case_stage = 'staff_review';
+        } else if (op === 'escalate_submission') {
+          casePatch.client_portal_status = 'under_review';
+        } else if (nextStatus === 'changes_requested') {
+          casePatch.client_portal_status = 'additional_info_required';
+        }
+        if (Object.keys(casePatch).length > 0) {
+          const { error: caseErr } = await admin.schema('aml').from('cases').update(casePatch).eq('id', sub.case_id);
+          if (caseErr) await admin.schema('aml').from('cases')
+            .update({ client_portal_status: casePatch.client_portal_status }).eq('id', sub.case_id);
+        }
+
+        // Changes/document/clarification requests create the actionable client
+        // request; its trigger writes the notification and outbox event in the
+        // same transaction.
+        let createdRequest: any = null;
+        if (['request_submission_changes', 'request_submission_document', 'request_submission_clarification'].includes(op)) {
+          const actionCode = op === 'request_submission_document' ? 'upload_document'
+            : op === 'request_submission_clarification' ? 'provide_clarification'
+            : 'review_and_submit';
+          const actionTarget: Record<string, unknown> = {};
+          if (body.requirement_id) actionTarget.requirement_id = String(body.requirement_id);
+          if (body.section_code) actionTarget.section_code = String(body.section_code);
+          actionTarget.target_step = op === 'request_submission_document' ? 'documents'
+            : op === 'request_submission_clarification' ? 'review' : 'review';
+          const { data: reqRow, error: reqErr } = await admin.schema('aml').from('client_requests').insert({
+            case_id: sub.case_id,
+            kind: op === 'request_submission_document' ? 'new_document'
+              : op === 'request_submission_clarification' ? 'clarification' : 'additional_info',
+            subject: String(body.subject ?? 'Information needed on your submission').slice(0, 200),
+            message: String(body.client_message ?? reason).slice(0, 4000),
+            action_code: actionCode,
+            action_target: actionTarget,
+            requested_by: userId, requested_by_label: userEmail,
+          }).select('*').single();
+          if (reqErr) throw reqErr;
+          createdRequest = reqRow;
+        }
+
+        await appendEvent(admin, sub.case_id, 'edd_note',
+          `Submission v${sub.version_number} ${nextStatus.replace('_', ' ')}`,
+          { submission_id: submissionId, review_status: nextStatus, reason: reason || null,
+            client_request_id: createdRequest?.id ?? null,
+            service_gate_unchanged: true },
+          userId, userEmail);
+
+        return jsonResponse({ submission: updated, client_request: createdRequest });
+      }
+
+      /* ═══════════ Document review with dual reasons (Stage 9) ═══════════ */
+      case 'review_document_v2': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const documentId = String(body.document_id ?? '');
+        const decision = String(body.decision ?? '');
+        if (!documentId || !['accepted', 'rejected'].includes(decision)) {
+          return jsonResponse({ error: 'document_id and decision (accepted|rejected) required' }, 400);
+        }
+        const { data: doc } = await admin.schema('aml').from('documents')
+          .select('*').eq('id', documentId).maybeSingle();
+        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+
+        const internalNote = String(body.internal_review_note ?? '').trim();
+        const safeReasonCode = String(body.client_safe_reason_code ?? '');
+        if (decision === 'rejected') {
+          if (!isClientSafeRejectionReason(safeReasonCode)) {
+            return jsonResponse({
+              error: 'A client-safe rejection reason code is required',
+              allowed: CLIENT_SAFE_REJECTION_REASONS,
+            }, 400);
+          }
+          if (internalNote.length < 5) {
+            return jsonResponse({ error: 'An internal review reason is required' }, 400);
+          }
+        }
+        const safeCopy = decision === 'rejected'
+          ? String(body.client_safe_message ?? CLIENT_SAFE_REJECTION_COPY[safeReasonCode]).slice(0, 500)
+          : null;
+
+        const { data: updated, error: docErr } = await admin.schema('aml').from('documents').update({
+          status: decision,
+          // Legacy column keeps the client-safe text so older readers stay
+          // correct; internal reasoning lives only in internal_review_note.
+          rejection_reason: safeCopy,
+          client_safe_rejection_reason: safeCopy,
+          internal_review_note: internalNote || null,
+          reviewed_by: userId, reviewed_at: new Date().toISOString(),
+        }).eq('id', documentId).select('*').single();
+        if (docErr) throw docErr;
+
+        if (doc.requirement_id) {
+          await admin.schema('aml').from('document_requirements')
+            .update({ status: decision === 'accepted' ? 'accepted' : 'outstanding' })
+            .eq('id', doc.requirement_id);
+        }
+
+        let createdRequest: any = null;
+        if (decision === 'rejected') {
+          const { data: reqRow } = await admin.schema('aml').from('client_requests').insert({
+            case_id: doc.case_id, kind: 'new_document',
+            subject: 'A document needs replacing',
+            message: safeCopy ?? 'Please upload a replacement document.',
+            action_code: 'upload_document',
+            action_target: { requirement_id: doc.requirement_id ?? null, target_step: 'documents' },
+            requested_by: userId, requested_by_label: userEmail,
+          }).select('*').single();
+          createdRequest = reqRow ?? null;
+        }
+
+        await appendEvent(admin, doc.case_id, 'system',
+          `Document ${decision}: ${doc.filename}`,
+          { document_id: documentId, decision, client_safe_reason_code: decision === 'rejected' ? safeReasonCode : null,
+            requirement_id: doc.requirement_id ?? null, client_request_id: createdRequest?.id ?? null },
+          userId, userEmail);
+
+        return jsonResponse({ document: updated, client_request: createdRequest });
+      }
+
+      /* ═══════════ Party reconciliation (Stages 13/14) ═══════════ */
+      case 'list_party_reconciliation': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data } = await admin.schema('aml').from('party_reconciliation_items')
+          .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+        return jsonResponse({ items: data ?? [] });
+      }
+
+      case 'resolve_party_reconciliation': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const itemId = String(body.item_id ?? '');
+        const resolution = String(body.resolution ?? '');
+        const rationale = String(body.rationale ?? '').trim();
+        const allowed = ['linked', 'created', 'manual_only', 'rejected', 'superseded', 'conflict'];
+        if (!itemId || !allowed.includes(resolution)) {
+          return jsonResponse({ error: `item_id and resolution (${allowed.join('|')}) required` }, 400);
+        }
+        if (rationale.length < 5) return jsonResponse({ error: 'A rationale is required' }, 400);
+        const { data: item } = await admin.schema('aml').from('party_reconciliation_items')
+          .select('*').eq('id', itemId).maybeSingle();
+        if (!item) return jsonResponse({ error: 'Item not found' }, 404);
+
+        let partyType = item.resolved_party_type;
+        let partyId = item.resolved_party_id;
+        if (resolution === 'linked') {
+          partyType = String(body.party_type ?? '');
+          partyId = String(body.party_id ?? '');
+          if (!partyType || !partyId) return jsonResponse({ error: 'party_type and party_id required to link' }, 400);
+          // Cross-case / cross-tenant linking is refused: the canonical party
+          // must belong to an entity on THIS case.
+          const { data: owner } = await admin.schema('aml')
+            .from(partyType === 'beneficial_owner' ? 'beneficial_owners' : 'authorised_representatives')
+            .select('id, entity_id, aml_entities:entity_id(case_id)').eq('id', partyId).maybeSingle();
+          const ownerCase = (owner as any)?.aml_entities?.case_id ?? null;
+          if (!owner || (ownerCase && String(ownerCase) !== String(item.case_id))) {
+            return jsonResponse({ error: 'That party does not belong to this case', code: 'cross_case_denied' }, 403);
+          }
+        }
+
+        const { data: updated, error } = await admin.schema('aml').from('party_reconciliation_items').update({
+          resolution_status: resolution,
+          resolved_party_type: partyType ?? null,
+          resolved_party_id: partyId ?? null,
+          resolution_rationale: rationale,
+          resolved_by: userId,
+          resolved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq('id', itemId).select('*').single();
+        if (error) throw error;
+
+        // Field-level provenance for every declared value at resolution time.
+        const provenance = Object.entries((item.declared_payload ?? {}) as Record<string, unknown>)
+          .filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object')
+          .slice(0, 40)
+          .map(([field, value]) => ({
+            case_id: item.case_id, reconciliation_item_id: item.id,
+            party_type: partyType ?? null, party_id: partyId ?? null,
+            source_submission_id: item.submission_id, source_section: 'related_parties',
+            source_field: field, submitted_value: String(value).slice(0, 500),
+            canonical_value: resolution === 'linked' || resolution === 'created' ? String(value).slice(0, 500) : null,
+            resolution_status: resolution, actor_id: userId, actor_label: userEmail, rationale,
+          }));
+        if (provenance.length > 0) {
+          await admin.schema('aml').from('party_field_provenance').insert(provenance);
+        }
+
+        // Screening work follows reconciliation, never precedes it.
+        if (['linked', 'created'].includes(resolution) && item.screening_required) {
+          await admin.schema('aml').from('party_screening_subjects').insert({
+            case_id: item.case_id, party_type: partyType ?? item.declared_role,
+            party_id: partyId ?? null, reconciliation_item_id: item.id,
+            screened_name: item.declared_name, required: true, state: 'not_started',
+          });
+        }
+
+        await appendEvent(admin, item.case_id, 'system',
+          `Party reconciliation ${resolution}: ${item.declared_name}`,
+          { reconciliation_item_id: itemId, resolution, party_type: partyType, party_id: partyId },
+          userId, userEmail);
+        return jsonResponse({ item: updated });
+      }
+
+      /* ═══════════ Party verification links (Stage 15) ═══════════ */
+      case 'list_party_verification_links': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const [{ data: links }, { data: checks }] = await Promise.all([
+          admin.schema('aml').from('party_verification_links')
+            .select('*').eq('case_id', caseId).is('unlinked_at', null),
+          admin.schema('aml').from('verification_checks')
+            .select('id, party_label, check_type, status, authoritative, execution_mode, completed_at')
+            .eq('case_id', caseId).order('created_at', { ascending: false }),
+        ]);
+        return jsonResponse({ links: links ?? [], eligible_checks: (checks ?? []).filter((c: any) => c.authoritative !== false) });
+      }
+
+      case 'link_party_verification': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const caseId = String(body.case_id ?? '');
+        const partyType = String(body.party_type ?? '');
+        const checkId = String(body.verification_check_id ?? '');
+        if (!caseId || !partyType || !checkId) {
+          return jsonResponse({ error: 'case_id, party_type and verification_check_id required' }, 400);
+        }
+        const { data: check } = await admin.schema('aml').from('verification_checks')
+          .select('id, case_id, status, authoritative, execution_mode, check_type').eq('id', checkId).maybeSingle();
+        if (!check) return jsonResponse({ error: 'Verification check not found' }, 404);
+        // Cross-case linking is impossible by contract.
+        if (String(check.case_id) !== caseId) {
+          return jsonResponse({ error: 'That check belongs to a different case', code: 'cross_case_denied' }, 403);
+        }
+        if (check.execution_mode === 'simulation' || check.authoritative === false) {
+          return jsonResponse({ error: 'A simulated or non-authoritative check cannot be evidence', code: 'not_authoritative' }, 409);
+        }
+        const { data: link, error } = await admin.schema('aml').from('party_verification_links').insert({
+          case_id: caseId, party_type: partyType, party_id: body.party_id ? String(body.party_id) : null,
+          verification_check_id: checkId, relationship: String(body.relationship ?? 'identity_evidence'),
+          authoritative: check.authoritative !== false, linked_by: userId,
+          metadata: { check_type: check.check_type, linked_status: check.status },
+        }).select('*').single();
+        if (error) throw error;
+        // Convenience pointer on the canonical party row — derived, never a
+        // substitute for the link evidence.
+        if (body.party_id && ['beneficial_owner', 'authorised_representative'].includes(partyType)) {
+          await admin.schema('aml')
+            .from(partyType === 'beneficial_owner' ? 'beneficial_owners' : 'authorised_representatives')
+            .update({ verification_check_id: checkId }).eq('id', String(body.party_id));
+        }
+        await appendEvent(admin, caseId, 'system', 'Party verification evidence linked',
+          { party_type: partyType, party_id: body.party_id ?? null, verification_check_id: checkId },
+          userId, userEmail);
+        return jsonResponse({ link });
+      }
+
+      case 'unlink_party_verification': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const linkId = String(body.link_id ?? '');
+        const reason = String(body.reason ?? '').trim();
+        if (!linkId) return jsonResponse({ error: 'link_id required' }, 400);
+        if (reason.length < 5) return jsonResponse({ error: 'An unlink reason is required' }, 400);
+        const { data: link, error } = await admin.schema('aml').from('party_verification_links')
+          .update({ unlinked_at: new Date().toISOString(), unlink_reason: reason })
+          .eq('id', linkId).is('unlinked_at', null).select('*').single();
+        if (error) throw error;
+        await appendEvent(admin, link.case_id, 'system', 'Party verification evidence unlinked',
+          { link_id: linkId, reason }, userId, userEmail);
+        return jsonResponse({ link });
+      }
+
+      /* ═══════════ Party-scoped screening (Stage 16) ═══════════ */
+      case 'list_party_screening': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+        return jsonResponse({ subjects: data ?? [] });
+      }
+
+      case 'queue_party_screening': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const subjectId = String(body.subject_id ?? '');
+        if (!subjectId) return jsonResponse({ error: 'subject_id required' }, 400);
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+        // Freshness window: do not re-screen the same party inside it.
+        const freshnessDays = Math.min(Math.max(Number(body.freshness_days ?? 90) || 90, 1), 365);
+        if (subject.last_screened_at &&
+            Date.now() - new Date(subject.last_screened_at).getTime() < freshnessDays * 864e5 &&
+            ['completed', 'false_positive'].includes(subject.state)) {
+          return jsonResponse({ skipped: true, code: 'within_freshness_window', subject });
+        }
+        const { data: updated, error } = await admin.schema('aml').from('party_screening_subjects')
+          .update({ state: 'queued', updated_at: new Date().toISOString() })
+          .eq('id', subjectId).select('*').single();
+        if (error) throw error;
+        await appendEvent(admin, subject.case_id, 'system',
+          `Party screening queued: ${subject.screened_name}`,
+          { party_screening_subject_id: subjectId }, userId, userEmail);
+        return jsonResponse({ subject: updated });
+      }
+
+      case 'adjudicate_party_screening': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const subjectId = String(body.subject_id ?? '');
+        const outcome = String(body.outcome ?? '');
+        const note = String(body.note ?? '').trim();
+        if (!subjectId || !['confirmed_match', 'false_positive'].includes(outcome)) {
+          return jsonResponse({ error: 'subject_id and outcome (confirmed_match|false_positive) required' }, 400);
+        }
+        if (note.length < 5) return jsonResponse({ error: 'An adjudication note is required' }, 400);
+        const { data: updated, error } = await admin.schema('aml').from('party_screening_subjects').update({
+          state: outcome, adjudicated_by: userId, adjudicated_at: new Date().toISOString(),
+          adjudication_note: note, updated_at: new Date().toISOString(),
+        }).eq('id', subjectId).select('*').single();
+        if (error) throw error;
+        await appendEvent(admin, updated.case_id, 'mlro_decision',
+          `Party screening adjudicated ${outcome}: ${updated.screened_name}`,
+          { party_screening_subject_id: subjectId, outcome }, userId, userEmail);
+        return jsonResponse({ subject: updated });
       }
 
       default:
