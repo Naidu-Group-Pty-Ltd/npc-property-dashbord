@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo } from "react";
 import {
   ShieldCheck,
@@ -401,7 +401,7 @@ export function AmlLayout() {
               const active = activeWorkspace?.key === w.key;
               const Icon = w.icon;
               return (
-                <NavLink
+                <Link
                   key={w.key}
                   to={w.defaultPath}
                   className={cn(
@@ -414,7 +414,7 @@ export function AmlLayout() {
                 >
                   <Icon aria-hidden="true" className="h-4 w-4 shrink-0" />
                   <span className="truncate">{t(w.label)}</span>
-                </NavLink>
+                </Link>
               );
             })}
           </nav>
@@ -431,10 +431,9 @@ export function AmlLayout() {
                   location.pathname === s.to ||
                   location.pathname.startsWith(s.to + "/");
                 return (
-                  <NavLink
+                  <Link
                     key={s.to}
                     to={s.to}
-                    end={s.end}
                     className={cn(
                       "inline-flex shrink-0 items-center rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                       active
@@ -444,7 +443,7 @@ export function AmlLayout() {
                     aria-current={active ? "page" : undefined}
                   >
                     {t(s.label)}
-                  </NavLink>
+                  </Link>
                 );
               })}
             </nav>
