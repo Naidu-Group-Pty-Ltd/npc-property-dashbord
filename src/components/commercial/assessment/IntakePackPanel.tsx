@@ -21,9 +21,10 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  AlertTriangle, CheckCircle2, Download, FileSpreadsheet, FileText, Info,
+  AlertTriangle, BookOpen, CheckCircle2, Download, FileSpreadsheet, FileText, Info,
   Loader2, Paperclip, ScanLine, Upload, UserPlus, X,
 } from 'lucide-react';
+import { WorkedExampleDialog } from './WorkedExampleDialog';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import {
@@ -100,6 +101,7 @@ export function IntakePackPanel({
   const [extractingId, setExtractingId] = useState<string | null>(null);
   const [extractStage, setExtractStage] = useState<string>('');
   const [extracted, setExtracted] = useState<{ pack: ParsedPack; fileName: string } | null>(null);
+  const [exampleOpen, setExampleOpen] = useState(false);
   const counter = useRef(0);
 
   /** Branding is fetched lazily — the panel must render instantly. */
@@ -407,6 +409,30 @@ export function IntakePackPanel({
         </p>
       </div>
 
+      {/*
+        The example sits above the downloads on purpose. The question somebody
+        has before they download a blank form is "what does a filled one look
+        like?", and answering it here costs one click instead of a round trip
+        through Excel.
+      */}
+      <div className="ci-example-callout">
+        <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-foreground">See a completed pack first</p>
+          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+            A fully worked example — a trust buying a two-tenant industrial facility, with a
+            guarantor company, existing properties and confirmed add-backs. Read it here, or
+            download the filled workbook and guide to keep beside the blank ones.
+          </p>
+        </div>
+        <Button
+          size="sm" variant="outline" className="shrink-0"
+          onClick={() => setExampleOpen(true)}
+        >
+          View example
+        </Button>
+      </div>
+
       {/* ---- Download ---------------------------------------------------- */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-border bg-muted/20 p-4">
@@ -415,9 +441,10 @@ export function IntakePackPanel({
             Workbook (Excel)
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            The one that comes back in. Every answer maps straight into the assessment. Covers all
-            seven steps, with a sheet per section and room to list multiple entities, properties,
-            liabilities and tenancies.
+            The one that comes back in. Every answer maps straight into the assessment, with a sheet
+            per section and room to list multiple entities, properties, liabilities and tenancies.
+            Its Summary sheet closes the funding, strikes the gearing and shows an indicative
+            coverage ratio live, so you can answer &quot;does it work?&quot; at the table.
           </p>
           <Button
             size="sm" className="mt-3" onClick={downloadWorkbook}
@@ -436,8 +463,9 @@ export function IntakePackPanel({
             Interview guide (Word)
           </h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            A printable question script for sitting with a client, with a declaration and a document
-            checklist. Editable, but not read back in — use the workbook for that.
+            A printable question script for sitting with a client — ten numbered sections with tick
+            boxes, room for notes against each, a document checklist and a declaration to sign.
+            Editable, but not read back in — use the workbook for that.
           </p>
           <Button
             size="sm" variant="outline" className="mt-3" onClick={downloadDocument}
@@ -698,6 +726,13 @@ export function IntakePackPanel({
           </Button>
         </div>
       </div>
+
+      <WorkedExampleDialog
+        open={exampleOpen}
+        onOpenChange={setExampleOpen}
+        resolveBranding={ensureBranding}
+        onDownload={triggerDownload}
+      />
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
