@@ -67,6 +67,9 @@ interface Props {
 export function StepOwnership({ payload, onChange, issues, disabled }: Props) {
   const ownership = payload.ownership;
   const errorFor = (field: string) => issues.find((issue) => issue.field === field && issue.severity === 'error')?.message;
+  const warningFor = (field: string) => issues.find((issue) => issue.field === field && issue.severity === 'warning')?.message;
+  /** Errors first; warnings still need a slot so the error summary can scroll to them. */
+  const messageFor = (field: string) => errorFor(field) ?? warningFor(field);
 
   const setOwnership = (patch: Partial<AssessmentPayload['ownership']>) => {
     onChange({ ...payload, ownership: { ...ownership, ...patch } });
@@ -172,8 +175,15 @@ export function StepOwnership({ payload, onChange, issues, disabled }: Props) {
           </Button>
         </div>
 
+        {/*
+          Section-level anchor. The ownership total is a property of the set of
+          entities, not of any one row, so the error summary lands on the
+          statement of the rule rather than picking an arbitrary entity to blame.
+        */}
         {errorFor('ownership.entities') ? (
-          <p className="ci-field-error" role="alert">{errorFor('ownership.entities')}</p>
+          <p className="ci-field-error" role="alert" data-ci-field="ownership.entities">
+            {errorFor('ownership.entities')}
+          </p>
         ) : null}
 
         {!ownership.entities.length ? (
@@ -203,10 +213,10 @@ export function StepOwnership({ payload, onChange, issues, disabled }: Props) {
                 </header>
 
                 <div className="ci-field-grid sm:grid-cols-2 lg:grid-cols-3">
-                  <TextField label="Entity name" value={entity.entityName} onChange={(value) => updateEntity(entity.id, { entityName: value })} disabled={disabled} />
-                  <SelectField label="Structure" value={entity.structure} onChange={(value) => updateEntity(entity.id, { structure: value })} options={STRUCTURES} disabled={disabled} />
-                  <TextField label="ABN / ACN" value={entity.abnAcn} onChange={(value) => updateEntity(entity.id, { abnAcn: value })} disabled={disabled} />
-                  <PercentField label="Ownership" value={entity.ownershipPercent} onChange={(value) => updateEntity(entity.id, { ownershipPercent: value })} disabled={disabled} />
+                  <TextField label="Entity name" value={entity.entityName} onChange={(value) => updateEntity(entity.id, { entityName: value })} disabled={disabled} error={messageFor(`ownership.entities.${index}.entityName`)} fieldPath={`ownership.entities.${index}.entityName`} />
+                  <SelectField label="Structure" value={entity.structure} onChange={(value) => updateEntity(entity.id, { structure: value })} options={STRUCTURES} disabled={disabled} fieldPath={`ownership.entities.${index}.structure`} />
+                  <TextField label="ABN / ACN" value={entity.abnAcn} onChange={(value) => updateEntity(entity.id, { abnAcn: value })} disabled={disabled} error={messageFor(`ownership.entities.${index}.abnAcn`)} fieldPath={`ownership.entities.${index}.abnAcn`} />
+                  <PercentField label="Ownership" value={entity.ownershipPercent} onChange={(value) => updateEntity(entity.id, { ownershipPercent: value })} disabled={disabled} fieldPath={`ownership.entities.${index}.ownershipPercent`} />
                   <NumberField label="Years trading" value={entity.yearsTrading} onChange={(value) => updateEntity(entity.id, { yearsTrading: value })} disabled={disabled} />
                   <TextField label="Industry" value={entity.industry} onChange={(value) => updateEntity(entity.id, { industry: value })} disabled={disabled} />
                 </div>

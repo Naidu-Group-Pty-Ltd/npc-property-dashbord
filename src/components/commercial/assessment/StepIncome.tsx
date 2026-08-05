@@ -128,7 +128,8 @@ export function StepIncome({ payload, onChange, issues, disabled }: Props) {
       </FieldGroup>
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        {/* Section anchor: duplicate period end dates are a property of the set. */}
+        <div className="flex items-center justify-between gap-3" data-ci-field="income.periods">
           <h3 className="text-sm font-semibold tracking-tight text-foreground">Financial periods</h3>
           <Button
             size="sm" variant="outline" disabled={disabled}
@@ -230,7 +231,7 @@ export function StepIncome({ payload, onChange, issues, disabled }: Props) {
                                 <MoneyField
                                   label="Amount" value={addback.amount}
                                   onChange={(value) => updateAddback(addback.id, { amount: value })} disabled={disabled}
-                                  error={errorFor(`income.addbacks.${income.addbacks.indexOf(addback)}.amount`)}
+                                  error={errorFor(`income.addbacks.${income.addbacks.indexOf(addback)}.amount`)} fieldPath={`income.addbacks.${income.addbacks.indexOf(addback)}.amount`}
                                 />
                                 <TextField label="Source document" value={addback.source} onChange={(value) => updateAddback(addback.id, { source: value })} disabled={disabled} placeholder="e.g. FY2025 statements, note 7" />
                                 <div className="flex items-end pb-1">
@@ -250,7 +251,7 @@ export function StepIncome({ payload, onChange, issues, disabled }: Props) {
                                     onChange={(value) => updateAddback(addback.id, { reason: value })}
                                     disabled={disabled} rows={2}
                                     placeholder="Why this expense will not recur, or why it is not a genuine cash cost."
-                                    error={errorFor(`income.addbacks.${income.addbacks.indexOf(addback)}.reason`)}
+                                    error={errorFor(`income.addbacks.${income.addbacks.indexOf(addback)}.reason`)} fieldPath={`income.addbacks.${income.addbacks.indexOf(addback)}.reason`}
                                   />
                                 </div>
                               </div>
