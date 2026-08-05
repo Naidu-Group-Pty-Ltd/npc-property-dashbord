@@ -79,7 +79,7 @@ export default function PortalHandoff() {
   }, [token]);
 
   return (
-    <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-6">
+    <div className="client-portal-theme min-h-screen flex items-center justify-center p-6">
       <Card className="client-portal-soft-panel max-w-md w-full overflow-hidden">
         <CardHeader className="border-b border-border/50 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
           <CardTitle className="flex items-center gap-2">

@@ -54,7 +54,7 @@ export default function SolicitorLogin() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
+      <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <div className="flex flex-col items-center gap-3">
           <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
 
@@ -162,7 +162,7 @@ export default function SolicitorLogin() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex">
       {/* ── Left branded panel (desktop only) ── */}
       <aside
         className="hidden lg:flex lg:w-[480px] xl:w-[520px] flex-col relative overflow-hidden border-r border-border bg-gradient-to-br from-card via-card to-primary/5"

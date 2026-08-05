@@ -226,6 +226,7 @@
   background: hsl(var(--card) / 0.9);
   box-shadow: var(--elevation-1);
   cursor: pointer;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 

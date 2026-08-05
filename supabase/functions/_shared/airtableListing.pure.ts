@@ -30,6 +30,12 @@
 
 import { INTAKE_FIELDS as F } from './airtableIntakeFields.pure.ts';
 import { reconcileLocality, type LocalityTrust } from './auLocality.pure.ts';
+import {
+  normaliseImageCandidates,
+  orderCandidatesForDisplay,
+  parseImageUrlList,
+  type ImageCandidate,
+} from './listingImages.pure.ts';
 
 export interface AirtableSourceRecord {
   id: string;
@@ -262,6 +268,67 @@ function displayDate(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Images                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** Everything the page needs to know about a listing's photographs. */
+export interface ResolvedListingImages {
+  /** Ordered, de-duplicated source candidates. The first is the intended hero. */
+  candidates: ImageCandidate[];
+  /** When intake last captured this set, or null if it never recorded one. */
+  capturedAt: string | null;
+  /** What intake counted, which can exceed `candidates.length` if URLs were malformed. */
+  reportedCount: number | null;
+  source: string | null;
+  primaryUrl: string | null;
+}
+
+/**
+ * Collects a record's image candidates from every column that can hold one.
+ *
+ * Reading `Listing Images` alone — which is all the projection used to do —
+ * answers "did an agent email us a photo", and the answer was no on all 1,441
+ * records. Photographs mostly arrive as *links* on a scraped listing page, and
+ * intake now records those in `Listing Image URLs` newest-first. Both are read,
+ * attachments first because bytes we hold beat a hotlink we do not, and the
+ * combined set is then ordered by source quality with plans pushed to the back.
+ *
+ * `Primary Image URL` is folded in last rather than first: it is a convenience
+ * copy of the head of the URL list, so it is normally already present, and the
+ * de-duplication drops it. It only contributes when the list column is empty.
+ */
+export function resolveListingImages(fields: Record<string, unknown>): ResolvedListingImages {
+  const attachments = normaliseImageCandidates(fields[F.listingImages], 'airtable');
+  // `listing_url`, not `scraped`. These URLs were read off the agency's own
+  // listing page by intake, so they outrank a generic scrape — and, more
+  // importantly, they must not share an origin with the photographs
+  // `listing-enrichment` harvests, which are stored as `scraped`. Two sources
+  // under one label cannot be told apart when the library merges them.
+  const fromListing = normaliseImageCandidates(
+    parseImageUrlList(fields[F.listingImageUrls]),
+    'listing_url',
+  );
+  const primary = normaliseImageCandidates(
+    parseImageUrlList(fields[F.primaryImageUrl]),
+    'listing_url',
+  );
+
+  const byIdentity = new Map<string, ImageCandidate>();
+  for (const candidate of [...attachments, ...fromListing, ...primary]) {
+    const key = candidate.externalId ? `att:${candidate.externalId}` : candidate.url;
+    if (!byIdentity.has(key)) byIdentity.set(key, candidate);
+  }
+
+  return {
+    candidates: orderCandidatesForDisplay(Array.from(byIdentity.values())),
+    capturedAt: isoDate(fields[F.imagesCapturedAt]),
+    reportedCount: numeric(fields[F.imageCount]),
+    source: text(fields[F.imageSource]),
+    primaryUrl: text(fields[F.primaryImageUrl]),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Projection                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -290,6 +357,7 @@ export function projectAirtableRecord(
 
   const price = resolvePrice(fields);
   const confidences = resolveConfidences(fields);
+  const media = resolveListingImages(fields);
   const beds = count(fields[F.beds]);
   const baths = count(fields[F.baths]);
   const landSizeSqm = numeric(fields[F.landSizeSqm]);
@@ -412,9 +480,26 @@ export function projectAirtableRecord(
     summary: text(fields[F.summary]),
     rawExtract: text(fields[F.rawSnippet]) ?? text(fields[F.originalRowText]),
 
-    // Links and media. All four attachment columns are empty on every record;
-    // photos come from the image library, keyed by listing id.
+    // Links and media.
+    //
+    // `images` stays the raw attachment array every existing caller expects.
+    // `imageCandidates` is the resolved set — attachments plus the scraped URL
+    // column, ordered best-source-first — and is what the image library should
+    // be asked to harvest.
     images: Array.isArray(fields[F.listingImages]) ? (fields[F.listingImages] as unknown[]) : [],
+    imageCandidates: media.candidates,
+    // The freshness signal. `createdTime` says when the record arrived, which is
+    // a different question: a record filed in January can have its photos
+    // re-scraped in August, and it is the August date that decides whether the
+    // page is showing the most recent images and how soon to re-verify them.
+    imagesCapturedAt: media.capturedAt,
+    // Named for what it is: how many candidates intake gave us, which is a
+    // different number from how many photographs the page renders. The
+    // rendered count comes from the image library, keyed by listing id.
+    imageCandidateCount: media.candidates.length,
+    reportedImageCount: media.reportedCount,
+    imageSource: media.source,
+    primaryImageUrl: media.primaryUrl,
     floorplans: Array.isArray(fields[F.floorplan]) ? (fields[F.floorplan] as unknown[]) : [],
     url: text(fields[F.webLink]) ?? text(fields[F.sourceWebLink]),
     webLinks: text(fields[F.webLink]),

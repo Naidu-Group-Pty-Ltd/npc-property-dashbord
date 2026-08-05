@@ -201,224 +201,143 @@
   .ci-empty-state { @apply flex min-h-72 flex-col items-center justify-center bg-gradient-to-br from-card via-card to-primary/5 px-6 py-14 text-center; }
   .ci-loading-state { @apply flex min-h-56 flex-col items-center justify-center bg-gradient-to-br from-card via-card to-primary/5 px-6 py-14 text-center; }
 
-  .client-portal-theme {
-    @apply relative min-h-screen bg-background text-foreground;
-    background-image:
-      radial-gradient(circle at top left, hsl(var(--primary) / 0.14), transparent 28%),
-      radial-gradient(circle at top right, hsl(var(--primary) / 0.08), transparent 24%),
-      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)) 40%, hsl(var(--card)) 100%);
-  }
+  /* ── Partner portals: client, finance, solicitor, builder ─────────
+     Layout, texture and typography only.
 
-  .client-portal-theme::before {
-    content: "";
-    @apply pointer-events-none absolute inset-0 opacity-40;
-    background-image: linear-gradient(hsl(var(--border) / 0.14) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.1) 1px, transparent 1px);
-    background-size: 32px 32px;
-    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
-  }
+     These four blocks used to be near-identical copies of the same
+     surface recipe — background, blur, border, shadow — repeated once
+     per portal. The material now comes from src/styles/glass.css, which
+     styles all four together so they cannot drift apart; what is left
+     here is the geometry each portal actually owns.
 
-  .client-portal-sidebar {
-    @apply border-border/70 bg-card/80 backdrop-blur-xl shadow-2xl shadow-primary/5;
-  }
-
-  .client-portal-topbar {
-    @apply border-border/70 bg-card/90 backdrop-blur-xl shadow-sm shadow-primary/5;
-  }
-
-  .client-portal-main {
-    @apply relative;
-  }
-
-  .client-portal-main::before {
-    content: "";
-    @apply pointer-events-none absolute inset-x-0 top-0 h-56;
-    background: linear-gradient(180deg, hsl(var(--primary) / 0.08), transparent);
-  }
-
-  .client-portal-content {
-    @apply relative mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-8 lg:px-10 lg:py-10;
-  }
-
-  .client-portal-content > * {
-    @apply relative z-10;
-  }
-
-  .client-portal-theme .border.bg-card {
-    border-color: hsl(var(--border) / 0.6);
-    background-color: hsl(var(--card) / 0.85);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 14px 36px -22px hsl(var(--primary) / 0.2);
-  }
-
-  .client-portal-theme input,
-  .client-portal-theme textarea,
-  .client-portal-theme button[role="combobox"] {
-    @apply border-border/60 bg-background/80 shadow-sm shadow-primary/5 focus-visible:ring-ring/80 focus-visible:ring-offset-background;
-  }
-
-  .client-portal-theme [data-radix-popper-content-wrapper] [role="listbox"],
-  .client-portal-theme [data-radix-popper-content-wrapper] [data-radix-select-content] {
-    @apply border-border/70 bg-popover/95 backdrop-blur-xl shadow-2xl shadow-primary/10;
-  }
-
-  .client-portal-page-header {
-    @apply relative overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/5 to-card p-6 shadow-xl shadow-primary/5 md:p-8;
-  }
-
-  .client-portal-page-header::after {
-    content: "";
-    @apply pointer-events-none absolute right-0 top-0 h-40 w-40 rounded-full blur-3xl;
-    background: hsl(var(--primary) / 0.12);
-    transform: translate(20%, -35%);
-  }
-
-  .client-portal-section-title {
-    @apply flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground;
-  }
-
-  .client-portal-soft-panel {
-    @apply rounded-2xl border border-border/60 bg-card/75 shadow-lg shadow-primary/5 backdrop-blur-sm;
-  }
-
-  .client-portal-stat-card {
-    @apply relative overflow-hidden rounded-2xl border border-border/60 bg-card/90 shadow-lg shadow-primary/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10;
-  }
-
-  /* Solicitor Portal — mirrors the client/finance portal chrome so all three
-     partner-facing surfaces share one visual language. */
-  .solicitor-portal-theme {
-    @apply relative min-h-screen bg-background text-foreground;
-    background-image:
-      radial-gradient(circle at top left, hsl(var(--primary) / 0.14), transparent 28%),
-      radial-gradient(circle at top right, hsl(var(--primary) / 0.08), transparent 24%),
-      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)) 40%, hsl(var(--card)) 100%);
-  }
-
-  .solicitor-portal-theme::before {
-    content: "";
-    @apply pointer-events-none absolute inset-0 opacity-40;
-    background-image: linear-gradient(hsl(var(--border) / 0.14) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.1) 1px, transparent 1px);
-    background-size: 32px 32px;
-    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
-  }
-
-  .solicitor-portal-sidebar {
-    @apply border-border/70 bg-card/80 backdrop-blur-xl shadow-2xl shadow-primary/5;
-  }
-
-  .solicitor-portal-topbar {
-    @apply border-border/70 bg-card/90 backdrop-blur-xl shadow-sm shadow-primary/5;
-  }
-
-  .solicitor-portal-main {
-    @apply relative;
-  }
-
-  .solicitor-portal-main::before {
-    content: "";
-    @apply pointer-events-none absolute inset-x-0 top-0 h-56;
-    background: linear-gradient(180deg, hsl(var(--primary) / 0.08), transparent);
-  }
-
-  .solicitor-portal-content {
-    @apply relative mx-auto w-full max-w-7xl px-4 py-5 md:px-8 md:py-8 lg:px-10 lg:py-10;
-  }
-
-  .solicitor-portal-content > * {
-    @apply relative z-10;
-  }
-
-  .solicitor-portal-page-header {
-    @apply relative overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/5 to-card p-6 shadow-xl shadow-primary/5 md:p-8;
-  }
-
-  .solicitor-portal-page-header::after {
-    content: "";
-    @apply pointer-events-none absolute right-0 top-0 h-40 w-40 rounded-full blur-3xl;
-    background: hsl(var(--primary) / 0.12);
-    transform: translate(20%, -35%);
-  }
-
-  .solicitor-portal-section-title {
-    @apply flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground;
-  }
-
-  .solicitor-portal-soft-panel {
-    @apply rounded-2xl border border-border/60 bg-card/75 shadow-lg shadow-primary/5 backdrop-blur-sm;
-  }
-
-  .solicitor-portal-stat-card {
-    @apply relative overflow-hidden rounded-2xl border border-border/60 bg-card/90 shadow-lg shadow-primary/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10;
-  }
-
-  .solicitor-portal-theme .border.bg-card {
-    border-color: hsl(var(--border) / 0.6);
-    background-color: hsl(var(--card) / 0.85);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 14px 36px -22px hsl(var(--primary) / 0.2);
-  }
-
-  .solicitor-portal-theme input,
-  .solicitor-portal-theme textarea,
-  .solicitor-portal-theme button[role="combobox"] {
-    @apply border-border/60 bg-background/80 shadow-sm shadow-primary/5 focus-visible:ring-ring/80 focus-visible:ring-offset-background;
-  }
-
-  .solicitor-portal-theme [data-radix-popper-content-wrapper] [role="listbox"],
-  .solicitor-portal-theme [data-radix-popper-content-wrapper] [data-radix-select-content] {
-    @apply border-border/70 bg-popover/95 backdrop-blur-xl shadow-2xl shadow-primary/10;
-  }
-
-  /* Builder / Developer Portal — the same visual formulas as the Solicitor
-     Portal above, kept as its own class so the two can never affect each other.
-     Every value is a semantic token, so a brand-colour change in Command Centre
-     moves Builder exactly as it moves the other partner portals. */
+     The theme root no longer paints an opaque background: the ambient
+     field is painted on <body> and has to read through. Keep it that
+     way — an opaque fill here switches the glass off for a whole
+     portal in one line. */
+  .client-portal-theme,
+  .finance-portal-theme,
+  .solicitor-portal-theme,
   .builder-portal-theme {
-    @apply relative min-h-screen bg-background text-foreground;
-    background-image:
-      radial-gradient(circle at top left, hsl(var(--primary) / 0.14), transparent 28%),
-      radial-gradient(circle at top right, hsl(var(--primary) / 0.08), transparent 24%),
-      linear-gradient(180deg, hsl(var(--background)), hsl(var(--background)) 40%, hsl(var(--card)) 100%);
+    @apply relative min-h-screen text-foreground;
   }
 
+  .client-portal-theme::before,
+  .finance-portal-theme::before,
+  .solicitor-portal-theme::before,
   .builder-portal-theme::before {
     content: "";
     @apply pointer-events-none absolute inset-0 opacity-40;
     background-image: linear-gradient(hsl(var(--border) / 0.14) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.1) 1px, transparent 1px);
     background-size: 32px 32px;
+    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
     mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
   }
 
-  .builder-portal-sidebar {
-    @apply border-border/70 bg-card/80 backdrop-blur-xl shadow-2xl shadow-primary/5;
-  }
-
-  .builder-portal-topbar {
-    @apply border-border/70 bg-card/90 backdrop-blur-xl shadow-sm shadow-primary/5;
-  }
-
+  .client-portal-main,
+  .finance-portal-main,
+  .solicitor-portal-main,
   .builder-portal-main {
-    @apply relative;
+    /* min-w-0 is load-bearing, not decoration. These sit in a flex row next
+       to a 288px sidebar; without it a flex item's min-width resolves to its
+       content width, so one wide table pushes the whole portal sideways and
+       the page scrolls horizontally. The Command Centre has always carried
+       it on .dashboard-main — the portals did not, which is why they were
+       the only surfaces overflowing at tablet width. */
+    @apply relative min-w-0;
   }
 
+  .client-portal-main::before,
+  .finance-portal-main::before,
+  .solicitor-portal-main::before,
   .builder-portal-main::before {
     content: "";
     @apply pointer-events-none absolute inset-x-0 top-0 h-56;
     background: linear-gradient(180deg, hsl(var(--primary) / 0.08), transparent);
   }
 
+  /* Content width is the one thing that genuinely differs per portal:
+     the client portal is a reading surface, the partner portals are
+     working surfaces. */
+  .client-portal-content {
+    @apply relative mx-auto w-full max-w-6xl py-5 md:py-8 lg:py-10;
+  }
+
+  .finance-portal-content,
+  .solicitor-portal-content,
   .builder-portal-content {
-    @apply relative mx-auto w-full max-w-7xl px-4 py-5 md:px-8 md:py-8 lg:px-10 lg:py-10;
+    @apply relative mx-auto w-full max-w-7xl py-5 md:py-8 lg:py-10;
   }
 
+  /* Inline padding is set here rather than with px-* utilities so it can be
+     max()'d against the display cutout.
+
+     index.html ships `viewport-fit=cover`, so the page paints edge to edge
+     and the browser does NOT reserve room for the notch or the home
+     indicator — that is the author's job. The Command Centre already did
+     this; the portals did not, so on a notched phone their content ran
+     under the indicator in portrait and under the camera housing in
+     landscape. env() is 0 on every device without a cutout, so max() leaves
+     the normal spacing exactly as it was. */
+  .client-portal-content,
+  .finance-portal-content,
+  .solicitor-portal-content,
+  .builder-portal-content {
+    --portal-pad-x: 1rem;
+    padding-left: max(var(--portal-pad-x), env(safe-area-inset-left));
+    padding-right: max(var(--portal-pad-x), env(safe-area-inset-right));
+    padding-bottom: max(1.25rem, calc(env(safe-area-inset-bottom) + 0.75rem));
+  }
+
+  @media (min-width: 768px) {
+    .client-portal-content,
+    .finance-portal-content,
+    .solicitor-portal-content,
+    .builder-portal-content {
+      --portal-pad-x: 2rem;
+      padding-bottom: max(2rem, calc(env(safe-area-inset-bottom) + 1rem));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .client-portal-content,
+    .finance-portal-content,
+    .solicitor-portal-content,
+    .builder-portal-content {
+      --portal-pad-x: 2.5rem;
+      padding-bottom: max(2.5rem, calc(env(safe-area-inset-bottom) + 1rem));
+    }
+  }
+
+  /* The sticky top bars sit under the status bar / camera housing. */
+  .client-portal-topbar,
+  .finance-portal-topbar,
+  .solicitor-portal-topbar,
+  .builder-portal-topbar {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  /* Same reasoning one level down, mirroring .dashboard-page-shell > *:
+     grid and flex children default to min-width:auto, so a long unbroken
+     cell or a wide table refuses to shrink and overflows the column. */
+  .client-portal-content > *,
+  .finance-portal-content > *,
+  .solicitor-portal-content > *,
   .builder-portal-content > * {
-    @apply relative z-10;
+    @apply relative z-10 min-w-0;
   }
 
+  .client-portal-page-header,
+  .finance-portal-page-header,
+  .solicitor-portal-page-header,
   .builder-portal-page-header {
-    @apply relative overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/10 via-primary/5 to-card p-6 shadow-xl shadow-primary/5 md:p-8;
+    @apply relative overflow-hidden rounded-2xl border p-6 md:p-8;
   }
 
+  .client-portal-page-header::after,
+  .finance-portal-page-header::after,
+  .solicitor-portal-page-header::after,
   .builder-portal-page-header::after {
     content: "";
     @apply pointer-events-none absolute right-0 top-0 h-40 w-40 rounded-full blur-3xl;
@@ -426,35 +345,38 @@
     transform: translate(20%, -35%);
   }
 
+  .client-portal-section-title,
+  .finance-portal-section-title,
+  .solicitor-portal-section-title,
   .builder-portal-section-title {
     @apply flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground;
   }
 
+  .client-portal-soft-panel,
+  .finance-portal-soft-panel,
+  .solicitor-portal-soft-panel,
   .builder-portal-soft-panel {
-    @apply rounded-2xl border border-border/60 bg-card/75 shadow-lg shadow-primary/5 backdrop-blur-sm;
+    @apply rounded-2xl border;
   }
 
+  .client-portal-stat-card,
+  .finance-portal-stat-card,
+  .solicitor-portal-stat-card,
   .builder-portal-stat-card {
-    @apply relative overflow-hidden rounded-2xl border border-border/60 bg-card/90 shadow-lg shadow-primary/5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10;
+    @apply relative overflow-hidden rounded-2xl border transition-all duration-200 hover:-translate-y-0.5;
   }
 
-  .builder-portal-theme .border.bg-card {
-    border-color: hsl(var(--border) / 0.6);
-    background-color: hsl(var(--card) / 0.85);
-    backdrop-filter: blur(10px);
-    box-shadow: 0 14px 36px -22px hsl(var(--primary) / 0.2);
+  .client-portal-sidebar,
+  .finance-portal-sidebar,
+  .solicitor-portal-sidebar,
+  .builder-portal-sidebar,
+  .client-portal-topbar,
+  .finance-portal-topbar,
+  .solicitor-portal-topbar,
+  .builder-portal-topbar {
+    @apply border-border/70;
   }
 
-  .builder-portal-theme input,
-  .builder-portal-theme textarea,
-  .builder-portal-theme button[role="combobox"] {
-    @apply border-border/60 bg-background/80 shadow-sm shadow-primary/5 focus-visible:ring-ring/80 focus-visible:ring-offset-background;
-  }
-
-  .builder-portal-theme [data-radix-popper-content-wrapper] [role="listbox"],
-  .builder-portal-theme [data-radix-popper-content-wrapper] [data-radix-select-content] {
-    @apply border-border/70 bg-popover/95 backdrop-blur-xl shadow-2xl shadow-primary/10;
-  }
 
   .dashboard-shell {
     @apply relative min-h-screen bg-background text-foreground;
@@ -469,12 +391,14 @@
     @apply pointer-events-none absolute inset-0 opacity-35;
     background-image: linear-gradient(hsl(var(--border) / 0.12) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.08) 1px, transparent 1px);
     background-size: 36px 36px;
+    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.48), transparent 72%);
     mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.48), transparent 72%);
   }
 
   .dashboard-surface-panel {
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.72);
     background-color: hsl(var(--surface-1, var(--dashboard-surface)) / 0.82);
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 48px -30px hsl(var(--brand-900) / 0.24), inset 0 1px 0 hsl(0 0% 100% / 0.62);
   }
@@ -482,6 +406,7 @@
   .dashboard-surface-panel-strong {
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 24px 60px -34px hsl(var(--brand-900) / 0.28), inset 0 1px 0 hsl(0 0% 100% / 0.66);
   }
@@ -490,6 +415,7 @@
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
     box-shadow: 0 10px 24px -20px hsl(var(--primary) / 0.4);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
   }
 
@@ -500,12 +426,14 @@
 
   .dashboard-sidebar-surface {
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 18px 0 50px -36px hsl(var(--brand-900) / 0.34), inset -1px 0 0 hsl(0 0% 100% / 0.52);
     background-color: hsl(var(--sidebar-surface, var(--surface-2, var(--dashboard-surface-elevated))) / 0.94);
   }
 
   .dashboard-topbar-surface {
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 46px -30px hsl(var(--brand-900) / 0.24), inset 0 -1px 0 hsl(var(--border-soft) / 0.46);
     border-color: hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.82);
@@ -537,8 +465,25 @@
   }
 
   .dashboard-content {
-    @apply relative mx-auto w-full max-w-[1600px] px-3 py-3 pb-24 sm:px-4 sm:py-4 md:px-6 md:py-6 md:pb-8;
+    @apply relative mx-auto w-full max-w-[1600px] py-3 pb-24 sm:py-4 md:py-6 md:pb-8;
+    /* Bottom already cleared the home indicator; the left/right cutout in
+       landscape did not, so the same max() treatment now covers all sides. */
+    --dashboard-pad-x: 0.75rem;
+    padding-left: max(var(--dashboard-pad-x), env(safe-area-inset-left));
+    padding-right: max(var(--dashboard-pad-x), env(safe-area-inset-right));
     padding-bottom: max(6rem, calc(env(safe-area-inset-bottom) + 5rem));
+  }
+
+  @media (min-width: 640px) {
+    .dashboard-content {
+      --dashboard-pad-x: 1rem;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .dashboard-content {
+      --dashboard-pad-x: 1.5rem;
+    }
   }
 
   @media (min-width: 1024px) {
@@ -566,6 +511,7 @@
   }
   @media (max-width: 767px) {
     .responsive-table-scroll {
+      -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
       mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
       -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
     }
@@ -627,6 +573,7 @@
   .dashboard-panel {
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 20px 48px -30px hsl(var(--primary) / 0.34);
     border-radius: 1rem;
@@ -634,6 +581,7 @@
 
   .dashboard-panel-muted {
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.72);
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 40px -28px hsl(var(--primary) / 0.28);
     border-radius: 1rem;
@@ -644,6 +592,7 @@
     @apply flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-5;
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 20px 48px -30px hsl(var(--primary) / 0.34);
     border-radius: 1rem;
@@ -658,6 +607,7 @@
     @apply relative overflow-hidden;
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     border-radius: 1rem;
     box-shadow: 0 22px 44px -30px hsl(var(--primary) / 0.32);
@@ -699,6 +649,7 @@
     @apply flex flex-col items-center justify-center gap-4 px-6 py-10 text-center md:px-10 md:py-12;
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.72);
     background-color: hsl(var(--dashboard-surface-muted) / 0.7);
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 40px -28px hsl(var(--primary) / 0.28);
     border-radius: 1rem;
@@ -716,6 +667,7 @@
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
     box-shadow: 0 10px 24px -20px hsl(var(--primary) / 0.4);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
   }
 
@@ -729,6 +681,7 @@
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
     box-shadow: 0 10px 24px -20px hsl(var(--primary) / 0.4);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
   }
 
@@ -747,6 +700,7 @@
 
   .dashboard-mobile-search-overlay {
     background-color: hsl(var(--background) / 0.94);
+    -webkit-backdrop-filter: blur(20px);
     backdrop-filter: blur(20px);
   }
 
@@ -755,6 +709,7 @@
   }
 
   .dashboard-mobile-sheet {
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 20px 48px -30px hsl(var(--primary) / 0.34);
     background-color: hsl(var(--sidebar-surface, var(--surface-2, var(--dashboard-surface-elevated))) / 0.94);
@@ -762,6 +717,7 @@
   }
 
   .dashboard-mobile-nav {
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     border-top-color: hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.72);
     background-color: hsl(var(--mobile-nav-background, var(--topbar-background, var(--surface-1, var(--dashboard-surface)))) / 0.96);
@@ -772,6 +728,7 @@
     @apply text-muted-foreground;
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
     box-shadow: 0 -6px 24px -16px hsl(var(--primary) / 0.3);
   }
@@ -922,21 +879,30 @@
 
   /* Light-mode global contrast polish for dashboard controls only.
      Dark mode selectors below remain untouched; these rules intentionally scope
-     to :root:not(.dark) so low-contrast utility classes cannot leak into dark mode. */
-  :root:not(.dark) .luxury-button,
+     to :root:not(.dark) so low-contrast utility classes cannot leak into dark mode.
+
+     `.dark` alone is not a complete test for "this document is light". The
+     finance portal ships dark palettes that cannot set `.dark` — BrandProvider
+     owns that class — so they mark themselves `data-palette="dark"` instead
+     (src/lib/finance-portal/theme.ts). Any rule below keyed on a SHARED class
+     (`.luxury-*`) therefore has to exclude both, or it paints light borders on
+     a dark portal. Rules keyed on `.dashboard-shell` / `.dashboard-*` / `.ci-*`
+     do not need the guard: those classes only exist in the Command Centre,
+     which never runs a finance palette. */
+  :root:not(.dark):not([data-palette='dark']) .luxury-button,
   :root:not(.dark) .dashboard-shell button,
   :root:not(.dark) .dashboard-shell [role="button"] {
     font-weight: 650;
   }
 
-  :root:not(.dark) .luxury-button:not(:disabled):not([aria-disabled="true"]),
+  :root:not(.dark):not([data-palette='dark']) .luxury-button:not(:disabled):not([aria-disabled="true"]),
   :root:not(.dark) .dashboard-shell button:not(:disabled):not([aria-disabled="true"]),
   :root:not(.dark) .dashboard-shell [role="button"]:not([aria-disabled="true"]) {
     border-color: hsl(var(--dashboard-border-strong) / 0.72);
   }
 
-  :root:not(.dark) .luxury-button:disabled,
-  :root:not(.dark) .luxury-button[aria-disabled="true"],
+  :root:not(.dark):not([data-palette='dark']) .luxury-button:disabled,
+  :root:not(.dark):not([data-palette='dark']) .luxury-button[aria-disabled="true"],
   :root:not(.dark) .dashboard-shell button:disabled,
   :root:not(.dark) .dashboard-shell button[aria-disabled="true"] {
     cursor: not-allowed;
@@ -948,65 +914,39 @@
     filter: saturate(0.72);
   }
 
-  :root:not(.dark) .luxury-button.bg-primary,
+  :root:not(.dark):not([data-palette='dark']) .luxury-button.bg-primary,
   :root:not(.dark) .dashboard-shell .bg-primary,
   :root:not(.dark) .dashboard-shell [class*="data-[state=active]:bg-primary"][data-state="active"] {
     color: hsl(var(--primary-foreground));
   }
 
-  :root:not(.dark) .luxury-tabs-list,
-  :root:not(.dark) .dashboard-shell [role="tablist"] {
-    border: 1px solid hsl(var(--dashboard-border-strong) / 0.74);
-    background: hsl(var(--surface-2) / 0.94);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.68), 0 12px 28px hsl(var(--brand-900) / 0.08);
-  }
-
-  :root:not(.dark) .luxury-tabs-trigger,
+  /* Tab weight only. The rail and the active chip are glass surfaces —
+     see src/styles/glass.css. These used to paint a solid light-mode-only
+     chip, which left the active tab looking different in light and dark. */
+  :root:not(.dark):not([data-palette='dark']) .luxury-tabs-trigger,
   :root:not(.dark) .dashboard-shell [role="tab"] {
-    border: 1px solid transparent;
-    color: hsl(var(--muted-foreground));
     font-weight: 700;
-  }
-
-  :root:not(.dark) .luxury-tabs-trigger:hover,
-  :root:not(.dark) .dashboard-shell [role="tab"]:hover {
-    border-color: hsl(var(--primary) / 0.28);
-    background-color: hsl(var(--primary) / 0.10);
-    color: hsl(var(--primary));
-  }
-
-  :root:not(.dark) .luxury-tabs-trigger[data-state="active"],
-  :root:not(.dark) .dashboard-shell [role="tab"][data-state="active"] {
-    border-color: hsl(var(--primary) / 0.72);
-    background: hsl(var(--primary));
-    color: hsl(var(--primary-foreground));
-    box-shadow: 0 12px 26px hsl(var(--primary) / 0.24), inset 0 1px 0 hsl(0 0% 100% / 0.24);
   }
 
   :root:not(.dark) .dashboard-shell input,
   :root:not(.dark) .dashboard-shell textarea,
-  :root:not(.dark) .dashboard-shell button[role="combobox"],
-  :root:not(.dark) .luxury-input {
-    border-color: hsl(var(--dashboard-border-strong) / 0.72);
-    background-color: hsl(var(--surface-1) / 0.96);
+  :root:not(.dark) .dashboard-shell button[role="combobox"] {
     color: hsl(var(--foreground));
   }
 
   :root:not(.dark) .dashboard-shell input::placeholder,
   :root:not(.dark) .dashboard-shell textarea::placeholder,
-  :root:not(.dark) .luxury-input::placeholder {
+  :root:not(.dark):not([data-palette='dark']) .luxury-input::placeholder {
     color: hsl(var(--muted-foreground) / 0.78);
   }
 
   :root:not(.dark) .dashboard-shell input:hover,
   :root:not(.dark) .dashboard-shell textarea:hover,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:hover,
-  :root:not(.dark) .luxury-input:hover {
+  :root:not(.dark) .dashboard-shell button[role="combobox"]:hover {
     border-color: hsl(var(--primary) / 0.42);
-    background-color: hsl(var(--card));
   }
 
-  :root:not(.dark) .luxury-badge,
+  :root:not(.dark):not([data-palette='dark']) .luxury-badge,
   :root:not(.dark) .dashboard-shell .dashboard-status-chip,
   :root:not(.dark) .dashboard-shell .dashboard-trend-chip,
   :root:not(.dark) .dashboard-shell .ci-badge-soft,
@@ -1147,14 +1087,22 @@
   .dashboard-shell .bg-card.border {
     border-color: hsl(var(--border) / 0.6);
     background-color: hsl(var(--card) / 0.84);
+    -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     box-shadow: 0 14px 36px -22px hsl(var(--primary) / 0.18);
   }
 
+  /* Raw controls inside the shell that never went through the Input /
+     Textarea / Select primitives. Same recessed glass recipe as
+     `.glass-inset`, so a hand-rolled <input> matches a primitive one. */
   .dashboard-shell input,
   .dashboard-shell textarea,
   .dashboard-shell button[role="combobox"] {
-    @apply border-border/60 bg-background/80 shadow-sm shadow-primary/5 focus-visible:ring-ring/80 focus-visible:ring-offset-background;
+    @apply focus-visible:ring-ring/80 focus-visible:ring-offset-background;
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
+    box-shadow: inset 0 1px 2px 0 hsl(var(--foreground) / 0.06),
+      inset 0 1px 0 0 var(--glass-specular-soft);
   }
 
   .qa-markdown {

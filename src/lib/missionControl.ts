@@ -1,4 +1,5 @@
 import { validateFeedbackUrl } from "@/lib/feedbackUrlPolicy";
+import { applyPricingMockRouting } from "@/lib/pricingMock";
 
 /**
  * Frontend client for Mission Control token balance + top-up packs.
@@ -333,8 +334,14 @@ export async function openMissionControlWithAttribution(
     }
   }
 
-  const url =
+  const resolved =
     (await fetchBillingHandoffUrl(intent, itemId)) ?? withUsernameHint(fallbackUrl);
+
+  // Last step, and deliberately after the handoff has been resolved: while the
+  // A$1 test catalogue is switched on, every money-moving CTA is steered to it.
+  // Rewriting the constants instead would be a no-op whenever the mint
+  // succeeded — see src/lib/pricingMock.ts. A no-op when the mode is off.
+  const url = applyPricingMockRouting(resolved, intent);
 
   if (win && !win.closed) {
     win.location.href = url;

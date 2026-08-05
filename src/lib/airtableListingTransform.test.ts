@@ -3,6 +3,7 @@ import { projectAirtableRecord } from './airtableListingTransform';
 import { INTAKE_FIELDS as F } from './airtableIntakeFields';
 import {
   resolveConfidences,
+  resolveListingImages,
   resolvePrice,
 } from '../../supabase/functions/_shared/airtableListing.pure';
 
@@ -245,5 +246,89 @@ describe('resolveConfidences', () => {
       specs: null,
       agent: null,
     });
+  });
+});
+
+describe('resolveListingImages', () => {
+  const attachment = (id: string, url: string) => ({ id, url, filename: `${id}.jpg` });
+
+  it('reads the scraped URL column, not just the attachment column', () => {
+    // The projection used to read `Listing Images` alone, and that column is
+    // empty on every record — photographs arrive as links on a scraped page.
+    const out = resolveListingImages({
+      [F.listingImageUrls]: 'https://cdn.test/1.jpg\nhttps://cdn.test/2.jpg',
+    });
+    expect(out.candidates.map((c) => c.url)).toEqual([
+      'https://cdn.test/1.jpg',
+      'https://cdn.test/2.jpg',
+    ]);
+    expect(out.candidates.every((c) => c.origin === 'listing_url')).toBe(true);
+  });
+
+  it('puts bytes we hold ahead of a hotlink we do not', () => {
+    const out = resolveListingImages({
+      [F.listingImages]: [attachment('attA', 'https://airtable.test/a.jpg')],
+      [F.listingImageUrls]: 'https://cdn.test/1.jpg',
+    });
+    expect(out.candidates.map((c) => c.origin)).toEqual(['airtable', 'listing_url']);
+  });
+
+  it('drops the primary URL when the list already carries it', () => {
+    const out = resolveListingImages({
+      [F.listingImageUrls]: 'https://cdn.test/1.jpg\nhttps://cdn.test/2.jpg',
+      [F.primaryImageUrl]: 'https://cdn.test/1.jpg',
+    });
+    expect(out.candidates).toHaveLength(2);
+  });
+
+  it('still uses the primary URL when the list column is empty', () => {
+    const out = resolveListingImages({ [F.primaryImageUrl]: 'https://cdn.test/hero.jpg' });
+    expect(out.candidates.map((c) => c.url)).toEqual(['https://cdn.test/hero.jpg']);
+  });
+
+  it('reports the capture stamp and source verbatim', () => {
+    const out = resolveListingImages({
+      [F.imagesCapturedAt]: '2026-08-01T03:00:00.000Z',
+      [F.imageSource]: 'Web Scrape',
+      [F.imageCount]: 7,
+    });
+    expect(out.capturedAt).toBe('2026-08-01T03:00:00.000Z');
+    expect(out.source).toBe('Web Scrape');
+    expect(out.reportedCount).toBe(7);
+  });
+
+  it('says nothing rather than guessing on a record with no image data', () => {
+    const out = resolveListingImages({});
+    expect(out).toEqual({
+      candidates: [],
+      capturedAt: null,
+      reportedCount: null,
+      source: null,
+      primaryUrl: null,
+    });
+  });
+});
+
+describe('projectAirtableRecord images', () => {
+  it('exposes the resolved candidates and the freshness stamp', () => {
+    const listing = projectAirtableRecord({
+      id: 'recIMG',
+      fields: {
+        [F.address]: '12 Smith Street',
+        [F.listingImageUrls]: 'https://cdn.test/1.jpg\nhttps://cdn.test/2.jpg',
+        [F.imagesCapturedAt]: '2026-08-03T00:00:00.000Z',
+        [F.imageSource]: 'Web Scrape',
+      },
+    });
+    expect((listing.imageCandidates as unknown[]).length).toBe(2);
+    expect(listing.imagesCapturedAt).toBe('2026-08-03T00:00:00.000Z');
+    expect(listing.imageCandidateCount).toBe(2);
+    expect(listing.imageSource).toBe('Web Scrape');
+  });
+
+  it('leaves `images` as the raw attachment array every existing caller reads', () => {
+    const raw = [{ id: 'attA', url: 'https://airtable.test/a.jpg' }];
+    const listing = projectAirtableRecord({ id: 'recA', fields: { [F.listingImages]: raw } });
+    expect(listing.images).toBe(raw);
   });
 });

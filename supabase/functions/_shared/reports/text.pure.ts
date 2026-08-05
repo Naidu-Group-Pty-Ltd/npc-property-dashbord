@@ -1,10 +1,11 @@
 /**
  * Text handling shared by every report format.
  *
- * One function lives here today, and it is here rather than in a format module
- * because two formats now need it and a second copy is the defect this
- * programme removes. The Cash Flow Comparison wrote it first; the Report Q&A
- * export cannot render a single conversation without it.
+ * Nothing here is here for tidiness. Each function is a repair for text that
+ * arrives from somewhere this repo does not control — a model's prose, a
+ * transcribed PDF, a textarea somebody typed into — and each one is here rather
+ * than in a format module because a second copy is the defect this programme
+ * removes.
  */
 
 /**

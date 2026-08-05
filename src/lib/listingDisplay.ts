@@ -140,3 +140,52 @@ export function listingFreshness(
   // Airtable prunes at 30 days, so "new" has to mean days, not weeks.
   return { label, isNew: days <= 3 };
 }
+
+export interface PhotoFreshness {
+  /** Full phrasing for a tooltip: "Photos updated 3 days ago". */
+  label: string;
+  /** Captured within the last week. */
+  isRecent: boolean;
+  /** Where intake got the set, when it recorded that. */
+  source: string | null;
+}
+
+/**
+ * When this listing's photographs were last captured.
+ *
+ * A separate question from `listingFreshness`, and the answer is often
+ * different: intake re-scrapes a listing page long after the record arrived, so
+ * a property "added over a month ago" can have photographs taken yesterday. The
+ * card was previously silent on this, which meant a set of photos had no way of
+ * telling a reader whether it was current — the one thing that makes a
+ * photograph worth trusting.
+ *
+ * Returns null when `Images Captured At` is empty. That column is only written
+ * when a capture actually happens, so an absent value means "we do not know",
+ * and inventing a date from the record's own timestamp would claim the photos
+ * are as recent as the record when they may be a year older.
+ */
+export function photoFreshness(
+  listing: PropertyListing,
+  now: number = Date.now(),
+): PhotoFreshness | null {
+  const raw = listing.imagesCapturedAt;
+  if (!raw) return null;
+
+  const at = Date.parse(String(raw));
+  if (!Number.isFinite(at)) return null;
+
+  const days = Math.floor((now - at) / 86_400_000);
+  if (days < 0) return null;
+
+  const label =
+    days === 0 ? 'Photos updated today'
+    : days === 1 ? 'Photos updated yesterday'
+    : days < 7 ? `Photos updated ${days} days ago`
+    : days < 14 ? 'Photos updated last week'
+    : days < 31 ? `Photos updated ${Math.floor(days / 7)} weeks ago`
+    : days < 365 ? `Photos updated ${Math.floor(days / 30)} months ago`
+    : 'Photos over a year old';
+
+  return { label, isRecent: days <= 7, source: listing.imageSource ?? null };
+}

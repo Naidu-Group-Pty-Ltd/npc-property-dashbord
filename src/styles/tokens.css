@@ -294,7 +294,15 @@ Clean, modern admin dashboard with confidence-based color coding
     --glass-hairline: var(--glass-stroke);
   }
 
-  .dark {
+  /* `.dark` is not the only way this app goes dark. The finance portal
+     ships its own palettes on <html>, and they cannot set `.dark` because
+     BrandProvider owns that class (see src/lib/finance-portal/theme.ts).
+     They mark themselves with `data-palette="dark"` instead, so the dark
+     half of the scale keys off both. Anything that means "this document is
+     dark" should test the pair; anything that means "this document is
+     light" should test `:root:not(.dark):not([data-palette='dark'])`. */
+  .dark,
+  :root[data-palette='dark'] {
     /* Elevation shadows lean harder on black in dark mode */
     --elevation-1: 0 1px 2px 0 hsl(0 0% 0% / 0.35),
                    0 1px 3px 0 hsl(0 0% 0% / 0.30);
@@ -407,7 +415,8 @@ Clean, modern admin dashboard with confidence-based color coding
       );
   }
 
-  .dark {
+  .dark,
+  :root[data-palette='dark'] {
     /* Dark glass is thinner and less saturated: a heavy frost over a
        near-black field turns to grey mud, so the fill leans on the
        lit edge instead of on opacity. */

@@ -50,6 +50,7 @@ import {
 import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { resolveReportPalette } from '../_shared/reportDesign/brandResolve.pure.ts';
+import { disclaimerParagraphs } from '../_shared/reportDesign/companyBlock.pure.ts';
 import {
   describeStructure,
   type ExtractedStructure,
@@ -596,6 +597,38 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const whitelabel = (whitelabelRes.data ?? null) as Record<string, unknown> | null;
     const settings = readReportSettings(settingsRes.data, settingsRes.error?.message ?? null);
+
+    // ── The template's own disclaimer, when ours will not print ─────────────
+    //
+    // `extractStructure` drops a trailing contact / disclaimer section because
+    // `renderCompanyPage` prints the tenant's own. That was unconditional, so
+    // when the tenant's was missing the document lost both and ended on a page
+    // classed `page-disclaimer` with no disclaimer on it. A settings row that
+    // was never written, and a query this route warns about and swallows, both
+    // arrive here as `null`.
+    //
+    // So when nothing will replace it, the section is kept and comes through as
+    // an appendix chapter. Re-derived rather than threaded through the earlier
+    // extraction because only this branch reads the settings, and only this
+    // branch prints.
+    const willPrintDisclaimer =
+      disclaimerParagraphs(settings.disclaimer as never).length > 0;
+    if (!willPrintDisclaimer) {
+      console.warn(
+        '[convert-template-document] no professional disclaimer in global_report_settings — '
+        + "keeping the template's own closing section",
+      );
+    }
+    const renderStructure = willPrintDisclaimer ? structure : extractStructure(
+      String(conversion.source_markdown ?? ''),
+      String(conversion.source_filename ?? '').replace(/\.[a-z0-9]+$/i, ''),
+      { keepClosingFurniture: true },
+    );
+    // Indices are re-checked against whichever structure will be printed. A
+    // kept section is appended, so every earlier index still means what it did.
+    const renderPlan = willPrintDisclaimer
+      ? plan
+      : readBindingPlan(request.binding, request.format, renderStructure);
     const storedLogos = (whitelabel?.logo_config ?? {}) as Record<string, string | null>;
     const themeConfig = (whitelabel?.theme_config ?? {}) as Record<string, unknown>;
 
@@ -656,7 +689,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // fail the render: a chapter that times out, invents a figure, or comes
     // back as one prose block simply has no entry in `enriched`, and
     // `planConvertedChapters` renders it exactly as before.
-    const planned = planConvertedChapters(structure, plan);
+    const planned = planConvertedChapters(renderStructure, renderPlan);
     const enrichment = await enrichChapters(
       Deno.env.get('ANTHROPIC_API_KEY'),
       planned
@@ -670,8 +703,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     const rendered = renderConvertedFromBrand({
-      structure,
-      plan,
+      structure: renderStructure,
+      plan: renderPlan,
       snapshot,
       palette,
       options,

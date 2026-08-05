@@ -17,6 +17,7 @@ import {
   formatArea,
   formatLocality,
   listingFreshness,
+  photoFreshness,
   qualityCaveat,
 } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
@@ -83,6 +84,7 @@ export function ListingGalleryCard({
   const photoCount = images?.length ?? 0;
   const contact = listingContact(listing);
   const freshness = listingFreshness(listing);
+  const photos = photoFreshness(listing);
   const inspection = listing.inspectionStart ?? listing.nextInspectionDate;
   const presence = marketPresence(listing);
 
@@ -156,9 +158,33 @@ export function ListingGalleryCard({
           )}
         </div>
 
+        {/*
+          The photo count, and — when intake recorded one — when the set was
+          captured. Those are different questions from the "Added N days ago"
+          pill below: a listing added last month can have been re-scraped
+          yesterday, and a reader deciding whether to trust a photograph is
+          asking about the photograph, not the record. The date rides in the
+          title rather than the label because the pill is 10px and already
+          competing with the agency band above it; the dot is the at-a-glance
+          version, and it only appears when we actually know.
+        */}
         {photoCount > 1 && (
-          <span className={cn(PILL, 'pointer-events-none absolute right-2 top-9 bg-foreground/70 text-background')}>
+          <span
+            title={photos ? [photos.label, photos.source].filter(Boolean).join(' — ') : undefined}
+            className={cn(
+              PILL,
+              'pointer-events-none absolute right-2 top-9 bg-foreground/70 text-background',
+            )}
+          >
+            {photos?.isRecent && (
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-success"
+                aria-hidden="true"
+              />
+            )}
             {photoCount} photos
+            {/* `title` is not reachable by a screen reader; this is. */}
+            {photos && <span className="sr-only">, {photos.label}</span>}
           </span>
         )}
 

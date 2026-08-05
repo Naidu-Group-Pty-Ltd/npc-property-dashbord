@@ -154,7 +154,7 @@ export function BuilderAuthShell({
             ) : null}
           </div>
 
-          <div className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-2xl backdrop-blur-xl sm:p-7">
+          <div className="glass-raised rounded-2xl p-6 sm:p-7">
             {children}
           </div>
 

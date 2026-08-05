@@ -60,7 +60,7 @@ export default function PortalAuth() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
+      <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
           <div className="flex flex-col items-center gap-3">
             <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
@@ -146,7 +146,7 @@ export default function PortalAuth() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex">
       {/* ── Left branded panel (desktop only) ── */}
       <aside className="hidden lg:flex lg:w-[480px] xl:w-[520px] flex-col relative bg-gradient-to-br from-card via-card to-primary/5 border-r border-border overflow-hidden" aria-hidden="true">
         <div className="absolute top-0 right-0 w-[2px] h-full bg-gradient-to-b from-transparent via-primary/30 to-transparent" />
@@ -235,6 +235,7 @@ export default function PortalAuth() {
               <button
                 type="button"
                 onClick={goBack}
+                data-slot="touch-target"
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
                 aria-label={`Back to ${mode === 'otp' || mode === 'reset' ? 'forgot password' : 'sign in'}`}
               >
@@ -305,6 +306,7 @@ export default function PortalAuth() {
                         <button
                           type="button"
                           onClick={() => setShowPassword(v => !v)}
+                          data-slot="touch-target"
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={showPassword ? 'Hide password' : 'Show password'}
                         >
@@ -320,6 +322,7 @@ export default function PortalAuth() {
                     <div className="text-center">
                       <button
                         type="button"
+                        data-slot="touch-target"
                         className="text-xs text-muted-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
                         onClick={() => changeMode('forgot')}
                         aria-label="Forgot your password? Request a reset code"
@@ -389,6 +392,7 @@ export default function PortalAuth() {
                         <button
                           type="button"
                           onClick={() => setShowNewPassword(v => !v)}
+                          data-slot="touch-target"
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={showNewPassword ? 'Hide password' : 'Show password'}
                         >
@@ -415,6 +419,7 @@ export default function PortalAuth() {
                         <button
                           type="button"
                           onClick={() => setShowConfirmPassword(v => !v)}
+                          data-slot="touch-target"
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
                         >

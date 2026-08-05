@@ -21,7 +21,7 @@ export function SolicitorAuthShell({
   const { settings } = useBrand();
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background">
+    <div className="solicitor-portal-theme relative min-h-screen overflow-hidden">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-70"
@@ -50,7 +50,7 @@ export function SolicitorAuthShell({
             ) : null}
           </div>
 
-          <div className="rounded-2xl border border-border/60 bg-card/80 p-6 shadow-2xl backdrop-blur-xl sm:p-8">
+          <div className="glass-raised rounded-2xl p-6 sm:p-8">
             {children}
           </div>
 
