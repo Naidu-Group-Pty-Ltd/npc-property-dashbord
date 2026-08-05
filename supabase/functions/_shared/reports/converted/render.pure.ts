@@ -83,12 +83,23 @@ export const CHAPTER_FURNITURE_LINES = 3;
 /**
  * Below this an appendix section cannot hold a page on its own.
  *
- * A page is `LINES_PER_PAGE` (38). Twelve is a third of one — a heading, a
- * short paragraph and a couple of bullets. Above it a section has enough to
- * look deliberate alone; below it, it looks like a page somebody forgot to
- * finish, which is what a real render produced four of.
+ * A page is `LINES_PER_PAGE` (38), so this is half of one.
+ *
+ * It was twelve — a third of a page, reasoned from "a heading, a short
+ * paragraph and a couple of bullets" rather than measured. Then the document
+ * was rendered and the pages counted: an appendix section of three ordinary
+ * paragraphs costs fourteen estimated lines, cleared the threshold, and printed
+ * on a sheet of its own at **2.3% ink**. Three consecutive sheets did. The
+ * rubric's sparse floor is 8% and a natively designed page in this system
+ * measures 13.3% to 22.1%, so a third of a page is not the boundary between
+ * "deliberate" and "unfinished" — it is well inside "unfinished".
+ *
+ * Half a page is the boundary a render supports. Above it a section has enough
+ * to look composed alone; below it, it reads as a page somebody forgot to
+ * finish, and it is better off packed with its neighbours under their own
+ * headings.
  */
-export const THIN_CHAPTER_LINES = 12;
+export const THIN_CHAPTER_LINES = 19;
 
 /** What a packed run of thin sections calls itself. */
 export const APPENDIX_TITLE = 'Also in the uploaded template';

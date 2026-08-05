@@ -23,7 +23,9 @@ import {
   CHAPTER_FURNITURE_LINES,
   planConvertedChapters,
   renderConvertedDocument,
+  THIN_CHAPTER_LINES,
 } from '../render.pure';
+import { renderMarkdown } from '../../markdown.pure';
 import { dropRedundantLede, enrichedLines, type EnrichedBlock } from '../enrich.pure';
 import { buildReportCss } from '../../../../../supabase/functions/_shared/reportDesign/css.pure';
 import {
@@ -50,22 +52,41 @@ const COMPANY = resolveCompanyBlock({
   address: 'Level 8, 1 Example Quay, Sydney NSW 2000',
 } as never, null);
 
-const prose = (n = 3) =>
-  Array.from({ length: n }, (_, i) =>
-    `Capacity is assessed against a servicing buffer of ${(3 + i * 0.1).toFixed(2)}% above the `
-    + 'advertised rate, on the household income and commitments recorded at application.').join('\n\n');
+/**
+ * Paragraphs of an uploaded template, no two of them alike.
+ *
+ * The version this replaced varied one decimal — `3.00%`, `3.10%`, `3.20%` —
+ * inside an otherwise identical sentence, and every section that called it got
+ * the same three. So four consecutive appendix sheets carried word-for-word
+ * identical prose, and the critique rubric's only `high` rule fired three times
+ * on the fixture rather than on the document.
+ */
+const SENTENCES = [
+  'Capacity is assessed against a servicing buffer of 3.00% above the advertised rate, on the household income and commitments recorded at application.',
+  'Income is taken at the lower of the two most recent payslips and the year-to-date figure annualised, and bonus income is shaded to 80%.',
+  'Every revolving facility is assessed at its limit rather than its balance, whether or not the balance is nil.',
+  'Living expenses are the greater of the declared figure and the benchmark for the household size and postcode.',
+  'A rental guarantee is not counted as income unless it survives a change of manager.',
+  'Existing repayments are assessed at the buffer rate where the loan is with another lender, and at the sheet rate where it is not.',
+  'Where an applicant is self-employed, two full years of returns are required and the lower year is used.',
+  'A liability released at settlement is excluded only where the release is a condition of the approval.',
+  'Negative gearing is applied at the marginal rate of the applicant who owns the property, not the household.',
+];
+
+const prose = (n = 3, from = 0) =>
+  Array.from({ length: n }, (_, i) => SENTENCES[(from + i) % SENTENCES.length]).join('\n\n');
 
 const table = '| Lender | Rate |\n| --- | --- |\n| One | 6.10% |\n| Two | 6.25% |\n| Three | 6.40% |';
 
 const UPLOAD = [
   '# Borrowing Power Assessment',
-  `## Client Position Summary\n\n${prose()}`,
+  `## Client Position Summary\n\n${prose(3, 0)}`,
   `## Household Income\n\n${table}`,
   `## Existing Commitments\n\n${table}`,
-  `## Servicing & Buffers\n\n${prose()}`,
+  `## Servicing & Buffers\n\n${prose(3, 3)}`,
   `## Maximum Capacity and Scenarios\n\n${table}`,
-  `## Assumptions Used\n\n${prose()}`,
-  `## Fee Schedule\n\n${prose()}`,
+  `## Assumptions Used\n\n${prose(3, 6)}`,
+  `## Fee Schedule\n\n${prose(2, 1)}`,
 ].join('\n\n');
 
 /**
@@ -329,11 +350,37 @@ describe('the converted document', () => {
   });
 
   it('puts unmatched sections at the back rather than dropping them', () => {
+    // Counted by *section*, not by chapter. This used to assert one appendix
+    // chapter per unbound section, which was only true while `packThin`'s
+    // threshold was low enough never to fire on this fixture — so the test that
+    // exists to prove nothing is dropped would have failed the moment the
+    // packer started doing its job, which is the opposite of what it is for.
     const chapters = planConvertedChapters(structure, plan);
     const appendix = chapters.filter((c) => c.kind === 'appendix');
-    expect(appendix.length).toBe(plan.unbound.length);
+    const carried = appendix.map((c) => `${c.title}\n${c.markdown}`).join('\n');
+    for (const index of plan.unbound) {
+      expect(carried, `"${structure.sections[index].title}" went missing`)
+        .toContain(structure.sections[index].title);
+    }
     // And they are last.
     expect(chapters.slice(-appendix.length).every((c) => c.kind === 'appendix')).toBe(true);
+  });
+
+  it('packs a section too small to hold a page, at the size a render showed', () => {
+    // The threshold was a third of a page, reasoned rather than measured. An
+    // appendix section of three ordinary paragraphs costs fourteen estimated
+    // lines, cleared it, and printed on a sheet of its own at 2.3% ink — three
+    // consecutive sheets did, against a sparse floor of 8% and a native band of
+    // 13.3% to 22.1%. It is now half a page.
+    expect(THIN_CHAPTER_LINES).toBe(19);
+    const three = renderMarkdown(prose(3, 0), { idPrefix: 'thin' }).lines;
+    expect(three + CHAPTER_FURNITURE_LINES).toBeLessThan(THIN_CHAPTER_LINES);
+
+    const chapters = planConvertedChapters(structure, plan);
+    const appendix = chapters.filter((c) => c.kind === 'appendix');
+    expect(appendix.length).toBe(1);
+    expect(appendix[0].title).toBe(APPENDIX_TITLE);
+    expect(appendix[0].packedSections).toBeGreaterThan(1);
   });
 
   it('numbers the appendix as its own series, so the page says which it is', () => {
@@ -341,7 +388,18 @@ describe('the converted document', () => {
     // "kept as an appendix" and then printed them as SECTION 05…10 with the
     // format's own eyebrow, rule and 30pt serif. The only marker was a 9pt
     // italic dek. Read off a real render: the document contradicted itself.
-    const chapters = planConvertedChapters(structure, plan);
+    // Two substantial unbound sections, so the letter *series* is exercised
+    // rather than just its first term. The main fixture's unbound sections are
+    // all short enough to pack into one, which is correct and tests nothing
+    // about numbering.
+    const long = extractStructure([
+      '# Borrowing Power Assessment',
+      `## Client Position Summary\n\n${prose(3, 0)}`,
+      `## Household Income\n\n${table}`,
+      `## Notes On Method\n\n${prose(9, 0)}`,
+      `## Notes On Sources\n\n${prose(9, 4)}`,
+    ].join('\n\n'));
+    const chapters = planConvertedChapters(long, proposeBinding('borrowing-capacity', long));
     const own = chapters.filter((c) => c.kind !== 'appendix');
     const appendix = chapters.filter((c) => c.kind === 'appendix');
 
