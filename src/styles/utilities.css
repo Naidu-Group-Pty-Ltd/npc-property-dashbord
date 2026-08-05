@@ -416,17 +416,44 @@ html {
       .luxury-tabs-trigger,
       .luxury-dropdown-item,
       .luxury-select-item,
+      .luxury-command-item,
       .dashboard-icon-button,
       .dashboard-input-control,
       .dashboard-surface-control,
-      .dashboard-sidebar-menu-button
+      .dashboard-sidebar-menu-button,
+      /* Primitives that are interactive but carry no `.luxury-*` hook.
+         Found by auditing the full component matrix rather than by
+         guessing: every one of these measured 20–40px tall on a tablet. */
+      [data-radix-collection-item],
+      [role='radio'],
+      [role='menuitemcheckbox'],
+      [role='menuitemradio'],
+      [role='option'],
+      [cmdk-item],
+      nav[aria-label='breadcrumb'] a,
+      nav[aria-label='pagination'] a,
+      [data-state][data-orientation] > button,
+      button[data-state='on'],
+      button[data-state='off'],
+      button[data-state='open'][aria-expanded],
+      button[data-state='closed'][aria-expanded]
     ) {
     min-height: 44px;
   }
 
-  /* Icon-only controls need the floor in both axes or they stay 40px wide. */
-  html :is(.dashboard-icon-button, .luxury-button:is(.w-10, .w-9, .w-8)) {
+  /* Icon-only controls need the floor in both axes or they stay 40px wide.
+     The dialog / sheet close buttons already declared a 44px floor and then
+     dropped it again at `sm:` — the same width-means-mouse assumption. On a
+     tablet that left a 16px tap target in the corner of every modal. */
+  html
+    :is(
+      .dashboard-icon-button,
+      .luxury-button:is(.w-10, .w-9, .w-8),
+      [data-radix-dialog-content] > button[type='button']:last-child,
+      [role='dialog'] > button.absolute
+    ) {
     min-width: 44px;
+    min-height: 44px;
   }
 
   /* 2. iOS zoom-on-focus.
@@ -505,5 +532,114 @@ html {
 @media (pointer: fine) {
   .responsive-table-scroll {
     scrollbar-width: thin;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   CONTAINMENT
+
+   Two things `overflow: hidden` does that authors rarely want, and that
+   the audit caught happening across the surface frames.
+   ──────────────────────────────────────────────────────────────── */
+
+/* 1. `overflow: hidden` makes the element a scroll container, which means
+      a `position: sticky` descendant sticks to *it* rather than to the
+      page — and since the container never scrolls, the child never sticks
+      at all. The frames only use hidden to clip decoration inside their
+      rounded corners, so `clip` is what they actually mean: identical
+      visual clipping, no scroll container, sticky keeps working.
+
+      Declared after `hidden` rather than instead of it: a browser that
+      does not know `clip` (Safari < 16) ignores the second declaration
+      and keeps today's behaviour. */
+.dashboard-theme-hero,
+.dashboard-theme-section,
+.dashboard-theme-premium-card,
+.dashboard-theme-chart-card,
+.client-portal-page-header,
+.finance-portal-page-header,
+.solicitor-portal-page-header,
+.builder-portal-page-header,
+.client-portal-stat-card,
+.finance-portal-stat-card,
+.solicitor-portal-stat-card,
+.builder-portal-stat-card {
+  overflow: hidden;
+  overflow: clip;
+}
+
+/* 2. A focus ring is drawn *outside* the control, so a scroll container
+      holding focusable chips clips it — the tab rail and the pagination
+      row both did. `overflow: clip` accepts `overflow-clip-margin`, which
+      grants exactly enough room for the ring and nothing more, so the
+      rail still clips its content but the ring survives.
+
+      The tab rail scrolls horizontally, so it keeps `auto` on that axis
+      and only gains the clip margin on the block axis. */
+.luxury-tabs-list,
+nav[aria-label='pagination'] > ul,
+.ci-tab-rail {
+  overflow-clip-margin: 4px;
+}
+
+/* The rail scrolls horizontally, so `overflow-y: clip` is coerced back to
+   `hidden` by the spec whenever the other axis is not clip/visible — which
+   means `overflow-clip-margin` cannot help here. Padding can: the app's ring
+   is `ring-2 ring-offset-2`, i.e. 4px outside the control, so the rail needs
+   more than its existing 4px of `p-1` for the ring to survive the clip. */
+.luxury-tabs-list {
+  padding-block: 6px;
+}
+
+/* ────────────────────────────────────────────────────────────────
+   TRANSPARENCY OPT-OUT — the complete version
+
+   src/styles/tokens.css degrades the glass *scale* for these preferences
+   by setting `--glass-blur: 0px`. Auditing the full component matrix
+   showed that is not enough, for two reasons:
+
+     1. `backdrop-filter: blur(0px) saturate(1.5)` is not `none`. The blur
+        radius is zero, but the element still gets a compositing layer, a
+        stacking context, a containing block for fixed descendants — and
+        it is still saturating the colours behind it, which is exactly
+        what a reader asking for reduced transparency or forced colours
+        does not want.
+
+     2. The token scale only governs CSS that reads the tokens. It never
+        touched Tailwind's own `backdrop-blur-*` utilities, of which this
+        codebase uses roughly 240. Those kept blurring in every one of
+        these modes.
+
+   So the opt-out is enforced here, at the property, for everything.
+   `!important` is deliberate and appropriate: this implements an explicit
+   user or platform preference, and it must beat component-level utilities
+   that cannot know the preference exists.
+   ──────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active), print {
+  *,
+  *::before,
+  *::after {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+/* The modal scrim is the one surface that must stay translucent — an
+   opaque scrim would hide the page entirely rather than de-emphasise it —
+   so it is darkened instead of blurred. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  .luxury-dialog-overlay,
+  .luxury-alert-dialog-overlay,
+  .luxury-sheet-overlay,
+  .luxury-drawer-overlay,
+  .glass-scrim {
+    background-color: hsl(var(--aurixa-obsidian) / 0.86);
+  }
+
+  /* The loading skeleton was made translucent so it would read correctly
+     on glass. With transparency turned off it has nothing to sit on, so it
+     goes solid. */
+  .animate-pulse {
+    background-color: hsl(var(--muted));
   }
 }
