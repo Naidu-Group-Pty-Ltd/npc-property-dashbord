@@ -11,6 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AmlEmptyState,
+  AmlLoadingState,
+  AmlMetricCard,
+  AmlPageHeader,
+} from "@/components/aml/primitives";
 import { toast } from "sonner";
 import {
   ShieldCheck, PlayCircle, ClipboardList, BookOpen, Bot, KeyRound, LifeBuoy, RefreshCw, CheckCircle2, XCircle, AlertTriangle, Users,
@@ -71,6 +78,7 @@ export default function AmlGovernance() {
 
   // Runbooks
   const [runbooks, setRunbooks] = useState<Runbook[]>([]);
+  const [runbooksLoading, setRunbooksLoading] = useState(true);
 
   const loadGates = async () => {
     setGateLoading(true);
@@ -158,12 +166,14 @@ export default function AmlGovernance() {
   };
 
   const loadRunbooks = async () => {
+    setRunbooksLoading(true);
     try {
       const data = await invokeAmlFunction<any>("aml-resilience", { op: "runbooks" });
       setRunbooks((data.runbooks ?? []) as Runbook[]);
     } catch (e: any) {
       toast.error(e?.message ?? "Unable to load runbooks");
     }
+    setRunbooksLoading(false);
   };
 
   useEffect(() => {
@@ -172,35 +182,34 @@ export default function AmlGovernance() {
 
   const latest = gates[0];
   const pendingCount = approvals.filter(a => a.status === "pending").length;
+  const activeSessionCount = sessions.filter(
+    s => !s.revoked_at && new Date(s.expires_at).getTime() > Date.now(),
+  ).length;
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <ClipboardList className="h-6 w-6 text-primary" /> AML Governance
-          </h1>
-          <p className="text-sm text-muted-foreground max-w-2xl mt-1">
-            Release gates, AI guardrails, step-up sessions, resilience drills and operational runbooks.
-            Configured to implement your approved AML/CTF program — not a substitute for legal advice.
-          </p>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Latest gate</div>
-            <div className="mt-1">{latest ? statusBadge(latest.status) : <Skeleton className="h-5 w-16" />}</div>
-          </Card>
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Pending AI approvals</div>
-            <div className="mt-1 text-lg font-semibold">{pendingCount}</div>
-          </Card>
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Active step-up sessions</div>
-            <div className="mt-1 text-lg font-semibold">
-              {sessions.filter(s => !s.revoked_at && new Date(s.expires_at).getTime() > Date.now()).length}
-            </div>
-          </Card>
-        </div>
+    <div className="space-y-6">
+      <AmlPageHeader
+        icon={ClipboardList}
+        title="AML Governance"
+        description="Release gates, AI guardrails, step-up sessions, resilience drills and operational runbooks. Configured to implement your approved AML/CTF program — not a substitute for legal advice."
+      />
+
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+        <AmlMetricCard
+          title="Latest gate"
+          state={gateLoading ? "loading" : "ready"}
+          value={latest ? statusLabel(latest.status) : "Not run yet"}
+        />
+        <AmlMetricCard
+          title="Pending AI approvals"
+          state={approvalsLoading ? "loading" : "ready"}
+          value={pendingCount}
+        />
+        <AmlMetricCard
+          title="Active step-up sessions"
+          state={sessionsLoading ? "loading" : "ready"}
+          value={activeSessionCount}
+        />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -388,17 +397,21 @@ export default function AmlGovernance() {
             <CardContent className="grid md:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>Kind</Label>
-                <select
-                  className="w-full border rounded-md h-9 px-2 bg-background"
+                <Select
                   value={newDrill.kind}
-                  onChange={(e) => setNewDrill(d => ({ ...d, kind: e.target.value }))}
+                  onValueChange={(v) => setNewDrill(d => ({ ...d, kind: v }))}
                 >
-                  <option value="backup_restore">Backup & restore</option>
-                  <option value="provider_outage">Provider outage</option>
-                  <option value="secret_rotation">Secret rotation</option>
-                  <option value="tabletop">Tabletop exercise</option>
-                  <option value="other">Other</option>
-                </select>
+                  <SelectTrigger aria-label="Drill kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="backup_restore">Backup &amp; restore</SelectItem>
+                    <SelectItem value="provider_outage">Provider outage</SelectItem>
+                    <SelectItem value="secret_rotation">Secret rotation</SelectItem>
+                    <SelectItem value="tabletop">Tabletop exercise</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label>Title</Label>
@@ -445,14 +458,24 @@ export default function AmlGovernance() {
 
         {/* Runbooks */}
         <TabsContent value="runbooks" className="space-y-4">
-          {runbooks.length === 0 ? <Skeleton className="h-32 w-full" /> : runbooks.map((rb) => (
-            <Card key={rb.id}>
-              <CardHeader><CardTitle>{rb.title}</CardTitle></CardHeader>
-              <CardContent>
-                <pre className="whitespace-pre-wrap text-sm font-sans leading-relaxed">{rb.body_md}</pre>
-              </CardContent>
-            </Card>
-          ))}
+          {runbooksLoading ? (
+            <AmlLoadingState variant="block" label="Loading runbooks…" />
+          ) : runbooks.length === 0 ? (
+            <AmlEmptyState
+              icon={BookOpen}
+              title="No runbooks published yet"
+              body="Operational runbooks appear here once they are recorded in the resilience programme — log a drill from the Resilience Drills tab, or check back after the next review cycle."
+            />
+          ) : (
+            runbooks.map((rb) => (
+              <Card key={rb.id}>
+                <CardHeader><CardTitle>{rb.title}</CardTitle></CardHeader>
+                <CardContent>
+                  <pre className="whitespace-pre-wrap text-sm font-sans leading-relaxed">{rb.body_md}</pre>
+                </CardContent>
+              </Card>
+            ))
+          )}
         </TabsContent>
       </Tabs>
     </div>
