@@ -9,9 +9,11 @@
    The foreground/input/ring tokens are declared here for that reason — a
    palette has to define both halves of the contrast pair.
 
-   Note these classes go on <html> WITHOUT `.dark` (see
-   src/lib/finance-portal/theme.ts), which is why src/styles/tokens.css lists
-   them alongside `.dark` when it declares the dark glass scale. */
+   These classes go on <html> but cannot set `.dark` — BrandProvider owns that
+   class. The applier marks them with `data-palette="dark"` instead (see
+   src/lib/finance-portal/theme.ts); that attribute is what tokens.css and the
+   light-mode rules test. A new dark palette here needs adding to DARK_THEMES
+   there, and nothing else. */
 :root.finance-theme-midnight {
   --background: 230 30% 6%;
   --card: 230 28% 9%;
