@@ -478,6 +478,15 @@ export default function ReportQA() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const viewport = scrollAreaRef.current?.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
+    if (viewport) {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      return;
+    }
+    chatEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+  }, []);
+
   // Custom hooks
   const { addReply, getReplies } = useMessageThreads();
   const { getPinnedIds, togglePin, isPinned } = usePinnedConversations();
@@ -502,8 +511,8 @@ export default function ReportQA() {
 
   // Scroll to bottom handler
   const handleScrollToBottom = useCallback(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+    scrollChatToBottom('smooth');
+  }, [scrollChatToBottom]);
 
   // Toggle reports panel
   const handleToggleReportsPanel = useCallback(() => {
@@ -535,10 +544,16 @@ export default function ReportQA() {
     } catch {}
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Keep the active turn inside the chat viewport without scrolling the page
+  // shell. `scrollIntoView` could move every scrollable ancestor (including the
+  // dashboard), while streaming text did not trigger the old messages-only
+  // effect at all.
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const frame = window.requestAnimationFrame(() => {
+      scrollChatToBottom(reducedMotion ? 'auto' : 'smooth');
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [failedMessage, isProcessing, messages, reducedMotion, scrollChatToBottom, streamingContent]);
 
   // Auto-resize textarea when inputMessage changes (e.g., from transcription)
   useEffect(() => {
@@ -1180,7 +1195,7 @@ export default function ReportQA() {
       } : c));
       setShowHistory(false);
       setLiveAnnouncement(`Conversation ${conversation.title || conv.title} loaded`);
-      requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+      requestAnimationFrame(() => scrollChatToBottom('auto'));
 
 
       toast({ title: 'Conversation loaded', description: conversation.title || conv.title });
@@ -1395,17 +1410,14 @@ export default function ReportQA() {
 
       // WP-11B/C cookie-only: the chat streams, so it cannot go through
       // `invokeSecureFunction` (that helper reads the whole body as JSON). It
-      // authenticates the same way regardless — the access-token JWT Bearer,
-      // resolved through `resolveAuthBearer` rather than read straight out of
-      // storage.
+      // still follows the same authentication contract: the access-token JWT
+      // Bearer is useful while fresh, but the authoritative staff session is
+      // the HttpOnly `__Host-session_token` cookie.
       //
-      // Reading storage directly is what broke this: the access token is
-      // tab-scoped and short-lived, so a session that is perfectly valid — its
-      // HttpOnly `__Host-session_token` cookie intact, every other call on the
-      // page working — sends the ANON key here and gets "Authentication
-      // required" back. `refreshIfMissing` re-mints the token from that cookie
-      // before the first attempt, and a 401/403 on the way back buys one more
-      // refresh and one more try, which is exactly what the JSON path does.
+      // Omitting credentials here was the failure: every JSON action worked via
+      // the cookie, while chat depended solely on a short-lived tab JWT and told
+      // a still-signed-in user to sign in again. Include the cookie; report-qa's
+      // CSRF guard validates the exact first-party Origin before mutation.
       const sendChatRequest = (bearerToken: string) =>
         fetch(`${SUPABASE_URL}/functions/v1/report-qa`, {
           method: 'POST',
@@ -1414,10 +1426,7 @@ export default function ReportQA() {
             'apikey': SUPABASE_KEY,
             'Authorization': `Bearer ${bearerToken}`,
           },
-          // Cookie-free on purpose: without ambient cookie authority the
-          // function's CSRF guard is a no-op, and the JWT above is a complete
-          // credential on its own.
-          credentials: 'omit',
+          credentials: 'include',
           body: requestPayload,
           signal: streamController.signal,
         });
@@ -2567,8 +2576,8 @@ export default function ReportQA() {
                         </div>
                         <Button
                           variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 shrink-0 rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                          size="sm"
+                          className="h-8 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
                           aria-label={`Remove ${report.name} from this chat`}
                           title="Remove report from this chat"
                           onClick={(e) => {
@@ -2576,7 +2585,8 @@ export default function ReportQA() {
                             void removeReport(report.name);
                           }}
                         >
-                          <X className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="hidden 2xl:inline">Remove</span>
                         </Button>
                       </div>
                     );
