@@ -3,6 +3,7 @@ import {
   cleanContactEmail,
   cleanContactPhone,
   describeContactSource,
+  isIntakeOperatorEmail,
   resolveContact,
 } from '@/lib/listingContact';
 
@@ -46,6 +47,32 @@ describe('cleanContactEmail', () => {
     for (const value of ['', '  ', 'not an email', 'a@b', null, undefined, 42]) {
       expect(cleanContactEmail(value)).toBeNull();
     }
+  });
+
+  it('refuses our own side of the pipeline', () => {
+    // Listings arrive forwarded by NPC staff, so the envelope carries a
+    // colleague. Offering to email him about his own forward is the bug this
+    // guard exists for.
+    for (const email of [
+      'lavankenobi@gmail.com',
+      'naidu.rugesh@gmail.com',
+      'property@npcservices.com.au',
+      'rugesh@npcservices.com.au',
+      'anyone@mail.npcservices.com.au',
+    ]) {
+      expect(cleanContactEmail(email), email).toBeNull();
+    }
+  });
+});
+
+describe('isIntakeOperatorEmail', () => {
+  it('knows ours from theirs', () => {
+    expect(isIntakeOperatorEmail('LavanKenobi@Gmail.com')).toBe(true);
+    expect(isIntakeOperatorEmail('property@npcservices.com.au')).toBe(true);
+    // A different mailbox at an unrelated host that merely ends similarly.
+    expect(isIntakeOperatorEmail('agent@notnpcservices.com.au')).toBe(false);
+    expect(isIntakeOperatorEmail('scott@shore-property.com.au')).toBe(false);
+    expect(isIntakeOperatorEmail(null)).toBe(false);
   });
 });
 
@@ -101,6 +128,47 @@ describe('resolveContact', () => {
     expect(contact.email).toBe('leanne@jelliscraig.com.au');
     expect(contact.emailSource).toBe('sender');
     expect(contact.name).toBe('Leanne Pearman');
+    expect(contact.direct).toBe(false);
+  });
+
+  it('does not offer the colleague who forwarded the listing in', () => {
+    // rec8rDYuNQSk2jMng — "3 Fairmile Close", DiJones Commercial. A forwarded
+    // realcommercial alert: no agent address anywhere, and the envelope is the
+    // forwarder. The page used to show him as the agent.
+    const contact = resolveContact({
+      senderEmail: 'lavankenobi@gmail.com',
+      senderName: 'Lavan Kenobi',
+      agencyName: 'DiJones Commercial',
+    });
+    expect(contact.email).toBeNull();
+    expect(contact.emailSource).toBeNull();
+    expect(contact.name).toBeNull();
+    expect(contact.agency).toBe('DiJones Commercial');
+  });
+
+  it('still reaches the agency when only the envelope is ours', () => {
+    // The 46 Waters & Carpenter rows: forwarded by an operator, but the
+    // extractor did find the agency inbox. That one is real and stays.
+    const contact = resolveContact({
+      senderEmail: 'naidu.rugesh@gmail.com',
+      senderName: 'Rugesh Naidu',
+      agencyEmail: 'sales@waterscarpenter.com.au',
+      agencyName: 'First National Real Estate Waters & Carpenter',
+    });
+    expect(contact.email).toBe('sales@waterscarpenter.com.au');
+    expect(contact.emailSource).toBe('agency');
+    expect(contact.name).toBeNull();
+  });
+
+  it('refuses an internal address even in the agent column', () => {
+    // Same mistake one field to the left: a model reading a forwarded chain can
+    // report the forwarder as `agent_email`.
+    const contact = resolveContact({
+      agentEmail: 'property@npcservices.com.au',
+      agencyEmail: 'sales@agency.com.au',
+    });
+    expect(contact.email).toBe('sales@agency.com.au');
+    expect(contact.emailSource).toBe('agency');
     expect(contact.direct).toBe(false);
   });
 
