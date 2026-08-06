@@ -192,13 +192,19 @@ unprivileged user, carries a `HEALTHCHECK`, and starts gunicorn with
 inherits a hot Pango and fontconfig instead of the first client's report paying
 for them. `WEASYPRINT_WARMUP=0` turns that off.
 
-> **A container change reaches production only by hand.** There is no deploy
-> workflow anywhere in this repository — `ci.yml` builds this image to test it
-> and publishes nothing. So anything that lives here (the veraPDF layer, the
-> `output_intent` and `custom_metadata` options, a font, an engine bump) is
-> inert in production until somebody runs the deploy below. Changes on the
-> other side of the boundary — the stylesheet, the document structure, what the
-> render routes ask for — ship with the edge functions and do not wait for it.
+> **A container change is a separate deploy from the rest of the repository.**
+> `ci.yml` builds this image to test it and publishes nothing, so anything that
+> lives here (the veraPDF layer, the `output_intent` and `custom_metadata`
+> options, a font, an engine bump) reaches production only through
+> `.github/workflows/deploy-weasyprint-service.yml` — or by hand, with the
+> commands below. Changes on the other side of the boundary — the stylesheet,
+> the document structure, what the render routes ask for — ship with the edge
+> functions and do not wait for it.
+>
+> The workflow **stages** on a push and promotes only when asked, because the
+> two halves have an order: the render routes ask for `pdf/ua-1`, and an engine
+> without that variant returns a 500 on every report. See
+> [`docs/reports/CONTAINER_RELEASE.md`](../docs/reports/CONTAINER_RELEASE.md).
 
 ## Deploy — Google Cloud Run (recommended)
 

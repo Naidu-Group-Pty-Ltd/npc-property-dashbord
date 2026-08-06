@@ -899,10 +899,10 @@ image a reader looks at first. `jpeg_quality` makes the file **larger** — it
 re-encodes an asset that is already a JPEG, paying a generation of loss to grow
 by 31 KB. `optimize_images` is worth 65 KB and is on.
 
-**The container has no deploy workflow.** Only `ci.yml` references the image,
-and it builds one rather than publishing it. Everything in this section that
-lives in `weasyprint-service/` — veraPDF, `output_intent`, `custom_metadata` —
-reaches production only when somebody builds and deploys the image by hand. The
+**The container ships on its own deploy.** `ci.yml` builds the image to test it
+and publishes nothing, so everything in this section that lives in
+`weasyprint-service/` — veraPDF, `output_intent`, `custom_metadata` — reaches
+production through `deploy-weasyprint-service.yml`, or by hand. The
 document-side half (heading levels, tagged chart figures, `bookmark-level`,
 `pressMarks`) ships with the edge functions and does not wait for it.
 
