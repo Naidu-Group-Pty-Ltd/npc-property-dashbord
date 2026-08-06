@@ -703,7 +703,9 @@ function ProvidersPanel({ summary, canWrite, onSaved }: { summary: AmlTenantSumm
 
       {canWrite && (
         <div className="flex justify-end">
-          <Button onClick={() => setEditing({ capability: "idv", provider_key: "", priority: 1, cost_per_unit_cents: 0, currency: "AUD", active: true, config: {}, mode: "simulator" })}>
+          {/* A new IDV provider defaults to live: an active simulator IDV row
+              is not a usable configuration, it is an incomplete one. */}
+          <Button onClick={() => setEditing({ capability: "idv", provider_key: "", priority: 1, cost_per_unit_cents: 0, currency: "AUD", active: true, config: {}, mode: "live" })}>
             <Plus className="h-3.5 w-3.5 mr-1" /> Add provider
           </Button>
         </div>
@@ -836,13 +838,29 @@ function ProviderEditor({ editing, onClose, onSaved }: {
             <Input value={form.secret_ref ?? ""} onChange={(e) => setF({ secret_ref: e.target.value })} placeholder="FRANKIEONE_API_KEY" />
           </FormRow>
           <FormRow label="Mode">
-            <Select value={(form.mode as string) ?? "simulator"} onValueChange={(v) => setF({ mode: v as any })}>
+            <Select
+              value={(form.mode as string) ?? (form.capability === "idv" ? "live" : "simulator")}
+              onValueChange={(v) => setF({ mode: v as any })}
+            >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="simulator">Simulator (deterministic, no external calls)</SelectItem>
+                {/* Identity verification has no simulator option. Production
+                    refuses to execute one, so offering it here only produces a
+                    row that looks configured and can never verify anybody —
+                    which is exactly the state production sat in. */}
+                {form.capability !== "idv" && (
+                  <SelectItem value="simulator">Simulator (deterministic, no external calls)</SelectItem>
+                )}
                 <SelectItem value="live">Live (requires wired adapter + secret)</SelectItem>
               </SelectContent>
             </Select>
+            {form.capability === "idv" && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Identity verification runs live or not at all. Until the verification
+                service is reachable, clients are routed to document verification by
+                an adviser — never to a simulated result.
+              </p>
+            )}
           </FormRow>
           <div className="flex items-center justify-between rounded-md border border-border/60 p-2">
             <Label htmlFor="active" className="text-sm">Active</Label>
