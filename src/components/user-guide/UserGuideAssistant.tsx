@@ -5,6 +5,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { formatKnowledgeBaseForAI } from '@/lib/userGuideKnowledge';
+import { describeAuthError, isAuthFailureResponse, resolveAuthBearer } from '@/lib/secureInvoke';
 import { usePlanEntitlements } from '@/hooks/usePlanEntitlements';
 import ReactMarkdown from 'react-markdown';
 
@@ -141,16 +142,25 @@ export function UserGuideAssistant({ onNavigateToSection }: UserGuideAssistantPr
     }));
 
     try {
-      // WP-11B/C cookie-only: authenticated via the HttpOnly `__Host-session_token`
-      // cookie (`credentials: 'include'`). No raw session token is read or sent.
-      const accessToken = sessionStorage.getItem('supabase_access_token');
+      // Cookie-authenticated path (ES256 remediation). Reading
+      // `supabase_access_token` straight out of storage bypassed the shared
+      // resolver, so a missing token silently became `Bearer <anon>` with no
+      // refresh attempt and no way to tell a real 401 from a server fault.
+      // `resolveAuthBearer` tries storage, then the native session, then
+      // re-mints from the HttpOnly cookie.
+      //
+      // Authority still rests with the server: the browser cannot read an
+      // HttpOnly cookie, so it cannot know it is signed in. We send the
+      // request and let a 401 be a 401 — which is also why this stays correct
+      // once the access token is retired and the cookie is the sole carrier.
+      const { token: bearer } = await resolveAuthBearer({ refreshIfMissing: true });
 
       const response = await fetch(`${SUPABASE_URL}/functions/v1/user-guide-assistant`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${accessToken || SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer ${bearer}`,
         },
         credentials: 'include', // Sends the HttpOnly session cookie
         body: JSON.stringify({
@@ -161,7 +171,12 @@ export function UserGuideAssistant({ onNavigateToSection }: UserGuideAssistantPr
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        // Turn an auth failure into the one instruction that resolves it,
+        // rather than surfacing a bare HTTP code to the user.
+        const authGuidance = isAuthFailureResponse(response.status, errorData?.error)
+          ? describeAuthError(errorData?.error) ?? 'Your sign-in session has expired. Sign out, sign back in, and try again.'
+          : null;
+        throw new Error(authGuidance || errorData.error || `HTTP ${response.status}`);
       }
 
       // Stream the response
