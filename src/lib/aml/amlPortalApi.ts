@@ -23,7 +23,19 @@ async function call<T = any>(op: string, payload: Record<string, any> = {}): Pro
     body: JSON.stringify({ op, ...payload }),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // The server's `code` is the machine-readable half of the refusal
+    // (`manual_verification_required`, `attempts_exhausted`, …). Dropping it
+    // left callers matching on prose, so a provider-readiness refusal was
+    // indistinguishable from a capture failure and the client was told to try
+    // again against a provider that could never serve them.
+    const err = new Error(json?.error || `HTTP ${res.status}`) as Error & {
+      code?: string; status?: number;
+    };
+    err.code = typeof json?.code === 'string' ? json.code : undefined;
+    err.status = res.status;
+    throw err;
+  }
   return json as T;
 }
 

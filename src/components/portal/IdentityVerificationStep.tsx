@@ -28,6 +28,26 @@ import { frameToJpeg, toUploadableJpeg, MAX_CAPTURE_EDGE_PX } from '@/lib/aml/ca
 
 type Capture = { blob: Blob; url: string } | null;
 
+/**
+ * Server refusals that mean "this client cannot use electronic verification",
+ * as opposed to "that photo did not work". The step, not the camera dialog,
+ * owns what the client is shown for these.
+ */
+const UNAVAILABLE_CODES = [
+  'manual_verification_required',
+  'temporarily_unavailable',
+  'attempts_exhausted',
+  'already_processing',
+];
+
+/** A signed-URL PUT that failed, carrying the object it was writing. */
+class UploadFailed extends Error {
+  constructor(message: string, readonly path: string) {
+    super(message);
+    this.name = 'UploadFailed';
+  }
+}
+
 const STATUS_PRESENTATION: Record<AmlVerificationParty['status'], { label: string; tone: string }> = {
   not_started:     { label: 'Not started',        tone: 'text-muted-foreground' },
   in_review:       { label: 'With our team',      tone: 'text-primary' },
@@ -47,6 +67,7 @@ export function IdentityVerificationStep({
   const [state, setState] = useState<AmlVerificationStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeParty, setActiveParty] = useState<AmlVerificationParty | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -58,6 +79,32 @@ export function IdentityVerificationStep({
   }, [caseId]);
 
   useEffect(() => { load(); }, [load]);
+
+  /**
+   * Open the capture dialog only if the server still says electronic
+   * verification is on for this party.
+   *
+   * The availability read at page mount is not enough: the client may have had
+   * the page open for a while, and the camera must never open against a
+   * provider that will refuse the upload — that was how a customer ended up
+   * photographing their face and being told afterwards that it could not be
+   * used.
+   */
+  const startCapture = useCallback(async (party: AmlVerificationParty) => {
+    setStarting(party.party_id ?? 'self');
+    try {
+      const fresh = await amlPortalApi.verificationStatus(caseId);
+      setState(fresh);
+      const stillAllowed = fresh.parties.find(
+        (p) => (p.party_id ?? null) === (party.party_id ?? null))?.can_attempt;
+      if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
+      setActiveParty(party);
+    } catch (e: any) {
+      setLoadError(e?.message ?? 'Unable to check verification availability.');
+    } finally {
+      setStarting(null);
+    }
+  }, [caseId]);
 
   if (loadError) {
     return (
@@ -156,8 +203,13 @@ export function IdentityVerificationStep({
               ) : party.can_attempt ? (
                 <Button
                   size="sm"
+                  disabled={starting === (party.party_id ?? 'self')}
                   variant={party.attempts_used > 0 ? 'outline' : 'default'}
-                  onClick={() => setActiveParty(party)}
+                  // Availability is re-read here rather than trusted from
+                  // page mount. A provider can go away while the client is
+                  // reading the page, and opening a camera whose capture the
+                  // server will refuse collects a face for nothing (APP 3).
+                  onClick={() => void startCapture(party)}
                 >
                   {party.attempts_used > 0 ? (
                     <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Try again</>
@@ -209,6 +261,10 @@ export function IdentityVerificationStep({
           party={activeParty}
           onClose={() => setActiveParty(null)}
           onDone={async () => { setActiveParty(null); await load(); }}
+          // A readiness refusal closes the dialog and re-reads status, so the
+          // client lands on the step's unavailable or manual-route state
+          // instead of being left pressing Submit against a dead provider.
+          onUnavailable={async () => { setActiveParty(null); await load(); }}
         />
       )}
     </Card>
@@ -218,12 +274,13 @@ export function IdentityVerificationStep({
 /* ─────────────────────────────── capture ────────────────────────────────── */
 
 function CaptureDialog({
-  caseId, party, onClose, onDone,
+  caseId, party, onClose, onDone, onUnavailable,
 }: {
   caseId: string;
   party: AmlVerificationParty;
   onClose: () => void;
   onDone: () => void | Promise<void>;
+  onUnavailable: () => void | Promise<void>;
 }) {
   const [stage, setStage] = useState<'document' | 'selfie' | 'submitting'>('document');
   const [documentShot, setDocumentShot] = useState<Capture>(null);
@@ -270,21 +327,33 @@ function CaptureDialog({
     setStage('submitting');
     setError(null);
     try {
-      const upload = async (blob: Blob, kind: 'document' | 'selfie') => {
-        const meta = await amlPortalApi.requestVerificationUpload(caseId, kind);
-        const put = await fetch(meta.upload_url, {
+      /**
+       * Both signed-upload grants BEFORE either byte is written.
+       *
+       * The old order asked for the document URL and uploaded it, then asked
+       * for the selfie URL — and the selfie request is the gate: it is where
+       * the server checks provider readiness and remaining attempts. With no
+       * live provider that gate answers 409, so every attempt uploaded a
+       * customer's identity document to `aml-documents` and then abandoned the
+       * submission. Production accumulated nine orphaned documents and not one
+       * selfie, verification row or outbox event.
+       *
+       * Asking for the gated grant first means a refusal costs nothing: no
+       * object is written, no attempt is spent, and nothing needs cleaning up.
+       */
+      const selfieMeta = await amlPortalApi.requestVerificationUpload(caseId, 'selfie');
+      const documentMeta = await amlPortalApi.requestVerificationUpload(caseId, 'document');
+
+      const put = async (meta: { upload_url: string; path: string }, blob: Blob) => {
+        const res = await fetch(meta.upload_url, {
           method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
         });
-        if (!put.ok) throw new Error(`Upload failed (${put.status})`);
+        if (!res.ok) throw new UploadFailed(`Upload failed (${res.status})`, meta.path);
         return meta.path;
       };
 
-      // Sequential and document-first: the selfie URL is the request that
-      // checks attempts and provider readiness, so a refusal happens before a
-      // face is uploaded rather than after (APP 3 — no collection without a
-      // purpose that can be served).
-      const docPath = await upload(documentShot.blob, 'document');
-      const selfiePath = await upload(selfieShot.blob, 'selfie');
+      const docPath = await put(documentMeta, documentShot.blob);
+      const selfiePath = await put(selfieMeta, selfieShot.blob);
 
       const res = await amlPortalApi.submitVerification(caseId, {
         party_id: party.party_id,
@@ -295,6 +364,14 @@ function CaptureDialog({
       toast.success(res.message);
       await onDone();
     } catch (e: any) {
+      // A readiness refusal is not a capture problem, and leaving the client
+      // in the camera to press Submit again against a provider that cannot
+      // serve them is a dead end. Hand it back to the step, which renders the
+      // correct unavailable or manual-route state.
+      if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {
+        await onUnavailable();
+        return;
+      }
       setError(e?.message ?? 'Something went wrong. Please try again.');
       setStage('selfie');
     } finally {
