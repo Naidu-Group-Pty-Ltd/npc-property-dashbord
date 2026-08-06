@@ -12,6 +12,7 @@ import { BuildType } from '@/types/overrideFields';
 import { getLocalityGrowthEstimate, getDerivedCpiGrowth } from '@/utils/localityGrowthEstimates';
 
 import { PropertyTab, FinancialsTab, IncomeExpensesTab, AdvancedTab } from './manual-inputs';
+import { OverrideStepFooter, type OverrideStep } from './OverrideStepFooter';
 
 export interface PreGenerationData {
   buildType: BuildType;
