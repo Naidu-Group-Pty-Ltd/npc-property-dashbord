@@ -149,7 +149,7 @@ class RenderTests(unittest.TestCase):
         )
         self.assertIn("npc-render-id", html)  # the fixture really has a head
         pdf = self.client.post(
-            "/render", headers=AUTH, json={"html": html, "pdf_variant": "pdf-1.7"},
+            "/render", headers=AUTH, json={"html": html},
         ).data
         self.assertIn(b"/npcrenderid", pdf)
         self.assertIn(b"row-42", pdf)
@@ -159,7 +159,7 @@ class RenderTests(unittest.TestCase):
         pdf = self.client.post(
             "/render",
             headers=AUTH,
-            json={"html": html, "custom_metadata": False, "pdf_variant": "pdf-1.7"},
+            json={"html": html, "custom_metadata": False},
         ).data
         self.assertNotIn(b"/npcrenderid", pdf)
 
