@@ -21,10 +21,16 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { IdentityVerificationStep } from './IdentityVerificationStep';
 
-/** Counts how many times the camera is opened, and hands back stoppable tracks. */
-function mockCamera() {
+/**
+ * Counts how many times the camera is opened, records the requested facing
+ * mode, and hands back stoppable tracks.
+ */
+function mockCamera(opts: { fail?: boolean; dimensions?: [number, number] } = {}) {
   const stops: Array<() => void> = [];
-  const getUserMedia = vi.fn(async () => {
+  const facings: string[] = [];
+  const getUserMedia = vi.fn(async (constraints: MediaStreamConstraints) => {
+    facings.push(String((constraints.video as MediaTrackConstraints)?.facingMode ?? ''));
+    if (opts.fail) throw new DOMException('Permission denied', 'NotAllowedError');
     const stop = vi.fn();
     stops.push(stop);
     return { getTracks: () => [{ stop }] } as unknown as MediaStream;
@@ -32,18 +38,50 @@ function mockCamera() {
   Object.defineProperty(navigator, 'mediaDevices', {
     value: { getUserMedia }, configurable: true, writable: true,
   });
-  // jsdom implements neither, and the component must not depend on either
-  // resolving for the preview to appear.
+  // jsdom implements none of these, and the component must not depend on
+  // play() resolving for the preview to become usable.
   Object.defineProperty(HTMLMediaElement.prototype, 'play', {
     value: vi.fn().mockResolvedValue(undefined), configurable: true, writable: true,
   });
+  const [w, h] = opts.dimensions ?? [1280, 960];
   Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', {
-    get: () => 1280, configurable: true,
+    get: () => w, configurable: true,
   });
   Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', {
-    get: () => 960, configurable: true,
+    get: () => h, configurable: true,
   });
-  return { getUserMedia, stops };
+  Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+    get: () => 1 /* HAVE_METADATA */, configurable: true,
+  });
+  return { getUserMedia, stops, facings };
+}
+
+/** Stand in for the canvas encoder jsdom does not implement. */
+function stubCanvas(blob: Blob | null = new Blob(['jpeg'], { type: 'image/jpeg' })) {
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => ({ drawImage: vi.fn() })) as any;
+  HTMLCanvasElement.prototype.toBlob = function (cb: BlobCallback) { cb(blob); } as any;
+}
+
+/**
+ * Open the capture dialog and let the camera effect settle.
+ *
+ * `/^start$/` rather than `/start/`: the shoot button reads "Starting camera…"
+ * until the stream is ready, and would otherwise match.
+ */
+async function openDialog() {
+  fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+  // getUserMedia → play() → setReady is a promise chain; flush it inside act
+  // so the ready-gated button has rendered before anything looks for it.
+  await act(async () => { await Promise.resolve(); });
+}
+
+/** Walk the dialog to the selfie step, leaving the selfie camera open. */
+async function reachSelfieStep() {
+  await openDialog();
+  await act(async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+  });
+  fireEvent.click(await screen.findByRole('button', { name: /use this photo/i }));
 }
 
 const party = {
@@ -77,11 +115,7 @@ describe('identity verification step', () => {
     // button — no way out but reloading the page.
     const camera = mockCamera();
     verificationStatus.mockResolvedValue(status());
-    // jsdom has no canvas encoder; stand one in so a shot produces a capture.
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({ drawImage: vi.fn() })) as any;
-    HTMLCanvasElement.prototype.toBlob = function (cb: BlobCallback) {
-      cb(new Blob(['jpeg'], { type: 'image/jpeg' }));
-    } as any;
+    stubCanvas();
 
     renderStep();
 
@@ -97,6 +131,127 @@ describe('identity verification step', () => {
     fireEvent.click(retake);
     await waitFor(() => expect(camera.getUserMedia).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('button', { name: /take photo/i })).toBeTruthy();
+  });
+
+  it('restarts the rear camera for a document retake and the front camera for a selfie retake', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+
+    fireEvent.click(await screen.findByRole('button', { name: /start/i }));
+    await waitFor(() => expect(camera.facings).toEqual(['environment']));
+
+    // Document retake reopens the environment-facing camera.
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /retake/i }));
+    await waitFor(() => expect(camera.facings).toEqual(['environment', 'environment']));
+
+    // Advance to the selfie step, then retake there.
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /use this photo/i }));
+    await waitFor(() => expect(camera.facings).toEqual(['environment', 'environment', 'user']));
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /retake/i }));
+    await waitFor(() =>
+      expect(camera.facings).toEqual(['environment', 'environment', 'user', 'user']));
+
+    // Every stream opened along the way was stopped, so no duplicate remains.
+    expect(camera.stops).toHaveLength(4);
+    camera.stops.slice(0, 3).forEach((stop, i) =>
+      expect(stop, `stream ${i} should be stopped`).toHaveBeenCalled());
+  });
+
+  it('stops the document camera when the selfie step opens', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await reachSelfieStep();
+
+    await waitFor(() => expect(camera.facings).toContain('user'));
+    expect(camera.stops[0], 'the document stream must not stay open').toHaveBeenCalled();
+  });
+
+  it('stops every track when the dialog is closed', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await openDialog();
+    await waitFor(() => expect(camera.stops).toHaveLength(1));
+
+    fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+    await waitFor(() => expect(camera.stops[0]).toHaveBeenCalled());
+  });
+
+  it('will not take a photo before the video has real dimensions', async () => {
+    // The blank-frame defect: a zero-height stream must not produce a capture.
+    mockCamera({ dimensions: [1280, 0] });
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await openDialog();
+
+    const shoot = await screen.findByRole('button', { name: /starting camera/i });
+    expect((shoot as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows a visible error when the customer denies camera permission', async () => {
+    mockCamera({ fail: true });
+    verificationStatus.mockResolvedValue(status());
+
+    renderStep();
+    await openDialog();
+
+    expect(await screen.findByText(/could not open your camera/i)).toBeTruthy();
+    // The manual file fallback stays available so they are not dead-ended.
+    expect(await screen.findByText(/upload a photo from this device/i)).toBeTruthy();
+  });
+
+  it('shows a visible error when the capture cannot be encoded', async () => {
+    // canvas.toBlob returning null used to be swallowed, so the button looked
+    // inert and nothing told the customer anything had gone wrong.
+    mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas(null);
+
+    renderStep();
+    await openDialog();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+
+    expect(await screen.findByText(/could not process the photo/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /retake/i }), 'no capture was kept').toBeNull();
+  });
+
+  it('refuses a HEIC chosen from the photo library and says what to do instead', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status());
+
+    renderStep();
+    await openDialog();
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const heic = new File(['x'], 'IMG_4021.HEIC', { type: 'image/heic' });
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [heic] } });
+    });
+
+    expect(await screen.findByText(/HEIC photos cannot be checked/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /retake/i }), 'nothing was captured').toBeNull();
   });
 
   it('does not offer capture when the server would refuse the upload', async () => {

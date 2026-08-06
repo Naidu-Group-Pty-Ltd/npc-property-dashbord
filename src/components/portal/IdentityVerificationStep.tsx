@@ -376,6 +376,19 @@ function CaptureDialog({
  * camera, an insecure context, a locked-down work laptop. Falling back to a
  * file input keeps those customers moving instead of dead-ending them.
  */
+/**
+ * Whether the element has an actual frame to draw.
+ *
+ * All three conditions are needed: `loadedmetadata` sets `readyState` to
+ * HAVE_METADATA and populates the dimensions, and a stream can report a width
+ * a tick before it reports a height.
+ */
+function isVideoRenderable(video: HTMLVideoElement): boolean {
+  return video.readyState >= HTMLMediaElement.HAVE_METADATA
+    && video.videoWidth > 0
+    && video.videoHeight > 0;
+}
+
 function CameraCapture({
   facing, existing, onCapture, onConfirm, confirmLabel = 'Use this photo',
 }: {
@@ -434,10 +447,10 @@ function CameraCapture({
         if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
         video.srcObject = stream;
         await video.play().catch(() => {});
-        // `play()` resolving does not mean there are pixels: videoWidth is
-        // still 0 until metadata arrives. Shooting then produced a blank
+        // `play()` resolving does not mean there are pixels: the dimensions
+        // are still 0 until metadata arrives. Shooting then produced a blank
         // frame that uploaded happily and came back "no face found".
-        if (!cancelled && video.videoWidth > 0) setReady(true);
+        if (!cancelled && isVideoRenderable(video)) setReady(true);
       } catch {
         setCameraError('We could not open your camera. You can upload a photo instead.');
       }
@@ -503,9 +516,8 @@ function CameraCapture({
             aria-label="Camera preview"
             // Metadata can land after the effect has already checked, so the
             // ready gate is driven from the element as well.
-            onLoadedMetadata={(e) => {
-              if (e.currentTarget.videoWidth > 0) setReady(true);
-            }}
+            onLoadedMetadata={(e) => { if (isVideoRenderable(e.currentTarget)) setReady(true); }}
+            onCanPlay={(e) => { if (isVideoRenderable(e.currentTarget)) setReady(true); }}
           />
           <Button className="w-full" onClick={shoot} disabled={!ready || working}>
             {working
@@ -532,7 +544,10 @@ function CameraCapture({
         </span>
         <input
           type="file"
-          accept="image/*"
+          // JPEG and PNG only. `image/*` let an iPhone offer HEIC, which the
+          // verification service cannot decode; toUploadableJpeg rejects it
+          // anyway, but not offering it is a better experience than refusing it.
+          accept="image/jpeg,image/png"
           capture={facing === 'user' ? 'user' : 'environment'}
           className="mt-1 block w-full text-xs"
           disabled={working}
@@ -540,14 +555,11 @@ function CameraCapture({
             const file = e.target.files?.[0];
             // Reset the input so choosing the same file twice still fires.
             e.currentTarget.value = '';
-            // Everything reaching the service is JPEG within its own working
-            // bound — see toUploadableJpeg. A HEIC straight from an iPhone
-            // library used to reach OpenCV and come back as a 400.
             if (file) void capture(() => toUploadableJpeg(file));
           }}
         />
         <span className="mt-1 block text-[11px] text-muted-foreground">
-          Photos are resized to {MAX_CAPTURE_EDGE_PX}px before they are sent.
+          JPEG or PNG. Photos are resized to {MAX_CAPTURE_EDGE_PX}px before they are sent.
         </span>
       </label>
     </div>

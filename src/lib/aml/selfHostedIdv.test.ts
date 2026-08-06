@@ -194,6 +194,39 @@ describe('self-hosted IDV adapter ↔ verification service', () => {
     await expect(adapter()).rejects.toThrow();
   });
 
+  it('never puts the service URL or token into an error', async () => {
+    // This string is persisted to `failure_reason`, read by staff and logged.
+    // A transport error quotes the request URL by default, which would put
+    // internal configuration into the case record.
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('error sending request for url (https://verify.example.internal/doc/mrz): refused'));
+    await expect((await adapter()).runIdv(request())).rejects.toThrow(
+      expect.objectContaining({
+        message: expect.not.stringContaining('verify.example.internal'),
+      }));
+  });
+
+  it('never echoes a rejected token back in an error', async () => {
+    serviceReturning({ '/doc/mrz': { detail: 'bad token service-token' } }, 401);
+    const err = await (await adapter()).runIdv(request()).catch((e: Error) => e);
+    expect(String((err as Error).message)).not.toContain('service-token');
+  });
+
+  it('never puts image bytes into the evidence it returns', async () => {
+    // outcome_detail is written straight from `raw`. Nothing image-shaped
+    // should be in it even before the consumer's own filter runs.
+    serviceReturning({
+      '/doc/mrz': MRZ_ABSENT,
+      '/face/compare': GOOD_COMPARE,
+      '/face/liveness': { ...LIVENESS_NO_FACE, is_real: true, problems: [] },
+    });
+    const result = await (await adapter()).runIdv(request());
+    const serialised = JSON.stringify(result.raw);
+    expect(serialised).not.toContain(IMAGES.document_image_b64);
+    expect(serialised).not.toContain(IMAGES.selfie_image_b64);
+    expect(serialised).not.toMatch(/base64/i);
+  });
+
   it('requires a document image before calling the service', async () => {
     const spy = serviceReturning({});
     await expect((await adapter()).runIdv(request({ selfie_image_b64: 'c2VsZmll' })))

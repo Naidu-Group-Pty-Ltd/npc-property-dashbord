@@ -49,22 +49,45 @@ def test_healthz_rejects_a_git_lfs_pointer_as_a_model(tmp_path, monkeypatch):
 
     Health must report usability, not presence.
     """
-    pointer = (
+    # Exactly what `raw.githubusercontent.com` served: 131 and 133 bytes.
+    yunet_pointer = (
         "version https://git-lfs.github.com/spec/v1\n"
         "oid sha256:8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4\n"
         "size 232589\n"
     )
-    (tmp_path / main_module.m.YUNET_FILE).write_text(pointer)
-    (tmp_path / main_module.m.SFACE_FILE).write_bytes(b"\0" * (main_module.m.MIN_MODEL_BYTES + 1))
+    sface_pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79\n"
+        "size 38696353\n"
+    )
+    (tmp_path / main_module.m.YUNET_FILE).write_text(yunet_pointer)
+    (tmp_path / main_module.m.SFACE_FILE).write_text(sface_pointer)
+    assert len(yunet_pointer) == 131 and len(sface_pointer) == 133
     monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
 
     body = client.get("/healthz").json()
     assert body["status"] == "degraded"
-    assert body["models"]["yunet"] is False
-    assert body["models"]["sface"] is True
+    assert body["models"] == {"yunet": False, "sface": False}
     # The reason has to be in the probe: this is the only place a broken
-    # deployment announces itself before a customer hits it.
-    assert "yunet" in body["model_problems"]
+    # deployment announces itself before a customer reaches it.
+    assert "git_lfs_pointer" in body["model_problems"]["yunet"]
+    assert "git_lfs_pointer" in body["model_problems"]["sface"]
+
+
+def test_healthz_rejects_a_model_opencv_cannot_initialise(tmp_path, monkeypatch):
+    """
+    Size is not usability. A truncated or wrong-architecture ONNX passes every
+    file-level check and then throws inside the first request, so health has to
+    prove the loader actually builds.
+    """
+    for name in (main_module.m.YUNET_FILE, main_module.m.SFACE_FILE):
+        (tmp_path / name).write_bytes(b"\0" * (main_module.m.MIN_MODEL_BYTES + 1))
+    monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert body["models"] == {"yunet": False, "sface": False}
+    assert "failed_to_initialise" in body["model_problems"]["yunet"]
 
 
 def test_a_pointer_model_raises_rather_than_degrading_silently(tmp_path, monkeypatch):

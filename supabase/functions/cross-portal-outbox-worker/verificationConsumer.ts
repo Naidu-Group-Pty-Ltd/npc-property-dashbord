@@ -15,12 +15,24 @@ import {
   currentEnvironment,
   ProviderResolutionError,
 } from '../_shared/aml/providers/index.ts';
+import { stripImagePayloads } from '../_shared/aml/verificationEvidence.pure.ts';
+import { canonicalOutcome } from '../_shared/aml/verificationOutcome.pure.ts';
 
-const OUTCOME_TO_STATUS: Record<string, string> = {
-  verified: 'passed',
-  failed: 'failed',
-  manual_review: 'referred',
-};
+/** Matches MAX_VERIFICATION_ATTEMPTS in aml-client-portal and the DB constraint. */
+const MAX_VERIFICATION_ATTEMPTS = 3;
+
+/** Attempts this party has actually spent — never the row count. */
+async function attemptsConsumed(db: any, caseId: string, partyId: string | null): Promise<number> {
+  let q = db.schema('aml').from('verification_checks')
+    .select('id')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv')
+    .eq('attempt_consumed', true);
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q;
+  if (error) return 0; // pre-migration: no escalation rather than a wrong one
+  return (data ?? []).length;
+}
 
 async function toBase64(blob: Blob): Promise<string> {
   const buf = new Uint8Array(await blob.arrayBuffer());
@@ -120,14 +132,23 @@ export async function runProviderForCheck(db: any, check: any): Promise<void> {
     metadata: { document_image_b64: documentImage, selfie_image_b64: selfieImage },
   }));
 
-  if (result.status === 'pending' || result.status === 'in_progress') {
-    // Unusable capture: the provider looked but could not examine identity.
-    // No identity outcome, NO attempt consumed — the client recaptures.
+  // Shared with the staff re-run in aml-verification, so the two writers of
+  // this row cannot drift apart again.
+  const outcome = canonicalOutcome(result, {
+    attemptsConsumed: await attemptsConsumed(db, check.case_id, check.party_id ?? null),
+    maxAttempts: MAX_VERIFICATION_ATTEMPTS,
+  });
+
+  if (outcome.processingStatus === 'capture_unusable') {
+    // The provider looked but could not examine identity. No identity outcome,
+    // NO attempt consumed — the client recaptures.
     await db.schema('aml').from('verification_checks').update({
-      processing_status: 'capture_unusable',
-      provider_error_category: 'capture_unusable',
+      processing_status: outcome.processingStatus,
+      provider_error_category: outcome.providerErrorCategory,
       provider_attempt_reference: result.providerReference,
-      outcome_detail: { ...(check.outcome_detail ?? {}), capture: result.raw?.face ?? null },
+      outcome_detail: stripImagePayloads({
+        ...(check.outcome_detail ?? {}), capture: result.raw?.face ?? null,
+      }),
       processing_completed_at: new Date().toISOString(),
     }).eq('id', check.id);
     return;
@@ -135,16 +156,18 @@ export async function runProviderForCheck(db: any, check: any): Promise<void> {
 
   // Authoritative outcome: the one place a customer attempt is consumed.
   await db.schema('aml').from('verification_checks').update({
-    status: OUTCOME_TO_STATUS[result.status] ?? 'referred',
-    processing_status: 'completed',
-    attempt_consumed: true,
+    status: outcome.status,
+    processing_status: outcome.processingStatus,
+    attempt_consumed: outcome.attemptConsumed,
     authoritative: provider.mode !== 'simulator',
     execution_mode: provider.mode === 'simulator' ? 'simulation' : 'live',
     environment: currentEnvironment(),
     provider: provider.name,
     provider_reference: result.providerReference,
     provider_attempt_reference: result.providerReference,
-    outcome_detail: result.raw,
+    // The adapter's `raw` goes straight into the case record, so it is
+    // filtered at the boundary rather than trusted to stay image-free.
+    outcome_detail: stripImagePayloads(result.raw),
     completed_at: new Date().toISOString(),
     processing_completed_at: new Date().toISOString(),
   }).eq('id', check.id);

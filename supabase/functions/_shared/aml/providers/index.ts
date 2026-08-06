@@ -222,6 +222,20 @@ function makeSelfHostedIdvProvider(): IdvProvider {
       const selfieImage = meta.selfie_image_b64 ?? "";
       if (!documentImage) throw new Error("document image is required for self-hosted IDV");
 
+      /**
+       * Strip the service host and bearer token out of anything that will be
+       * persisted or logged. `failure_reason` is read by staff and carried
+       * into the case record; neither the internal URL nor the credential
+       * belongs there, and a transport error quotes the URL by default.
+       */
+      const redactService = (text: string): string => {
+        let out = text;
+        if (baseUrl) out = out.split(baseUrl).join("[verification-service]");
+        if (token) out = out.split(token).join("[redacted]");
+        // Belt and braces: any absolute URL left in a transport message.
+        return out.replace(/https?:\/\/[^\s"')]+/gi, "[verification-service]");
+      };
+
       const call = async (path: string, body: Record<string, unknown>) => {
         let res: Response;
         try {
@@ -241,7 +255,11 @@ function makeSelfHostedIdvProvider(): IdvProvider {
           // and records a technical failure, which consumes no attempt.
           throw new Error(aborted
             ? `verification service ${path} timed out after ${VERIFICATION_SERVICE_TIMEOUT_MS}ms`
-            : `verification service ${path} unreachable: ${(e as Error)?.message ?? e}`);
+            // A transport error's message embeds the request URL, and this
+            // string is persisted to `failure_reason` and logged. Redact it:
+            // the service host is internal configuration and belongs in
+            // neither the case record nor the logs.
+            : `verification service ${path} unreachable: ${redactService((e as Error)?.message ?? String(e))}`);
         }
         if (!res.ok) {
           // Read the body for the reason but never let it become an identity
@@ -250,7 +268,8 @@ function makeSelfHostedIdvProvider(): IdvProvider {
           // All three are ours to fix, not the customer's to have failed.
           const detail = await res.text().catch(() => "");
           throw new Error(
-            `verification service ${path} returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+            `verification service ${path} returned ${res.status}` +
+            (detail ? `: ${redactService(detail).slice(0, 200)}` : ""),
           );
         }
         return await res.json();

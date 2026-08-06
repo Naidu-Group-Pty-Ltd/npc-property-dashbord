@@ -75,6 +75,38 @@ describe('electronic verification, as the client sees it', () => {
     expect(p.retake_required).toBe(true);
   });
 
+  it('charges nothing for any technical condition', () => {
+    // Every one of these leaves `attempt_consumed` false by contract: the
+    // customer was never examined, so there is nothing to have failed.
+    const technical = (sequence: number, processing_status: string): VerificationCheckRow => ({
+      party_id: null, check_type: 'electronic_idv', status: 'pending',
+      attempt_number: sequence, capture_sequence: sequence,
+      attempt_consumed: false, processing_status,
+    });
+    const rows = [
+      technical(1, 'technical_failure'),   // provider outage
+      technical(2, 'technical_failure'),   // storage unreadable
+      technical(3, 'technical_failure'),   // timeout
+      technical(4, 'retry_scheduled'),     // duplicate worker delivery, requeued
+      unusableCapture(5),
+    ];
+    const p = projectParty(me, rows, MAX, true);
+    expect(p.attempts_used).toBe(0);
+    expect(p.attempts_remaining).toBe(MAX);
+    expect(p.can_attempt).toBe(true);
+  });
+
+  it('charges nothing for a simulated run', () => {
+    // A simulator result is not an authoritative outcome and never sets
+    // attempt_consumed, so it cannot spend a real customer's attempt.
+    const simulated: VerificationCheckRow = {
+      party_id: null, check_type: 'electronic_idv', status: 'referred',
+      attempt_number: 1, capture_sequence: 1,
+      attempt_consumed: false, processing_status: 'completed',
+    };
+    expect(projectParty(me, [simulated], MAX, true).attempts_used).toBe(0);
+  });
+
   it('reports a verified party as done, with nothing further to do', () => {
     const p = projectParty(me, [settled(1, 'passed')], MAX, true);
     expect(p.status).toBe('verified');

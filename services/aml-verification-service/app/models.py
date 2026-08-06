@@ -62,26 +62,64 @@ class ModelUnavailable(RuntimeError):
 # rightly refuses to allow.
 MIN_MODEL_BYTES = 64 * 1024
 
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+# Which loader proves each model actually initialises. Checking the file is not
+# the same as checking OpenCV can build a net from it: a truncated or
+# wrong-architecture ONNX passes every file-level test and then throws inside
+# the first request.
+_INITIALISERS = {
+    YUNET_FILE: lambda path: cv2.FaceDetectorYN.create(path, "", (320, 320), 0.9, 0.3, 5000),
+    SFACE_FILE: lambda path: cv2.FaceRecognizerSF.create(path, ""),
+}
+
+# Health is probed every few seconds; initialising a 37 MB recogniser each time
+# would make the probe the most expensive thing the service does. The verdict
+# is cached per (path, size, mtime), so a replaced model is re-checked and an
+# unchanged one is checked once.
+_health_cache: dict[str, tuple[tuple, Optional[str]]] = {}
+
 
 def model_problem(name: str) -> Optional[str]:
     """
-    Why `name` is unusable, or None if it looks like a real model.
+    Why `name` is unusable, or None if OpenCV can actually initialise it.
 
-    Deliberately does not load the model: this runs on the health path, which
-    must stay cheap and must never be the thing that first loads a 37 MB
-    recogniser.
+    Checks in increasing cost: present, not an LFS pointer, plausibly sized,
+    and finally that the loader for this model builds without throwing. The
+    first three exist so the common failure is named precisely rather than
+    surfacing as an opaque OpenCV error.
     """
     p = MODEL_DIR / name
     if not p.exists():
         return "missing"
-    size = p.stat().st_size
+
+    stat = p.stat()
+    size = stat.st_size
+
     if size < MIN_MODEL_BYTES:
-        return (
-            f"not_a_model ({size} bytes) — a file this small is almost always a "
-            "Git LFS pointer; check scripts/fetch_models.sh fetched from "
-            "media.githubusercontent.com/media, not raw"
-        )
-    return None
+        # `read_bytes` on a file this small is a few hundred bytes of I/O.
+        if p.read_bytes()[:len(_LFS_POINTER_PREFIX)].startswith(_LFS_POINTER_PREFIX):
+            return (
+                "git_lfs_pointer — scripts/fetch_models.sh must fetch from "
+                "media.githubusercontent.com/media, not raw"
+            )
+        return f"not_a_model ({size} bytes)"
+
+    key = (str(p), size, stat.st_mtime_ns)
+    cached = _health_cache.get(name)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    initialiser = _INITIALISERS.get(name)
+    problem: Optional[str] = None
+    if initialiser is not None:
+        try:
+            initialiser(str(p))
+        except Exception as exc:  # cv2 raises cv2.error, which is not an OSError
+            problem = f"failed_to_initialise: {str(exc)[:200]}"
+
+    _health_cache[name] = (key, problem)
+    return problem
 
 
 def _model_path(name: str) -> Path:

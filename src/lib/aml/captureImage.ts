@@ -63,8 +63,9 @@ function drawToJpeg(
 export async function frameToJpeg(video: HTMLVideoElement): Promise<Blob> {
   const width = video.videoWidth;
   const height = video.videoHeight;
-  // A zero-dimension frame yields a blank 1×1 JPEG that uploads and verifies
-  // as "no face found" — a capture failure disguised as a result.
+  // A zero-dimension frame yields a blank JPEG that uploads and comes back
+  // "no face found" — a capture failure disguised as a result. Both dimensions
+  // are checked: a stream can report a width before it reports a height.
   if (!width || !height) {
     throw new UnreadableCaptureError('The camera was not ready. Please try again.');
   }
@@ -72,13 +73,47 @@ export async function frameToJpeg(video: HTMLVideoElement): Promise<Blob> {
 }
 
 /**
- * Convert a user-selected file into an upload-ready JPEG.
+ * Formats the verification service cannot read.
  *
- * `createImageBitmap` decodes whatever the browser itself can decode, which on
- * iOS includes HEIC. Where it cannot, we say so in words the customer can act
- * on rather than letting an undecodable image reach the service.
+ * OpenCV decodes neither HEIC nor HEIF, and an iPhone photo chosen from the
+ * library is HEIC by default. Uploading one under `Content-Type: image/jpeg`
+ * is how a customer who had done nothing wrong ended up on "With our team":
+ * the service answered 400, the worker recorded a technical failure, and
+ * nothing in the portal ever asked them for a different photo.
+ *
+ * Rejecting here, before any upload, is the only point at which we can tell
+ * them something useful. Nothing is submitted, so no attempt is consumed and
+ * no identity outcome is recorded.
  */
-export async function toUploadableJpeg(file: Blob): Promise<Blob> {
+const UNSUPPORTED_MIME = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'];
+const UNSUPPORTED_EXTENSIONS = ['.heic', '.heif', '.hif'];
+
+/** iOS sometimes reports an empty or generic type, so the name is checked too. */
+export function isUnsupportedCaptureFormat(file: { type?: string; name?: string }): boolean {
+  const type = (file.type ?? '').toLowerCase().trim();
+  if (UNSUPPORTED_MIME.includes(type)) return true;
+  const name = (file.name ?? '').toLowerCase().trim();
+  return UNSUPPORTED_EXTENSIONS.some((ext) => name.endsWith(ext));
+}
+
+export const UNSUPPORTED_FORMAT_MESSAGE =
+  'iPhone HEIC photos cannot be checked. Please use the camera above, or choose '
+  + 'a JPEG or PNG file. (On iPhone: Settings → Camera → Formats → Most Compatible.)';
+
+/**
+ * Prepare a user-selected file for upload.
+ *
+ * JPEG and PNG are supported and are re-encoded to JPEG so the stored object
+ * matches the content type it is uploaded under. Re-encoding on a canvas also
+ * strips EXIF, including the GPS tag a phone photo often carries — we have no
+ * purpose for a customer's location (APP 3), so not collecting it is better
+ * than holding it.
+ */
+export async function toUploadableJpeg(file: File | Blob): Promise<Blob> {
+  if (isUnsupportedCaptureFormat(file as File)) {
+    throw new UnreadableCaptureError(UNSUPPORTED_FORMAT_MESSAGE);
+  }
+
   if (typeof createImageBitmap !== 'function') {
     if (file.type === 'image/jpeg') return file;
     throw new UnreadableCaptureError(
