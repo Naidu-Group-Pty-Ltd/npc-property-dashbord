@@ -32,6 +32,7 @@ const tidy = (value: string) =>
     .replace(/\s+/g, ' ')
     .replace(/[,\s]+$/, '')
     .replace(/\bCopy\b\s*$/i, '')
+    .replace(/(\d{4})\s*Copy$/i, '$1')
     .trim();
 
 const titleCaseSuburb = (value: string) =>
@@ -56,7 +57,12 @@ interface Locality {
 function findLocality(text: string): Locality | null {
   const counts = new Map<string, { locality: Locality; count: number }>();
   for (const match of text.matchAll(LOCALITY_PATTERN)) {
-    const suburb = tidy(match[1]);
+    // Prose leading into the locality ("located in Maryborough QLD 4650") is
+    // trimmed by keeping only the capitalised words that form the suburb name.
+    const words = tidy(match[1]).split(' ');
+    while (words.length > 1 && !/^[A-Z]/.test(words[0])) words.shift();
+    while (words.length > 1 && /^(?:In|The|Of|And|For|To|At|From|Is|As|By|With|Near|Within|Property|Located|Subject|Suburb)$/i.test(words[0])) words.shift();
+    const suburb = words.join(' ');
     if (!suburb || suburb.length < 3) continue;
     // Skip sentence fragments that merely precede a state ("in the suburb of" style noise).
     if (/\b(?:in|the|of|and|for|to|at|from|is|as|by|with|near|within)$/i.test(suburb)) continue;
