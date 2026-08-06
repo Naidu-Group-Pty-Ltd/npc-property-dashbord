@@ -4,12 +4,14 @@ How a change in `weasyprint-service/` reaches a client's document.
 
 `weasyprint-service/README.md` is the reference for *what the service is* — its
 endpoints, its font contract, its first deploy. This is the reference for
-*shipping a change to it*, and it exists because the gap between those two is
-where the silence lives: **there is no deploy workflow for this image anywhere
-in the repository.** `ci.yml` builds it to test it and publishes nothing. There
-is no `docker push`, no `gcloud`, no `cloudbuild.yaml`. Every line in
-`weasyprint-service/` is inert in production until a person runs the commands
-below.
+*shipping a change to it*.
+
+It exists because for a long time nothing did. `ci.yml` built the image to test
+it and published nothing; there was no `docker push`, no `gcloud`, no
+`cloudbuild.yaml` anywhere in the repository, so every line in
+`weasyprint-service/` — veraPDF, `output_intent`, a font, an engine bump — was
+inert in production until a person ran commands from a document. There is now a
+deploy workflow, and the document it was written from is this one.
 
 The other half of the report system does not work like that. The stylesheet, the
 document structure and what the render routes ask for all live in
@@ -41,6 +43,166 @@ normally — `custom_metadata` defaults on and finds no `<meta>` tags to carry,
 | **new container** | safe — no provenance, no output intent | the release |
 
 ---
+
+---
+
+## The short way: the deploy workflow
+
+`.github/workflows/deploy-weasyprint-service.yml` does Steps 0–2 for you, with
+no credential stored anywhere. Once it is set up (below), a release is:
+
+1. merge to `main` — a push touching `weasyprint-service/**` **builds, stages a
+   revision with no traffic, and verifies it**. Production is untouched;
+2. read the run summary — pinned engine confirmed, capabilities reconciled, a
+   real Borrowing Capacity Snapshot rendered whole and tagged;
+3. **Actions → Deploy the render container → Run workflow → `promote: cutover`**
+   when you want traffic on it.
+
+It never cuts over by itself, and that is the point. `deploy-supabase-functions.yml`
+also fires on push to `main`; a merge touching both trees would otherwise race,
+and if the functions win, production is on routes asking `pdf/ua-1` of an old
+engine. Promotion stays a decision.
+
+The manual `gcloud` path below remains correct and is the fallback — for a
+first deploy, for a repository without the variables set, and for the day the
+workflow itself is what is broken.
+
+### Setting up federated deploy — once
+
+No service account key is created, downloaded or stored. GitHub mints a
+short-lived OIDC token per run; Google exchanges it for a scoped access token
+that expires with the job.
+
+```bash
+PROJECT_ID=your-gcp-project
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
+REPO=lavan96/npc-property-dashbord
+POOL=github
+PROVIDER=npc-property-dashbord
+SA=weasyprint-deployer
+
+gcloud services enable \
+  iamcredentials.googleapis.com sts.googleapis.com \
+  cloudbuild.googleapis.com run.googleapis.com \
+  --project "$PROJECT_ID"
+
+gcloud iam workload-identity-pools create "$POOL" \
+  --project "$PROJECT_ID" --location global \
+  --display-name 'GitHub Actions'
+```
+
+**The next command is the one to get right.** `--attribute-condition` is what
+binds this provider to *this repository*. Without it, any GitHub Actions
+workflow in any repository on the internet can present a token this provider
+accepts and impersonate the deploy account. It is not optional and it is not a
+hardening extra.
+
+```bash
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER" \
+  --project "$PROJECT_ID" --location global \
+  --workload-identity-pool "$POOL" \
+  --issuer-uri 'https://token.actions.githubusercontent.com' \
+  --attribute-mapping 'google.subject=assertion.sub,attribute.repository=assertion.repository' \
+  --attribute-condition "assertion.repository == '${REPO}'"
+```
+
+The deploy account, and the least set of roles that completes a release:
+
+```bash
+gcloud iam service-accounts create "$SA" \
+  --project "$PROJECT_ID" --display-name 'WeasyPrint container deployer'
+
+SA_EMAIL="${SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+for role in roles/cloudbuild.builds.editor \
+            roles/storage.admin \
+            roles/run.admin \
+            roles/iam.serviceAccountUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member "serviceAccount:${SA_EMAIL}" --role "$role" --condition=None
+done
+```
+
+- `cloudbuild.builds.editor` submits the build; `storage.admin` is the build's
+  staging bucket, which Cloud Build reads and writes on your behalf.
+- `run.admin` deploys revisions, moves traffic, and **describes the service** —
+  which is how the workflow reads the service token without a second copy of it
+  living in GitHub.
+- `iam.serviceAccountUser` lets it act as the Cloud Run runtime service account.
+
+Finally, let the repository impersonate that account, and print the provider
+name to paste into the variable:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+  --project "$PROJECT_ID" --role roles/iam.workloadIdentityUser \
+  --member "principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}"
+
+echo "GCP_WORKLOAD_IDENTITY_PROVIDER = projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+echo "GCP_DEPLOY_SERVICE_ACCOUNT     = ${SA_EMAIL}"
+echo "GCP_PROJECT_ID                 = ${PROJECT_ID}"
+```
+
+Then **Settings → Secrets and variables → Actions → Variables**:
+
+| variable | required | notes |
+| --- | --- | --- |
+| `GCP_PROJECT_ID` | yes | |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | yes | the full `projects/…/providers/…` name printed above |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | yes | |
+| `GCP_REGION` | no | defaults to `australia-southeast1` |
+| `WEASYPRINT_SERVICE_NAME` | no | defaults to `weasyprint-service` |
+| `WEASYPRINT_IMAGE` | no | defaults to `gcr.io/$GCP_PROJECT_ID/weasyprint-service`. Set an `…-docker.pkg.dev/…` path to move to Artifact Registry |
+
+These are **variables, not secrets**. None is confidential — the provider name
+and the account email are useless without the repository binding above — and
+the workflow's gate reads them in an `if:`, which secrets cannot do reliably.
+
+### Prove the setup before trusting it
+
+In this order:
+
+1. **Run the workflow with no variables set.** It must report which variables
+   are missing and **succeed**. A red run here means the gate is wrong.
+2. **Set the variables, then dispatch with `promote: canary`.** It must build,
+   stage with no traffic, and verify. Check `gcloud run services describe` and
+   confirm the serving revision has not changed.
+3. **Only then dispatch `promote: cutover`.**
+
+To revoke, at any time and without touching the repository:
+
+```bash
+gcloud iam service-accounts remove-iam-policy-binding "$SA_EMAIL" \
+  --project "$PROJECT_ID" --role roles/iam.workloadIdentityUser \
+  --member "principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}"
+```
+
+Nothing has to be rotated, because nothing was issued.
+
+### Housekeeping
+
+A canary that is staged and never promoted keeps its `ci<sha>` tag, and a tag
+pins its revision against garbage collection. That is deliberate — an unpromoted
+canary is the thing somebody may still want to look at — but they accumulate.
+List and clear them occasionally:
+
+```bash
+gcloud run services describe weasyprint-service \
+  --region australia-southeast1 --format=json \
+| jq -r '.status.traffic[]? | select(.tag) | "\(.tag)\t\(.revisionName)"'
+
+gcloud run services update-traffic weasyprint-service \
+  --region australia-southeast1 --remove-tags ci1234567
+```
+
+A promoted release removes its own tag as its last act.
+
+---
+
+## The manual path
+
+Everything below works without the workflow, and is what to follow for a first
+deploy or when the workflow is what is broken.
 
 ## Step 0 — Find out what is actually deployed
 

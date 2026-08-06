@@ -55,9 +55,11 @@ rules from screen, and most of the repo's "logo" files are email-signature banne
 carrying the director's personal mobile number. Architecture and the migration
 programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
-Every report is rendered by one container, `weasyprint-service/`, and **nothing
-deploys it** — no workflow anywhere pushes that image, so a change in it is
-inert in production until a person runs the commands in
+Every report is rendered by one container, `weasyprint-service/`, and it ships
+on its **own** deploy — `ci.yml` builds that image to test it and publishes
+nothing. `deploy-weasyprint-service.yml` stages a revision with no traffic on
+every push and promotes only when a person asks, for the reason below; the
+manual path and the one-time federation setup are in
 [`docs/reports/CONTAINER_RELEASE.md`](./docs/reports/CONTAINER_RELEASE.md).
 Read that before changing the engine pin, the fonts or the render options: it
 also carries the order the container and the render routes have to ship in,
