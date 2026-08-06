@@ -761,6 +761,7 @@ export function PreGenerationOverrides({
                 setFloorSpaceRatio={setFloorSpaceRatio}
                 disabled={disabled}
               />
+              <OverrideStepFooter current="property" onNavigate={goToStep} />
             </TabsContent>
 
             <TabsContent value="financials" className="reports-overrides-tab-content mt-0">
@@ -802,6 +803,7 @@ export function PreGenerationOverrides({
                 setOffsetBalance={setOffsetBalance}
                 localityGrowthEstimate={localityGrowthEstimate}
               />
+              <OverrideStepFooter current="financials" onNavigate={goToStep} />
             </TabsContent>
 
             <TabsContent value="income" className="reports-overrides-tab-content mt-0">
@@ -840,6 +842,7 @@ export function PreGenerationOverrides({
                 purchasePrice={parseFloat(purchasePrice) || undefined}
                 landPrice={parseFloat(landPrice) || undefined}
               />
+              <OverrideStepFooter current="income" onNavigate={goToStep} />
             </TabsContent>
 
             <TabsContent value="advanced" className="reports-overrides-tab-content mt-0">
@@ -899,6 +902,7 @@ export function PreGenerationOverrides({
                 derivedCpiHint={derivedCpiHint}
                 capitalGrowthValue={capitalGrowth}
               />
+              <OverrideStepFooter current="advanced" onNavigate={goToStep} />
             </TabsContent>
           </ScrollArea>
         </Tabs>
