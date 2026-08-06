@@ -8,8 +8,10 @@ rather than trusting a support table.
 """
 
 import json
+import re
 import socket
 import unittest
+import zlib
 from unittest.mock import patch
 
 import app
@@ -21,6 +23,24 @@ TWO_PAGES = (
     '<p style="break-before: page">second page</p>'
     "</body></html>"
 )
+
+
+def _searchable_pdf_bytes(pdf: bytes) -> bytes:
+    """Return raw PDF data plus directly Flate-compressed stream contents."""
+    chunks = [pdf]
+
+    for match in re.finditer(
+        rb"stream\r?\n(.*?)\r?\nendstream",
+        pdf,
+        flags=re.DOTALL,
+    ):
+        try:
+            chunks.append(zlib.decompress(match.group(1)))
+        except zlib.error:
+            # Images, fonts and other streams may use a different encoding.
+            pass
+
+    return b"\n".join(chunks)
 
 
 class VersionEndpointTests(unittest.TestCase):
@@ -139,29 +159,52 @@ class RenderTests(unittest.TestCase):
         # render routes put `npc-format` and `npc-render-id` in the head; this
         # is the switch that copies them into the file.
         #
-        # The keys arrive lowercased and stripped to letters and digits — that
-        # is the engine, not this service, and it is why the assertion below
-        # looks for `npcrenderid` rather than the tag's own name.
+        # The PDF Info dictionary is normally stored in a compressed object
+        # stream. Expand directly Flate-compressed streams before inspecting
+        # the normalized custom metadata keys.
         html = TWO_PAGES.replace(
             "<head>",
             '<head><meta name="npc-format" content="borrowing-capacity">'
             '<meta name="npc-render-id" content="row-42">',
         )
-        self.assertIn("npc-render-id", html)  # the fixture really has a head
-        pdf = self.client.post(
-            "/render", headers=AUTH, json={"html": html, "pdf_variant": "pdf-1.7"},
-        ).data
+        self.assertIn("npc-render-id", html)
+
+        response = self.client.post(
+            "/render",
+            headers=AUTH,
+            json={"html": html},
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        pdf = _searchable_pdf_bytes(response.data)
+
+        self.assertIn(b"/npcformat", pdf)
+        self.assertIn(b"borrowing-capacity", pdf)
         self.assertIn(b"/npcrenderid", pdf)
         self.assertIn(b"row-42", pdf)
 
     def test_honours_custom_metadata_false(self):
-        html = TWO_PAGES.replace("<head>", '<head><meta name="npc-render-id" content="row-42">')
-        pdf = self.client.post(
+        html = TWO_PAGES.replace(
+            "<head>",
+            '<head><meta name="npc-render-id" content="row-42">',
+        )
+
+        response = self.client.post(
             "/render",
             headers=AUTH,
-            json={"html": html, "custom_metadata": False, "pdf_variant": "pdf-1.7"},
-        ).data
+            json={
+                "html": html,
+                "custom_metadata": False,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        pdf = _searchable_pdf_bytes(response.data)
+
         self.assertNotIn(b"/npcrenderid", pdf)
+        self.assertNotIn(b"row-42", pdf)
 
     def test_asks_the_engine_for_the_colour_space_by_name(self):
         # `pdf/ua-1` does not add an output intent the way the PDF/A variants

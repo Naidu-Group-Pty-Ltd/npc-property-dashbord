@@ -109,7 +109,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # context is this directory. SIL OFL 1.1; the licence files ship beside them,
 # which redistribution inside an image requires.
 COPY fonts/ /usr/local/share/fonts/npc/
-RUN fc-cache -f \
+
+# Normalize copied font permissions independently of the caller's umask.
+# Keep the assets root-owned and read-only while allowing the unprivileged
+# runtime identity to traverse the directory and read every shipped face.
+RUN chown -R root:root /usr/local/share/fonts/npc \
+    && find /usr/local/share/fonts/npc -type d -exec chmod 0755 {} + \
+    && find /usr/local/share/fonts/npc -type f -exec chmod 0644 {} + \
+    && fc-cache -f \
     # Fail the build rather than the render. A missing brand face produces a
     # document set in the engine's default serif, and nothing detects that until
     # a client opens it.
@@ -198,6 +205,11 @@ RUN useradd --system --no-create-home --uid 10001 weasy \
     && mkdir -p /tmp/.cache \
     && chown -R weasy:weasy /app /tmp/.cache
 USER weasy
+
+# Re-run the complete self-check as the exact runtime identity.
+# The earlier check proves the image contents are valid; this one also proves
+# that UID 10001 can read the fonts, run the engine and invoke veraPDF.
+RUN python selfcheck.py
 
 # Warm the engine in the gunicorn parent, before it forks. WeasyPrint's import
 # and fontconfig's first scan are seconds, and paying them on a client's first
