@@ -19,6 +19,7 @@ import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_s
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { summariseUploads } from '../_shared/ciAssessments/uploads.pure.ts';
 
 /**
  * Client ownership filter, matching the model used by `get-client-data`:
@@ -39,7 +40,7 @@ const clientOwnershipFilter = (userId: string) =>
   `created_by.eq.${userId},assigned_team_user_id.eq.${userId}`;
 
 type Operation =
-  | 'list' | 'get' | 'create' | 'autosave' | 'update_section'
+  | 'list' | 'get' | 'create' | 'autosave' | 'update_section' | 'rename'
   | 'run_calculation' | 'list_calculations'
   | 'save_scenario' | 'list_scenarios'
   | 'complete' | 'search_clients' | 'create_client' | 'link_client' | 'unlink_client'
@@ -51,9 +52,40 @@ const VALID_STATUSES = new Set([
   'requires_review', 'completed', 'linked', 'archived',
 ]);
 
-// Statuses whose working payload may still be edited. A completed or linked
-// assessment is reopened explicitly, not edited by a stray autosave.
+/**
+ * Statuses whose working payload may be edited: everything but archived.
+ *
+ * This used to stop at `requires_review`, so a completed assessment refused
+ * every edit — "An assessment with status \"completed\" cannot be edited.
+ * Reopen it first" — with no reopen anywhere in the product. A deal does not
+ * stop moving because an assessment was marked complete: a valuation lands, a
+ * rate moves, a tenant is re-signed, and the assessment has to take it.
+ *
+ * What completion actually protects is the **calculation run**, and that is
+ * protected by the run itself: every run stores its own `inputs_snapshot`,
+ * `policy_snapshot` and `outputs`, and reports are produced from the stored run
+ * rather than from the working payload. Editing the payload of a completed
+ * assessment therefore changes what the *next* calculation will say and
+ * nothing about what the last one said. The workspace shows when the two have
+ * diverged; running the calculation again reconciles them.
+ *
+ * Archived is the one refusal, and it has a documented way back — restore.
+ */
 const EDITABLE_STATUSES = new Set([
+  'draft', 'data_entry', 'ready_to_calculate', 'calculated', 'requires_review',
+  'completed', 'linked',
+]);
+
+/**
+ * Statuses a *client* may assign through an update.
+ *
+ * Narrower than the set above, and deliberately so: `completed` is reached
+ * through the `complete` operation (which requires a calculation run) and
+ * `linked` through `link_client` (which requires a reachable client). Letting
+ * an autosave set either would let the browser claim a state the server never
+ * checked the preconditions for.
+ */
+const ASSIGNABLE_STATUSES = new Set([
   'draft', 'data_entry', 'ready_to_calculate', 'calculated', 'requires_review',
 ]);
 
@@ -372,7 +404,7 @@ Deno.serve(async (req) => {
 
         if (!EDITABLE_STATUSES.has(existing.status)) {
           return fail(
-            `An assessment with status "${existing.status}" cannot be edited. Reopen it first.`,
+            `An assessment with status "${existing.status}" cannot be edited. Restore it first.`,
             409, corsHeaders, 'NOT_EDITABLE',
           );
         }
@@ -403,9 +435,13 @@ Deno.serve(async (req) => {
           update.assessment_type = String(body.data.assessmentType).slice(0, 60);
         }
         if (existing.status === 'draft') update.status = 'data_entry';
-        if (body.status && VALID_STATUSES.has(body.status) && EDITABLE_STATUSES.has(body.status)) {
+        if (body.status && VALID_STATUSES.has(body.status) && ASSIGNABLE_STATUSES.has(body.status)) {
           update.status = body.status;
         }
+        // A completed or linked assessment keeps its status through an edit.
+        // Demoting it would revoke the report and unlink the client because a
+        // figure moved, which is the opposite of what editing one is for.
+        if (!ASSIGNABLE_STATUSES.has(existing.status)) delete update.status;
 
         const { data, error } = await supabase
           .from('commercial_industrial_assessments')
@@ -428,6 +464,51 @@ Deno.serve(async (req) => {
         if (body.operation === 'update_section' && body.section) {
           await writeAudit(existing.id, 'section_updated', { section: String(body.section).slice(0, 80) });
         }
+        return json({ success: true, data }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      /**
+       * Rename — the title, and nothing else.
+       *
+       * Deliberately outside the `EDITABLE_STATUSES` gate that governs
+       * `autosave`. That gate protects the *figures*: a completed assessment's
+       * calculation run snapshots its own inputs, outputs and policy, and
+       * letting a stray autosave move the working payload underneath it would
+       * make the run describe something that no longer exists. A title is a
+       * label on the folder, not a number in the file — "Test" has to be able
+       * to become "45 Industrial Drive" after the work is done, which is
+       * exactly when its real name is known.
+       *
+       * The payload is not touched, so there is no version race to lose and no
+       * expectedVersion to send. Archived is the one refusal: an archived
+       * assessment is restored first.
+       */
+      case 'rename': {
+        if (!body.assessmentId) return fail('assessmentId is required', 400, corsHeaders);
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        if (existing.status === 'archived') {
+          return fail('An archived assessment cannot be renamed. Restore it first.', 409, corsHeaders, 'NOT_EDITABLE');
+        }
+
+        const title = String(body.data?.title ?? '').trim().slice(0, 300);
+        if (!title) return fail('A name is required', 400, corsHeaders, 'INVALID_TITLE');
+        if (title === existing.title) return json({ success: true, data: existing }, 200, corsHeaders);
+
+        const { data, error } = await supabase
+          .from('commercial_industrial_assessments')
+          .update({ title, updated_by: userId, version: Number(existing.version) + 1 })
+          .eq('id', existing.id)
+          .eq('user_id', userId)
+          .select()
+          .single();
+        if (error) throw error;
+
+        await writeAudit(existing.id, 'assessment_renamed', {
+          from: String(existing.title ?? '').slice(0, 300), to: title,
+        });
         return json({ success: true, data }, 200, corsHeaders);
       }
 
@@ -480,7 +561,10 @@ Deno.serve(async (req) => {
             .from('commercial_industrial_assessments')
             .update({
               current_calculation_id: run.id,
-              status: EDITABLE_STATUSES.has(existing.status) ? nextStatus : existing.status,
+              // Re-running on a completed or linked assessment updates its
+              // figures and leaves it completed or linked — the run it points
+              // at moves forward, its place in the workflow does not.
+              status: ASSIGNABLE_STATUSES.has(existing.status) ? nextStatus : existing.status,
               requested_loan: Number.isFinite(summary.requestedLoan) ? summary.requestedLoan : null,
               maximum_indicative_loan: Number.isFinite(summary.maximumIndicativeLoan)
                 ? summary.maximumIndicativeLoan : null,
@@ -837,12 +921,20 @@ Deno.serve(async (req) => {
         if (!body.clientId || typeof body.clientId !== 'string') {
           return fail('clientId is required', 400, corsHeaders);
         }
-        const client = await loadReachableClient(body.clientId);
+        const client = await loadReachableClient(
+          body.clientId,
+          'id, primary_first_name, primary_surname, primary_email, primary_mobile',
+        );
         if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
 
         const { data: assessments, error: assessError } = await supabase
           .from('commercial_industrial_assessments')
-          .select('id, user_id, reference, title, status, segment, assessment_type, requested_loan, maximum_indicative_loan, proposed_lvr, proposed_dscr, outcome, binding_constraint, current_calculation_id, linked_at, created_at, updated_at, archived_at')
+          // `provenance` is the payload's record of where each value came
+          // from, and it is the only trace the intake pack leaves in the
+          // database — the workbook and its supporting files are read in the
+          // browser and never uploaded. Selecting the one JSON path rather
+          // than the whole payload keeps a 1.5MB document out of the response.
+          .select('id, user_id, reference, title, status, segment, assessment_type, requested_loan, maximum_indicative_loan, proposed_lvr, proposed_dscr, outcome, binding_constraint, current_calculation_id, linked_at, created_at, updated_at, archived_at, provenance:payload->provenance')
           .eq('client_id', body.clientId)
           .order('updated_at', { ascending: false })
           .limit(100);
@@ -887,9 +979,76 @@ Deno.serve(async (req) => {
           links = linksRes.data ?? [];
         }
 
+        /**
+         * Assessments that belong to this client but are not linked to them.
+         *
+         * The reported symptom was a client profile reading "No Commercial &
+         * Industrial assessments linked" for a client who had been *created
+         * from* an assessment minutes earlier — true, and useless. Two records
+         * establish the relationship without a link: the audit event written
+         * when a client is created from the linking step, and any historical
+         * link that was later removed. Both are surfaced so the tab can say
+         * which assessment it means and offer the step that links it.
+         *
+         * Read-only and best-effort — a failure here costs a prompt, not the
+         * tab, which is why it is not thrown.
+         */
+        let candidates: unknown[] = [];
+        try {
+          const [createdRes, historicRes] = await Promise.all([
+            supabase
+              .from('commercial_industrial_assessment_audit_events')
+              .select('assessment_id')
+              .eq('event_type', 'client_created')
+              .eq('detail->>clientId', body.clientId)
+              .limit(50),
+            supabase
+              .from('commercial_industrial_assessment_client_links')
+              .select('assessment_id')
+              .eq('client_id', body.clientId)
+              .not('unlinked_at', 'is', null)
+              .limit(50),
+          ]);
+
+          const linked = new Set(ids);
+          const candidateIds = [
+            ...(createdRes.data ?? []).map((row: { assessment_id: string }) => row.assessment_id),
+            ...(historicRes.data ?? []).map((row: { assessment_id: string }) => row.assessment_id),
+          ].filter((id) => id && !linked.has(id));
+
+          if (candidateIds.length) {
+            const { data: rows } = await supabase
+              .from('commercial_industrial_assessments')
+              .select('id, reference, title, status, segment, requested_loan, maximum_indicative_loan, updated_at')
+              // Still scoped to the caller's own assessments: the client is
+              // reachable, which says nothing about whose assessment this is.
+              .eq('user_id', userId)
+              .in('id', Array.from(new Set(candidateIds)))
+              .is('archived_at', null)
+              .order('updated_at', { ascending: false })
+              .limit(25);
+            candidates = rows ?? [];
+          }
+        } catch (candidateError) {
+          console.warn('[manage-ci-assessments] candidates unreadable:', candidateError);
+        }
+
+        // What was read into each assessment, one row per document rather than
+        // the payload's one entry per field. See `uploads.pure.ts`.
+        const uploads = (assessments ?? []).flatMap(
+          (row: Record<string, unknown>) => summariseUploads(String(row.id), row.provenance),
+        );
+
+        // The provenance array has done its job; it must not travel on to the
+        // browser, where it would be an unbounded field-by-field payload.
+        const assessmentRows = (assessments ?? []).map((row: Record<string, unknown>) => {
+          const { provenance: _provenance, ...rest } = row;
+          return rest;
+        });
+
         return json({
           success: true,
-          data: { assessments: assessments ?? [], runs, renders, links },
+          data: { client, assessments: assessmentRows, runs, renders, links, uploads, candidates },
         }, 200, corsHeaders);
       }
 

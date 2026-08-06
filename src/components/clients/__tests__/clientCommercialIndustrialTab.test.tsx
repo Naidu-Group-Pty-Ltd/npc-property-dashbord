@@ -20,6 +20,11 @@ vi.mock('@/hooks/useCiAssessments', () => ({
 vi.mock('@/hooks/useCapacityReport', () => ({
   useCapacityReport: () => ({ generatingId: null, generate }),
 }));
+const navigate = vi.fn();
+vi.mock('react-router-dom', async () => ({
+  ...(await vi.importActual<typeof import('react-router-dom')>('react-router-dom')),
+  useNavigate: () => navigate,
+}));
 
 const { ClientCommercialIndustrialTab } = await import('../ClientCommercialIndustrialTab');
 
@@ -58,11 +63,22 @@ const WORKSPACE = {
     created_at: '2026-08-05T01:10:00.000Z',
   }],
   links: [{ id: 'link-1', assessment_id: 'a-linked', linked_at: '2026-08-05T01:00:00.000Z', unlinked_at: null, applied_changes: [] }],
+  uploads: [
+    {
+      assessmentId: 'a-linked', name: 'Intake pack workbook', source: 'document_import',
+      fields: 218, capturedAt: '2026-08-04T22:00:57.000Z',
+    },
+    {
+      assessmentId: 'a-linked', name: 'Contract of sale.pdf', source: 'document_import',
+      fields: 3, capturedAt: '2026-08-04T22:30:00.000Z',
+    },
+  ],
 };
 
 beforeEach(() => {
   clientWorkspace.mockReset().mockResolvedValue({ data: WORKSPACE, error: null });
   generate.mockReset().mockResolvedValue(undefined);
+  navigate.mockReset();
 });
 
 afterEach(cleanup);
@@ -123,6 +139,72 @@ describe('the client Commercial / Industrial tab', () => {
     // Guidance, not a dead end: it names where linking happens and offers the way there.
     expect(screen.getByText(/final step of the assessment workspace/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /open commercial \/ industrial/i })).toBeInTheDocument();
+  });
+
+  it('shows what was read into the assessments, and where it came from', async () => {
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+
+    expect(screen.getByText(/uploaded information \(2\)/i)).toBeInTheDocument();
+    expect(screen.getByText('Intake pack workbook')).toBeInTheDocument();
+    expect(screen.getByText('Contract of sale.pdf')).toBeInTheDocument();
+    expect(screen.getByText('218')).toBeInTheDocument();
+    // And it does not imply a download that does not exist: the pack is read
+    // in the browser and only its values are kept.
+    expect(screen.getByText(/read in the browser and are not\s+stored/i)).toBeInTheDocument();
+  });
+
+  it('says plainly when nothing has been imported', async () => {
+    clientWorkspace.mockResolvedValue({ data: { ...WORKSPACE, uploads: [] }, error: null });
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+    expect(screen.getByText(/nothing has been imported into these assessments/i)).toBeInTheDocument();
+  });
+
+  it('names the assessment that belongs to this client but was never linked', async () => {
+    // The reported symptom: a client created from an assessment minutes
+    // earlier, and a tab that said "No Commercial & Industrial assessments
+    // linked" — true, and useless.
+    clientWorkspace.mockResolvedValue({
+      data: {
+        assessments: [], runs: [], renders: [], links: [], uploads: [],
+        candidates: [{
+          id: 'a-unlinked', reference: 'CI-202608-TS6PK', title: 'Test',
+          status: 'completed', segment: 'commercial',
+          requested_loan: 4_095_000, maximum_indicative_loan: 3_055_219,
+          updated_at: '2026-08-05T18:04:55.000Z',
+        }],
+      },
+      error: null,
+    });
+    renderTab();
+
+    expect(await screen.findByText(/not linked yet \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText('Test')).toBeInTheDocument();
+    expect(screen.getByText(/CI-202608-TS6PK/)).toBeInTheDocument();
+    // And an action, on the step where linking actually happens.
+    fireEvent.click(screen.getByRole('button', { name: /link this assessment/i }));
+    expect(navigate).toHaveBeenCalledWith('/commercial/assessments/a-unlinked?step=link');
+  });
+
+  it('shows the prompt above the linked records when there are both', async () => {
+    clientWorkspace.mockResolvedValue({
+      data: {
+        ...WORKSPACE,
+        candidates: [{
+          id: 'a-unlinked', reference: 'CI-202608-ZZZZ', title: 'Second site',
+          status: 'completed', segment: 'industrial',
+          requested_loan: null, maximum_indicative_loan: null,
+          updated_at: '2026-08-05T18:04:55.000Z',
+        }],
+      },
+      error: null,
+    });
+    renderTab();
+
+    const prompt = await screen.findByText(/not linked yet \(1\)/i);
+    const linked = screen.getByText(/linked assessments \(2\)/i);
+    expect(prompt.compareDocumentPosition(linked) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows an error as an error, with a retry', async () => {

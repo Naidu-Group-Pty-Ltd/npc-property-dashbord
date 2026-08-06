@@ -25,6 +25,7 @@ import { runAssessment, type AssessmentResult } from '@/lib/ciAssessment/engine'
 import { validateAssessment, type ValidationIssue } from '@/lib/ciAssessment/validation';
 import { focusAssessmentFieldWhenReady } from '@/components/commercial/assessment/fieldFocus';
 import { ASSESSMENT_STATUS_LABELS, assessmentTypeDefinition, type AssessmentPayload } from '@/lib/ciAssessment/types';
+import { clientCommercialIndustrialPath } from '@/lib/ciAssessment/clientRoute';
 import { StepAssessmentType } from '@/components/commercial/assessment/StepAssessmentType';
 import { IntakePackPanel } from '@/components/commercial/assessment/IntakePackPanel';
 import type { ParsedPack } from '@/lib/ciAssessment/intakePack';
@@ -197,7 +198,51 @@ export default function CommercialAssessmentWorkspace() {
     }
   }, [error, saveState]);
 
-  const readOnly = record ? !['draft', 'data_entry', 'ready_to_calculate', 'calculated', 'requires_review'].includes(record.status) : false;
+  /**
+   * Read-only means archived, and nothing else.
+   *
+   * It used to mean "completed or linked", which locked every field on the
+   * step the moment the assessment was marked complete — and the server
+   * refused the autosave behind it with "An assessment with status
+   * \"completed\" cannot be edited. Reopen it first", pointing at a reopen
+   * action that does not exist. A deal keeps moving after the assessment is
+   * complete: a valuation lands, a rate moves, a tenancy is re-signed.
+   *
+   * What completion protects is the stored calculation run, and the run
+   * protects itself — it holds its own inputs, policy and outputs, and reports
+   * are produced from it rather than from the working payload. So editing is
+   * allowed and the divergence is *shown* (see `figuresChanged` below) rather
+   * than prevented.
+   */
+  const readOnly = record?.status === 'archived';
+
+  /**
+   * Whether the working data has moved away from the completed calculation.
+   *
+   * Editing a completed assessment is allowed, so something has to say when
+   * the figures on screen are no longer the figures the assessment was
+   * completed on — otherwise a report generated afterwards states one set of
+   * numbers while the workspace shows another, and nobody is told which is
+   * which. The stored columns are written only by a base calculation run, so
+   * comparing them to the live result is an exact test of "has anything moved
+   * since the last run".
+   *
+   * Whole dollars and 4dp ratios both round to the same tolerance here; the
+   * comparison is deliberately loose enough not to fire on float noise.
+   */
+  const figuresChanged = useMemo(() => {
+    if (!record || !liveResult) return false;
+    if (record.status !== 'completed' && record.status !== 'linked') return false;
+    if (!record.current_calculation_id) return false;
+
+    const moved = (stored: number | null, live: number, tolerance: number) => (
+      stored == null ? live > 0 : Math.abs(stored - live) > tolerance
+    );
+    return moved(record.maximum_indicative_loan, liveResult.summary.maximumIndicativeLoan, 1)
+      || moved(record.requested_loan, liveResult.summary.requestedLoan, 1)
+      || moved(record.proposed_lvr, liveResult.summary.proposedLvr, 0.0001)
+      || moved(record.proposed_dscr, liveResult.summary.proposedDscr, 0.0001);
+  }, [record, liveResult]);
 
   const { generatingId, generate } = useCapacityReport();
 
@@ -479,10 +524,41 @@ export default function CommercialAssessmentWorkspace() {
             </div>
           ) : null}
 
+          {/*
+            Editing after completion is allowed; saying nothing about it is
+            not. This appears only once the working data has actually moved
+            away from the run the assessment was completed on, and it names
+            both consequences: what the stored figures still say, and what
+            makes them agree again.
+          */}
+          {figuresChanged ? (
+            <div className="ci-warning-row ci-warning-info" role="status">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="min-w-0">
+                <p className="font-semibold text-foreground">
+                  The figures on screen have moved since this assessment was completed.
+                </p>
+                <p className="mt-0.5 text-sm">
+                  The saved calculation — and any report produced from it — still states the
+                  completed figures. Run the calculation again to bring them up to date; the
+                  assessment stays {record.status === 'linked' ? 'linked' : 'completed'} either way.
+                </p>
+                <Button size="sm" variant="outline" className="mt-2" onClick={calculate} disabled={calculating}>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  Run calculation
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           {activeStep === 'type' ? (
             <StepAssessmentType
               payload={payload} title={record.title} onTitleChange={setTitle}
               onChange={setPayload} disabled={readOnly}
+              // Renaming is governed by the archive, not by completion: the
+              // figures freeze when the assessment completes, the label does
+              // not. `rename` on the edge function enforces the same rule.
+              titleDisabled={record.status === 'archived'}
             />
           ) : null}
           {activeStep === 'pack' ? (
@@ -493,6 +569,8 @@ export default function CommercialAssessmentWorkspace() {
               segment={definition.segment === 'industrial' ? 'industrial' : 'commercial'}
               onApply={applyIntakePack}
               onCreateClient={() => window.open('/clients', '_blank', 'noopener,noreferrer')}
+              linkedClientId={record.client_id}
+              onOpenClient={() => navigate(clientCommercialIndustrialPath(record.client_id!))}
               disabled={readOnly}
             />
           ) : null}

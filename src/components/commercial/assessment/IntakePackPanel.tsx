@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   AlertTriangle, BookOpen, CheckCircle2, Download, Eye, FileSpreadsheet, FileText, Info,
-  Loader2, Paperclip, ScanLine, Upload, UserPlus, X,
+  Loader2, Paperclip, ScanLine, Upload, UserCheck, UserPlus, X,
 } from 'lucide-react';
 import { PackDocumentViewer } from './PackDocumentViewer';
 import { cn } from '@/lib/utils';
@@ -108,6 +108,20 @@ interface Props {
   onApply: (parsed: ParsedPack) => void;
   /** Opens the Command Centre client flow. */
   onCreateClient: () => void;
+  /** Set once the assessment is linked; switches the hand-off to "Open client". */
+  linkedClientId?: string | null;
+  /** Opens the linked client's own Commercial / Industrial file. */
+  onOpenClient?: () => void;
+  /**
+   * Read-only assessment: the *import* is closed, the *documents* are not.
+   *
+   * These are two different things, and conflating them is what took the blank
+   * templates away. Filling a template in and dropping it back changes the
+   * assessment, so it stops when the assessment is complete; downloading the
+   * blank template and reading the worked example change nothing at all, and
+   * an adviser preparing the next client meeting from a finished assessment
+   * still needs both. Only the drop zone and Apply honour this flag.
+   */
   disabled?: boolean;
 }
 
@@ -132,7 +146,7 @@ function isPackFile(file: File): boolean {
 
 export function IntakePackPanel({
   payload, assessmentReference, assessmentTitle, segment = 'commercial',
-  onApply, onCreateClient, disabled,
+  onApply, onCreateClient, linkedClientId, onOpenClient, disabled,
 }: Props) {
   const [downloading, setDownloading] = useState<PackDocumentKind | null>(null);
   const [parsing, setParsing] = useState(false);
@@ -436,10 +450,13 @@ export function IntakePackPanel({
               fill it in Excel or Word.
             */}
             <div className="mt-3 grid gap-2">
+              {/* Never gated by `disabled`: see the prop's note. Handing over
+                  an approved blank template is not an edit to this
+                  assessment. */}
               <Button
                 size="sm"
                 onClick={() => downloadBlank(card.kind)}
-                disabled={disabled || downloading !== null}
+                disabled={downloading !== null}
               >
                 {downloading === card.kind
                   ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -701,16 +718,28 @@ export function IntakePackPanel({
 
       {/* ---- Proceed ----------------------------------------------------- */}
       <div className="rounded-lg border border-border bg-muted/20 p-4">
-        <h3 className="text-sm font-semibold tracking-tight text-foreground">If the client wishes to proceed</h3>
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">
+          {linkedClientId ? 'This assessment belongs to a client' : 'If the client wishes to proceed'}
+        </h3>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          The assessment stays standalone until you link it. If this is a new client, create their
-          record in the Command Centre first — then link the completed assessment to it on the final
-          step, where you can reconcile the portfolio against what is already on file.
+          {linkedClientId
+            ? 'Everything gathered here — the assessment, its calculations and its reports — sits in the '
+              + 'client’s own Commercial / Industrial file. That is where it is read from.'
+            : 'The assessment stays standalone until you link it. You can create the client here or on the '
+              + 'final step, where the completed assessment is linked and the portfolio is reconciled '
+              + 'against what is already on file.'}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={onCreateClient}>
-            <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Create a new client
-          </Button>
+          {linkedClientId && onOpenClient ? (
+            <Button size="sm" variant="outline" onClick={onOpenClient}>
+              <UserCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Open client
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onCreateClient}>
+              <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Create a new client
+            </Button>
+          )}
         </div>
       </div>
 
