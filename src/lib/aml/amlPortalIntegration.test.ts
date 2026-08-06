@@ -357,10 +357,16 @@ describe("unified staff verification surface", () => {
 
 describe("client portal request actions", () => {
   it("routes internally through the closed vocabulary with no URLs", () => {
-    expect(portalPage2).toContain("REQUEST_ACTIONS");
+    // The vocabulary moved to `src/lib/aml/portalRequestRoute.ts` so the
+    // resolver could be unit-tested as behaviour rather than as source text
+    // (see portalRequestRoute.test.ts). The page must consume it, not
+    // reimplement it.
+    expect(portalPage2).toContain("resolveRequestStep");
+    const routeModule = readFileSync("src/lib/aml/portalRequestRoute.ts", "utf8");
+    expect(routeModule).toContain("REQUEST_ACTIONS");
     for (const code of ["complete_identity_verification", "upload_document",
       "update_questionnaire_section", "review_consent", "provide_clarification", "review_and_submit"]) {
-      expect(portalPage2).toContain(code);
+      expect(routeModule).toContain(code);
     }
     const nav = portalPage2.slice(portalPage2.indexOf("onNavigate={(target"), portalPage2.indexOf("/>", portalPage2.indexOf("onNavigate={(target")));
     expect(nav).not.toMatch(/action_url|window\.location|href/);
