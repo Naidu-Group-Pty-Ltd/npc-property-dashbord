@@ -63,7 +63,11 @@ PARSER_ID = 200
 #      "the last From:" into "the last From: that belongs to an agency".
 #
 # `<?` is optional because html-to-text renders a mailto as
-# `Name <addr [addr]>` in some clients and as a bare `From: addr` in others.
+# `Name <addr [addr]>` in some clients and as a bare `From: addr` in others. It
+# also expands a linked display name to `realcommercial.com.au
+# [http://realcommercial.com.au]`, so the name stops at `[` and an optional
+# bracketed run is skipped before the address — without that the captured name
+# carries the URL, and excluding `[` from the name alone loses the match.
 #
 # Measured over the 120 most recent bodies in the Emails table: 6 of 6
 # recoverable forwards resolved to the originating agency
@@ -72,7 +76,8 @@ PARSER_ID = 200
 # non-forwarded messages were touched.
 FORWARD_PATTERN = (
     r"[\s\S]*(?:Begin forwarded message|Forwarded message|Original Message)"
-    r"[\s\S]*[\n>]From[ \t]*:[ \t]*(?<fwd_name>[^<\n]{0,150}?)[ \t]*<?[ \t]*"
+    r"[\s\S]*[\n>]From[ \t]*:[ \t]*(?<fwd_name>[^<\[\n]{0,150}?)"
+    r"[ \t]*(?:\[[^\]\n]*\][ \t]*)?<?[ \t]*"
     r"(?<fwd_email>(?!(?:lavankenobi|naidu\.rugesh)@gmail\.com)"
     r"(?![A-Za-z0-9._%+-]+@npcservices\.com\.au)"
     r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})"

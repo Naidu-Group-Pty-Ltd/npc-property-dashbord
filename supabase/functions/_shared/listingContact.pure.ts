@@ -75,6 +75,14 @@ const BULK_SENDER_HOSTS = [
   'exacttarget',
   'rsgsv.net',
   'mcsv.net',
+  // Portal broadcast infrastructure. A saved-search alert forwarded in from
+  // realcommercial resolves to `email@campaign.realcommercial.com.au` — which is
+  // genuinely who sent it, and is the portal's own mail platform rather than the
+  // agency marketing the property. `email@` slips past UNREACHABLE, so it has to
+  // be named here.
+  'campaign.realcommercial.com.au',
+  'campaign.realestate.com.au',
+  'reastatic.net',
 ];
 
 /**
