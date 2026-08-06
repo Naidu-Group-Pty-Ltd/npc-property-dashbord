@@ -1,4 +1,5 @@
 import type { InvestmentReport } from '@/components/reports/library/types';
+import { resolveReportAddress } from './reportAddress';
 import { getReportPackageKey, normalizeReportVariant, REPORT_VARIANT_ORDER } from './reportVariants';
 
 export interface GeneratedReportGroup {
@@ -27,7 +28,7 @@ export function buildGeneratedReportGroups(reports: readonly InvestmentReport[])
   const packages = new Map<string, InvestmentReport[]>();
   for (const report of reports) {
     if (!report || typeof report.id !== 'string') continue;
-    const safeReport = { ...report, property_address: report.property_address || 'Address unavailable' };
+    const safeReport = { ...report, property_address: resolveReportAddress(report) };
     const key = getReportPackageKey(safeReport);
     packages.set(key, [...(packages.get(key) || []), safeReport]);
   }
