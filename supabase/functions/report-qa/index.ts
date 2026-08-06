@@ -1274,6 +1274,11 @@ Deno.serve(async (req) => {
       // conversation row exists. Module permission + paid rate limits still
       // apply; there is simply no conversation resource to authorize.
       'transcribe': { access: 'none', permission: 'can_edit', paid: true },
+      // OCR only converts caller-supplied page images to text. It does not
+      // access or persist a conversation, so it must work before a new chat
+      // has a conversation id. The separate `extract` action remains a
+      // write-authorized storage path.
+      'ocr-pages': { access: 'none', permission: 'can_edit', paid: true },
       'extract': { access: 'write', permission: 'can_edit', paid: true },
       'index-reports': { access: 'write', permission: 'can_edit', paid: true },
       'update-conversation': { access: 'admin', permission: 'can_edit' },
@@ -1457,9 +1462,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Handle PDF text extraction with RAG storage (Step 5)
-    if (action === "extract") {
-      const { fileData, fileName, conversationId, enableRAG = true, enableOCR = true, pageImages } = body;
+    // Handle standalone raster OCR or PDF extraction with RAG storage (Step 5).
+    // `ocr-pages` is intentionally unable to persist or resolve stored data.
+    if (action === "extract" || action === "ocr-pages") {
+      const isOcrOnlyAction = action === "ocr-pages";
+      const { fileData, fileName, conversationId, enableOCR = true, pageImages } = body;
+      const enableRAG = isOcrOnlyAction ? false : body.enableRAG ?? true;
       console.log(`[report-qa] Extracting text from: ${fileName}, RAG enabled: ${enableRAG}, OCR enabled: ${enableOCR}`);
       
       if (!Array.isArray(pageImages) && pageImages !== undefined) {
@@ -1471,6 +1479,13 @@ Deno.serve(async (req) => {
 
       const imagesOnly = (!fileData || typeof fileData !== 'string' || fileData.length === 0)
         && Array.isArray(pageImages) && pageImages.length > 0;
+
+      if (isOcrOnlyAction && !imagesOnly) {
+        return new Response(JSON.stringify({ error: 'OCR pages are required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
       // Accept either a full data URL or raw base64.
       const base64Data = (typeof fileData === 'string' && fileData.includes(','))

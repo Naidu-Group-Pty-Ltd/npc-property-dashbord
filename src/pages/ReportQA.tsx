@@ -737,10 +737,13 @@ export default function ReportQA() {
           for (let i = 0; i < pageImages.length; i += BATCH_SIZE) {
             const batch = pageImages.slice(i, i + BATCH_SIZE);
             const { data, error } = await invokeSecureFunction('report-qa', {
-              action: 'extract',
+              // Raster OCR is deliberately conversation-independent: a user
+              // must be able to read a flattened PDF before the first chat is
+              // created. `extract` is a storage mutation and correctly
+              // requires an existing writable conversation.
+              action: 'ocr-pages',
               fileName: file.name,
               pageImages: batch,
-              enableRAG: false,
             });
 
             if (error) {
