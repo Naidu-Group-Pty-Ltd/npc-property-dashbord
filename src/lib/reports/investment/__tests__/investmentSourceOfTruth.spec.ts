@@ -25,9 +25,16 @@ const pureModules = (dir: string) =>
 const BRIDGE_SHAPE =
   /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/investment\/([\w.]+)\.pure\.ts';\s*$/;
 
-/** Siblings, the design system next door, or the two shared text helpers. */
+/**
+ * Siblings, the design system next door, or the shared report helpers.
+ *
+ * `vizDirectives`/`vizFigures` joined `text`/`markdown` when the model's own
+ * `{{bars: …}}` vocabulary turned out to be shared: it is written into the
+ * investment corpus, but the parser and the router sit at the root of
+ * `_shared/reports/` because nothing about them is investment-specific.
+ */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown)\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures)\.pure\.ts)$/;
 
 describe('investment report — single source of truth', () => {
   it('has at least one canonical module', () => {

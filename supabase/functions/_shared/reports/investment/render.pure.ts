@@ -57,6 +57,7 @@ import type { ReportDesignOptions } from '../../reportDesign/options.pure.ts';
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
 import { renderMarkdown } from '../markdown.pure.ts';
+import { vizDirectiveRenderer } from '../vizFigures.pure.ts';
 import { chartHasData, investmentChartContext, renderNamedChart } from './charts.pure.ts';
 import type { InvestmentReport, SectionChart } from './payload.pure.ts';
 import { scenarioSeries } from './normalise.pure.ts';
@@ -113,7 +114,17 @@ export function kpiCells(report: InvestmentReport): KpiCell[] {
   }
   if (s?.grade) cells.push({ label: 'Grade', value: s.grade, foot: 'composite' });
   if (report.specs.propertyType) {
-    cells.push({ label: 'Property', value: report.specs.propertyType, foot: report.specs.zoning || undefined });
+    // The one cell in this strip whose value is words rather than a figure, and
+    // the corpus writes it long — "Residential Property" on 1,054 rows. In a
+    // six-cell `table-layout: fixed` strip that is about 28mm a cell, so it
+    // wraps; `.kpi-value` now leads for that, and the redundant noun is dropped
+    // so it usually does not have to. The zoning stays in the foot.
+    const type = report.specs.propertyType.replace(/\s+Property$/i, '').trim();
+    cells.push({
+      label: 'Property',
+      value: type || report.specs.propertyType,
+      foot: report.specs.zoning || undefined,
+    });
   }
   if (f?.grossYield !== null && f?.grossYield !== undefined) {
     cells.push({ label: 'Gross yield', value: pct(f.grossYield, 2), foot: 'of purchase price' });
@@ -132,20 +143,35 @@ export function kpiCells(report: InvestmentReport): KpiCell[] {
   return cells.slice(0, 6);
 }
 
-/** The property specification, as a table, beside its tiles. */
-function specTable(report: InvestmentReport): string {
+/**
+ * The property specification, as a table — carrying only what the tiles above
+ * it do not.
+ *
+ * `propertyTiles` draws bedrooms, bathrooms, parking, land, building, year
+ * built, zoning and type. This table used to draw all eight again, directly
+ * underneath, so the opening chapter said the same facts twice in two
+ * treatments across two consecutive pages. Read off a render: eight tiles on
+ * page 4, the same eight as table rows on page 5.
+ *
+ * The address and the council are the two the tiles have no room for, so they
+ * are what the table is for. When the tiles did not draw — fewer than three
+ * facts — the table carries everything, because then nothing else has.
+ */
+function specTable(report: InvestmentReport, tiled: boolean): string {
   const s = report.specs;
   const rows: TableRow[] = [];
   const add = (k: string, v: string) => { if (v) rows.push({ item: k, detail: v }); };
   add('Address', report.meta.propertyAddress);
-  add('Type', s.propertyType);
-  add('Bedrooms', s.bedrooms === null ? '' : String(s.bedrooms));
-  add('Bathrooms', s.bathrooms === null ? '' : String(s.bathrooms));
-  add('Parking', s.parking === null ? '' : String(s.parking));
-  add('Land', s.landSqm === null ? '' : `${Math.round(s.landSqm)} m²`);
-  add('Building', s.buildingSqm === null ? '' : `${Math.round(s.buildingSqm)} m²`);
-  add('Year built', s.yearBuilt === null ? '' : String(s.yearBuilt));
-  add('Zoning', s.zoning);
+  if (!tiled) {
+    add('Type', s.propertyType);
+    add('Bedrooms', s.bedrooms === null ? '' : String(s.bedrooms));
+    add('Bathrooms', s.bathrooms === null ? '' : String(s.bathrooms));
+    add('Parking', s.parking === null ? '' : String(s.parking));
+    add('Land', s.landSqm === null ? '' : `${Math.round(s.landSqm)} m²`);
+    add('Building', s.buildingSqm === null ? '' : `${Math.round(s.buildingSqm)} m²`);
+    add('Year built', s.yearBuilt === null ? '' : String(s.yearBuilt));
+    add('Zoning', s.zoning);
+  }
   add('Council', s.councilArea);
   if (!rows.length) return '';
   return renderDataTable(
@@ -212,6 +238,8 @@ function chapterBody(
   const scenarios = (field: 'propertyValue' | 'cumulativeCashFlow' | 'annualRent') =>
     scenarioSeries(projectionsRaw, field);
 
+  const drawDirective = vizDirectiveRenderer(ctx);
+
   const drawCharts = (names: readonly SectionChart[]): string => names.map((name) => {
     // `chartHasData` is what the page planner charged for. Asking it first means
     // a chart that produces nothing anyway is counted the same way in both
@@ -224,24 +252,42 @@ function chapterBody(
   }).join('');
 
   if (chapter.kind === 'sources') return sourcesTable(report.sources);
-  if (chapter.kind === 'property') return drawCharts(chapter.charts) + specTable(report);
+  if (chapter.kind === 'property') {
+    const tiles = drawCharts(chapter.charts);
+    return tiles + specTable(report, Boolean(tiles));
+  }
 
   // A prose chapter is its numbered sections, each under its own subhead, each
   // followed by its own charts. Interleaved rather than prose-then-charts,
   // because `SECTION_CHARTS` attaches an infographic to a section by number:
   // rendering a chapter's prose and then all of its charts would put the
   // sensitivity tornado four subheads below the sensitivity analysis.
+  // A chapter that *is* one section already carries that section's name in its
+  // 34pt header, so a subhead repeating it would set the same words twice, four
+  // lines apart — the defect `MarkdownOptions.chapterTitle` exists to stop, one
+  // level up. Only the grouped chapters need subheads to tell their parts apart.
+  const subheads = chapter.parts.length > 1;
+
   return chapter.parts.map((part, i) => {
     const idPrefix = `${chapter.id.replace(/[^a-z0-9]/gi, '')}p${i}`;
-    const heading = `<h2>${escapeHtml(part.title)}</h2>`;
-    const prose = part.markdown
-      ? renderMarkdown(part.markdown, {
+    const heading = subheads ? `<h2>${escapeHtml(part.title)}</h2>` : '';
+    let prose = '';
+    if (part.markdown) {
+      const md = renderMarkdown(part.markdown, {
         idPrefix,
         // See `MarkdownOptions.chapterTitle` — model prose heads itself, and
         // the subhead above is now that title, so an echo must still be dropped.
         chapterTitle: part.title,
-      }).html
-      : '';
+        // The model's own `{{bars: …}}` / `{{gauge: …}}` lines. Around 124 a
+        // report, and until this callback existed every one of them set as body
+        // copy. They count into the same ledger columns as the fourteen named
+        // infographics, because on the page they are the same thing.
+        renderDirective: drawDirective,
+      });
+      prose = md.html;
+      counters.drawn += md.notices.figuresDrawn;
+      counters.skipped += md.notices.figuresDropped;
+    }
     // Charts after the prose that introduces them, not before it. The section's
     // own first sentence says what the reader is about to look at.
     return heading + prose + drawCharts(part.charts);

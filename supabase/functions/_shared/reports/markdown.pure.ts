@@ -74,6 +74,11 @@ import {
   type TableRow,
 } from '../reportDesign/primitives.pure.ts';
 import { countUrlTokens, neutraliseUrls } from './text.pure.ts';
+import {
+  directiveOnlyBlock,
+  scanVizDirectives,
+  type VizDirective,
+} from './vizDirectives.pure.ts';
 
 // ── Bounds ──────────────────────────────────────────────────────────────────
 
@@ -366,7 +371,42 @@ export interface MarkdownOptions {
    * of the same name later in the body is a real subsection.
    */
   chapterTitle?: string;
+  /**
+   * Draw a chart the model asked for.
+   *
+   * The investment corpus carries **2,601** `{{bars: …}}` / `{{gauge: …}}`
+   * directives across 21 documents — about 124 a report — and without this
+   * every one of them set as an ordinary paragraph. A client's page printed
+   * `{{bars: Bed/bath/car match to family demand 82, Layout flexibility 75 |
+   * title=Property fit | max=100}}` in body copy, over and over.
+   *
+   * A callback rather than a direct call into `charts.pure.ts`, because a chart
+   * needs a `ChartContext` — the resolved palette and the printed column width
+   * — and this module has neither and should not acquire them. The caller knows
+   * both. See `vizFigures.pure.ts` for the one this programme's formats pass.
+   *
+   * Return `null` to decline a kind; it is dropped and counted, never printed.
+   * **Omitting the option entirely is also a decision**: the directives are
+   * still removed from the prose, because a shortcode is instruction to the
+   * renderer and not something to show a client either way.
+   *
+   * `lines` is the block's share of the page budget, in body lines. Omitted, a
+   * figure is charged `DEFAULT_FIGURE_LINES`.
+   */
+  renderDirective?: (
+    directive: VizDirective,
+  ) => string | { html: string; lines?: number } | null;
 }
+
+/**
+ * What a figure costs the page estimator when its renderer does not say.
+ *
+ * The charts run 176–360 SVG units tall against a `CHART_WIDTH` of 520–720,
+ * which on the 174mm measure is roughly 42–87mm, or 8–17 body lines at the
+ * 15.5pt leading `LINES_PER_PAGE` is derived from. Twelve is the middle of
+ * that, and a renderer that knows which chart it drew should say so instead.
+ */
+export const DEFAULT_FIGURE_LINES = 12;
 
 export interface MarkdownHeading {
   /** As emitted. Never 1, 5 or 6. */
@@ -382,7 +422,7 @@ export interface MarkdownHeading {
 
 export type MarkdownBlockKind =
   | 'paragraph' | 'heading' | 'list' | 'table' | 'landscape-table'
-  | 'blockquote' | 'code' | 'notice';
+  | 'blockquote' | 'code' | 'notice' | 'figure';
 
 export interface MarkdownBlock {
   kind: MarkdownBlockKind;
@@ -415,6 +455,13 @@ export interface MarkdownNotices {
   unmatchedEmphasis: number;
   /** Runs too long or too marker-dense to parse emphasis in. */
   inlineSkipped: number;
+  /** `{{…}}` chart directives that became a figure. */
+  figuresDrawn: number;
+  /**
+   * Directives that did not: an unknown kind, a payload with nothing plottable
+   * in it, or a caller who declined the kind. Counted rather than printed.
+   */
+  figuresDropped: number;
 }
 
 export interface MarkdownResult {
@@ -455,6 +502,8 @@ const emptyNotices = (): MarkdownNotices => ({
   urlsNeutralised: 0,
   unmatchedEmphasis: 0,
   inlineSkipped: 0,
+  figuresDrawn: 0,
+  figuresDropped: 0,
 });
 
 // ── Inline ──────────────────────────────────────────────────────────────────
@@ -764,6 +813,32 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
         .map((l) => escapeHtml(l).replace(/^ +/, (sp) => '\u00a0'.repeat(sp.length)))
         .join('<br>');
       if (!push('code', renderCallout('informative', label, `<p><code>${inner}</code></p>`), kept.length + 2)) break scan;
+      continue;
+    }
+
+    // A line that is nothing but chart directives.
+    //
+    // Whole-line only, and that is the whole of the rule. Measured over the
+    // corpus: 3,761 lines carry a directive and **3,748 of them carry nothing
+    // else**. The remaining 13 are a "how to read this report" legend, where
+    // the model names the kinds in prose — `- **{{gauge: …}}** — a score out of
+    // 100`. Lifting those out would leave a bullet with a hole in it, and their
+    // payload is a literal ellipsis, so they refuse to parse anyway.
+    if (trimmed.startsWith('{{') && directiveOnlyBlock(trimmed)) {
+      if (!flushParagraph()) break scan;
+      const { directives, refused } = scanVizDirectives(trimmed);
+      notices.figuresDropped += refused;
+      for (const directive of directives) {
+        const drawn = options.renderDirective?.(directive) ?? null;
+        const html = typeof drawn === 'string' ? drawn : drawn?.html ?? '';
+        if (!html.trim()) { notices.figuresDropped++; continue; }
+        notices.figuresDrawn++;
+        const charged = typeof drawn === 'object' && typeof drawn.lines === 'number'
+          ? drawn.lines
+          : DEFAULT_FIGURE_LINES;
+        if (!push('figure', html, charged)) break scan;
+      }
+      i++;
       continue;
     }
 

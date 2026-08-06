@@ -400,10 +400,22 @@ const TONE_CLASS: Record<ValueTone, string> = {
   negative: ' neg',
 };
 
+/**
+ * Above this many cells, the strip sets its figures a step smaller.
+ *
+ * `table-layout: fixed` divides the strip evenly, so a six-cell strip across
+ * the 174mm measure gives each value about 28mm. At `h2 + 2` — 22pt — that is
+ * not enough for "3.74%" or "House", and a render showed both broken across
+ * two lines: "3.74 / %" and "Hous / e". Five is where the arithmetic turns:
+ * 34mm holds a five-character figure at 22pt, 28mm does not.
+ */
+export const KPI_DENSE_FROM = 5;
+
 export function renderKpiStrip(cells: KpiCell[]): string {
   if (!cells.length) return '';
+  const dense = cells.length >= KPI_DENSE_FROM ? ' dense' : '';
   return `
-      <div class="kpi-strip">
+      <div class="kpi-strip${dense}">
         ${cells.map((c) => `
         <div class="kpi">
           <div class="kpi-label">${escapeHtml(c.label)}</div>

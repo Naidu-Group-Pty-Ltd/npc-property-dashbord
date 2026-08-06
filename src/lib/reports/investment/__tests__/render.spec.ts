@@ -28,6 +28,7 @@ import { contentsEntriesFor, REPORT_ARCHETYPES } from '@/lib/reportDesign/struct
 import { assertSafeRenderResources } from '../../../../../supabase/functions/_shared/renderResourcePolicy.pure';
 import {
   ADDRESS,
+  currentFormat,
   locationOnly,
   minimal,
   PREPARED_ON,
@@ -75,11 +76,17 @@ const SHAPES = [
 ] as const;
 
 /**
- * The document, on disk, for the eye — the full report, which is the only shape
- * that draws every chart. See `renderArtifact.ts`.
+ * The document, on disk, for the eye. See `renderArtifact.ts`.
+ *
+ * `currentFormat()` rather than `reportRow()`: same structured columns, same
+ * charts, but the prose in the shape the generator writes **today** — named
+ * sections, no numbering, a `{{…}}` figure under most of them. The numbered
+ * variant still serves two-thirds of the archive and is still asserted below;
+ * it is not the document a client receives this week, and the artefact anyone
+ * looks at should be.
  */
 beforeAll(() => {
-  writeRenderArtifact('investment-compass', render().html);
+  writeRenderArtifact('investment-compass', render(currentFormat()).html);
 });
 
 describe('the contents page cannot claim something that was not printed', () => {

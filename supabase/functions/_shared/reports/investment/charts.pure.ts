@@ -23,6 +23,7 @@ import {
   type BarItem,
   chartContext,
   chartFigure,
+  COMPACT_FIGURE_FRACTION,
   type ChartContext,
   renderBars,
   renderBullet,
@@ -37,7 +38,11 @@ import {
   withAlpha,
 } from '../../reportDesign/charts.pure.ts';
 import type { ResolvedReportPalette } from '../../reportDesign/roles.pure.ts';
-import { escapeHtml } from '../../reportDesign/primitives.pure.ts';
+import {
+  escapeHtml,
+  renderDataTable,
+  type TableRow,
+} from '../../reportDesign/primitives.pure.ts';
 import type {
   Demographics,
   EconomicContext,
@@ -64,18 +69,34 @@ const money = (v: number): string => {
 
 const pct = (v: number, digits = 1): string => `${v.toFixed(digits)}%`;
 
+/**
+ * The context a chart drawn at `CHART_WIDTH.compact` should be measured
+ * against, and the figure width that matches it.
+ *
+ * A gauge is 460 units wide and 300 tall. Rendered `width: 100%` across the
+ * 174mm measure that is 113mm of paper — read off a render, the score gauge
+ * had a whole page to itself with two thirds of it empty. The narrowed context
+ * matters as much as the CSS: every point size inside the drawing is computed
+ * against `ctx.widthMm`, so a chart printed at 60% of the width it was measured
+ * for sets its labels at 60% of the size the code asked for.
+ */
+const compactCtx = (ctx: ChartContext): ChartContext =>
+  ({ ...ctx, widthMm: ctx.widthMm * COMPACT_FIGURE_FRACTION });
+
 // ── The score ───────────────────────────────────────────────────────────────
 
 /** The headline gauge. Absolute, 0-100, with the grade under it. */
 export function scoreGauge(ctx: ChartContext, score: InvestmentScore): string {
   if (score.total === null) return '';
   return chartFigure(
-    renderGauge(ctx, score.total, {
+    renderGauge(compactCtx(ctx), score.total, {
       max: 100,
       label: score.grade ? `Grade ${score.grade}` : 'Investment score',
       caption: 'Out of 100',
     }),
     'The composite score across all five dimensions.',
+    '',
+    'compact',
   );
 }
 
@@ -150,19 +171,62 @@ export function scorePeerStrip(ctx: ChartContext, score: InvestmentScore): strin
   );
 }
 
-/** The five dimensions as a radar. */
+/**
+ * The five dimensions as a radar, and the table that explains it.
+ *
+ * The wheel alone says how the five scored and nothing about which of them the
+ * composite leaned on. The engine records a `weight` and a one-line `details`
+ * for each — "Excellent walkability (90+). Limited CBD access (>60 min)." —
+ * and until `toScore` learned to read the dimension objects, none of it left
+ * the database. A shape without its weights is a picture; with them it is an
+ * argument, so the two ship together.
+ */
 export function scoreWheel(ctx: ChartContext, score: InvestmentScore): string {
   const present = score.breakdown.filter((b) => b.value !== null);
   // A radar over one or two axes is a line, not a shape.
   if (present.length < 3) return '';
-  return chartFigure(
-    renderScoreWheel(ctx, present.map((b) => b.value as number), {
+  const wheel = chartFigure(
+    renderScoreWheel(compactCtx(ctx), present.map((b) => b.value as number), {
       labels: present.map((b) => b.label),
       max: 100,
     }),
     present.length < score.breakdown.length
       ? `${score.breakdown.length - present.length} of the five dimensions were not scored and are not plotted.`
       : 'Each dimension out of 100.',
+    '',
+    'compact',
+  );
+  return wheel + scoreBreakdownTable(score);
+}
+
+/**
+ * The dimension table: score, weight, and the engine's own reason.
+ *
+ * An excluded dimension keeps its row and says so rather than being dropped —
+ * "no data" and "scored zero" are opposite facts, and a reader who counts four
+ * rows where the wheel has five would assume the fifth was cut for space.
+ */
+export function scoreBreakdownTable(score: InvestmentScore): string {
+  const rows: TableRow[] = score.breakdown
+    .filter((b) => b.value !== null || b.excluded || b.details)
+    .map((b) => ({
+      dimension: b.label,
+      score: b.excluded || b.value === null ? 'Not scored' : String(Math.round(b.value)),
+      weight: b.weight === null ? '' : `${Math.round(b.weight)}`,
+      why: b.excluded && !b.details ? 'No data was available for this dimension.' : b.details,
+    }));
+  if (rows.length < 2) return '';
+  const anyWeight = score.breakdown.some((b) => b.weight !== null);
+  const anyDetail = score.breakdown.some((b) => Boolean(b.details));
+  return renderDataTable(
+    [
+      { key: 'dimension', label: 'Dimension', align: 'left' },
+      { key: 'score', label: 'Score', align: 'right' },
+      ...(anyWeight ? [{ key: 'weight', label: 'Weight', align: 'right' as const }] : []),
+      ...(anyDetail ? [{ key: 'why', label: 'What the score reflects', align: 'left' as const }] : []),
+    ],
+    rows,
+    { caption: 'How the composite was built' },
   );
 }
 
@@ -199,10 +263,12 @@ export function localityMap(ctx: ChartContext, loc: LocationIntelligence): strin
   if (!loc.suburb && loc.walkScore === null) return '';
   const map = loc.suburb
     ? chartFigure(
-      renderMicroMap(ctx, { suburb: loc.suburb, state: loc.state, postcode: loc.postcode }),
+      renderMicroMap(compactCtx(ctx), { suburb: loc.suburb, state: loc.state, postcode: loc.postcode }),
       loc.lat !== null && loc.lng !== null
         ? 'An abstract locator, not a map to scale.'
         : 'An abstract locator. No coordinates were recorded for this property.',
+      '',
+      'compact',
     )
     : '';
   const walk = loc.walkScore !== null

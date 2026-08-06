@@ -12,7 +12,8 @@
  * a sources chapter at the back.
  */
 import type { ChapterInput } from '../../reportDesign/structure.pure.ts';
-import { pagesForLines, renderMarkdown } from '../markdown.pure.ts';
+import { markdownToPlainText, pagesForLines, renderMarkdown } from '../markdown.pure.ts';
+import { planningChartContext, vizDirectiveRenderer } from '../vizFigures.pure.ts';
 import { chartHasData } from './charts.pure.ts';
 import {
   type InvestmentReport,
@@ -118,7 +119,8 @@ export const CHAPTER_FURNITURE_LINES = 3;
 export const CHART_LINES: Readonly<Record<SectionChart, number>> = {
   'score-gauge': 22,
   'score-peers': 14,
-  'score-wheel': 26,
+  // The wheel plus the dimension table it now ships with — see `scoreWheel`.
+  'score-wheel': 26 + 8,
   'swot-quadrant': 20,
   'locality-map': 30,
   'amenity-bullets': 20,
@@ -145,8 +147,24 @@ function clip(markdown: string): { text: string; omitted: number } {
   return { text: markdown.slice(0, at), omitted: markdown.length - at };
 }
 
+/**
+ * A chapter's prose, in lines — **including the figures inside it**.
+ *
+ * `renderDirective` is passed here for one reason: without it the planner
+ * charges nothing for the model's own charts, and the corpus carries around 124
+ * of them a report. A plan that budgets zero for a hundred figures is not a
+ * plan. The context is `planningChartContext` — grey, never printed — because
+ * a chart's height comes from its data and its column width and not at all from
+ * its colours, so this measures the figure the render will actually draw rather
+ * than a per-kind constant that goes stale.
+ */
 const proseLines = (markdown: string, idPrefix: string): number =>
-  markdown ? renderMarkdown(markdown, { idPrefix }).lines : 0;
+  markdown
+    ? renderMarkdown(markdown, {
+      idPrefix,
+      renderDirective: vizDirectiveRenderer(planningChartContext()),
+    }).lines
+    : 0;
 
 /**
  * Only the charts that will actually be drawn.
@@ -235,6 +253,45 @@ export function planChapters(report: InvestmentReport): {
     lines: chartLines(['property-tiles'], report) + CHAPTER_FURNITURE_LINES,
   });
 
+  // ── The prose chapters ────────────────────────────────────────────────
+  //
+  // Two shapes, because the generator has two.
+  //
+  // **Numbered** — sections 1-36 with `# 24. Sensitivity Analysis` headings.
+  // 733 reports in the corpus. `PROSE_GROUPS` folds those 36 into four
+  // chapters, which is the only sane contents page for a document of that
+  // shape.
+  //
+  // **Unnumbered** — 17-odd named sections: `Executive Verdict`, `Transport &
+  // Connectivity`, `Risk Dashboard`, `Final Recommendation`. **Every report the
+  // product makes today**, and not one of them numbered. Folding those into
+  // four groups needs a number they do not have, so the old loop left `group`
+  // at 0 and put all seventeen into "Location & Market" — one chapter, three
+  // empty ones, and a contents page that named none of the model's sections.
+  //
+  // The fix is not a cleverer fold. A report whose sections are already named
+  // and already in a deliberate order **is** its own chapter list: the section
+  // becomes the chapter. Order is preserved exactly, because nothing is being
+  // sorted. A keyword classifier was tried first and is not in this file for a
+  // reason — the financial variant opens with `Client Investment Decision
+  // Summary` and closes with `Financial Recommendation & Portfolio Fit`, so any
+  // monotonic keyword scan puts the whole document in the last chapter.
+  if (!kept.some((p) => p.number !== null)) {
+    for (const part of kept) {
+      push({
+        id: `inv.s${chapters.length}`,
+        kind: 'prose',
+        title: part.title,
+        // The section's own opening words. There is no editorial gloss to use
+        // and inventing one would be writing on a client's contents page.
+        note: markdownToPlainText(part.markdown, CONTENTS_NOTE_CHARS * 2),
+        markdown: '',
+        charts: [],
+        parts: [part],
+        lines: part.lines + CHAPTER_FURNITURE_LINES,
+      });
+    }
+  } else {
   // An unnumbered section belongs with whatever was numbered before it — 256
   // reports carry `## Location Overview` and `## Current Market Performance`
   // between the numbered ones, and they are real content.
@@ -269,6 +326,7 @@ export function planChapters(report: InvestmentReport): {
       lines: members.reduce((n, p) => n + p.lines, 0) + CHAPTER_FURNITURE_LINES,
     });
   });
+  }
 
   if (report.sources.length) {
     push({

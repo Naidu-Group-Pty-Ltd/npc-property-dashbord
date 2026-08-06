@@ -72,7 +72,8 @@ being resumed — by the browser, the bulk worker, or a cron watchdog. Read
 [`docs/reports/INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
 before changing the section loop, its timeouts, or anything that claims a report.
 
-Nine formats have been migrated onto it, and each carries its own contract:
+Ten formats have been migrated onto it, and each carries its own contract:
+[`INVESTMENT.md`](./docs/reports/INVESTMENT.md),
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
 [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md),
 [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md),
@@ -86,7 +87,18 @@ relevant one before touching that format — each records defects that only a
 render against production data revealed, and each names the legacy generators
 that must stay.
 
-**Commercial & Industrial Capacity** is the newest, and the one to read before
+**Investment Location & Property Fit** is the highest-volume format by an order
+of magnitude — 1,182 rows, 5-18 a week — and the one to read before touching
+anything the *model* draws. Its prose carries a chart vocabulary the generator's
+prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style
+directives, about 107 a report**, every one of which set as body copy on a
+client's page. The parser and the router are shared
+(`_shared/reports/vizDirectives.pure.ts`, `vizFigures.pure.ts`) and eleven of the
+twelve kinds map one-to-one onto a chart primitive that already existed.
+`INVESTMENT.md` also records why nothing keyed on a section *number* works any
+more: of the 35 reports the current generator has produced, **none is numbered**.
+
+**Commercial & Industrial Capacity** is the one to read before
 adding a format whose prose a model writes. Its figures come from the stored
 calculation run and never from a recomputation; its analysis section is
 model-authored under a tool schema that contains **no numeric field at all**,
@@ -96,7 +108,7 @@ render found a live bug in `measure.pure.ts` — `formatDelta` reported "no
 change" for every `rate` that changed, which had been silently wrong in the
 Borrowing Capacity Snapshot's audit table.
 
-Two of the eight carry model-authored Markdown rather than typed figures, and
+Two of the ten carry model-authored Markdown rather than typed figures, and
 they share the programme's only Markdown renderer,
 `_shared/reports/markdown.pure.ts`. Read them first if you are touching prose.
 **Report Q&A** discovers its sections from the content rather than declaring
