@@ -34,6 +34,15 @@ two that meant the page had never received a single photo, and it names the colu
 dashboard now depends on. Retention (the 30-day purge) is in
 [`AIRTABLE_RETENTION.md`](./docs/integrations/AIRTABLE_RETENTION.md); it has one manual step.
 
+The scenario that is actually **switched on** is `NPC Email 1 New` (Make id `9618493`); the
+audited `NPC Email 1` (`6720116`) is off. Listings reach it *forwarded* by NPC staff rather
+than sent by agents, and that broke who a listing belongs to — every record it wrote named a
+colleague as the agent. Read [`FORWARDED_SENDER.md`](./docs/integrations/FORWARDED_SENDER.md)
+before touching `Sender Email`/`Sender Name`, the contact fallback in
+`_shared/listingContact.pure.ts`, or anything that decides who to email about a listing. It
+also records the one rule that keeps biting: an address on our side of the pipeline is never
+the answer, in any column.
+
 Column names for that table live in `_shared/airtableIntakeFields.pure.ts` and nowhere else.
 Airtable returns `undefined` for a column that does not exist exactly as it does for one
 that is empty, so a mistyped name is invisible — that file's header records what that cost

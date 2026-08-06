@@ -10,6 +10,12 @@ This is the pipeline that turns an agent's email into a row on the Listings page
 62 modules across four branches of one router, and it is currently **switched off** and
 flagged `isinvalid` by Make. This document is why.
 
+> **The live scenario is `NPC Email 1 New` (`9618493`), not this one.** It carries these
+> fixes and is on a 15-minute schedule. One of them, F7 — provenance from the trigger
+> rather than the model — turned out to be right about *where* to read the sender and wrong
+> about *which* sender, once listings began arriving forwarded by NPC staff instead of sent
+> by agents. See [`FORWARDED_SENDER.md`](./FORWARDED_SENDER.md).
+
 ---
 
 ## The short version

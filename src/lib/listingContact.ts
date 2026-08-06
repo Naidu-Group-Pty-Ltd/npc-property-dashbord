@@ -16,6 +16,7 @@ export {
   cleanContactEmail,
   cleanContactPhone,
   describeContactSource,
+  isIntakeOperatorEmail,
   resolveContact,
   resolveContactFromFields,
   type ContactSource,

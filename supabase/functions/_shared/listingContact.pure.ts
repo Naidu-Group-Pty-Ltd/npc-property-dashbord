@@ -19,6 +19,18 @@
  * from an envelope is a different claim from emailing the address they published,
  * and the person about to press send deserves to know which one it is.
  *
+ * That premise — "the sender is the agent" — holds only while agents mail
+ * property@ directly, and intake stopped working that way. Listings now arrive
+ * *forwarded* by NPC's own people from their personal mailboxes, so the envelope
+ * carries the forwarder rather than the agency: every one of the 51 records the
+ * rebuilt intake scenario wrote on 2026-08-04 has an NPC operator in
+ * `Sender Email`. With `Agent Email` and `Agency Email` empty — which is the
+ * common case — the fallback resolved "the agent" to the colleague who forwarded
+ * the mail, and the compose dialog offered to send an enquiry to him about his
+ * own forward. `isIntakeOperatorEmail` is why that cannot happen again: an
+ * address on our side of the pipeline is never the answer to "who do I ask about
+ * this property", whichever column it arrives in.
+ *
  * Pure: no Deno, Supabase, network, DOM or clock.
  */
 
@@ -65,7 +77,32 @@ const BULK_SENDER_HOSTS = [
   'mcsv.net',
 ];
 
+/**
+ * NPC's own side of the pipeline: the intake mailbox, the company domain, and
+ * the personal mailboxes staff forward listing mail in from.
+ *
+ * These are not agency addresses under any circumstances, so they disqualify a
+ * candidate in *every* column rather than only in `Sender Email` — a model that
+ * reads a forwarded chain and reports the forwarder as `agent_email` is making
+ * the same mistake one field to the left, and it should fail the same way.
+ *
+ * Add a mailbox here when someone new starts forwarding into intake; leaving one
+ * out is silent, and the symptom is their name appearing as the agent.
+ */
+const INTAKE_OPERATOR_DOMAINS = ['npcservices.com.au'];
+const INTAKE_OPERATOR_ADDRESSES = ['lavankenobi@gmail.com', 'naidu.rugesh@gmail.com'];
+
 const EMAIL_SHAPE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+
+/** True when the address belongs to NPC rather than to an agency. */
+export function isIntakeOperatorEmail(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const email = value.trim().toLowerCase();
+  if (!email) return false;
+  if (INTAKE_OPERATOR_ADDRESSES.includes(email)) return true;
+  const host = email.slice(email.indexOf('@') + 1);
+  return INTAKE_OPERATOR_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
 
 /** A usable, human-reachable address, or null. */
 export function cleanContactEmail(value: unknown): string | null {
@@ -73,6 +110,8 @@ export function cleanContactEmail(value: unknown): string | null {
   const email = value.trim().toLowerCase();
   if (!email || !EMAIL_SHAPE.test(email)) return null;
   if (UNREACHABLE.test(email)) return null;
+  // Ours, not theirs — see INTAKE_OPERATOR_DOMAINS.
+  if (isIntakeOperatorEmail(email)) return null;
 
   const host = email.slice(email.indexOf('@') + 1);
   // A listing relayed through a bulk sender carries that sender's envelope
