@@ -65,7 +65,7 @@ describe("provider policy — production fails closed", () => {
 
 describe("client-portal session contract (the production defect)", () => {
   it("never selects full_name from client_portal_users", () => {
-    expect(portalFn).not.toMatch(/full_name.*\)/s ? /client_portal_users:user_id\([^)]*full_name/ : /$ ^/);
+    expect(portalFn).not.toMatch(/client_portal_users:user_id\([^)]*full_name/);
   });
   it("selects exactly the columns production has, and keeps the error", () => {
     expect(portalFn).toContain("client_portal_users:user_id(id, client_id, email, status)");
