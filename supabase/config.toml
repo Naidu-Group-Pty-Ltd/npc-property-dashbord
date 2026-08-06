@@ -1184,3 +1184,6 @@ verify_jwt = false
 # service-role-only cron ops that carry no user JWT.
 [functions.listing-enrichment]
 verify_jwt = false
+
+[functions.authenticated-data]
+verify_jwt = false

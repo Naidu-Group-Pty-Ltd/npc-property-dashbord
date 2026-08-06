@@ -265,6 +265,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "authenticated-data": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "notes": "ES256 remediation: cookie-authenticated data gateway. Holds service-role but exposes only an explicit table allow-list, each entry carrying the authority rule its RLS policy already expresses (module permission, owner column, or user_roles membership). Identity comes solely from the session cookie; CSRF and exact-origin CORS enforced. Not a generic proxy."
+    },
     "auto-report-sync": {
       "verify_jwt": true,
       "exposure_class": "internal-service",
@@ -335,6 +342,36 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "builder-collaboration-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-construction-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-delivery-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-document-processor": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-inventory-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-portal-accept-invite": {
       "verify_jwt": false,
       "exposure_class": "public-auth",
@@ -353,9 +390,33 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-portal-collaboration": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-portal-construction": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-portal-delivery": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-portal-forgot-password": {
       "verify_jwt": false,
       "exposure_class": "public-auth",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-portal-inventory": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
       "owner": "builder-portal-program",
       "reviewed": true
     },
@@ -389,75 +450,15 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
-    "builder-projects-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-inventory": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-inventory-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
     "builder-portal-transactions": {
       "verify_jwt": false,
       "exposure_class": "portal-authenticated",
       "owner": "builder-portal-program",
       "reviewed": true
     },
-    "builder-transactions-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-construction": {
+    "builder-portal-verify": {
       "verify_jwt": false,
       "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-construction-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-delivery": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-delivery-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-document-processor": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-collaboration": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-collaboration-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
     },
@@ -467,15 +468,21 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
-    "builder-workspace-admin": {
+    "builder-projects-admin": {
       "verify_jwt": true,
       "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
     },
-    "builder-portal-verify": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
+    "builder-transactions-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-workspace-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
     },
@@ -645,6 +652,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "convert-template-document": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "template-converter"
     },
     "cotality-service": {
       "verify_jwt": true,
@@ -1186,6 +1200,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "generate-brand-design-system": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "brand-design-system"
+    },
     "generate-bulk-reports": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
@@ -1606,6 +1627,24 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "listing-enrichment": {
+      "verify_jwt": false,
+      "exposure_class": "module-gated",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
+    "listing-images": {
+      "verify_jwt": false,
+      "exposure_class": "module-gated",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
+    "listings-cache": {
+      "verify_jwt": false,
+      "exposure_class": "module-gated",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
     "location-intelligence-service": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -1641,30 +1680,19 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
-    "listing-images": {
-      "verify_jwt": false,
-      "exposure_class": "module-gated",
-      "owner": "security-remediation-program",
-      "reviewed": true
-    },
-    "listings-cache": {
-      "verify_jwt": false,
-      "exposure_class": "module-gated",
-      "owner": "security-remediation-program",
-      "reviewed": true
-    },
-    "listing-enrichment": {
-      "verify_jwt": false,
-      "exposure_class": "module-gated",
-      "owner": "security-remediation-program",
-      "reviewed": true
-    },
     "manage-bc-scenarios": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "manage-branding": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "reviewed_in": "wp14-registry-backfill"
     },
     "manage-call-logs": {
       "verify_jwt": true,
@@ -1679,6 +1707,12 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "manage-ci-assessments": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "commercial-industrial-assessments",
+      "reviewed": true
     },
     "manage-client-data": {
       "verify_jwt": true,
@@ -1816,6 +1850,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "market-news-archive-v2": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-news-archive-versioned-transport"
+    },
     "market-qa-digest-runner": {
       "verify_jwt": false,
       "exposure_class": "cron-worker",
@@ -1857,6 +1898,13 @@
       "owner": "market-intelligence",
       "reviewed": true
     },
+    "market-updates-archive": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-news-archive-versioned-transport"
+    },
     "market-updates-curate": {
       "verify_jwt": false,
       "exposure_class": "module-gated",
@@ -1889,20 +1937,6 @@
       "exposure_class": "cron-worker",
       "owner": "security-remediation-program",
       "reviewed": true
-    },
-    "market-news-archive-v2": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "market-intelligence",
-      "reviewed": true,
-      "reviewed_in": "market-news-archive-versioned-transport"
-    },
-    "market-updates-archive": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "market-intelligence",
-      "reviewed": true,
-      "reviewed_in": "market-news-archive-versioned-transport"
     },
     "market-updates-qa": {
       "verify_jwt": false,
@@ -2087,6 +2121,13 @@
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true
+    },
+    "notifications-feed-v2": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "reviewed_in": "wp14-registry-backfill"
     },
     "one-time-bulk-conversation-sync": {
       "verify_jwt": true,
@@ -2303,20 +2344,6 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
-    "render-investment-report-pdf": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true,
-      "wp14_auto_classified": true
-    },
-    "render-source": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true,
-      "wp14_auto_classified": true
-    },
     "render-borrowing-capacity-pdf": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -2324,12 +2351,75 @@
       "reviewed": true,
       "reviewed_in": "borrowing-capacity-render-path"
     },
+    "render-cash-flow-comparison-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "cash-flow-comparison-render-path"
+    },
+    "render-cash-flow-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "cash-flow-render-path"
+    },
+    "render-client-details-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "client-details-render-path"
+    },
     "render-commercial-capacity-pdf": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "report-design-system",
       "reviewed": true,
       "reviewed_in": "commercial-capacity-render-path"
+    },
+    "render-investment-report-pdf": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "wp14_auto_classified": true
+    },
+    "render-market-intelligence-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "market-intelligence-render-path"
+    },
+    "render-portfolio-review-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "portfolio-render-path"
+    },
+    "render-property-comparison-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "property-comparison-render-path"
+    },
+    "render-report-qa-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "report-qa-render-path"
+    },
+    "render-source": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "wp14_auto_classified": true
     },
     "render-template-pdf": {
       "verify_jwt": false,
@@ -2720,89 +2810,6 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
-    },
-    "manage-ci-assessments": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "commercial-industrial-assessments",
-      "reviewed": true
-    },
-    "convert-template-document": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "template-converter"
-    },
-    "generate-brand-design-system": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "brand-design-system"
-    },
-    "manage-branding": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true,
-      "reviewed_in": "wp14-registry-backfill"
-    },
-    "notifications-feed-v2": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true,
-      "reviewed_in": "wp14-registry-backfill"
-    },
-    "render-cash-flow-comparison-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "cash-flow-comparison-render-path"
-    },
-    "render-cash-flow-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "cash-flow-render-path"
-    },
-    "render-client-details-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "client-details-render-path"
-    },
-    "render-market-intelligence-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "market-intelligence-render-path"
-    },
-    "render-portfolio-review-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "portfolio-render-path"
-    },
-    "render-property-comparison-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "property-comparison-render-path"
-    },
-    "render-report-qa-pdf": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "report-design-system",
-      "reviewed": true,
-      "reviewed_in": "report-qa-render-path"
     }
   }
 }
