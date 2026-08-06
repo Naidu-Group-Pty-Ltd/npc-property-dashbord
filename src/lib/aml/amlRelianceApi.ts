@@ -45,6 +45,13 @@ export interface ComplianceAttestation {
   issued_by_email: string | null;
   issued_at: string;
   superseded_at: string | null;
+  /**
+   * Phase 6 — the softer sibling of supersession: a material change flags
+   * the attestation while the MLRO decides whether to re-issue. Absent on
+   * environments before the Phase 6 migration.
+   */
+  refresh_required_at?: string | null;
+  refresh_reason_code?: string | null;
 }
 
 export interface RelianceGrant {
@@ -55,19 +62,34 @@ export interface RelianceGrant {
   expires_at: string;
   revoked_at: string | null;
   revoke_reason: string | null;
+  /** Phase 6 — see `ComplianceAttestation.refresh_required_at`. */
+  refresh_required_at?: string | null;
   reliance_agreements?: { partner_org_name: string; partner_org_type: string; status: string };
 }
 
 export interface IndependentAssessment {
   id: string;
   case_id: string;
+  /** Both are NOT NULL columns; declared so callers need no cast to group
+   *  a determination back to the agreement (and so the partner) it concerns. */
+  agreement_id: string;
+  grant_id: string;
   assessor_name: string;
   assessor_role: string | null;
   based_on_attestation_sha256: string;
-  status: "open" | "satisfied" | "not_satisfied" | "records_requested";
+  /**
+   * `independent_cdd_required` was added to the CHECK constraint by the
+   * Phase 4 migration; the union had not followed, so a value the database
+   * legitimately returns was unrepresentable here.
+   */
+  status:
+    | "open" | "satisfied" | "not_satisfied"
+    | "records_requested" | "independent_cdd_required";
   decision_notes: string | null;
   decided_at: string | null;
   created_at: string;
+  /** Phase 6 — set when the pinned attestation content has since changed. */
+  refresh_required_at?: string | null;
   reliance_agreements?: { partner_org_name: string };
 }
 

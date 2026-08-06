@@ -347,6 +347,139 @@ export function progressRail(row: CaseDimensionSource & { closed_at?: string | n
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* Partner compliance state                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The sixth canonical dimension: where ONE linked partner organisation
+ * stands on this case.
+ *
+ * It belongs beside the other five because it is the same kind of thing —
+ * a workflow state with a single authority — and the authority here is the
+ * partner, never us. The Command Centre may *observe* this dimension; no
+ * origin action moves it, and it never feeds `service_gate_status` back.
+ *
+ * Two rules make the label set what it is:
+ *
+ *  - No state asserts that a partner is compliant. A single origin approval
+ *    does not make a downstream organisation compliant, so the terminal
+ *    good state is "Partner satisfied" — a statement about the decision
+ *    that partner recorded, not about its regulatory position.
+ *  - Losing access is not the same as never having had it. `revoked` and
+ *    `refresh_required` are distinct from `not_linked`, so a withdrawn
+ *    passport can never read as a partner that was simply never connected.
+ */
+export const PARTNER_COMPLIANCE_STATES = [
+  "not_linked",
+  "independent_cdd",
+  "passport_available",
+  "under_partner_review",
+  "records_requested",
+  "partner_satisfied",
+  "refresh_required",
+  "revoked",
+] as const;
+export type AmlPartnerComplianceState = (typeof PARTNER_COMPLIANCE_STATES)[number];
+
+/** Command-Centre labels. Partner-facing surfaces use their own wording. */
+export const PARTNER_COMPLIANCE_STATE_LABELS: Record<AmlPartnerComplianceState, string> = {
+  not_linked: "Not linked",
+  independent_cdd: "Independent CDD",
+  passport_available: "Passport available",
+  under_partner_review: "Under partner review",
+  records_requested: "Records requested",
+  partner_satisfied: "Partner satisfied",
+  refresh_required: "Refresh required",
+  revoked: "Revoked",
+};
+
+/** A reliance grant, reduced to the fields this dimension reads. */
+export interface PartnerGrantSource {
+  revoked_at?: string | null;
+  expires_at?: string | null;
+  refresh_required_at?: string | null;
+}
+
+/**
+ * A partner's own recorded determination, reduced to the fields this
+ * dimension reads. `status` mirrors `aml.independent_assessments.status`.
+ */
+export interface PartnerDeterminationSource {
+  status?: string | null;
+  refresh_required_at?: string | null;
+}
+
+function grantExpired(grant: PartnerGrantSource, now: Date): boolean {
+  if (!grant.expires_at) return false;
+  const at = new Date(grant.expires_at).getTime();
+  return Number.isFinite(at) && at < now.getTime();
+}
+
+/**
+ * Derive one partner's state from the grants and determinations recorded
+ * against it. Pure: no clock unless supplied, no I/O, no writes.
+ *
+ * Precedence is deliberate, and it is "stale first":
+ *
+ *   1. anything flagged for refresh — a determination pinned to content
+ *      that has since changed is not a live determination, and §7.2 treats
+ *      a stale passport still reading as current as the severe failure;
+ *   2. the partner's own current determination, most settled first;
+ *   3. an open determination — they are looking at it;
+ *   4. a live grant with nothing decided yet;
+ *   5. access that existed and stopped existing;
+ *   6. nothing recorded at all.
+ *
+ * Both `not_satisfied` and `independent_cdd_required` land on
+ * `independent_cdd`: the plan pairs them as the single outcome "this
+ * partner is not relying on our procedures and will verify separately".
+ */
+export function partnerComplianceState(input: {
+  grants: PartnerGrantSource[];
+  determinations: PartnerDeterminationSource[];
+  /** The case's current attestation is flagged for refresh. */
+  attestationRefreshRequired?: boolean;
+  now?: Date;
+}): AmlPartnerComplianceState {
+  const now = input.now ?? new Date();
+  const grants = input.grants ?? [];
+  const determinations = input.determinations ?? [];
+
+  const liveGrants = grants.filter(
+    (g) => !g.revoked_at && !grantExpired(g, now),
+  );
+  const decided = determinations.filter(
+    (d) => d.status && d.status !== "open",
+  );
+  const current = decided.filter((d) => !d.refresh_required_at);
+  const has = (status: string) => current.some((d) => d.status === status);
+
+  // 1 — stale before anything else.
+  const refreshFlagged =
+    input.attestationRefreshRequired === true ||
+    liveGrants.some((g) => Boolean(g.refresh_required_at)) ||
+    (decided.length > 0 && current.length === 0);
+  if (refreshFlagged) return "refresh_required";
+
+  // 2 — the partner's own current determination.
+  if (has("satisfied")) return "partner_satisfied";
+  if (has("records_requested")) return "records_requested";
+  if (has("not_satisfied") || has("independent_cdd_required")) return "independent_cdd";
+
+  // 3 / 4 — looking at it, or able to.
+  const open = determinations.some((d) => !d.status || d.status === "open");
+  if (liveGrants.length > 0) return open ? "under_partner_review" : "passport_available";
+  if (open) return "under_partner_review";
+
+  // 5 — access existed and stopped.
+  if (grants.some((g) => Boolean(g.revoked_at))) return "revoked";
+  if (grants.some((g) => grantExpired(g, now))) return "refresh_required";
+
+  // 6 — nothing recorded.
+  return "not_linked";
+}
+
 /** Explicit activation fields written at activation time (Phase 1 contract). */
 export interface ActivationContract {
   activation_timing: AmlActivationTiming;

@@ -1324,6 +1324,27 @@ describe("compliance journey surfaces", () => {
     expect(staffMap).not.toMatch(/risk_rating|risk_score/);
   });
 
+  it("staff map never claims a partner is compliant", () => {
+    // The correction both governing documents lead with: one origin approval
+    // does not make a downstream organisation compliant. Partner tile text
+    // comes from PARTNER_COMPLIANCE_STATE_LABELS, which is asserted
+    // compliance-word-free in caseDimensions.test.ts — so the check here is
+    // that the component keeps deriving its labels from that dimension
+    // rather than reintroducing its own.
+    expect(staffMap).toContain("PARTNER_COMPLIANCE_STATE_LABELS");
+    expect(staffMap).toContain("partnerComplianceState");
+    const codeOnly = staffMap.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(codeOnly).not.toMatch(/Independently compliant|compliant/i);
+  });
+
+  it("staff map distinguishes withdrawn access from never-linked", () => {
+    // A revoked or refresh-flagged passport reading as "not yet connected"
+    // is the §7.2 high-severity failure; both must reach the tile.
+    expect(staffMap).toContain("attestationRefreshRequired");
+    expect(staffMap).not.toMatch(/grants\.filter\(\(g\) => !g\.revoked_at\)\s*;/);
+  });
+
   it("both surfaces use semantic tokens, not raw palette classes", () => {
     for (const src of [staffMap, clientStrip]) {
       // FRONTEND_TOOLING hard rule: no raw Tailwind palette colours.

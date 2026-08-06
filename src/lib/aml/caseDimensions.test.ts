@@ -8,8 +8,11 @@ import {
   LEGACY_STATUS_TO_CLIENT_PORTAL,
   LEGACY_STATUS_TO_SERVICE_GATE,
   LEGACY_STATUS_TO_STAGE,
+  PARTNER_COMPLIANCE_STATES,
+  PARTNER_COMPLIANCE_STATE_LABELS,
   SERVICE_GATE_STATUSES,
   activationContractForModel,
+  partnerComplianceState,
   caseStage,
   clientPortalStatus,
   financePortalStatus,
@@ -144,6 +147,90 @@ describe("finance-safe contract shape", () => {
   it("finance dimension values never include risk vocabulary", () => {
     for (const v of FINANCE_PORTAL_STATUSES) {
       expect(v).not.toMatch(/risk|pep|sanction|screen|investigat|smr|austrac/i);
+    }
+  });
+});
+
+describe("partner compliance state", () => {
+  const state = (input: Parameters<typeof partnerComplianceState>[0]) =>
+    partnerComplianceState(input);
+  const future = "2099-01-01T00:00:00.000Z";
+  const past = "2000-01-01T00:00:00.000Z";
+  const liveGrant = { revoked_at: null, expires_at: future };
+
+  it("reports nothing recorded as not linked", () => {
+    expect(state({ grants: [], determinations: [] })).toBe("not_linked");
+  });
+
+  it("a live grant with no determination is passport available", () => {
+    expect(state({ grants: [liveGrant], determinations: [] })).toBe("passport_available");
+  });
+
+  it("an open determination reads as under partner review", () => {
+    expect(state({ grants: [liveGrant], determinations: [{ status: "open" }] }))
+      .toBe("under_partner_review");
+  });
+
+  it("maps each determination outcome to its documented state", () => {
+    const at = (status: string) =>
+      state({ grants: [liveGrant], determinations: [{ status }] });
+    expect(at("satisfied")).toBe("partner_satisfied");
+    expect(at("records_requested")).toBe("records_requested");
+    // The plan pairs these as the single "not relying on us" outcome.
+    expect(at("not_satisfied")).toBe("independent_cdd");
+    expect(at("independent_cdd_required")).toBe("independent_cdd");
+  });
+
+  it("never asserts that a partner is compliant", () => {
+    // The whole point of the label set: no state may claim an origin
+    // approval discharged a downstream organisation's obligations.
+    for (const s of PARTNER_COMPLIANCE_STATES) {
+      expect(PARTNER_COMPLIANCE_STATE_LABELS[s]).not.toMatch(/complian/i);
+    }
+  });
+
+  it("distinguishes revoked access from never having been linked", () => {
+    expect(state({ grants: [{ revoked_at: past, expires_at: future }], determinations: [] }))
+      .toBe("revoked");
+  });
+
+  it("treats an expired grant as needing refresh, not as unlinked", () => {
+    expect(state({ grants: [{ revoked_at: null, expires_at: past }], determinations: [] }))
+      .toBe("refresh_required");
+  });
+
+  it("puts a flagged grant, attestation or determination into refresh first", () => {
+    expect(state({
+      grants: [{ ...liveGrant, refresh_required_at: past }], determinations: [],
+    })).toBe("refresh_required");
+    expect(state({
+      grants: [liveGrant], determinations: [], attestationRefreshRequired: true,
+    })).toBe("refresh_required");
+    // A determination pinned to content that has since changed is stale, and
+    // must not keep reading as a settled decision.
+    expect(state({
+      grants: [liveGrant],
+      determinations: [{ status: "satisfied", refresh_required_at: past }],
+    })).toBe("refresh_required");
+  });
+
+  it("keeps a partner's own decision after its access ends", () => {
+    // Revocation terminates access; it does not retract the determination
+    // that organisation recorded, which was never ours to change.
+    expect(state({
+      grants: [{ revoked_at: past, expires_at: future }],
+      determinations: [{ status: "satisfied" }],
+    })).toBe("partner_satisfied");
+  });
+
+  it("returns a member of the declared state set for any input", () => {
+    const inputs = [
+      { grants: [], determinations: [{ status: "weird_value" }] },
+      { grants: [{}], determinations: [] },
+      { grants: [{ expires_at: "not-a-date" }], determinations: [{}] },
+    ];
+    for (const input of inputs) {
+      expect(PARTNER_COMPLIANCE_STATES).toContain(state(input));
     }
   });
 });

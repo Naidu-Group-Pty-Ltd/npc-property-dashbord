@@ -460,7 +460,9 @@ export function ReliancePassportSection({
                   a.status === "satisfied" ? "text-success"
                     : a.status === "not_satisfied" ? "text-destructive" : "text-warning"
                 }>
-                  {a.status.replace("_", " ")}
+                  {/* Global replace: `independent_cdd_required` (Phase 4)
+                      otherwise renders with its later underscores intact. */}
+                  {a.status.replace(/_/g, " ")}
                 </Badge>
               </div>
             ))}

@@ -1559,7 +1559,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       case "list_grants": {
         if (!body.case_id) return jr({ error: "case_id required" }, 400);
         const { data, error } = await admin.schema("aml").from("reliance_grants")
-          .select("id, agreement_id, attestation_id, granted_at, expires_at, revoked_at, revoke_reason, reliance_agreements:agreement_id(partner_org_name, partner_org_type, status)")
+          // `refresh_required_at` (Phase 6) is part of the projection: without
+          // it the Command Centre cannot tell a live grant from one flagged
+          // by a material change, and a stale passport reads as current.
+          .select("id, agreement_id, attestation_id, granted_at, expires_at, revoked_at, revoke_reason, refresh_required_at, reliance_agreements:agreement_id(partner_org_name, partner_org_type, status)")
           .eq("case_id", body.case_id).order("granted_at", { ascending: false });
         if (error) throw error;
         // The token hash never leaves the database, even to staff.
