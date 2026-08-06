@@ -101,13 +101,34 @@ describe('the allow-list is the security boundary', () => {
     }
   });
 
-  it('does NOT expose the two tables whose rules were not modelled', () => {
-    // email_copilot_emails has a four-branch ownership predicate; approximating
-    // an access rule is a security defect, so it is not routed here.
-    // agency_agreements has RLS on with zero policies — deny-all — so routing it
-    // would grant access no policy ever authorised.
-    expect(gateway).not.toMatch(/^\s*email_copilot_emails:/m);
-    expect(gateway).not.toMatch(/^\s*agency_agreements:/m);
+  it('reproduces every branch of the email_copilot_emails predicate', () => {
+    // The live policy has four branches. All four must be present, or the
+    // gateway is narrower or wider than the policy it replaces.
+    expect(gateway).toContain('email_copilot_emails:');
+    expect(gateway).toContain('buildFilter: emailCopilotFilter');
+    expect(gateway).toContain('created_by.eq.${userId}');            // branch 2
+    expect(gateway).toContain('owner_user_id.eq.${userId}');          // branch 3
+    expect(gateway).toContain('client_id.in.(${ids.join(\',\')})');   // branch 1, EXISTS resolved
+    expect(gateway).toContain('and(client_id.is.null,or(');           // branch 4
+  });
+
+  it('keeps IS DISTINCT FROM NULL-safe rather than silently narrowing', () => {
+    // `mailbox_source IS DISTINCT FROM 'personal'` is TRUE when the column is
+    // NULL. PostgREST `neq` drops NULLs, so `is.null` must be ORed in or rows
+    // would vanish for their owners.
+    expect(gateway).toContain('mailbox_source.is.null');
+    expect(gateway).toContain('mailbox_source.neq.personal');
+  });
+
+  it('gives agency_agreements the narrowest rule that makes the feature work', () => {
+    // RLS on with zero policies means deny-all today, so any rule is a widening.
+    // Module permission AND own rows — not team- or client-wide.
+    expect(gateway).toMatch(/agency_agreements:\s*\{[^}]*module: 'agreements'/);
+    expect(gateway).toMatch(/agency_agreements:\s*\{[^}]*ownerColumn: 'created_by'/);
+  });
+
+  it('applies owner scoping to reads too, except where the policy is open', () => {
+    expect(gateway).toContain('if (rule.ownerColumn && !(isRead && rule.openRead))');
   });
 });
 

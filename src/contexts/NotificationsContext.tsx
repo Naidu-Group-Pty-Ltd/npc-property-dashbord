@@ -191,25 +191,10 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchNotifications();
     
-    // Subscribe to real-time changes (RLS applies; authorize with the JWT)
-    if (accessToken) {
-      try { supabase.realtime.setAuth(accessToken); } catch { /* non-fatal */ }
-    }
-    const channel = supabase
-      .channel('notifications-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'notifications'
-        },
-        () => {
-          fetchNotifications();
-        }
-      )
-      .subscribe();
-
+    // Realtime removed with the HS256 token (ES256 remediation). `postgres_changes`
+    // authorises via a project JWT, and the browser no longer holds one — under
+    // RLS the socket would deliver nothing while still looking healthy. The
+    // bounded poll below was already the reliable path and is now the only one.
     // Realtime is a best-effort transport, not a guarantee: corporate proxies
     // block WebSockets outright, the socket dies silently on sleep/resume, and
     // a CHANNEL_ERROR surfaces nowhere the user can see. When it fails the bell
@@ -227,9 +212,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       window.clearInterval(poll);
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
-      supabase.removeChannel(channel);
     };
-  }, [fetchNotifications, supabase, accessToken]);
+  }, [fetchNotifications]);
 
 
   /**

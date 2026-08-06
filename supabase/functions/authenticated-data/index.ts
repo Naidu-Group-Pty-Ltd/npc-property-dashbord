@@ -61,6 +61,47 @@ interface TableRule {
   openRead?: boolean;
   /** Staff roles permitted, checked against user_roles. */
   roles?: string[];
+  /**
+   * A mandatory PostgREST filter expression reproducing a policy that is more
+   * than a single owner column. Built per-request because some branches need a
+   * server-side lookup first. Appended like any other mandatory filter, so the
+   * caller cannot widen it.
+   */
+  buildFilter?: (admin: SupabaseClientLike, userId: string) => Promise<string>;
+}
+
+/** The narrow slice of the client surface this module uses. */
+type SupabaseClientLike = ReturnType<typeof createClient>;
+
+/**
+ * `email_copilot_emails` — the complete SELECT/UPDATE/DELETE predicate, branch
+ * for branch, from the live policy:
+ *
+ *   (client_id IS NOT NULL AND EXISTS (SELECT 1 FROM clients c
+ *        WHERE c.id = client_id AND c.created_by::text = auth.uid()::text))
+ *   OR created_by    = auth.uid()
+ *   OR owner_user_id = auth.uid()
+ *   OR (client_id IS NULL AND (mailbox_source IS DISTINCT FROM 'personal'
+ *        OR (owner_user_id IS NULL AND created_by IS NULL)))
+ *
+ * The EXISTS branch is resolved first into the set of client ids this user
+ * created, because PostgREST cannot express a correlated EXISTS inside an OR.
+ * Note `IS DISTINCT FROM 'personal'` is true for NULL, so that branch is
+ * `mailbox_source.is.null` OR `mailbox_source.neq.personal` — `neq` alone would
+ * silently drop NULL rows and narrow the rule.
+ */
+async function emailCopilotFilter(admin: SupabaseClientLike, userId: string): Promise<string> {
+  const { data: owned } = await admin.from('clients').select('id').eq('created_by', userId);
+  const ids = (owned ?? []).map((c: { id: string }) => c.id);
+
+  const branches = [
+    `created_by.eq.${userId}`,
+    `owner_user_id.eq.${userId}`,
+    'and(client_id.is.null,or(mailbox_source.is.null,mailbox_source.neq.personal,'
+      + 'and(owner_user_id.is.null,created_by.is.null)))',
+  ];
+  if (ids.length) branches.unshift(`and(client_id.not.is.null,client_id.in.(${ids.join(',')}))`);
+  return `or=(${branches.join(',')})`;
 }
 
 /** Every table reachable through this gateway. Absent table => refused. */
@@ -77,6 +118,21 @@ const TABLES: Record<string, TableRule> = {
   workflow_runs:           { roles: ['superadmin', 'admin'] },
   workflow_run_steps:      { roles: ['superadmin', 'admin'] },
   workflow_trigger_events: { roles: ['superadmin', 'admin'] },
+
+  // Full ownership predicate, every branch — see emailCopilotFilter.
+  email_copilot_emails:    { module: 'email_copilot', buildFilter: emailCopilotFilter },
+
+  /**
+   * `agency_agreements` carries RLS with ZERO policies, i.e. deny-all except
+   * service-role, so the feature is broken for everyone today. Any rule is a
+   * widening, so this is the narrowest one that makes the feature work at all:
+   * the `agreements` module permission AND rows the caller created.
+   *
+   * Deliberately NOT team- or client-wide. If agreements need to be visible to
+   * colleagues, that is a product decision and a policy, not something to infer
+   * here — widening later is safe, narrowing after release is not.
+   */
+  agency_agreements:       { module: 'agreements', ownerColumn: 'created_by' },
 };
 
 const READ_METHODS = new Set(['GET', 'HEAD']);
@@ -143,7 +199,21 @@ Deno.serve(async (req) => {
   // a caller cannot widen its own scope by sending a competing filter.
   const target = new URL(`${Deno.env.get('SUPABASE_URL')}/rest/v1/${table}`);
   url.searchParams.forEach((v, k) => target.searchParams.append(k, v));
-  if (rule.ownerColumn && !isRead) target.searchParams.append(rule.ownerColumn, `eq.${userId}`);
+
+  // Owner scoping applies to reads as well as writes. The only exception is a
+  // table whose SELECT policy is genuinely `true` (openRead) — there the owner
+  // column still constrains writes but must not narrow reads, or the gateway
+  // would be stricter than the policy it is reproducing.
+  if (rule.ownerColumn && !(isRead && rule.openRead)) {
+    target.searchParams.append(rule.ownerColumn, `eq.${userId}`);
+  }
+
+  // A multi-branch policy contributes its own mandatory filter.
+  if (rule.buildFilter) {
+    const expr = await rule.buildFilter(admin, userId);
+    const eq = expr.indexOf('=');
+    target.searchParams.append(expr.slice(0, eq), expr.slice(eq + 1));
+  }
 
   const forwardHeaders: Record<string, string> = {
     apikey: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,

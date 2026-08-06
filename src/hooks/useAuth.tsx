@@ -180,15 +180,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isSuperadmin = roles.includes('superadmin') || user?.role === 'super_admin';
   const isAdmin = roles.includes('admin') || isSuperadmin || user?.role === 'sub_admin';
 
-  // Authenticate the shared realtime connection with the staff JWT so
-  // postgres_changes subscriptions run as `authenticated` (Phase 7). Tables
-  // whose anon SELECT grant is revoked (report_qa_*, agent_messages,
-  // client_portal_*) only deliver realtime events to staff after this.
-  useEffect(() => {
-    try {
-      supabase.realtime.setAuth(accessToken ?? SUPABASE_ANON_KEY);
-    } catch { /* non-fatal */ }
-  }, [accessToken]);
+  // The realtime setAuth call was removed with the HS256 token (ES256
+  // remediation): there is no project JWT to authorise the socket with, and
+  // passing the anon key only made an unauthorised socket look authorised.
+  // Surfaces that relied on it poll through the authenticated gateway instead.
 
   // Check for existing session on mount
   useEffect(() => {
