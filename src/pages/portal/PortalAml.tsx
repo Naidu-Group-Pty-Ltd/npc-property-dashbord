@@ -20,6 +20,7 @@ import {
 } from '@/lib/aml/amlPortalApi';
 import { IdentityVerificationStep } from '@/components/portal/IdentityVerificationStep';
 import { ClientJourneyStrip } from '@/components/portal/ClientJourneyStrip';
+import { resolveRequestStep, type IdvAvailability } from '@/lib/aml/portalRequestRoute';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -69,6 +70,10 @@ export default function PortalAml() {
   // the real problem was a broken call — keep the two states separate.
   const [loadFailed, setLoadFailed] = useState<string | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
+  // Client-safe readiness ('available' | 'temporarily_unavailable' |
+  // 'manual_verification_required'). Needed here, not just inside the capture
+  // step, because it decides which step an identity request opens at all.
+  const [idvAvailability, setIdvAvailability] = useState<IdvAvailability | null>(null);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -86,6 +91,19 @@ export default function PortalAml() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Readiness is advisory to the UI and never a gate on requesting anything;
+  // an unknown value resolves identity requests to the manual route, which
+  // always works.
+  useEffect(() => {
+    const id = data?.case?.id;
+    if (!id) return;
+    let alive = true;
+    amlPortalApi.verificationStatus(id)
+      .then((s) => { if (alive) setIdvAvailability((s as any)?.availability ?? null); })
+      .catch(() => { if (alive) setIdvAvailability(null); });
+    return () => { alive = false; };
+  }, [data?.case?.id]);
 
   const caseObj = data?.case ?? null;
 
@@ -287,6 +305,7 @@ export default function PortalAml() {
             <OpenRequestsCard
               requests={data!.open_requests!}
               onDone={load}
+              availability={idvAvailability}
               onNavigate={(target, sectionCode) => {
                 // Internal routing only: resolve the validated target to a
                 // step index in the server-derived step list.
@@ -1174,16 +1193,7 @@ function ReviewStep({
 /** Closed action vocabulary → button copy + the portal step it routes to.
  * The server projects only validated action metadata; nothing here follows a
  * URL from a request payload. */
-const REQUEST_ACTIONS: Record<string, { label: string; step: string }> = {
-  complete_identity_verification: { label: 'Complete identity verification', step: 'verify' },
-  upload_document: { label: 'Upload requested document', step: 'documents' },
-  update_questionnaire_section: { label: 'Update information', step: 'questionnaire' },
-  review_consent: { label: 'Review updated consent', step: 'consent' },
-  provide_clarification: { label: 'Respond', step: 'respond' },
-  review_and_submit: { label: 'Review and submit', step: 'review' },
-};
-
-function OpenRequestsCard({ requests, onDone, onNavigate }: { requests: any[]; onDone: () => void; onNavigate?: (target: string, sectionCode?: string | null) => void }) {
+function OpenRequestsCard({ requests, onDone, onNavigate, availability }: { requests: any[]; onDone: () => void; onNavigate?: (target: string, sectionCode?: string | null) => void; availability: IdvAvailability | null }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1236,26 +1246,35 @@ function OpenRequestsCard({ requests, onDone, onNavigate }: { requests: any[]; o
               </div>
             ) : (
               r.status === 'open' && (() => {
-                const action = REQUEST_ACTIONS[String(r.action_code ?? '')] ?? null;
                 const sectionCode = r.action_target?.section_code ?? null;
-                const targetStep = action?.step ?? 'respond';
+                const resolved = resolveRequestStep(r, availability);
+                const routable = resolved.step !== 'respond';
                 return (
                   <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                    {/* Say why the route changed, before they click. Without
+                        this the copy contradicted itself: an identity request
+                        that opened a camera the server would refuse. */}
+                    {resolved.manualFallback && (
+                      <p className="w-full text-xs text-muted-foreground">
+                        Electronic verification is unavailable. Please upload your identity
+                        document for manual review.
+                      </p>
+                    )}
                     {r.due_at && (
                       <span className="text-xs text-muted-foreground">
                         Due {new Date(r.due_at).toLocaleDateString()}
                       </span>
                     )}
-                    {action && targetStep !== 'respond' ? (
+                    {routable ? (
                       <Button
                         size="sm"
-                        onClick={() => onNavigate?.(targetStep, sectionCode)}
+                        onClick={() => onNavigate?.(resolved.step, sectionCode)}
                       >
-                        {action.label}
+                        {resolved.label}
                       </Button>
                     ) : (
                       <Button size="sm" variant="outline" onClick={() => setActiveId(r.id)}>
-                        {action?.label ?? 'Respond'}
+                        {resolved.label}
                       </Button>
                     )}
                   </div>
