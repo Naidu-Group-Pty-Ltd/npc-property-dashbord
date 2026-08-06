@@ -29,6 +29,7 @@ import {
   resolveTenantProvider,
   ProviderResolutionError,
 } from "../_shared/aml/providers/index.ts";
+import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -220,6 +221,15 @@ async function loadConsentState(admin: any, caseId: string): Promise<ConsentStat
 /** Owner decision of 2026-07-28: one attempt plus two retries. */
 const MAX_VERIFICATION_ATTEMPTS = 3;
 
+/**
+ * How long a check may sit claimed before it stops counting as in flight.
+ *
+ * Comfortably longer than the provider timeout plus outbox backoff, so a
+ * genuinely running check is never treated as abandoned — but finite, because
+ * an unbounded "processing" row is a permanent dead end for the client.
+ */
+const STALE_PROCESSING_MS = 15 * 60 * 1000;
+
 /** Closed client-action vocabulary (Stage 12) — mirrored by the CHECK
  * constraint in 20260831000100. Anything else projects as null. */
 const CLIENT_ACTION_CODES = [
@@ -318,14 +328,18 @@ async function verificationAttemptsUsed(
     .rpc('verification_attempts_used', { p_case_id: caseId, p_party_id: partyId });
   if (!rpcError && typeof counted === 'number') return counted;
 
+  // RPC unavailable (pre-migration). Count authoritative outcomes rather than
+  // rows: `attempt_number` is a capture sequence, so reading it here charged a
+  // client for captures the provider could not even examine.
   let q = admin.schema('aml').from('verification_checks')
-    .select('attempt_number')
+    .select('status')
     .eq('case_id', caseId)
-    .eq('check_type', 'electronic_idv');
+    .eq('check_type', 'electronic_idv')
+    .in('status', ['passed', 'failed', 'referred', 'exhausted']);
   q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
-  const { data, error } = await q.order('attempt_number', { ascending: false }).limit(1);
+  const { data, error } = await q;
   if (error) throw error;
-  return Number((data ?? [])[0]?.attempt_number ?? 0);
+  return (data ?? []).length;
 }
 
 /**
@@ -367,12 +381,18 @@ async function activeProcessingCheck(
   admin: any, caseId: string, partyId: string | null,
 ): Promise<{ id: string; processing_status: string } | null> {
   let q = admin.schema('aml').from('verification_checks')
-    .select('id, processing_status')
+    .select('id, processing_status, processing_started_at, created_at')
     .eq('case_id', caseId)
     .eq('check_type', 'electronic_idv')
-    .in('processing_status', ['submitted', 'queued', 'processing', 'retry_scheduled']);
+    .in('processing_status', ['submitted', 'queued', 'processing', 'retry_scheduled'])
+    // A claim the worker never finished — an edge function killed mid-provider
+    // call leaves `processing` set forever. Without a bound that row blocked
+    // both resubmission and the selfie upload URL permanently, with no path
+    // back for the client. The outbox retries and dead-letters the event
+    // itself, so treating a long-stale claim as not-in-flight cannot lose one.
+    .gte('created_at', new Date(Date.now() - STALE_PROCESSING_MS).toISOString());
   q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
-  const { data, error } = await q.limit(1);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
   if (error) {
     // Legacy schema without processing_status: nothing can be "in flight".
     if (/processing_status/i.test(error.message ?? '')) return null;
@@ -444,9 +464,22 @@ async function verificationParties(admin: any, caseId: string) {
     if (name) declared.push(name.slice(0, 200));
   }
 
-  const { data: checks } = await admin.schema('aml').from('verification_checks')
-    .select('party_id, attempt_number, status, check_type')
-    .eq('case_id', caseId);
+  // `attempt_consumed` and `processing_status` are what separate a customer's
+  // attempt from a row. Legacy-schema retry keeps the portal readable before
+  // the canonical migration is applied.
+  const CHECK_COLUMNS =
+    'party_id, attempt_number, status, check_type, attempt_consumed, processing_status, capture_sequence';
+  let { data: checks, error: checksError } = await admin.schema('aml').from('verification_checks')
+    .select(CHECK_COLUMNS).eq('case_id', caseId);
+  let canonicalColumns = true;
+  if (checksError) {
+    if (!/attempt_consumed|processing_status|capture_sequence/i.test(checksError.message ?? '')) {
+      throw checksError;
+    }
+    canonicalColumns = false;
+    ({ data: checks } = await admin.schema('aml').from('verification_checks')
+      .select('party_id, attempt_number, status, check_type').eq('case_id', caseId));
+  }
 
   const targets: Array<{ id: string | null; label: string }> = [
     { id: null, label: String(caseRow?.subject_display_name ?? 'You') },
@@ -455,39 +488,10 @@ async function verificationParties(admin: any, caseId: string) {
     targets.push({ id: await derivedPartyId(caseId, name), label: name });
   }
 
-  // Internal states collapse to what the client can act on. No score, no
-  // threshold, no reason for a referral (Appendix C.1).
-  const CLIENT_VISIBLE: Record<string, string> = {
-    passed: 'verified',
-    failed: 'action_required',
-    referred: 'in_review',
-    exhausted: 'contact_adviser',
-    pending: 'in_review',
-    in_progress: 'in_review',
-    abandoned: 'not_started',
-  };
-
-  return targets.map((t) => {
-    const mine = (checks ?? []).filter((c: any) =>
-      (t.id === null ? c.party_id === null : String(c.party_id) === t.id));
-    const electronic = mine.filter((c: any) => c.check_type === 'electronic_idv');
-    const used = electronic.reduce((max: number, c: any) =>
-      Math.max(max, Number(c.attempt_number ?? 0)), 0);
-    // A staff document sighting settles the party regardless of attempts.
-    const sighted = mine.some((c: any) => c.check_type === 'document_sighting' && c.status === 'passed');
-    const latest = mine.slice().sort((a: any, b: any) =>
-      Number(b.attempt_number ?? 0) - Number(a.attempt_number ?? 0))[0];
-
-    const rawStatus = sighted ? 'passed' : (latest?.status ?? 'not_started');
-    return {
-      party_id: t.id,
-      label: t.label,
-      status: CLIENT_VISIBLE[rawStatus] ?? 'not_started',
-      attempts_used: used,
-      attempts_remaining: Math.max(0, MAX_VERIFICATION_ATTEMPTS - used),
-      can_attempt: !sighted && used < MAX_VERIFICATION_ATTEMPTS && rawStatus !== 'passed',
-    };
-  });
+  // Attempt accounting and status collapse live in the pure module so the
+  // lockout they caused stays covered by tests rather than by inspection.
+  return targets.map((t) =>
+    projectParty(t, (checks ?? []) as any, MAX_VERIFICATION_ATTEMPTS, canonicalColumns));
 }
 
 function consentRequiredResponse(state: ConsentState) {

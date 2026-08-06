@@ -48,13 +48,50 @@ class ModelUnavailable(RuntimeError):
     """Raised when a model file is missing. Never degrade silently."""
 
 
-def _model_path(name: str) -> Path:
+# The smallest of these models is 227 KB and the larger is 37 MB, so anything
+# under this bound is not a model at all. In practice it is a Git LFS pointer:
+# opencv_zoo stores the weights under LFS, and `raw.githubusercontent.com`
+# serves the ~130-byte pointer text rather than the object. That produced a
+# container whose models were text files while every existence check — this
+# service's own /healthz included — reported it healthy, and the only symptom
+# was an opaque OpenCV error inside the first real verification.
+#
+# Size alone separates the two cases unambiguously, and it costs one stat.
+# Sniffing the file's first bytes would be marginally more specific and would
+# mean reading inside the service, which `test_service_persists_nothing`
+# rightly refuses to allow.
+MIN_MODEL_BYTES = 64 * 1024
+
+
+def model_problem(name: str) -> Optional[str]:
+    """
+    Why `name` is unusable, or None if it looks like a real model.
+
+    Deliberately does not load the model: this runs on the health path, which
+    must stay cheap and must never be the thing that first loads a 37 MB
+    recogniser.
+    """
     p = MODEL_DIR / name
     if not p.exists():
-        raise ModelUnavailable(
-            f"Model {name} not found in {MODEL_DIR}. Run scripts/fetch_models.sh."
+        return "missing"
+    size = p.stat().st_size
+    if size < MIN_MODEL_BYTES:
+        return (
+            f"not_a_model ({size} bytes) — a file this small is almost always a "
+            "Git LFS pointer; check scripts/fetch_models.sh fetched from "
+            "media.githubusercontent.com/media, not raw"
         )
-    return p
+    return None
+
+
+def _model_path(name: str) -> Path:
+    problem = model_problem(name)
+    if problem is not None:
+        raise ModelUnavailable(
+            f"Model {name} in {MODEL_DIR} is unusable ({problem}). "
+            "Run scripts/fetch_models.sh."
+        )
+    return MODEL_DIR / name
 
 
 def get_detector(size: tuple[int, int] = (320, 320)):

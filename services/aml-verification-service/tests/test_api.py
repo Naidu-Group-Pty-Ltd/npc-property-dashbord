@@ -37,6 +37,43 @@ def test_healthz_reports_model_presence_without_auth():
     assert body["token_configured"] is True
 
 
+def test_healthz_rejects_a_git_lfs_pointer_as_a_model(tmp_path, monkeypatch):
+    """
+    The build defect this exists to catch.
+
+    opencv_zoo keeps the weights in Git LFS. `raw.githubusercontent.com` serves
+    the pointer, so `fetch_models.sh` used to write a 131-byte text file that
+    curl reported as a success and `Path.exists()` reported as a model. The
+    container came up, answered /healthz with `"status": "ok"`, and failed on
+    the first real verification with an opaque OpenCV error.
+
+    Health must report usability, not presence.
+    """
+    pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4\n"
+        "size 232589\n"
+    )
+    (tmp_path / main_module.m.YUNET_FILE).write_text(pointer)
+    (tmp_path / main_module.m.SFACE_FILE).write_bytes(b"\0" * (main_module.m.MIN_MODEL_BYTES + 1))
+    monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert body["models"]["yunet"] is False
+    assert body["models"]["sface"] is True
+    # The reason has to be in the probe: this is the only place a broken
+    # deployment announces itself before a customer hits it.
+    assert "yunet" in body["model_problems"]
+
+
+def test_a_pointer_model_raises_rather_than_degrading_silently(tmp_path, monkeypatch):
+    (tmp_path / main_module.m.YUNET_FILE).write_text("version https://git-lfs.github.com/spec/v1\n")
+    monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
+    with pytest.raises(main_module.m.ModelUnavailable):
+        main_module.m._model_path(main_module.m.YUNET_FILE)
+
+
 @pytest.mark.parametrize("path", ["/face/compare", "/face/liveness", "/doc/mrz"])
 def test_endpoints_require_a_token(path):
     r = client.post(path, json={"document_image": TINY_PNG, "selfie_image": TINY_PNG})

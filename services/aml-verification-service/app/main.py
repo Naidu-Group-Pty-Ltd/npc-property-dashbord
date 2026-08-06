@@ -104,14 +104,24 @@ class MrzRequest(BaseModel):
 
 @app.get("/healthz")
 def healthz() -> dict:
-    """Liveness probe. Reports model presence without loading them."""
-    present = {
-        "yunet": (m.MODEL_DIR / m.YUNET_FILE).exists(),
-        "sface": (m.MODEL_DIR / m.SFACE_FILE).exists(),
+    """
+    Liveness probe. Reports model USABILITY without loading them.
+
+    It used to report presence, which is a different question: a Git LFS
+    pointer exists on disk and satisfies `Path.exists()`, so a container that
+    could not verify anybody reported `"status": "ok"`. `model_problem` checks
+    the properties a pointer fails, and the reason is named in the response so
+    a bad deployment is diagnosable from the probe alone.
+    """
+    problems = {
+        "yunet": m.model_problem(m.YUNET_FILE),
+        "sface": m.model_problem(m.SFACE_FILE),
     }
+    usable = {name: problem is None for name, problem in problems.items()}
     return {
-        "status": "ok" if all(present.values()) else "degraded",
-        "models": present,
+        "status": "ok" if all(usable.values()) else "degraded",
+        "models": usable,
+        "model_problems": {n: p for n, p in problems.items() if p is not None},
         "model_dir": str(m.MODEL_DIR),
         "token_configured": bool(SERVICE_TOKEN),
     }

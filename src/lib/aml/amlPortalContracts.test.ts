@@ -1172,16 +1172,25 @@ describe("self-hosted verification stack", () => {
   });
 
   it("keeps the portal verification view free of scores and thresholds", () => {
+    // Attempt accounting and the status collapse moved into
+    // verificationParties.pure.ts so the lockout they caused could be covered
+    // by behavioural tests. The withholding property is asserted across both
+    // halves rather than against where the mapping happens to live.
     const helper = portalSource.slice(
       portalSource.indexOf("async function verificationParties"),
       portalSource.indexOf("function consentRequiredResponse"));
-    expect(helper).toContain("CLIENT_VISIBLE");
-    // Comments describe what is withheld; assert against code only.
-    const codeOnly = helper.split("\n")
-      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
-    expect(codeOnly).not.toMatch(/similarity|threshold|score|outcome_detail/);
-    // The staff ownership model must stay out of the portal entirely.
-    expect(codeOnly).not.toContain("beneficial_owners");
+    const pureSource = readFileSync(
+      "supabase/functions/_shared/aml/verificationParties.pure.ts", "utf8");
+    expect(pureSource).toContain("CLIENT_VISIBLE");
+
+    for (const [label, source] of [["portal", helper], ["projection", pureSource]] as const) {
+      // Comments describe what is withheld; assert against code only.
+      const codeOnly = source.split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+      expect(codeOnly, label).not.toMatch(/similarity|threshold|score|outcome_detail/);
+      // The staff ownership model must stay out of the portal entirely.
+      expect(codeOnly, label).not.toContain("beneficial_owners");
+    }
   });
 
   it("keeps the biometric bucket private with no direct client policy", () => {

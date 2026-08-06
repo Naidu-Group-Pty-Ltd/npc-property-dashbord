@@ -189,6 +189,17 @@ const SIMULATOR_SCREENING: ScreeningProvider = {
  * That is deliberate: passive liveness here is a heuristic, and the honest
  * response to "probably fine" is a human, not a pass.
  */
+/**
+ * Per-call ceiling for the verification service.
+ *
+ * A face compare on a 2000px pair is well under a second; this is generous
+ * enough that a cold container still answers, and short enough that three
+ * sequential calls stay inside the worker's own budget.
+ */
+const VERIFICATION_SERVICE_TIMEOUT_MS = Number(
+  Deno.env.get("AML_VERIFICATION_SERVICE_TIMEOUT_MS") ?? 20_000,
+);
+
 function makeSelfHostedIdvProvider(): IdvProvider {
   const baseUrl = (Deno.env.get("AML_VERIFICATION_SERVICE_URL") || "").replace(/\/+$/, "");
   const token = Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN") || "";
@@ -212,13 +223,35 @@ function makeSelfHostedIdvProvider(): IdvProvider {
       if (!documentImage) throw new Error("document image is required for self-hosted IDV");
 
       const call = async (path: string, body: Record<string, unknown>) => {
-        const res = await fetch(`${baseUrl}${path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(body),
-        });
+        let res: Response;
+        try {
+          res = await fetch(`${baseUrl}${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+            // Without this a hung service hangs the worker until the platform
+            // kills it, leaving the check claimed as `processing` with no
+            // completion — which used to strand the client permanently.
+            signal: AbortSignal.timeout(VERIFICATION_SERVICE_TIMEOUT_MS),
+          });
+        } catch (e) {
+          const aborted = (e as Error)?.name === "TimeoutError" ||
+            (e as Error)?.name === "AbortError";
+          // The word `timeout` is load-bearing: the consumer categorises on it
+          // and records a technical failure, which consumes no attempt.
+          throw new Error(aborted
+            ? `verification service ${path} timed out after ${VERIFICATION_SERVICE_TIMEOUT_MS}ms`
+            : `verification service ${path} unreachable: ${(e as Error)?.message ?? e}`);
+        }
         if (!res.ok) {
-          throw new Error(`verification service ${path} returned ${res.status}`);
+          // Read the body for the reason but never let it become an identity
+          // outcome — a 400 here means we sent something undecodable, a 401
+          // means our own token is wrong, a 503 means the models are missing.
+          // All three are ours to fix, not the customer's to have failed.
+          const detail = await res.text().catch(() => "");
+          throw new Error(
+            `verification service ${path} returned ${res.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+          );
         }
         return await res.json();
       };
@@ -261,14 +294,36 @@ function makeSelfHostedIdvProvider(): IdvProvider {
             : `similarity ${face.similarity} (threshold ${face?.thresholds?.match})`,
         });
       }
+      // A liveness signal that failed only because the photo was poor is a
+      // capture problem, not a finding. Charging a customer an attempt — and
+      // recording an identity failure against them — because their selfie was
+      // blurred is exactly the confusion the service's own `problems` list
+      // exists to prevent. A screen-replay signal is a different matter and
+      // stays a failure.
+      let livenessUnusable = false;
       if (liveness) {
-        checks.push({
-          name: "liveness",
-          status: liveness.is_real === true ? "warn" : "fail",
-          // Never "pass": this is a heuristic, and recording it as a pass
-          // would overstate what was actually established.
-          detail: liveness.advisory ?? "heuristic signal only",
-        });
+        const problems: string[] = Array.isArray(liveness.problems)
+          ? liveness.problems.map((p: unknown) => String(p))
+          : [];
+        const qualityOnly = liveness.is_real === null ||
+          problems.includes("no_face_in_selfie") ||
+          (problems.length > 0 && problems.every((p) => p === "image_too_blurred"));
+
+        if (qualityOnly) {
+          livenessUnusable = true;
+          checks.push({
+            name: "liveness", status: "warn",
+            detail: `capture quality prevented a liveness signal: ${problems.join(", ") || "no face detected"}`,
+          });
+        } else {
+          checks.push({
+            name: "liveness",
+            status: liveness.is_real === true ? "warn" : "fail",
+            // Never "pass": this is a heuristic, and recording it as a pass
+            // would overstate what was actually established.
+            detail: liveness.advisory ?? "heuristic signal only",
+          });
+        }
       }
 
       // Document authenticity is explicitly NOT established: without DVS we
@@ -280,14 +335,15 @@ function makeSelfHostedIdvProvider(): IdvProvider {
       });
 
       const failed = checks.some((c) => c.status === "fail");
-      const faceMatched = face?.verdict === "match";
-      const captureUnusable = face?.verdict === "unusable";
+      const captureUnusable = face?.verdict === "unusable" || livenessUnusable;
 
+      // Never "verified", even on a match above threshold. Without a check
+      // against the issuing authority we have established that a face matches
+      // a document, not that the document is genuine — so the strongest honest
+      // outcome is a referral to a human. "pending" means we could not look at
+      // all, and consumes no attempt.
       const status: IdvResult["status"] =
-        captureUnusable ? "pending"
-        : failed ? "failed"
-        : faceMatched ? "manual_review"
-        : "manual_review";
+        captureUnusable ? "pending" : failed ? "failed" : "manual_review";
 
       const overallScore = typeof face?.similarity === "number"
         ? Math.max(0, Math.min(1, Number(face.similarity)))

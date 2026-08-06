@@ -70,12 +70,25 @@ export interface AmlVerificationParty {
   attempts_used: number;
   attempts_remaining: number;
   can_attempt: boolean;
+  /**
+   * The last capture could not be examined — no face found, or too blurred.
+   * It consumed no attempt, and the client needs to be asked for a new photo
+   * rather than left waiting on a review that is not happening.
+   */
+  retake_required?: boolean;
 }
 
 export interface AmlVerificationStatus {
   enabled: boolean;
   max_attempts: number;
   biometric_consent_accepted: boolean;
+  /**
+   * Whether electronic capture may proceed at all. The server has always sent
+   * this and the step ignored it, so a client whose case had no live provider
+   * was offered "Start", allowed to photograph their face, and refused at the
+   * upload URL. Client-safe by construction — never a provider name.
+   */
+  availability?: 'available' | 'temporarily_unavailable' | 'manual_verification_required';
   parties: AmlVerificationParty[];
 }
 
