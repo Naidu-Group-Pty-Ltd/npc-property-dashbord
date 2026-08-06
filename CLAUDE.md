@@ -40,6 +40,14 @@ that is empty, so a mistyped name is invisible — that file's header records wh
 last time.
 
 ## Generated reports / PDFs
+**Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
+else here.** The design system renders **0.14%** of the documents this product
+actually produces — 2 of 1,440, and zero of 1,162 investment reports. Every
+other measure in this programme (the ink floor, the critique rubric, the golden
+diff, PDF/UA validation) is taken against fixtures in a harness and passes while
+that stays true. A correctness measure cannot see an unused system, so check
+coverage before improving output.
+
 Read [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 before touching any PDF generator — print has different contrast, colour and font
 rules from screen, and most of the repo's "logo" files are email-signature banners
