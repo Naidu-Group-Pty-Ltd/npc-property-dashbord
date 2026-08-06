@@ -183,7 +183,8 @@ export function renderVizDirective(
         .map((i) => `<li>${escapeHtml(i.symbol)} ${escapeHtml(i.text)}</li>`)
         .join('');
       if (!items) return null;
-      const html = renderCallout('neutral', 'At a glance', `<ul>${items}</ul>`);
+      // `marked`: each item already leads with its own glyph. See the rule.
+      const html = renderCallout('neutral', 'At a glance', `<ul class="marked">${items}</ul>`);
       return { html, lines: d.items.length + 2 };
     }
 

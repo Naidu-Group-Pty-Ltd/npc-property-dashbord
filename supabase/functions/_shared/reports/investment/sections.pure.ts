@@ -12,7 +12,12 @@
  * a sources chapter at the back.
  */
 import type { ChapterInput } from '../../reportDesign/structure.pure.ts';
-import { markdownToPlainText, pagesForLines, renderMarkdown } from '../markdown.pure.ts';
+import {
+  markdownToPlainText,
+  pagesForLines,
+  renderMarkdown,
+  THIN_CHAPTER_LINES,
+} from '../markdown.pure.ts';
 import { planningChartContext, vizDirectiveRenderer } from '../vizFigures.pure.ts';
 import { chartHasData } from './charts.pure.ts';
 import {
@@ -277,18 +282,43 @@ export function planChapters(report: InvestmentReport): {
   // Summary` and closes with `Financial Recommendation & Portfolio Fit`, so any
   // monotonic keyword scan puts the whole document in the last chapter.
   if (!kept.some((p) => p.number !== null)) {
+    // One chapter per section — except for a section too short to hold a page.
+    //
+    // A current section is substantial: measured over the 546 sections in the
+    // 35 reports the generator has produced, the median is 7,938 characters,
+    // about 122 lines of prose before its seven figures. So the chapter is
+    // normally two to three full pages and giving it a page of its own is
+    // right. **4.9% are not** — 27 of 546 come in under half a page, and one of
+    // those opening a sheet on its own is the defect the converter recorded at
+    // 2.3% ink.
+    //
+    // `THIN_CHAPTER_LINES` is the converter's own threshold, and its history is
+    // worth keeping: the first value was twelve, a third of a page, reasoned
+    // rather than measured, and a render showed a section that cleared it
+    // printing almost blank. Half a page is the boundary a render supports.
+    const packed: ChapterPart[][] = [];
     for (const part of kept) {
+      const previous = packed[packed.length - 1];
+      if (previous && part.lines < THIN_CHAPTER_LINES) previous.push(part);
+      else packed.push([part]);
+    }
+
+    for (const group of packed) {
+      const lead = group[0];
       push({
         id: `inv.s${chapters.length}`,
         kind: 'prose',
-        title: part.title,
+        // The chapter takes the first section's name. A packed run is named for
+        // what it opens on, and every section in it keeps its own subhead —
+        // `chapterBody` sets those as soon as a chapter carries more than one.
+        title: lead.title,
         // The section's own opening words. There is no editorial gloss to use
         // and inventing one would be writing on a client's contents page.
-        note: markdownToPlainText(part.markdown, CONTENTS_NOTE_CHARS * 2),
+        note: markdownToPlainText(lead.markdown, CONTENTS_NOTE_CHARS * 2),
         markdown: '',
         charts: [],
-        parts: [part],
-        lines: part.lines + CHAPTER_FURNITURE_LINES,
+        parts: group,
+        lines: group.reduce((n, p) => n + p.lines, 0) + CHAPTER_FURNITURE_LINES,
       });
     }
   } else {
