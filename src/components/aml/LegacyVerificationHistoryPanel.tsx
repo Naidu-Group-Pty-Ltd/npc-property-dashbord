@@ -18,7 +18,7 @@ function legacyLabel(r: IdentityCheck): { label: string; tone: "secondary" | "de
     return { label: "Test simulation — not compliance evidence", tone: "secondary" };
   }
   if (r.result_payload?.error_category) {
-    return { label: `${String(r.result_payload.error_category).replaceAll("_", " ")} — attempt not consumed`, tone: "secondary" };
+    return { label: `${String(r.result_payload.error_category).replace(/_/g, " ")} — attempt not consumed`, tone: "secondary" };
   }
   switch (r.status) {
     case "verified": return { label: "Verified (legacy)", tone: "default" };
