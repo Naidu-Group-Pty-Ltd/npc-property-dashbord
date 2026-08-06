@@ -116,12 +116,51 @@ function evaluateTriggers(triggers: Trigger[], inputs: Record<string, any>) {
 }
 
 async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise<Record<string, any>> {
-  const [{ data: failedIdv }, { data: confirmedSanctions }] = await Promise.all([
-    admin.schema("aml").from("identity_checks")
+  // Only authoritative executions may feed the risk model — a simulator
+  // 'failed' is not an adverse fact about the customer. The filtered query
+  // falls back to the legacy shape while the execution-mode migration is
+  // not applied (where every row is treated as authoritative, as before).
+  async function failedAuthoritativeIdv() {
+    const filtered = await admin.schema("aml").from("identity_checks")
       .select("id, status, completed_at, updated_at")
       .eq("case_id", caseId)
       .eq("status", "failed")
-      .limit(1),
+      .eq("authoritative", true)
+      .limit(1);
+    if (!filtered.error) return filtered;
+    return await admin.schema("aml").from("identity_checks")
+      .select("id, status, completed_at, updated_at")
+      .eq("case_id", caseId)
+      .eq("status", "failed")
+      .limit(1);
+  }
+  // Canonical model (Stage 21): an authoritative electronic failure in
+  // verification_checks is a mandatory input exactly like a legacy one.
+  // Only rows where the provider actually examined the subject count —
+  // attempt_consumed + authoritative excludes outages, unusable captures,
+  // worker retries and simulations by construction. Legacy fallback keeps
+  // the pre-migration shape (status alone) working unchanged.
+  async function failedCanonicalIdv() {
+    const filtered = await admin.schema("aml").from("verification_checks")
+      .select("id, status, completed_at")
+      .eq("case_id", caseId)
+      .eq("check_type", "electronic_idv")
+      .eq("status", "failed")
+      .eq("authoritative", true)
+      .eq("attempt_consumed", true)
+      .is("superseded_at", null)
+      .limit(1);
+    if (!filtered.error) return filtered;
+    return await admin.schema("aml").from("verification_checks")
+      .select("id, status, completed_at")
+      .eq("case_id", caseId)
+      .eq("check_type", "electronic_idv")
+      .eq("status", "failed")
+      .limit(1);
+  }
+  const [{ data: failedIdv }, { data: failedCanonical }, { data: confirmedSanctions }] = await Promise.all([
+    failedAuthoritativeIdv(),
+    failedCanonicalIdv(),
     admin.schema("aml").from("screening_matches")
       .select("id, match_type, status, updated_at")
       .eq("case_id", caseId)
@@ -131,7 +170,7 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
   ]);
 
   const inputs: Record<string, any> = {};
-  if ((failedIdv ?? []).length > 0) inputs.idv = "failed";
+  if ((failedIdv ?? []).length > 0 || (failedCanonical ?? []).length > 0) inputs.idv = "failed";
   if ((confirmedSanctions ?? []).length > 0) inputs.screening = { confirmed_match: true };
   return inputs;
 }
@@ -809,11 +848,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!latestAss) return jr({ recalc: { stale: true, reasons: ["no_assessment"], latest_assessment_at: null } });
 
       const since = latestAss.created_at;
-      const [scr, idv, fin, quest, cp] = await Promise.all([
+      const [scr, idv, canonicalIdv, fin, quest, cp] = await Promise.all([
         admin.schema("aml").from("screening_checks").select("id", { count: "exact", head: true })
           .eq("case_id", caseId).gt("updated_at", since),
         admin.schema("aml").from("identity_checks").select("id", { count: "exact", head: true })
           .eq("case_id", caseId).gt("updated_at", since),
+        // Canonical portal/manual verification outcomes also stale the
+        // assessment; completed_at bounds it to actual results, not
+        // worker-pipeline churn.
+        admin.schema("aml").from("verification_checks").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("completed_at", since),
         admin.schema("aml").from("finance_comparisons").select("id", { count: "exact", head: true })
           .eq("case_id", caseId).gt("captured_at", since),
         admin.schema("aml").from("questionnaire_responses").select("id", { count: "exact", head: true })
@@ -823,7 +867,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       ]);
       const reasons: string[] = [];
       if ((scr.count ?? 0) > 0) reasons.push("screening_changed");
-      if ((idv.count ?? 0) > 0) reasons.push("verification_changed");
+      if ((idv.count ?? 0) > 0 || (canonicalIdv.count ?? 0) > 0) reasons.push("verification_changed");
       if ((fin.count ?? 0) > 0) reasons.push("funding_changed");
       if ((quest.count ?? 0) > 0) reasons.push("questionnaire_changed");
       if ((cp.count ?? 0) > 0) reasons.push("counterparty_changed");

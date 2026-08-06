@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { FileWarning, Loader2, ThumbsUp, ThumbsDown, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FileWarning, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,6 +10,12 @@ import { amlRiskApi, type AmlRiskOverride, type AmlApproval } from "@/lib/aml/am
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
+import {
+  AmlEmptyState,
+  AmlLoadingState,
+  AmlPageHeader,
+  AmlRefreshButton,
+} from "@/components/aml/primitives";
 
 const STATUS_TONE: Record<string, string> = {
   pending: "bg-warning/15 text-warning",
@@ -51,17 +57,12 @@ export default function AmlInvestigations() {
   return (
     <div className="space-y-6">
       {regulatoryHub && <RegulatoryAssuranceHeader />}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2"><FileWarning className="h-5 w-5 text-primary" /> Investigations</CardTitle>
-            <CardDescription>Risk override requests and senior-authority approvals.</CardDescription>
-          </div>
-          <Button variant="outline" size="sm" onClick={refresh}>
-            <RefreshCw className="h-4 w-4 mr-1" /> Refresh
-          </Button>
-        </CardHeader>
-      </Card>
+      <AmlPageHeader
+        title="Investigations & EDD"
+        description="Review and decide risk override requests and senior-authority approvals raised from case decisions."
+        icon={FileWarning}
+        actions={<AmlRefreshButton onClick={refresh} loading={loading} />}
+      />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
@@ -72,18 +73,18 @@ export default function AmlInvestigations() {
         <TabsContent value="overrides">
           <Card>
             <CardContent className="pt-6">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : overrides.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No override requests.</p>
+              {loading ? <AmlLoadingState variant="list" lines={3} label="Loading override requests…" /> : overrides.length === 0 ? (
+                <AmlEmptyState body="No override requests. Overrides raised from case decisions appear here for approval." />
               ) : (
-                <Table>
+                <Table aria-label="Risk override requests">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Requested</TableHead>
-                      <TableHead>Case</TableHead>
-                      <TableHead>Requested rating</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
+                      <TableHead scope="col">Requested</TableHead>
+                      <TableHead scope="col">Case</TableHead>
+                      <TableHead scope="col">Requested rating</TableHead>
+                      <TableHead scope="col">Reason</TableHead>
+                      <TableHead scope="col">Status</TableHead>
+                      <TableHead scope="col" className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -97,8 +98,8 @@ export default function AmlInvestigations() {
                         <TableCell className="text-right">
                           {o.status === "pending" && canReview && (
                             <>
-                              <Button size="sm" variant="ghost" onClick={() => resolveOv(o.id, "approved")}><ThumbsUp className="h-4 w-4" /></Button>
-                              <Button size="sm" variant="ghost" onClick={() => resolveOv(o.id, "rejected")}><ThumbsDown className="h-4 w-4" /></Button>
+                              <Button size="sm" variant="ghost" aria-label="Approve override request" onClick={() => resolveOv(o.id, "approved")}><ThumbsUp aria-hidden="true" className="h-4 w-4" /></Button>
+                              <Button size="sm" variant="ghost" aria-label="Reject override request" onClick={() => resolveOv(o.id, "rejected")}><ThumbsDown aria-hidden="true" className="h-4 w-4" /></Button>
                             </>
                           )}
                         </TableCell>
@@ -114,18 +115,18 @@ export default function AmlInvestigations() {
         <TabsContent value="approvals">
           <Card>
             <CardContent className="pt-6">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : approvals.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No pending approvals.</p>
+              {loading ? <AmlLoadingState variant="list" lines={3} label="Loading approval requests…" /> : approvals.length === 0 ? (
+                <AmlEmptyState body="No approval requests. Senior-authority approvals raised from case workflows appear here for decision." />
               ) : (
-                <Table>
+                <Table aria-label="Senior-authority approval requests">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Requested</TableHead>
-                      <TableHead>Case</TableHead>
-                      <TableHead>Kind</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Note</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
+                      <TableHead scope="col">Requested</TableHead>
+                      <TableHead scope="col">Case</TableHead>
+                      <TableHead scope="col">Kind</TableHead>
+                      <TableHead scope="col">Status</TableHead>
+                      <TableHead scope="col">Note</TableHead>
+                      <TableHead scope="col" className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -139,8 +140,8 @@ export default function AmlInvestigations() {
                         <TableCell className="text-right">
                           {a.status === "pending" && canReview && (
                             <>
-                              <Button size="sm" variant="ghost" onClick={() => resolveAp(a.id, "approved")}><ThumbsUp className="h-4 w-4" /></Button>
-                              <Button size="sm" variant="ghost" onClick={() => resolveAp(a.id, "rejected")}><ThumbsDown className="h-4 w-4" /></Button>
+                              <Button size="sm" variant="ghost" aria-label="Approve request" onClick={() => resolveAp(a.id, "approved")}><ThumbsUp aria-hidden="true" className="h-4 w-4" /></Button>
+                              <Button size="sm" variant="ghost" aria-label="Reject request" onClick={() => resolveAp(a.id, "rejected")}><ThumbsDown aria-hidden="true" className="h-4 w-4" /></Button>
                             </>
                           )}
                         </TableCell>

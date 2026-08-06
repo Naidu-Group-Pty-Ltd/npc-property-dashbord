@@ -13,14 +13,19 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardList,
+  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardCheck, ClipboardList,
   FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, Radar,
   ScanSearch, Scale, User, Wallet, History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +35,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
 import { amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import {
@@ -41,6 +47,10 @@ import {
 } from "@/lib/aml/amlMonitoringApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { VerificationSection } from "@/components/aml/VerificationSection";
+import { SubmissionReviewPanel } from "@/components/aml/SubmissionReviewPanel";
+import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificationHistoryPanel";
+import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
+import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import {
@@ -51,6 +61,9 @@ import {
   VerificationTab, ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
 } from "@/components/aml/CaseWorkspaceTabs";
+import {
+  AmlGateBadge, AmlLoadingState, AmlRiskBadge, AmlStageBadge,
+} from "@/components/aml/primitives";
 
 const STATUS_LABELS: Record<AmlCaseStatus, string> = {
   draft: "Draft", kyc_in_progress: "Onboarding in progress", kyc_complete: "Submission received",
@@ -84,7 +97,7 @@ const GATE_LABELS: Record<string, string> = {
 
 type SectionKey =
   | "overview" | "identity" | "ownership"
-  | "counterparty" | "finance" | "documents"
+  | "counterparty" | "finance" | "documents" | "submission-review"
   | "risk" | "monitoring" | "requests" | "timeline";
 
 interface SectionDef {
@@ -109,6 +122,7 @@ const SECTION_GROUPS: Array<{ group: string; sections: SectionDef[] }> = [
       { key: "counterparty", label: "Purchase & Counterparty", icon: Handshake, visible: (a) => a.canInvestigate },
       { key: "finance", label: "Funding & Finance", icon: Wallet, visible: (a) => a.canInvestigate },
       { key: "documents", label: "Documents & Evidence", icon: FileText, visible: () => true },
+      { key: "submission-review", label: "Submission Review", icon: ClipboardCheck, visible: () => true },
     ],
   },
   {
@@ -131,9 +145,14 @@ const RAIL_STATE_META: Record<ProgressRailState, { icon: typeof Circle; classNam
   not_applicable: { icon: Minus, className: "text-muted-foreground/40" },
 };
 
+const isKnownSection = (value: string | null): value is SectionKey =>
+  !!value &&
+  SECTION_GROUPS.some((g) => g.sections.some((s) => s.key === value));
+
+
 export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const access = useAmlAccess();
   const { caseWorkspace: workspaceEnabled, loading: flagsLoading } = useAmlV3Flags();
 
@@ -143,13 +162,18 @@ export default function AmlCaseWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const requestedSection = searchParams.get("section") as SectionKey | null;
-  const [section, setSection] = useState<SectionKey>("overview");
-  useEffect(() => {
-    if (requestedSection && SECTION_GROUPS.some((g) => g.sections.some((s) => s.key === requestedSection))) {
-      setSection(requestedSection);
-    }
-  }, [requestedSection]);
+  // The selected section lives in the `section` URL parameter, so deep links
+  // work, a refresh keeps the section, and browser back/forward walks the
+  // sections the user visited. Overview is the unparameterised default.
+  const requestedSection = searchParams.get("section");
+  const section: SectionKey = isKnownSection(requestedSection) ? requestedSection : "overview";
+  const setSection = (next: SectionKey) => {
+    if (next === section) return;
+    const params = new URLSearchParams(searchParams);
+    if (next === "overview") params.delete("section");
+    else params.set("section", next);
+    setSearchParams(params);
+  };
 
   const canWrite = access.canWrite;
   const canInvestigate = access.roles.has("analyst") || access.roles.has("reviewer") || access.roles.has("mlro");
@@ -185,7 +209,7 @@ export default function AmlCaseWorkspace() {
 
   if (access.loading || flagsLoading || (loading && !caseRow)) {
     return (
-      <div className="space-y-4 p-6">
+      <div className="space-y-4" role="status" aria-label="Loading the case workspace">
         <Skeleton className="h-8 w-72" />
         <Skeleton className="h-24 w-full" />
         <Skeleton className="h-96 w-full" />
@@ -195,7 +219,7 @@ export default function AmlCaseWorkspace() {
 
   if (error || !caseRow) {
     return (
-      <div className="mx-auto max-w-2xl p-6">
+      <div className="mx-auto max-w-2xl">
         <Alert variant="destructive">
           <AlertTitle>Case unavailable</AlertTitle>
           <AlertDescription className="space-y-3">
@@ -223,7 +247,7 @@ export default function AmlCaseWorkspace() {
   const activation = (caseRow.metadata as any)?.activation;
 
   return (
-    <div className="space-y-4 p-4 sm:p-6">
+    <div className="space-y-4">
       {/* ---- Persistent case header ---- */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -248,43 +272,39 @@ export default function AmlCaseWorkspace() {
                   <User className="h-3.5 w-3.5" /> Client record
                 </Link>
               )}
-              <span>Updated {new Date(caseRow.updated_at).toLocaleDateString()}</span>
+              <span>Updated {displayDate(caseRow.updated_at)}</span>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">{CASE_STAGE_LABELS[stage]}</Badge>
-            <Badge
-              variant="outline"
-              className={
-                gate === "approved" || gate === "approved_with_controls"
-                  ? "border-success/40 text-success"
-                  : gate === "locked"
-                    ? "border-destructive/40 text-destructive"
-                    : "border-muted-foreground/30 text-muted-foreground"
-              }
-            >
-              Service gate: {GATE_LABELS[gate] ?? gate}
-            </Badge>
-            {caseRow.risk_rating && (
-              <Badge variant="outline" className="capitalize">Risk: {caseRow.risk_rating}</Badge>
-            )}
+          <div className="flex flex-wrap items-center gap-2" aria-label="Case status">
+            <AmlStageBadge stage={stage} />
+            <AmlGateBadge gate={gate} prefix />
+            <AmlRiskBadge risk={caseRow.risk_rating} prefix />
           </div>
         </div>
 
         {/* ---- Progress rail ---- */}
         <Card>
           <CardContent className="py-3">
-            <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-              <span>Case progress</span>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span className="font-medium">Case progress</span>
               <span aria-live="polite">{progressPercent}% of stages complete</span>
             </div>
-            <ol className="flex flex-wrap gap-x-4 gap-y-2" aria-label="Case progress stages">
+            <ol className="flex flex-wrap gap-x-3 gap-y-1.5" aria-label="Case progress stages">
               {rail.map((step) => {
                 const meta = RAIL_STATE_META[step.state];
                 const Icon = meta.icon;
+                const current =
+                  step.state === "in_progress" ||
+                  step.state === "attention_required" ||
+                  step.state === "blocked";
                 return (
-                  <li key={step.key} className="flex items-center gap-1.5 text-xs">
-                    <Icon className={`h-3.5 w-3.5 ${meta.className}`} aria-hidden />
+                  <li
+                    key={step.key}
+                    className={`flex items-center gap-1.5 rounded-full px-2 py-1 text-xs ${
+                      current ? "bg-muted/60 font-medium" : ""
+                    }`}
+                  >
+                    <Icon className={`h-4 w-4 shrink-0 ${meta.className}`} aria-hidden />
                     <span className={step.state === "not_started" ? "text-muted-foreground/70" : ""}>
                       {step.label}
                     </span>
@@ -297,8 +317,11 @@ export default function AmlCaseWorkspace() {
         </Card>
       </div>
 
-      {/* ---- Body: grouped nav · content · action panel ---- */}
-      <div className="grid gap-4 lg:grid-cols-[200px_minmax(0,1fr)_260px]">
+      {/* ---- Body: grouped nav · content · action panel ----
+          At lg (1024 px laptops) only nav + content share the row, so the
+          main column keeps a workable width; the action panel joins as a
+          sticky third column from xl up. */}
+      <div className="grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)_270px]">
         {/* Grouped section navigation — vertical on desktop, select on mobile */}
         <nav aria-label="Case sections" className="lg:sticky lg:top-4 lg:self-start">
           <div className="lg:hidden">
@@ -332,7 +355,7 @@ export default function AmlCaseWorkspace() {
                           onClick={() => setSection(s.key)}
                           aria-current={active ? "page" : undefined}
                           className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
-                            active ? "bg-primary/10 font-medium text-primary" : "hover:bg-accent"
+                            active ? "border border-primary/30 bg-primary/10 font-medium text-primary shadow-sm" : "border border-transparent hover:bg-accent"
                           }`}
                         >
                           <Icon className="h-4 w-4 shrink-0" />
@@ -368,12 +391,25 @@ export default function AmlCaseWorkspace() {
           )}
           {section === "identity" && (
             <div className="space-y-4">
-              {/* Self-hosted verification: per-party attempts, document
-                  sightings and audited biometric access. */}
+              {/* ONE canonical identity-verification surface: per-party
+                  attempts, processing state, document sightings and audited
+                  biometric access. The legacy identity_checks history lives
+                  in its own collapsed read-only panel below — there are no
+                  two competing primary actions. */}
               <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
-              <VerificationTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <PartyVerificationPanel caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <PartyScreeningPanel caseId={caseRow.id} canWrite={canWrite} canAdjudicate={access.isMlro || access.roles.has("reviewer")} onChanged={load} />
+              <LegacyVerificationHistoryPanel caseId={caseRow.id} />
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
             </div>
+          )}
+          {section === "submission-review" && (
+            <SubmissionReviewPanel
+              caseId={caseRow.id}
+              canWrite={canWrite}
+              canDecide={access.isMlro || access.roles.has("reviewer")}
+              onChanged={load}
+            />
           )}
           {section === "ownership" && <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />}
           {section === "counterparty" && canInvestigate && (
@@ -408,8 +444,12 @@ export default function AmlCaseWorkspace() {
           )}
         </main>
 
-        {/* Right action panel */}
-        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start" aria-label="Case actions">
+        {/* Right action panel — full-width row under the content at lg,
+            sticky right rail from xl. */}
+        <aside
+          className="space-y-4 lg:col-span-2 xl:col-span-1 xl:sticky xl:top-4 xl:self-start"
+          aria-label="Case actions"
+        >
           <ActionPanel
             caseRow={caseRow}
             openRequests={openRequests}
@@ -425,7 +465,7 @@ export default function AmlCaseWorkspace() {
       {/* Activation provenance footnote for context, kept out of the header */}
       {activation && (
         <p className="text-xs text-muted-foreground">
-          Activated {activation.activated_at ? new Date(activation.activated_at).toLocaleDateString() : ""} —{" "}
+          Activated {activation.activated_at ? displayDate(activation.activated_at) : ""} —{" "}
           {caseRow.activation_timing === "conditional_agreement"
             ? "compliance runs under a conditional agreement; the service unlocks when the gate is approved."
             : "the designated service trigger had occurred at activation."}
@@ -469,7 +509,7 @@ function CaseOverviewSection({
                 <span className="text-muted-foreground">Not linked</span>
               )}
             />
-            <Row k="Opened" v={new Date(caseRow.opened_at).toLocaleDateString()} />
+            <Row k="Opened" v={displayDate(caseRow.opened_at)} />
           </CardContent>
         </Card>
 
@@ -595,7 +635,7 @@ function ConsentEvidenceCard({ caseId }: { caseId: string }) {
                     {d.accepted_at ? (
                       <>
                         <div className="text-success">
-                          {new Date(d.accepted_at).toLocaleString()}
+                          {displayDateTime(d.accepted_at)}
                         </div>
                         {d.accepted_by && (
                           <div className="text-muted-foreground">{d.accepted_by}</div>
@@ -725,7 +765,7 @@ function DocumentsEvidenceSection({
   };
 
   if (requirements === null || documents === null) {
-    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+    return <AmlLoadingState variant="spinner" label="Loading this section…" />;
   }
 
   return (
@@ -755,7 +795,7 @@ function DocumentsEvidenceSection({
                     <div className="truncate">{r.label}</div>
                     <div className="text-xs text-muted-foreground">
                       {r.required ? "Required" : "Optional"}
-                      {r.due_at ? ` · due ${new Date(r.due_at).toLocaleDateString()}` : ""}
+                      {r.due_at ? ` · due ${displayDate(r.due_at)}` : ""}
                     </div>
                   </div>
                   <Badge variant="outline" className="capitalize">{String(r.status ?? "pending").replace(/_/g, " ")}</Badge>
@@ -780,7 +820,7 @@ function DocumentsEvidenceSection({
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{d.filename}</div>
                     <div className="text-xs text-muted-foreground">
-                      Uploaded {new Date(d.uploaded_at).toLocaleString()}
+                      Uploaded {displayDateTime(d.uploaded_at)}
                       {d.rejection_reason ? ` · rejected: ${d.rejection_reason}` : ""}
                     </div>
                   </div>
@@ -838,7 +878,7 @@ function DocumentsEvidenceSection({
                       {String(e.reference_type ?? "reference").replace(/_/g, " ")}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleDateString()}
+                      {displayDate(e.created_at)}
                     </span>
                   </div>
                 </li>
@@ -982,7 +1022,7 @@ function MonitoringReviewsSection({
   };
 
   if (loading) {
-    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+    return <AmlLoadingState variant="spinner" label="Loading this section…" />;
   }
   if (!monitoring) {
     return (
@@ -1022,7 +1062,7 @@ function MonitoringReviewsSection({
         <CardContent className="space-y-2 text-sm">
           {ended ? (
             <>
-              <Row k="Ended" v={monitoring.relationship_ended_at ? new Date(monitoring.relationship_ended_at).toLocaleDateString() : "—"} />
+              <Row k="Ended" v={monitoring.relationship_ended_at ? displayDate(monitoring.relationship_ended_at) : "—"} />
               {monitoring.relationship_end_reason && (
                 <div className="rounded bg-muted/40 p-2 text-xs">{monitoring.relationship_end_reason}</div>
               )}
@@ -1039,20 +1079,20 @@ function MonitoringReviewsSection({
                 v={
                   monitoring.next_periodic_review_at
                     ? <span className={monitoring.next_periodic_review_at < today ? "text-warning" : ""}>
-                        {new Date(monitoring.next_periodic_review_at).toLocaleDateString()}
+                        {displayDate(monitoring.next_periodic_review_at)}
                         {monitoring.next_periodic_review_at < today ? " · due" : ""}
                       </span>
                     : <span className="text-muted-foreground">Not scheduled</span>
                 }
               />
-              <Row k="Last review" v={monitoring.last_periodic_review_at ? new Date(monitoring.last_periodic_review_at).toLocaleDateString() : "—"} />
+              <Row k="Last review" v={monitoring.last_periodic_review_at ? displayDate(monitoring.last_periodic_review_at) : "—"} />
               <Row
                 k="Screening refresh"
                 v={
                   monitoring.rescreen_due_at
                     ? <span className={monitoring.rescreen_overdue ? "text-warning" : ""}>
                         {monitoring.rescreen_overdue ? "Overdue since " : "Due "}
-                        {new Date(monitoring.rescreen_due_at).toLocaleDateString()}
+                        {displayDate(monitoring.rescreen_due_at)}
                       </span>
                     : <span className="text-muted-foreground">No screening on record</span>
                 }
@@ -1157,7 +1197,7 @@ function MonitoringReviewsSection({
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {r.due_at ? `Due ${new Date(r.due_at).toLocaleDateString()}` : "No deadline"}
+                          {r.due_at ? `Due ${displayDate(r.due_at)}` : "No deadline"}
                           {overdue ? " · overdue" : ""}
                           {r.extension_count ? ` · extended ${r.extension_count}×` : ""}
                         </div>
@@ -1384,7 +1424,7 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
   const today = new Date().toISOString().slice(0, 10);
 
   if (loading) {
-    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+    return <AmlLoadingState variant="spinner" label="Loading this section…" />;
   }
 
   return (
@@ -1450,9 +1490,9 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
                   <div className="min-w-0">
                     <div className="truncate">{t.property_address ?? t.reference ?? t.kind}</div>
                     <div className="text-xs text-muted-foreground">
-                      {t.settlement_date ? `Settles ${new Date(t.settlement_date).toLocaleDateString()}` : "No settlement date"}
+                      {t.settlement_date ? `Settles ${displayDate(t.settlement_date)}` : "No settlement date"}
                       {t.original_settlement_date && t.settlement_date !== t.original_settlement_date &&
-                        ` (moved from ${new Date(t.original_settlement_date).toLocaleDateString()})`}
+                        ` (moved from ${displayDate(t.original_settlement_date)})`}
                       {t.purchase_price ? ` · ${Number(t.purchase_price).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : ""}
                     </div>
                   </div>
@@ -1489,7 +1529,7 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
                           variant="outline"
                           className={`h-5 px-1.5 text-[10px] ${cp.delayed_cdd_deadline < today ? "border-destructive/50 text-destructive" : "border-warning/50 text-warning"}`}
                         >
-                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${new Date(cp.delayed_cdd_deadline).toLocaleDateString()}`}
+                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${displayDate(cp.delayed_cdd_deadline)}`}
                         </Badge>
                       )}
                     </div>
@@ -1665,6 +1705,29 @@ function RequestsSection({
 /* Right action panel (directive §11.4)                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Grouping is presentation only — every option still comes from
+ * NEXT_STATUSES (mirrored by the server). Attention-raising and destructive
+ * transitions get distinct treatments so "Blocked" never sits camouflaged
+ * beside "Cleared"; Blocked/Closed additionally require a confirmed reason,
+ * matching the legacy workspace dialog.
+ */
+const PANEL_ATTENTION_TRANSITIONS = new Set<AmlCaseStatus>(["edd_required"]);
+const PANEL_DESTRUCTIVE_TRANSITIONS = new Set<AmlCaseStatus>(["blocked", "closed"]);
+
+const PANEL_DESTRUCTIVE_COPY: Partial<Record<AmlCaseStatus, { title: string; body: string; action: string }>> = {
+  blocked: {
+    title: "Block this case?",
+    body: "Blocking locks the service gate and stops the client's onboarding until the case is re-reviewed. Record why this case is being blocked — the reason is written to the tamper-evident audit trail.",
+    action: "Block case",
+  },
+  closed: {
+    title: "Close this case?",
+    body: "Closing ends this AML/CTF case. A closed case cannot be advanced further. Record why this case is being closed — the reason is written to the tamper-evident audit trail.",
+    action: "Close case",
+  },
+};
+
 function ActionPanel({
   caseRow, openRequests, events, canWrite, isMlro, onChanged, onOpenSection,
 }: {
@@ -1678,18 +1741,26 @@ function ActionPanel({
 }) {
   const [reason, setReason] = useState("");
   const [transitioning, setTransitioning] = useState(false);
+  const [pendingDestructive, setPendingDestructive] = useState<AmlCaseStatus | null>(null);
+  const [destructiveReason, setDestructiveReason] = useState("");
   const nextOptions = NEXT_STATUSES[caseRow.status] ?? [];
+  const progressOptions = nextOptions.filter(
+    (s) => !PANEL_ATTENTION_TRANSITIONS.has(s) && !PANEL_DESTRUCTIVE_TRANSITIONS.has(s));
+  const attentionOptions = nextOptions.filter((s) => PANEL_ATTENTION_TRANSITIONS.has(s));
+  const destructiveOptions = nextOptions.filter((s) => PANEL_DESTRUCTIVE_TRANSITIONS.has(s));
   const stage = caseStage(caseRow);
 
-  const transition = async (to: AmlCaseStatus) => {
+  const transition = async (to: AmlCaseStatus, reasonText?: string) => {
     setTransitioning(true);
     try {
-      await amlCasesApi.transition(caseRow.id, to, reason || undefined);
+      await amlCasesApi.transition(caseRow.id, to, reasonText || undefined);
       toast({
         title: "Status updated",
         description: `${STATUS_LABELS[caseRow.status]} → ${STATUS_LABELS[to]}`,
       });
       setReason("");
+      setPendingDestructive(null);
+      setDestructiveReason("");
       onChanged();
     } catch (e: any) {
       toast({ title: "Transition failed", description: e.message, variant: "destructive" });
@@ -1704,27 +1775,29 @@ function ActionPanel({
   if (openRequests.length > 0) blockers.push(`${openRequests.length} client request${openRequests.length === 1 ? "" : "s"} awaiting a response.`);
 
   const nextAction =
-    stage === "client_submitted" ? { label: "Review the client submission", section: "documents" as SectionKey }
+    stage === "client_submitted" ? { label: "Review the client submission", section: "submission-review" as SectionKey }
     : stage === "decision_pending" ? { label: "Record the decision", section: "risk" as SectionKey }
     : stage === "enhanced_cdd" ? { label: "Work the additional-information items", section: "requests" as SectionKey }
     : stage === "client_in_progress" ? { label: "Check portal progress and chase requirements", section: "documents" as SectionKey }
     : { label: "Review the case overview", section: "overview" as SectionKey };
 
+  const destructiveCopy = pendingDestructive ? PANEL_DESTRUCTIVE_COPY[pendingDestructive] : null;
+
   return (
     <>
-      <Card>
+      <Card className="border-primary/20 bg-primary/5">
         <CardHeader className="pb-2"><CardTitle className="text-sm">Next best action</CardTitle></CardHeader>
         <CardContent className="space-y-2 text-sm">
           <p>{nextAction.label}</p>
-          <Button size="sm" variant="outline" onClick={() => onOpenSection(nextAction.section)}>
-            Go
+          <Button size="sm" onClick={() => onOpenSection(nextAction.section)}>
+            {nextAction.label === "Review the case overview" ? "Open overview" : "Go to it"}
           </Button>
         </CardContent>
       </Card>
 
       {blockers.length > 0 && (
         <Card className="border-warning/40">
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Blockers</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Waiting on</CardTitle></CardHeader>
           <CardContent>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
               {blockers.map((b, i) => <li key={i}>{b}</li>)}
@@ -1742,20 +1815,49 @@ function ActionPanel({
               placeholder="Reason (optional)…"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              disabled={transitioning}
             />
             <div className="flex flex-wrap gap-2">
-              {nextOptions.map((s) => (
+              {progressOptions.map((s) => (
                 <Button
                   key={s}
                   size="sm"
                   variant="outline"
                   disabled={transitioning}
-                  onClick={() => transition(s)}
+                  onClick={() => transition(s, reason)}
+                >
+                  {STATUS_LABELS[s]}
+                </Button>
+              ))}
+              {attentionOptions.map((s) => (
+                <Button
+                  key={s}
+                  size="sm"
+                  variant="outline"
+                  className="border-warning/40 text-warning hover:bg-warning/10 hover:text-warning"
+                  disabled={transitioning}
+                  onClick={() => transition(s, reason)}
                 >
                   {STATUS_LABELS[s]}
                 </Button>
               ))}
             </div>
+            {destructiveOptions.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-t border-border/60 pt-2">
+                {destructiveOptions.map((s) => (
+                  <Button
+                    key={s}
+                    size="sm"
+                    variant="outline"
+                    className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    disabled={transitioning}
+                    onClick={() => { setDestructiveReason(reason); setPendingDestructive(s); }}
+                  >
+                    {STATUS_LABELS[s]}
+                  </Button>
+                ))}
+              </div>
+            )}
             {caseRow.status === "escalated_mlro" && !isMlro && (
               <p className="text-xs text-muted-foreground">
                 Escalated decisions can only be recorded by authorised decision-makers.
@@ -1775,7 +1877,7 @@ function ActionPanel({
               {events.slice(0, 5).map((e) => (
                 <li key={e.id}>
                   <div className="line-clamp-2">{e.summary}</div>
-                  <div className="text-muted-foreground">{new Date(e.created_at).toLocaleString()}</div>
+                  <div className="text-muted-foreground">{displayDateTime(e.created_at)}</div>
                 </li>
               ))}
             </ul>
@@ -1790,6 +1892,45 @@ function ActionPanel({
           </Button>
         </CardContent>
       </Card>
+
+      {/* Destructive transitions are confirmed with a required reason,
+          exactly like the legacy workspace dialog. */}
+      <AlertDialog
+        open={!!pendingDestructive}
+        onOpenChange={(o) => { if (!o) { setPendingDestructive(null); setDestructiveReason(""); } }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle aria-hidden="true" className="h-5 w-5 text-destructive" />
+              {destructiveCopy?.title ?? "Confirm action"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{destructiveCopy?.body}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="aml-workspace-destructive-reason">Reason (required)</Label>
+            <Textarea
+              id="aml-workspace-destructive-reason"
+              value={destructiveReason}
+              onChange={(e) => setDestructiveReason(e.target.value)}
+              rows={3}
+              placeholder="Why is this case being blocked or closed?"
+              disabled={transitioning}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={transitioning}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={transitioning || !destructiveReason.trim()}
+              onClick={() => pendingDestructive && transition(pendingDestructive, destructiveReason.trim())}
+            >
+              {transitioning && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {destructiveCopy?.action ?? "Confirm"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

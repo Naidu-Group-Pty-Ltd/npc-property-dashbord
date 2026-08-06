@@ -145,13 +145,13 @@ export function StepLeaseIncome({ payload, onChange, issues, disabled }: Props) 
                   <MoneyField
                     label="Rent" value={tenancy.annualRent}
                     onChange={(value) => updateTenancy(tenancy.id, { annualRent: value })} disabled={disabled}
-                    error={errorFor(`lease.tenancies.${index}.annualRent`)}
+                    error={errorFor(`lease.tenancies.${index}.annualRent`)} fieldPath={`lease.tenancies.${index}.annualRent`}
                   />
                   <DateField label="Lease commencement" value={tenancy.leaseCommencement} onChange={(value) => updateTenancy(tenancy.id, { leaseCommencement: value })} disabled={disabled} />
                   <DateField
                     label="Lease expiry" value={tenancy.leaseExpiry}
                     onChange={(value) => updateTenancy(tenancy.id, { leaseExpiry: value })} disabled={disabled}
-                    error={errorFor(`lease.tenancies.${index}.leaseExpiry`)}
+                    error={errorFor(`lease.tenancies.${index}.leaseExpiry`)} fieldPath={`lease.tenancies.${index}.leaseExpiry`}
                   />
                 </div>
 
@@ -178,12 +178,12 @@ export function StepLeaseIncome({ payload, onChange, issues, disabled }: Props) 
         <PercentField
           label="Vacancy allowance" value={lease.vacancyAllowancePercent}
           onChange={(value) => setLease({ vacancyAllowancePercent: value })} disabled={disabled}
-          error={errorFor('lease.vacancyAllowancePercent')}
+          error={errorFor('lease.vacancyAllowancePercent')} fieldPath="lease.vacancyAllowancePercent"
         />
         <PercentField
           label="Management allowance" value={lease.managementAllowancePercent}
           onChange={(value) => setLease({ managementAllowancePercent: value })} disabled={disabled}
-          error={errorFor('lease.managementAllowancePercent')}
+          error={errorFor('lease.managementAllowancePercent')} fieldPath="lease.managementAllowancePercent"
         />
         <MoneyField label="Incentive allowance" value={lease.incentiveAllowance} onChange={(value) => setLease({ incentiveAllowance: value })} disabled={disabled} />
         <NumberField

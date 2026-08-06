@@ -61,9 +61,9 @@ const DialogContent = React.forwardRef<
         // Default treatment: mobile (<640px) bottom sheet sliding up; ≥sm classic centered modal.
         !bareLayout && [
           "grid gap-4",
-          "inset-x-0 bottom-0 top-auto w-full max-w-none rounded-t-2xl border-x-0 border-b-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[92vh] overflow-y-auto",
+          "inset-x-0 bottom-0 top-auto w-full max-w-none rounded-t-2xl border-x-0 border-b-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[92dvh] overflow-y-auto",
           "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
-          "sm:inset-auto sm:left-[50%] sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-full sm:max-w-lg sm:rounded-lg sm:border sm:p-6 sm:max-h-[85vh] sm:overflow-visible sm:pb-6",
+          "sm:inset-auto sm:left-[50%] sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-full sm:max-w-lg sm:rounded-lg sm:border sm:p-6 sm:max-h-[85dvh] sm:overflow-visible sm:pb-6",
           "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
         ],
         className

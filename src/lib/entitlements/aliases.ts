@@ -217,6 +217,7 @@ export const LEGACY_KEY_TO_CAPABILITY: Readonly<Record<string, CapabilityKey>> =
   "clients.send-portfolio-to-client": "client.send_portfolio",
   "clients.send-agreement": "client.send_agreement",
   "clients.borrowing-capacity": "client.borrowing_capacity",
+  "clients.commercial-industrial": "client.commercial_industrial",
   "clients.lenders": "client.lenders",
   "clients.ai": "client.ai",
 };

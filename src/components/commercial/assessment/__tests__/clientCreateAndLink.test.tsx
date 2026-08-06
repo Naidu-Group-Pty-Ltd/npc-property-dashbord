@@ -1,0 +1,162 @@
+/**
+ * Creating a client from the Save & link step, and what feeds the form.
+ *
+ * The rule under test: nothing reaches the client record the user did not see
+ * on screen. The prefill is a *suggestion* drawn from the assessment; the
+ * record is created from the form's state at the moment of submission, and the
+ * new client then flows into the exact confirmation-and-reconciliation path an
+ * existing client takes. One path, not two — a client created here must not
+ * skip the reconciliation an existing client would get.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+import { baseAssessment } from '@/lib/ciAssessment/__tests__/fixtures';
+import type { AssessmentPayload } from '@/lib/ciAssessment/types';
+
+const searchClients = vi.fn();
+const createClient = vi.fn();
+const toast = vi.fn();
+
+vi.mock('@/hooks/useCiAssessments', () => ({
+  ciAssessmentApi: {
+    searchClients: (...args: unknown[]) => searchClients(...args),
+    createClient: (...args: unknown[]) => createClient(...args),
+    linkClient: vi.fn(),
+    unlinkClient: vi.fn(),
+  },
+}));
+vi.mock('@/hooks/use-toast', () => ({ toast: (...args: unknown[]) => toast(...args) }));
+vi.mock('@/utils/commercial/clientPortfolioRepository', () => ({
+  fetchClientProfile: vi.fn().mockResolvedValue({ client: null, properties: [], liabilities: [] }),
+}));
+
+const { StepClientLink } = await import('../StepClientLink');
+const { prefillFromAssessment } = await import('../clientPrefill');
+
+const NEW_CLIENT = {
+  id: 'c1a2b3c4-d5e6-4f70-8123-456789abcdef',
+  primary_first_name: 'Marcus',
+  primary_surname: 'Chen',
+  primary_email: 'marcus@example.test',
+  primary_mobile: '0400 000 000',
+  updated_at: '2026-08-05T00:00:00.000Z',
+};
+
+beforeEach(() => {
+  searchClients.mockReset().mockResolvedValue({ data: [], error: null });
+  createClient.mockReset().mockResolvedValue({ data: NEW_CLIENT, error: null });
+  toast.mockReset();
+});
+
+afterEach(cleanup);
+
+function renderStep(payload: AssessmentPayload = baseAssessment()) {
+  return render(
+    <StepClientLink
+      assessmentId="4f2c9a1e-8b7d-4c3a-9e51-2d6f8a0b1c34"
+      payload={payload}
+      linkedClientId={null}
+      onLinked={() => {}}
+      canLink
+      canUpdateClient
+    />,
+  );
+}
+
+describe('prefillFromAssessment', () => {
+  it('prefers the first named director — a person, not a company', () => {
+    const payload = baseAssessment();
+    payload.ownership.entities[0].directors = 'Marcus Chen; Priya Nair';
+    expect(prefillFromAssessment(payload)).toEqual({ firstName: 'Marcus', surname: 'Chen' });
+  });
+
+  it('falls back to the entity name when no director is recorded', () => {
+    const payload = baseAssessment();
+    payload.ownership.entities[0].directors = '';
+    payload.ownership.entities[0].entityName = 'Asteron Industrial Holdings Pty Ltd';
+    // Wrong-but-visible beats empty: the adviser sees it in the form and
+    // corrects it, rather than leaving the workflow to create the client.
+    expect(prefillFromAssessment(payload).surname).toContain('Industrial');
+  });
+
+  it('returns empties for an assessment with no ownership data', () => {
+    const payload = baseAssessment();
+    payload.ownership.entities = [];
+    expect(prefillFromAssessment(payload)).toEqual({ firstName: '', surname: '' });
+  });
+});
+
+describe('creating a client from the linking step', () => {
+  it('offers creation beside the search, not instead of it', async () => {
+    renderStep();
+    expect(await screen.findByRole('button', { name: /create a new client instead/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/search your clients/i)).toBeInTheDocument();
+  });
+
+  it('creates from the form state and hands the client to the normal flow', async () => {
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /create a new client instead/i }));
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Marcus' } });
+    fireEvent.change(screen.getByLabelText('Surname'), { target: { value: 'Chen' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'marcus@example.test' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create client$/i }));
+
+    await waitFor(() => expect(createClient).toHaveBeenCalledWith({
+      firstName: 'Marcus',
+      surname: 'Chen',
+      email: 'marcus@example.test',
+      mobile: undefined,
+      // The audit trail records that this client came out of a finance workflow.
+      assessmentId: '4f2c9a1e-8b7d-4c3a-9e51-2d6f8a0b1c34',
+    }));
+
+    // The new client lands in step 2 — confirm — exactly as a searched-for
+    // client would. Creation does not skip reconciliation.
+    expect(await screen.findByText(/confirm this is the right client/i)).toBeInTheDocument();
+    expect(screen.getByText('marcus@example.test')).toBeInTheDocument();
+  });
+
+  it('refuses to create a nameless client without a server round-trip', async () => {
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /create a new client instead/i }));
+
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: '  ' } });
+    fireEvent.change(screen.getByLabelText('Surname'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create client$/i }));
+
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the server refusal — a duplicate email — as its own words', async () => {
+    createClient.mockResolvedValue({
+      data: null,
+      error: 'A client with this email already exists — search for them instead.',
+    });
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /create a new client instead/i }));
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Marcus' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create client$/i }));
+
+    await waitFor(() => {
+      const last = toast.mock.calls.at(-1)?.[0];
+      expect(last?.variant).toBe('destructive');
+      expect(last?.description).toContain('already exists');
+    });
+    // And the flow stays where the user can act on it: the form is still open.
+    expect(screen.getByLabelText('First name')).toBeInTheDocument();
+  });
+
+  it('prefills the form from the assessment ownership data', async () => {
+    const payload = baseAssessment();
+    payload.ownership.entities[0].directors = 'Priya Nair';
+    renderStep(payload);
+    fireEvent.click(await screen.findByRole('button', { name: /create a new client instead/i }));
+
+    expect((screen.getByLabelText('First name') as HTMLInputElement).value).toBe('Priya');
+    expect((screen.getByLabelText('Surname') as HTMLInputElement).value).toBe('Nair');
+  });
+});

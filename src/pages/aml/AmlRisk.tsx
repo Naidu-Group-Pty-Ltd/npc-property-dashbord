@@ -16,6 +16,11 @@ import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlRiskApi, type AmlRiskFactor, type AmlMandatoryTrigger, type AmlRiskAssessment, type AmlCaseCondition, type AmlDecision } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
+import {
+  AmlLoadingState,
+  AmlPageHeader,
+  AmlTableEmptyRow,
+} from "@/components/aml/primitives";
 
 const RATING_TONE: Record<string, string> = {
   low: "bg-success/15 text-success",
@@ -35,6 +40,7 @@ export default function AmlRisk() {
   const [history, setHistory] = useState<AmlRiskAssessment[]>([]);
   const [conditions, setConditions] = useState<AmlCaseCondition[]>([]);
   const [decision, setDecision] = useState<AmlDecision | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [decideOpen, setDecideOpen] = useState(false);
   const [decideOutcome, setDecideOutcome] = useState<AmlDecision["outcome"]>("cleared");
@@ -48,6 +54,7 @@ export default function AmlRisk() {
       setCases(c.cases); setFactors(f.factors); setTriggers(t.triggers);
       if (c.cases[0]) setCaseId(c.cases[0].id);
     } catch (e: any) { toast.error(e?.message ?? "Failed to load"); }
+    finally { setLoading(false); }
   })(); }, []);
 
   useEffect(() => { if (caseId) refreshCase(); }, [caseId]);
@@ -106,15 +113,14 @@ export default function AmlRisk() {
   return (
     <div className="space-y-6">
       <LegacyAliasBanner label="Risk & Decision" tabHint="risk" routePath="/admin/aml/risk" />
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2"><Gauge className="h-5 w-5 text-primary" /> Risk Engine</CardTitle>
-            <CardDescription>Tenant-configurable factor scoring, mandatory holds, and immutable decisions.</CardDescription>
-          </div>
+      <AmlPageHeader
+        title="Risk Assessment"
+        description="Score the case against the configured risk factors, review any mandatory holds, and record decisions that cannot be changed later."
+        icon={Gauge}
+        actions={
           <div className="min-w-[280px]">
             <Select value={caseId} onValueChange={setCaseId}>
-              <SelectTrigger><SelectValue placeholder="Select a case" /></SelectTrigger>
+              <SelectTrigger aria-label="Select case"><SelectValue placeholder="Select a case" /></SelectTrigger>
               <SelectContent>
                 {cases.map((c) => (
                   <SelectItem key={c.id} value={c.id}>{c.case_reference} — {c.subject_display_name}</SelectItem>
@@ -122,9 +128,12 @@ export default function AmlRisk() {
               </SelectContent>
             </Select>
           </div>
-        </CardHeader>
-      </Card>
+        }
+      />
 
+      {loading ? (
+        <AmlLoadingState variant="list" lines={4} label="Loading risk factors and assessments…" />
+      ) : (
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Inputs / factors */}
         <Card className="lg:col-span-2">
@@ -245,6 +254,7 @@ export default function AmlRisk() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {/* Conditions */}
       <Card>
@@ -260,19 +270,21 @@ export default function AmlRisk() {
               <PlusCircle className="h-4 w-4 mr-1" /> Add
             </Button>
           </div>
-          {conditions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No conditions.</p>
-          ) : (
-            <Table>
+          <Table aria-label="Case conditions">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Label</TableHead>
-                  <TableHead>Detail</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead scope="col">Label</TableHead>
+                  <TableHead scope="col">Detail</TableHead>
+                  <TableHead scope="col">Status</TableHead>
+                  <TableHead scope="col" className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {conditions.length === 0 && (
+                  <AmlTableEmptyRow colSpan={4}>
+                    No conditions on this case. Add one above to track what must be cleared before purchase-ready.
+                  </AmlTableEmptyRow>
+                )}
                 {conditions.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.label}</TableCell>
@@ -283,11 +295,21 @@ export default function AmlRisk() {
                     <TableCell className="text-right">
                       {c.status === "open" && (
                         <>
-                          <Button size="sm" variant="ghost" onClick={() => amlRiskApi.resolveCondition(c.id, "resolved").then(refreshCase)}>
-                            <CheckCircle2 className="h-4 w-4" />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Mark condition "${c.label}" as resolved`}
+                            onClick={() => amlRiskApi.resolveCondition(c.id, "resolved").then(refreshCase)}
+                          >
+                            <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => amlRiskApi.resolveCondition(c.id, "waived").then(refreshCase)}>
-                            <XCircle className="h-4 w-4" />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Waive condition "${c.label}"`}
+                            onClick={() => amlRiskApi.resolveCondition(c.id, "waived").then(refreshCase)}
+                          >
+                            <XCircle aria-hidden="true" className="h-4 w-4" />
                           </Button>
                         </>
                       )}
@@ -296,7 +318,6 @@ export default function AmlRisk() {
                 ))}
               </TableBody>
             </Table>
-          )}
         </CardContent>
       </Card>
 
@@ -307,21 +328,23 @@ export default function AmlRisk() {
           <CardDescription>Immutable log of every re-scoring.</CardDescription>
         </CardHeader>
         <CardContent>
-          {history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing yet.</p>
-          ) : (
-            <Table>
+          <Table aria-label="Assessment history">
               <TableHeader>
                 <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead>Rating</TableHead>
-                  <TableHead>ML/TF</TableHead>
-                  <TableHead>Completion</TableHead>
-                  <TableHead>Verification</TableHead>
-                  <TableHead>Holds</TableHead>
+                  <TableHead scope="col">When</TableHead>
+                  <TableHead scope="col">Rating</TableHead>
+                  <TableHead scope="col">ML/TF</TableHead>
+                  <TableHead scope="col">Completion</TableHead>
+                  <TableHead scope="col">Verification</TableHead>
+                  <TableHead scope="col">Holds</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {history.length === 0 && (
+                  <AmlTableEmptyRow colSpan={6}>
+                    No assessments recorded yet. Run an assessment above to start the log.
+                  </AmlTableEmptyRow>
+                )}
                 {history.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell className="text-xs">{new Date(a.created_at).toLocaleString()}</TableCell>
@@ -334,7 +357,6 @@ export default function AmlRisk() {
                 ))}
               </TableBody>
             </Table>
-          )}
         </CardContent>
       </Card>
     </div>

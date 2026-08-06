@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
 import { buildIntakeWorkbook } from '../workbook';
 import { parseIntakeWorkbook } from '../parseWorkbook';
+import { SINGLE_ANSWER_COL } from '../layout';
 import { emptyAssessmentPayload } from '../../types';
 
 async function roundTrip(values: Record<string, unknown>) {
@@ -23,9 +24,11 @@ async function roundTrip(values: Record<string, unknown>) {
     header: 1, defval: '', blankrows: true,
   });
   Object.entries(values).forEach(([key, value]) => {
-    const index = rows.findIndex((row) => String(row?.[0] ?? '').trim() === key);
+    const index = rows.findIndex((row) => (row ?? []).some(
+      (cell) => String(cell ?? '').trim() === key,
+    ));
     if (index === -1) throw new Error(`Field ${key} is not in the workbook`);
-    rows[index][2] = value as never;
+    rows[index][SINGLE_ANSWER_COL - 1] = value as never;
   });
   workbook.Sheets[sheetName] = XLSX.utils.aoa_to_sheet(rows as never);
 

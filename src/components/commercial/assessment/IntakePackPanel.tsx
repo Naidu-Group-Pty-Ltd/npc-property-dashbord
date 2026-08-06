@@ -21,18 +21,25 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  AlertTriangle, CheckCircle2, Download, FileSpreadsheet, FileText, Info,
+  AlertTriangle, BookOpen, CheckCircle2, Download, Eye, FileSpreadsheet, FileText, Info,
   Loader2, Paperclip, ScanLine, Upload, UserPlus, X,
 } from 'lucide-react';
+import { PackDocumentViewer } from './PackDocumentViewer';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import {
-  buildIntakeWorkbook, workbookToBlob, packFileName,
-  buildIntakeDocument, documentToBlob,
-  parseIntakeFile, resolvePackBranding,
-  extractFromDocument, isExtractableDocument,
-  DEFAULT_PACK_BRANDING, type PackBranding, type ParsedPack,
+  parseIntakeFile, extractFromDocument, isExtractableDocument, type ParsedPack,
 } from '@/lib/ciAssessment/intakePack';
+import type {
+  PackDocumentKind, PackSourceDocument,
+} from '@/lib/ciAssessment/intakePack/sourceDocuments';
+
+/**
+ * The four documents are inlined as base64, so they are worth about 240KB.
+ * Loading that module lazily keeps it out of the assessment workspace chunk and
+ * off the wire for everyone who never opens the intake pack step.
+ */
+const loadSourceDocuments = () => import('@/lib/ciAssessment/intakePack/sourceDocuments');
 import type { AssessmentPayload } from '@/lib/ciAssessment/types';
 
 /** Extensions we will parse. Anything else is kept as a supporting document. */
@@ -40,6 +47,44 @@ const PACK_EXTENSIONS = ['.xlsx', '.xlsm', '.xls'];
 const PACK_MIME_HINTS = ['spreadsheetml', 'ms-excel', 'excel'];
 const MAX_PACK_BYTES = 15 * 1024 * 1024;
 const MAX_SUPPORTING_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The two documents, each offered two ways.
+ *
+ * The blank template is the file you fill in; the example is the same document
+ * completed, and it is deliberately not downloadable — a filled-in copy of a
+ * form is exactly the sort of thing that gets mistaken for the form itself and
+ * sent to a client.
+ */
+const PACK_DOCUMENT_CARDS: ReadonlyArray<{
+  kind: PackDocumentKind;
+  title: string;
+  icon: typeof FileSpreadsheet;
+  description: string;
+  exampleHint: string;
+}> = [
+  {
+    kind: 'workbook',
+    title: 'Workbook (Excel)',
+    icon: FileSpreadsheet,
+    description: 'The one that comes back in. Every answer maps straight into the assessment, with '
+      + 'a sheet per section and room to list multiple entities, properties, liabilities and '
+      + 'tenancies. Its Summary sheet closes the funding and shows an indicative coverage ratio '
+      + 'while you are still with the client.',
+    exampleHint: 'The example opens here with every sheet filled in, so you can see what belongs '
+      + 'in each column before you start.',
+  },
+  {
+    kind: 'guide',
+    title: 'Interview guide (Word)',
+    icon: FileText,
+    description: 'A printable question script for sitting with a client — numbered sections with '
+      + 'tick boxes, room for notes, a document checklist and a declaration to sign. Editable, but '
+      + 'not read back in; use the workbook for that.',
+    exampleHint: 'The example opens here as a completed interview, showing the level of detail an '
+      + 'answer needs.',
+  },
+];
 
 interface SupportingFile {
   id: string;
@@ -89,9 +134,7 @@ export function IntakePackPanel({
   payload, assessmentReference, assessmentTitle, segment = 'commercial',
   onApply, onCreateClient, disabled,
 }: Props) {
-  const [branding, setBranding] = useState<PackBranding>(DEFAULT_PACK_BRANDING);
-  const [brandingLoaded, setBrandingLoaded] = useState(false);
-  const [downloading, setDownloading] = useState<'xlsx' | 'docx' | null>(null);
+  const [downloading, setDownloading] = useState<PackDocumentKind | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parsed, setParsed] = useState<ParsedPack | null>(null);
   const [packFile, setPackFile] = useState<string | null>(null);
@@ -100,74 +143,43 @@ export function IntakePackPanel({
   const [extractingId, setExtractingId] = useState<string | null>(null);
   const [extractStage, setExtractStage] = useState<string>('');
   const [extracted, setExtracted] = useState<{ pack: ParsedPack; fileName: string } | null>(null);
+  const [viewing, setViewing] = useState<PackSourceDocument | null>(null);
   const counter = useRef(0);
 
-  /** Branding is fetched lazily — the panel must render instantly. */
-  const ensureBranding = useCallback(async (): Promise<PackBranding> => {
-    if (brandingLoaded) return branding;
-    const resolved = await resolvePackBranding();
-    setBranding(resolved);
-    setBrandingLoaded(true);
-    return resolved;
-  }, [branding, brandingLoaded]);
-
-  const triggerDownload = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    // Revoke on the next tick so Safari has started the download first.
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  };
-
-  const downloadWorkbook = async () => {
-    setDownloading('xlsx');
+  /**
+   * Hand over the approved file itself.
+   *
+   * The bytes are not rebuilt, re-zipped or re-saved on the way out — the
+   * anchor points straight at the inlined source and carries its approved file
+   * name, so what lands in Downloads is the document that was signed off.
+   */
+  const downloadBlank = useCallback(async (kind: PackDocumentKind) => {
+    setDownloading(kind);
     try {
-      const resolved = await ensureBranding();
-      const workbook = await buildIntakeWorkbook({
-        branding: resolved, payload, assessmentReference, assessmentTitle,
-      });
-      triggerDownload(await workbookToBlob(workbook), packFileName(resolved, assessmentReference, 'xlsx'));
+      const { packSourceDocument } = await loadSourceDocuments();
+      const source = packSourceDocument(kind, 'blank');
+      const anchor = document.createElement('a');
+      anchor.href = source.url;
+      anchor.download = source.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
       toast({
-        title: 'Workbook downloaded',
-        description: 'Fill it in with the client, then drop it back here to populate the assessment.',
+        title: `${source.fileName} downloaded`,
+        description: kind === 'workbook'
+          ? 'Fill it in with the client in Excel, then drop it back here to populate the assessment.'
+          : 'A printable question guide for the meeting. Use the workbook for the data that comes back in.',
       });
     } catch (error) {
       toast({
-        title: 'Could not build the workbook',
+        title: 'Could not start the download',
         description: error instanceof Error ? error.message : 'Try again.',
         variant: 'destructive',
       });
     } finally {
       setDownloading(null);
     }
-  };
-
-  const downloadDocument = async () => {
-    setDownloading('docx');
-    try {
-      const resolved = await ensureBranding();
-      const doc = buildIntakeDocument({
-        branding: resolved, assessmentReference, assessmentTitle,
-      });
-      triggerDownload(await documentToBlob(doc), packFileName(resolved, assessmentReference, 'docx'));
-      toast({
-        title: 'Interview document downloaded',
-        description: 'A printable question guide. Use the workbook for the data that comes back in.',
-      });
-    } catch (error) {
-      toast({
-        title: 'Could not build the document',
-        description: error instanceof Error ? error.message : 'Try again.',
-        variant: 'destructive',
-      });
-    } finally {
-      setDownloading(null);
-    }
-  };
+  }, []);
 
   /**
    * Accept a whole drop at once.
@@ -400,55 +412,58 @@ export function IntakePackPanel({
       <div>
         <h2 className="ci-step-heading">Offline intake pack</h2>
         <p className="ci-step-description">
-          A branded workbook and interview guide you can take to a client meeting. Fill them in away
-          from the app, then drop the workbook back here to populate this assessment. Individuals,
-          trusts and SMSFs are all catered for — the pack captures the owning entity for every
-          property and debt so the group position adds up.
+          A workbook and interview guide you can take to a client meeting. Download the blank
+          template, fill it in away from the app in Excel or Word, then drop the workbook back here
+          to populate this assessment. Individuals, trusts and SMSFs are all catered for — the pack
+          captures the owning entity for every property and debt so the group position adds up. Each
+          document has a completed example you can read here first.
         </p>
       </div>
 
-      {/* ---- Download ---------------------------------------------------- */}
+      {/* ---- Templates and examples --------------------------------------- */}
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-lg border border-border bg-muted/20 p-4">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <FileSpreadsheet className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-            Workbook (Excel)
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            The one that comes back in. Every answer maps straight into the assessment. Covers all
-            seven steps, with a sheet per section and room to list multiple entities, properties,
-            liabilities and tenancies.
-          </p>
-          <Button
-            size="sm" className="mt-3" onClick={downloadWorkbook}
-            disabled={disabled || downloading !== null}
-          >
-            {downloading === 'xlsx'
-              ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              : <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
-            Download workbook
-          </Button>
-        </div>
+        {PACK_DOCUMENT_CARDS.map((card) => (
+          <div key={card.kind} className="rounded-lg border border-border bg-muted/20 p-4">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <card.icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+              {card.title}
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{card.description}</p>
 
-        <div className="rounded-lg border border-border bg-muted/20 p-4">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
-            Interview guide (Word)
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            A printable question script for sitting with a client, with a declaration and a document
-            checklist. Editable, but not read back in — use the workbook for that.
-          </p>
-          <Button
-            size="sm" variant="outline" className="mt-3" onClick={downloadDocument}
-            disabled={disabled || downloading !== null}
-          >
-            {downloading === 'docx'
-              ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              : <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
-            Download guide
-          </Button>
-        </div>
+            {/*
+              Two different jobs, kept visually distinct: the filled one is
+              never a download, and the blank one is never opened here — you
+              fill it in Excel or Word.
+            */}
+            <div className="mt-3 grid gap-2">
+              <Button
+                size="sm"
+                onClick={() => downloadBlank(card.kind)}
+                disabled={disabled || downloading !== null}
+              >
+                {downloading === card.kind
+                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  : <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+                Download blank template
+              </Button>
+              <Button
+                size="sm" variant="outline"
+                onClick={async () => {
+                  const { packSourceDocument } = await loadSourceDocuments();
+                  setViewing(packSourceDocument(card.kind, 'example'));
+                }}
+              >
+                <Eye className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                View completed example
+              </Button>
+            </div>
+
+            <p className="mt-2 flex items-start gap-1.5 text-[0.7rem] leading-4 text-muted-foreground">
+              <BookOpen className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>{card.exampleHint}</span>
+            </p>
+          </div>
+        ))}
       </div>
 
       {/* ---- Drop zone --------------------------------------------------- */}
@@ -698,6 +713,12 @@ export function IntakePackPanel({
           </Button>
         </div>
       </div>
+
+      <PackDocumentViewer
+        document={viewing}
+        open={viewing !== null}
+        onOpenChange={(next) => { if (!next) setViewing(null); }}
+      />
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>

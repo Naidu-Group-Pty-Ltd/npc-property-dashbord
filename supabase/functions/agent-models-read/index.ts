@@ -9,6 +9,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 
 function admin() {
   return createClient(
@@ -29,6 +30,11 @@ const SAFE_ASSIGNMENT_COLUMNS =
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  // Reads are dispatched over POST, so this surface is reachable as a
+  // cookie-authenticated cross-site request even though it never writes.
+  // enforceCsrf passes safe methods and header-only callers through.
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
   try {
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
     const action = body.action ?? 'list';

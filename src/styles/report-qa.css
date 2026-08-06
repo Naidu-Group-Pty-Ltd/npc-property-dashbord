@@ -229,6 +229,7 @@
     @apply pointer-events-none absolute inset-0 opacity-40;
     background-image: linear-gradient(hsl(var(--border) / 0.14) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.1) 1px, transparent 1px);
     background-size: 32px 32px;
+    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
     mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 70%);
   }
 
@@ -236,7 +237,13 @@
   .finance-portal-main,
   .solicitor-portal-main,
   .builder-portal-main {
-    @apply relative;
+    /* min-w-0 is load-bearing, not decoration. These sit in a flex row next
+       to a 288px sidebar; without it a flex item's min-width resolves to its
+       content width, so one wide table pushes the whole portal sideways and
+       the page scrolls horizontally. The Command Centre has always carried
+       it on .dashboard-main — the portals did not, which is why they were
+       the only surfaces overflowing at tablet width. */
+    @apply relative min-w-0;
   }
 
   .client-portal-main::before,
@@ -252,20 +259,73 @@
      the client portal is a reading surface, the partner portals are
      working surfaces. */
   .client-portal-content {
-    @apply relative mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-8 lg:px-10 lg:py-10;
+    @apply relative mx-auto w-full max-w-6xl py-5 md:py-8 lg:py-10;
   }
 
   .finance-portal-content,
   .solicitor-portal-content,
   .builder-portal-content {
-    @apply relative mx-auto w-full max-w-7xl px-4 py-5 md:px-8 md:py-8 lg:px-10 lg:py-10;
+    @apply relative mx-auto w-full max-w-7xl py-5 md:py-8 lg:py-10;
   }
 
+  /* Inline padding is set here rather than with px-* utilities so it can be
+     max()'d against the display cutout.
+
+     index.html ships `viewport-fit=cover`, so the page paints edge to edge
+     and the browser does NOT reserve room for the notch or the home
+     indicator — that is the author's job. The Command Centre already did
+     this; the portals did not, so on a notched phone their content ran
+     under the indicator in portrait and under the camera housing in
+     landscape. env() is 0 on every device without a cutout, so max() leaves
+     the normal spacing exactly as it was. */
+  .client-portal-content,
+  .finance-portal-content,
+  .solicitor-portal-content,
+  .builder-portal-content {
+    --portal-pad-x: 1rem;
+    padding-left: max(var(--portal-pad-x), env(safe-area-inset-left));
+    padding-right: max(var(--portal-pad-x), env(safe-area-inset-right));
+    padding-bottom: max(1.25rem, calc(env(safe-area-inset-bottom) + 0.75rem));
+  }
+
+  @media (min-width: 768px) {
+    .client-portal-content,
+    .finance-portal-content,
+    .solicitor-portal-content,
+    .builder-portal-content {
+      --portal-pad-x: 2rem;
+      padding-bottom: max(2rem, calc(env(safe-area-inset-bottom) + 1rem));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .client-portal-content,
+    .finance-portal-content,
+    .solicitor-portal-content,
+    .builder-portal-content {
+      --portal-pad-x: 2.5rem;
+      padding-bottom: max(2.5rem, calc(env(safe-area-inset-bottom) + 1rem));
+    }
+  }
+
+  /* The sticky top bars sit under the status bar / camera housing. */
+  .client-portal-topbar,
+  .finance-portal-topbar,
+  .solicitor-portal-topbar,
+  .builder-portal-topbar {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  /* Same reasoning one level down, mirroring .dashboard-page-shell > *:
+     grid and flex children default to min-width:auto, so a long unbroken
+     cell or a wide table refuses to shrink and overflows the column. */
   .client-portal-content > *,
   .finance-portal-content > *,
   .solicitor-portal-content > *,
   .builder-portal-content > * {
-    @apply relative z-10;
+    @apply relative z-10 min-w-0;
   }
 
   .client-portal-page-header,
@@ -331,12 +391,14 @@
     @apply pointer-events-none absolute inset-0 opacity-35;
     background-image: linear-gradient(hsl(var(--border) / 0.12) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--border) / 0.08) 1px, transparent 1px);
     background-size: 36px 36px;
+    -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.48), transparent 72%);
     mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.48), transparent 72%);
   }
 
   .dashboard-surface-panel {
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.72);
     background-color: hsl(var(--surface-1, var(--dashboard-surface)) / 0.82);
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 48px -30px hsl(var(--brand-900) / 0.24), inset 0 1px 0 hsl(0 0% 100% / 0.62);
   }
@@ -344,6 +406,7 @@
   .dashboard-surface-panel-strong {
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 24px 60px -34px hsl(var(--brand-900) / 0.28), inset 0 1px 0 hsl(0 0% 100% / 0.66);
   }
@@ -352,6 +415,7 @@
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
     box-shadow: 0 10px 24px -20px hsl(var(--primary) / 0.4);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
   }
 
@@ -362,12 +426,14 @@
 
   .dashboard-sidebar-surface {
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 18px 0 50px -36px hsl(var(--brand-900) / 0.34), inset -1px 0 0 hsl(0 0% 100% / 0.52);
     background-color: hsl(var(--sidebar-surface, var(--surface-2, var(--dashboard-surface-elevated))) / 0.94);
   }
 
   .dashboard-topbar-surface {
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 46px -30px hsl(var(--brand-900) / 0.24), inset 0 -1px 0 hsl(var(--border-soft) / 0.46);
     border-color: hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.82);
@@ -399,8 +465,25 @@
   }
 
   .dashboard-content {
-    @apply relative mx-auto w-full max-w-[1600px] px-3 py-3 pb-24 sm:px-4 sm:py-4 md:px-6 md:py-6 md:pb-8;
+    @apply relative mx-auto w-full max-w-[1600px] py-3 pb-24 sm:py-4 md:py-6 md:pb-8;
+    /* Bottom already cleared the home indicator; the left/right cutout in
+       landscape did not, so the same max() treatment now covers all sides. */
+    --dashboard-pad-x: 0.75rem;
+    padding-left: max(var(--dashboard-pad-x), env(safe-area-inset-left));
+    padding-right: max(var(--dashboard-pad-x), env(safe-area-inset-right));
     padding-bottom: max(6rem, calc(env(safe-area-inset-bottom) + 5rem));
+  }
+
+  @media (min-width: 640px) {
+    .dashboard-content {
+      --dashboard-pad-x: 1rem;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .dashboard-content {
+      --dashboard-pad-x: 1.5rem;
+    }
   }
 
   @media (min-width: 1024px) {
@@ -428,6 +511,7 @@
   }
   @media (max-width: 767px) {
     .responsive-table-scroll {
+      -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
       mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
       -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
     }
@@ -489,6 +573,7 @@
   .dashboard-panel {
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 20px 48px -30px hsl(var(--primary) / 0.34);
     border-radius: 1rem;
@@ -496,6 +581,7 @@
 
   .dashboard-panel-muted {
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.72);
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 40px -28px hsl(var(--primary) / 0.28);
     border-radius: 1rem;
@@ -506,6 +592,7 @@
     @apply flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between md:px-5;
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 20px 48px -30px hsl(var(--primary) / 0.34);
     border-radius: 1rem;
@@ -520,6 +607,7 @@
     @apply relative overflow-hidden;
     border: 1px solid hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.7);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.9);
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     border-radius: 1rem;
     box-shadow: 0 22px 44px -30px hsl(var(--primary) / 0.32);
@@ -561,6 +649,7 @@
     @apply flex flex-col items-center justify-center gap-4 px-6 py-10 text-center md:px-10 md:py-12;
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.72);
     background-color: hsl(var(--dashboard-surface-muted) / 0.7);
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     box-shadow: 0 18px 40px -28px hsl(var(--primary) / 0.28);
     border-radius: 1rem;
@@ -578,6 +667,7 @@
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
     box-shadow: 0 10px 24px -20px hsl(var(--primary) / 0.4);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
   }
 
@@ -591,6 +681,7 @@
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
     box-shadow: 0 10px 24px -20px hsl(var(--primary) / 0.4);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
   }
 
@@ -609,6 +700,7 @@
 
   .dashboard-mobile-search-overlay {
     background-color: hsl(var(--background) / 0.94);
+    -webkit-backdrop-filter: blur(20px);
     backdrop-filter: blur(20px);
   }
 
@@ -617,6 +709,7 @@
   }
 
   .dashboard-mobile-sheet {
+    -webkit-backdrop-filter: blur(22px);
     backdrop-filter: blur(22px);
     box-shadow: 0 20px 48px -30px hsl(var(--primary) / 0.34);
     background-color: hsl(var(--sidebar-surface, var(--surface-2, var(--dashboard-surface-elevated))) / 0.94);
@@ -624,6 +717,7 @@
   }
 
   .dashboard-mobile-nav {
+    -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
     border-top-color: hsl(var(--border-strong, var(--dashboard-border-strong)) / 0.72);
     background-color: hsl(var(--mobile-nav-background, var(--topbar-background, var(--surface-1, var(--dashboard-surface)))) / 0.96);
@@ -634,6 +728,7 @@
     @apply text-muted-foreground;
     border: 1px solid hsl(var(--border-soft, var(--dashboard-border-soft)) / 0.74);
     background-color: hsl(var(--surface-2, var(--dashboard-surface-elevated)) / 0.74);
+    -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
     box-shadow: 0 -6px 24px -16px hsl(var(--primary) / 0.3);
   }
@@ -992,6 +1087,7 @@
   .dashboard-shell .bg-card.border {
     border-color: hsl(var(--border) / 0.6);
     background-color: hsl(var(--card) / 0.84);
+    -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     box-shadow: 0 14px 36px -22px hsl(var(--primary) / 0.18);
   }

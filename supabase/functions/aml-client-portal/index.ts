@@ -24,6 +24,11 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
+import {
+  getIdvProvider,
+  resolveTenantProvider,
+  ProviderResolutionError,
+} from "../_shared/aml/providers/index.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -215,10 +220,104 @@ async function loadConsentState(admin: any, caseId: string): Promise<ConsentStat
 /** Owner decision of 2026-07-28: one attempt plus two retries. */
 const MAX_VERIFICATION_ATTEMPTS = 3;
 
-/** Attempts already consumed by this party on the electronic path. */
+/** Closed client-action vocabulary (Stage 12) — mirrored by the CHECK
+ * constraint in 20260831000100. Anything else projects as null. */
+const CLIENT_ACTION_CODES = [
+  'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
+  'review_consent', 'provide_clarification', 'review_and_submit',
+];
+
+/**
+ * Stage 22 — server-derived journey. The portal renders exactly what this
+ * returns; no completion claim is computed client-side. "Verified" appears
+ * only when every applicable party holds an authoritative electronic result
+ * or an accepted staff sighting — never from case status alone. Completion
+ * wording stays restrained: reuse claims belong to the passport/consent
+ * machinery, not this journey.
+ */
+function buildJourney(args: {
+  consentSatisfied: boolean;
+  activeSections: string[];
+  sectionMap: Map<string, any>;
+  requirements: any[];
+  parties: Array<{ status: string; can_attempt: boolean }>;
+  submissions: any[];
+  openRequestCount: number;
+  portalStatus: string;
+}) {
+  const sectionsDone = args.activeSections.every((sec) =>
+    ['submitted', 'accepted', 'complete'].includes(args.sectionMap.get(sec)?.status ?? ''));
+  const requiredReqs = args.requirements.filter((r: any) => r.required);
+  const docsDone = requiredReqs.length > 0 &&
+    requiredReqs.every((r: any) => ['uploaded', 'accepted'].includes(r.status));
+  const partiesResolved = args.parties.length > 0 &&
+    args.parties.every((pt) => pt.status === 'verified');
+  const verificationInFlight = args.parties.some((pt) => pt.status === 'in_review');
+  const submitted = (args.submissions ?? []).length > 0;
+  const complete = args.portalStatus === 'complete';
+
+  const step = (
+    key: string, status: 'complete' | 'in_progress' | 'action_required' | 'not_started' | 'blocked',
+    label: string, description: string, target: string, completedAt: string | null = null,
+  ) => ({
+    step: key, status, action_required: status === 'action_required',
+    safe_label: label, safe_description: description, target_step: target,
+    completed_at: completedAt,
+  });
+
+  return [
+    step('consent', args.consentSatisfied ? 'complete' : 'action_required',
+      'Consents', args.consentSatisfied
+        ? 'You have accepted the current consents.'
+        : 'Please review and accept the consents to continue.', 'consent'),
+    step('questionnaire', sectionsDone ? 'complete' : args.consentSatisfied ? 'action_required' : 'blocked',
+      'Your information', sectionsDone
+        ? 'All required sections are submitted.'
+        : 'Some sections still need to be completed.', 'questionnaire'),
+    step('documents', docsDone ? 'complete' : requiredReqs.length === 0 ? 'not_started' : 'action_required',
+      'Documents', docsDone
+        ? 'All requested documents are uploaded.'
+        : 'Some requested documents are outstanding.', 'documents'),
+    step('verification',
+      partiesResolved ? 'complete' : verificationInFlight ? 'in_progress' : 'action_required',
+      'Identity verification',
+      partiesResolved
+        ? 'You are verified.'
+        : verificationInFlight
+          ? 'We are checking your identity documents.'
+          : 'Identity verification is still to be completed.', 'verify'),
+    step('submission', submitted ? 'complete' : 'not_started',
+      'Review and submit', submitted
+        ? 'Your information has been submitted for review.'
+        : 'Submit your onboarding once everything above is complete.', 'review'),
+    step('review',
+      complete ? 'complete' : args.openRequestCount > 0 ? 'action_required' : submitted ? 'in_progress' : 'not_started',
+      complete ? 'Complete' : 'Adviser review',
+      complete
+        ? 'Your onboarding is complete.'
+        : args.openRequestCount > 0
+          ? 'Your adviser has asked for something — see your requests.'
+          : 'Your adviser is reviewing your information.', 'review'),
+  ];
+}
+
+/**
+ * Attempts already CONSUMED by this party on the electronic path.
+ *
+ * The truth is aml.verification_attempts_used(): only rows whose provider
+ * examination produced an authoritative outcome (attempt_consumed) count —
+ * outages, unusable captures, worker retries and simulations never do.
+ * MAX(attempt_number) is kept solely as the legacy fallback for a database
+ * that has not applied 20260831000000 yet, where every historical row
+ * implied a consumed attempt by construction.
+ */
 async function verificationAttemptsUsed(
   admin: any, caseId: string, partyId: string | null,
 ): Promise<number> {
+  const { data: counted, error: rpcError } = await admin.schema('aml')
+    .rpc('verification_attempts_used', { p_case_id: caseId, p_party_id: partyId });
+  if (!rpcError && typeof counted === 'number') return counted;
+
   let q = admin.schema('aml').from('verification_checks')
     .select('attempt_number')
     .eq('case_id', caseId)
@@ -228,6 +327,82 @@ async function verificationAttemptsUsed(
   if (error) throw error;
   return Number((data ?? [])[0]?.attempt_number ?? 0);
 }
+
+/**
+ * The next per-party capture row number.
+ *
+ * `uq_aml_verification_attempt` is unique on
+ * `(case_id, coalesce(party_id, case_id), check_type, attempt_number)`, so
+ * `attempt_number` identifies a ROW, not a consumed attempt. Deriving it from
+ * the consumed-attempt count meant a capture that consumed nothing — an
+ * unusable capture, a provider outage, a cancelled run — left the counter at
+ * its previous value, so the next capture reused the same `attempt_number`,
+ * hit 23505, and the client was told "your verification is already being
+ * checked" forever. A client whose first capture was unreadable could never
+ * recapture. Found by the production-shaped database rehearsal.
+ *
+ * The customer's ALLOWANCE stays on `aml.verification_attempts_used()` — that
+ * is what gates exhaustion and what `attempts_remaining` reports. This is only
+ * the row sequence.
+ */
+async function nextCaptureSequence(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<number> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('attempt_number')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv');
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.order('attempt_number', { ascending: false }).limit(1);
+  if (error) throw error;
+  return Number((data ?? [])[0]?.attempt_number ?? 0) + 1;
+}
+
+/**
+ * An in-flight electronic check for this party (submitted/queued/processing/
+ * retry_scheduled). A second submission while one is processing would burn
+ * provider work and confuse the journey — the portal refuses it safely.
+ */
+async function activeProcessingCheck(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<{ id: string; processing_status: string } | null> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('id, processing_status')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv')
+    .in('processing_status', ['submitted', 'queued', 'processing', 'retry_scheduled']);
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.limit(1);
+  if (error) {
+    // Legacy schema without processing_status: nothing can be "in flight".
+    if (/processing_status/i.test(error.message ?? '')) return null;
+    throw error;
+  }
+  return (data ?? [])[0] ?? null;
+}
+
+/**
+ * Client-safe electronic-IDV availability. Internal readiness (provider keys,
+ * environment classification, secret presence) NEVER crosses this boundary —
+ * the portal learns only whether capture may proceed.
+ */
+async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'temporarily_unavailable' | 'manual_verification_required'> {
+  try {
+    const resolved = await resolveTenantProvider(admin, 'default', 'idv');
+    getIdvProvider({ resolved, admin });
+    return 'available';
+  } catch (err: any) {
+    if (err instanceof ProviderResolutionError) {
+      // Not configured / simulator blocked → the adviser will arrange manual
+      // sighting; transient misconfiguration reads as temporary.
+      return err.code === 'provider_misconfigured'
+        ? 'temporarily_unavailable'
+        : 'manual_verification_required';
+    }
+    return 'temporarily_unavailable';
+  }
+}
+
 
 /**
  * Stable per-party identifier derived from the case and the declared name.
@@ -344,20 +519,37 @@ Deno.serve(async (req) => {
       body?.session_token;
     if (!token) return jsonResponse({ error: 'Portal session token required' }, 401);
 
-    const { data: session } = await admin
+    // Session lookup mirrors get-portal-client-data (the proven production
+    // contract): select ONLY columns that exist on client_portal_users in
+    // every environment. This function once embedded a `full_name` column the
+    // production table does not have; PostgREST rejected the whole select,
+    // the error object was discarded, and every op answered 401 — which the
+    // portal then rendered as "no case yet". Never widen this select without
+    // checking the deployed schema, and never discard the error.
+    const { data: session, error: sessionError } = await admin
       .from('client_portal_sessions')
-      .select('user_id, expires_at, client_portal_users:user_id(id, client_id, email, full_name, status)')
+      .select('user_id, expires_at, revoked_at, client_portal_users:user_id(id, client_id, email, status)')
       .eq('session_token', token)
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
+    if (sessionError) {
+      console.error('aml-client-portal session lookup failed', sessionError.message);
+      return jsonResponse({
+        error: 'We could not confirm your session. Please sign in again.',
+        code: 'portal_session_lookup_failed',
+      }, 401);
+    }
 
     const portalUser = (session as any)?.client_portal_users;
-    if (!portalUser || portalUser.status !== 'active') {
-      return jsonResponse({ error: 'Invalid or expired session' }, 401);
+    if (!portalUser || portalUser.status !== 'active' || (session as any)?.revoked_at) {
+      return jsonResponse({
+        error: 'Invalid or expired session',
+        code: 'portal_session_invalid',
+      }, 401);
     }
     const clientId: string = portalUser.client_id;
     const portalUserId: string = portalUser.id;
-    const actorLabel: string = portalUser.full_name || portalUser.email || 'client-portal';
+    const actorLabel: string = portalUser.email || 'client-portal';
 
     const op = String(body?.op ?? '');
     if (!op) return jsonResponse({ error: 'op is required' }, 400);
@@ -374,7 +566,19 @@ Deno.serve(async (req) => {
     switch (op) {
       case 'overview': {
         const c = await resolveCase(body.case_id);
-        if (!c) return jsonResponse({ case: null, message: 'No AML onboarding case yet.' });
+        // The portal renders this string verbatim, so it must be the copy a
+        // client should read — not an API status line. "No AML onboarding case
+        // yet." rendered as the whole empty state and read like something had
+        // gone wrong; the reassuring sentence lives here rather than in the SPA
+        // so every consumer (portal, mobile) shows the same words.
+        if (!c) {
+          return jsonResponse({
+            case: null,
+            message:
+              'Your adviser hasn’t opened an identity and compliance case for you yet. '
+              + 'You’ll be notified when it’s ready — there is nothing for you to do now.',
+          });
+        }
         const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
             .select('section,status,updated_at,payload').eq('case_id', c.id),
@@ -428,8 +632,28 @@ Deno.serve(async (req) => {
           open_requests: (openRequests ?? []).map((r: any) => ({
             id: r.id, kind: r.kind, subject: r.subject, message: r.message,
             status: r.status, created_at: r.created_at,
+            // Closed action vocabulary only — anything uncatalogued projects
+            // as null, and routing fields are the safe whitelisted subset.
+            // Arbitrary URLs from request payloads never reach the client.
+            action_code: CLIENT_ACTION_CODES.includes(String(r.action_code ?? '')) ? r.action_code : null,
+            action_target: {
+              target_step: typeof r.action_target?.target_step === 'string' ? r.action_target.target_step.slice(0, 60) : null,
+              requirement_id: typeof r.action_target?.requirement_id === 'string' ? r.action_target.requirement_id : null,
+              section_code: typeof r.action_target?.section_code === 'string' ? r.action_target.section_code.slice(0, 60) : null,
+            },
+            due_at: r.due_at ?? null,
           })),
           recent_submissions: submissions ?? [],
+          journey: buildJourney({
+            consentSatisfied: consentState.satisfied,
+            activeSections: active,
+            sectionMap,
+            requirements: reqs,
+            parties: await verificationParties(admin, c.id),
+            submissions: submissions ?? [],
+            openRequestCount: (openRequests ?? []).length,
+            portalStatus,
+          }),
         });
       }
 
@@ -577,8 +801,12 @@ Deno.serve(async (req) => {
         if (!c) return jsonResponse({ parties: [], enabled: false });
         const consentState = await loadConsentState(admin, c.id);
         const parties = await verificationParties(admin, c.id);
+        // Client-safe availability only — never provider names, environment
+        // classification, secret presence or internal health detail.
+        const availability = await clientSafeIdvAvailability(admin);
         return jsonResponse({
           enabled: true,
+          availability,
           max_attempts: MAX_VERIFICATION_ATTEMPTS,
           // The biometric consent is separate (APP 3.3) and is what unlocks
           // the facial check specifically.
@@ -635,39 +863,119 @@ Deno.serve(async (req) => {
           }
         }
 
-        const { data: created, error: insErr } = await admin.schema('aml')
+        // Live-provider readiness gates the SUBMISSION, not just the UI: a
+        // capture must never sit against a provider that cannot examine it.
+        const availability = await clientSafeIdvAvailability(admin);
+        if (availability !== 'available') {
+          return jsonResponse({
+            error: availability === 'manual_verification_required'
+              ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+              : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: availability,
+          }, 409);
+        }
+
+        // One in-flight check per party: a duplicate submission neither
+        // creates a second row nor calls the provider twice.
+        const active = await activeProcessingCheck(admin, c.id, partyId);
+        if (active) {
+          return jsonResponse({
+            submitted: true,
+            status: 'processing',
+            code: 'already_processing',
+            message: 'Your verification is already being checked. We will update you shortly.',
+          });
+        }
+
+        // Stable per-capture idempotency: resubmitting the SAME captures
+        // collapses onto one row (unique index), while a new capture pair is
+        // a genuinely new submission.
+        const idempotencyKey = 'portal-idv-' + await sha256Hex(`${c.id}|${partyId ?? 'subject'}|${documentPath}|${selfiePath}`);
+
+        // Row sequence, NOT the consumed-attempt count — see
+        // nextCaptureSequence(). Using `used + 1` here stranded any client
+        // whose previous capture consumed no attempt.
+        const captureSequence = await nextCaptureSequence(admin, c.id, partyId);
+
+        const baseRow = {
+          case_id: c.id,
+          party_id: partyId,
+          party_label: partyLabel,
+          check_type: 'electronic_idv',
+          attempt_number: captureSequence,
+          status: 'pending',
+          provider: 'selfhosted',
+          biometric_kind: 'face_image',
+          biometric_storage_path: selfiePath,
+          biometric_captured_at: new Date().toISOString(),
+          biometric_consent_id: bioConsent.id,
+          document_reference: documentPath,
+          outcome_detail: { submitted_from: 'client_portal' },
+        };
+        // Canonical-model columns stamped at creation; the AFTER-trigger from
+        // 20260831000100 emits aml.verification.requested in the same
+        // transaction, and the worker takes it from there. Legacy-schema
+        // retry keeps the portal working before the migration is applied.
+        let { data: created, error: insErr } = await admin.schema('aml')
           .from('verification_checks').insert({
-            case_id: c.id,
-            party_id: partyId,
-            party_label: partyLabel,
-            check_type: 'electronic_idv',
-            attempt_number: used + 1,
-            status: 'pending',
-            provider: 'selfhosted',
-            biometric_kind: 'face_image',
-            biometric_storage_path: selfiePath,
-            biometric_captured_at: new Date().toISOString(),
-            biometric_consent_id: bioConsent.id,
-            document_reference: documentPath,
-            outcome_detail: { submitted_from: 'client_portal' },
+            ...baseRow,
+            processing_status: 'queued',
+            capture_sequence: captureSequence,
+            attempt_consumed: false,
+            execution_mode: 'live',
+            idempotency_key: idempotencyKey,
           }).select('*').single();
+        if (insErr && /processing_status|capture_sequence|attempt_consumed|execution_mode|idempotency_key/i.test(insErr.message ?? '')) {
+          ({ data: created, error: insErr } = await admin.schema('aml')
+            .from('verification_checks').insert(baseRow).select('*').single());
+        }
         if (insErr) {
           if (insErr.code === '23514') {
             return jsonResponse({
               error: 'You have used all available attempts.', code: 'attempts_exhausted',
             }, 409);
           }
-          throw insErr;
+          if (insErr.code === '23505') {
+            const onIdempotencyKey = /idempotency/i.test(
+              `${insErr.message ?? ''} ${(insErr as any).details ?? ''}`);
+            if (onIdempotencyKey) {
+              // Genuinely the same captures again — idempotent success.
+              return jsonResponse({
+                submitted: true, status: 'processing', code: 'already_processing',
+                message: 'Your verification is already being checked. We will update you shortly.',
+              });
+            }
+            // Attempt-number collision: another submission for this party
+            // landed between the sequence read and the insert. Re-sequence and
+            // retry once. Reporting "already processing" here was what stranded
+            // a client after an unusable capture.
+            const retrySequence = await nextCaptureSequence(admin, c.id, partyId);
+            const retry = await admin.schema('aml').from('verification_checks').insert({
+              ...baseRow,
+              attempt_number: retrySequence,
+              processing_status: 'queued',
+              capture_sequence: retrySequence,
+              attempt_consumed: false,
+              execution_mode: 'live',
+              idempotency_key: idempotencyKey,
+            }).select('*').single();
+            if (retry.error) throw retry.error;
+            created = retry.data;
+            insErr = null;
+          } else {
+            throw insErr;
+          }
         }
 
         // Adjudication happens staff-side. The portal deliberately does not
         // learn the score, the threshold, or why a check was referred —
-        // that is internal AML information (Appendix C.1).
+        // that is internal AML information (Appendix C.1). Attempts shown
+        // are CONSUMED attempts: a technical failure will not move them.
         return jsonResponse({
           submitted: true,
           attempt_number: created.attempt_number,
-          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - created.attempt_number,
-          status: 'pending',
+          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - used,
+          status: 'processing',
           message: 'Thank you. We are checking your identity documents and will be in touch if anything else is needed.',
         });
       }
@@ -681,6 +989,36 @@ Deno.serve(async (req) => {
         const kind = String(body.kind ?? '');
         if (!['document', 'selfie'].includes(kind)) {
           return jsonResponse({ error: 'kind must be "document" or "selfie"' }, 400);
+        }
+        // A biometric is only ever COLLECTED when a live provider can examine
+        // it, attempts remain, and nothing is already processing. Collecting
+        // a face against a dead provider would be collection without purpose
+        // (APP 3) — the gate sits on the upload URL, before any capture UI.
+        if (kind === 'selfie') {
+          const availability = await clientSafeIdvAvailability(admin);
+          if (availability !== 'available') {
+            return jsonResponse({
+              error: availability === 'manual_verification_required'
+                ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+                : 'Verification is temporarily unavailable. Please try again shortly.',
+              code: availability,
+            }, 409);
+          }
+          const uploadPartyId = body.party_id ? String(body.party_id) : null;
+          const used = await verificationAttemptsUsed(admin, c.id, uploadPartyId);
+          if (used >= MAX_VERIFICATION_ATTEMPTS) {
+            return jsonResponse({
+              error: 'You have used all available attempts. A member of our team will contact you.',
+              code: 'attempts_exhausted',
+            }, 409);
+          }
+          const active = await activeProcessingCheck(admin, c.id, uploadPartyId);
+          if (active) {
+            return jsonResponse({
+              error: 'Your previous submission is still being checked.',
+              code: 'already_processing',
+            }, 409);
+          }
         }
         // Selfies go to the biometrics bucket, never to aml-documents: the
         // tighter access policy and the access log both hang off that bucket.
@@ -786,9 +1124,28 @@ Deno.serve(async (req) => {
         const { data: rr } = await admin.schema('aml').from('client_requests')
           .select('*, cases:case_id(client_id)').eq('id', body.request_id).maybeSingle();
         if (!rr || (rr as any).cases?.client_id !== clientId) return jsonResponse({ error: 'Not found' }, 404);
+        // Versioned response contract (v1): one shape both sides read.
+        // Historical free-form payloads stay readable staff-side through the
+        // compatibility projection; new writes are always v1.
+        const raw = body.response_payload && typeof body.response_payload === 'object' && !Array.isArray(body.response_payload)
+          ? body.response_payload : {};
+        const responsePayload = {
+          version: 1,
+          text: String(raw.text ?? raw.message ?? '').slice(0, 4000),
+          attachments: Array.isArray(raw.attachments)
+            ? raw.attachments.filter((a: unknown) => typeof a === 'string').slice(0, 10)
+            : [],
+          completed_action: CLIENT_ACTION_CODES.includes(String(raw.completed_action ?? ''))
+            ? raw.completed_action : null,
+          submitted_at: new Date().toISOString(),
+        };
+        if (!responsePayload.text && responsePayload.attachments.length === 0 && !responsePayload.completed_action) {
+          return jsonResponse({ error: 'A response needs text, an attachment reference or a completed action.' }, 400);
+        }
         const { data, error } = await admin.schema('aml').from('client_requests').update({
           status: 'responded', responded_at: new Date().toISOString(),
-          responded_by: portalUserId, response_payload: body.response_payload ?? {},
+          responded_by: portalUserId, response_payload: responsePayload,
+          response_version: 1,
         }).eq('id', body.request_id).select('*').single();
         if (error) throw error;
         return jsonResponse({ request: data });

@@ -275,6 +275,17 @@ export const CAPABILITY_DEFINITIONS: readonly CapabilityDefinition[] = [
     parentCapability: "module.clients",
   },
   {
+    // The client-profile view of the Commercial & Industrial module: linked
+    // assessments, calculation runs and generated capacity reports. Gated by
+    // the same plan/add-on as the module itself, so the tab appears exactly
+    // where the workspace can use what it shows.
+    key: "client.commercial_industrial",
+    label: "Commercial / Industrial",
+    includedInPlans: SCALE_ONLY,
+    addonSlugs: ["commercial-industrial"],
+    parentCapability: "module.clients",
+  },
+  {
     key: "client.lenders",
     label: "Lenders",
     includedInPlans: ADDON_ONLY,

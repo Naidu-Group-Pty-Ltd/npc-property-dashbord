@@ -116,7 +116,7 @@ describe("arrangement governance guard (Phase 2)", () => {
     ];
     for (const d of denials) {
       expect(d.ok).toBe(false);
-      if (!d.ok) {
+      if (d.ok === false) {
         expect(d.message).not.toMatch(/risk|screening|match|mlro note|reviewer note|suspicious|smr/i);
       }
     }

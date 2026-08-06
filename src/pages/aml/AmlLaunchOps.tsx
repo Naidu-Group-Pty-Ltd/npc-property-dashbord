@@ -11,6 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AmlMetricCard, AmlPageHeader } from "@/components/aml/primitives";
 import { toast } from "sonner";
 import { Rocket, ClipboardCheck, ShieldAlert, RefreshCw, ArrowRight, ArrowLeft, Plus, CheckCircle2, XCircle, Award, Ban } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -103,33 +105,29 @@ export default function AmlLaunchOps() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <Rocket className="h-6 w-6 text-primary" /> AML Launch Operations
-          </h1>
-          <p className="text-sm text-muted-foreground max-w-2xl mt-1">
-            Progressive rollout gates, acceptance-scenario traceability, and the operational risk register.
-            Read-only for analysts and reporters. MLRO signs off every stage transition.
-          </p>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          <Card className="p-3 min-w-[140px]">
-            <div className="text-xs text-muted-foreground">Current stage</div>
-            <div className="mt-1 font-medium text-sm">{summary ? stageLabel[summary.rollout.rollout_stage] : <Skeleton className="h-4 w-24" />}</div>
-          </Card>
-          <Card className="p-3 min-w-[140px]">
-            <div className="text-xs text-muted-foreground">Scenarios passing</div>
-            <div className="mt-1 text-lg font-semibold">
-              {summary ? `${summary.scenarios.by_status.passed ?? 0}/${summary.scenarios.total}` : "…"}
-            </div>
-          </Card>
-          <Card className="p-3 min-w-[140px]">
-            <div className="text-xs text-muted-foreground">Open risks</div>
-            <div className="mt-1 text-lg font-semibold">{summary ? (summary.risks.by_status.open ?? 0) : "…"}</div>
-          </Card>
-        </div>
+    <div className="space-y-6">
+      <AmlPageHeader
+        icon={Rocket}
+        title="AML Launch Operations"
+        description="Progressive rollout gates, acceptance-scenario traceability, and the operational risk register. Read-only for analysts and reporters. MLRO signs off every stage transition."
+      />
+
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+        <AmlMetricCard
+          title="Current stage"
+          state={summary ? "ready" : "loading"}
+          value={summary ? stageLabel[summary.rollout.rollout_stage] : undefined}
+        />
+        <AmlMetricCard
+          title="Scenarios passing"
+          state={summary ? "ready" : "loading"}
+          value={summary ? `${summary.scenarios.by_status.passed ?? 0}/${summary.scenarios.total}` : undefined}
+        />
+        <AmlMetricCard
+          title="Open risks"
+          state={summary ? "ready" : "loading"}
+          value={summary ? summary.risks.by_status.open ?? 0 : undefined}
+        />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -501,14 +499,25 @@ function RiskDialog({ onSaved }: { onSaved: () => void }) {
           <div><Label>Title</Label><Input value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} /></div>
           <div className="grid md:grid-cols-3 gap-3">
             <div><Label>Likelihood</Label>
-              <select className="w-full border rounded-md h-9 px-2 bg-background" value={form.likelihood} onChange={(e) => setForm(f => ({ ...f, likelihood: e.target.value }))}>
-                <option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
-              </select>
+              <Select value={form.likelihood} onValueChange={(v) => setForm(f => ({ ...f, likelihood: v }))}>
+                <SelectTrigger aria-label="Risk likelihood"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">low</SelectItem>
+                  <SelectItem value="medium">medium</SelectItem>
+                  <SelectItem value="high">high</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div><Label>Impact</Label>
-              <select className="w-full border rounded-md h-9 px-2 bg-background" value={form.impact} onChange={(e) => setForm(f => ({ ...f, impact: e.target.value }))}>
-                <option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option>
-              </select>
+              <Select value={form.impact} onValueChange={(v) => setForm(f => ({ ...f, impact: v }))}>
+                <SelectTrigger aria-label="Risk impact"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">low</SelectItem>
+                  <SelectItem value="medium">medium</SelectItem>
+                  <SelectItem value="high">high</SelectItem>
+                  <SelectItem value="critical">critical</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div><Label>Owner</Label><Input value={form.owner_label} onChange={(e) => setForm(f => ({ ...f, owner_label: e.target.value }))} /></div>
           </div>

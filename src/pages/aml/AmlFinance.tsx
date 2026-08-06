@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Landmark, PlusCircle, RefreshCw, Trash2, Link2, ClipboardCheck, AlertTriangle } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Landmark, PlusCircle, Trash2, Link2, ClipboardCheck, AlertTriangle } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,12 @@ import {
 } from "@/lib/aml/amlFinanceApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
+import {
+  AmlMetricCard,
+  AmlPageHeader,
+  AmlRefreshButton,
+  AmlTableEmptyRow,
+} from "@/components/aml/primitives";
 import { normalizeExternalUrl } from "@/lib/security/externalUrl";
 
 
@@ -241,64 +247,55 @@ export default function AmlFinance() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-4 px-6 py-6">
+    <div className="space-y-4">
       <LegacyAliasBanner label="Funding & Finance" tabHint="finance" routePath="/admin/aml/finance" />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Landmark className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold">Finance Comparison</h2>
-            <p className="text-sm text-muted-foreground">
-              Cross-check loan, lender, LVR, contributions and gifts declared by Finance vs the AML case.
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Select value={caseId} onValueChange={setCaseId}>
-            <SelectTrigger className="w-[320px]"><SelectValue placeholder="Select case" /></SelectTrigger>
-            <SelectContent>
-              {cases.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.case_reference} — {c.subject_display_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" onClick={load} disabled={busy}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          </Button>
-        </div>
-      </div>
+      <AmlPageHeader
+        title="Finance Comparison"
+        description="Cross-check loan, lender, LVR, contributions and gifts declared by Finance vs the AML case."
+        icon={Landmark}
+        actions={
+          <>
+            <Select value={caseId} onValueChange={setCaseId}>
+              <SelectTrigger aria-label="Select case" className="w-full sm:w-[320px]"><SelectValue placeholder="Select case" /></SelectTrigger>
+              <SelectContent>
+                {cases.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.case_reference} — {c.subject_display_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <AmlRefreshButton onClick={load} loading={busy} />
+          </>
+        }
+      />
 
       {/* Summary tiles */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>Latest loan amount</CardDescription></CardHeader>
-          <CardContent><div className="text-2xl font-semibold">{money(latestComparison?.loan_amount)}</div>
-            <div className="text-xs text-muted-foreground">{latestComparison?.lender ?? "No lender"}</div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>Purchase price</CardDescription></CardHeader>
-          <CardContent><div className="text-2xl font-semibold">{money(latestComparison?.purchase_price)}</div>
-            <div className="text-xs text-muted-foreground">LVR {latestComparison?.lvr ?? "—"}%</div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>Borrower contribution</CardDescription></CardHeader>
-          <CardContent><div className="text-2xl font-semibold">{money(latestComparison?.borrower_contribution)}</div>
-            <div className="text-xs text-muted-foreground">
-              Gift {money(latestComparison?.gift_amount)} · Refi {money(latestComparison?.refi_equity)}
-            </div></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>Open discrepancies</CardDescription></CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold text-warning">{openDiscrepancyCount}</div>
-            <div className="text-xs text-muted-foreground">{discrepancies.length} total</div>
-          </CardContent>
-        </Card>
+        <AmlMetricCard
+          title="Latest loan amount"
+          state={busy ? "loading" : "ready"}
+          value={money(latestComparison?.loan_amount)}
+          hint={latestComparison?.lender ?? "No lender"}
+        />
+        <AmlMetricCard
+          title="Purchase price"
+          state={busy ? "loading" : "ready"}
+          value={money(latestComparison?.purchase_price)}
+          hint={`LVR ${latestComparison?.lvr ?? "—"}%`}
+        />
+        <AmlMetricCard
+          title="Borrower contribution"
+          state={busy ? "loading" : "ready"}
+          value={money(latestComparison?.borrower_contribution)}
+          hint={`Gift ${money(latestComparison?.gift_amount)} · Refi ${money(latestComparison?.refi_equity)}`}
+        />
+        <AmlMetricCard
+          title="Open discrepancies"
+          state={busy ? "loading" : "ready"}
+          value={openDiscrepancyCount}
+          hint={`${discrepancies.length} total`}
+        />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -376,19 +373,19 @@ export default function AmlFinance() {
 
           <Card>
             <CardContent className="p-0">
-              <Table>
+              <Table aria-label="Finance snapshots">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Captured</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Lender</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-right">Loan</TableHead>
-                    <TableHead className="text-right">LVR</TableHead>
-                    <TableHead className="text-right">Contribution</TableHead>
-                    <TableHead className="text-right">Gift</TableHead>
-                    <TableHead>SMSF</TableHead>
-                    <TableHead />
+                    <TableHead scope="col">Captured</TableHead>
+                    <TableHead scope="col">Source</TableHead>
+                    <TableHead scope="col">Lender</TableHead>
+                    <TableHead scope="col" className="text-right">Price</TableHead>
+                    <TableHead scope="col" className="text-right">Loan</TableHead>
+                    <TableHead scope="col" className="text-right">LVR</TableHead>
+                    <TableHead scope="col" className="text-right">Contribution</TableHead>
+                    <TableHead scope="col" className="text-right">Gift</TableHead>
+                    <TableHead scope="col">SMSF</TableHead>
+                    <TableHead scope="col"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -416,9 +413,9 @@ export default function AmlFinance() {
                     </TableRow>
                   ))}
                   {comparisons.length === 0 && (
-                    <TableRow><TableCell colSpan={10} className="text-center text-sm text-muted-foreground py-8">
+                    <AmlTableEmptyRow colSpan={10}>
                       No snapshots yet. Import from the purchase file or add manually.
-                    </TableCell></TableRow>
+                    </AmlTableEmptyRow>
                   )}
                 </TableBody>
               </Table>
@@ -443,15 +440,15 @@ export default function AmlFinance() {
           </div>
           <Card>
             <CardContent className="p-0">
-              <Table>
+              <Table aria-label="Finance discrepancies">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Detected</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead>Severity</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Summary</TableHead>
-                    <TableHead />
+                    <TableHead scope="col">Detected</TableHead>
+                    <TableHead scope="col">Kind</TableHead>
+                    <TableHead scope="col">Severity</TableHead>
+                    <TableHead scope="col">Status</TableHead>
+                    <TableHead scope="col">Summary</TableHead>
+                    <TableHead scope="col"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -478,9 +475,9 @@ export default function AmlFinance() {
                     </TableRow>
                   ))}
                   {filteredDiscrepancies.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
+                    <AmlTableEmptyRow colSpan={6}>
                       No discrepancies. New ones appear automatically when snapshots are saved.
-                    </TableCell></TableRow>
+                    </AmlTableEmptyRow>
                   )}
                 </TableBody>
               </Table>
@@ -522,14 +519,14 @@ export default function AmlFinance() {
           </div>
           <Card>
             <CardContent className="p-0">
-              <Table>
+              <Table aria-label="Evidence references">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Added</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Label</TableHead>
-                    <TableHead>Detail</TableHead>
-                    <TableHead />
+                    <TableHead scope="col">Added</TableHead>
+                    <TableHead scope="col">Type</TableHead>
+                    <TableHead scope="col">Label</TableHead>
+                    <TableHead scope="col">Detail</TableHead>
+                    <TableHead scope="col"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -557,9 +554,9 @@ export default function AmlFinance() {
                     </TableRow>;
                   })}
                   {evidence.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
-                      No evidence attached yet.
-                    </TableCell></TableRow>
+                    <AmlTableEmptyRow colSpan={5}>
+                      No evidence attached yet. Add a reference to link finance documents to this case.
+                    </AmlTableEmptyRow>
                   )}
                 </TableBody>
               </Table>
@@ -617,15 +614,15 @@ export default function AmlFinance() {
 
           <Card>
             <CardContent className="p-0">
-              <Table>
+              <Table aria-label="Finance information requests">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Sent</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Subject</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Response</TableHead>
-                    <TableHead />
+                    <TableHead scope="col">Sent</TableHead>
+                    <TableHead scope="col">Type</TableHead>
+                    <TableHead scope="col">Subject</TableHead>
+                    <TableHead scope="col">Status</TableHead>
+                    <TableHead scope="col">Response</TableHead>
+                    <TableHead scope="col"><span className="sr-only">Actions</span></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -663,9 +660,9 @@ export default function AmlFinance() {
                     </TableRow>
                   ))}
                   {requests.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
+                    <AmlTableEmptyRow colSpan={6}>
                       No requests yet. Send one to start the finance information loop.
-                    </TableCell></TableRow>
+                    </AmlTableEmptyRow>
                   )}
                 </TableBody>
               </Table>

@@ -8,7 +8,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, Check, Link2, Loader2, Search, Unlink, User } from 'lucide-react';
+import { AlertTriangle, Check, Link2, Loader2, Search, Unlink, User, UserPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ciAssessmentApi, type ClientSearchRow } from '@/hooks/useCiAssessments';
 import { fetchClientProfile } from '@/utils/commercial/clientPortfolioRepository';
@@ -17,6 +17,7 @@ import {
   type ReconciliationDisposition, type ReconciliationItem, type ReconciliationSummary,
 } from '@/lib/ciAssessment/reconciliation';
 import type { AssessmentPayload } from '@/lib/ciAssessment/types';
+import { prefillFromAssessment } from './clientPrefill';
 import { toast } from '@/hooks/use-toast';
 
 const DISPOSITION_OPTIONS: ReadonlyArray<{ value: ReconciliationDisposition; label: string }> = [
@@ -79,6 +80,46 @@ export function StepClientLink({
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [linking, setLinking] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // ---- Create a new client ----------------------------------------------
+  const [creatingOpen, setCreatingOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState(() => ({
+    ...prefillFromAssessment(payload), email: '', mobile: '',
+  }));
+
+  const createAndSelect = useCallback(async () => {
+    if (!draft.firstName.trim() && !draft.surname.trim()) {
+      toast({ title: 'A name is required', description: 'Enter at least a first name or surname.', variant: 'destructive' });
+      return;
+    }
+    setCreating(true);
+    const result = await ciAssessmentApi.createClient({
+      firstName: draft.firstName.trim(),
+      surname: draft.surname.trim(),
+      email: draft.email.trim() || undefined,
+      mobile: draft.mobile.trim() || undefined,
+      assessmentId,
+    });
+    setCreating(false);
+
+    if (result.error || !result.data) {
+      toast({ title: 'Could not create the client', description: result.error ?? 'Try again.', variant: 'destructive' });
+      return;
+    }
+
+    toast({
+      title: 'Client created',
+      description: `${clientLabel(result.data)} was added to your client book.`,
+    });
+    // Straight into the existing flow: the new client becomes the selected
+    // client, and confirmation + reconciliation + linking run exactly as they
+    // do for one found by search. One path, not two.
+    setCreatingOpen(false);
+    setSelected(result.data);
+    setConfirmed(false);
+    setReconciliation(null);
+  }, [draft, assessmentId]);
 
   // Debounced so typing a name does not fire a request per keystroke.
   useEffect(() => {
@@ -269,6 +310,72 @@ export function StepClientLink({
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      {/* ---- 1b. Or create ------------------------------------------------ */}
+      <section className="space-y-3">
+        {!creatingOpen ? (
+          <Button
+            variant="outline" size="sm" disabled={!canLink}
+            onClick={() => setCreatingOpen(true)}
+          >
+            <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            Create a new client instead
+          </Button>
+        ) : (
+          <div className="rounded-lg border border-border bg-muted/25 p-4">
+            <h3 className="text-sm font-semibold tracking-tight text-foreground">Create a new client</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Prefilled from this assessment where possible — check it before creating. The client is
+              added to your book and then linked through the same confirmation and reconciliation steps.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="new-client-first" className="ci-field-label">First name</Label>
+                <Input
+                  id="new-client-first" className="mt-1.5" value={draft.firstName}
+                  onChange={(event) => setDraft((d) => ({ ...d, firstName: event.target.value }))}
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <Label htmlFor="new-client-surname" className="ci-field-label">Surname</Label>
+                <Input
+                  id="new-client-surname" className="mt-1.5" value={draft.surname}
+                  onChange={(event) => setDraft((d) => ({ ...d, surname: event.target.value }))}
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <Label htmlFor="new-client-email" className="ci-field-label">Email</Label>
+                <Input
+                  id="new-client-email" className="mt-1.5" type="email" value={draft.email}
+                  onChange={(event) => setDraft((d) => ({ ...d, email: event.target.value }))}
+                  autoComplete="off"
+                />
+              </div>
+              <div>
+                <Label htmlFor="new-client-mobile" className="ci-field-label">Mobile</Label>
+                <Input
+                  id="new-client-mobile" className="mt-1.5" value={draft.mobile}
+                  onChange={(event) => setDraft((d) => ({ ...d, mobile: event.target.value }))}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={createAndSelect} disabled={creating}>
+                {creating
+                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  : <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+                {creating ? 'Creating…' : 'Create client'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setCreatingOpen(false)} disabled={creating}>
+                Cancel
+              </Button>
+            </div>
+          </div>
         )}
       </section>
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, ShieldCheck, PlayCircle, RefreshCw, XCircle, CheckCircle2, AlertTriangle, HelpCircle } from "lucide-react";
+import { Loader2, ShieldCheck, PlayCircle, XCircle, CheckCircle2, AlertTriangle, HelpCircle } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,13 @@ import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlVerificationApi, type IdentityCheck, type IdvStatus } from "@/lib/aml/amlVerificationApi";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
 import { SanctionsListHealth } from "@/components/aml/SanctionsListHealth";
+import {
+  AmlMetricCard,
+  AmlPageHeader,
+  AmlRefreshButton,
+  AmlTableEmptyRow,
+  AmlTableLoadingRow,
+} from "@/components/aml/primitives";
 
 const STATUS_TONE: Record<IdvStatus, string> = {
   pending: "bg-muted text-muted-foreground",
@@ -86,25 +93,20 @@ export default function AmlVerification() {
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <LegacyAliasBanner label="Verification" tabHint="verification" routePath="/admin/aml/verification" />
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-primary" /> Identity Verification
-          </h1>
-          <p className="text-sm text-muted-foreground">Provider-agnostic IDV runs with tamper-evident audit and Mission Control metering.</p>
-        </div>
-        <Button size="sm" variant="ghost" onClick={() => loadChecks(caseId)} disabled={loading}>
-          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-        </Button>
-      </div>
+      <AmlPageHeader
+        title="Identity Verification"
+        description="Provider-agnostic IDV runs with tamper-evident audit and Mission Control metering."
+        icon={ShieldCheck}
+        actions={<AmlRefreshButton onClick={() => loadChecks(caseId)} loading={loading} />}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <KpiCard label="Runs (scope)" value={kpis.total} />
-        <KpiCard label="Verified" value={kpis.verified} tone="success" />
-        <KpiCard label="Manual review" value={kpis.review} tone="warning" />
-        <KpiCard label="Failed" value={kpis.failed} tone="destructive" />
+        <AmlMetricCard title="Runs (scope)" state={loading ? "loading" : "ready"} value={kpis.total} />
+        <AmlMetricCard title="Verified" state={loading ? "loading" : "ready"} value={kpis.verified} />
+        <AmlMetricCard title="Manual review" state={loading ? "loading" : "ready"} value={kpis.review} />
+        <AmlMetricCard title="Failed" state={loading ? "loading" : "ready"} value={kpis.failed} />
       </div>
 
       <Card>
@@ -178,24 +180,26 @@ export default function AmlVerification() {
       <Card>
         <CardHeader><CardTitle>Recent runs</CardTitle></CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table aria-label="Recent IDV runs">
             <TableHeader>
               <TableRow>
-                <TableHead>Subject</TableHead>
-                <TableHead>Provider</TableHead>
-                <TableHead>Method</TableHead>
-                <TableHead>Score</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Requested</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead scope="col">Subject</TableHead>
+                <TableHead scope="col">Provider</TableHead>
+                <TableHead scope="col">Method</TableHead>
+                <TableHead scope="col">Score</TableHead>
+                <TableHead scope="col">Status</TableHead>
+                <TableHead scope="col">Requested</TableHead>
+                <TableHead scope="col" className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading && (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                <AmlTableLoadingRow colSpan={7} label="Loading IDV runs…" />
               )}
               {!loading && checks.length === 0 && (
-                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No IDV runs yet for this case.</TableCell></TableRow>
+                <AmlTableEmptyRow colSpan={7}>
+                  No IDV runs yet for this case. Initiate a verification above to record the first run.
+                </AmlTableEmptyRow>
               )}
               {checks.map((c) => (
                 <TableRow key={c.id}>
@@ -221,17 +225,5 @@ export default function AmlVerification() {
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function KpiCard({ label, value, tone }: { label: string; value: number; tone?: "success" | "warning" | "destructive" }) {
-  const cls = tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : tone === "destructive" ? "text-destructive" : "text-foreground";
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={`text-2xl font-semibold mt-1 ${cls}`}>{value}</div>
-      </CardContent>
-    </Card>
   );
 }

@@ -8,6 +8,7 @@ import { buildIntakeWorkbook, INSTRUCTIONS_SHEET, PACK_MAGIC, packFileName } fro
 import { parseIntakeWorkbook } from '../parseWorkbook';
 import { buildIntakeDocument, documentToBlob } from '../document';
 import { ALL_PACK_FIELDS, PACK_SECTIONS } from '../schema';
+import { SINGLE_ANSWER_COL, SINGLE_KEY_COL } from '../layout';
 import { decodeDate, decodeNumber, decodeTriState, encodeValue, decodeValue } from '../values';
 import { DEFAULT_PACK_BRANDING, toHex, fitLogo, argb, bareHex } from '../branding';
 import { emptyAssessmentPayload, type AssessmentPayload } from '../../types';
@@ -34,9 +35,13 @@ async function buildAndRead(options = {}) {
 function setScalar(workbook: XLSX.WorkBook, sheetName: string, key: string, value: unknown) {
   const sheet = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
-  const index = rows.findIndex((row) => String(row?.[0] ?? '').trim() === key);
+  // The key column is hidden and does not sit in column A, so find it by
+  // content — the same way the parser does.
+  const index = rows.findIndex((row) => (row ?? []).some(
+    (cell) => String(cell ?? '').trim() === key,
+  ));
   if (index === -1) throw new Error(`Field key ${key} not found on ${sheetName}`);
-  rows[index][2] = value as never;
+  rows[index][SINGLE_ANSWER_COL - 1] = value as never;
   workbook.Sheets[sheetName] = XLSX.utils.aoa_to_sheet(rows as never);
 }
 
@@ -594,8 +599,8 @@ describe('branded workbook output', () => {
     // 255-character inline list limit.
     let found = false;
     sheet.eachRow((row) => {
-      if (String(row.getCell(1).value ?? '') === 'property.state') {
-        const validation = row.getCell(3).dataValidation;
+      if (String(row.getCell(SINGLE_KEY_COL).value ?? '') === 'property.state') {
+        const validation = row.getCell(SINGLE_ANSWER_COL).dataValidation;
         expect(validation?.type).toBe('list');
         expect(String(validation?.formulae?.[0])).toContain('NSW');
         found = true;

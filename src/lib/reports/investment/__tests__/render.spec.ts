@@ -233,7 +233,7 @@ describe('the KPI strip', () => {
 
 describe('the document is safe to send to the renderer', () => {
   it.each(SHAPES)('references no remote resource — %s', (_label, row) => {
-    expect(() => assertSafeRenderResources(render(row as Record<string, unknown>).html)).not.toThrow();
+    expect(() => assertSafeRenderResources(render(row as Record<string, unknown>).html, '')).not.toThrow();
   });
 
   it('escapes an address that is markup', () => {
