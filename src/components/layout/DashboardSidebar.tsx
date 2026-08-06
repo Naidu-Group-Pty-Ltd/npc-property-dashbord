@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, Search, ShieldCheck, X as XIcon } from 'lucide-react';
 import {
@@ -237,10 +237,22 @@ export function DashboardSidebar() {
             </div>
           )}
           {/* The framed/highlighted treatment now wraps the main modules
-              (Main Dashboard → AML/CTF Compliance); Administration renders plain. */}
-          {groupedNavItems.map((group) => renderGroup(group, { administration: true }))}
+              (Main Dashboard → AML/CTF Compliance); Administration renders plain.
+              AML/CTF sits directly after Main Dashboard, before Reports & Analysis. */}
+          {groupedNavItems.map((group) => (
+            <Fragment key={group.title}>
+              {renderGroup(group, { administration: true })}
+              {group.title === 'Main Dashboard' && amlGroupedItems
+                ? renderGroup(amlGroupedItems, { administration: true })
+                : null}
+            </Fragment>
+          ))}
 
-          {amlGroupedItems && renderGroup(amlGroupedItems, { administration: true })}
+          {/* Fallback: if Main Dashboard is hidden/filtered out, still show AML. */}
+          {amlGroupedItems &&
+            !groupedNavItems.some((group) => group.title === 'Main Dashboard') &&
+            renderGroup(amlGroupedItems, { administration: true })}
+
 
           {groupedAdminItems.items.length > 0 && (
             <div className="dashboard-sidebar-admin-divider">

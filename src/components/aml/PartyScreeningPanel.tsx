@@ -90,14 +90,14 @@ export function PartyScreeningPanel({
                 <div className="min-w-0">
                   <div className="font-medium">{s.screened_name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {s.party_type.replaceAll("_", " ")}
+                    {s.party_type.replace(/_/g, " ")}
                     {s.last_screened_at && <> · last screened {displayDate(s.last_screened_at)}</>}
                     {s.refresh_due_at && <> · refresh due {displayDate(s.refresh_due_at)}</>}
                     {s.adjudication_note && <> · adjudicated</>}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={STATE_TONE[s.state] ?? "outline"}>{s.state.replaceAll("_", " ")}</Badge>
+                  <Badge variant={STATE_TONE[s.state] ?? "outline"}>{s.state.replace(/_/g, " ")}</Badge>
                   {canWrite && ["not_started", "error", "completed"].includes(s.state) && (
                     <Button size="sm" variant="outline" disabled={busyId === s.id} onClick={() => void queue(s.id)}>
                       {busyId === s.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}

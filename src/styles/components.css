@@ -1119,11 +1119,11 @@
   }
 
   .reports-overrides-scroll-desktop {
-    height: clamp(520px, 60dvh, 760px);
+    height: clamp(620px, 74dvh, 1040px);
   }
 
   .reports-overrides-scroll-mobile {
-    height: clamp(420px, 64dvh, 620px);
+    height: clamp(480px, 70dvh, 760px);
   }
 
   .reports-overrides-tab-content {
