@@ -81,14 +81,28 @@ export function decideProvider(input: ProviderDecisionInput): ProviderDecision {
 
   if (wantsSimulator) {
     if (input.environment === "production") {
+      // Simulator is not a mode production can be in — it is an unfinished
+      // configuration. A real provider key left in simulator mode is the more
+      // dangerous of the two, because the row reads as configured and active
+      // on the dashboard while it can never verify anybody; production sat in
+      // exactly that state. Both refuse, and both refuse as "not configured"
+      // so the client is routed to document verification by an adviser rather
+      // than being told to come back later for something that will not
+      // self-heal.
+      const nothingConfigured =
+        input.mode === "simulator" && input.providerKey === "simulator";
+      const realProviderLeftInSimulator =
+        input.providerKey !== "simulator" && input.mode === "simulator";
       return {
         kind: "refuse",
-        code: input.mode === "simulator" && input.providerKey === "simulator"
-          ? "provider_not_configured"
-          : "simulator_blocked_in_production",
-        message: "Identity verification is not configured for production. " +
-          "Configure a live provider in AML › Configuration › Providers. " +
-          "No verification attempt was recorded.",
+        code: nothingConfigured ? "provider_not_configured" : "simulator_blocked_in_production",
+        message: realProviderLeftInSimulator
+          ? `Provider "${input.providerKey}" is still in simulator mode, which production ` +
+            "cannot execute. Finish configuring it as live in AML › Configuration › " +
+            "Providers. No verification attempt was recorded."
+          : "Identity verification is not configured for production. " +
+            "Configure a live provider in AML › Configuration › Providers. " +
+            "No verification attempt was recorded.",
       };
     }
     return { kind: "simulator" };
