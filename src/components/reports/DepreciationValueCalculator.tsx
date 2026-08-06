@@ -124,10 +124,11 @@ export function DepreciationValueCalculator({
     
     try {
       console.group('🏠 Depreciation Calculator - Fetch & Calculate');
-      console.log('Fetching comps from database...', {
-        hasSessionToken: !!(sessionStorage.getItem('session_token') || localStorage.getItem('session_token')),
-        hasAccessToken: !!(sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token')),
-      });
+      // The fetch below goes through `invokeSecureFunction`, which owns auth.
+      // This diagnostic used to read the session and access tokens out of
+      // storage to log whether they were present — the last reason this file
+      // touched either key. Auth state is not this component's to inspect.
+      console.log('Fetching comps from database...');
 
       // IMPORTANT: Query via edge function to respect RLS
       const fetchBucket = async (typeToUse: PropertyType) => {

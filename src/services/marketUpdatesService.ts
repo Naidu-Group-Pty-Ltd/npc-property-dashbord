@@ -1,5 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { invokeSecureFunction, isAuthFailureResponse, resolveAuthBearer } from '@/lib/secureInvoke';
 import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQADepth, MarketQAMessage, MarketQAStage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue, SetMarketNewsArchiveStateInput, SetMarketNewsArchiveStateResult } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
@@ -358,16 +358,18 @@ export async function streamMarketUpdateQuestion(
   } = {},
 ): Promise<MarketQAMessage> {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-qa`;
-  // Custom-auth carriers: the staff session rides in the HttpOnly
-  // `__Host-session_token` cookie (`credentials: 'include'`) and the stored
-  // access token. supabase.auth has no session in this app, so relying on it
-  // sent the public anon key and the function answered 401.
-  let token: string | null = null;
-  try { token = sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token'); } catch { /* storage may be blocked */ }
-  if (!token) {
-    try { token = (await supabase.auth.getSession()).data.session?.access_token ?? null; } catch { /* best effort */ }
-  }
-  const bearer = token || (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string);
+  // Cookie-authenticated path (ES256 remediation). This block hand-rolled the
+  // same storage → native-session → publishable-key ladder that
+  // `resolveAuthBearer` already owns, and its final `||` was a silent anon
+  // fallback: a signed-in user with no stored token sent the publishable key
+  // and got a 401 that read as a server fault. The shared resolver also
+  // re-mints from the HttpOnly cookie, which this never did.
+  //
+  // Authority rests with the server: the browser cannot read an HttpOnly
+  // cookie, so it cannot know it is signed in. The request goes out and a 401
+  // is surfaced as an auth failure below — which is also why this stays
+  // correct once the access token is retired and the cookie is sole carrier.
+  const { token: bearer } = await resolveAuthBearer({ refreshIfMissing: true });
   const correlationId=crypto.randomUUID();
   try {
     const res = await fetch(url, {
@@ -394,7 +396,15 @@ export async function streamMarketUpdateQuestion(
         stream: true,
       }),
     });
-    if (!res.ok || !res.body) throw new Error(`Stream failed (${res.status})`);
+    if (!res.ok || !res.body) {
+      // A 401 here means the session, not the stream, failed. Reported as
+      // `unauthorised` it reaches the user as "sign in again"; reported as a
+      // bare stream failure it reads as a Market News Feed outage.
+      if (isAuthFailureResponse(res.status)) {
+        throw operationalError('database', { status: res.status, code: 'unauthorised', correlationId }, 'market-updates-qa');
+      }
+      throw new Error(`Stream failed (${res.status})`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
