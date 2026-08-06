@@ -66,6 +66,9 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import tempfile
+import os
 import re
 import sys
 from pathlib import Path
@@ -173,6 +176,53 @@ def _specimen(faces: list[ShippedFace]) -> str:
     )
 
 
+VERAPDF = os.environ.get("VERAPDF", "/opt/verapdf/verapdf")
+
+
+def _validates_as_pdf_ua(pdf: bytes) -> list[str]:
+    """The specimen, through the conformance validator that ships beside it.
+
+    The reports claim PDF/UA-1. A claim that fails validation is worse than no
+    claim — it tells a procurement officer, a screen-reader user and an
+    accessibility auditor that the document is navigable, and none of them
+    finds out otherwise until they try.
+
+    The first run of this on a real report said FAIL: seven of the ten formats
+    broke clause 7.4.2, a skipped heading level, because each had grown its own
+    `h3` helper for a subhead while the design system's own `h2` went unused.
+    That is the class of thing only a validator finds, and it had been shipping.
+
+    A missing validator is a failure rather than a pass. The image installs one;
+    if it is not there, the image is not the one this file was written for.
+    """
+    if not os.path.exists(VERAPDF):
+        return [f"no validator at {VERAPDF} — the PDF/UA claim is unchecked"]
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+        handle.write(pdf)
+        path = handle.name
+    try:
+        result = subprocess.run(
+            [VERAPDF, "-f", "ua1", "--format", "text", path],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except (OSError, subprocess.SubprocessError) as err:
+        return [f"the validator could not be run: {err}"]
+    finally:
+        os.unlink(path)
+
+    verdict = (result.stdout or "").strip().split()
+    if verdict and verdict[0] == "PASS":
+        print("the specimen validates as PDF/UA-1")
+        return []
+    return [
+        "the specimen does not validate as PDF/UA-1, and the render routes "
+        f"claim it: {(result.stdout or result.stderr or '').strip()[:400]}",
+    ]
+
+
 def main() -> int:
     import weasyprint
 
@@ -190,8 +240,17 @@ def main() -> int:
 
     faces = shipped_faces()
     print(f"{len(faces)} shipped face(s) in {FONT_DIR}")
-    pdf = HTML(string=_specimen(faces)).write_pdf(pdf_tags=True, uncompressed_pdf=True)
+    # Rendered the way a report is rendered — the variant and the output intent
+    # the render routes ask for — so the check below is a check of what ships
+    # rather than of a plainer document that happens to be in the image.
+    pdf = HTML(string=_specimen(faces)).write_pdf(
+        pdf_tags=True,
+        uncompressed_pdf=True,
+        pdf_variant="pdf/ua-1",
+        output_intent="srgb",
+    )
     failures: list[str] = []
+    failures.extend(_validates_as_pdf_ua(pdf))
 
     if not pdf.startswith(b"%PDF-"):
         failures.append("the render did not produce PDF bytes")

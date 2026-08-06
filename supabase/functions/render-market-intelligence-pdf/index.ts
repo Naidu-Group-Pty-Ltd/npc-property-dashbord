@@ -322,7 +322,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       .maybeSingle();
     renderId = (renderRow?.id as string) ?? null;
 
-    const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/a-2b', tagged: true });
+    const pdf = await renderPdf(weasyprint, rendered.html, {
+      variant: 'pdf/ua-1',
+      tagged: true,
+      // The ledger row and the source row, stamped into the PDF itself.
+      // See `DocumentProvenance` — a delivered file could not be traced
+      // back to the render that produced it.
+      provenance: {
+        format: 'market-intelligence',
+        renderId: renderId,
+        sourceId: request.reportId,
+        renderedAt: now,
+      },
+    });
 
     // `upsert: true`, unlike every other format in the programme, and the stable
     // path above is why. `pdf_storage_path` names the current PDF for this

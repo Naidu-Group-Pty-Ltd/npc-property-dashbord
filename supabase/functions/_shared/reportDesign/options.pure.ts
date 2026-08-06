@@ -51,6 +51,23 @@ export interface ReportDesignOptions {
   showSectionNumbers: boolean;
   justifyText: boolean;
   /**
+   * Crop marks and a bleed-extended sheet, for a document going to a press.
+   *
+   * Off by default, and it must stay that way: a screen PDF with crop marks on
+   * it looks like a proof somebody sent by mistake, and the page is 6mm larger
+   * in each dimension than the paper anybody would print it on.
+   *
+   * Three named pages already declare `bleed: true`, and that flag paints the
+   * field colour and suppresses the running chrome — it does **not** extend the
+   * trim. So a full-bleed obsidian cover trimmed with any tolerance at all
+   * shows a white hairline down the edge it was trimmed short on. This is the
+   * half that fixes it: `bleed: 3mm` extends the sheet past the trim so the
+   * field runs off it, and `marks: crop cross` tells the press where the trim
+   * is. Verified against the pinned engine — MediaBox 603.8 x 850.4pt around a
+   * TrimBox of 595.3 x 841.9.
+   */
+  pressMarks: boolean;
+  /**
    * How much the design system is allowed to lift off the page.
    *
    * `flat` is every rule this repo shipped for its first nine formats: hairline
@@ -82,6 +99,7 @@ export const DEFAULT_REPORT_DESIGN_OPTIONS: ReportDesignOptions = {
   showDropCaps: false,
   showSectionNumbers: true,
   justifyText: true,
+  pressMarks: false,
   surfaceStyle: 'flat',
 };
 
@@ -155,6 +173,7 @@ export function normalizeReportDesignOptions(
     showDropCaps: o.showDropCaps ?? DEFAULT_REPORT_DESIGN_OPTIONS.showDropCaps,
     showSectionNumbers: o.showSectionNumbers ?? DEFAULT_REPORT_DESIGN_OPTIONS.showSectionNumbers,
     justifyText: o.justifyText ?? DEFAULT_REPORT_DESIGN_OPTIONS.justifyText,
+    pressMarks: o.pressMarks ?? DEFAULT_REPORT_DESIGN_OPTIONS.pressMarks,
   };
 }
 

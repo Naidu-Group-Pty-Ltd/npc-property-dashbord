@@ -5,7 +5,7 @@
     "supabase/config.toml"
   ],
   "counts": {
-    "staff": 238,
+    "staff": 237,
     "public": 40,
     "portal": 69,
     "server-only": 66
@@ -2098,12 +2098,6 @@
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": true
-    },
-    {
-      "name": "render-commercial-capacity-pdf",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
     },
     {
       "name": "render-investment-report-pdf",

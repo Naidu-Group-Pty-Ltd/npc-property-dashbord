@@ -18,6 +18,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { withDecodedCharts } from '@/lib/reportDesign/__tests__/chartSvg';
 import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
 import { mastheadFor, resolveCompanyBlock } from '@/lib/reportDesign/companyBlock.pure';
 
@@ -163,7 +164,10 @@ withGolden('and against the captured golden', () => {
   it('asks for a brand face first, everywhere (F8)', () => {
     expect(golden).toContain('/Helvetica');
 
-    const stacks = [...html.matchAll(/font-family="([^"]+)"/g)].map((m) => m[1]);
+    // Decoded: a chart's drawing is base64 inside an `img`, so the sweep has to
+    // reach through the payload or it finds no stacks and passes vacuously —
+    // which the message below was written for and which is what happened.
+    const stacks = [...withDecodedCharts(html).matchAll(/font-family="([^"]+)"/g)].map((m) => m[1]);
     expect(stacks.length, 'no font stacks found — has the chart markup changed?')
       .toBeGreaterThan(0);
     for (const stack of stacks) {

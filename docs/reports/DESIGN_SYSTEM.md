@@ -501,12 +501,25 @@ either impossible by construction or asserted by a test.
 | Running foot wrapped to two lines | The `@bottom-left` box is a third of the measure; company + document name does not fit in letterspaced mono | `mastheadFor()` returns the company name alone; the document name lives on the cover, in the PDF title and in the running head |
 | The drop cap printed on top of the words it opened | WeasyPrint places a floated `::first-letter` but does not shorten the first line box around it | Ships a raised initial instead; `reportCss.spec.ts` fails on `float: left` |
 
-One caveat on that render, stated because it bounds what it proves: it was
-produced by WeasyPrint 69 on this workspace, not by the container
-(`weasyprint-service` pins 62.3). **Phase 4 closed the font half of this
-caveat** — the faces are now installed and the specimen re-rendered with Inter,
-Playfair Display (upright and italic), Cinzel and IBM Plex Mono. What remains
-unverified is engine-version parity, which needs the container itself.
+That render was produced by WeasyPrint 69 on this workspace rather than by the
+container, and for a long time that was a real caveat: the container pinned
+**62.3**, and the two disagree — 62.3 rejects `width: calc(210mm - 44mm)`,
+drops the declaration and renders on, which is how the cover's masthead printed
+the classification and the reference as one word in every shipped copy with
+nothing red anywhere.
+
+**Both halves of that caveat are now closed.** The faces are installed in the
+image and the specimen re-renders with Inter, Playfair Display (upright and
+italic), Cinzel and IBM Plex Mono; and `weasyprint-service/requirements.txt`
+pins `weasyprint==69.0`, the version this workspace runs. The two cannot drift
+silently again — `PINNED_ENGINE` in `engineSupport.pure.ts` mirrors that line,
+`engineSupport.spec.ts` reads the requirements file and fails if they differ,
+and CI's `render-container` job asserts the installed version against the pin
+inside the built image.
+
+What that pin does **not** prove is which image is *deployed*. There is no
+deploy workflow; see [`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md), whose
+first step is asking the running service what engine it has.
 
 The specimen is also the re-skin proof: the same content rendered with
 `--preset=minimal_ink --brand='#00A3FF' --density=compact --table=ledger
@@ -531,24 +544,45 @@ judges each with `judgeDocument`, and leaves the page images under
 designed page in this system measures 0.133 to 0.221**, and a document whose
 body pages sit at 0.05 does not have one sparse page, it has no page economy.
 
-| format | pp | median body ink | in band | high | medium |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| borrowing-capacity | 11 | 0.151 | 3/9 | 0 | 2 |
-| cash-flow-projection | 10 | 0.167 | 5/8 | 0 | 1 |
-| cash-flow-comparison | 21 | 0.093 ↓ | 4/19 | 0 | 9 |
-| client-details | 14 | 0.119 ↓ | 5/12 | 0 | 4 |
-| investment-compass | 29 | 0.095 ↓ | 5/27 | 0 | 7 |
-| market-intelligence | 22 | 0.060 ↓ | 2/20 | 0 | 12 |
-| portfolio-performance | 25 | 0.180 | 5/23 | 0 | 5 |
-| property-comparison | 15 | 0.070 ↓ | 0/13 | 0 | 8 |
-| report-qa | 9 | 0.123 ↓ | 3/7 | 0 | 2 |
-| converted | 10 | 0.091 ↓ | 1/8 | 0 | 3 |
+| format | pp | median body ink | in band | high | medium | outline | validates |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| borrowing-capacity | 12 | 0.131 ↓ | 2/10 | 0 | 3 | 14 | PDF/UA-1 |
+| cash-flow-projection | 10 | 0.167 | 5/8 | 0 | 1 | 6 | PDF/UA-1 |
+| cash-flow-comparison | 21 | 0.093 ↓ | 3/19 | 0 | 9 | 23 | PDF/UA-1 |
+| client-details | 14 | 0.119 ↓ | 5/12 | 0 | 4 | 14 | PDF/UA-1 |
+| investment-compass | 28 | 0.096 ↓ | 5/26 | 0 | 7 | 44 | PDF/UA-1 |
+| market-intelligence | 22 | 0.060 ↓ | 2/20 | 0 | 12 | 44 | PDF/UA-1 |
+| portfolio-performance | 26 | 0.173 | 5/24 | 0 | 6 | 28 | PDF/UA-1 |
+| property-comparison | 15 | 0.070 ↓ | 1/13 | 0 | 8 | 22 | PDF/UA-1 |
+| report-qa | 9 | 0.121 ↓ | 3/7 | 0 | 2 | 18 | PDF/UA-1 |
+| converted | 10 | 0.091 ↓ | 1/8 | 0 | 3 | 13 | PDF/UA-1 |
 
-**Zero `high` findings across all ten, and zero engine warnings.** The `medium`
-column is almost entirely `sparse-page`, and the `↓` on median ink is the page
-economy this programme has not finished with — several formats still spend a
-sheet on two-thirds of a sheet's content. That is the next thing to work on and
-it is stated here rather than left to be rediscovered.
+**Zero `high` findings across all ten, and zero engine warnings.** The last two
+columns come from `scripts/reports/validateUa.mts` rather than `renderAll.mts`;
+every one of the ten had an outline of **zero** until `bookmark-level` reached
+the stylesheet, and none of them had ever been through a validator.
+
+The `medium` column is almost entirely `sparse-page`, and the `↓` on median ink
+is the page economy this programme has **not** finished with. Eight of the ten
+sit below the 0.133 floor — several spend a sheet on two-thirds of a sheet's
+content. Reading the pages says where it comes from, and it is one thing rather
+than eight: `.chapter { page-break-before: always }` is global, the chapter
+opener's furniture is about a third of a sheet on its own, and a chapter with
+less than two-thirds of a sheet of content therefore leaves the rest blank —
+`market-intelligence` page 5 is a 40pt title, a dek, a rule, five one-line
+bullets and 55% empty paper. Two formats already solved it for themselves
+(Investment groups 36 prose sections into four chapters; the converter packs
+thin chapters through `packThin`), and neither fix is available to the other
+eight. That is the next thing to work on and it is stated here rather than left
+to be rediscovered.
+
+Two of these numbers moved for a reason worth recording. Borrowing Capacity was
+eleven pages at 0.151, inside the band; it is twelve at 0.131 because its
+subheads moved from `h3` to `h2` to satisfy PDF/UA clause 7.4.2, and `h2` — the
+design system's actual subhead — carries 3pt more type and 16pt more air than
+the `h3` six formats had each invented for themselves. The document is correct
+now and costs a page for it. Investment lost a page and Portfolio gained one
+from the same change.
 
 Three things this table taught, none of which was visible from the code:
 
@@ -756,7 +790,7 @@ quality win and is not.
 | `optimize_images` | 157,498 vs 157,502 bytes | **Irrelevant.** The reports embed *no raster images at all* — every figure is SVG. `jpeg_quality` and `dpi` are moot for the same reason. |
 | `full_fonts` | 157KB → **1.69MB** | No. Subsetting does not change how a glyph draws; this is 10× the file for nothing a reader can see. |
 | `hinting` | +7KB (4.5%) | No. Modern viewers rasterise with their own hinting and ignore the embedded instructions. |
-| `pdf_variant: pdf/a-2b` | **pixel-identical** to plain across all 11 pages | Keep. It costs nothing visually and the archival claim is worth having. |
+| `pdf_variant: pdf/a-2b` | **pixel-identical** to plain across all 11 pages | Superseded — see 11.7. The variant is now `pdf/ua-1`. |
 
 One artefact worth not chasing: under `pdf/a-2b`, poppler prints `Bad color
 space 'srgb'` ten times. WeasyPrint defines a named `/srgb` colour space in the
@@ -764,3 +798,118 @@ page resources and its transparency-group XObjects reference it from their own
 resource dictionaries, where it is not defined. It is upstream, it affects
 nothing — the pixel diff above was taken with those warnings present — and the
 only way to avoid it would be to stop emitting SVG.
+
+The `optimize_images` row above is **wrong**, and the way it got that way is
+the more useful part: it was measured on a fixture with no cover art, and the
+"the reports embed no raster images at all" premise it rests on is true of the
+*figures* and false of the *document*. See 11.7 for the re-measurement.
+
+### 11.7 The conformance claim, and the sheet a press can trim
+
+A conformance claim that fails validation is worse than no claim: it tells a
+procurement officer, a screen-reader user and an accessibility auditor that the
+document is navigable, and none of them finds out otherwise until they try. So
+the validator came first.
+
+**veraPDF 1.30.2 is in the image**, installed headlessly beside `default-jre`,
+and `selfcheck.py` fails the build if the specimen does not validate as
+PDF/UA-1. `scripts/reports/validateUa.mts` is the same check over all ten
+formats; CI runs veraPDF against the Borrowing Capacity Snapshot it already
+renders through the container.
+
+Its first run said `FAIL … ua1` on documents this repo had been tagging as
+accessible for months — clause 7.4.2, heading level 2 skipped in a descending
+sequence, on six of ten formats. Each had grown its own `const h3 = …` helper
+for "a subhead" while the design system's own subhead, `h2`, went unused in all
+six. That defect was reachable from the code and nobody had reached it.
+
+**The variant is `pdf/ua-1`**, and that was a choice between two claims rather
+than a free addition. Measured:
+
+| rendered as | PDF/UA-1 | PDF/A-2A | PDF/A-2B |
+| --- | --- | --- | --- |
+| `pdf/a-2b` (what shipped) | fail | fail | **pass** |
+| `pdf/a-2a` | fail | **pass** | **pass** |
+| `pdf/ua-1` | **pass** | fail | fail |
+
+The middle row is the interesting one: `pdf/a-2a` fails UA-1 on exactly **one**
+rule and one check — clause 5, the PDF/UA identification schema in the XMP.
+Everything structural passes on both. So these documents already satisfy both
+standards' *content* rules and can carry only one standard's *declaration*. It
+went to accessibility; nothing asks these reports to be archival, and fonts
+stay embedded 168 of 168 either way.
+
+Three things the switch cost or exposed, each now closed:
+
+- **`pdf/ua-1` drops the output intent** the PDF/A variants added for free,
+  because accessibility says nothing about colour. `output_intent: "srgb"` is
+  now sent by name and is in `REQUIRED_OPTIONS`, so an engine that stopped
+  honouring it would be caught rather than silently shipping colourless files.
+  `srgb` is a **keyword** the engine resolves to its own bundled `sRGB2014.icc`
+  — a path matches nothing and produces no intent at all, which is what the
+  first attempt did.
+- **A chart was unreachable and validated clean anyway.** Probed three ways,
+  only one produces a `/Figure` with `/Alt`: an inline `<svg role="img"
+  aria-label>` lands under `/NonStruct`, an inline `<svg><title>` likewise, and
+  a `data:` URI `<img alt>` is the only one that tags. With the drawing under
+  `/NonStruct` there is no figure for a validator to demand alternative text
+  for — **the document passes PDF/UA with every chart in it unreachable**. The
+  validator cannot catch this one; `conformance.spec.ts` does.
+- **`pdf-1.7` is not a variant the engine has.** `weasyprint.pdf.VARIANTS`
+  holds eighteen names and that is not among them; asking for it raises
+  `KeyError` and the service returns a 500. The Export Pipeline dialog has
+  offered it as "PDF 1.7 (standard)" the whole time, so that option had never
+  produced a file. It now means "send no variant", which is the engine's way of
+  saying the same thing, and its default version is already 1.7.
+
+**A PDF now names the row it came from.** `custom_metadata` copies the
+document's own `<meta name=…>` tags into the file, and the render routes put
+`npc-format`, `npc-render-id` and `npc-source-id` in the head. The engine
+lowercases the key and strips everything that is not a letter or a digit, so
+`npc-render-id` arrives as `/npcrenderid`, and the entries land in the Info
+dictionary rather than the XMP packet — fine for UA, and not for PDF/A, which
+requires the two to agree.
+
+**Press marks are behind `pressMarks`, off by default**, because crop marks on
+a client document read as a proof. On, the base `@page` emits `marks: crop
+cross` and `bleed: 3mm`, which measured as MediaBox `-8.5 -8.5 603.8 850.4`
+around a TrimBox of `0 0 595.3 841.9` — 8.5pt is 3mm, the trade convention. The
+three named pages that already declare `bleed: true` only paint the field
+colour and suppress the running chrome; they never extended the trim, so until
+now a full-bleed obsidian cover trimmed short showed a white hairline.
+
+**`dpi` and `jpeg_quality` stay unset, and this is the measurement.** Taken on a
+document with the house cover art spliced in — a 224 KB JPEG data URI, the only
+raster a report carries:
+
+| setting | file |
+| --- | ---: |
+| `optimize_images` off | 320.1 KB |
+| `optimize_images` on | **254.9 KB** ← ships |
+| `dpi: 300` | 254.9 KB |
+| `dpi: 150` | 254.9 KB |
+| `dpi: 96` | 247.9 KB |
+| `dpi: 72` | 218.1 KB |
+| `dpi: 36` | 181.4 KB |
+| `jpeg_quality: 85` | 286.7 KB |
+
+So the cover art sits between 96 and 150 dpi on the page: 150 and 300 do
+nothing at all, and anything low enough to save bytes visibly degrades the one
+image a reader looks at first. `jpeg_quality` makes the file **larger** — it
+re-encodes an asset that is already a JPEG, paying a generation of loss to grow
+by 31 KB. `optimize_images` is worth 65 KB and is on.
+
+**The container has no deploy workflow.** Only `ci.yml` references the image,
+and it builds one rather than publishing it. Everything in this section that
+lives in `weasyprint-service/` — veraPDF, `output_intent`, `custom_metadata` —
+reaches production only when somebody builds and deploys the image by hand. The
+document-side half (heading levels, tagged chart figures, `bookmark-level`,
+`pressMarks`) ships with the edge functions and does not wait for it.
+
+That split has an order to it, and getting it wrong is not cosmetic: the render
+routes ask for `pdf/ua-1`, an engine that does not have that variant raises
+`KeyError` and the service returns a 500 on **every** report. So the container
+goes first, and the first thing to do is ask the running service what engine it
+has. The whole procedure — canary, verification, rollback, the edge-function
+half, and what to look for inside a delivered PDF — is
+[`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md).

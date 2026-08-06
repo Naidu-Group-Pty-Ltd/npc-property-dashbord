@@ -392,14 +392,69 @@ def render():
     if not isinstance(html, str) or not html.strip():
         return jsonify({"error": "html is required"}), 400
 
+    # The colour space the file declares it was prepared for.
+    #
+    # `pdf/a-*` sets this itself, which is why the reports carried one while
+    # they claimed PDF/A. `pdf/ua-1` does not — accessibility says nothing about
+    # colour — so switching the variant silently dropped the output intent from
+    # every report. Asked for explicitly, it survives the switch: measured, a
+    # `pdf/ua-1` file with `output_intent: "srgb"` carries a real ICC profile
+    # (IEC 61966-2-1) and still validates as PDF/UA-1.
+    #
+    # `srgb` is a keyword the engine resolves to its own bundled `sRGB2014.icc`,
+    # not a path. A path silently matches nothing and produces no intent at all,
+    # which is what the first attempt here did.
+    output_intent = payload.get("output_intent") or None
+
+    # Copy the document's own `<meta name=…>` tags into the PDF.
+    #
+    # What this is for: nothing connected a delivered file back to the row that
+    # produced it. The render routes now put `npc-format`, `npc-render-id` and
+    # `npc-source-id` in the head, and this is the switch that carries them into
+    # the file. Measured against the pinned engine — the key is lowercased and
+    # stripped to letters and digits (`npc-render-id` → `/npcrenderid`), the
+    # values land in the Info dictionary rather than the XMP packet, and the
+    # tags the engine already understands (`author`, `description`) are not
+    # duplicated. A `pdf/ua-1` file with all of them present validates clean.
+    #
+    # Default on: the option means "carry what the document declares", and a
+    # document declaring nothing is unaffected by it.
+    custom_metadata = bool(payload.get("custom_metadata", True))
+
     options = _supported_options(
         {
             "pdf_variant": pdf_variant,
+            "output_intent": output_intent,
+            "custom_metadata": custom_metadata,
             # The knob that actually produces /StructTreeRoot. This service read
             # `tagged` from the body and never passed it to the engine, so every
             # report it has produced has been untagged — valid, printable, and
             # unnavigable to a screen reader.
             "pdf_tags": tagged,
+            # `dpi` and `jpeg_quality` are deliberately absent, and this is the
+            # measurement rather than an opinion.
+            #
+            # Taken against a real document with the house cover art spliced in
+            # — a 224 KB JPEG data URI, the only raster a report carries:
+            #
+            #     optimize_images off      320.1 KB
+            #     optimize_images on       254.9 KB   ← what ships
+            #     dpi 300                  254.9 KB
+            #     dpi 150                  254.9 KB
+            #     dpi 96                   247.9 KB
+            #     dpi 72                   218.1 KB
+            #     dpi 36                   181.4 KB
+            #     jpeg_quality 85          286.7 KB
+            #
+            # So the cover art sits between 96 and 150 dpi on the page: a `dpi`
+            # of 150 or 300 does nothing at all, and anything low enough to save
+            # bytes visibly degrades a full-bleed cover. And `jpeg_quality`
+            # makes the file *larger* — it forces a re-encode of an asset that
+            # is already a JPEG, paying a generation of loss to grow by 31 KB.
+            #
+            # `optimize_images` is worth 65 KB and is on. The other two are
+            # recorded here so they are not proposed again from first
+            # principles, which is how they got onto the list.
             "optimize_images": optimize_images,
             "presentational_hints": False,
         }

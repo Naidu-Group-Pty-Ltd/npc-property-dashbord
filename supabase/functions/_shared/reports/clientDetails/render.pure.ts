@@ -110,7 +110,21 @@ export function formatReportDate(iso: string): string {
 // ── Escaping helpers ────────────────────────────────────────────────────────
 
 const p = (t: string) => (t ? `<p>${escapeHtml(t)}</p>` : '');
-const h3 = (t: string) => `<h3>${escapeHtml(t)}</h3>`;
+/**
+ * A subhead inside a chapter.
+ *
+ * `h2`, not `h3`. Six of these formats grew their own `const h3` helper for
+ * "a subhead" while the design system's actual subhead — `h2` at 17pt, whose
+ * rule in `css.pure.ts` carries a paragraph explaining that it is a different
+ * object from a chapter title — went unused in every one of them. A chapter
+ * title is an `h1`, so an `h3` under it skips a level, and PDF/UA 7.4.2 fails
+ * on exactly that: "heading level 2 is skipped in a descending sequence".
+ *
+ * Seven of the ten documents failed the same rule and no other. Named
+ * `subhead` rather than `h2` so the next person reaches for the level the
+ * design system defines instead of inventing one.
+ */
+const subhead = (text: string) => `<h2>${escapeHtml(text)}</h2>`;
 
 /** An em dash for what is not recorded, so a cell is never silently blank. */
 const show = (m: Measure | null): string => (m ? formatMeasure(m) : '—');
@@ -146,7 +160,7 @@ function contactBlock(contact: Contact, residence: ClientDetails['household']['r
     { item: 'Gender', value: orDash(contact.gender) },
   ], `${heading} — details`);
 
-  if (!residence) return h3(heading) + details;
+  if (!residence) return subhead(heading) + details;
 
   const r = residence.residence;
   const address = [r.address, r.suburb, `${r.state} ${r.postcode}`.trim(), r.country]
@@ -160,7 +174,7 @@ function contactBlock(contact: Contact, residence: ClientDetails['household']['r
       { item: 'Residential status', value: orDash(r.residentialStatus) },
     ], `${heading} — address and status`);
 
-  return h3(heading) + details + where;
+  return subhead(heading) + details + where;
 }
 
 function whoSection(cf: ClientDetails): string {
@@ -174,7 +188,7 @@ function whoSection(cf: ClientDetails): string {
   ], 'The household');
 
   const history = h.history.length
-    ? h3('Address history')
+    ? subhead('Address history')
       + renderDataTable(
         [
           { key: 'address', label: 'Address', align: 'left' },
@@ -259,7 +273,7 @@ function incomeSection(cf: ClientDetails): string {
     : '';
 
   const other = inc.otherIncome.length
-    ? h3('Other income')
+    ? subhead('Other income')
       + renderDataTable(
         [
           { key: 'label', label: 'Source', align: 'left' },
@@ -307,7 +321,7 @@ function balanceSection(cf: ClientDetails): string {
     : '';
 
   const liabilities = cf.liabilities.length
-    ? h3('Liabilities')
+    ? subhead('Liabilities')
       + renderDataTable(
         [
           { key: 'type', label: 'Liability', align: 'left' },
@@ -373,7 +387,7 @@ function spendingSection(cf: ClientDetails, palette: ResolvedReportPalette): str
     { caption: 'Household expenses by category', signedKeys: ['monthly'] },
   )
     + expenseCompositionChart(cf, palette)
-    + h3('Every line')
+    + subhead('Every line')
     + renderDataTable(
       [
         { key: 'category', label: 'Category', align: 'left' },
@@ -431,7 +445,7 @@ function holdingsSection(cf: ClientDetails, palette: ResolvedReportPalette): str
 
   return valueAgainstDebtChart(cf, palette) + cf.properties.map((x) => {
     const smsf = x.smsf
-      ? h3('The fund')
+      ? subhead('The fund')
         + definitionTable([
           { item: 'Fund name', value: orDash(x.smsf.fundName) },
           { item: 'Trustee', value: orDash(x.smsf.trusteeName) },
@@ -443,7 +457,7 @@ function holdingsSection(cf: ClientDetails, palette: ResolvedReportPalette): str
         ], 'Self-managed super fund particulars')
       : '';
 
-    return h3(`${x.kindLabel} — ${x.address || 'address not recorded'}`)
+    return subhead(`${x.kindLabel} — ${x.address || 'address not recorded'}`)
       + definitionTable([
         { item: 'Value', value: formatMeasure(x.value) },
         { item: 'Loan remaining', value: formatMeasure(x.loanRemaining) },
@@ -513,7 +527,7 @@ function positionSection(cf: ClientDetails, palette: ResolvedReportPalette): str
       { item: 'Other liabilities', value: formatMeasure(pos.otherLiabilities) },
       { item: 'Net worth', value: formatMeasure(pos.netWorth), total: true },
     ], 'What is owned, less what is owed', 'Amount')
-    + h3('Income against commitments')
+    + subhead('Income against commitments')
     + incomeAgainstCommitmentsChart(cf, palette)
     + definitionTable([
       { item: 'Income', value: formatAmount(pos.incomeMonthly) },

@@ -96,9 +96,15 @@ refused — it fails closed.
   {"probes": {"name": "declaration"}}` to supply your own set; that is how the
   repo's list is checked without redeploying the service.
 - `POST /render` — body
-  `{ "html": "...", "base_url": "...", "pdf_variant": "pdf/a-2b",
-  "tagged": true, "optimize_images": true, "strict": false }`, returns
-  `application/pdf` bytes.
+  `{ "html": "...", "base_url": "...", "pdf_variant": "pdf/ua-1",
+  "output_intent": "srgb", "tagged": true, "optimize_images": true,
+  "custom_metadata": true, "strict": false }`, returns `application/pdf` bytes.
+
+  `pdf_variant` omitted (or `null`) means the engine's default — no conformance
+  claim. `output_intent` takes the keyword `srgb` or `device-cmyk`, not a path
+  to a profile; a path silently matches nothing and produces no intent at all.
+  `custom_metadata` copies the document's own `<meta name=…>` tags into the
+  PDF, which is how a delivered file names the row that produced it.
 
 `/render` answers with the engine's diagnostics in headers:
 
@@ -119,13 +125,37 @@ on a report is not served by a refusal — and on in CI.
 > passed anything to the engine, so **every report it produced before this was
 > untagged**: valid, printable, and unnavigable to a screen reader.
 
+### The conformance claim is checked, not asserted
+
+The image carries **veraPDF 1.30.2** at `/opt/verapdf/verapdf`, and
+`selfcheck.py` fails the build if the specimen it renders does not validate as
+PDF/UA-1. A claim that fails validation is worse than no claim — it tells a
+procurement officer, a screen-reader user and an accessibility auditor that the
+document is navigable, and none of them finds out otherwise until they try.
+
+```bash
+docker run --rm --entrypoint /opt/verapdf/verapdf weasyprint-service \
+  -f ua1 /path/to/report.pdf          # exit 0 means conformant
+```
+
+`scripts/reports/validateUa.mts` runs the same check over all ten report
+formats using whatever validator `VERAPDF` points at, defaulting to the path
+above.
+
+Two facts about `pdf/ua-1` that cost time to find. It **does not** add an
+OutputIntent the way the PDF/A variants do — accessibility says nothing about
+colour — so `output_intent` has to be asked for by name or the file has no
+colour space at all. And `pdf/a-2a` fails UA-1 on exactly one check (clause 5,
+the XMP identification schema) while passing everything structural, which means
+these documents satisfy both standards' content rules and can declare only one.
+
 ## Local run
 
 ```bash
 cd weasyprint-service
 docker build -t weasyprint-service .
 docker run --rm -p 8080:8080 \
-  -e WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)=dev-token \
+  -e WEASYPRINT_SERVICE_TOKEN=dev-token \
   weasyprint-service
 curl -X POST http://localhost:8080/render \
   -H "Authorization: Bearer dev-token" \
@@ -162,14 +192,33 @@ unprivileged user, carries a `HEALTHCHECK`, and starts gunicorn with
 inherits a hot Pango and fontconfig instead of the first client's report paying
 for them. `WEASYPRINT_WARMUP=0` turns that off.
 
+> **A container change reaches production only by hand.** There is no deploy
+> workflow anywhere in this repository — `ci.yml` builds this image to test it
+> and publishes nothing. So anything that lives here (the veraPDF layer, the
+> `output_intent` and `custom_metadata` options, a font, an engine bump) is
+> inert in production until somebody runs the deploy below. Changes on the
+> other side of the boundary — the stylesheet, the document structure, what the
+> render routes ask for — ship with the edge functions and do not wait for it.
+
 ## Deploy — Google Cloud Run (recommended)
+
+> **Releasing a change rather than standing this up for the first time?** Use
+> [`docs/reports/CONTAINER_RELEASE.md`](../docs/reports/CONTAINER_RELEASE.md).
+> It carries the ordering constraint between this image and the render routes,
+> the no-traffic canary, the rollback, and what to check in the delivered PDF.
+> What follows is the first-deploy recipe.
 
 ```bash
 PROJECT_ID=your-gcp-project
 REGION=australia-southeast1
 TOKEN=$(openssl rand -hex 32)
 
-gcloud builds submit --tag gcr.io/$PROJECT_ID/weasyprint-service ./weasyprint-service
+# --timeout: the default is 10 minutes and the veraPDF layer alone fetches a
+# 33 MB installer and installs a JRE.
+gcloud builds submit \
+  --tag gcr.io/$PROJECT_ID/weasyprint-service \
+  --timeout=1800s \
+  ./weasyprint-service
 
 gcloud run deploy weasyprint-service \
   --image gcr.io/$PROJECT_ID/weasyprint-service \
@@ -179,20 +228,29 @@ gcloud run deploy weasyprint-service \
   --memory 2Gi --cpu 2 \
   --concurrency 4 --timeout 600 \
   --min-instances 0 --max-instances 10 \
-  --set-env-vars WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)=$TOKEN
+  --set-env-vars WEASYPRINT_SERVICE_TOKEN=$TOKEN
 
 # Note the deployed URL, then add these as Supabase Edge Function secrets:
 #   WEASYPRINT_SERVICE_URL   = https://weasyprint-service-xxxx.a.run.app
-#   WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY) = <the TOKEN you generated>
+#   WEASYPRINT_SERVICE_TOKEN = <the TOKEN you generated>
 ```
 
+`--allow-unauthenticated` is deliberate rather than an oversight: the service
+does its own bearer-token check and refuses every request when no token is set.
 Cloud Run scales to zero — typical cost is a few cents per thousand renders.
+
+> `WEASYPRINT_API_KEY` is accepted as a **legacy alias** for the token by
+> `app.py` and by `weasyprintClient.ts`, on both sides, so an environment that
+> already has it keeps working. Nothing writes it and nothing should: set
+> `WEASYPRINT_SERVICE_TOKEN`. The alias used to be spelled inline in these
+> commands — `WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)=$TOKEN` — which
+> made four lines of the one recipe here impossible to paste.
 
 ## Deploy — Fly.io / Railway / Render alternatives
 
 Any container host that runs the Dockerfile works. Set the same two env vars
-(`WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)` on the service, `WEASYPRINT_SERVICE_URL` +
-`WEASYPRINT_SERVICE_TOKEN (or WEASYPRINT_API_KEY)` on Supabase) and you're done.
+(`WEASYPRINT_SERVICE_TOKEN` on the service, `WEASYPRINT_SERVICE_URL` +
+`WEASYPRINT_SERVICE_TOKEN` on Supabase) and you're done.
 
 ## Edge function wiring
 

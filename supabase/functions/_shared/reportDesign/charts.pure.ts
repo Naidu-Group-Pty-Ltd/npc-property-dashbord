@@ -265,11 +265,62 @@ export function formatAxisValue(value: number, mode: AxisMode): string {
   return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0);
 }
 
-/** Wrap a chart into a print-ready figure. */
-export function chartFigure(svg: string, caption = ''): string {
+/**
+ * Base64, UTF-8 safe, in both runtimes these modules run in.
+ *
+ * `btoa` takes a latin1 string, and a chart label contains an em dash, a
+ * non-breaking space or a currency symbol often enough that passing the SVG
+ * straight in throws. Encoding to bytes first is the portable fix — no
+ * `Buffer`, which the Edge Function runtime does not have.
+ */
+function base64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/**
+ * Wrap a chart into a print-ready figure.
+ *
+ * ## Why the chart is an `img` and not inline SVG
+ *
+ * It was inline, and every chart in every format was **invisible to a screen
+ * reader**. WeasyPrint renders inline `<svg>` as drawing operators under a
+ * `/NonStruct` node: there is no `/Figure` in the structure tree, so there is
+ * nothing to attach alternative text to and nothing for assistive technology
+ * to announce. `aria-label` on the `<svg>` does nothing. A `<title>` child
+ * does nothing. Both were tried against the pinned engine.
+ *
+ * The part that makes this worth stating plainly: **the document still passes
+ * PDF/UA**. veraPDF cannot require alt text for a figure that is not in the
+ * tree, so a report full of unreachable charts validates clean. That is the
+ * shape of a hollow conformance claim, and it is why the check that matters
+ * here is not the validator.
+ *
+ * `<img src="data:image/svg+xml;base64,…" alt="…">` is the one form the engine
+ * tags as `/Figure` with `/Alt`. Base64 rather than percent-encoded because
+ * `renderResourcePolicy.pure.ts` skips exactly the base64 payload — a
+ * percent-encoded SVG stays under the URL scan, where its own markup can trip
+ * the scheme-relative check.
+ *
+ * ## The alt text
+ *
+ * The caption when there is one, an explicit `alt` when the caption is absent
+ * or would not describe the drawing. A figure with neither is emitted inline
+ * and untagged rather than as a `/Figure` with an empty `/Alt`: an untagged
+ * drawing is merely silent, while a figure that declares itself described and
+ * is not fails PDF/UA — and lies.
+ */
+export function chartFigure(svg: string, caption = '', alt = ''): string {
   if (!svg) return '';
-  return `<figure class="chart-figure">${minifySvg(svg)}`
-    + `${caption ? `<figcaption>${svgEscape(caption)}</figcaption>` : ''}</figure>`;
+  const described = (alt || caption).trim();
+  const figcaption = caption ? `<figcaption>${svgEscape(caption)}</figcaption>` : '';
+  const body = described
+    ? `<img class="chart-img" src="data:image/svg+xml;base64,${base64Utf8(minifySvg(svg))}"`
+      + ` alt="${svgEscape(described)}">`
+    : minifySvg(svg);
+  return `<figure class="chart-figure">${body}${figcaption}</figure>`;
 }
 
 /** Shared `<text>` builder — every label in this module routes through it. */

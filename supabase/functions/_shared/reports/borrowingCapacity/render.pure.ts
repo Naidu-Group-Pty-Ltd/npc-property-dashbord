@@ -143,7 +143,21 @@ export interface RenderSnapshotInput {
 // ── Section renderers ───────────────────────────────────────────────────────
 
 const p = (text: string) => (text ? `<p>${escapeHtml(text)}</p>` : '');
-const h3 = (text: string) => `<h3>${escapeHtml(text)}</h3>`;
+/**
+ * A subhead inside a chapter.
+ *
+ * `h2`, not `h3`. Six of these formats grew their own `const h3` helper for
+ * "a subhead" while the design system's actual subhead — `h2` at 17pt, whose
+ * rule in `css.pure.ts` carries a paragraph explaining that it is a different
+ * object from a chapter title — went unused in every one of them. A chapter
+ * title is an `h1`, so an `h3` under it skips a level, and PDF/UA 7.4.2 fails
+ * on exactly that: "heading level 2 is skipped in a descending sequence".
+ *
+ * Seven of the ten documents failed the same rule and no other. Named
+ * `subhead` rather than `h2` so the next person reaches for the level the
+ * design system defines instead of inventing one.
+ */
+const subhead = (text: string) => `<h2>${escapeHtml(text)}</h2>`;
 
 /** A list where an empty list should print nothing at all. */
 function renderList(items: readonly string[]): string {
@@ -301,7 +315,7 @@ function incomeSection(s: BorrowingCapacitySnapshot, palette: ResolvedReportPale
   return renderDataTable(incomeCols, incomeRows, { caption: 'Income, before and after shading' })
     + incomeMixChart(s, palette)
     + shadingNote
-    + h3('Expenses and commitments')
+    + subhead('Expenses and commitments')
     // Short labels on purpose. A KPI label that wraps to two lines pushes its
     // own value down while its neighbours stay put, and the strip's baselines
     // stop lining up — visible in the first render of this document.
@@ -348,7 +362,7 @@ function explanationSection(s: BorrowingCapacitySnapshot): string {
           step.figures.map((f) => ({ item: f.label, value: formatMeasure(f.value) })),
         )
       : '';
-    return h3(`${i + 1}. ${step.title}`) + p(step.narrative) + figures;
+    return subhead(`${i + 1}. ${step.title}`) + p(step.narrative) + figures;
   }).join('');
   return headline + steps;
 }
@@ -438,7 +452,7 @@ function scenarioSection(s: BorrowingCapacitySnapshot): string {
   // own line. It has room here, beside the rest of the scenario's detail.
   const details = rows
     .filter((r) => r.adjustments.length || r.details.length)
-    .map((r) => h3(r.name) + renderList([
+    .map((r) => subhead(r.name) + renderList([
       ...(r.adjustments.length ? [`Changed: ${r.adjustments.join(' · ')}`] : []),
       ...r.details,
     ]))

@@ -368,7 +368,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       .maybeSingle();
     renderId = (renderRow?.id as string) ?? null;
 
-    const pdf = await renderPdf(weasyprint, html, { variant: 'pdf/a-2b', tagged: true });
+    const pdf = await renderPdf(weasyprint, html, {
+      variant: 'pdf/ua-1',
+      tagged: true,
+      // The ledger row and the source row, stamped into the PDF itself.
+      // See `DocumentProvenance` — a delivered file could not be traced
+      // back to the render that produced it.
+      provenance: {
+        format: 'property-comparison',
+        renderId: renderId,
+        sourceId: request.comparisonId,
+        renderedAt: now,
+      },
+    });
 
     const { error: uploadError } = await supabase.storage.from(PDF_BUCKET).upload(path, pdf, {
       contentType: 'application/pdf',
