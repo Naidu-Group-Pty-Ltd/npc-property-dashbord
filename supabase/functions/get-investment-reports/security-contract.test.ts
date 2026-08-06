@@ -24,6 +24,8 @@ describe('get-investment-reports authorization contract', () => {
     expect(functionSource).toContain('canonical_property_key');
     const libraryProjection = functionSource.match(/INVESTMENT_LIBRARY_SELECT = '([^']+)'/)?.[1] || '';
     expect(libraryProjection).not.toContain('report_content');
+    expect(functionSource).toContain("select('id,report_content,sources_content')");
+    expect(functionSource).toContain('hydrateCompleteAddresses');
     expect(functionSource).toContain("projection === 'detail' ? INVESTMENT_DETAIL_SELECT");
     expect(functionSource).toContain("code: 'REPORT_SCHEMA_MISMATCH'");
     expect(functionSource).toContain("error.code === '42703'");

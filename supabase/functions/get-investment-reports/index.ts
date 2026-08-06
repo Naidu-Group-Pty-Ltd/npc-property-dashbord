@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
 type Projection = 'library' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
@@ -37,7 +38,7 @@ const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = 
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-07-26.1';
+const FUNCTION_VERSION = '2026-08-06.1';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -52,6 +53,46 @@ const classifyDatabaseError = (error: { code?: string; message?: string }) => {
   if (/connection|unavailable|gateway/i.test(message)) return { code: 'REPORT_DATABASE_UNAVAILABLE' as const, details: 'The report database is temporarily unavailable.', retryable: true, status: 503 };
   return { code: 'REPORT_QUERY_FAILED' as const, details: 'The report query could not be completed.', retryable: true, status: 500 };
 };
+
+type ReportRow = Record<string, unknown> & { id?: string; property_address?: string; report_content?: string; sources_content?: string };
+
+async function hydrateCompleteAddresses(
+  supabase: ReturnType<typeof createClient>,
+  rows: ReportRow[],
+): Promise<{ rows: ReportRow[]; error: { code?: string; message?: string } | null }> {
+  const incompleteIds = rows
+    .filter(row => typeof row.id === 'string' && !hasCompleteAustralianAddress(row.property_address))
+    .map(row => row.id as string);
+  if (!incompleteIds.length) return { rows, error: null };
+
+  const missingContentIds = rows
+    .filter(row => incompleteIds.includes(row.id as string) && typeof row.report_content !== 'string')
+    .map(row => row.id as string);
+  let contentById = new Map<string, { report_content?: string; sources_content?: string }>();
+  if (missingContentIds.length) {
+    const contentResult = await supabase
+      .from('investment_reports')
+      .select('id,report_content,sources_content')
+      .in('id', missingContentIds);
+    if (contentResult.error) return { rows, error: contentResult.error };
+    contentById = new Map((contentResult.data || []).map(item => [item.id, item]));
+  }
+
+  return {
+    error: null,
+    rows: rows.map(row => {
+      const content = typeof row.id === 'string' ? contentById.get(row.id) : undefined;
+      return {
+        ...row,
+        property_address: resolveCompleteReportAddress(
+          row.property_address,
+          row.report_content ?? content?.report_content,
+          row.sources_content ?? content?.sources_content,
+        ),
+      };
+    }),
+  };
+}
 
 Deno.serve(async (req) => {
   const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -136,9 +177,17 @@ Deno.serve(async (req) => {
         responseData = [...new Map([...(data || []), ...(siblings.data || [])].map(row => [row.id, row])).values()];
       }
     }
+    if (table === 'investment_reports' && projection !== 'idLookup' && projection !== 'generationProgress' && responseData.length) {
+      const hydrated = await hydrateCompleteAddresses(supabase, responseData as ReportRow[]);
+      if (hydrated.error) {
+        console.error('[get-investment-reports]', { correlationId, functionVersion: FUNCTION_VERSION, technicalError: hydrated.error });
+        const mapped = classifyDatabaseError(hydrated.error); return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
+      }
+      responseData = hydrated.rows as typeof responseData;
+    }
     const totalRows = count || 0, totalPages = Math.ceil(totalRows / pageSize);
     console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection, filters: { status: options.status, archived: options.isArchived, client: options.isClientReport, hasDateRange: Boolean(options.createdAfter || options.createdBefore) }, page, pageSize, durationMs: Math.round(performance.now() - started), returnedCount: responseData.length, functionVersion: FUNCTION_VERSION });
-    if (body.reportId) return json({ success: true, report: data[0], correlationId }, 200, corsHeaders, correlationId);
+    if (body.reportId) return json({ success: true, report: responseData[0], correlationId }, 200, corsHeaders, correlationId);
     return json({ success: true, reports: responseData, count: totalRows, pagination: { page, pageSize, totalRows, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 }, correlationId }, 200, corsHeaders, correlationId);
   } catch (error) {
     console.error('[get-investment-reports]', { correlationId, functionVersion: FUNCTION_VERSION, technicalError: error });
