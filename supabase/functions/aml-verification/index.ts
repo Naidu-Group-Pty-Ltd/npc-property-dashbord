@@ -19,9 +19,12 @@ import {
   resolveTenantProvider,
   runWithMetrics,
   currentEnvironment,
+  checkSelfHostedIdvHealth,
   ProviderResolutionError,
   type ScreeningScope,
 } from "../_shared/aml/providers/index.ts";
+import { stripImagePayloads } from "../_shared/aml/verificationEvidence.pure.ts";
+import { canonicalOutcome } from "../_shared/aml/verificationOutcome.pure.ts";
 
 const DEFAULT_TENANT = "default";
 async function resolveTenantId(admin: any, caseId: string): Promise<string> {
@@ -83,6 +86,26 @@ const corsHeaders = {
 
 /** Owner decision of 2026-07-28: one attempt plus two retries. */
 const MAX_VERIFICATION_ATTEMPTS = 3;
+
+/**
+ * Attempts this party has actually spent.
+ *
+ * Never `attempt_number`: that is a capture sequence, and reading it here is
+ * what let three unusable captures exhaust a client who had used none.
+ */
+async function consumedAttempts(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<number> {
+  let q = admin.schema("aml").from("verification_checks")
+    .select("id")
+    .eq("case_id", caseId)
+    .eq("check_type", "electronic_idv")
+    .eq("attempt_consumed", true);
+  q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+  const { data, error } = await q;
+  if (error) return 0; // pre-migration: no escalation rather than a wrong one
+  return (data ?? []).length;
+}
 
 const IDV_ESTIMATED_TOKENS = 400;
 const SCREENING_ESTIMATED_TOKENS = 250;
@@ -162,7 +185,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // customer failure. It is an operator condition, answered as 409.
         let provider;
         try {
-          provider = getIdvProvider({ resolved, preferred: body.provider });
+          // No caller-supplied hint. `providers/index.ts` states the rule —
+          // "Providers MUST NEVER be selected client-side" — and this was the
+          // one place a request body could still influence the choice.
+          provider = getIdvProvider({ resolved, admin });
         } catch (resolutionErr: any) {
           if (resolutionErr instanceof ProviderResolutionError) {
             return jr({
@@ -196,7 +222,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           status: "in_progress",
           requested_by: userId,
           mc_job_id: reservation?.jobId ?? null,
-          metadata: body.metadata ?? {},
+          // The caller's metadata carries the base64 captures the provider
+          // needs. They are passed to the provider below but never stored:
+          // persisting them here would put a second, unaudited copy of a
+          // customer's face in a database row.
+          metadata: stripImagePayloads(body.metadata ?? {}),
         };
         // Stamp the evidential standing at creation: a simulator execution is
         // never authoritative. Retry without the columns while a database has
@@ -225,7 +255,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             status: result.status,
             overall_score: result.overallScore,
             provider_reference: result.providerReference,
-            result_payload: result.raw,
+            result_payload: stripImagePayloads(result.raw),
             completed_at: new Date().toISOString(),
             mc_tokens_committed: IDV_ESTIMATED_TOKENS,
           }).eq("id", inserted.id).select().single();
@@ -573,46 +603,67 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             failure_reason: `service_error: ${String(e?.message ?? e).slice(0, 300)}`,
             updated_at: new Date().toISOString(),
           }).eq("id", checkId);
-          return jr({ error: `Verification service unavailable: ${e?.message ?? e}`, code: "service_unavailable" }, 503);
+          // The adapter already redacts its host and token, but the message is
+          // still internal diagnostics; it belongs in failure_reason, not in a
+          // response body.
+          return jr({
+            error: "The verification service could not be reached. Nothing was recorded against the customer — try again once Integration Health shows the service is available.",
+            code: "service_unavailable",
+          }, 503);
         }
 
-        // 'unusable' capture (no face found, too small) is a capture problem,
-        // not an identity failure — leave the attempt open for a retake.
-        const unusable = (result.raw as any)?.face?.verdict === "unusable";
-        const status = unusable ? "pending"
-          : result.status === "failed" ? "failed"
-          : result.status === "verified" ? "passed"
-          : "referred";
-
-        const attemptsUsed = Number(check.attempt_number ?? 1);
-        const finalStatus = (status === "failed" && attemptsUsed >= MAX_VERIFICATION_ATTEMPTS)
-          ? "exhausted" : status;
+        // Exactly the rules the outbox worker applies. This path used to have
+        // its own: it read `attempt_number` (a capture sequence) to decide
+        // `exhausted`, never set `attempt_consumed` — so an outcome it
+        // recorded was invisible to the portal's accounting — and never set
+        // `processing_status`, leaving a finished check looking in-flight and
+        // blocking the client from submitting again.
+        const outcome = canonicalOutcome(result, {
+          attemptsConsumed: await consumedAttempts(admin, check.case_id, check.party_id ?? null),
+          maxAttempts: MAX_VERIFICATION_ATTEMPTS,
+        });
+        const unusable = outcome.processingStatus === "capture_unusable";
 
         const { data: updated, error: upErr } = await admin.schema("aml")
           .from("verification_checks").update({
-            status: finalStatus,
+            // null leaves the identity status untouched: an unusable capture
+            // is not a result, and the attempt stays open for a retake.
+            ...(outcome.status ? { status: outcome.status } : {}),
+            processing_status: outcome.processingStatus,
+            provider_error_category: outcome.providerErrorCategory,
+            attempt_consumed: outcome.attemptConsumed,
             provider: result.provider,
             provider_reference: result.providerReference,
-            outcome_detail: {
+            outcome_detail: stripImagePayloads({
               ...(check.outcome_detail ?? {}),
               checks: result.checks,
               overall_score: result.overallScore,
               raw: result.raw,
               adjudicated_by: userId,
-            },
-            failure_reason: status === "failed"
+            }),
+            failure_reason: outcome.status === "failed"
               ? result.checks.filter((c: any) => c.status === "fail").map((c: any) => c.name).join(", ")
               : null,
-            completed_at: ["passed", "failed", "exhausted"].includes(finalStatus)
+            completed_at: ["passed", "failed", "exhausted"].includes(String(outcome.status))
               ? new Date().toISOString() : null,
             updated_at: new Date().toISOString(),
           }).eq("id", checkId).select("*").single();
         if (upErr) throw upErr;
 
+        // The timeline records consumed attempts, so it agrees with what the
+        // client is told. An unusable capture is named as such rather than
+        // reported as an identity outcome.
+        // Read after the update, so it already includes this one if consumed.
+        const consumedNow = await consumedAttempts(admin, check.case_id, check.party_id ?? null);
         await appendCaseEvent(admin, check.case_id, "idv_result",
-          `Identity verification for ${check.party_label}: ${finalStatus} (attempt ${attemptsUsed} of ${MAX_VERIFICATION_ATTEMPTS})`,
+          unusable
+            ? `Identity verification for ${check.party_label}: capture unusable — no attempt consumed (${consumedNow} of ${MAX_VERIFICATION_ATTEMPTS} used)`
+            : `Identity verification for ${check.party_label}: ${outcome.status} (attempt ${consumedNow} of ${MAX_VERIFICATION_ATTEMPTS})`,
           {
-            verification_check_id: checkId, status: finalStatus,
+            verification_check_id: checkId,
+            status: outcome.status ?? "pending",
+            processing_status: outcome.processingStatus,
+            attempt_consumed: outcome.attemptConsumed,
             provider: result.provider, provider_reference: result.providerReference,
             checks: result.checks,
             limitations: (result.raw as any)?.limitations ?? [],
@@ -809,12 +860,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             : true;
           const wantsSimulator = mode === "simulator" || key === "simulator";
           let state: string;
+          // Live health of the actual service, not an inference from secrets.
+          // Two secrets can point at a dead container; reporting `ready_live`
+          // for that is what let staff believe the provider was up while every
+          // verification would have failed.
+          let serviceHealth: Awaited<ReturnType<typeof checkSelfHostedIdvHealth>> | null = null;
+
           if (wantsSimulator) {
             state = environment === "production" ? "not_configured" : "simulator_non_production";
           } else if (!wired || !configured) {
             state = "misconfigured";
           } else if (resolved && ["failing", "unhealthy"].includes(String((resolved as any).lastHealthStatus ?? ""))) {
             state = "unavailable";
+          } else if (capability === "idv" && key === "selfhosted") {
+            serviceHealth = await checkSelfHostedIdvHealth();
+            state = serviceHealth.reachable && serviceHealth.status === "ok"
+              ? "ready_live"
+              : "unavailable";
           } else {
             state = "ready_live";
           }
@@ -833,6 +895,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               at: cfg.last_health_at, status: cfg.last_health_status,
               message: cfg.last_health_message,
             } : null,
+            // A probe made just now, so `state` is evidence rather than
+            // inference. Carries no URL and no token.
+            service_health: serviceHealth,
             state,
           };
         }
@@ -840,7 +905,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({
           environment,
           simulator_blocked: environment === "production",
-          note: "Recorded configuration and runtime booleans — not a claim that any provider call has been made.",
+          note: "Configuration plus a live /healthz probe of the configured service. `ready_live` means the service answered and both models initialised.",
           idv: await capabilityReadiness("idv"),
           screening: await capabilityReadiness("pep_sanctions"),
         });

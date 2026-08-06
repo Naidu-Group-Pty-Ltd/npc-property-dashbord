@@ -37,6 +37,66 @@ def test_healthz_reports_model_presence_without_auth():
     assert body["token_configured"] is True
 
 
+def test_healthz_rejects_a_git_lfs_pointer_as_a_model(tmp_path, monkeypatch):
+    """
+    The build defect this exists to catch.
+
+    opencv_zoo keeps the weights in Git LFS. `raw.githubusercontent.com` serves
+    the pointer, so `fetch_models.sh` used to write a 131-byte text file that
+    curl reported as a success and `Path.exists()` reported as a model. The
+    container came up, answered /healthz with `"status": "ok"`, and failed on
+    the first real verification with an opaque OpenCV error.
+
+    Health must report usability, not presence.
+    """
+    # Exactly what `raw.githubusercontent.com` served: 131 and 133 bytes.
+    yunet_pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4\n"
+        "size 232589\n"
+    )
+    sface_pointer = (
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79\n"
+        "size 38696353\n"
+    )
+    (tmp_path / main_module.m.YUNET_FILE).write_text(yunet_pointer)
+    (tmp_path / main_module.m.SFACE_FILE).write_text(sface_pointer)
+    assert len(yunet_pointer) == 131 and len(sface_pointer) == 133
+    monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert body["models"] == {"yunet": False, "sface": False}
+    # The reason has to be in the probe: this is the only place a broken
+    # deployment announces itself before a customer reaches it.
+    assert "git_lfs_pointer" in body["model_problems"]["yunet"]
+    assert "git_lfs_pointer" in body["model_problems"]["sface"]
+
+
+def test_healthz_rejects_a_model_opencv_cannot_initialise(tmp_path, monkeypatch):
+    """
+    Size is not usability. A truncated or wrong-architecture ONNX passes every
+    file-level check and then throws inside the first request, so health has to
+    prove the loader actually builds.
+    """
+    for name in (main_module.m.YUNET_FILE, main_module.m.SFACE_FILE):
+        (tmp_path / name).write_bytes(b"\0" * (main_module.m.MIN_MODEL_BYTES + 1))
+    monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert body["models"] == {"yunet": False, "sface": False}
+    assert "failed_to_initialise" in body["model_problems"]["yunet"]
+
+
+def test_a_pointer_model_raises_rather_than_degrading_silently(tmp_path, monkeypatch):
+    (tmp_path / main_module.m.YUNET_FILE).write_text("version https://git-lfs.github.com/spec/v1\n")
+    monkeypatch.setattr(main_module.m, "MODEL_DIR", tmp_path)
+    with pytest.raises(main_module.m.ModelUnavailable):
+        main_module.m._model_path(main_module.m.YUNET_FILE)
+
+
 @pytest.mark.parametrize("path", ["/face/compare", "/face/liveness", "/doc/mrz"])
 def test_endpoints_require_a_token(path):
     r = client.post(path, json={"document_image": TINY_PNG, "selfie_image": TINY_PNG})

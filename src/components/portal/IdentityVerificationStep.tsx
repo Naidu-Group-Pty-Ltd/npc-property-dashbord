@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   amlPortalApi, type AmlVerificationParty, type AmlVerificationStatus,
 } from '@/lib/aml/amlPortalApi';
+import { frameToJpeg, toUploadableJpeg, MAX_CAPTURE_EDGE_PX } from '@/lib/aml/captureImage';
 
 /**
  * Identity verification step (zero-cost stack).
@@ -91,6 +92,33 @@ export function IdentityVerificationStep({
   const allSettled = state.parties.every(
     (p) => p.status === 'verified' || p.status === 'in_review' || p.status === 'contact_adviser');
 
+  // The server refuses a selfie upload URL unless a live provider can examine
+  // the result. Honour that here rather than offering a capture that ends in a
+  // 409 — the same contradiction the request router was fixed to avoid.
+  const availability = state.availability ?? 'available';
+  if (availability !== 'available') {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-primary" /> Verify your identity
+          </CardTitle>
+          <CardDescription>
+            {availability === 'manual_verification_required'
+              ? 'The photo check is not available for your case. Your adviser will verify your identity from your documents instead — there is nothing you need to do here, and no disadvantage to you.'
+              : 'The photo check is temporarily unavailable. Nothing has been used up. Please come back shortly, or upload your identity document and your adviser will take it from there.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex justify-between">
+          <Button variant="outline" onClick={onBack}>
+            <ArrowLeft className="mr-1 h-4 w-4" /> Back
+          </Button>
+          <Button onClick={onNext}>Continue <ArrowRight className="ml-1 h-4 w-4" /></Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -139,6 +167,13 @@ export function IdentityVerificationStep({
                 </Button>
               ) : null}
             </div>
+
+            {party.retake_required && party.can_attempt && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                We could not read your last photos clearly enough to check them, so
+                nothing was used up. Please take them again in brighter, even light.
+              </p>
+            )}
 
             {party.status === 'contact_adviser' && (
               <p className="mt-3 text-xs text-muted-foreground">
@@ -194,15 +229,44 @@ function CaptureDialog({
   const [documentShot, setDocumentShot] = useState<Capture>(null);
   const [selfieShot, setSelfieShot] = useState<Capture>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Guards a second submit from a double tap, before React re-renders. */
+  const submitting = useRef(false);
 
-  // Revoke object URLs on unmount — these hold image data in memory.
+  /**
+   * Object URLs hold image data until revoked, so every one we mint is tracked
+   * and released on unmount. Revoking on each capture change — the previous
+   * shape here — released the document preview's URL the moment the selfie was
+   * taken, which is only invisible because that preview is off screen by then.
+   */
+  const urls = useRef<string[]>([]);
+  const setCapture = useCallback((
+    set: (c: Capture) => void, previous: Capture,
+  ) => (next: Capture) => {
+    if (previous) {
+      URL.revokeObjectURL(previous.url);
+      urls.current = urls.current.filter((u) => u !== previous.url);
+    }
+    if (next) urls.current.push(next.url);
+    set(next);
+  }, []);
   useEffect(() => () => {
-    if (documentShot) URL.revokeObjectURL(documentShot.url);
-    if (selfieShot) URL.revokeObjectURL(selfieShot.url);
-  }, [documentShot, selfieShot]);
+    urls.current.forEach((u) => URL.revokeObjectURL(u));
+    urls.current = [];
+  }, []);
 
   const submit = async () => {
-    if (!documentShot || !selfieShot) return;
+    if (submitting.current) return;
+    if (!documentShot || !selfieShot) {
+      // Never return silently: the customer pressed Submit and is owed a
+      // reason. Reaching this means a capture was lost, so send them back to
+      // the step that has to be redone rather than leaving Submit inert.
+      setError(!documentShot
+        ? 'The photo of your document was not kept. Please take it again.'
+        : 'The photo of your face was not kept. Please take it again.');
+      setStage(documentShot ? 'selfie' : 'document');
+      return;
+    }
+    submitting.current = true;
     setStage('submitting');
     setError(null);
     try {
@@ -215,10 +279,12 @@ function CaptureDialog({
         return meta.path;
       };
 
-      const [docPath, selfiePath] = [
-        await upload(documentShot.blob, 'document'),
-        await upload(selfieShot.blob, 'selfie'),
-      ];
+      // Sequential and document-first: the selfie URL is the request that
+      // checks attempts and provider readiness, so a refusal happens before a
+      // face is uploaded rather than after (APP 3 — no collection without a
+      // purpose that can be served).
+      const docPath = await upload(documentShot.blob, 'document');
+      const selfiePath = await upload(selfieShot.blob, 'selfie');
 
       const res = await amlPortalApi.submitVerification(caseId, {
         party_id: party.party_id,
@@ -231,6 +297,8 @@ function CaptureDialog({
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong. Please try again.');
       setStage('selfie');
+    } finally {
+      submitting.current = false;
     }
   };
 
@@ -269,7 +337,7 @@ function CaptureDialog({
             <CameraCapture
               facing="environment"
               existing={documentShot}
-              onCapture={(c) => setDocumentShot(c)}
+              onCapture={setCapture(setDocumentShot, documentShot)}
               onConfirm={() => setStage('selfie')}
             />
           )}
@@ -278,7 +346,7 @@ function CaptureDialog({
             <CameraCapture
               facing="user"
               existing={selfieShot}
-              onCapture={(c) => setSelfieShot(c)}
+              onCapture={setCapture(setSelfieShot, selfieShot)}
               onConfirm={submit}
               confirmLabel="Submit"
             />
@@ -308,6 +376,19 @@ function CaptureDialog({
  * camera, an insecure context, a locked-down work laptop. Falling back to a
  * file input keeps those customers moving instead of dead-ending them.
  */
+/**
+ * Whether the element has an actual frame to draw.
+ *
+ * All three conditions are needed: `loadedmetadata` sets `readyState` to
+ * HAVE_METADATA and populates the dimensions, and a stream can report a width
+ * a tick before it reports a height.
+ */
+function isVideoRenderable(video: HTMLVideoElement): boolean {
+  return video.readyState >= HTMLMediaElement.HAVE_METADATA
+    && video.videoWidth > 0
+    && video.videoHeight > 0;
+}
+
 function CameraCapture({
   facing, existing, onCapture, onConfirm, confirmLabel = 'Use this photo',
 }: {
@@ -321,17 +402,38 @@ function CameraCapture({
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [working, setWorking] = useState(false);
+  /**
+   * Bumped to reopen the camera. Retake used to call `onCapture(null)` alone,
+   * which re-rendered the preview branch — but the acquisition effect keys on
+   * `facing`, which had not changed, so it never re-ran and the stream stopped
+   * by the previous shot was never replaced. The customer got a permanently
+   * black preview and a dead "Take photo" button, with no way out but reload.
+   */
+  const [restartKey, setRestartKey] = useState(0);
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   }, []);
 
+  const restart = useCallback(() => {
+    stop();
+    setReady(false);
+    setCameraError(null);
+    setRestartKey((k) => k + 1);
+  }, [stop]);
+
   useEffect(() => {
+    // Nothing to acquire while a capture is on screen; the preview branch has
+    // no <video> to attach a stream to, and holding the camera open would
+    // leave the device indicator lit for no reason.
+    if (existing) return;
+
     let cancelled = false;
     (async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraError('This browser cannot use the camera.');
+        setCameraError('This browser cannot use the camera. You can upload a photo instead.');
         return;
       }
       try {
@@ -341,31 +443,42 @@ function CameraCapture({
         });
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-        setReady(true);
+        const video = videoRef.current;
+        if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
+        video.srcObject = stream;
+        await video.play().catch(() => {});
+        // `play()` resolving does not mean there are pixels: the dimensions
+        // are still 0 until metadata arrives. Shooting then produced a blank
+        // frame that uploaded happily and came back "no face found".
+        if (!cancelled && isVideoRenderable(video)) setReady(true);
       } catch {
         setCameraError('We could not open your camera. You can upload a photo instead.');
       }
     })();
     return () => { cancelled = true; stop(); };
-  }, [facing, stop]);
+  }, [facing, stop, restartKey, existing]);
+
+  const capture = async (produce: () => Promise<Blob>) => {
+    setWorking(true);
+    setCameraError(null);
+    try {
+      const blob = await produce();
+      stop();
+      setReady(false);
+      onCapture({ blob, url: URL.createObjectURL(blob) });
+    } catch (e: any) {
+      // Say what happened. A silent return here left the customer pressing a
+      // button that appeared to do nothing.
+      setCameraError(e?.message ?? 'We could not use that photo. Please try again.');
+    } finally {
+      setWorking(false);
+    }
+  };
 
   const shoot = () => {
     const video = videoRef.current;
     if (!video) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')?.drawImage(video, 0, 0);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      onCapture({ blob, url: URL.createObjectURL(blob) });
-      stop();
-      setReady(false);
-    }, 'image/jpeg', 0.92);
+    void capture(() => frameToJpeg(video));
   };
 
   if (existing) {
@@ -377,7 +490,11 @@ function CameraCapture({
           className="w-full rounded-md border"
         />
         <div className="flex gap-2">
-          <Button variant="outline" className="flex-1" onClick={() => onCapture(null)}>
+          <Button
+            variant="outline"
+            className="flex-1"
+            onClick={() => { onCapture(null); restart(); }}
+          >
             Retake
           </Button>
           <Button className="flex-1" onClick={onConfirm}>{confirmLabel}</Button>
@@ -397,16 +514,27 @@ function CameraCapture({
             playsInline
             muted
             aria-label="Camera preview"
+            // Metadata can land after the effect has already checked, so the
+            // ready gate is driven from the element as well.
+            onLoadedMetadata={(e) => { if (isVideoRenderable(e.currentTarget)) setReady(true); }}
+            onCanPlay={(e) => { if (isVideoRenderable(e.currentTarget)) setReady(true); }}
           />
-          <Button className="w-full" onClick={shoot} disabled={!ready}>
-            <Camera className="mr-2 h-4 w-4" /> Take photo
+          <Button className="w-full" onClick={shoot} disabled={!ready || working}>
+            {working
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing…</>
+              : <><Camera className="mr-2 h-4 w-4" /> {ready ? 'Take photo' : 'Starting camera…'}</>}
           </Button>
         </>
       )}
 
       {cameraError && (
         <Alert>
-          <AlertDescription className="text-xs">{cameraError}</AlertDescription>
+          <AlertDescription className="space-y-2 text-xs">
+            <span className="block">{cameraError}</span>
+            <Button variant="outline" size="sm" onClick={restart}>
+              <RefreshCw className="mr-1.5 h-3 w-3" /> Try the camera again
+            </Button>
+          </AlertDescription>
         </Alert>
       )}
 
@@ -416,14 +544,23 @@ function CameraCapture({
         </span>
         <input
           type="file"
-          accept="image/*"
+          // JPEG and PNG only. `image/*` let an iPhone offer HEIC, which the
+          // verification service cannot decode; toUploadableJpeg rejects it
+          // anyway, but not offering it is a better experience than refusing it.
+          accept="image/jpeg,image/png"
           capture={facing === 'user' ? 'user' : 'environment'}
           className="mt-1 block w-full text-xs"
+          disabled={working}
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) onCapture({ blob: file, url: URL.createObjectURL(file) });
+            // Reset the input so choosing the same file twice still fires.
+            e.currentTarget.value = '';
+            if (file) void capture(() => toUploadableJpeg(file));
           }}
         />
+        <span className="mt-1 block text-[11px] text-muted-foreground">
+          JPEG or PNG. Photos are resized to {MAX_CAPTURE_EDGE_PX}px before they are sent.
+        </span>
       </label>
     </div>
   );

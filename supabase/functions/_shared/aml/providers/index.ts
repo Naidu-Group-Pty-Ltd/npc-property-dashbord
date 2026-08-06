@@ -189,6 +189,17 @@ const SIMULATOR_SCREENING: ScreeningProvider = {
  * That is deliberate: passive liveness here is a heuristic, and the honest
  * response to "probably fine" is a human, not a pass.
  */
+/**
+ * Per-call ceiling for the verification service.
+ *
+ * A face compare on a 2000px pair is well under a second; this is generous
+ * enough that a cold container still answers, and short enough that three
+ * sequential calls stay inside the worker's own budget.
+ */
+const VERIFICATION_SERVICE_TIMEOUT_MS = Number(
+  Deno.env.get("AML_VERIFICATION_SERVICE_TIMEOUT_MS") ?? 20_000,
+);
+
 function makeSelfHostedIdvProvider(): IdvProvider {
   const baseUrl = (Deno.env.get("AML_VERIFICATION_SERVICE_URL") || "").replace(/\/+$/, "");
   const token = Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN") || "";
@@ -211,14 +222,55 @@ function makeSelfHostedIdvProvider(): IdvProvider {
       const selfieImage = meta.selfie_image_b64 ?? "";
       if (!documentImage) throw new Error("document image is required for self-hosted IDV");
 
+      /**
+       * Strip the service host and bearer token out of anything that will be
+       * persisted or logged. `failure_reason` is read by staff and carried
+       * into the case record; neither the internal URL nor the credential
+       * belongs there, and a transport error quotes the URL by default.
+       */
+      const redactService = (text: string): string => {
+        let out = text;
+        if (baseUrl) out = out.split(baseUrl).join("[verification-service]");
+        if (token) out = out.split(token).join("[redacted]");
+        // Belt and braces: any absolute URL left in a transport message.
+        return out.replace(/https?:\/\/[^\s"')]+/gi, "[verification-service]");
+      };
+
       const call = async (path: string, body: Record<string, unknown>) => {
-        const res = await fetch(`${baseUrl}${path}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(body),
-        });
+        let res: Response;
+        try {
+          res = await fetch(`${baseUrl}${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(body),
+            // Without this a hung service hangs the worker until the platform
+            // kills it, leaving the check claimed as `processing` with no
+            // completion — which used to strand the client permanently.
+            signal: AbortSignal.timeout(VERIFICATION_SERVICE_TIMEOUT_MS),
+          });
+        } catch (e) {
+          const aborted = (e as Error)?.name === "TimeoutError" ||
+            (e as Error)?.name === "AbortError";
+          // The word `timeout` is load-bearing: the consumer categorises on it
+          // and records a technical failure, which consumes no attempt.
+          throw new Error(aborted
+            ? `verification service ${path} timed out after ${VERIFICATION_SERVICE_TIMEOUT_MS}ms`
+            // A transport error's message embeds the request URL, and this
+            // string is persisted to `failure_reason` and logged. Redact it:
+            // the service host is internal configuration and belongs in
+            // neither the case record nor the logs.
+            : `verification service ${path} unreachable: ${redactService((e as Error)?.message ?? String(e))}`);
+        }
         if (!res.ok) {
-          throw new Error(`verification service ${path} returned ${res.status}`);
+          // Read the body for the reason but never let it become an identity
+          // outcome — a 400 here means we sent something undecodable, a 401
+          // means our own token is wrong, a 503 means the models are missing.
+          // All three are ours to fix, not the customer's to have failed.
+          const detail = await res.text().catch(() => "");
+          throw new Error(
+            `verification service ${path} returned ${res.status}` +
+            (detail ? `: ${redactService(detail).slice(0, 200)}` : ""),
+          );
         }
         return await res.json();
       };
@@ -261,14 +313,36 @@ function makeSelfHostedIdvProvider(): IdvProvider {
             : `similarity ${face.similarity} (threshold ${face?.thresholds?.match})`,
         });
       }
+      // A liveness signal that failed only because the photo was poor is a
+      // capture problem, not a finding. Charging a customer an attempt — and
+      // recording an identity failure against them — because their selfie was
+      // blurred is exactly the confusion the service's own `problems` list
+      // exists to prevent. A screen-replay signal is a different matter and
+      // stays a failure.
+      let livenessUnusable = false;
       if (liveness) {
-        checks.push({
-          name: "liveness",
-          status: liveness.is_real === true ? "warn" : "fail",
-          // Never "pass": this is a heuristic, and recording it as a pass
-          // would overstate what was actually established.
-          detail: liveness.advisory ?? "heuristic signal only",
-        });
+        const problems: string[] = Array.isArray(liveness.problems)
+          ? liveness.problems.map((p: unknown) => String(p))
+          : [];
+        const qualityOnly = liveness.is_real === null ||
+          problems.includes("no_face_in_selfie") ||
+          (problems.length > 0 && problems.every((p) => p === "image_too_blurred"));
+
+        if (qualityOnly) {
+          livenessUnusable = true;
+          checks.push({
+            name: "liveness", status: "warn",
+            detail: `capture quality prevented a liveness signal: ${problems.join(", ") || "no face detected"}`,
+          });
+        } else {
+          checks.push({
+            name: "liveness",
+            status: liveness.is_real === true ? "warn" : "fail",
+            // Never "pass": this is a heuristic, and recording it as a pass
+            // would overstate what was actually established.
+            detail: liveness.advisory ?? "heuristic signal only",
+          });
+        }
       }
 
       // Document authenticity is explicitly NOT established: without DVS we
@@ -280,14 +354,15 @@ function makeSelfHostedIdvProvider(): IdvProvider {
       });
 
       const failed = checks.some((c) => c.status === "fail");
-      const faceMatched = face?.verdict === "match";
-      const captureUnusable = face?.verdict === "unusable";
+      const captureUnusable = face?.verdict === "unusable" || livenessUnusable;
 
+      // Never "verified", even on a match above threshold. Without a check
+      // against the issuing authority we have established that a face matches
+      // a document, not that the document is genuine — so the strongest honest
+      // outcome is a referral to a human. "pending" means we could not look at
+      // all, and consumes no attempt.
       const status: IdvResult["status"] =
-        captureUnusable ? "pending"
-        : failed ? "failed"
-        : faceMatched ? "manual_review"
-        : "manual_review";
+        captureUnusable ? "pending" : failed ? "failed" : "manual_review";
 
       const overallScore = typeof face?.similarity === "number"
         ? Math.max(0, Math.min(1, Number(face.similarity)))
@@ -510,6 +585,80 @@ export function currentEnvironment(): AmlEnvironment {
 function selfHostedIdvConfigured(): boolean {
   return Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")) &&
     Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN"));
+}
+
+// ---------- live health of the self-hosted service ----------
+
+export interface SelfHostedHealth {
+  /** The service answered. */
+  reachable: boolean;
+  /** `ok` only when both models initialise — see the service's /healthz. */
+  status: string | null;
+  /** Safe, non-identifying reason. Never the URL or the token. */
+  detail: string | null;
+}
+
+/**
+ * Probe `GET /healthz` on the verification service.
+ *
+ * Readiness used to be computed from secret presence alone, and said as much
+ * in its own note: "not a claim that any provider call has been made". Two
+ * secrets pointing at a dead container reported `ready_live`, so staff saw a
+ * ready provider and clients were offered a camera whose capture could never
+ * be examined — a face collected with no purpose that could be served (APP 3).
+ *
+ * `/healthz` is unauthenticated by design, so this needs no token and cannot
+ * leak one. The probe is short: readiness is an interactive screen.
+ */
+export async function checkSelfHostedIdvHealth(): Promise<SelfHostedHealth> {
+  const baseUrl = (Deno.env.get("AML_VERIFICATION_SERVICE_URL") || "").replace(/\/+$/, "");
+  if (!baseUrl) return { reachable: false, status: null, detail: "service_url_not_set" };
+
+  try {
+    const res = await fetch(`${baseUrl}/healthz`, {
+      method: "GET",
+      signal: AbortSignal.timeout(HEALTH_PROBE_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      return { reachable: true, status: null, detail: `healthz_http_${res.status}` };
+    }
+    const body = await res.json().catch(() => null) as
+      { status?: string; models?: Record<string, boolean>; token_configured?: boolean } | null;
+    if (!body) return { reachable: true, status: null, detail: "healthz_unparseable" };
+
+    const unusable = Object.entries(body.models ?? {})
+      .filter(([, usable]) => !usable).map(([name]) => name);
+    return {
+      reachable: true,
+      status: body.status ?? null,
+      detail: body.status === "ok"
+        ? null
+        : unusable.length
+          ? `models_unusable: ${unusable.join(", ")}`
+          : body.token_configured === false
+            ? "service_token_not_configured"
+            : `status_${body.status ?? "unknown"}`,
+    };
+  } catch (e) {
+    const timedOut = (e as Error)?.name === "TimeoutError" ||
+      (e as Error)?.name === "AbortError";
+    // Never echo the transport message: it embeds the service URL.
+    return { reachable: false, status: null, detail: timedOut ? "healthz_timeout" : "healthz_unreachable" };
+  }
+}
+
+/** Short cache so a per-request readiness check is not a per-request round trip. */
+const HEALTH_PROBE_TIMEOUT_MS = 5_000;
+const HEALTH_CACHE_MS = 30_000;
+let healthCache: { at: number; value: SelfHostedHealth } | null = null;
+
+/** Cached probe, for paths that run on every client page load. */
+export async function cachedSelfHostedIdvHealth(): Promise<SelfHostedHealth> {
+  const now = Date.now();
+  if (healthCache && now - healthCache.at < HEALTH_CACHE_MS) return healthCache.value;
+  const value = await checkSelfHostedIdvHealth();
+  healthCache = { at: now, value };
+  return value;
 }
 
 function adapterConfigured(capability: "idv" | "screening", key: string): boolean {

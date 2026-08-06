@@ -9,6 +9,9 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import {
+  canonicalOutcome,
+} from "../../../supabase/functions/_shared/aml/verificationOutcome.pure.ts";
 
 const portalFn = readFileSync("supabase/functions/aml-client-portal/index.ts", "utf8");
 const verificationFn = readFileSync("supabase/functions/aml-verification/index.ts", "utf8");
@@ -81,9 +84,22 @@ describe("attempt accounting", () => {
     expect(helper.indexOf(".rpc(")).toBeLessThan(helper.indexOf("attempt_number"));
   });
   it("the worker consumes an attempt only on an authoritative outcome", () => {
+    // The decision moved into verificationOutcome.pure.ts so the staff re-run
+    // in aml-verification obeys the same rules — the two writers of this row
+    // had drifted, and the staff path was never setting attempt_consumed at
+    // all. The behaviour itself is covered by verificationOutcome.test.ts;
+    // what is asserted here is that the worker defers to that contract rather
+    // than deciding for itself.
     const authoritativeBlock = consumer.slice(consumer.indexOf("Authoritative outcome"));
-    expect(authoritativeBlock).toContain("attempt_consumed: true");
-    expect(consumer.slice(0, consumer.indexOf("Authoritative outcome"))).not.toContain("attempt_consumed: true");
+    expect(authoritativeBlock).toContain("attempt_consumed: outcome.attemptConsumed");
+    expect(consumer).toContain("canonicalOutcome(result,");
+    expect(consumer, "never a hardcoded consumption").not.toContain("attempt_consumed: true");
+
+    // And the contract it defers to only consumes on an authoritative outcome.
+    expect(canonicalOutcome({ status: "failed" }, { attemptsConsumed: 0, maxAttempts: 3 })
+      .attemptConsumed).toBe(true);
+    expect(canonicalOutcome({ status: "pending" }, { attemptsConsumed: 0, maxAttempts: 3 })
+      .attemptConsumed).toBe(false);
   });
   it("unusable captures and technical failures never touch status or attempts", () => {
     const unusable = consumer.slice(consumer.indexOf("capture_unusable"), consumer.indexOf("Authoritative outcome"));
