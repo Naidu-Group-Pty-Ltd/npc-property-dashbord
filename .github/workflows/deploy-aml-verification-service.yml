@@ -1,0 +1,157 @@
+# Deploy the self-hosted AML identity-verification service to Cloud Run.
+#
+# ## Why this file exists
+#
+# `services/aml-verification-service/` has shipped for months with no way to
+# deploy it. That is the single reason electronic IDV cannot run: with no
+# reachable service there is no `AML_VERIFICATION_SERVICE_URL`, so
+# `decideProvider` refuses, `clientSafeIdvAvailability` answers
+# `manual_verification_required`, and the Client Portal offers only the
+# documentary route.
+#
+# It mirrors `deploy-weasyprint-service.yml` — the same Workload Identity
+# Federation, the same repository variables, the same manual promotion — rather
+# than introducing a second deployment idiom. If that file's auth works, this
+# one works.
+#
+# ## What it does NOT do
+#
+# It does not set the Supabase secrets or flip the provider to live. Those are
+# separate, reviewable acts: a service can be running long before anyone wants
+# customer captures reaching it. After a successful deploy, finish with
+#
+#   1. set AML_VERIFICATION_SERVICE_URL / AML_VERIFICATION_SERVICE_TOKEN as
+#      Supabase Edge Function secrets (the token must equal the service's
+#      AML_SERVICE_TOKEN);
+#   2. insert the aml.provider_configs row (capability=idv, provider_key=
+#      selfhosted, mode=live, active=true);
+#   3. confirm provider_readiness reports state=ready_live.
+#
+# Until step 1 the service is deployed but unreferenced, which is a safe
+# resting state.
+
+name: Deploy AML verification service
+
+on:
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: 'Send 100% of traffic to the new revision'
+        type: boolean
+        default: false
+
+env:
+  SERVICE: aml-verification-service
+  REGION: ${{ vars.GCP_REGION || 'australia-southeast1' }}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      # Same guard as the weasyprint workflow: a missing credential must stop
+      # the run visibly, not skip the deploy and report success.
+      - id: check
+        name: Check for a deploy credential
+        run: |
+          set -euo pipefail
+          if [ -z "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ] \
+          || [ -z "${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" ] \
+          || [ -z "${{ vars.GCP_PROJECT_ID }}" ]; then
+            echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_DEPLOY_SERVICE_ACCOUNT and GCP_PROJECT_ID must be set as repository variables."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: image
+        run: |
+          set -euo pipefail
+          base="gcr.io/${{ vars.GCP_PROJECT_ID }}/aml-verification-service"
+          tag="$(git rev-parse --short HEAD)"
+          echo "ref=${base}:${tag}" >> "$GITHUB_OUTPUT"
+          echo "building ${base}:${tag}"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # The image fetches the two Apache-2.0 opencv_zoo models at build time
+      # (scripts/fetch_models.sh). Those downloads are why this needs more than
+      # the default build timeout.
+      - name: Build on Cloud Build
+        run: |
+          gcloud builds submit \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --tag "${{ steps.image.outputs.ref }}" \
+            --timeout=1800s \
+            ./services/aml-verification-service
+
+  deploy:
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # `--no-traffic` by default: a new revision must be provable before it
+      # sees a customer capture. Promotion is the explicit input.
+      #
+      # `--allow-unauthenticated` matches the weasyprint service and is safe for
+      # the same reason: app/main.py refuses every request when AML_SERVICE_TOKEN
+      # is unset (503) and otherwise requires a matching bearer, so it fails
+      # closed rather than open.
+      #
+      # AML_SERVICE_TOKEN comes from Secret Manager, never from a workflow input
+      # or a repository variable — a token in run metadata is a token published.
+      - name: Deploy revision
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$SERVICE" \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --region "$REGION" \
+            --image "${{ needs.build.outputs.image }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --cpu 1 --memory 2Gi \
+            --concurrency 8 \
+            --timeout 60s \
+            --max-instances 4 \
+            --set-secrets "AML_SERVICE_TOKEN=aml-verification-service-token:latest" \
+            $( [ "${{ inputs.promote }}" = "true" ] && echo "" || echo "--no-traffic" )
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          url=$(gcloud run services describe "$SERVICE" \
+                  --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+                  --format='value(status.url)')
+          echo "service url: $url"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url/healthz" || true)
+          echo "GET /healthz -> $code"
+          # /healthz is the only unauthenticated route; anything else here would
+          # need the bearer, which this job deliberately does not hold.
+          [ "$code" = "200" ] || { echo "::error::health check failed"; exit 1; }
+
+      - name: Next steps
+        run: |
+          echo "Deployed. Electronic IDV stays OFF until:"
+          echo "  1. AML_VERIFICATION_SERVICE_URL + AML_VERIFICATION_SERVICE_TOKEN are set as Supabase secrets"
+          echo "  2. an aml.provider_configs row exists (capability=idv, provider_key=selfhosted, mode=live, active=true)"
+          echo "  3. provider_readiness reports state=ready_live"
