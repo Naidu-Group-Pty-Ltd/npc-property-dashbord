@@ -20,6 +20,38 @@ const outboxMigration = readFileSync("supabase/migrations/20260831000100_aml_ver
 
 const idvBlock = portalFn.slice(portalFn.indexOf("case 'submit_verification'"), portalFn.indexOf("case 'request_verification_upload_url'"));
 
+describe("case-access tenant resolution (found by production browser run)", () => {
+  const verifyFn = readFileSync("supabase/functions/aml-verification/index.ts", "utf8");
+
+  it("hasCaseAccess does not depend on a column aml.cases never had", () => {
+    // `aml.cases` has no `tenant_id` column and no migration adds one. The
+    // gate used to `.select("tenant_id")` and `return false` on the resulting
+    // PostgREST error, so it denied EVERY caller on EVERY case — making the
+    // documentary route permanently 403 behind an enabled "Record sighting"
+    // button. It must resolve the tenant the way the rest of the file does.
+    const fn = verifyFn.slice(
+      verifyFn.indexOf("async function hasCaseAccess"),
+      verifyFn.indexOf("import { reserveTokens"),
+    );
+    expect(fn).toContain("await resolveTenantId(admin, caseId)");
+    expect(fn).not.toMatch(/from\("cases"\)\s*\n?\s*\.select\("tenant_id"\)/);
+    expect(fn).not.toContain("caseRow?.tenant_id");
+  });
+
+  it("authorisation still rests solely on the tenant-scoped AML role RPCs", () => {
+    // The fix must not widen access: the RPCs remain the only grant path.
+    const fn = verifyFn.slice(
+      verifyFn.indexOf("async function hasCaseAccess"),
+      verifyFn.indexOf("import { reserveTokens"),
+    );
+    expect(fn).toContain("has_any_tenant_aml_role");
+    expect(fn).toContain("has_tenant_aml_role");
+    expect(fn).toContain('for (const role of ["analyst", "reviewer", "mlro"])');
+    // No unconditional success path.
+    expect(fn.trimEnd().endsWith("return false;\n}")).toBe(true);
+  });
+});
+
 describe("canonical verification model", () => {
   it("portal submission writes verification_checks, never identity_checks", () => {
     expect(idvBlock).toContain("from('verification_checks').insert");
