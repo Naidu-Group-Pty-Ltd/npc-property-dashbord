@@ -5,11 +5,11 @@
 // push_delivery_log so retries never fan out duplicate pushes.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import webpush from 'https://esm.sh/web-push@3.6.7';
-import { verifyRequiredCronSecret, verifySignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
+import { verifySignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-internal-edge-secret',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
@@ -97,29 +97,29 @@ Deno.serve(async (req) => {
   const rawBody = await req.text();
 
   try {
-    // Auth: signed internal caller only, by either of the two fail-closed
-    // schemes this project uses.
+    // Auth: the signed internal envelope, and only that (WP-12).
     //
-    // The static `x-internal-edge-secret` compare came first. The database
-    // trigger, however, builds its headers with `cron_signed_internal_headers`,
-    // which is the HMAC scheme every pg_cron dispatch here uses — so accept
-    // that too rather than requiring the two secret formats to agree. Both are
-    // deny-by-default; neither widens who may call this.
-    const staticSecretOk = verifyRequiredCronSecret(
-      Deno.env.get('INTERNAL_EDGE_SECRET'),
-      req.headers.get('x-internal-edge-secret'),
+    // This used to try a raw `x-internal-edge-secret` compare first and fall
+    // back to the signed check. Reading that header here is what WP-12 forbids:
+    // a bearer-style shared secret is replayable, carries no caller identity and
+    // no body binding, so it cannot be reasoned about the way the HMAC envelope
+    // can. Every caller already sends the envelope —
+    // `dispatch_web_push_for_portal_notification` and the staff dispatcher both
+    // build their headers with `public.cron_signed_internal_headers(...)`, which
+    // signs the method, target, body and declared caller — so dropping the
+    // static path removes a redundant weaker credential rather than a
+    // capability. `verifySignedInternal` binds the signature to `rawBody` and
+    // restricts the declared caller to the two below; it fails closed when
+    // INTERNAL_EDGE_SECRET is short or absent.
+    const authClient = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
-    if (!staticSecretOk) {
-      const authClient = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      );
-      const signed = await verifySignedInternal(authClient, req, rawBody, [
-        'notifications_trigger',
-        'pg_cron',
-      ]);
-      if (!signed.ok) return securityJsonError(401, 'unauthorized');
-    }
+    const signed = await verifySignedInternal(authClient, req, rawBody, [
+      'notifications_trigger',
+      'pg_cron',
+    ]);
+    if (!signed.ok) return securityJsonError(401, 'unauthorized');
 
     const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY');
     const VAPID_PRIVATE = Deno.env.get('VAPID_PRIVATE_KEY');

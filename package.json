@@ -137,7 +137,12 @@
     "reportkit:specimen": "tsx scripts/reportDesign/buildSpecimen.ts",
     "reportkit:assets": "tsx scripts/reportDesign/buildDefaultAssets.ts",
     "reportkit:assets:check": "tsx scripts/reportDesign/buildDefaultAssets.ts --check",
-    "brand:sync": "tsx scripts/brandDesign/syncClaudeDesign.ts"
+    "brand:sync": "tsx scripts/brandDesign/syncClaudeDesign.ts",
+    "audit:css-compat": "node scripts/audit-css-compat.cjs",
+    "mobile:tokens": "node scripts/mobile/export-design-tokens.mjs",
+    "mobile:tokens:check": "node scripts/mobile/export-design-tokens.mjs --check",
+    "mobile:api": "node scripts/mobile/export-api-surface.mjs",
+    "mobile:api:check": "node scripts/mobile/export-api-surface.mjs --check"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -184,6 +189,7 @@
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
     "docx": "^9.7.1",
+    "docx-preview": "^0.4.0",
     "dompurify": "^3.4.4",
     "embla-carousel-react": "^8.6.0",
     "exceljs": "^4.4.0",

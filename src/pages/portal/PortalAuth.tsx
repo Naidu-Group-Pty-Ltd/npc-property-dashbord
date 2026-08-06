@@ -235,6 +235,7 @@ export default function PortalAuth() {
               <button
                 type="button"
                 onClick={goBack}
+                data-slot="touch-target"
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
                 aria-label={`Back to ${mode === 'otp' || mode === 'reset' ? 'forgot password' : 'sign in'}`}
               >
@@ -305,6 +306,7 @@ export default function PortalAuth() {
                         <button
                           type="button"
                           onClick={() => setShowPassword(v => !v)}
+                          data-slot="touch-target"
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={showPassword ? 'Hide password' : 'Show password'}
                         >
@@ -320,6 +322,7 @@ export default function PortalAuth() {
                     <div className="text-center">
                       <button
                         type="button"
+                        data-slot="touch-target"
                         className="text-xs text-muted-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
                         onClick={() => changeMode('forgot')}
                         aria-label="Forgot your password? Request a reset code"
@@ -389,6 +392,7 @@ export default function PortalAuth() {
                         <button
                           type="button"
                           onClick={() => setShowNewPassword(v => !v)}
+                          data-slot="touch-target"
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={showNewPassword ? 'Hide password' : 'Show password'}
                         >
@@ -415,6 +419,7 @@ export default function PortalAuth() {
                         <button
                           type="button"
                           onClick={() => setShowConfirmPassword(v => !v)}
+                          data-slot="touch-target"
                           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
                         >

@@ -4,7 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Loader2, RefreshCw, ClipboardList, Gauge, ListChecks, BarChart3 } from "lucide-react";
+import { ClipboardList, Gauge, ListChecks, BarChart3 } from "lucide-react";
+import { AmlErrorState, AmlPageHeader, AmlRefreshButton } from "@/components/aml/primitives";
 import {
   amlRelianceApi,
   type PartnerManagementReport,
@@ -106,32 +107,24 @@ export default function AmlPartnerOperations() {
     age === "escalate" ? "text-destructive" : age === "warn" ? "text-warning" : "text-muted-foreground";
 
   return (
-    <div className="p-6 space-y-6" data-testid="aml-partner-operations">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Gauge className="h-6 w-6 text-primary" aria-hidden="true" />
-            Partner compliance operations
-          </h1>
-          <p className="text-sm text-muted-foreground max-w-2xl mt-1">
-            Queues, registers, reporting and readiness for the partner/reliance
-            domain. Ageing thresholds are operational targets, never statutory
-            deadlines.
-          </p>
-        </div>
-        <Button size="sm" variant="outline" onClick={load} disabled={loading} aria-label="Refresh partner operations">
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          <span className="ml-2">Refresh</span>
-        </Button>
-      </div>
+    <div className="space-y-6" data-testid="aml-partner-operations">
+      {/* AmlRefreshButton renders its label as the accessible name, i.e.
+          aria-label="Refresh partner operations" in the DOM (§8.9). */}
+      <AmlPageHeader
+        icon={Gauge}
+        title="Partner compliance operations"
+        description="Queues, registers, reporting and readiness for the partner/reliance domain. Ageing thresholds are operational targets, never statutory deadlines."
+        actions={
+          <AmlRefreshButton onClick={load} loading={loading} label="Refresh partner operations" />
+        }
+      />
 
       {disabled && (
         <Card>
           <CardContent className="py-4 text-sm text-muted-foreground">
-            Partner operations reporting is not enabled
-            (aml_partner_operations_reporting is off, or the Phase 8 migration
-            is not present in this environment). The readiness panel below
-            still reports what the database can evidence.
+            Partner operations reporting is not enabled in this environment.
+            The readiness panel below still reports what the database can
+            evidence.
           </CardContent>
         </Card>
       )}
@@ -202,7 +195,7 @@ export default function AmlPartnerOperations() {
           </CardHeader>
           <CardContent className="overflow-x-auto">
             {registerDenied ? (
-              <p className="text-sm text-muted-foreground">{registerDenied}</p>
+              <AmlErrorState title="Register unavailable" message={registerDenied} />
             ) : registerRows.length === 0 ? (
               <p className="text-sm text-muted-foreground">No records match this filter.</p>
             ) : (

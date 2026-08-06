@@ -208,4 +208,109 @@ export const amlCasesApi = {
   }) => invoke<{ request: any }>({ op: "create_client_request", request }),
   resolveClientRequest: (request_id: string) =>
     invoke<{ request: any }>({ op: "resolve_client_request", request_id }),
+
+  /* ── Submission review (integration Stage 3/4) ── */
+  getSubmissionReview: (case_id: string, version_number?: number) =>
+    invoke<AmlSubmissionReview>({ op: "get_submission_review", case_id, version_number }),
+  acceptSubmission: (submission_id: string, reason?: string) =>
+    invoke<{ submission: any }>({ op: "accept_submission", submission_id, reason }),
+  requestSubmissionChanges: (submission_id: string, reason: string, client_message?: string, subject?: string) =>
+    invoke<{ submission: any; client_request: any }>({ op: "request_submission_changes", submission_id, reason, client_message, subject }),
+  requestSubmissionDocument: (submission_id: string, reason: string, requirement_id?: string, client_message?: string) =>
+    invoke<{ submission: any; client_request: any }>({ op: "request_submission_document", submission_id, reason, requirement_id, client_message }),
+  requestSubmissionClarification: (submission_id: string, reason: string, client_message?: string) =>
+    invoke<{ submission: any; client_request: any }>({ op: "request_submission_clarification", submission_id, reason, client_message }),
+  escalateSubmission: (submission_id: string, reason: string) =>
+    invoke<{ submission: any }>({ op: "escalate_submission", submission_id, reason }),
+  supersedeSubmission: (submission_id: string, reason: string) =>
+    invoke<{ submission: any }>({ op: "supersede_submission", submission_id, reason }),
+
+  /* ── Document review with separated reasons (Stage 9/10) ── */
+  reviewDocumentV2: (args: {
+    document_id: string; decision: "accepted" | "rejected";
+    internal_review_note?: string; client_safe_reason_code?: string; client_safe_message?: string;
+  }) => invoke<{ document: any; client_request: any }>({ op: "review_document_v2", ...args }),
+
+  /* ── Party reconciliation (Stage 13/14) ── */
+  listPartyReconciliation: (case_id: string) =>
+    invoke<{ items: AmlReconciliationItem[] }>({ op: "list_party_reconciliation", case_id }),
+  resolvePartyReconciliation: (args: {
+    item_id: string; resolution: "linked" | "created" | "manual_only" | "rejected" | "superseded" | "conflict";
+    rationale: string; party_type?: string; party_id?: string;
+  }) => invoke<{ item: AmlReconciliationItem }>({ op: "resolve_party_reconciliation", ...args }),
+
+  /* ── Party verification links (Stage 15) ── */
+  listPartyVerificationLinks: (case_id: string) =>
+    invoke<{ links: AmlPartyVerificationLink[]; eligible_checks: any[] }>({ op: "list_party_verification_links", case_id }),
+  linkPartyVerification: (args: { case_id: string; party_type: string; party_id?: string; verification_check_id: string; relationship?: string }) =>
+    invoke<{ link: AmlPartyVerificationLink }>({ op: "link_party_verification", ...args }),
+  unlinkPartyVerification: (link_id: string, reason: string) =>
+    invoke<{ link: AmlPartyVerificationLink }>({ op: "unlink_party_verification", link_id, reason }),
+
+  /* ── Party-scoped screening (Stage 16) ── */
+  listPartyScreening: (case_id: string) =>
+    invoke<{ subjects: AmlPartyScreeningSubject[] }>({ op: "list_party_screening", case_id }),
+  queuePartyScreening: (subject_id: string, freshness_days?: number) =>
+    invoke<{ subject: AmlPartyScreeningSubject; skipped?: boolean; code?: string }>({ op: "queue_party_screening", subject_id, freshness_days }),
+  adjudicatePartyScreening: (subject_id: string, outcome: "confirmed_match" | "false_positive", note: string) =>
+    invoke<{ subject: AmlPartyScreeningSubject }>({ op: "adjudicate_party_screening", subject_id, outcome, note }),
 };
+
+export interface AmlReconciliationItem {
+  id: string; declared_role: string; declared_name: string;
+  change_kind: string; resolution_status: string;
+  resolved_party_type: string | null; resolved_party_id: string | null;
+  verification_required: boolean; screening_required: boolean;
+  conflicts: any[]; similarity_candidates: Array<{ party_type: string; party_id: string; full_name: string; score: number; requires_confirmation: boolean }>;
+  exact_candidate_id: string | null; exact_candidate_type: string | null;
+  declared_payload?: Record<string, unknown>;
+  resolution_rationale?: string | null;
+}
+
+export interface AmlPartyVerificationLink {
+  id: string; case_id: string; party_type: string; party_id: string | null;
+  verification_check_id: string; relationship: string; authoritative: boolean;
+  linked_at: string; unlinked_at: string | null; unlink_reason: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AmlPartyScreeningSubject {
+  id: string; case_id: string; party_type: string; party_id: string | null;
+  screened_name: string; required: boolean; state: string;
+  last_screened_at: string | null; refresh_due_at: string | null;
+  adjudicated_at: string | null; adjudication_note: string | null;
+  screening_check_id: string | null; error_category: string | null;
+}
+
+export interface AmlSubmissionReview {
+  case: {
+    id: string; reference: string; subject: string; status: string;
+    case_stage: string | null; client_portal_status: string | null; service_gate_status: string | null;
+  };
+  submission: {
+    id: string; version_number: number; review_status: string; submitted_at: string;
+    submitted_by_type: string | null; submitted_by: string | null; review_reason: string | null;
+    reviewed_at: string | null; questionnaire_version: string | null; consent_version: string | null;
+    applicable_sections: string[]; sections: Array<{ section: string; status?: string; payload?: any }>;
+    superseded_at: string | null;
+  } | null;
+  previous_version: { id: string; version_number: number; submitted_at: string } | null;
+  differences: Array<{ section: string; field: string; previous: unknown; current: unknown; kind: string }>;
+  differences_material: boolean;
+  versions: Array<{ id: string; version_number: number; submitted_at: string; review_status: string }>;
+  consent_evidence: Array<{ kind: string; version: string; accepted_at: string; document_hash: string | null }>;
+  related_parties: AmlReconciliationItem[];
+  requirements: any[];
+  documents: any[];
+  verification: Array<{
+    id: string; party_id: string | null; party_label: string | null; check_type: string;
+    status: string; processing_status: string | null; authoritative: boolean | null;
+    execution_mode: string | null; attempt_consumed: boolean | null; provider: string | null;
+    completed_at: string | null; provider_error_category: string | null;
+  }>;
+  screening: AmlPartyScreeningSubject[];
+  open_requests: any[];
+  missing_mandatory: string[];
+  risk: { latest_assessment_at: string | null; stale: boolean; stale_reasons: string[] };
+  message?: string;
+}

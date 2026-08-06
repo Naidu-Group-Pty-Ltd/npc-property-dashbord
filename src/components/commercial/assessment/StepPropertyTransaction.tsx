@@ -192,7 +192,7 @@ export function StepPropertyTransaction({ payload, onChange, issues, disabled }:
           <TextField
             label="Street address" required disabled={disabled}
             value={property.address} onChange={(value) => set('address', value)}
-            error={errorFor('property.address')} provenance={provenanceFor('address')}
+            error={errorFor('property.address')} fieldPath="property.address" provenance={provenanceFor('address')}
             placeholder="45 Industrial Drive"
           />
         </FullWidth>
@@ -200,11 +200,11 @@ export function StepPropertyTransaction({ payload, onChange, issues, disabled }:
         <SelectField
           label="State" value={(property.state || 'NSW') as AustralianState}
           onChange={(value) => set('state', value)} options={STATES} disabled={disabled}
-          error={errorFor('property.state')}
+          error={errorFor('property.state')} fieldPath="property.state"
         />
         <TextField
           label="Postcode" value={property.postcode} onChange={(value) => set('postcode', value)}
-          disabled={disabled} error={errorFor('property.postcode')}
+          disabled={disabled} error={errorFor('property.postcode')} fieldPath="property.postcode"
         />
       </FieldGroup>
 
@@ -218,20 +218,20 @@ export function StepPropertyTransaction({ payload, onChange, issues, disabled }:
         <MoneyField
           label="Purchase price" required={!definition.isRefinance} disabled={disabled}
           value={property.purchasePrice} onChange={(value) => set('purchasePrice', value)}
-          error={errorFor('property.purchasePrice')} provenance={provenanceFor('purchasePrice')}
+          error={errorFor('property.purchasePrice')} fieldPath="property.purchasePrice" provenance={provenanceFor('purchasePrice')}
           help={definition.isRefinance ? 'Not required for a refinance.' : undefined}
         />
         <MoneyField
           label="Current valuation" disabled={disabled}
           value={property.currentValuation} onChange={(value) => set('currentValuation', value)}
-          error={errorFor('property.currentValuation')} provenance={provenanceFor('currentValuation')}
+          error={errorFor('property.currentValuation')} fieldPath="property.currentValuation" provenance={provenanceFor('currentValuation')}
           help="LVR is struck against the lower of price and valuation."
         />
         <SelectField label="Valuation confidence" value={property.valuationConfidence} onChange={(value) => set('valuationConfidence', value)} options={VALUATION_CONFIDENCE} disabled={disabled} />
-        <DateField label="Valuation date" value={property.valuationDate} onChange={(value) => set('valuationDate', value)} disabled={disabled} error={errorFor('property.valuationDate')} />
+        <DateField label="Valuation date" value={property.valuationDate} onChange={(value) => set('valuationDate', value)} disabled={disabled} error={errorFor('property.valuationDate')} fieldPath="property.valuationDate" />
         <TextField label="Valuation source" value={property.valuationSource} onChange={(value) => set('valuationSource', value)} disabled={disabled} placeholder="Valuer or platform" />
         <DateField label="Contract date" value={property.contractDate} onChange={(value) => set('contractDate', value)} disabled={disabled} />
-        <DateField label="Settlement date" value={property.settlementDate} onChange={(value) => set('settlementDate', value)} disabled={disabled} error={errorFor('property.settlementDate')} />
+        <DateField label="Settlement date" value={property.settlementDate} onChange={(value) => set('settlementDate', value)} disabled={disabled} error={errorFor('property.settlementDate')} fieldPath="property.settlementDate" />
         <NumberField label="Lettable area (m²)" value={property.lettableAreaSqm} onChange={(value) => set('lettableAreaSqm', value)} disabled={disabled} provenance={provenanceFor('lettableAreaSqm')} />
         <NumberField label="Site area (m²)" value={property.siteAreaSqm} onChange={(value) => set('siteAreaSqm', value)} disabled={disabled} provenance={provenanceFor('siteAreaSqm')} />
       </FieldGroup>
@@ -270,7 +270,7 @@ export function StepPropertyTransaction({ payload, onChange, issues, disabled }:
           value={property.requestedLoanAmount} onChange={(value) => set('requestedLoanAmount', value)}
           help="Refine this in the Loan structure step; both fields stay in step."
         />
-        <MoneyField label="Deposit or contribution" value={property.depositOrContribution} onChange={(value) => set('depositOrContribution', value)} disabled={disabled} error={errorFor('property.depositOrContribution')} />
+        <MoneyField label="Deposit or contribution" value={property.depositOrContribution} onChange={(value) => set('depositOrContribution', value)} disabled={disabled} error={errorFor('property.depositOrContribution')} fieldPath="property.depositOrContribution" />
         {definition.isRefinance ? (
           <MoneyField label="Amount being refinanced" value={property.refinanceAmount} onChange={(value) => set('refinanceAmount', value)} disabled={disabled} />
         ) : null}

@@ -9,7 +9,16 @@ const required = [
   [stepUp, 'isSessionHashConfigured()'],
   [stepUp, 'eq("portal_scope", "staff")'],
   [stepUp, 'bound_session_id !== staffSession.id'],
-  [issuer, 'bound_session_id: staffSession.id'],
+  // The proof is bound to the verified staff session. This was asserted as
+  // `bound_session_id: staffSession.id`, but at assurance level >= 2 the issuer
+  // now ROTATES the session before issuing, so binding to `staffSession.id`
+  // would pin the proof to the session the rotation just invalidated. The
+  // binding therefore goes through `boundSessionId`, which starts as the
+  // verified session and is only ever reassigned from a successful rotation.
+  // Asserting all three pins that chain end to end.
+  [issuer, 'let boundSessionId = staffSession.id;'],
+  [issuer, 'boundSessionId = rot.newSessionId;'],
+  [issuer, 'bound_session_id: boundSessionId,'],
   [issuer, 'staff_session_required'],
   [migration, 'REFERENCES public.user_sessions(id) ON DELETE CASCADE'],
   [migration, 'enforce_step_up_session_owner'],

@@ -22,12 +22,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Archive, Building2, Calculator, ExternalLink, Factory, Loader2,
+  Archive, Building2, Calculator, ExternalLink, Factory, FileDown, Loader2,
   Plus, Search, Settings2, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import { ciAssessmentApi, useCiAssessments, type AssessmentListRow } from '@/hooks/useCiAssessments';
+import { useCapacityReport } from '@/hooks/useCapacityReport';
+import { isReportable } from '@/lib/reports/commercialCapacity/route.pure';
 import {
   ASSESSMENT_STATUS_LABELS, ASSESSMENT_TYPE_DEFINITIONS,
   assessmentTypeDefinition, emptyAssessmentPayload, type AssessmentStatus, type AssessmentType,
@@ -107,6 +109,7 @@ export default function CommercialIndustrial() {
   }), [status, segment, search]);
 
   const { rows, loading, refresh, metrics } = useCiAssessments(filters);
+  const { generatingId, generate } = useCapacityReport();
 
   const createAssessment = useCallback(async (type: AssessmentType) => {
     setCreating(true);
@@ -313,6 +316,24 @@ export default function CommercialIndustrial() {
                       </TableCell>
                       <TableCell>
                         <div className="flex justify-end gap-1">
+                          {/* Reporting is offered only where it is possible.
+                              The action is absent rather than disabled on an
+                              incomplete assessment: a disabled icon in a dense
+                              row of icons is a control nobody can interpret,
+                              and this one has a precondition the row already
+                              shows in its status column. */}
+                          {isReportable(row.status) ? (
+                            <Button
+                              size="icon" variant="ghost" className="h-8 w-8"
+                              onClick={() => void generate(row.id)}
+                              disabled={generatingId !== null}
+                              aria-label={`Generate the capacity report for ${row.title}`}
+                            >
+                              {generatingId === row.id
+                                ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                                : <FileDown className="h-4 w-4" aria-hidden="true" />}
+                            </Button>
+                          ) : null}
                           <Button
                             size="icon" variant="ghost" className="h-8 w-8"
                             onClick={() => navigate(`/commercial/assessments/${row.id}`)}
@@ -378,9 +399,9 @@ export default function CommercialIndustrial() {
             </h2>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
               A report is generated from a completed assessment&apos;s saved calculation run, so it always
-              reflects the engine and policy versions in force when the figures were produced. Open an
-              assessment and use <span className="font-medium text-foreground">Generate report</span> on
-              the results step.
+              reflects the engine and policy versions in force when the figures were produced. It is
+              white-labelled to your firm, and carries an AI reading of the figures — what bound the
+              capacity, what the risks are, and what would move the result — clearly marked as such.
             </p>
           </div>
 
@@ -410,12 +431,24 @@ export default function CommercialIndustrial() {
                           {new Date(row.updated_at).toLocaleDateString('en-AU')}
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="sm" variant="ghost"
-                            onClick={() => navigate(`/commercial/assessments/${row.id}?step=results`)}
-                          >
-                            Open
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm" variant="ghost"
+                              onClick={() => void generate(row.id)}
+                              disabled={generatingId !== null}
+                            >
+                              {generatingId === row.id
+                                ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                : <FileDown className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+                              {generatingId === row.id ? 'Generating…' : 'Generate'}
+                            </Button>
+                            <Button
+                              size="sm" variant="ghost"
+                              onClick={() => navigate(`/commercial/assessments/${row.id}?step=results`)}
+                            >
+                              Open
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}

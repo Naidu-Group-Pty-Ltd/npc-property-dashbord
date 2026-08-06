@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ClipboardList, Gauge, Loader2, PlusCircle, RefreshCw, ShieldAlert, Sparkles } from "lucide-react";
+import { Activity, AlertTriangle, ClipboardList, Gauge, PlusCircle, ShieldAlert, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,12 @@ import { toast } from "sonner";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
+import {
+  AmlPageHeader,
+  AmlRefreshButton,
+  AmlTableEmptyRow,
+  AmlTableLoadingRow,
+} from "@/components/aml/primitives";
 import {
   amlMonitoringApi, type AmlAlert, type AmlAlertSeverity, type AmlAlertStatus,
   type AmlEddCase, type AmlMonitoringRule, type AmlMonitoringSummary, type AmlReview,
@@ -174,29 +180,23 @@ export default function AmlMonitoring() {
   return (
     <div className="space-y-6">
       {regulatoryHub && <RegulatoryAssuranceHeader />}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><Activity className="h-5 w-5" /></div>
-          <div>
-            <h2 className="text-lg font-semibold">Ongoing Monitoring</h2>
-            <p className="text-xs text-muted-foreground">Alerts, EDD, source of funds/wealth, and existing-customer remediation.</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {isMlro && (
-            <Button variant="outline" size="sm" onClick={runScansNow} disabled={busy}>
-              <Sparkles className="mr-2 h-4 w-4" /> Run scans now
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={load} disabled={busy}>
-            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Refresh
-          </Button>
-        </div>
-      </div>
+      <AmlPageHeader
+        title="Ongoing Monitoring"
+        description="Alerts, EDD, source of funds/wealth, and existing-customer remediation."
+        icon={Activity}
+        actions={
+          <>
+            {isMlro && (
+              <Button variant="outline" size="sm" onClick={runScansNow} disabled={busy}>
+                <Sparkles aria-hidden="true" className="mr-2 h-4 w-4" /> Run scans now
+              </Button>
+            )}
+            <AmlRefreshButton onClick={load} loading={busy} />
+          </>
+        }
+      />
 
-
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         {[
           { label: "Open alerts", value: stats.open_alerts, icon: AlertTriangle, tone: "text-warning" },
           { label: "Critical", value: stats.critical_alerts, icon: ShieldAlert, tone: "text-destructive" },
@@ -206,7 +206,7 @@ export default function AmlMonitoring() {
           { label: "Overdue reviews", value: stats.overdue_reviews, icon: ClipboardList, tone: "text-destructive" },
         ].map((s) => (
           <Card key={s.label}><CardContent className="flex items-center gap-3 p-4">
-            <s.icon className={`h-6 w-6 ${s.tone}`} />
+            <s.icon aria-hidden="true" className={`h-6 w-6 ${s.tone}`} />
             <div><div className="text-2xl font-semibold tabular-nums">{s.value}</div><div className="text-[11px] uppercase tracking-wide text-muted-foreground">{s.label}</div></div>
           </CardContent></Card>
         ))}
@@ -240,13 +240,15 @@ export default function AmlMonitoring() {
               </div>
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Alert queue">
                 <TableHeader><TableRow>
-                  <TableHead>Opened</TableHead><TableHead>Severity</TableHead><TableHead>Title</TableHead>
-                  <TableHead>Summary</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead>
+                  <TableHead scope="col">Opened</TableHead><TableHead scope="col">Severity</TableHead><TableHead scope="col">Title</TableHead>
+                  <TableHead scope="col">Summary</TableHead><TableHead scope="col">Status</TableHead><TableHead scope="col" className="text-right">Actions</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {alerts.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground">No alerts</TableCell></TableRow>}
+                  {alerts.length === 0 && (busy
+                    ? <AmlTableLoadingRow colSpan={6} label="Loading alerts…" />
+                    : <AmlTableEmptyRow colSpan={6}>No alerts in this view. New alerts from rules, screening and scheduled scans appear here.</AmlTableEmptyRow>)}
                   {alerts.map((a) => (
                     <TableRow key={a.id}>
                       <TableCell className="text-xs whitespace-nowrap">{fmt(a.created_at)}</TableCell>
@@ -282,13 +284,15 @@ export default function AmlMonitoring() {
               {canWrite && <Button size="sm" onClick={() => setEddOpen(true)}><PlusCircle className="mr-2 h-4 w-4" /> Open EDD</Button>}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Enhanced Due Diligence cases">
                 <TableHeader><TableRow>
-                  <TableHead>Opened</TableHead><TableHead>Case</TableHead><TableHead>Reason</TableHead>
-                  <TableHead>Status</TableHead><TableHead>MLRO</TableHead><TableHead className="text-right">Decision</TableHead>
+                  <TableHead scope="col">Opened</TableHead><TableHead scope="col">Case</TableHead><TableHead scope="col">Reason</TableHead>
+                  <TableHead scope="col">Status</TableHead><TableHead scope="col">MLRO</TableHead><TableHead scope="col" className="text-right">Decision</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {edd.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground">No EDD cases</TableCell></TableRow>}
+                  {edd.length === 0 && (busy
+                    ? <AmlTableLoadingRow colSpan={6} label="Loading EDD cases…" />
+                    : <AmlTableEmptyRow colSpan={6}>No EDD cases. Deep-dive investigations opened from alerts or cases appear here for MLRO sign-off.</AmlTableEmptyRow>)}
                   {edd.map((e) => {
                     const c = cases.find((x) => x.id === e.case_id);
                     return (
@@ -329,14 +333,16 @@ export default function AmlMonitoring() {
               )}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Existing customer reviews">
                 <TableHeader><TableRow>
-                  <TableHead>Case</TableHead><TableHead>Class</TableHead><TableHead>Priority</TableHead>
-                  <TableHead>Due</TableHead><TableHead>Status</TableHead><TableHead>Outcome</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead scope="col">Case</TableHead><TableHead scope="col">Class</TableHead><TableHead scope="col">Priority</TableHead>
+                  <TableHead scope="col">Due</TableHead><TableHead scope="col">Status</TableHead><TableHead scope="col">Outcome</TableHead>
+                  <TableHead scope="col" className="text-right">Actions</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {reviews.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-sm text-muted-foreground">No reviews queued</TableCell></TableRow>}
+                  {reviews.length === 0 && (busy
+                    ? <AmlTableLoadingRow colSpan={7} label="Loading reviews…" />
+                    : <AmlTableEmptyRow colSpan={7}>No reviews queued. Queue a review, or seed the pre-commencement backlog to get started.</AmlTableEmptyRow>)}
                   {reviews.map((r) => {
                     const c = cases.find((x) => x.id === r.case_id);
                     const overdue = r.due_at && new Date(r.due_at).getTime() < Date.now() && !["complete", "exited"].includes(r.status);
@@ -370,13 +376,15 @@ export default function AmlMonitoring() {
               {canWrite && <Button size="sm" onClick={() => openRule()}><PlusCircle className="mr-2 h-4 w-4" /> New rule</Button>}
             </CardHeader>
             <CardContent>
-              <Table>
+              <Table aria-label="Monitoring rules">
                 <TableHeader><TableRow>
-                  <TableHead>Name</TableHead><TableHead>Trigger</TableHead><TableHead>Severity</TableHead>
-                  <TableHead>Enabled</TableHead><TableHead className="text-right">Actions</TableHead>
+                  <TableHead scope="col">Name</TableHead><TableHead scope="col">Trigger</TableHead><TableHead scope="col">Severity</TableHead>
+                  <TableHead scope="col">Enabled</TableHead><TableHead scope="col" className="text-right">Actions</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>
-                  {rules.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground">No rules</TableCell></TableRow>}
+                  {rules.length === 0 && (busy
+                    ? <AmlTableLoadingRow colSpan={5} label="Loading rules…" />
+                    : <AmlTableEmptyRow colSpan={5}>No monitoring rules yet. Create a rule to start raising alerts from events and scheduled scans.</AmlTableEmptyRow>)}
                   {rules.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell>
@@ -385,7 +393,7 @@ export default function AmlMonitoring() {
                       </TableCell>
                       <TableCell><Badge variant="outline">{r.trigger_kind}</Badge></TableCell>
                       <TableCell><Badge className={SEV_TONE[r.severity]} variant="secondary">{r.severity}</Badge></TableCell>
-                      <TableCell><Switch checked={r.is_enabled} onCheckedChange={() => canWrite && toggleRule(r)} disabled={!canWrite} /></TableCell>
+                      <TableCell><Switch aria-label={`Enable rule ${r.name}`} checked={r.is_enabled} onCheckedChange={() => canWrite && toggleRule(r)} disabled={!canWrite} /></TableCell>
                       <TableCell className="text-right">
                         {canWrite && (
                           <div className="flex justify-end gap-1">

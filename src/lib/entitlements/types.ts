@@ -158,6 +158,7 @@ export type CapabilityKey =
   | "client.send_portfolio"
   | "client.send_agreement"
   | "client.borrowing_capacity"
+  | "client.commercial_industrial"
   | "client.lenders"
   | "client.ai";
 

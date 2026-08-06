@@ -81,30 +81,30 @@ export function StepLoanStructure({ payload, onChange, issues, canOverridePolicy
         <MoneyField
           label="Requested loan" value={loan.requestedLoan}
           onChange={(value) => setLoan({ requestedLoan: value })} disabled={disabled}
-          error={errorFor('loan.requestedLoan')}
+          error={errorFor('loan.requestedLoan')} fieldPath="loan.requestedLoan"
         />
         <PercentField
           label="Contract interest rate" value={loan.actualRatePercent} max={30}
           onChange={(value) => setLoan({ actualRatePercent: value })} disabled={disabled}
-          required error={errorFor('loan.actualRatePercent')}
+          required error={errorFor('loan.actualRatePercent')} fieldPath="loan.actualRatePercent"
         />
         <SelectField label="Repayment type" value={loan.repaymentType} onChange={(value) => setLoan({ repaymentType: value })} options={REPAYMENT_TYPES} disabled={disabled} />
         <NumberField label="Loan term (years)" value={loan.loanTermYears} onChange={(value) => setLoan({ loanTermYears: value })} disabled={disabled} />
         <NumberField
           label="Amortisation (years)" value={loan.amortisationYears}
           onChange={(value) => setLoan({ amortisationYears: value })} disabled={disabled}
-          error={errorFor('loan.amortisationYears')}
+          error={errorFor('loan.amortisationYears')} fieldPath="loan.amortisationYears"
           help="The profile repayments are struck on. May exceed the facility term."
         />
         <NumberField
           label="Interest-only period (years)" value={loan.interestOnlyPeriodYears}
           onChange={(value) => setLoan({ interestOnlyPeriodYears: value })} disabled={disabled}
-          error={errorFor('loan.interestOnlyPeriodYears')}
+          error={errorFor('loan.interestOnlyPeriodYears')} fieldPath="loan.interestOnlyPeriodYears"
         />
         <MoneyField
           label="Residual / balloon" value={loan.residualBalloonAmount}
           onChange={(value) => setLoan({ residualBalloonAmount: value })} disabled={disabled}
-          error={errorFor('loan.residualBalloonAmount')}
+          error={errorFor('loan.residualBalloonAmount')} fieldPath="loan.residualBalloonAmount"
         />
         <SelectField label="Repayment frequency" value={loan.repaymentFrequency} onChange={(value) => setLoan({ repaymentFrequency: value })} options={FREQUENCY} disabled={disabled} />
         <SwitchField label="Cross-collateralised" value={loan.crossCollateralised} onChange={(value) => setLoan({ crossCollateralised: value })} disabled={disabled} />

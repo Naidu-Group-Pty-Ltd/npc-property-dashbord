@@ -77,6 +77,7 @@ export function MobileHeader({ theme, isDark, onCycleTheme }: MobileHeaderProps)
               size="icon" 
               onClick={() => setIsSearchOpen(false)}
                className="dashboard-icon-button h-11 w-11 shrink-0"
+               aria-label="Close search"
             >
               <X className="h-5 w-5" />
             </Button>
@@ -129,7 +130,7 @@ export function MobileHeader({ theme, isDark, onCycleTheme }: MobileHeaderProps)
           <div className="flex items-center gap-2">
             <Sheet open={isSidebarOpen} onOpenChange={setIsSidebarOpen}>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="dashboard-icon-button h-11 w-11 shrink-0">
+                <Button variant="ghost" size="icon" className="dashboard-icon-button h-11 w-11 shrink-0" aria-label="Open navigation menu">
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
@@ -156,6 +157,7 @@ export function MobileHeader({ theme, isDark, onCycleTheme }: MobileHeaderProps)
               size="icon" 
               onClick={() => setIsSearchOpen(true)}
               className="dashboard-icon-button h-11 w-11"
+              aria-label="Search"
             >
               <Search className="h-5 w-5" />
             </Button>
@@ -165,6 +167,7 @@ export function MobileHeader({ theme, isDark, onCycleTheme }: MobileHeaderProps)
               size="icon"
               onClick={onCycleTheme}
               className="dashboard-icon-button h-11 w-11"
+              aria-label="Change theme"
             >
               {getThemeIcon()}
             </Button>
@@ -175,7 +178,7 @@ export function MobileHeader({ theme, isDark, onCycleTheme }: MobileHeaderProps)
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="dashboard-icon-button h-11 w-11">
+                <Button variant="ghost" size="icon" className="dashboard-icon-button h-11 w-11" aria-label="Account menu">
                   <Avatar className="h-7 w-7">
                     <AvatarFallback className="bg-primary/10 text-xs text-primary">
                       {user?.username?.substring(0, 2).toUpperCase() || 'AD'}
