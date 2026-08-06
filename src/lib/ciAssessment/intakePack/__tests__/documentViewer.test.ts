@@ -151,6 +151,29 @@ describe('every sheet reports a size that can hold it', () => {
       expect(sheet.height, `${sheet.name} height`).toBeGreaterThan(100);
     });
   });
+
+  /**
+   * The fourth recurrence's lesson. When measurement is unavailable — here,
+   * because jsdom has no layout engine — the arithmetic grid sum is known to
+   * run up to 358px short on this pack, so an unmeasured sheet must ship with
+   * generous slack over its grid and say `measured: false`, which is the
+   * viewer's cue to re-measure the sheet when its tab is shown. An unmeasured
+   * sheet that is too tall shows blank space; one that is too short silently
+   * cuts rows off.
+   */
+  it('pads an unmeasured sheet well beyond its grid, and says so', async () => {
+    const { sheets } = await renderWorkbookToHtml(bytes(EXAMPLE));
+
+    sheets.forEach((sheet) => {
+      expect(sheet.measured, `${sheet.name} measured`).toBe(false);
+
+      const rows = (sheet.html.match(/<tr style="height:(\d+)px">/g) ?? [])
+        .map((tag) => Number(/height:(\d+)px/.exec(tag)?.[1] ?? 0));
+      const gridHeight = rows.reduce((total, height) => total + height, 0);
+      // 358px is the worst measured shortfall; the pad must clear it with room.
+      expect(sheet.height, `${sheet.name} height`).toBeGreaterThanOrEqual(gridHeight + 400);
+    });
+  });
 });
 
 describe('worked example is fully fictional', () => {

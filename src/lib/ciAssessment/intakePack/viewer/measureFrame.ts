@@ -14,12 +14,32 @@
  * numbers, because the heights stored in an .xlsx are the heights *Excel* laid
  * the file out with, using Excel's fonts and Excel's wrapping. A browser wraps
  * a long answer across two lines where Excel used one, and the row grows. Every
- * sheet in the pack came out between 53px and 356px short, and the shortfall
+ * sheet in the pack came out between 53px and 358px short, and the shortfall
  * was silently clipped.
  *
  * So: render the exact same HTML in a hidden, same-origin iframe first and read
  * the size back. It is the same document, laid out by the same engine, so the
  * answer is exact rather than an estimate that happens to be close.
+ *
+ * ## Why it polls instead of listening for `load`
+ *
+ * The third attempt listened for the frame's `load` event and read the layout
+ * then. That shipped, verified — and clipped anyway, because an iframe fires
+ * `load` **twice**: once for the initial `about:blank` document it is born
+ * with, and once for the `srcdoc` document that replaces it. Chromium delivers
+ * the `about:blank` event first, deterministically. The handler looked at that
+ * empty document, found nothing matching the selector, and settled on the
+ * arithmetic fallback — so every sheet quietly shipped the exact shortfalls
+ * this module exists to kill, while the measuring machinery sat unread one
+ * event later.
+ *
+ * The lesson is baked in here: **never conclude anything from a document
+ * without first proving it is the srcdoc document** (`about:blank` is the
+ * newborn placeholder, not a failure), and never trust event order across
+ * browsers. So this polls: wait until the frame's document is no longer
+ * `about:blank`, is fully loaded, has its fonts (a .docx can embed its own),
+ * and has laid out to a stable size — and only then read it. `load` is kept
+ * only as a hint to poll sooner.
  *
  * The measuring frame is deliberately *not* sandboxed — same-origin is what
  * makes `contentDocument` readable — but it is also never shown, never
@@ -42,8 +62,16 @@ export interface MeasuredSize {
  */
 const MEASURE_VIEWPORT_PX = 3200;
 
-/** A frame that never loads must not hang the viewer behind its spinner. */
-const MEASURE_TIMEOUT_MS = 2000;
+/**
+ * A frame that never produces a readable document must not hang the viewer
+ * behind its spinner forever. Generous on purpose: with the polling above, the
+ * only way to spend this budget is an environment that genuinely cannot load
+ * srcdoc, and a slow answer that is right beats a fast one that clips.
+ */
+const MEASURE_TIMEOUT_MS = 8000;
+
+/** How often to look at the frame while waiting for it to become readable. */
+const POLL_INTERVAL_MS = 50;
 
 /**
  * Breathing room on the measured size.
@@ -72,17 +100,41 @@ interface MeasureRequest {
 export interface MeasureResult extends MeasuredSize {
   /** Present when `offsetSelector` was given. */
   offsets?: number[];
-  /** False when the environment could not lay the document out. */
+  /**
+   * False when the environment could not lay the document out. A caller
+   * showing an unmeasured document must size it with room to spare — the
+   * fallback is a floor known to run short, not an estimate that is close.
+   */
   measured: boolean;
 }
 
-function createFrame(): HTMLIFrameElement {
+/**
+ * Whether this environment lays documents out at all.
+ *
+ * jsdom parses HTML but gives every element a zero rect, so waiting on it to
+ * produce a nonzero layout would only spend the timeout. The root element of a
+ * real browser always has a width; a zero here means there is no layout engine
+ * to ask.
+ */
+function hasLayoutEngine(): boolean {
+  if (typeof document === 'undefined' || !document.body) return false;
+  return document.documentElement.getBoundingClientRect().width > 0;
+}
+
+function createFrame(html: string): HTMLIFrameElement {
   const frame = document.createElement('iframe');
   frame.setAttribute('aria-hidden', 'true');
   frame.setAttribute('tabindex', '-1');
   frame.setAttribute('title', 'Measuring');
+  // No scrollbars, to match the display frame exactly: a classic (non-overlay)
+  // scrollbar consumes layout space, and the display frame — `scrolling="no"`,
+  // sized to its content — never has one.
+  frame.setAttribute('scrolling', 'no');
   frame.style.cssText = 'position:fixed;left:-20000px;top:0;border:0;visibility:hidden;'
     + `width:${MEASURE_VIEWPORT_PX}px;height:800px;pointer-events:none;`;
+  // Set before the frame enters the DOM, so the srcdoc navigation starts
+  // immediately rather than after an about:blank commit.
+  frame.srcdoc = html;
   return frame;
 }
 
@@ -90,37 +142,60 @@ function createFrame(): HTMLIFrameElement {
  * Measure one document.
  *
  * Resolves with the fallback rather than rejecting when there is no layout to
- * read — jsdom under test, or a frame that never fires `load`. A viewer that
- * showed an approximately sized document is far better than one that showed an
- * error because it could not measure it.
+ * read — jsdom under test, or a frame whose document never becomes readable. A
+ * viewer that showed an approximately sized document is far better than one
+ * that showed an error because it could not measure it.
  */
 export function measureDocument(request: MeasureRequest): Promise<MeasureResult> {
   const unmeasured: MeasureResult = { ...request.fallback, measured: false };
-  if (typeof document === 'undefined' || !document.body) {
-    return Promise.resolve(unmeasured);
-  }
+  if (!hasLayoutEngine()) return Promise.resolve(unmeasured);
 
   return new Promise<MeasureResult>((resolve) => {
-    const frame = createFrame();
+    const frame = createFrame(request.html);
     let settled = false;
+    /** Height seen on the previous look, for the stability requirement. */
+    let lastHeight = -1;
 
     const finish = (result: MeasureResult) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
+      window.clearInterval(poller);
       frame.remove();
       resolve(result);
     };
 
     const timer = window.setTimeout(() => finish(unmeasured), MEASURE_TIMEOUT_MS);
 
-    frame.addEventListener('load', () => {
+    const inspect = () => {
+      if (settled) return;
       try {
         const inner = frame.contentDocument;
-        const target = inner?.querySelector(request.selector);
-        if (!inner || !target) { finish(unmeasured); return; }
+        // `about:blank` is the placeholder document every iframe is born
+        // with, and it can fire its own `load` event before the srcdoc
+        // commits. It is not our document and proves nothing — keep waiting.
+        if (!inner || inner.URL === 'about:blank' || inner.readyState !== 'complete') return;
+
+        const target = inner.querySelector(request.selector);
+        // The srcdoc document really is loaded and really has no target:
+        // nothing to measure, ever. (An empty worksheet renders no table.)
+        if (!target) { finish(unmeasured); return; }
+
+        // Embedded fonts (a .docx carries its own as data URLs) can finish
+        // after `load` and re-wrap every line. Wait until they are in.
+        const fonts = (inner as Document & { fonts?: FontFaceSet }).fonts;
+        if (fonts && fonts.status === 'loading') return;
 
         const rect = target.getBoundingClientRect();
+        // A document that lays out to nothing means the frame never really
+        // rendered; trust the estimate instead of sizing the box to zero.
+        if (rect.width < 1 || rect.height < 1) { finish(unmeasured); return; }
+
+        // Require the same height on two consecutive looks. Static markup
+        // settles instantly; anything still moving — late images, a font swap
+        // the FontFaceSet missed — gets another poll instead of a wrong answer.
+        if (rect.height !== lastHeight) { lastHeight = rect.height; return; }
+
         // Padding on the container the target sits in is part of the document.
         const container = target.parentElement;
         const style = container ? inner.defaultView?.getComputedStyle(container) : null;
@@ -135,10 +210,6 @@ export function measureDocument(request: MeasureRequest): Promise<MeasureResult>
           )
           : undefined;
 
-        // A document that lays out to nothing means the frame never really
-        // rendered; trust the estimate instead of sizing the box to zero.
-        if (rect.width < 1 || rect.height < 1) { finish(unmeasured); return; }
-
         finish({
           width: Math.max(Math.ceil(rect.width + padX) + SAFETY_PX, request.fallback.width),
           height: Math.max(Math.ceil(rect.height + padY) + SAFETY_PX, request.fallback.height),
@@ -149,10 +220,13 @@ export function measureDocument(request: MeasureRequest): Promise<MeasureResult>
         // Cross-origin or a document that refused to lay out. Estimate it is.
         finish(unmeasured);
       }
-    });
+    };
 
+    const poller = window.setInterval(inspect, POLL_INTERVAL_MS);
+    // `load` fires for the srcdoc document too (after about:blank's, where
+    // that one comes at all) — a hint to look sooner than the next poll tick.
+    frame.addEventListener('load', inspect);
     document.body.appendChild(frame);
-    frame.srcdoc = request.html;
   });
 }
 

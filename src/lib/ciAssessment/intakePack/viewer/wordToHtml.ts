@@ -32,6 +32,11 @@ export interface RenderedWordDocument {
   height: number;
   /** Rendered width of a page, for fitting the viewport. */
   width: number;
+  /**
+   * Whether the height came from laying the frame's own document out. False
+   * means the padded staging-area estimate — the viewer re-measures it.
+   */
+  measured: boolean;
 }
 
 const RENDER_OPTIONS = {
@@ -179,8 +184,13 @@ export async function renderWordToHtml(data: ArrayBuffer): Promise<RenderedWordD
     return {
       html,
       pageOffsets: measured.offsets?.length ? measured.offsets : pageOffsets,
-      height: measured.height,
+      // Unmeasured means the height came from the staging area, where the
+      // app's own type rules reached in and may have wrapped lines differently
+      // from the frame. Pad it: extra grey below the last page is visible and
+      // harmless, a short frame silently cuts the document off.
+      height: measured.measured ? measured.height : Math.round(measured.height * 1.1) + 200,
       width: Math.max(width, 1),
+      measured: measured.measured,
     };
   } finally {
     stage.remove();
