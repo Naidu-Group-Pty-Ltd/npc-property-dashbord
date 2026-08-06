@@ -11,6 +11,25 @@ import {
 } from "@/lib/aml/amlVerificationApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { displayDateTime } from "@/lib/aml/displayDate";
+import { amlCasesApi } from "@/lib/aml/amlCasesApi";
+
+/**
+ * The canonical client-request action code for identity verification. The
+ * Client Portal routes on this exact value; it is defined once so a second
+ * spelling cannot be invented at a call site.
+ */
+export const IDENTITY_VERIFICATION_ACTION = "complete_identity_verification";
+
+/** Minimal shape of a client request this surface reads. */
+interface AmlClientRequest {
+  id: string;
+  status?: string | null;
+  subject?: string | null;
+  created_at?: string | null;
+  viewed_at?: string | null;
+  responded_at?: string | null;
+  action_code?: string | null;
+}
 
 /**
  * Identity verification — command-centre surface for the self-hosted stack.
@@ -87,21 +106,33 @@ export function VerificationSection({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
+  const [openRequest, setOpenRequest] = useState<AmlClientRequest | null>(null);
   const { prompt, dialog } = usePromptDialog();
 
   const refresh = useCallback(async () => {
     try {
-      const [res, log, ready] = await Promise.all([
+      const [res, log, ready, requests] = await Promise.all([
         amlVerificationApi.listVerificationChecks(caseId),
         amlVerificationApi.listBiometricAccess(caseId).catch(() => ({ access_log: [] })),
         // Readiness is advisory: staff need to know an electronic check cannot
-        // run right now before they chase the client for another capture.
+        // run right now before they chase the client for another capture. It
+        // decides the *method*, never whether the workflow may be requested.
         amlVerificationApi.providerReadiness().catch(() => null),
+        amlCasesApi.listClientRequests(caseId).catch(() => ({ requests: [] })),
       ]);
       setChecks(res.checks ?? []);
       setMaxAttempts(res.max_attempts ?? 3);
       setAccessLog(log.access_log ?? []);
       setReadiness(ready);
+      // The one unresolved identity-verification request, if any. Its presence
+      // is what prevents a second request — not the provider's state.
+      setOpenRequest(
+        (requests.requests ?? []).find(
+          (r: AmlClientRequest) =>
+            r?.action_code === IDENTITY_VERIFICATION_ACTION &&
+            r?.status !== "resolved" && r?.status !== "cancelled",
+        ) ?? null,
+      );
       setError(null);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load verification checks.");
@@ -110,6 +141,59 @@ export function VerificationSection({
   }, [caseId]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  /**
+   * Ask the client to verify their identity.
+   *
+   * This creates a workflow request. It does NOT run the provider, which is
+   * why provider readiness must not gate it: the legacy panel disabled this
+   * button whenever the electronic provider was unavailable, which left staff
+   * unable to start verification at all in exactly the situation where the
+   * manual document route is the only way forward.
+   *
+   * Readiness decides the method the client is routed to, and the message
+   * says which one they are getting. Nothing synthetic is created here and no
+   * customer attempt is consumed.
+   */
+  const requestVerification = async () => {
+    setBusy("request");
+    try {
+      const electronic = readiness?.idv?.state === "ready_live";
+      await amlCasesApi.createClientRequest({
+        case_id: caseId,
+        kind: "additional_info",
+        subject: "Identity verification",
+        message: electronic
+          ? "Please complete identity verification in your client portal: you will be asked to "
+            + "photograph your identity document and take a selfie. It only takes a few minutes."
+          : "Please upload a current identity document (passport or driver licence) in your client "
+            + "portal so we can verify your identity. You do not need to take a selfie.",
+        // Canonical vocabulary (`CLIENT_ACTION_CODES`), not a free-text
+        // payload: the portal only projects an action it recognises, and
+        // `action_target.target_step` is the whitelisted routing field — no
+        // URL is ever accepted. Readiness is resolved here, at request time,
+        // so the client is never sent to a capture step that cannot run.
+        action_code: IDENTITY_VERIFICATION_ACTION,
+        action_target: { target_step: electronic ? "identity_verification" : "upload_document" },
+      });
+      toast({
+        title: "Verification requested",
+        description: electronic
+          ? "The client will see the request in their portal. The result returns to this case for review."
+          : "The client will be asked to upload an identity document. Record a sighting here once it arrives.",
+      });
+      await refresh();
+      onChanged?.();
+    } catch (e: any) {
+      toast({
+        title: "Could not request verification",
+        description: e?.message ?? "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const adjudicate = async (check: AmlVerificationCheck) => {
     setBusy(check.id);
@@ -271,9 +355,9 @@ export function VerificationSection({
             <AlertDescription className="text-xs">
               {ready
                 ? "The configured provider is live. Captures submitted by the client are processed automatically."
-                : "No live provider is available for this environment, so electronic checks cannot run. "
-                  + "Verify identity by document sighting until it is restored — no client attempt is "
-                  + "consumed while it is unavailable."}
+                : "Electronic verification is currently unavailable. Request documents and complete manual "
+                  + "verification. Requesting verification still works — the client is routed to document "
+                  + "upload instead of capture, and no customer attempt is consumed."}
               {` (${readiness.idv.state.replace(/_/g, " ")})`}
             </AlertDescription>
           </Alert>
@@ -286,14 +370,42 @@ export function VerificationSection({
             <ShieldCheck className="h-4 w-4 text-primary" /> Identity verification
           </CardTitle>
           {canWrite && (
-            <Button size="sm" variant="outline" onClick={recordSighting} disabled={busy === "sighting"}>
-              {busy === "sighting" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-              <FileCheck2 className="mr-1.5 h-3.5 w-3.5" /> Record sighting
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" onClick={recordSighting} disabled={busy === "sighting"}>
+                {busy === "sighting" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                <FileCheck2 className="mr-1.5 h-3.5 w-3.5" /> Record sighting
+              </Button>
+              {/* Enabled whenever the user may write and no identity request is
+                  still outstanding. Provider readiness is deliberately absent
+                  from this condition — see `requestVerification`. */}
+              <Button
+                size="sm"
+                onClick={requestVerification}
+                disabled={busy === "request" || Boolean(openRequest)}
+              >
+                {busy === "request"
+                  ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  : <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />}
+                Request identity verification
+              </Button>
+            </div>
           )}
         </CardHeader>
 
         <CardContent className="space-y-3 text-sm">
+          {/* Why the request button is disabled. A disabled control with no
+              stated reason is indistinguishable from a broken one. */}
+          {openRequest && (
+            <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+              <span className="font-medium">Identity verification already requested.</span>{" "}
+              <span className="text-muted-foreground">
+                Sent {displayDateTime(openRequest.created_at)}
+                {openRequest.viewed_at ? ` · client viewed ${displayDateTime(openRequest.viewed_at)}` : " · not yet viewed"}
+                {openRequest.responded_at ? ` · responded ${displayDateTime(openRequest.responded_at)}` : ""}
+                . Resolve it before sending another.
+              </span>
+            </div>
+          )}
           {error ? (
             <p className="text-muted-foreground">{error}</p>
           ) : checks === null ? (

@@ -364,6 +364,12 @@ describe("notification category regression (found by staging browser E2E)", () =
   });
 });
 
+/** Source with comments removed, so a note describing a removed symbol cannot
+ *  satisfy or fail an assertion about the code itself. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
 describe("browser-journey regressions (found by real Chromium against staging)", () => {
   const terminology = readFileSync("src/lib/aml/useAmlTerminology.ts", "utf8");
   const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
@@ -459,7 +465,58 @@ describe("browser-journey regressions (found by real Chromium against staging)",
   it("provider readiness is shown so staff do not chase an unprocessable capture", () => {
     expect(verificationSection).toContain("providerReadiness()");
     expect(verificationSection).toContain("Electronic verification:");
-    expect(verificationSection).toContain("no client attempt is ");
+    // Readiness now names the route staff should take instead of only saying
+    // the provider is down, and still promises no attempt is spent.
+    expect(verificationSection).toContain("Electronic verification is currently unavailable.");
+    expect(verificationSection).toContain("Request documents and complete manual ");
+    expect(verificationSection).toContain("no customer attempt is consumed");
+  });
+
+  /* ── the verification surface defect ─────────────────────────────────── */
+
+  it("the case workspace tab mounts the canonical surface, not the legacy one", () => {
+    // CaseWorkspaceTabs used to mount `VerificationTab` (aml.identity_checks).
+    // Two competing primary panels is the defect; there must be exactly one.
+    const tabs = readFileSync("src/components/aml/CaseWorkspaceTabs.tsx", "utf8");
+    expect(tabs).toContain("<VerificationSection");
+    expect(tabs).toContain("<LegacyVerificationHistoryPanel");
+    // Checked against comment-stripped source: the removal is documented in a
+    // comment that names the component it removed, and that note must not be
+    // what fails the test guarding the removal.
+    const tabsCode = stripComments(tabs);
+    expect(tabsCode).not.toMatch(/<VerificationTab[\s/>]/);
+    expect(tabsCode).not.toMatch(/export function VerificationTab\b/);
+  });
+
+  it("requesting verification is not gated on provider readiness", () => {
+    // The legacy panel disabled the request whenever the provider was not
+    // ready_live, which blocked verification in precisely the case where the
+    // manual document route is the only way forward. The request creates a
+    // workflow item; it does not run the provider.
+    expect(verificationSection).toContain("const requestVerification");
+    const btn = verificationSection.slice(verificationSection.indexOf("Request identity verification") - 600);
+    expect(btn).toContain('disabled={busy === "request" || Boolean(openRequest)}');
+    expect(btn).not.toMatch(/disabled=\{[^}]*ready_live/);
+  });
+
+  it("a second request is prevented while one is unresolved", () => {
+    expect(verificationSection).toContain("IDENTITY_VERIFICATION_ACTION");
+    expect(verificationSection).toContain('r?.status !== "resolved"');
+    // And the disabled state explains itself rather than reading as broken.
+    expect(verificationSection).toContain("Identity verification already requested.");
+  });
+
+  it("readiness selects the client's route rather than blocking the request", () => {
+    expect(verificationSection).toContain('action_code: IDENTITY_VERIFICATION_ACTION');
+    expect(verificationSection).toContain('target_step: electronic ? "identity_verification" : "upload_document"');
+    // The canonical code, not a second spelling invented at the call site.
+    expect(verificationSection).toContain('"complete_identity_verification"');
+    // No synthetic pass may be manufactured when the provider is unavailable.
+    // `initiateIdv` is the simulator entry point the legacy panel called; the
+    // canonical surface must never call it. It may still *label* a simulation
+    // row that already exists, which is why only the call is forbidden.
+    expect(verificationSection).not.toContain("initiateIdv");
+    expect(verificationSection).toContain("Test simulation — not compliance evidence");
   });
 
   // DEF-B6 — icon-only shell controls had no accessible name at 360×800.
