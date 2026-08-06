@@ -19,7 +19,7 @@ const LOCALITY_PATTERN = new RegExp(
 );
 
 const PROPERTY_LINE_PATTERN = new RegExp(
-  `\\*\\*(?:Property|Property Address|Address|Subject Property)(?:\\*\\*)?:?\\*{0,2}\\s*([^\\n*]{6,160})`,
+  `\\*\\*(?:Property|Property Address|Address|Subject Property)(?:\\*\\*)?:?\\*{0,2}\\s*(?:\\r?\\n\\s*)?([^\\n*]{6,160})`,
   'i',
 );
 
@@ -76,6 +76,13 @@ function findLocality(text: string): Locality | null {
   return [...counts.values()].sort((a, b) => b.count - a.count)[0].locality;
 }
 
+const sameStreet = (candidate: string, stored: string) => {
+  const comparable = (value: string) => normalise(value).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const candidateKey = comparable(candidate);
+  const storedKey = comparable(stored);
+  return storedKey.length >= 4 && (candidateKey.startsWith(storedKey) || candidateKey.includes(storedKey));
+};
+
 export interface ReportAddressSource {
   property_address?: string | null;
   report_content?: string | null;
@@ -100,12 +107,15 @@ export function resolveReportAddress(report: ReportAddressSource | null | undefi
   const line = text.match(PROPERTY_LINE_PATTERN)?.[1];
   if (line) {
     const candidate = tidy(line);
-    if (hasLocality(candidate) && normalise(candidate).startsWith(normalise(stored))) return candidate;
+    if (hasLocality(candidate) && sameStreet(candidate, stored)) return candidate;
   }
 
   // 2. Otherwise append the dominant locality mentioned in the narrative.
   const locality = findLocality(text);
   if (!locality) return stored;
+  const localityPattern = new RegExp(`[^\\n]{0,180}${locality.state}\\s+${locality.postcode}`, 'i');
+  const localityLine = text.match(localityPattern)?.[0] || '';
+  if (!sameStreet(localityLine, stored)) return stored;
   if (normalise(stored).includes(normalise(locality.suburb))) {
     return hasLocality(stored) ? stored : `${stored} ${locality.state} ${locality.postcode}`;
   }
