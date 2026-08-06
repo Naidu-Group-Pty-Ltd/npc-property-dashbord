@@ -587,6 +587,80 @@ function selfHostedIdvConfigured(): boolean {
     Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN"));
 }
 
+// ---------- live health of the self-hosted service ----------
+
+export interface SelfHostedHealth {
+  /** The service answered. */
+  reachable: boolean;
+  /** `ok` only when both models initialise — see the service's /healthz. */
+  status: string | null;
+  /** Safe, non-identifying reason. Never the URL or the token. */
+  detail: string | null;
+}
+
+/**
+ * Probe `GET /healthz` on the verification service.
+ *
+ * Readiness used to be computed from secret presence alone, and said as much
+ * in its own note: "not a claim that any provider call has been made". Two
+ * secrets pointing at a dead container reported `ready_live`, so staff saw a
+ * ready provider and clients were offered a camera whose capture could never
+ * be examined — a face collected with no purpose that could be served (APP 3).
+ *
+ * `/healthz` is unauthenticated by design, so this needs no token and cannot
+ * leak one. The probe is short: readiness is an interactive screen.
+ */
+export async function checkSelfHostedIdvHealth(): Promise<SelfHostedHealth> {
+  const baseUrl = (Deno.env.get("AML_VERIFICATION_SERVICE_URL") || "").replace(/\/+$/, "");
+  if (!baseUrl) return { reachable: false, status: null, detail: "service_url_not_set" };
+
+  try {
+    const res = await fetch(`${baseUrl}/healthz`, {
+      method: "GET",
+      signal: AbortSignal.timeout(HEALTH_PROBE_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      return { reachable: true, status: null, detail: `healthz_http_${res.status}` };
+    }
+    const body = await res.json().catch(() => null) as
+      { status?: string; models?: Record<string, boolean>; token_configured?: boolean } | null;
+    if (!body) return { reachable: true, status: null, detail: "healthz_unparseable" };
+
+    const unusable = Object.entries(body.models ?? {})
+      .filter(([, usable]) => !usable).map(([name]) => name);
+    return {
+      reachable: true,
+      status: body.status ?? null,
+      detail: body.status === "ok"
+        ? null
+        : unusable.length
+          ? `models_unusable: ${unusable.join(", ")}`
+          : body.token_configured === false
+            ? "service_token_not_configured"
+            : `status_${body.status ?? "unknown"}`,
+    };
+  } catch (e) {
+    const timedOut = (e as Error)?.name === "TimeoutError" ||
+      (e as Error)?.name === "AbortError";
+    // Never echo the transport message: it embeds the service URL.
+    return { reachable: false, status: null, detail: timedOut ? "healthz_timeout" : "healthz_unreachable" };
+  }
+}
+
+/** Short cache so a per-request readiness check is not a per-request round trip. */
+const HEALTH_PROBE_TIMEOUT_MS = 5_000;
+const HEALTH_CACHE_MS = 30_000;
+let healthCache: { at: number; value: SelfHostedHealth } | null = null;
+
+/** Cached probe, for paths that run on every client page load. */
+export async function cachedSelfHostedIdvHealth(): Promise<SelfHostedHealth> {
+  const now = Date.now();
+  if (healthCache && now - healthCache.at < HEALTH_CACHE_MS) return healthCache.value;
+  const value = await checkSelfHostedIdvHealth();
+  healthCache = { at: now, value };
+  return value;
+}
+
 function adapterConfigured(capability: "idv" | "screening", key: string): boolean {
   if (capability === "idv" && key === "selfhosted") return selfHostedIdvConfigured();
   // Adapters without external configuration (e.g. local_lists screening)

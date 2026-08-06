@@ -19,6 +19,7 @@ import {
   resolveTenantProvider,
   runWithMetrics,
   currentEnvironment,
+  checkSelfHostedIdvHealth,
   ProviderResolutionError,
   type ScreeningScope,
 } from "../_shared/aml/providers/index.ts";
@@ -859,12 +860,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             : true;
           const wantsSimulator = mode === "simulator" || key === "simulator";
           let state: string;
+          // Live health of the actual service, not an inference from secrets.
+          // Two secrets can point at a dead container; reporting `ready_live`
+          // for that is what let staff believe the provider was up while every
+          // verification would have failed.
+          let serviceHealth: Awaited<ReturnType<typeof checkSelfHostedIdvHealth>> | null = null;
+
           if (wantsSimulator) {
             state = environment === "production" ? "not_configured" : "simulator_non_production";
           } else if (!wired || !configured) {
             state = "misconfigured";
           } else if (resolved && ["failing", "unhealthy"].includes(String((resolved as any).lastHealthStatus ?? ""))) {
             state = "unavailable";
+          } else if (capability === "idv" && key === "selfhosted") {
+            serviceHealth = await checkSelfHostedIdvHealth();
+            state = serviceHealth.reachable && serviceHealth.status === "ok"
+              ? "ready_live"
+              : "unavailable";
           } else {
             state = "ready_live";
           }
@@ -883,6 +895,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               at: cfg.last_health_at, status: cfg.last_health_status,
               message: cfg.last_health_message,
             } : null,
+            // A probe made just now, so `state` is evidence rather than
+            // inference. Carries no URL and no token.
+            service_health: serviceHealth,
             state,
           };
         }
@@ -890,7 +905,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({
           environment,
           simulator_blocked: environment === "production",
-          note: "Recorded configuration and runtime booleans — not a claim that any provider call has been made.",
+          note: "Configuration plus a live /healthz probe of the configured service. `ready_live` means the service answered and both models initialised.",
           idv: await capabilityReadiness("idv"),
           screening: await capabilityReadiness("pep_sanctions"),
         });

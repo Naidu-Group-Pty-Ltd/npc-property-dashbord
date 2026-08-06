@@ -27,6 +27,7 @@ import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
 import {
   getIdvProvider,
   resolveTenantProvider,
+  cachedSelfHostedIdvHealth,
   ProviderResolutionError,
 } from "../_shared/aml/providers/index.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
@@ -409,7 +410,16 @@ async function activeProcessingCheck(
 async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'temporarily_unavailable' | 'manual_verification_required'> {
   try {
     const resolved = await resolveTenantProvider(admin, 'default', 'idv');
-    getIdvProvider({ resolved, admin });
+    const provider = getIdvProvider({ resolved, admin });
+
+    // Resolution only proves the provider is *configured*. Two secrets can
+    // point at a dead container, and offering a camera against one collects a
+    // face with no purpose that can be served (APP 3). So the live path is
+    // also probed — cached, because this runs on every portal page load.
+    if (provider.name === 'selfhosted') {
+      const health = await cachedSelfHostedIdvHealth();
+      if (!health.reachable || health.status !== 'ok') return 'temporarily_unavailable';
+    }
     return 'available';
   } catch (err: any) {
     if (err instanceof ProviderResolutionError) {
