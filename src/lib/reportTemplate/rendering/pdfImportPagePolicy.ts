@@ -81,6 +81,48 @@ function isPolicyObject(value: unknown): value is PdfImportPagePolicy {
 }
 
 /**
+ * The bucket `template-import-pdf` writes page rasters to
+ * (`ASSET_BUCKET` in `supabase/functions/template-import-pdf/index.ts`).
+ *
+ * A background image served from here is, by construction, a picture of the
+ * page it sits behind — nothing else is ever stored there.
+ */
+export const PDF_IMPORT_ASSET_BUCKET = 'template-import-assets';
+
+/**
+ * Is this page's background a *source raster* rather than decoration?
+ *
+ * ## Why the URL is a signal, and why it had to become one
+ *
+ * The three markers below it — the typed policy, `sourceRasterRef`, and the
+ * legacy `underlay` flag — are all written by `applyPagePolicyToPage`. They are
+ * reliable when something applied a policy, and absent when nothing did. An
+ * import that stored `background.imageUrl` and no policy produced pages that
+ * classified as ordinary decorative backgrounds, and this module's central
+ * promise — "a full raster and duplicate native content can never render
+ * together" — failed silently on every one of them.
+ *
+ * That was not hypothetical. A 61-page Compass template imported this way was
+ * the global default for two months, and every report it rendered painted the
+ * source raster *and* the reconstructed text overlays: two misaligned copies of
+ * every word, on every page, in documents that went to clients.
+ *
+ * The bucket closes it without widening the net. `PDF_IMPORT_ASSET_BUCKET`
+ * holds page rasters and nothing else, so a hero image, a cover photograph or
+ * any other decorative background — none of which is served from there — keeps
+ * its historical behaviour exactly.
+ */
+export function isPdfImportSourceRaster(page: Page | null | undefined): boolean {
+  const meta = (page?.meta ?? {}) as Record<string, unknown>;
+  const background = (page?.background ?? {}) as Record<string, unknown>;
+  if (isPolicyObject(meta.pdfImport)) return true;
+  if (meta.sourceRasterRef) return true;
+  if (background.underlay === true) return true;
+  const url = background.imageUrl;
+  return typeof url === 'string' && url.includes(`/${PDF_IMPORT_ASSET_BUCKET}/`);
+}
+
+/**
  * Resolve the effective output policy for a page. The typed
  * `page.meta.pdfImport` policy is authoritative; otherwise legacy background
  * signals are normalized in memory (never mutating the page):
@@ -98,7 +140,12 @@ export function resolvePageOutputPolicy(page: Page | null | undefined): PdfImpor
   const background = (page?.background ?? {}) as Record<string, unknown>;
   const hasImage = typeof background.imageUrl === 'string' && background.imageUrl.length > 0;
   const underlay = background.underlay === true;
-  const isPdfImportRaster = Boolean((meta as { sourceRasterRef?: unknown }).sourceRasterRef);
+  // Was `Boolean(meta.sourceRasterRef)` alone. An import that wrote the raster
+  // and no policy therefore fell through to `nativePolicy('semantic')`, which
+  // renders the blocks — while `shouldRenderPageBackgroundImage` separately
+  // decided the raster was decorative and painted that too. See
+  // `isPdfImportSourceRaster`.
+  const isPdfImportRaster = isPdfImportSourceRaster(page);
 
   if (hasImage && underlay) {
     return {
@@ -150,17 +197,18 @@ export function resolvePageRenderPlan(
 /**
  * Apply the PDF-import render plan to the page background without changing the
  * historical behaviour of ordinary decorative background images.
+ *
+ * A source raster defers to the plan; anything else paints as it always has.
+ * The predicate is shared with `resolvePageOutputPolicy` deliberately — when
+ * the two disagreed about what counted as an import background, the classifier
+ * said "native, no raster" and this said "decorative, paint it", and the page
+ * got both layers.
  */
 export function shouldRenderPageBackgroundImage(
   page: Page | null | undefined,
   plan: { showSourceRaster: boolean },
 ): boolean {
-  const meta = (page?.meta ?? {}) as Record<string, unknown>;
-  const background = (page?.background ?? {}) as Record<string, unknown>;
-  const isPdfImportBackground = isPolicyObject(meta.pdfImport)
-    || Boolean(meta.sourceRasterRef)
-    || background.underlay === true;
-  return isPdfImportBackground ? plan.showSourceRaster : true;
+  return isPdfImportSourceRaster(page) ? plan.showSourceRaster : true;
 }
 
 /**
