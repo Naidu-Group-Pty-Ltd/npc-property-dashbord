@@ -48,6 +48,12 @@ export interface RenderedSheet {
    */
   width: number;
   height: number;
+  /**
+   * Whether the size above came from a real layout. False means the fallback
+   * (padded so it cannot clip, but not exact) — the viewer re-measures such a
+   * sheet when its tab is shown.
+   */
+  measured: boolean;
 }
 
 export interface RenderedWorkbook {
@@ -192,7 +198,7 @@ function renderSheet(
   if (!reference) {
     return {
       name, html: documentShell('<div class="sheet"></div>'),
-      rows: 0, columns: 0, width: 0, height: 0,
+      rows: 0, columns: 0, width: 0, height: 0, measured: false,
     };
   }
 
@@ -263,6 +269,7 @@ function renderSheet(
     // sheet in the pack.
     width: contentWidth + SHEET_PADDING_PX * 2,
     height: contentHeight + SHEET_PADDING_PX * 2,
+    measured: false,
   };
 }
 
@@ -307,10 +314,22 @@ export async function renderWorkbookToHtml(data: ArrayBuffer): Promise<RenderedW
   })));
 
   return {
-    sheets: sheets.map((sheet, index) => ({
-      ...sheet,
-      width: measured[index]?.width ?? sheet.width,
-      height: measured[index]?.height ?? sheet.height,
-    })),
+    sheets: sheets.map((sheet, index) => {
+      const size = measured[index];
+      if (size?.measured) {
+        return { ...sheet, width: size.width, height: size.height, measured: true };
+      }
+      // No measurement — only the arithmetic floor, which on this pack runs up
+      // to 358px short (rows wrap wider in a browser than they did in Excel).
+      // Pad it so the degraded mode shows blank space below the grid instead of
+      // silently cutting rows off: too tall is visible and harmless, too short
+      // is invisible data loss. Sheets with no grid at all stay zero.
+      if (!sheet.height || !sheet.width) return sheet;
+      return {
+        ...sheet,
+        width: Math.round(sheet.width * 1.05) + 64,
+        height: Math.round(sheet.height * 1.3) + 400,
+      };
+    }),
   };
 }

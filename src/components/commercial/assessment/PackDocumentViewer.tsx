@@ -56,7 +56,11 @@ type Status = 'idle' | 'loading' | 'ready' | 'error' | 'unsupported';
 
 interface WorkbookState {
   kind: 'workbook';
-  sheets: Array<{ name: string; html: string; width: number; height: number }>;
+  sheets: Array<{
+    name: string; html: string; width: number; height: number;
+    /** False: the size is a padded estimate — re-measured when the tab shows. */
+    measured: boolean;
+  }>;
 }
 
 interface WordState {
@@ -65,6 +69,8 @@ interface WordState {
   pageOffsets: number[];
   height: number;
   width: number;
+  /** False: the height is a padded estimate — re-measured once shown. */
+  measured: boolean;
 }
 
 type Rendered = WorkbookState | WordState;
@@ -178,6 +184,7 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
             kind: 'workbook',
             sheets: result.sheets.map((sheet) => ({
               name: sheet.name, html: sheet.html, width: sheet.width, height: sheet.height,
+              measured: sheet.measured,
             })),
           });
         } else {
@@ -192,6 +199,7 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
             pageOffsets: result.pageOffsets,
             height: result.height,
             width: result.width,
+            measured: result.measured,
           });
         }
         if (!cancelled) setStatus('ready');
@@ -204,6 +212,66 @@ export function PackDocumentViewer({ document: source, open, onOpenChange }: Pro
 
     return () => { cancelled = true; };
   }, [open, source, attempt]);
+
+  /**
+   * Second chance for a document the opening batch could not measure.
+   *
+   * A sheet whose `measured` flag is false is showing at a padded estimate —
+   * safe against clipping, but not exact. Measuring is cheap and this runs at
+   * most once per unmeasured document (a successful measurement flips the flag,
+   * a failed one changes nothing), so whatever transient state starved the
+   * first pass — a busy main thread while twelve sheets loaded — gets retried
+   * the moment the user is actually looking at the tab it affected.
+   */
+  useEffect(() => {
+    if (status !== 'ready' || !rendered) return;
+    const wants = rendered.kind === 'workbook'
+      ? rendered.sheets[sheetIndex] && !rendered.sheets[sheetIndex].measured
+      : !rendered.measured;
+    if (!wants) return;
+
+    let cancelled = false;
+    (async () => {
+      const { measureDocument } = await import(
+        '@/lib/ciAssessment/intakePack/viewer/measureFrame'
+      );
+      if (rendered.kind === 'workbook') {
+        const index = sheetIndex;
+        const sheet = rendered.sheets[index];
+        // Fallback of 1×1: on success the exact size replaces the padded
+        // estimate (shrinking is fine — it is exact); on failure nothing moves.
+        const size = await measureDocument({
+          html: sheet.html, selector: 'table', fallback: { width: 1, height: 1 },
+        });
+        if (cancelled || !size.measured) return;
+        setRendered((current) => {
+          if (!current || current.kind !== 'workbook') return current;
+          const entry = current.sheets[index];
+          if (!entry || entry.measured) return current;
+          const sheets = current.sheets.slice();
+          sheets[index] = { ...entry, width: size.width, height: size.height, measured: true };
+          return { ...current, sheets };
+        });
+      } else {
+        const size = await measureDocument({
+          html: rendered.html,
+          selector: '.docx-wrapper',
+          offsetSelector: 'section.docx',
+          fallback: { width: 1, height: 1 },
+        });
+        if (cancelled || !size.measured) return;
+        setRendered((current) => (current?.kind === 'guide' && !current.measured
+          ? {
+            ...current,
+            height: size.height,
+            pageOffsets: size.offsets?.length ? size.offsets : current.pageOffsets,
+            measured: true,
+          }
+          : current));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [status, rendered, sheetIndex]);
 
   const pageCount = rendered?.kind === 'guide' ? rendered.pageOffsets.length : 0;
 
