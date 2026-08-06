@@ -39,6 +39,8 @@ import {
 } from "@/lib/aml/amlEntitiesApi";
 import { amlCasesApi, type AmlCase, type AmlCaseEvent } from "@/lib/aml/amlCasesApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { VerificationSection } from "@/components/aml/VerificationSection";
+import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificationHistoryPanel";
 import {
   CASE_STAGE_LABELS, CASE_STATUS_LABELS, CLIENT_PORTAL_STATUS_LABELS,
   FINANCE_PORTAL_STATUS_LABELS, RISK_BADGE_CLASSES, SERVICE_GATE_LABELS,
@@ -127,7 +129,16 @@ export function CaseWorkspaceTabs({
         <OverviewTab caseRow={caseRow} events={events} onOpenAudit={() => setTab("audit")} />
       </TabsContent>
       <TabsContent value="verification" className={contentCls}>
-        <VerificationTab caseId={caseRow.id} canWrite={canWrite} onChanged={onChanged} />
+        {/* ONE canonical identity-verification surface, matching the case
+            page. This tab used to mount the legacy `VerificationTab`, which
+            read aml.identity_checks and disabled "Request identity
+            verification" whenever the electronic provider was not
+            ready_live — leaving staff unable to start verification in
+            exactly the case where the manual route is the only option. */}
+        <div className="space-y-4">
+          <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={onChanged} />
+          <LegacyVerificationHistoryPanel caseId={caseRow.id} />
+        </div>
       </TabsContent>
       <TabsContent value="screening" className={contentCls}>
         <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={onChanged} />
@@ -378,118 +389,13 @@ function identityCheckPresentation(r: IdentityCheck): { label: string; tone: "de
   }
 }
 
-export function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
-  const [items, setItems] = useState<IdentityCheck[] | null>(null);
-  const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const load = async () => {
-    try { setItems((await amlVerificationApi.listIdv(caseId)).identity_checks); }
-    catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
-    try { setReadiness(await amlVerificationApi.providerReadiness()); }
-    catch { setReadiness(null); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
-
-  const idvState = readiness?.idv?.state ?? "unknown";
-  const liveReady = idvState === "ready_live";
-  const simulatorAllowed = idvState === "simulator_non_production";
-
-  // Production workflow: staff REQUEST verification; the client completes
-  // capture in their portal under consent, and the server submits it to the
-  // configured live provider. Nothing synthetic is generated here.
-  const requestVerification = async () => {
-    setBusy(true);
-    try {
-      await amlCasesApi.createClientRequest({
-        case_id: caseId,
-        kind: "additional_info",
-        subject: "Identity verification",
-        message: "Please complete identity verification in your client portal: you will be asked to photograph your identity document and take a selfie. It only takes a few minutes.",
-        request_payload: { action: "identity_verification" },
-      });
-      toast({ title: "Verification requested", description: "The client will see the request in their portal. The result returns to this case for review." });
-      onChanged();
-    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
-    finally { setBusy(false); }
-  };
-
-  // Explicit non-production testing path — clearly labelled, never the
-  // production action, and refused server-side in production regardless.
-  const runSimulatedIdv = async () => {
-    setBusy(true);
-    try {
-      await amlVerificationApi.initiateIdv(caseId);
-      toast({ title: "Test IDV run (simulation)" });
-      await load(); onChanged();
-    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-3 flex-wrap">
-        <CardTitle className="text-sm">Identity verification</CardTitle>
-        {canWrite && (
-          <div className="flex items-center gap-2">
-            {simulatorAllowed && (
-              <Button size="sm" variant="outline" onClick={runSimulatedIdv} disabled={busy}>
-                Run test IDV (simulation)
-              </Button>
-            )}
-            <Button size="sm" onClick={requestVerification} disabled={busy || (!liveReady && !simulatorAllowed)}>
-              {busy ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}
-              Request identity verification
-            </Button>
-          </div>
-        )}
-      </CardHeader>
-      <CardContent>
-        {readiness && !liveReady && !simulatorAllowed && (
-          <div className="mb-3 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
-            <span className="font-medium">Identity verification is not configured.</span>{" "}
-            <span className="text-muted-foreground">
-              No live provider is available in this environment, so no request can be sent and no check will be created.
-            </span>{" "}
-            <Link to="/admin/aml-integration-health" className="underline underline-offset-2">
-              Open Integration Health
-            </Link>
-          </div>
-        )}
-        {readiness && (
-          <p className="mb-3 text-xs text-muted-foreground">
-            Environment: {readiness.environment} · IDV provider:{" "}
-            {readiness.idv.configured_provider ?? "none configured"} ({readiness.idv.mode}) · {String(idvState).replace(/_/g, " ")}
-          </p>
-        )}
-        {items === null ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No IDV checks yet for this case.</p>
-        ) : (
-          <ul className="space-y-2">
-            {items.map((r) => {
-              const p = identityCheckPresentation(r);
-              return (
-                <li key={r.id} className="flex items-center justify-between gap-3 text-sm border-b border-border/50 py-2">
-                  <div className="min-w-0">
-                    <div className="font-medium">{r.subject_label}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {r.provider} · {r.method} · {new Date(r.requested_at).toLocaleString()}
-                    </div>
-                  </div>
-                  <Badge variant={p.tone}>{p.label}</Badge>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-/* -------------------- Screening -------------------- */
+/* The legacy `VerificationTab` lived here. It read aml.identity_checks and
+   gated "Request identity verification" on provider readiness, so staff could
+   not start verification when the electronic provider was unavailable — the
+   one case where the manual document route is the only way forward. The
+   canonical `VerificationSection` (aml.verification_checks) is now mounted in
+   its place; aml.identity_checks survives read-only in
+   `LegacyVerificationHistoryPanel`. */
 
 export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [items, setItems] = useState<ScreeningCheck[] | null>(null);
@@ -499,7 +405,7 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
     try { setItems((await amlVerificationApi.listScreening(caseId)).screening_checks); }
     catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
+  useEffect(() => { load();   }, [caseId]);
 
   const runScreen = async () => {
     setBusy(true);
@@ -602,7 +508,7 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
       setRecalc(rc.recalc ?? null);
     } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
+  useEffect(() => { load();   }, [caseId]);
 
   const evaluate = async () => {
     setBusy(true);

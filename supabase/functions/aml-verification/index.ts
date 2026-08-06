@@ -38,15 +38,25 @@ async function hasCaseAccess(
   caseId: string,
   requireWriteRole = false,
 ): Promise<boolean> {
-  const { data: caseRow, error: caseError } = await admin.schema("aml").from("cases")
-    .select("tenant_id").eq("id", caseId).maybeSingle();
-  if (caseError || !caseRow?.tenant_id) return false;
+  // `aml.cases` has no `tenant_id` column — no migration ever added one. This
+  // used to `.select("tenant_id")` and `return false` on the resulting
+  // PostgREST error, so it denied EVERY caller on EVERY case. That made the
+  // documentary route — the primary evidence path when no electronic provider
+  // is configured — permanently 403 behind an enabled "Record sighting"
+  // button. Found by running the real case workspace against production.
+  //
+  // The case still resolves its tenant exactly as `resolveTenantId` above
+  // does: the recorded value when one exists, otherwise the default tenant.
+  // Authorisation itself is unchanged — the tenant-scoped AML role RPCs below
+  // remain the only thing that can grant access.
+  const tenantId = await resolveTenantId(admin, caseId);
+  if (!tenantId) return false;
 
   const aml = admin.schema("aml");
   if (!requireWriteRole) {
     const { data, error } = await aml.rpc("has_any_tenant_aml_role", {
       _user_id: userId,
-      _tenant_id: caseRow.tenant_id,
+      _tenant_id: tenantId,
     });
     return !error && data === true;
   }
@@ -54,7 +64,7 @@ async function hasCaseAccess(
   for (const role of ["analyst", "reviewer", "mlro"]) {
     const { data, error } = await aml.rpc("has_tenant_aml_role", {
       _user_id: userId,
-      _tenant_id: caseRow.tenant_id,
+      _tenant_id: tenantId,
       _role: role,
     });
     if (!error && data === true) return true;
