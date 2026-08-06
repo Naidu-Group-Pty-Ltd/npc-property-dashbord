@@ -66,7 +66,7 @@ From: Blights Real Estate Yorke Peninsula <yp@blights.com.au>   <- the agency
 So the answer is recoverable, and it is worth more than "not Lavan": the innermost
 hop is a real agency address on records that had none.
 
-Three things had to be true at once, and each was learned from a body that broke
+Four things had to be true at once, and each was learned from a body that broke
 the previous attempt:
 
 - **Take the *last* `From:`, not the first.** The first is the outermost
@@ -79,6 +79,14 @@ the previous attempt:
 - **Skip addresses that are ours.** Chains routinely pass through
   `property@npcservices.com.au`, which would otherwise become the "last" hop. This
   is what turns "the last `From:`" into "the last `From:` belonging to an agency".
+- **Stop the display name at `[`, then skip one bracketed run.** `HTMLToText`
+  renders a linked display name as `realcommercial.com.au
+  [http://realcommercial.com.au]`, so a name bounded only by `<` swallows the URL
+  and `Sender Name` reads `realcommercial.com.au [http://realcommercial.com.au]`.
+  Excluding `[` from the name *alone* loses the match — the bracketed run has to be
+  consumed by something, so the pattern skips an optional `\[[^\]\n]*\]` between the
+  name and the address. This changes the captured **name** only; the same bodies
+  match either way, so the table below is unaffected.
 
 Anchoring each `From:` to a marker of its own does *not* work: a Gmail forward of
 an Outlook forward nests one header block inside another and only the outer one
@@ -147,6 +155,15 @@ blueprint below has been imported yet.
 into intake.** Leaving one out is silent, and the symptom is their name appearing
 as the agent.
 
+`BULK_SENDER_HOSTS` gains the portals' own broadcast infrastructure —
+`campaign.realcommercial.com.au`, `campaign.realestate.com.au`, `reastatic.net`.
+Once the forwarder is stripped off a saved-search alert, the innermost hop is
+`email@campaign.realcommercial.com.au`: genuinely who sent it, and still not a
+contact — it is the portal's mail platform, not the agency marketing the property.
+`email@` is not one of the local parts `UNREACHABLE` recognises, so nothing else
+catches it. Recovering the *agent* for these alerts is the separate job described
+under **Still open**.
+
 ---
 
 ## Applying the Make change
@@ -180,14 +197,49 @@ python3 docs/integrations/blueprints/apply-sender-fix.py
 
 ---
 
-## Still open
+## The backfill
 
-The 51 records already written keep an NPC address in `Sender Email`. The
-dashboard no longer offers it, so this is a cosmetic and archival question rather
-than a live one, and the raw bodies are still in the `Emails` table if those rows
-are ever worth re-deriving — 46 of them already carry
-`sales@waterscarpenter.com.au` in `Agency Email`, so only 5 are genuinely without
-a contact.
+The 51 records the scenario had written were repaired in place on 2026-08-06, by
+re-deriving each one from its own raw body in the `Emails` table with the same
+pattern module 200 will use. Sweeping all 491 rows of the table for the related
+`Agent Email` defect brought the total touched to 71. This was a one-off
+correction, not a scheduled job: there is no script to re-run, because once the
+blueprint is imported there is nothing left to correct.
+
+| | |
+|---|---|
+| records touched | 71 |
+| `Sender Email` / `Sender Name` rewritten to the originating agency | 51 |
+| `Agent Email` cleared because it held a general inbox, not an agent | 65 |
+| records left holding an NPC-side address in any email column | 0 |
+
+The 51 resolved to two senders — 46 to `sales@waterscarpenter.com.au` / *First
+National Real Estate Waters & Carpenter*, and 5 to
+`email@campaign.realcommercial.com.au` / *realcommercial.com.au*, the forwarded
+saved-search alerts. The trailing `[http://realcommercial.com.au]` was stripped
+from the name before writing, which is the defect the fourth constraint above now
+prevents at the source.
+
+The `Agent Email` clears are the wider set, and they are the defect the prompt rule
+closes: 65 records held a general agency inbox in `Agent Email` — the same value as
+`Agency Email`, or a role address like `feedback@raywhite.com` — because nothing had
+told the model that a role inbox is not an agent's own address. The 20 records that
+needed *only* this clear had a correct `Sender Email` already; the other 45 needed
+both. Clearing it loses nothing: `Agency Email` still carries the inbox, so the
+dashboard offers the same contact, and it stops claiming to know an agent it never
+knew. An `Agent Email` that was a *personal* address was left alone.
+
+Every pre-change value was captured before writing and is committed as
+[`blueprints/sender-backfill-2026-08-06.json`](./blueprints/sender-backfill-2026-08-06.json)
+— `before` and `after` per record, per column — so any row can be put back exactly
+as it was if the derivation is ever disputed.
+
+**This does not make the blueprint import optional.** It corrects the rows written
+so far; every listing that arrives before the import will need the same correction.
+
+---
+
+## Still open
 
 Recovering an *agent* rather than an agency for a forwarded portal alert is a
 different job: those alerts print agent names (`Paul Cunningham; Saxon Stonehouse`)

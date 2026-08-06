@@ -38,6 +38,10 @@ describe('cleanContactEmail', () => {
       'reply@mail.mailchimpapp.net',
       'x@socketlabs.vaultre.com.au',
       'noreply@em1234.hubspot.com',
+      // The portal's own broadcast platform. This is what a forwarded
+      // realcommercial saved-search alert resolves to once the forwarder is
+      // stripped off, and `email@` is not an address shape UNREACHABLE catches.
+      'email@campaign.realcommercial.com.au',
     ]) {
       expect(cleanContactEmail(email), email).toBeNull();
     }
