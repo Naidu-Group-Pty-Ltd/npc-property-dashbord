@@ -59,8 +59,27 @@ export const MIN_SECTION_CHARS = 80;
  */
 export const MAX_SECTION_CHARS = 14_000;
 
-/** A last-resort whole-document ceiling, in estimated printed lines. */
-export const MAX_DOCUMENT_LINES = 2_000;
+/**
+ * A last-resort whole-document ceiling, in estimated printed lines.
+ *
+ * Raised from 2,000 when the model's `{{…}}` figures started being drawn
+ * instead of printed as source. Measured across the 35 reports in the corpus
+ * that carry directives: **107 figures a report**, and at the widths
+ * `vizFigures.pure.ts` draws them, an average of 890 lines — around 23 sheets
+ * of charts that this budget previously charged nothing for and now must hold.
+ *
+ * 2,000 lines is 53 pages. The Compass document a client was actually sent last
+ * month is **61**, so the old ceiling was already cutting sections off the end
+ * of the longest reports before a single chart existed; with the figures
+ * counted it would cut a third of them. 3,200 is 84 pages, which sits under the
+ * archetype's own 92-page ceiling (`structure.pure.ts`) with room for the
+ * per-chapter page rounding that `pagesForLines` applies on top.
+ *
+ * Still a last resort. `MAX_SECTION_CHARS` is the budget that should bind
+ * first, for the reason recorded above it: a reader would rather have all 36
+ * sections shortened than 22 of them whole.
+ */
+export const MAX_DOCUMENT_LINES = 3_200;
 
 /** The corpus maximum is 36 numbered sections plus a title. */
 export const MAX_SECTIONS = 60;
@@ -205,7 +224,25 @@ export interface InvestmentScore {
   grade: string;
   recommendation: string;
   /** In `SCORE_DIMENSIONS` order. Absent dimensions are null, never zero. */
-  breakdown: ReadonlyArray<{ key: ScoreDimensionKey; label: string; value: number | null }>;
+  /**
+   * The five dimensions, as the engine records them.
+   *
+   * `weight` and `details` are carried because the corpus has them and the
+   * document had nowhere to put them: a wheel showing five scores says nothing
+   * about which of them the composite actually leaned on, and `details` is the
+   * engine's own one-line reason ("Excellent walkability (90+). Limited CBD
+   * access (>60 min)"). `excluded` is the engine saying a dimension had no data
+   * and was left out of the total — a fact a reader of the wheel needs, and the
+   * opposite of a zero.
+   */
+  breakdown: ReadonlyArray<{
+    key: ScoreDimensionKey;
+    label: string;
+    value: number | null;
+    weight: number | null;
+    details: string;
+    excluded: boolean;
+  }>;
   strengths: readonly string[];
   weaknesses: readonly string[];
   opportunities: readonly string[];

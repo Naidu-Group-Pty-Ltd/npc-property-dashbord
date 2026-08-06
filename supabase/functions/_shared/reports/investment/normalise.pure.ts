@@ -43,6 +43,7 @@ import {
   type ReportSection,
   SCORE_DIMENSIONS,
   SECTION_CHARTS,
+  type SectionChart,
   type ScoreDimensionKey,
   type SensitivityPoint,
 } from './payload.pure.ts';
@@ -237,34 +238,190 @@ export function splitSections(markdown: string): ReportSection[] {
   }
   flush();
 
-  return sections.slice(0, MAX_SECTIONS);
+  return attachChartsByTitle(sections.slice(0, MAX_SECTIONS));
+}
+
+/**
+ * Which infographic belongs under which section, when nothing is numbered.
+ *
+ * ## Why this exists
+ *
+ * `SECTION_CHARTS` keys the fourteen named infographics on the generator's own
+ * section numbers — `24: ['sensitivity-tornado']` — and that was right for the
+ * format it was read off. The generator has since stopped numbering. Measured
+ * over the whole corpus:
+ *
+ * | reports | numbered headings |
+ * | --- | --- |
+ * | 1,147 without `{{…}}` figures | 733 numbered |
+ * | **35 with them — every current report** | **0 numbered** |
+ *
+ * So on every report the product makes today, `SECTION_CHARTS[null]` is
+ * nothing, and not one of the fourteen charts drawn from the structured jsonb
+ * columns reaches the page. Those columns are the whole reason the migration
+ * exists: the score breakdown, the household profile, the cost lines and the
+ * projections appear nowhere else in the document.
+ *
+ * ## The rule
+ *
+ * Title keywords, read off the section names the current generator actually
+ * writes — `Executive Verdict`, `Risk Dashboard`, `Population & Housing
+ * Demand`, `Financial Input Snapshot` — and **each chart attaches at most
+ * once**, to the first section that matches it. Order in this list is the
+ * order the charts are claimed in, not a priority: two sections that both
+ * mention amenity get one bullet chart between them, under the first.
+ *
+ * A chart still only draws if `chartHasData` says its column is populated, so
+ * a generous pattern costs nothing but a counted skip. That asymmetry is
+ * deliberate — a missed chart is invisible, a spurious one cannot happen.
+ */
+export const TITLED_SECTION_CHARTS: ReadonlyArray<{
+  chart: SectionChart;
+  test: RegExp;
+}> = [
+  { chart: 'score-gauge', test: /executive verdict|decision summary|investment score/i },
+  { chart: 'score-wheel', test: /risk dashboard|score breakdown/i },
+  { chart: 'score-peers', test: /market positioning|yield market/i },
+  { chart: 'locality-map', test: /why this location|position within the locality|locality snapshot|location snapshot/i },
+  { chart: 'demographics-bars', test: /population|household growth|demographic/i },
+  { chart: 'economic-bullets', test: /employment|economic linkage|income & affordability|socioeconomic/i },
+  { chart: 'amenity-bullets', test: /retail|healthcare|lifestyle amenity|amenity maturity|education & family/i },
+  { chart: 'yield-bullets', test: /financial input snapshot|price, rent & yield/i },
+  { chart: 'cost-waterfall', test: /feasibility|financial performance|cash ?flow/i },
+  { chart: 'sensitivity-tornado', test: /vacancy risk|rent sustainability|sensitivity/i },
+  { chart: 'swot-quadrant', test: /property fit|suburb character|occupier appeal|dwelling layout/i },
+  { chart: 'lvr-bullet', test: /portfolio fit|loan structure|\blvr\b/i },
+  { chart: 'projection-value', test: /projection|ten[- ]year|10[- ]year/i },
+];
+
+/**
+ * Attach the named charts by title, but only for a report with no numbering.
+ *
+ * A numbered report keeps `SECTION_CHARTS` exactly as it was: 733 reports in
+ * the corpus are numbered, they render correctly today, and a title heuristic
+ * that overrode a number the generator stated would be a guess replacing a
+ * fact.
+ */
+export function attachChartsByTitle(sections: ReportSection[]): ReportSection[] {
+  if (sections.some((s) => s.number !== null)) return sections;
+
+  const claimed = new Set<SectionChart>();
+  return sections.map((section) => {
+    const charts = TITLED_SECTION_CHARTS
+      .filter((entry) => !claimed.has(entry.chart) && entry.test.test(section.title))
+      .filter((entry) => !supersededByDirective(entry.chart, section.markdown))
+      .map((entry) => { claimed.add(entry.chart); return entry.chart; });
+    return charts.length ? { ...section, charts } : section;
+  });
+}
+
+/**
+ * Directives that plot the same stored numbers a named chart would.
+ *
+ * Read off a render: `Executive Verdict` carried the model's own
+ * `{{gauge: 61 | Location & Property Fit}}`, and the title rule then attached
+ * `score-gauge`, which draws 61 out of 100 from the score column. The chapter
+ * printed the same needle at the same value on two consecutive pages.
+ *
+ * Only these two, and only because the model is *given* those numbers: a gauge
+ * it writes is the composite score and a wheel it writes is the five
+ * dimensions. A `{{bars}}` in a demographics section is not necessarily the
+ * demographics bars, so `demographics-bars` is not in this table — suppressing
+ * a chart drawn from a structured column on the strength of an unrelated bar
+ * chart would lose real content to avoid a resemblance.
+ */
+const SUPERSEDING_DIRECTIVE: Partial<Record<SectionChart, RegExp>> = {
+  'score-gauge': /\{\{\s*gauge\s*:/i,
+  'score-wheel': /\{\{\s*wheel\s*:/i,
+};
+
+function supersededByDirective(chart: SectionChart, markdown: string): boolean {
+  const pattern = SUPERSEDING_DIRECTIVE[chart];
+  return Boolean(pattern && pattern.test(markdown));
 }
 
 // ── The structured columns ──────────────────────────────────────────────────
 
-export function toSpecs(raw: unknown): PropertySpecs {
+/**
+ * The property specification — from two columns, because it lives in two.
+ *
+ * `property_specs` is present on all 1,182 rows with exactly the snake_case
+ * keys this function reads, which is why nothing ever looked wrong. What it
+ * mostly holds is nulls:
+ *
+ * | field | populated in `property_specs` | in `financial_calculations.propertySpecs` |
+ * | --- | ---: | ---: |
+ * | land size | **0** | 110 |
+ * | building size | **0** | 109 (as `buildSizeSqm`) |
+ * | bedrooms | 651 | 0 |
+ * | property type | 1,054 | 34 |
+ *
+ * So the spec table has never printed a land or building size on any report in
+ * the corpus, and the two dimensions a reader of a property report looks for
+ * first were sitting one column over under different names. `buildSizeSqm` is
+ * the one to note: not `building_size_sqm`, not `buildingSizeSqm`, both of
+ * which this function already accepted and neither of which exists.
+ *
+ * `property_specs` wins wherever it has a value — it is the column the intake
+ * writes and the other is a by-product of the finance run.
+ */
+export function toSpecs(raw: unknown, fallbackRaw?: unknown): PropertySpecs {
   const s = isRecord(raw) ? raw : {};
+  const f = isRecord(fallbackRaw) ? fallbackRaw : {};
+  const pick = (...keys: string[]): unknown => {
+    for (const key of keys) {
+      if (s[key] !== undefined && s[key] !== null) return s[key];
+    }
+    for (const key of keys) {
+      if (f[key] !== undefined && f[key] !== null) return f[key];
+    }
+    return undefined;
+  };
   return {
-    propertyType: short(s.property_type ?? s.propertyType, 60),
-    bedrooms: num(s.bedrooms),
-    bathrooms: num(s.bathrooms),
-    parking: num(s.parking),
-    landSqm: num(s.land_size_sqm ?? s.landSizeSqm),
-    buildingSqm: num(s.building_size_sqm ?? s.buildingSizeSqm),
-    yearBuilt: num(s.year_built ?? s.yearBuilt),
-    zoning: short(s.zoning, 40),
-    councilArea: short(s.council_area ?? s.councilArea, 80),
+    propertyType: short(pick('property_type', 'propertyType'), 60),
+    bedrooms: num(pick('bedrooms')),
+    bathrooms: num(pick('bathrooms')),
+    parking: num(pick('parking', 'carSpaces', 'car_spaces')),
+    landSqm: num(pick('land_size_sqm', 'landSizeSqm')),
+    buildingSqm: num(pick('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm')),
+    yearBuilt: num(pick('year_built', 'yearBuilt')),
+    zoning: short(pick('zoning'), 40),
+    councilArea: short(pick('council_area', 'councilArea'), 80),
   };
 }
 
 export function toScore(raw: unknown, percentile: number | null): InvestmentScore | null {
   if (!isRecord(raw)) return null;
   const breakdownRaw = isRecord(raw.breakdown) ? raw.breakdown : {};
-  const breakdown = SCORE_DIMENSIONS.map((d) => ({
-    key: d.key as ScoreDimensionKey,
-    label: d.label,
-    value: num(breakdownRaw[d.key]),
-  }));
+  // A dimension is an object, not a number, on **every one of the 985 scored
+  // reports in the corpus**:
+  //
+  //     "locationScore": { "score": 58, "weight": 56, "hasData": true,
+  //                        "excluded": false, "details": "Excellent
+  //                        walkability (90+). Limited CBD access (>60 min)." }
+  //
+  // `num()` on that returns null, so the five-way breakdown read as five nulls
+  // and `chartHasData('score-wheel')` — which needs three — was false on every
+  // report ever generated. The wheel is the one drawing in this document that
+  // comes from the scoring engine rather than from the model's prose, and it
+  // has never been on a page. The bare-number branch stays because nothing
+  // proves an older row cannot hold one, and it costs one `typeof`.
+  const breakdown = SCORE_DIMENSIONS.map((d) => {
+    const cell = breakdownRaw[d.key];
+    const record = isRecord(cell) ? cell : null;
+    const excluded = record?.excluded === true || record?.hasData === false;
+    return {
+      key: d.key as ScoreDimensionKey,
+      label: d.label,
+      // An excluded dimension has no score to plot, whatever number is sitting
+      // in the field: the engine is saying it had no data and left it out of
+      // the total. Plotting it would put a fabricated point on the wheel.
+      value: excluded ? null : num(record ? record.score : cell),
+      weight: num(record?.weight),
+      details: short(record?.details, 300),
+      excluded,
+    };
+  });
   const total = num(raw.totalScore);
   // A score object with neither a total nor one populated dimension is not a
   // score — it is an empty shell the engine wrote before it failed.
@@ -519,6 +676,16 @@ export function toSources(raw: unknown): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const line of text.split('\n')) {
+    // The column's own furniture is not a citation.
+    //
+    // `sources_content` opens `## SOURCES & REFERENCES` / `### Citations:` and
+    // usually carries a third `### Additional Sources:` in the middle. All
+    // three are longer than the eight-character floor, so all three were being
+    // counted and printed: a chapter of 19 URLs was captioned "21 cited" and
+    // its table's first two rows were the headings above it. Measured over the
+    // whole corpus — 1,114 reports carry the first two, 777 the third, and
+    // **those three strings are the only non-URL lines in the column**.
+    if (/^\s*#{1,6}\s/.test(line)) continue;
     const cleaned = short(line.replace(/^[-*\d.)\s]+/, ''), 300);
     if (cleaned.length < 8 || seen.has(cleaned.toLowerCase())) continue;
     seen.add(cleaned.toLowerCase());
@@ -573,7 +740,10 @@ export function buildInvestmentReport(input: BuildInput): BuildResult {
   const stripped = stripFurniture(sanitiseGlyphs(rawProse).text);
   const sections = splitSections(stripped.text);
 
-  const specs = toSpecs(row.property_specs);
+  const specs = toSpecs(
+    row.property_specs,
+    isRecord(row.financial_calculations) ? row.financial_calculations.propertySpecs : null,
+  );
   const score = toScore(row.investment_score, input.scorePercentile ?? null);
   const location = toLocation(row.location_intelligence, address);
   const demographics = toDemographics(row.demographics_data);

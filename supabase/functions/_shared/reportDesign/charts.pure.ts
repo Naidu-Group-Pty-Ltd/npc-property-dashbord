@@ -312,7 +312,31 @@ function base64Utf8(value: string): string {
  * drawing is merely silent, while a figure that declares itself described and
  * is not fails PDF/UA — and lies.
  */
-export function chartFigure(svg: string, caption = '', alt = ''): string {
+/**
+ * How wide the figure prints, as a share of the measure.
+ *
+ * `full` is the default and what every caller before this one wanted. `compact`
+ * exists because a chart drawn at `CHART_WIDTH.compact` — a gauge, a donut, a
+ * score wheel — is 460 units wide and up to 360 tall, and stretching that to
+ * the full 174mm measure prints a single number 136mm high. Nine of those in a
+ * chapter is nine sheets to say nine things.
+ *
+ * The fraction is the ratio the charts were drawn at: 460 of 760. A caller
+ * choosing `compact` **must** also narrow its `ChartContext.widthMm` by the
+ * same fraction, or every label inside the drawing is set at the wrong point
+ * size — `chartContextForSpan` exists for the same reason.
+ */
+export type ChartFigureWidth = 'full' | 'compact';
+
+/** `CHART_WIDTH.compact / CHART_WIDTH.wide`. */
+export const COMPACT_FIGURE_FRACTION = CHART_WIDTH.compact / CHART_WIDTH.wide;
+
+export function chartFigure(
+  svg: string,
+  caption = '',
+  alt = '',
+  width: ChartFigureWidth = 'full',
+): string {
   if (!svg) return '';
   const described = (alt || caption).trim();
   const figcaption = caption ? `<figcaption>${svgEscape(caption)}</figcaption>` : '';
@@ -320,7 +344,8 @@ export function chartFigure(svg: string, caption = '', alt = ''): string {
     ? `<img class="chart-img" src="data:image/svg+xml;base64,${base64Utf8(minifySvg(svg))}"`
       + ` alt="${svgEscape(described)}">`
     : minifySvg(svg);
-  return `<figure class="chart-figure">${body}${figcaption}</figure>`;
+  const cls = width === 'compact' ? 'chart-figure chart-compact' : 'chart-figure';
+  return `<figure class="${cls}">${body}${figcaption}</figure>`;
 }
 
 /** Shared `<text>` builder — every label in this module routes through it. */

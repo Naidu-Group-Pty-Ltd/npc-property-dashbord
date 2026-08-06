@@ -1034,10 +1034,21 @@ ${options.showDropCaps
   .kpi .kpi-value {
     font-family: ${PRINT_STACK.display};
     font-size: ${pt(type.h2 + 2)};
-    line-height: 1;
+    /* Not 1. A KPI value is usually a figure on one line, where a leading of
+       exactly the em is the right tight setting — but table-layout: fixed
+       divides the strip evenly, so a six-cell strip gives each value about
+       28mm, and anything wordier than a number wraps. At line-height 1 the
+       second line's ascenders print through the first line's descenders in a
+       display face. 1.08 is the smallest leading that clears them and is
+       invisible on the one-line case. */
+    line-height: 1.08;
     color: ${palette.bodyInk};
     ${NUMERIC_FEATURES}
   }
+  /* Five or more cells — see KPI_DENSE_FROM. The step down is what stops a
+     28mm cell breaking "House" into "Hous / e". */
+  .kpi-strip.dense .kpi-value { font-size: ${pt(type.subhead)}; }
+  .kpi-strip.dense .kpi { padding: ${pt(d.cellPadPt + 4)} ${pt(d.cellPadPt + 4)}; }
   .kpi .kpi-value.pos { color: ${palette.positive}; }
   .kpi .kpi-value.neg { color: ${palette.negative}; }
   .kpi .kpi-foot {
@@ -1297,6 +1308,11 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
      inline svg case remains for a figure with nothing to describe it by. */
   .chart-figure svg,
   .chart-figure .chart-img { display: block; width: 100%; height: auto; }
+  /* A chart drawn at CHART_WIDTH.compact prints at the width it was drawn for,
+     not stretched across the measure - see chartFigure's ChartFigureWidth. Left
+     against the measure rather than centred, so it reads as a figure in a
+     column and not as a slide. */
+  .chart-figure.chart-compact { width: 60.5%; }
   .chart-figure figcaption {
     margin-top: 6pt;
     font-family: ${PRINT_STACK.mono};

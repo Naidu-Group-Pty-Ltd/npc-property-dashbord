@@ -10,6 +10,7 @@ import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { parseTemplate } from '@/lib/reportTemplate/templateSchema';
 import { preloadImages } from '@/lib/reportTemplate/imagePreloader';
 import { resolveReportTemplate, type ReportVariant } from '@/lib/reportTemplate/resolveTemplate';
+import { refuseUnboundReconstruction } from '@/lib/reportTemplate/rendering/productionTemplateGuard';
 import { getAdapter, listAdapters, type ReportTemplateAdapter } from '@/lib/reportTemplate/adapters';
 
 export interface TemplateBuilderRouteResult {
@@ -57,6 +58,21 @@ export async function routeReportThroughTemplate(
       const bindingData = ctx?.data ?? {};
 
       const schema = parseTemplate(tplRow.schema);
+
+      // A template that is a static copy of one client's report will render
+      // that client's report for everybody, with only the title substituted.
+      // That shipped for two months; see `productionTemplateGuard`. Refusing
+      // here falls back to the legacy generator, which is wrong-looking rather
+      // than wrong.
+      const refusal = refuseUnboundReconstruction(schema);
+      if (refusal) {
+        console.error(
+          `[routeReportThroughTemplate] refusing template ${tplRow.id} `
+          + `(${tplRow.name}): ${refusal.reason}`,
+        );
+        continue;
+      }
+
       const preparedSchema = await preloadImages(schema).catch(() => schema);
       const { html } = renderTemplateToHtml(preparedSchema, {
         data: bindingData,

@@ -168,19 +168,55 @@ const SOURCES = [
   'CoreLogic — Suburb median and days-on-market series, June 2026',
 ];
 
-/** `sources_content` is a text column, one source per line, in the corpus. */
-export const sourcesContent = SOURCES.map((s, i) => `${i + 1}. ${s}`).join('\n');
+/**
+ * `sources_content` is a text column, and it opens with its own headings.
+ *
+ * 1,114 rows carry `## SOURCES & REFERENCES` and `### Citations:`; 777 also
+ * carry `### Additional Sources:` partway down. They are the only non-URL lines
+ * in the column, and counting them is what captioned a chapter of 19 citations
+ * "21 cited" and printed two headings as its first two rows.
+ */
+export const sourcesContent = [
+  '',
+  '## SOURCES & REFERENCES',
+  '',
+  '### Citations:',
+  ...SOURCES.slice(0, 5).map((s, i) => `${i + 1}. ${s}`),
+  '',
+  '### Additional Sources:',
+  ...SOURCES.slice(5).map((s, i) => `${i + 6}. ${s}`),
+].join('\n');
 
+/** How many real citations `sourcesContent` carries. */
+export const SOURCE_COUNT = SOURCES.length;
+
+/**
+ * `property_specs`, as the column is actually populated.
+ *
+ * Land and building size are null here because they are null on **every one of
+ * the 1,182 rows** — the two dimensions a reader of a property report looks for
+ * first live in `financial_calculations.propertySpecs`, under different names.
+ * A fixture that filled them in was the reason the spec table looked complete
+ * in every test and printed neither on a client's page.
+ */
 const PROPERTY_SPECS = {
   property_type: 'House',
   bedrooms: 4,
   bathrooms: 2,
-  parking: 2,
-  land_size_sqm: 612,
-  building_size_sqm: 198,
+  parking: null,
+  land_size_sqm: null,
+  building_size_sqm: null,
   year_built: 2004,
   zoning: 'R2 Low Density',
   council_area: 'Kirribeck City Council',
+};
+
+/** The other half of the specification. Note `buildSizeSqm`, not `building…`. */
+const FINANCIAL_PROPERTY_SPECS = {
+  landSizeSqm: 612,
+  buildSizeSqm: 198,
+  carSpaces: 2,
+  propertyType: 'House',
 };
 
 /** Inside the observed 38-68 band. A score outside it would be fiction. */
@@ -190,12 +226,37 @@ const INVESTMENT_SCORE = {
   recommendation:
     'Suitable as a yield holding for an investor with a five-to-seven year horizon and '
     + 'the capacity to absorb a rate rise of one per cent without refinancing.',
+  /**
+   * A dimension is an object, not a number.
+   *
+   * The first version of this fixture wrote `locationScore: 68`, which reads
+   * perfectly and is a shape **no row in the corpus has ever held**: all 985
+   * scored reports carry `{ score, weight, details, hasData, excluded }`. The
+   * normaliser read the bare number, the fixture agreed with it, and the score
+   * wheel — the one drawing in this document that comes from the scoring engine
+   * rather than the model's prose — had never been on a page.
+   */
   breakdown: {
-    locationScore: 68,
-    yieldScore: 57,
-    growthScore: 62,
-    demandScore: 71,
-    riskScore: 49,
+    locationScore: {
+      score: 68, weight: 30, hasData: true, excluded: false,
+      details: 'Rail within 900m. Two primary schools in catchment. Walk score 63.',
+    },
+    yieldScore: {
+      score: 57, weight: 25, hasData: true, excluded: false,
+      details: 'Gross yield 3.74% against a 4.10% suburb median.',
+    },
+    growthScore: {
+      score: 62, weight: 20, hasData: true, excluded: false,
+      details: 'Land value growth outran improved value in each of three assessments.',
+    },
+    demandScore: {
+      score: 71, weight: 15, hasData: true, excluded: false,
+      details: 'Vacancy under 1% across six quarters. Four-bedroom stock under-supplied.',
+    },
+    riskScore: {
+      score: 49, weight: 10, hasData: true, excluded: false,
+      details: 'Single major employer in the catchment. Insurance repricing annually.',
+    },
   },
   strengths: [
     'Vacancy under one per cent across six quarters.',
@@ -303,6 +364,7 @@ const FINANCIAL_CALCULATIONS = {
     },
   },
   projections: PROJECTIONS,
+  propertySpecs: FINANCIAL_PROPERTY_SPECS,
 };
 
 export interface RowOverrides {
@@ -353,6 +415,88 @@ export const locationOnly = (over: RowOverrides = {}) =>
     financial_calculations: null,
     ...over,
   });
+
+/**
+ * The format the generator writes **today**.
+ *
+ * Seventeen named sections, no numbering anywhere, and a chart directive under
+ * most of them. Measured over the corpus: of the 35 reports carrying `{{…}}`
+ * figures — every current one — **not one has a numbered heading**, against 733
+ * of the 1,147 older reports that do. Both shapes are real and both are
+ * fixtured, because the numbered path still serves two-thirds of the archive.
+ *
+ * The directives are verbatim in form and fictional in content.
+ */
+export const CURRENT_SECTION_TITLES: readonly string[] = [
+  'Client Reading Guide',
+  'Executive Verdict',
+  'Property & Locality Snapshot',
+  'Why This Location Matters',
+  'Property Fit Within the Suburb',
+  'Transport & Connectivity',
+  'Education & Family Amenity',
+  'Retail, Healthcare & Lifestyle Amenity',
+  'Employment & Economic Linkages',
+  'Population & Housing Demand',
+  'Tenant & Buyer Profile',
+  'Market Positioning',
+  'Risk Dashboard',
+  'Due Diligence Checklist',
+  'Final Recommendation',
+  'Appendix, Source Notes & Disclaimer',
+];
+
+/**
+ * One directive per section, none of them repeated.
+ *
+ * The same rule the prose follows, and for the same reason recorded above
+ * `OBSERVED`: a fixture that repeats itself makes `duplicate-block` — the
+ * critique rubric's only `high` finding — useless for the document it is
+ * checking. Cycling seven directives over sixteen sections put the identical
+ * gauge on pages 7 and 17 and fired the rule five times on the fixture alone.
+ */
+const directiveFor = (i: number, title: string): string => {
+  const v = 52 + ((i * 7) % 34);
+  switch (i % 8) {
+    case 0:
+      return `{{glance: \u2713 ${title} holds up on the evidence | \u25c6 Established 4-bed House `
+        + `| \u26a0 Watch the ${['insurance', 'supply', 'employment', 'rates'][i % 4]} line `
+        + `| \u2605 Weighting: ${['strong', 'adequate', 'mixed', 'thin'][i % 4]}}}`;
+    case 1:
+      return `{{gauge: ${v} | ${title} score | Weighted against the firm's own record}}`;
+    case 2:
+      return `{{bars: Town centre access ${v}, Highway connectivity ${v - 9}, `
+        + `Active transport ${v - 17} | title=${title} pillars | max=100 | unit=%}}`;
+    case 3:
+      return `{{donut: Detached ${v}, Semi/terrace ${100 - v - 14}, Units 14 `
+        + `| title=${title} mix | center=${v}% | centerSub=Detached}}`;
+    case 4:
+      return `{{tiles: Kirribeck ${v} sub="Quiet streets, large yards" int=0.7${i % 9}, `
+        + `Marlowe Point ${v - 11} sub="Rail, schools, retail" int=0.6${i % 9} `
+        + `| title=${title} across nearby markets | cols=3}}`;
+    case 5:
+      return `{{timeline: Existing "Rail within 900m", 0-2y "Forecourt upgrade stage ${i}", `
+        + `3-5y "Arterial widening stage ${i}" | title=${title} pipeline}}`;
+    case 6:
+      return `{{wheel: ${v},${v - 4},${v + 6},${v - 12},${v + 2} `
+        + `| labels=Location,Yield,Growth,Demand,Risk | max=100 | title=${title} dimensions}}`;
+    default:
+      return `{{pictograph: ${(i % 8) + 2}/10 | label=${title} | `
+        + `sub=Share of the catchment this applies to | icon=house | cols=10}}`;
+  }
+};
+
+export function currentFormatContent(): string {
+  const body = CURRENT_SECTION_TITLES.map((title, i) => {
+    const s = (i + 1) * 7;
+    return `## ${title}\n\n${directiveFor(i, title)}\n\n${para(s)}\n\n${para(s + 1)}`;
+  }).join('\n\n');
+  return `# Property & Location Due Diligence Report\n\n_${ADDRESS}_\n\n${body}\n`;
+}
+
+/** A row in the shape the product produces now. */
+export const currentFormat = (over: RowOverrides = {}) =>
+  reportRow({ report_content: currentFormatContent(), ...over });
 
 /** The smallest thing this format will still typeset. */
 export const minimal = (over: RowOverrides = {}) => ({
