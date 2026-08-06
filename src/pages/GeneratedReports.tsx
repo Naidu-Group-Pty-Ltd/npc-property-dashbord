@@ -49,6 +49,7 @@ const ManualDataOverrideModal = lazy(() => import('@/components/reports/ManualDa
 
 // Non-lazy imports for components used inline without Suspense
 import type { ReportTier } from '@/components/reports/TierBadge';
+import { resolveReportAddress } from '@/lib/reports/reportAddress';
 
 // Loading fallback for modals
 const GENERATED_REPORTS_COMPARE_OVERLAY_TOP = 'calc(72px + 1rem)';
@@ -264,7 +265,7 @@ export default function GeneratedReports() {
 
   // Filter and paginate investment reports
   const filteredInvestmentReports = investmentReports.filter(report => {
-    const matchesSearch = report.property_address.toLowerCase().includes(investmentSearchQuery.toLowerCase());
+    const matchesSearch = resolveReportAddress(report).toLowerCase().includes(investmentSearchQuery.toLowerCase());
     const matchesScope = scopeFilter === 'all' || report.report_scope === scopeFilter;
     
     // Grade filter
