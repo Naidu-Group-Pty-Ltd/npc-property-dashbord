@@ -1287,8 +1287,19 @@ export function renderTimelineRibbon(
   const markers = phases.map((phase, i) => {
     const x = padX + i * step;
     const list = (grouped.get(phase) ?? []).slice(0, 2);
+    // The end labels align to the edge; only the interior ones centre.
+    //
+    // Centring all four put the first label's midpoint at `padX` — 44 units
+    // into a 760-unit viewBox — so a 28-character micro label spanned roughly
+    // −16 to 104 and the SVG clipped its first glyph. Read off a render:
+    // "Rail within 900m" printed as "ail within 900m" under the Existing dot,
+    // on every timeline in the corpus. The last marker overflowed the right
+    // edge by the same amount.
+    const last = phases.length - 1;
+    const anchor = i === 0 ? 'start' : i === last ? 'end' : 'middle';
+    const labelX = i === 0 ? 12 : i === last ? w - 12 : x;
     const labels = list.map((it, j) => text(ctx, w,
-      { x, y: axisY + 36 + j * 15, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: j === 0 ? 700 : 500 },
+      { x: labelX, y: axisY + 36 + j * 15, pt: 'micro', fill: ctx.palette.ink, anchor, weight: j === 0 ? 700 : 500 },
       svgEscape(it.label.length > 28 ? `${it.label.slice(0, 26)}…` : it.label))).join('');
     return `<circle cx="${x.toFixed(1)}" cy="${axisY}" r="8" fill="${i === 0 ? ctx.palette.ink : ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
       + text(ctx, w, { x, y: axisY - 24, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', weight: 700, tracking: 1 }, svgEscape(phase.toUpperCase()))
