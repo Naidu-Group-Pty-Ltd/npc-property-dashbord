@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ReportTypeBadge } from '@/components/reports/ReportTypeBadge';
 import { getCanonicalReportType } from '@/lib/reports/reportVariants';
+import { resolveReportAddress } from '@/lib/reports/reportAddress';
 import type { InvestmentReport } from './types';
 import type { GeneratedReportGroup } from '@/lib/reports/generatedReportGroups';
 
