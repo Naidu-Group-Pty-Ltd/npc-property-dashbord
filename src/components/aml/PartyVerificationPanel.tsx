@@ -101,9 +101,9 @@ export function PartyVerificationPanel({
             {links.map((l) => (
               <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 py-2 text-sm">
                 <div className="min-w-0">
-                  <div className="font-medium">{l.party_type.replaceAll("_", " ")}</div>
+                  <div className="font-medium">{l.party_type.replace(/_/g, " ")}</div>
                   <div className="text-xs text-muted-foreground">
-                    {l.relationship.replaceAll("_", " ")} · linked {displayDate(l.linked_at)}
+                    {l.relationship.replace(/_/g, " ")} · linked {displayDate(l.linked_at)}
                     {l.metadata?.linked_status ? <> · {String(l.metadata.linked_status)}</> : null}
                   </div>
                 </div>
@@ -134,7 +134,7 @@ export function PartyVerificationPanel({
               <Select value={partyType} onValueChange={setPartyType}>
                 <SelectTrigger id="pv-type"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {PARTY_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replaceAll("_", " ")}</SelectItem>)}
+                  {PARTY_TYPES.map((t) => <SelectItem key={t} value={t}>{t.replace(/_/g, " ")}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -149,7 +149,7 @@ export function PartyVerificationPanel({
                 <SelectContent>
                   {checks.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {(c.party_label ?? "subject")} · {c.check_type?.replaceAll("_", " ")} · {c.status}
+                      {(c.party_label ?? "subject")} · {c.check_type?.replace(/_/g, " ")} · {c.status}
                     </SelectItem>
                   ))}
                 </SelectContent>

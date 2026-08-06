@@ -12,6 +12,7 @@ import { BuildType } from '@/types/overrideFields';
 import { getLocalityGrowthEstimate, getDerivedCpiGrowth } from '@/utils/localityGrowthEstimates';
 
 import { PropertyTab, FinancialsTab, IncomeExpensesTab, AdvancedTab } from './manual-inputs';
+import { OverrideStepFooter, type OverrideStep } from './OverrideStepFooter';
 
 export interface PreGenerationData {
   buildType: BuildType;
@@ -139,7 +140,28 @@ export function PreGenerationOverrides({
 }: PreGenerationOverridesProps) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const [activeTab, setActiveTab] = useState('property');
+  const [activeTab, setActiveTab] = useState<OverrideStep>('property');
+  const scrollRootRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Step navigation. Switching the tab alone leaves the reader parked halfway
+   * down the previous category, so the scroll viewport is returned to the top
+   * of the newly revealed section — smoothly, and respecting reduced motion.
+   */
+  const goToStep = useCallback((step: OverrideStep) => {
+    setActiveTab(step);
+    requestAnimationFrame(() => {
+      const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+        '[data-radix-scroll-area-viewport]'
+      );
+      const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      viewport?.scrollTo({ top: 0, behavior: prefersReduced ? 'auto' : 'smooth' });
+      scrollRootRef.current?.scrollIntoView({
+        behavior: prefersReduced ? 'auto' : 'smooth',
+        block: 'nearest',
+      });
+    });
+  }, []);
   
   // Build type selection
   const [internalBuildType, setInternalBuildType] = useState<BuildType>(externalBuildType || 'existing_property');
@@ -665,7 +687,7 @@ export function PreGenerationOverrides({
         </CardDescription>
       </CardHeader>
       <CardContent className="reports-overrides-content px-3 md:px-6">
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="reports-overrides-tabs w-full">
+        <Tabs value={activeTab} onValueChange={(value) => goToStep(value as OverrideStep)} className="reports-overrides-tabs w-full">
           <div className={isMobile ? "reports-overrides-tabs-scroll overflow-x-auto -mx-3 px-3 pb-2" : "reports-overrides-tabs-wrap"}>
             <TabsList className={isMobile ? "reports-overrides-tabs-list inline-flex w-auto min-w-full mb-4" : "reports-overrides-tabs-list grid w-full grid-cols-4 mb-4"}>
               <TabsTrigger 
@@ -699,7 +721,7 @@ export function PreGenerationOverrides({
             </TabsList>
           </div>
 
-          <ScrollArea className={isMobile ? "reports-overrides-scroll reports-overrides-scroll-mobile pr-2" : "reports-overrides-scroll reports-overrides-scroll-desktop pr-4"}
+          <ScrollArea ref={scrollRootRef} className={isMobile ? "reports-overrides-scroll reports-overrides-scroll-mobile pr-2" : "reports-overrides-scroll reports-overrides-scroll-desktop pr-4"}
             aria-label="Pre-generation override fields">
             <TabsContent value="property" className="reports-overrides-tab-content mt-0">
               <PropertyTab
@@ -739,6 +761,7 @@ export function PreGenerationOverrides({
                 setFloorSpaceRatio={setFloorSpaceRatio}
                 disabled={disabled}
               />
+              <OverrideStepFooter current="property" onNavigate={goToStep} />
             </TabsContent>
 
             <TabsContent value="financials" className="reports-overrides-tab-content mt-0">
@@ -780,6 +803,7 @@ export function PreGenerationOverrides({
                 setOffsetBalance={setOffsetBalance}
                 localityGrowthEstimate={localityGrowthEstimate}
               />
+              <OverrideStepFooter current="financials" onNavigate={goToStep} />
             </TabsContent>
 
             <TabsContent value="income" className="reports-overrides-tab-content mt-0">
@@ -818,6 +842,7 @@ export function PreGenerationOverrides({
                 purchasePrice={parseFloat(purchasePrice) || undefined}
                 landPrice={parseFloat(landPrice) || undefined}
               />
+              <OverrideStepFooter current="income" onNavigate={goToStep} />
             </TabsContent>
 
             <TabsContent value="advanced" className="reports-overrides-tab-content mt-0">
@@ -877,6 +902,7 @@ export function PreGenerationOverrides({
                 derivedCpiHint={derivedCpiHint}
                 capitalGrowthValue={capitalGrowth}
               />
+              <OverrideStepFooter current="advanced" onNavigate={goToStep} />
             </TabsContent>
           </ScrollArea>
         </Tabs>

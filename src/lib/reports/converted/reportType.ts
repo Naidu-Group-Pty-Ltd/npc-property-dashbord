@@ -30,6 +30,7 @@ export const CONVERTED_REPORT_TYPES: Record<ReportArchetypeId, string> = {
   'property-comparison': 'comparison',
   'market-intelligence': 'market_intelligence',
   'report-qa': 'qa',
+  'commercial-capacity': 'commercial_capacity',
   // Not bindable, and listed so this map stays exhaustive over the archetype
   // union — a new archetype fails the compiler here rather than falling back to
   // whatever the last format happened to be.

@@ -41,7 +41,7 @@ const REVIEW_STATUS_TONE: Record<string, "default" | "secondary" | "destructive"
 };
 
 function StatusBadge({ status }: { status: string }) {
-  return <Badge variant={REVIEW_STATUS_TONE[status] ?? "outline"}>{status.replaceAll("_", " ")}</Badge>;
+  return <Badge variant={REVIEW_STATUS_TONE[status] ?? "outline"}>{status.replace(/_/g, " ")}</Badge>;
 }
 
 /** Render a questionnaire payload as labelled rows — never raw JSON. */
@@ -55,7 +55,7 @@ function PayloadRows({ payload }: { payload: unknown }) {
     <dl className="grid gap-2 sm:grid-cols-2">
       {entries.map(([key, value]) => (
         <div key={key} className="min-w-0 rounded-md border border-border/60 bg-muted/20 px-3 py-2">
-          <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{key.replaceAll("_", " ")}</dt>
+          <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{key.replace(/_/g, " ")}</dt>
           <dd className="mt-0.5 break-words text-sm">
             {Array.isArray(value)
               ? value.map((v) => String(v)).join(", ") || "—"
@@ -212,7 +212,7 @@ export function SubmissionReviewPanel({
               <ShieldAlert className="h-4 w-4" />
               <AlertTitle>Risk assessment is stale</AlertTitle>
               <AlertDescription>
-                {data.risk.stale_reasons.map((r) => r.replaceAll("_", " ")).join(", ")}. Recompute risk before
+                {data.risk.stale_reasons.map((r) => r.replace(/_/g, " ")).join(", ")}. Recompute risk before
                 recording a decision.
               </AlertDescription>
             </Alert>
@@ -224,7 +224,7 @@ export function SubmissionReviewPanel({
               <AlertTitle>Missing mandatory information</AlertTitle>
               <AlertDescription>
                 <ul className="list-inside list-disc">
-                  {data.missing_mandatory.slice(0, 12).map((m) => <li key={m}>{m.replaceAll(":", ": ")}</li>)}
+                  {data.missing_mandatory.slice(0, 12).map((m) => <li key={m}>{m.replace(/:/g, ": ")}</li>)}
                 </ul>
               </AlertDescription>
             </Alert>
@@ -273,7 +273,7 @@ export function SubmissionReviewPanel({
                   <tbody>
                     {data.differences.slice(0, 60).map((d, i) => (
                       <tr key={`${d.section}-${d.field}-${i}`} className="border-t border-border/50">
-                        <td className="py-1 pr-3">{d.section.replaceAll("_", " ")}</td>
+                        <td className="py-1 pr-3">{d.section.replace(/_/g, " ")}</td>
                         <td className="py-1 pr-3">{d.field}</td>
                         <td className="py-1 pr-3 text-muted-foreground">{String(d.previous ?? "—")}</td>
                         <td className="py-1">{String(d.current ?? "—")}</td>
@@ -295,7 +295,7 @@ export function SubmissionReviewPanel({
               <ul className="space-y-1 text-sm">
                 {data.consent_evidence.map((c) => (
                   <li key={`${c.kind}-${c.version}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1">
-                    <span>{c.kind.replaceAll("_", " ")} · v{c.version}</span>
+                    <span>{c.kind.replace(/_/g, " ")} · v{c.version}</span>
                     <span className="text-xs text-muted-foreground">
                       {displayDateTime(c.accepted_at)}
                       {c.document_hash && <> · hash {c.document_hash.slice(0, 12)}…</>}
@@ -312,7 +312,7 @@ export function SubmissionReviewPanel({
           <AccordionContent className="space-y-4">
             {(s.sections ?? []).map((sec) => (
               <div key={sec.section}>
-                <h4 className="mb-1 text-sm font-medium">{sec.section.replaceAll("_", " ")}</h4>
+                <h4 className="mb-1 text-sm font-medium">{sec.section.replace(/_/g, " ")}</h4>
                 <PayloadRows payload={sec.payload} />
               </div>
             ))}
@@ -332,9 +332,9 @@ export function SubmissionReviewPanel({
                   <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1">
                     <span>{p.declared_name} · {p.declared_role}</span>
                     <span className="flex items-center gap-2 text-xs">
-                      <Badge variant="outline">{p.change_kind.replaceAll("_", " ")}</Badge>
+                      <Badge variant="outline">{p.change_kind.replace(/_/g, " ")}</Badge>
                       <Badge variant={p.resolution_status === "open" ? "destructive" : "secondary"}>
-                        {p.resolution_status.replaceAll("_", " ")}
+                        {p.resolution_status.replace(/_/g, " ")}
                       </Badge>
                     </span>
                   </li>
@@ -382,10 +382,10 @@ export function SubmissionReviewPanel({
               <ul className="space-y-1 text-sm">
                 {data.verification.map((v) => (
                   <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1">
-                    <span>{v.party_label ?? "Case subject"} · {v.check_type.replaceAll("_", " ")}</span>
+                    <span>{v.party_label ?? "Case subject"} · {v.check_type.replace(/_/g, " ")}</span>
                     <span className="flex items-center gap-2 text-xs">
                       {v.execution_mode === "simulation" && <Badge variant="secondary">Test simulation — not compliance evidence</Badge>}
-                      {v.provider_error_category && <Badge variant="secondary">{v.provider_error_category.replaceAll("_", " ")} — attempt not consumed</Badge>}
+                      {v.provider_error_category && <Badge variant="secondary">{v.provider_error_category.replace(/_/g, " ")} — attempt not consumed</Badge>}
                       {v.execution_mode !== "simulation" && !v.provider_error_category && (
                         <Badge variant={v.status === "passed" ? "default" : v.status === "failed" ? "destructive" : "outline"}>
                           {v.status}
@@ -408,9 +408,9 @@ export function SubmissionReviewPanel({
               <ul className="space-y-1 text-sm">
                 {data.screening.map((sc) => (
                   <li key={sc.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1">
-                    <span>{sc.screened_name} · {sc.party_type.replaceAll("_", " ")}</span>
+                    <span>{sc.screened_name} · {sc.party_type.replace(/_/g, " ")}</span>
                     <Badge variant={sc.state === "confirmed_match" ? "destructive" : sc.state === "completed" || sc.state === "false_positive" ? "default" : "outline"}>
-                      {sc.state.replaceAll("_", " ")}
+                      {sc.state.replace(/_/g, " ")}
                     </Badge>
                   </li>
                 ))}
@@ -432,7 +432,7 @@ export function SubmissionReviewPanel({
                   <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 py-1">
                     <span>{r.subject}</span>
                     <span className="flex items-center gap-2 text-xs">
-                      {r.action_code && <Badge variant="outline">{r.action_code.replaceAll("_", " ")}</Badge>}
+                      {r.action_code && <Badge variant="outline">{r.action_code.replace(/_/g, " ")}</Badge>}
                       <Badge variant={r.status === "open" ? "destructive" : "secondary"}>{r.status}</Badge>
                     </span>
                   </li>

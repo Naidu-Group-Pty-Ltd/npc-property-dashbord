@@ -459,7 +459,7 @@ export function VerificationTab({ caseId, canWrite, onChanged }: { caseId: strin
         {readiness && (
           <p className="mb-3 text-xs text-muted-foreground">
             Environment: {readiness.environment} · IDV provider:{" "}
-            {readiness.idv.configured_provider ?? "none configured"} ({readiness.idv.mode}) · {idvState.replaceAll("_", " ")}
+            {readiness.idv.configured_provider ?? "none configured"} ({readiness.idv.mode}) · {String(idvState).replace(/_/g, " ")}
           </p>
         )}
         {items === null ? (
