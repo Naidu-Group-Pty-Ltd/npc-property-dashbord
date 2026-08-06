@@ -721,7 +721,7 @@ export function PreGenerationOverrides({
             </TabsList>
           </div>
 
-          <ScrollArea className={isMobile ? "reports-overrides-scroll reports-overrides-scroll-mobile pr-2" : "reports-overrides-scroll reports-overrides-scroll-desktop pr-4"}
+          <ScrollArea ref={scrollRootRef} className={isMobile ? "reports-overrides-scroll reports-overrides-scroll-mobile pr-2" : "reports-overrides-scroll reports-overrides-scroll-desktop pr-4"}
             aria-label="Pre-generation override fields">
             <TabsContent value="property" className="reports-overrides-tab-content mt-0">
               <PropertyTab
