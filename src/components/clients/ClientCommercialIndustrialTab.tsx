@@ -21,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
-  Building2, ExternalLink, Factory, FileDown, FileText, Landmark, Link2, Loader2,
+  Building2, ExternalLink, Factory, FileDown, FileText, Landmark, Link2, Loader2, Paperclip,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ciAssessmentApi, type ClientCiWorkspace } from '@/hooks/useCiAssessments';
@@ -39,6 +39,14 @@ const STATUS_TONE: Record<string, string> = {
   completed: 'ci-status-good',
   linked: 'ci-status-good',
   archived: 'ci-status-neutral',
+};
+
+/** How a value reached an assessment, in the words the workflow uses. */
+const UPLOAD_SOURCE_LABELS: Record<string, string> = {
+  document_import: 'Read from a document',
+  url_import: 'Read from a listing',
+  client_profile: 'From the client record',
+  ai_estimate: 'Estimated',
 };
 
 function statusLabel(status: string): string {
@@ -104,6 +112,7 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
   const renders = workspace?.renders ?? [];
   const runs = workspace?.runs ?? [];
   const links = workspace?.links ?? [];
+  const uploads = workspace?.uploads ?? [];
 
   if (!assessments.length) {
     return (
@@ -213,6 +222,60 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
               </TableBody>
             </Table>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ---- Uploaded information --------------------------------------- */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+            <Paperclip className="h-4 w-4 text-primary" aria-hidden="true" />
+            Uploaded information ({uploads.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {uploads.length ? (
+            <>
+              <div className="overflow-x-auto" role="region" aria-label="Documents read into these assessments" tabIndex={0}>
+                <Table className="min-w-[560px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Document</TableHead>
+                      <TableHead>Assessment</TableHead>
+                      <TableHead>Read as</TableHead>
+                      <TableHead className="text-right">Fields</TableHead>
+                      <TableHead>Read</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {uploads.map((upload) => (
+                      <TableRow key={`${upload.assessmentId}-${upload.source}-${upload.name}`}>
+                        <TableCell className="max-w-[280px] truncate" title={upload.name}>{upload.name}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{titleFor(upload.assessmentId)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{UPLOAD_SOURCE_LABELS[upload.source] ?? upload.source.replace(/_/g, ' ')}</TableCell>
+                        <TableCell className="text-right font-mono tabular-nums">{upload.fields}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{formatDate(upload.capturedAt)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {/* Said plainly, because "uploaded" invites the reader to look
+                  for a download that does not exist: the pack is read in the
+                  browser and only its values are kept. */}
+              <p className="mt-2 text-xs text-muted-foreground">
+                The intake pack and its supporting documents are read in the browser and are not
+                stored — what is kept is the values they filled in, and this record of where each
+                one came from.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Nothing has been imported into these assessments. Values dropped in through the intake
+              pack, or read from a contract or valuation, are listed here with the document they came
+              from.
+            </p>
+          )}
         </CardContent>
       </Card>
 

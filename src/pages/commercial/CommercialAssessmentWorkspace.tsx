@@ -25,6 +25,7 @@ import { runAssessment, type AssessmentResult } from '@/lib/ciAssessment/engine'
 import { validateAssessment, type ValidationIssue } from '@/lib/ciAssessment/validation';
 import { focusAssessmentFieldWhenReady } from '@/components/commercial/assessment/fieldFocus';
 import { ASSESSMENT_STATUS_LABELS, assessmentTypeDefinition, type AssessmentPayload } from '@/lib/ciAssessment/types';
+import { clientCommercialIndustrialPath } from '@/lib/ciAssessment/clientRoute';
 import { StepAssessmentType } from '@/components/commercial/assessment/StepAssessmentType';
 import { IntakePackPanel } from '@/components/commercial/assessment/IntakePackPanel';
 import type { ParsedPack } from '@/lib/ciAssessment/intakePack';
@@ -483,6 +484,10 @@ export default function CommercialAssessmentWorkspace() {
             <StepAssessmentType
               payload={payload} title={record.title} onTitleChange={setTitle}
               onChange={setPayload} disabled={readOnly}
+              // Renaming is governed by the archive, not by completion: the
+              // figures freeze when the assessment completes, the label does
+              // not. `rename` on the edge function enforces the same rule.
+              titleDisabled={record.status === 'archived'}
             />
           ) : null}
           {activeStep === 'pack' ? (
@@ -493,6 +498,8 @@ export default function CommercialAssessmentWorkspace() {
               segment={definition.segment === 'industrial' ? 'industrial' : 'commercial'}
               onApply={applyIntakePack}
               onCreateClient={() => window.open('/clients', '_blank', 'noopener,noreferrer')}
+              linkedClientId={record.client_id}
+              onOpenClient={() => navigate(clientCommercialIndustrialPath(record.client_id!))}
               disabled={readOnly}
             />
           ) : null}

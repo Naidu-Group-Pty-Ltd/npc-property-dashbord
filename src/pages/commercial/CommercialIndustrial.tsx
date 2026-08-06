@@ -35,6 +35,7 @@ import {
   assessmentTypeDefinition, emptyAssessmentPayload, type AssessmentStatus, type AssessmentType,
 } from '@/lib/ciAssessment/types';
 import { formatMoney, formatMultiple, formatRatioPercent, toCents } from '@/lib/ciAssessment/money';
+import { clientCommercialIndustrialPath } from '@/lib/ciAssessment/clientRoute';
 import { PROFILE_LABELS, PLATFORM_DEFAULT_POLICY, POLICY_VERSION, CALCULATION_ENGINE_VERSION } from '@/lib/ciAssessment/policy';
 import { CommercialPropertyRegister } from '@/components/commercial/CommercialPropertyRegister';
 import { PortfolioImpactTab } from '@/components/commercial/assessment/PortfolioImpactTab';
@@ -283,7 +284,22 @@ export default function CommercialIndustrial() {
                         </button>
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {row.reference}
-                          {row.client_id ? ' · Linked to client' : ' · Not linked'}
+                          {row.client_id ? (
+                            <>
+                              {' · '}
+                              {/* The link is the point of the label: a row that
+                                  says "linked to client" and cannot reach that
+                                  client makes the reader search for someone
+                                  they were already looking at. */}
+                              <button
+                                type="button"
+                                className="underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                onClick={() => navigate(clientCommercialIndustrialPath(row.client_id!))}
+                              >
+                                Open client
+                              </button>
+                            </>
+                          ) : ' · Not linked'}
                         </p>
                       </TableCell>
                       <TableCell>

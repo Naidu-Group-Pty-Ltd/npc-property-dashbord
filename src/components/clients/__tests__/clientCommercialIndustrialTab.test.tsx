@@ -58,6 +58,16 @@ const WORKSPACE = {
     created_at: '2026-08-05T01:10:00.000Z',
   }],
   links: [{ id: 'link-1', assessment_id: 'a-linked', linked_at: '2026-08-05T01:00:00.000Z', unlinked_at: null, applied_changes: [] }],
+  uploads: [
+    {
+      assessmentId: 'a-linked', name: 'Intake pack workbook', source: 'document_import',
+      fields: 218, capturedAt: '2026-08-04T22:00:57.000Z',
+    },
+    {
+      assessmentId: 'a-linked', name: 'Contract of sale.pdf', source: 'document_import',
+      fields: 3, capturedAt: '2026-08-04T22:30:00.000Z',
+    },
+  ],
 };
 
 beforeEach(() => {
@@ -123,6 +133,26 @@ describe('the client Commercial / Industrial tab', () => {
     // Guidance, not a dead end: it names where linking happens and offers the way there.
     expect(screen.getByText(/final step of the assessment workspace/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /open commercial \/ industrial/i })).toBeInTheDocument();
+  });
+
+  it('shows what was read into the assessments, and where it came from', async () => {
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+
+    expect(screen.getByText(/uploaded information \(2\)/i)).toBeInTheDocument();
+    expect(screen.getByText('Intake pack workbook')).toBeInTheDocument();
+    expect(screen.getByText('Contract of sale.pdf')).toBeInTheDocument();
+    expect(screen.getByText('218')).toBeInTheDocument();
+    // And it does not imply a download that does not exist: the pack is read
+    // in the browser and only its values are kept.
+    expect(screen.getByText(/read in the browser and are not\s+stored/i)).toBeInTheDocument();
+  });
+
+  it('says plainly when nothing has been imported', async () => {
+    clientWorkspace.mockResolvedValue({ data: { ...WORKSPACE, uploads: [] }, error: null });
+    renderTab();
+    await screen.findAllByText('Foundry Link acquisition');
+    expect(screen.getByText(/nothing has been imported into these assessments/i)).toBeInTheDocument();
   });
 
   it('shows an error as an error, with a retry', async () => {

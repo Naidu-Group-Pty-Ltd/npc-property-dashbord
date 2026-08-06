@@ -320,3 +320,13 @@ There is deliberately no legacy fallback: what this replaces is
 `window.print()` on a print-styled results screen, and falling back to that
 would hand a client a screenshot of an application under the name of a finance
 report.
+
+`manage-ci-assessments` has since been deployed by hand twice more for the same
+reason — **v12** (client creation, the client workspace, the platform client
+scope) and **v13** (the `rename` operation and the workspace's uploaded-document
+summary). Each time, the repo merged and the pipeline shipped nothing. Until the
+secret exists, treat "the function changed" as "the function needs deploying by
+hand", and verify the same way: OPTIONS 200, then an unauthenticated POST that
+must answer `401 {"error":"Authentication required"}` with the CORS headers on
+it. A worker that failed to parse answers 503 `WORKER_BOOT_ERROR` instead, so
+the 401 is the proof it booted.

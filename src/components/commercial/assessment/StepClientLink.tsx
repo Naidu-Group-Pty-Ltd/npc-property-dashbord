@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,7 +9,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertTriangle, Check, Link2, Loader2, Search, Unlink, User, UserPlus } from 'lucide-react';
+import {
+  AlertTriangle, Check, ExternalLink, Link2, Loader2, Search, Unlink, User, UserPlus,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ciAssessmentApi, type ClientSearchRow } from '@/hooks/useCiAssessments';
 import { fetchClientProfile } from '@/utils/commercial/clientPortfolioRepository';
@@ -17,6 +20,7 @@ import {
   type ReconciliationDisposition, type ReconciliationItem, type ReconciliationSummary,
 } from '@/lib/ciAssessment/reconciliation';
 import type { AssessmentPayload } from '@/lib/ciAssessment/types';
+import { clientCommercialIndustrialPath } from '@/lib/ciAssessment/clientRoute';
 import { prefillFromAssessment } from './clientPrefill';
 import { toast } from '@/hooks/use-toast';
 
@@ -62,14 +66,16 @@ interface Props {
 /**
  * Final step — client association.
  *
- * The sequence is deliberate and enforced: search → confirm the right client →
- * reconcile every field → choose a disposition per item → link. Nothing is
+ * The sequence is deliberate and enforced: find the client — by search, where
+ * the record found must then be confirmed, or by creating one here — then
+ * reconcile every field, choose a disposition per item, and link. Nothing is
  * written to the client record except the items explicitly set to update it,
  * and the whole decision set is stored on the link for audit.
  */
 export function StepClientLink({
   assessmentId, payload, linkedClientId, onLinked, canLink, canUpdateClient,
 }: Props) {
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [clients, setClients] = useState<ClientSearchRow[]>([]);
@@ -80,6 +86,47 @@ export function StepClientLink({
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [linking, setLinking] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // ---- The client already linked ----------------------------------------
+  /**
+   * The client this assessment is already linked to.
+   *
+   * Only fetched in the linked state, and only to put a name on the panel: a
+   * page that says "linked to a client record" without saying which one asks
+   * the reader to go and look it up.
+   */
+  const [linkedClient, setLinkedClient] = useState<ClientSearchRow | null>(null);
+  useEffect(() => {
+    if (!linkedClientId) { setLinkedClient(null); return; }
+    let cancelled = false;
+    // Through the module's own workspace read, so the name shown here obeys
+    // exactly the client access this function already enforces.
+    void ciAssessmentApi.clientWorkspace(linkedClientId).then((result) => {
+      const record = result.data?.client;
+      // A name is a nicety; the panel and its actions work without one.
+      if (cancelled || !record) return;
+      setLinkedClient({ ...record, updated_at: null });
+    });
+    return () => { cancelled = true; };
+  }, [linkedClientId]);
+
+  const confirmClient = useCallback(async (client: ClientSearchRow) => {
+    setConfirmed(true);
+    setLoadingProfile(true);
+    try {
+      const profile = await fetchClientProfile(client.id);
+      setReconciliation(reconcileAssessmentWithClient(payload, profile));
+    } catch (error) {
+      toast({
+        title: 'Could not load the client portfolio',
+        description: error instanceof Error ? error.message : 'Try again, or link without reconciling.',
+        variant: 'destructive',
+      });
+      setConfirmed(false);
+    } finally {
+      setLoadingProfile(false);
+    }
+  }, [payload]);
 
   // ---- Create a new client ----------------------------------------------
   const [creatingOpen, setCreatingOpen] = useState(false);
@@ -110,16 +157,26 @@ export function StepClientLink({
 
     toast({
       title: 'Client created',
-      description: `${clientLabel(result.data)} was added to your client book.`,
+      description: `${clientLabel(result.data)} was added to your client book. Review the reconciliation below, then link.`,
     });
     // Straight into the existing flow: the new client becomes the selected
-    // client, and confirmation + reconciliation + linking run exactly as they
-    // do for one found by search. One path, not two.
+    // client, and reconciliation + linking run exactly as they do for one
+    // found by search. One path, not two.
+    //
+    // The identity confirmation is the one step that is skipped, and only
+    // here. "Confirm this is the right client" exists to stop an assessment
+    // being linked to the wrong *existing* record — a client created from this
+    // form, from details the user has just typed, cannot be someone else. What
+    // it cost to keep was worse than what it bought: creating a client left
+    // the user two unexplained clicks short of a link, and the reported
+    // symptom was a client record with a created-here client and no
+    // assessment on it. Linking still takes an explicit action and its own
+    // confirmation dialog; nothing is written by creating.
     setCreatingOpen(false);
     setSelected(result.data);
-    setConfirmed(false);
     setReconciliation(null);
-  }, [draft, assessmentId]);
+    await confirmClient(result.data);
+  }, [draft, assessmentId, confirmClient]);
 
   // Debounced so typing a name does not fire a request per keystroke.
   useEffect(() => {
@@ -138,23 +195,6 @@ export function StepClientLink({
     return () => { cancelled = true; };
   }, [debouncedSearch]);
 
-  const confirmClient = useCallback(async (client: ClientSearchRow) => {
-    setConfirmed(true);
-    setLoadingProfile(true);
-    try {
-      const profile = await fetchClientProfile(client.id);
-      setReconciliation(reconcileAssessmentWithClient(payload, profile));
-    } catch (error) {
-      toast({
-        title: 'Could not load the client portfolio',
-        description: error instanceof Error ? error.message : 'Try again, or link without reconciling.',
-        variant: 'destructive',
-      });
-      setConfirmed(false);
-    } finally {
-      setLoadingProfile(false);
-    }
-  }, [payload]);
 
   const setDisposition = (itemId: string, disposition: ReconciliationDisposition) => {
     setReconciliation((current) => current && ({
@@ -225,16 +265,29 @@ export function StepClientLink({
         <div className="ci-warning-row ci-warning-info">
           <Link2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <div>
-            <p className="font-medium text-foreground">This assessment is linked to a client record.</p>
+            <p className="font-medium text-foreground">
+              {linkedClient
+                ? `This assessment is linked to ${clientLabel(linkedClient)}.`
+                : 'This assessment is linked to a client record.'}
+            </p>
             <p className="mt-0.5 text-sm">
+              It appears in their Commercial / Industrial file along with its calculations and reports.
               Unlinking preserves the assessment, its calculation history and its audit trail — it only
               removes the association.
             </p>
           </div>
         </div>
-        <Button variant="outline" onClick={doUnlink} disabled={linking || !canLink}>
-          <Unlink className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Unlink from client
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {/* Straight to this client's C&I file — not the client list, which
+              is where every "open client" in this module used to land. */}
+          <Button onClick={() => navigate(clientCommercialIndustrialPath(linkedClientId))}>
+            <ExternalLink className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            Open client
+          </Button>
+          <Button variant="outline" onClick={doUnlink} disabled={linking || !canLink}>
+            <Unlink className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Unlink from client
+          </Button>
+        </div>
       </div>
     );
   }

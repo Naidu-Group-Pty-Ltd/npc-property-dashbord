@@ -15,6 +15,17 @@ interface Props {
   onTitleChange: (title: string) => void;
   onChange: (next: AssessmentPayload) => void;
   disabled?: boolean;
+  /**
+   * The name is governed separately from the figures, and defaults to being
+   * editable when they are not.
+   *
+   * A completed assessment's inputs are frozen because a calculation run
+   * snapshots them — but its *name* is a label, and an assessment is usually
+   * called "Test" while it is being built and only earns its real name once
+   * the deal is understood. Locking the two together left a finished
+   * assessment permanently misnamed in the list.
+   */
+  titleDisabled?: boolean;
 }
 
 /**
@@ -25,7 +36,9 @@ interface Props {
  * whether the transaction is routed straight to specialist review. That is why
  * each option states its own consequence rather than just naming itself.
  */
-export function StepAssessmentType({ payload, title, onTitleChange, onChange, disabled }: Props) {
+export function StepAssessmentType({
+  payload, title, onTitleChange, onChange, disabled, titleDisabled = false,
+}: Props) {
   /**
    * The title is persisted through an autosave + reload round-trip, so writing
    * on every keystroke made the field feel frozen (each character raced the
@@ -82,9 +95,13 @@ export function StepAssessmentType({ payload, title, onTitleChange, onChange, di
           value={draftTitle}
           onChange={handleTitleChange}
           onBlur={() => commitTitle(draftTitle)}
-          disabled={disabled}
+          disabled={titleDisabled}
           placeholder="e.g. 45 Industrial Drive — Wetherill Park"
-          help="How this assessment appears in your list. You can change it at any time."
+          help={
+            disabled
+              ? 'How this assessment appears in your list. The figures are locked now it is complete, but the name can still be changed.'
+              : 'How this assessment appears in your list. You can change it at any time.'
+          }
         />
       </div>
 

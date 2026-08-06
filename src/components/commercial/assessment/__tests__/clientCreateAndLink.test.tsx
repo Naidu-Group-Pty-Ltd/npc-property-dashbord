@@ -4,13 +4,21 @@
  * The rule under test: nothing reaches the client record the user did not see
  * on screen. The prefill is a *suggestion* drawn from the assessment; the
  * record is created from the form's state at the moment of submission, and the
- * new client then flows into the exact confirmation-and-reconciliation path an
+ * new client then flows into the exact reconciliation-and-link path an
  * existing client takes. One path, not two — a client created here must not
  * skip the reconciliation an existing client would get.
+ *
+ * The identity confirmation is the single exception, and it is a considered
+ * one: a client created from this form cannot be the wrong record, and leaving
+ * that step in the way left users two unexplained clicks short of a link — a
+ * client created out of the workflow with no assessment attached to it, which
+ * is exactly what was reported. Reconciliation still runs, and linking still
+ * takes an explicit action and its own dialog.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 import { baseAssessment } from '@/lib/ciAssessment/__tests__/fixtures';
 import type { AssessmentPayload } from '@/lib/ciAssessment/types';
@@ -28,8 +36,9 @@ vi.mock('@/hooks/useCiAssessments', () => ({
   },
 }));
 vi.mock('@/hooks/use-toast', () => ({ toast: (...args: unknown[]) => toast(...args) }));
+const fetchClientProfile = vi.fn();
 vi.mock('@/utils/commercial/clientPortfolioRepository', () => ({
-  fetchClientProfile: vi.fn().mockResolvedValue({ client: null, properties: [], liabilities: [] }),
+  fetchClientProfile: (...args: unknown[]) => fetchClientProfile(...args),
 }));
 
 const { StepClientLink } = await import('../StepClientLink');
@@ -45,6 +54,18 @@ const NEW_CLIENT = {
 };
 
 beforeEach(() => {
+  // The shape `reconcileAssessmentWithClient` reads: a brand-new client with
+  // nothing on file, which is exactly what creating one here produces.
+  fetchClientProfile.mockReset().mockResolvedValue({
+    clientId: NEW_CLIENT.id,
+    clientName: 'Marcus Chen',
+    residentialAssets: [],
+    commercialAssets: [],
+    industrialAssets: [],
+    liabilities: {},
+    existingLoans: {},
+    businessFinancials: {},
+  });
   searchClients.mockReset().mockResolvedValue({ data: [], error: null });
   createClient.mockReset().mockResolvedValue({ data: NEW_CLIENT, error: null });
   toast.mockReset();
@@ -54,14 +75,16 @@ afterEach(cleanup);
 
 function renderStep(payload: AssessmentPayload = baseAssessment()) {
   return render(
-    <StepClientLink
-      assessmentId="4f2c9a1e-8b7d-4c3a-9e51-2d6f8a0b1c34"
-      payload={payload}
-      linkedClientId={null}
-      onLinked={() => {}}
-      canLink
-      canUpdateClient
-    />,
+    <MemoryRouter>
+      <StepClientLink
+        assessmentId="4f2c9a1e-8b7d-4c3a-9e51-2d6f8a0b1c34"
+        payload={payload}
+        linkedClientId={null}
+        onLinked={() => {}}
+        canLink
+        canUpdateClient
+      />
+    </MemoryRouter>,
   );
 }
 
@@ -113,10 +136,25 @@ describe('creating a client from the linking step', () => {
       assessmentId: '4f2c9a1e-8b7d-4c3a-9e51-2d6f8a0b1c34',
     }));
 
-    // The new client lands in step 2 — confirm — exactly as a searched-for
-    // client would. Creation does not skip reconciliation.
-    expect(await screen.findByText(/confirm this is the right client/i)).toBeInTheDocument();
-    expect(screen.getByText('marcus@example.test')).toBeInTheDocument();
+    // The new client lands on the reconciliation, with the link action for
+    // that named client — creation does not skip reconciliation, and it does
+    // not link anything by itself.
+    expect(await screen.findByText(/reconcile against the client record/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /link to marcus chen/i })).toBeInTheDocument();
+    // Nothing was linked by creating: the confirmation dialog has not opened
+    // and the link call has not been made.
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('reconciles the new client against what is on file, as it would an existing one', async () => {
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /create a new client instead/i }));
+    fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Marcus' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create client$/i }));
+
+    // The same portfolio read a searched-for client gets — a new client simply
+    // has nothing on file, which the reconciliation states rather than skips.
+    await waitFor(() => expect(fetchClientProfile).toHaveBeenCalledWith(NEW_CLIENT.id));
   });
 
   it('refuses to create a nameless client without a server round-trip', async () => {

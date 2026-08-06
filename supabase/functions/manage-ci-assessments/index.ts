@@ -19,6 +19,7 @@ import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_s
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { summariseUploads } from '../_shared/ciAssessments/uploads.pure.ts';
 
 /**
  * Client ownership filter, matching the model used by `get-client-data`:
@@ -39,7 +40,7 @@ const clientOwnershipFilter = (userId: string) =>
   `created_by.eq.${userId},assigned_team_user_id.eq.${userId}`;
 
 type Operation =
-  | 'list' | 'get' | 'create' | 'autosave' | 'update_section'
+  | 'list' | 'get' | 'create' | 'autosave' | 'update_section' | 'rename'
   | 'run_calculation' | 'list_calculations'
   | 'save_scenario' | 'list_scenarios'
   | 'complete' | 'search_clients' | 'create_client' | 'link_client' | 'unlink_client'
@@ -428,6 +429,51 @@ Deno.serve(async (req) => {
         if (body.operation === 'update_section' && body.section) {
           await writeAudit(existing.id, 'section_updated', { section: String(body.section).slice(0, 80) });
         }
+        return json({ success: true, data }, 200, corsHeaders);
+      }
+
+      // ---------------------------------------------------------------------
+      /**
+       * Rename — the title, and nothing else.
+       *
+       * Deliberately outside the `EDITABLE_STATUSES` gate that governs
+       * `autosave`. That gate protects the *figures*: a completed assessment's
+       * calculation run snapshots its own inputs, outputs and policy, and
+       * letting a stray autosave move the working payload underneath it would
+       * make the run describe something that no longer exists. A title is a
+       * label on the folder, not a number in the file — "Test" has to be able
+       * to become "45 Industrial Drive" after the work is done, which is
+       * exactly when its real name is known.
+       *
+       * The payload is not touched, so there is no version race to lose and no
+       * expectedVersion to send. Archived is the one refusal: an archived
+       * assessment is restored first.
+       */
+      case 'rename': {
+        if (!body.assessmentId) return fail('assessmentId is required', 400, corsHeaders);
+        const existing = await loadOwned(body.assessmentId);
+        if (!existing) return fail('Assessment not found', 404, corsHeaders, 'NOT_FOUND');
+
+        if (existing.status === 'archived') {
+          return fail('An archived assessment cannot be renamed. Restore it first.', 409, corsHeaders, 'NOT_EDITABLE');
+        }
+
+        const title = String(body.data?.title ?? '').trim().slice(0, 300);
+        if (!title) return fail('A name is required', 400, corsHeaders, 'INVALID_TITLE');
+        if (title === existing.title) return json({ success: true, data: existing }, 200, corsHeaders);
+
+        const { data, error } = await supabase
+          .from('commercial_industrial_assessments')
+          .update({ title, updated_by: userId, version: Number(existing.version) + 1 })
+          .eq('id', existing.id)
+          .eq('user_id', userId)
+          .select()
+          .single();
+        if (error) throw error;
+
+        await writeAudit(existing.id, 'assessment_renamed', {
+          from: String(existing.title ?? '').slice(0, 300), to: title,
+        });
         return json({ success: true, data }, 200, corsHeaders);
       }
 
@@ -837,12 +883,20 @@ Deno.serve(async (req) => {
         if (!body.clientId || typeof body.clientId !== 'string') {
           return fail('clientId is required', 400, corsHeaders);
         }
-        const client = await loadReachableClient(body.clientId);
+        const client = await loadReachableClient(
+          body.clientId,
+          'id, primary_first_name, primary_surname, primary_email, primary_mobile',
+        );
         if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
 
         const { data: assessments, error: assessError } = await supabase
           .from('commercial_industrial_assessments')
-          .select('id, user_id, reference, title, status, segment, assessment_type, requested_loan, maximum_indicative_loan, proposed_lvr, proposed_dscr, outcome, binding_constraint, current_calculation_id, linked_at, created_at, updated_at, archived_at')
+          // `provenance` is the payload's record of where each value came
+          // from, and it is the only trace the intake pack leaves in the
+          // database — the workbook and its supporting files are read in the
+          // browser and never uploaded. Selecting the one JSON path rather
+          // than the whole payload keeps a 1.5MB document out of the response.
+          .select('id, user_id, reference, title, status, segment, assessment_type, requested_loan, maximum_indicative_loan, proposed_lvr, proposed_dscr, outcome, binding_constraint, current_calculation_id, linked_at, created_at, updated_at, archived_at, provenance:payload->provenance')
           .eq('client_id', body.clientId)
           .order('updated_at', { ascending: false })
           .limit(100);
@@ -887,9 +941,22 @@ Deno.serve(async (req) => {
           links = linksRes.data ?? [];
         }
 
+        // What was read into each assessment, one row per document rather than
+        // the payload's one entry per field. See `uploads.pure.ts`.
+        const uploads = (assessments ?? []).flatMap(
+          (row: Record<string, unknown>) => summariseUploads(String(row.id), row.provenance),
+        );
+
+        // The provenance array has done its job; it must not travel on to the
+        // browser, where it would be an unbounded field-by-field payload.
+        const assessmentRows = (assessments ?? []).map((row: Record<string, unknown>) => {
+          const { provenance: _provenance, ...rest } = row;
+          return rest;
+        });
+
         return json({
           success: true,
-          data: { assessments: assessments ?? [], runs, renders, links },
+          data: { client, assessments: assessmentRows, runs, renders, links, uploads },
         }, 200, corsHeaders);
       }
 

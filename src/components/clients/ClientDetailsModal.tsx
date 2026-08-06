@@ -65,6 +65,7 @@ import { ClientFiles } from './ClientFiles';
 import { ClientScoreCard } from './ClientScoreCard';
 import { BorrowingCapacityCard, BorrowingCapacityModal } from '@/components/borrowing-capacity';
 import { ClientCommercialIndustrialTab } from './ClientCommercialIndustrialTab';
+import { ClientCommercialIndustrialSnapshot } from './ClientCommercialIndustrialSnapshot';
 import { ClientAIInsights } from './ClientAIInsights';
 import { ClientFormaraUpload } from './ClientFormaraUpload';
 import { ClientFormaraForms } from './ClientFormaraForms';
@@ -112,6 +113,7 @@ import {
   CLIENT_ACTION_CAPABILITIES,
   resolveClientTab,
 } from './clientWorkspaceRegistry';
+import { CLIENT_CI_TAB } from '@/lib/ciAssessment/clientRoute';
 interface ClientDetailsModalProps {
   client: {
     id: string;
@@ -485,6 +487,16 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
                 clientName={`${smartCapitalize(client.primary_first_name || '')} ${smartCapitalize(client.primary_surname || '')}`.trim()}
                 isActive={clientIsActive}
               />
+
+              {/* Commercial & Industrial, when there is any. Renders nothing
+                  for a client without linked assessments, and nothing for a
+                  workspace that cannot see the module. */}
+              {visibleTabs.some((tab) => tab.value === CLIENT_CI_TAB) ? (
+                <ClientCommercialIndustrialSnapshot
+                  clientId={client.id}
+                  onOpenTab={() => setActiveTab(CLIENT_CI_TAB)}
+                />
+              ) : null}
 
               {/* Contact Info */}
               <div className="grid gap-4 md:grid-cols-2">

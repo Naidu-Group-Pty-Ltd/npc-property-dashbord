@@ -118,6 +118,28 @@ export interface ClientCiWorkspace {
     unlinked_at: string | null;
     applied_changes: unknown[];
   }>;
+  /** The client the workspace belongs to, so a caller need not fetch it twice. */
+  client?: {
+    id: string;
+    primary_first_name: string | null;
+    primary_surname: string | null;
+    primary_email: string | null;
+    primary_mobile: string | null;
+  } | null;
+  /**
+   * What was read into each assessment, one row per document.
+   *
+   * The intake pack is parsed in the browser and the files themselves are
+   * never uploaded, so this is the record of them: the file the values came
+   * from, how many fields it filled, and when.
+   */
+  uploads?: Array<{
+    assessmentId: string;
+    name: string;
+    source: string;
+    fields: number;
+    capturedAt: string | null;
+  }>;
 }
 
 export interface AuditEventRow {
@@ -174,6 +196,21 @@ export const ciAssessmentApi = {
       segment: input.segment,
       section: input.section,
       data: { title: input.title, assessmentType: input.assessmentType },
+    }).then(unwrap),
+
+  /**
+   * Rename, and only rename.
+   *
+   * Separate from `autosave` because the two answer to different rules: the
+   * payload may not move once an assessment is completed, but its name may —
+   * an assessment is usually called something forgettable while it is being
+   * built and earns its real name at the end. Sending no payload also means a
+   * rename cannot lose a version race with the autosave timer.
+   */
+  rename: (input: { assessmentId: string; title: string }) =>
+    call<AssessmentRow>('rename', {
+      assessmentId: input.assessmentId,
+      data: { title: input.title },
     }).then(unwrap),
 
   runCalculation: (input: {
@@ -402,15 +439,18 @@ export function useCiAssessment(assessmentId: string | null) {
    * whole assessment to pick up the new value tore the workspace down to its
    * loading state mid-keystroke — which is what made the name field feel dead.
    * Take the version and record straight from the save response instead.
+   *
+   * It goes through `rename` rather than an autosave carrying a title. Sending
+   * the payload to change a label meant a rename inherited every rule the
+   * payload has: a completed assessment refused it outright ("An assessment
+   * with status completed cannot be edited"), which is precisely when an
+   * assessment finally gets its real name. The dedicated route writes the one
+   * column, so the completed figures stay exactly as they were calculated.
    */
   const saveTitle = useCallback(async (title: string) => {
     if (!assessmentId) return;
-    const current = pendingRef.current ?? payload;
-    if (!current) return;
     setSaveState('saving');
-    const result = await ciAssessmentApi.autosave({
-      assessmentId, payload: current, expectedVersion: versionRef.current, title,
-    });
+    const result = await ciAssessmentApi.rename({ assessmentId, title });
     if (result.code === 'VERSION_CONFLICT') {
       setSaveState('conflict');
       setError('This assessment was changed in another tab or session. Reload to continue.');
@@ -426,7 +466,7 @@ export function useCiAssessment(assessmentId: string | null) {
     setLastSavedAt(result.data.updated_at);
     setError(null);
     setSaveState('saved');
-  }, [assessmentId, payload]);
+  }, [assessmentId]);
 
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
