@@ -29,7 +29,11 @@ RUN useradd --system --uid 10001 amlsvc && chown -R amlsvc /srv /models
 USER amlsvc
 
 EXPOSE 8080
+# Healthy means it can verify somebody, not merely that it answers. /healthz
+# returns 200 while reporting `degraded`, so checking the status code alone
+# would route traffic to a container whose models are unusable — the same
+# mistake the probe itself used to make.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz').status==200 else 1)"
+  CMD python -c "import json,urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/healthz'); sys.exit(0 if r.status==200 and json.load(r).get('status')=='ok' else 1)"
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
