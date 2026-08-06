@@ -702,43 +702,71 @@ export default function ReportQA() {
         let pageImages: Array<{ pageNumber: number; base64: string; width: number; height: number; mimeType: string }> = [];
         try {
           const conv = await convertPdfToImages(file, (current, total) => {
-            const pct = 85 + Math.round((current / Math.max(total, 1)) * 10);
-            updateProgress(Math.min(pct, 95), 'processing');
+            const pct = 85 + Math.round((current / Math.max(total, 1)) * 5);
+            updateProgress(Math.min(pct, 90), 'processing');
           });
 
           if (conv.success) {
             pageImages = conv.images
-              .slice(0, 8)
+              .slice(0, 24)
               .map((img) => ({
                 pageNumber: img.pageNumber,
                 base64: img.base64,
                 width: img.width,
                 height: img.height,
-                mimeType: 'image/png',
+                // Use the real encoding — mislabelling a JPEG as PNG made the
+                // vision provider reject every page.
+                mimeType: img.mimeType,
               }));
+          } else if (conv.error) {
+            console.warn('[ReportQA] Rasterisation reported an error:', conv.error);
           }
         } catch (err) {
           console.warn('PDF page image pre-render failed:', err);
         }
 
         if (pageImages.length > 0) {
-          const reader = new FileReader();
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onload = (e) => resolve(e.target?.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
+          // Send pages in small batches. A whole flattened report rendered at
+          // print quality is tens of megabytes, so the previous single request
+          // (PDF bytes + 8 full-page images) was rejected before it ever reached
+          // the function — which surfaced as "could not extract text".
+          const BATCH_SIZE = 3;
+          const ocrChunks: string[] = [];
+          let lastOcrError: string | null = null;
 
-          const { data, error } = await invokeSecureFunction('report-qa', {
-            action: 'extract',
-            fileData: base64,
-            fileName: file.name,
-            pageImages,
-          });
+          for (let i = 0; i < pageImages.length; i += BATCH_SIZE) {
+            const batch = pageImages.slice(i, i + BATCH_SIZE);
+            const { data, error } = await invokeSecureFunction('report-qa', {
+              action: 'extract',
+              fileName: file.name,
+              pageImages: batch,
+              enableRAG: false,
+            });
 
-          if (!error && data?.success && data.extractedText?.length > extractedText.length) {
-            extractedText = data.extractedText;
+            if (error) {
+              lastOcrError = error.message || 'OCR request failed';
+              console.warn(`[ReportQA] OCR batch ${i / BATCH_SIZE + 1} failed:`, error);
+              // Keep whatever earlier batches produced rather than aborting.
+              break;
+            }
+            if (data?.success && typeof data.extractedText === 'string' && data.extractedText.trim()) {
+              ocrChunks.push(data.extractedText.trim());
+            } else if (data?.error) {
+              lastOcrError = data.error;
+            }
+
+            const done = Math.min(i + BATCH_SIZE, pageImages.length);
+            updateProgress(90 + Math.round((done / pageImages.length) * 9), 'processing');
           }
+
+          const ocrText = ocrChunks.join('\n\n');
+          if (ocrText.length > extractedText.length) {
+            extractedText = `[Document: ${file.name}]\n[Pages OCR'd: ${Math.min(pageImages.length, ocrChunks.length * 3)}]\n\n${ocrText}`;
+          } else if (lastOcrError && extractedText.length < 50) {
+            throw new Error(`This PDF has no readable text layer and OCR failed: ${lastOcrError}`);
+          }
+        } else if (extractedText.length < 50) {
+          throw new Error('This PDF has no readable text layer and its pages could not be rendered for OCR. Please re-export it as a text-based PDF.');
         }
       }
 

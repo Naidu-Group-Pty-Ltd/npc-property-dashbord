@@ -1071,9 +1071,37 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!['additional_info','new_document','clarification','re_consent'].includes(r.kind)) {
           return jsonResponse({ error: 'Invalid kind' }, 400);
         }
+        // Closed action vocabulary. An unrecognised code is dropped rather than
+        // stored, so the portal can never be handed a route it does not know.
+        const CLIENT_ACTION_CODES = [
+          'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
+          'review_consent', 'provide_clarification', 'review_and_submit',
+        ];
+        const actionCode = CLIENT_ACTION_CODES.includes(String(r.action_code ?? ''))
+          ? String(r.action_code) : null;
+        // Routing is whitelisted fields only — never a URL.
+        const actionTarget = {
+          target_step: typeof r.action_target?.target_step === 'string'
+            ? r.action_target.target_step.slice(0, 60) : null,
+          requirement_id: typeof r.action_target?.requirement_id === 'string'
+            ? r.action_target.requirement_id : null,
+        };
+
+        // Idempotency: one unresolved request per action on a case. A repeated
+        // click (or a double-submit) returns the request that already exists
+        // instead of creating a second one the client would see twice.
+        if (actionCode) {
+          const { data: existing } = await admin.schema('aml').from('client_requests')
+            .select('*').eq('case_id', r.case_id).eq('action_code', actionCode)
+            .not('status', 'in', '("resolved","cancelled")')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (existing) return jsonResponse({ request: existing, deduplicated: true });
+        }
+
         const { data, error } = await admin.schema('aml').from('client_requests').insert({
           case_id: r.case_id, kind: r.kind, subject: String(r.subject).slice(0, 200),
           message: String(r.message), request_payload: r.request_payload ?? {},
+          action_code: actionCode, action_target: actionTarget,
           requested_by: userId, requested_by_label: userEmail,
         }).select('*').single();
         if (error) throw error;

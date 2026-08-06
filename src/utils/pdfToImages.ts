@@ -16,6 +16,8 @@ export interface PdfPageImage {
   base64: string;
   width: number;
   height: number;
+  /** Actual encoding of `base64` — 'image/png' or 'image/jpeg'. */
+  mimeType: 'image/png' | 'image/jpeg';
 }
 
 export interface PdfConversionResult {
@@ -140,6 +142,10 @@ export async function convertPdfToImages(
           base64,
           width,
           height,
+          // The real encoding matters downstream: OCR callers used to hardcode
+          // `image/png` for what was often a JPEG, and the vision provider
+          // rejected the mislabelled data URL.
+          mimeType: config.format,
         });
         
         // Free memory immediately

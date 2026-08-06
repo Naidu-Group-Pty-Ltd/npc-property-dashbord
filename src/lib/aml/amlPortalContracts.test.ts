@@ -1119,7 +1119,15 @@ describe("self-hosted verification stack", () => {
       verifySource.indexOf("import { reserveTokens"));
     expect(helper).toContain('rpc("has_any_tenant_aml_role"');
     expect(helper).toContain('rpc("has_tenant_aml_role"');
-    expect(helper).toContain('_tenant_id: caseRow.tenant_id');
+    // The tenant is resolved from the case, but NOT by selecting a
+    // `aml.cases.tenant_id` column — that column does not exist and no
+    // migration adds it, so the previous `caseRow.tenant_id` form made this
+    // gate deny every caller on every case (the documentary route was
+    // permanently 403). `resolveTenantId` is the same resolver the rest of
+    // this function file already uses; the assertion pins the property that
+    // matters — authorisation is tenant-scoped — not the broken expression.
+    expect(helper).toContain('await resolveTenantId(admin, caseId)');
+    expect(helper).toContain('_tenant_id: tenantId');
 
     for (const op of [
       "list_verification_checks",

@@ -205,6 +205,12 @@ export const amlCasesApi = {
     subject: string;
     message: string;
     request_payload?: Record<string, any>;
+    /** Canonical action vocabulary (`CLIENT_ACTION_CODES`). The portal only
+     *  renders an action button for a code it recognises. */
+    action_code?: string;
+    /** Whitelisted routing only — `target_step` / `requirement_id`. The portal
+     *  never accepts a URL. */
+    action_target?: { target_step?: string; requirement_id?: string };
   }) => invoke<{ request: any }>({ op: "create_client_request", request }),
   resolveClientRequest: (request_id: string) =>
     invoke<{ request: any }>({ op: "resolve_client_request", request_id }),

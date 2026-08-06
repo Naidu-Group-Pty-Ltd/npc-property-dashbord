@@ -58,7 +58,7 @@ import {
   serviceGateStatus, progressRail, type ProgressRailState,
 } from "@/lib/aml/caseDimensions";
 import {
-  VerificationTab, ScreeningTab, RiskTab, OwnershipControlTab,
+  ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
 } from "@/components/aml/CaseWorkspaceTabs";
 import {
