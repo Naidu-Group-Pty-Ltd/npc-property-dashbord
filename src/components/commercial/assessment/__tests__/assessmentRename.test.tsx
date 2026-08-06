@@ -48,15 +48,16 @@ describe('the assessment name field', () => {
     expect(screen.getByRole('radio', { name: /commercial investment/i })).toBeDisabled();
   });
 
-  it('says why the name is still open when the rest is closed', () => {
+  it('says the name can be changed after completion', () => {
     renderStep({ disabled: true });
-    expect(screen.getByText(/the figures are locked now it is complete, but the name can still be changed/i))
+    expect(screen.getByText(/you can change it at any time, including after the assessment is complete/i))
       .toBeInTheDocument();
   });
 
-  it('is closed only when the assessment is archived', () => {
+  it('is closed only when the assessment is archived, and says which', () => {
     renderStep({ disabled: true, titleDisabled: true });
     expect(screen.getByLabelText(/assessment name/i)).toBeDisabled();
+    expect(screen.getByText(/archived\. restore it to change its name/i)).toBeInTheDocument();
   });
 
   it('commits the new name once, on blur, rather than per keystroke', () => {

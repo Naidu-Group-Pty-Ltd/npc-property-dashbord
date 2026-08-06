@@ -312,22 +312,43 @@ export function StepClientLink({
         </div>
       ) : null}
 
-      {/* ---- 1. Search --------------------------------------------------- */}
+      {/* ---- 1. Search, or create -------------------------------------- */}
       <section className="space-y-3">
         <h3 className="text-sm font-semibold tracking-tight text-foreground">1. Find the client</h3>
-        <div className="max-w-md">
-          <Label htmlFor="client-search" className="ci-field-label">Search your clients</Label>
-          <div className="relative mt-1.5">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-            <Input
-              id="client-search"
-              value={search}
-              disabled={!canLink}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Name or email"
-              className="pl-9"
-            />
+        {/*
+          The two ways of naming a client sit together, at the top.
+          "Create a new client" used to be its own section *below* the results
+          — which on a book of any size put it under a long scrolling list,
+          where the person who could not find their client had already given
+          up. Searching and creating answer the same question, so they are
+          offered in the same place.
+        */}
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="min-w-[16rem] flex-1 max-w-md">
+            <Label htmlFor="client-search" className="ci-field-label">Search your clients</Label>
+            <div className="relative mt-1.5">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                id="client-search"
+                value={search}
+                disabled={!canLink}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Name or email"
+                className="pl-9"
+              />
+            </div>
           </div>
+          {!creatingOpen ? (
+            <Button
+              variant="outline" disabled={!canLink}
+              onClick={() => setCreatingOpen(true)}
+            >
+              <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Create a new client instead
+            </Button>
+          ) : null}
+        </div>
+        <div className="max-w-md">
           <p className="mt-1.5 text-xs text-muted-foreground">
             Only clients you are authorised to access appear here.
           </p>
@@ -366,17 +387,9 @@ export function StepClientLink({
         )}
       </section>
 
-      {/* ---- 1b. Or create ------------------------------------------------ */}
-      <section className="space-y-3">
-        {!creatingOpen ? (
-          <Button
-            variant="outline" size="sm" disabled={!canLink}
-            onClick={() => setCreatingOpen(true)}
-          >
-            <UserPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            Create a new client instead
-          </Button>
-        ) : (
+      {/* ---- 1b. The create form ------------------------------------------ */}
+      {creatingOpen ? (
+        <section className="space-y-3">
           <div className="rounded-lg border border-border bg-muted/25 p-4">
             <h3 className="text-sm font-semibold tracking-tight text-foreground">Create a new client</h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -429,8 +442,8 @@ export function StepClientLink({
               </Button>
             </div>
           </div>
-        )}
-      </section>
+        </section>
+      ) : null}
 
       {/* ---- 2. Confirm --------------------------------------------------- */}
       {selected && !confirmed ? (

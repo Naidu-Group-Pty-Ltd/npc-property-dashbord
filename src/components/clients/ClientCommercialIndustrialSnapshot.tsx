@@ -54,7 +54,40 @@ export function ClientCommercialIndustrialSnapshot({ clientId, onOpenTab }: Prop
   }, [clientId]);
 
   const assessments = workspace?.assessments ?? [];
-  if (!assessments.length) return null;
+  const candidates = workspace?.candidates ?? [];
+
+  /**
+   * Started for this client, never linked.
+   *
+   * Worth one line on the Overview because the alternative is what was
+   * reported: a client created out of an assessment, and a profile that shows
+   * no sign the assessment exists. The tab holds the action; this says there
+   * is something to act on.
+   */
+  if (!assessments.length) {
+    if (!candidates.length) return null;
+    return (
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Landmark className="h-4 w-4 text-primary" aria-hidden="true" />
+            Commercial / Industrial
+          </CardTitle>
+          <Button size="sm" variant="outline" className="h-7" onClick={onOpenTab}>
+            Open
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            {candidates.length === 1 ? 'An assessment was' : `${candidates.length} assessments were`}
+            {' '}started for this client but not linked yet, so nothing from
+            {candidates.length === 1 ? ' it' : ' them'} appears here. The Commercial / Industrial tab
+            offers the step that links {candidates.length === 1 ? 'it' : 'them'}.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // The most recently updated assessment is the one being worked on, and the
   // one whose figures answer "where is this client up to".

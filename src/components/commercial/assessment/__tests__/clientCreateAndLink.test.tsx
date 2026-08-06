@@ -118,6 +118,20 @@ describe('creating a client from the linking step', () => {
     expect(screen.getByLabelText(/search your clients/i)).toBeInTheDocument();
   });
 
+  it('puts creating beside the search rather than under the results', async () => {
+    // A book of any size pushed this button under a long scrolling list of
+    // clients — below where the person who could not find their client had
+    // already stopped reading. Searching and creating answer the same
+    // question, so they are offered together, above the results.
+    renderStep();
+    const create = await screen.findByRole('button', { name: /create a new client instead/i });
+    const search = screen.getByLabelText(/search your clients/i);
+    const results = screen.getByText(/no matching clients/i);
+
+    expect(search.compareDocumentPosition(create) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(create.compareDocumentPosition(results) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('creates from the form state and hands the client to the normal flow', async () => {
     renderStep();
     fireEvent.click(await screen.findByRole('button', { name: /create a new client instead/i }));

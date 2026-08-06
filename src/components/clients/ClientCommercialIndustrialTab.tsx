@@ -113,26 +113,87 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
   const runs = workspace?.runs ?? [];
   const links = workspace?.links ?? [];
   const uploads = workspace?.uploads ?? [];
+  const candidates = workspace?.candidates ?? [];
+
+  /**
+   * An assessment that belongs to this client but is not linked to them.
+   *
+   * Rendered above everything else, and on its own where nothing is linked at
+   * all, because it is the answer to the question the empty tab provoked:
+   * "I created this client from an assessment — where is it?". Linking happens
+   * on the assessment's own final step, so this offers that step rather than
+   * doing it from here, where none of the reconciliation could be shown.
+   */
+  const candidateCard = candidates.length ? (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+          <Link2 className="h-4 w-4 text-warning" aria-hidden="true" />
+          Not linked yet ({candidates.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          {candidates.length === 1 ? 'This assessment was' : 'These assessments were'} started for this
+          client but never linked, so nothing from {candidates.length === 1 ? 'it' : 'them'} appears
+          below. Linking happens on the assessment's final step, where the portfolio is reconciled
+          against what is already on file.
+        </p>
+        <ul className="space-y-2">
+          {candidates.map((row) => (
+            <li
+              key={row.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-foreground">{row.title}</span>
+                <span className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {row.segment === 'industrial'
+                    ? <Factory className="h-3 w-3" aria-hidden="true" />
+                    : <Building2 className="h-3 w-3" aria-hidden="true" />}
+                  {row.reference} · {statusLabel(row.status)}
+                  {row.maximum_indicative_loan
+                    ? ` · ${formatMoney(toCents(row.maximum_indicative_loan))} indicative`
+                    : ''}
+                </span>
+              </span>
+              <Button
+                size="sm"
+                onClick={() => navigate(`/commercial/assessments/${row.id}?step=link`)}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Link this assessment
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  ) : null;
 
   if (!assessments.length) {
     return (
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-start gap-3">
-            <Landmark className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <div>
-              <p className="text-sm font-semibold text-foreground">No Commercial &amp; Industrial assessments linked</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Assessments are linked to a client on the final step of the assessment workspace. Once
-                linked, the assessment, its calculations and its capacity reports all appear here.
-              </p>
-              <Button className="mt-3" size="sm" variant="outline" onClick={() => navigate('/commercial')}>
-                Open Commercial / Industrial
-              </Button>
+      <div className="space-y-4">
+        {candidateCard}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-start gap-3">
+              <Landmark className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <div>
+                <p className="text-sm font-semibold text-foreground">No Commercial &amp; Industrial assessments linked</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Assessments are linked to a client on the final step of the assessment workspace. Once
+                  linked, the assessment, its calculations, the documents read into it and its capacity
+                  reports all appear here.
+                </p>
+                <Button className="mt-3" size="sm" variant="outline" onClick={() => navigate('/commercial')}>
+                  Open Commercial / Industrial
+                </Button>
+              </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
@@ -141,6 +202,8 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
 
   return (
     <div className="space-y-4">
+      {candidateCard}
+
       {/* ---- Linked assessments --------------------------------------- */}
       <Card>
         <CardHeader className="pb-3">

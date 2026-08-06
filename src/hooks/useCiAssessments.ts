@@ -140,6 +140,21 @@ export interface ClientCiWorkspace {
     fields: number;
     capturedAt: string | null;
   }>;
+  /**
+   * Assessments that belong to this client but are not linked to them —
+   * created from the client's own linking step, or linked once and unlinked
+   * since. The tab offers the step that finishes the job.
+   */
+  candidates?: Array<{
+    id: string;
+    reference: string;
+    title: string;
+    status: string;
+    segment: 'commercial' | 'industrial';
+    requested_loan: number | null;
+    maximum_indicative_loan: number | null;
+    updated_at: string;
+  }>;
 }
 
 export interface AuditEventRow {

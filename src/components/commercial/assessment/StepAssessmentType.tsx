@@ -98,9 +98,9 @@ export function StepAssessmentType({
           disabled={titleDisabled}
           placeholder="e.g. 45 Industrial Drive — Wetherill Park"
           help={
-            disabled
-              ? 'How this assessment appears in your list. The figures are locked now it is complete, but the name can still be changed.'
-              : 'How this assessment appears in your list. You can change it at any time.'
+            titleDisabled
+              ? 'This assessment is archived. Restore it to change its name.'
+              : 'How this assessment appears in your list. You can change it at any time, including after the assessment is complete.'
           }
         />
       </div>

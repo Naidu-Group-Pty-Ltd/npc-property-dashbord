@@ -321,10 +321,12 @@ There is deliberately no legacy fallback: what this replaces is
 would hand a client a screenshot of an application under the name of a finance
 report.
 
-`manage-ci-assessments` has since been deployed by hand twice more for the same
-reason — **v12** (client creation, the client workspace, the platform client
-scope) and **v13** (the `rename` operation and the workspace's uploaded-document
-summary). Each time, the repo merged and the pipeline shipped nothing. Until the
+`manage-ci-assessments` has since been deployed by hand three more times for
+the same reason — **v12** (client creation, the client workspace, the platform
+client scope), **v13** (the `rename` operation and the workspace's
+uploaded-document summary) and **v14** (editing a completed assessment, and the
+workspace's not-linked-yet candidates). Each time, the repo merged and the
+pipeline shipped nothing. Until the
 secret exists, treat "the function changed" as "the function needs deploying by
 hand", and verify the same way: OPTIONS 200, then an unauthenticated POST that
 must answer `401 {"error":"Authentication required"}` with the CORS headers on

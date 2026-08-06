@@ -110,6 +110,26 @@ describe('the Overview snapshot', () => {
   });
 });
 
+describe('the Overview snapshot, before anything is linked', () => {
+  it('says an assessment is waiting rather than showing nothing', async () => {
+    clientWorkspace.mockResolvedValue({
+      data: {
+        assessments: [], runs: [], renders: [], links: [], uploads: [],
+        candidates: [{
+          id: 'a-unlinked', reference: 'CI-202608-TS6PK', title: 'Test',
+          status: 'completed', segment: 'commercial',
+          requested_loan: null, maximum_indicative_loan: null,
+          updated_at: '2026-08-05T18:04:55.000Z',
+        }],
+      },
+      error: null,
+    });
+    render(<ClientCommercialIndustrialSnapshot clientId={CLIENT_ID} onOpenTab={() => {}} />);
+
+    expect(await screen.findByText(/started for this client but not linked yet/i)).toBeInTheDocument();
+  });
+});
+
 describe('the linked step', () => {
   it('names the client and offers their file, not the client list', async () => {
     vi.resetModules();
