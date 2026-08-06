@@ -140,7 +140,28 @@ export function PreGenerationOverrides({
 }: PreGenerationOverridesProps) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const [activeTab, setActiveTab] = useState('property');
+  const [activeTab, setActiveTab] = useState<OverrideStep>('property');
+  const scrollRootRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Step navigation. Switching the tab alone leaves the reader parked halfway
+   * down the previous category, so the scroll viewport is returned to the top
+   * of the newly revealed section — smoothly, and respecting reduced motion.
+   */
+  const goToStep = useCallback((step: OverrideStep) => {
+    setActiveTab(step);
+    requestAnimationFrame(() => {
+      const viewport = scrollRootRef.current?.querySelector<HTMLElement>(
+        '[data-radix-scroll-area-viewport]'
+      );
+      const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      viewport?.scrollTo({ top: 0, behavior: prefersReduced ? 'auto' : 'smooth' });
+      scrollRootRef.current?.scrollIntoView({
+        behavior: prefersReduced ? 'auto' : 'smooth',
+        block: 'nearest',
+      });
+    });
+  }, []);
   
   // Build type selection
   const [internalBuildType, setInternalBuildType] = useState<BuildType>(externalBuildType || 'existing_property');
