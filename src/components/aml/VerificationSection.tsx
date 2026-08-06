@@ -3,12 +3,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, ShieldCheck, AlertTriangle, Eye, FileCheck2 } from "lucide-react";
+import { Loader2, ShieldCheck, AlertTriangle, Eye, FileCheck2, RefreshCw } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import {
-  amlVerificationApi, type AmlVerificationCheck, type AmlBiometricAccessEntry,
+  amlVerificationApi, isRetryableProcessingStatus,
+  type AmlVerificationCheck, type AmlBiometricAccessEntry, type ProviderReadiness,
 } from "@/lib/aml/amlVerificationApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
+import { displayDateTime } from "@/lib/aml/displayDate";
 
 /**
  * Identity verification — command-centre surface for the self-hosted stack.
@@ -40,6 +42,42 @@ const STATUS_LABELS: Record<string, string> = {
   abandoned: "Abandoned",
 };
 
+/**
+ * Processing state is separate from the identity outcome and was invisible to
+ * staff: a check stranded in `technical_failure` read as "Awaiting
+ * adjudication", so nobody could tell an unreachable provider from a customer
+ * waiting on a decision, and the `retry_verification_processing` op the server
+ * already exposes had no control at all. Found by the staff browser journey.
+ */
+const PROCESSING_LABELS: Record<string, string> = {
+  submitted: "Capture received",
+  queued: "Queued for the provider",
+  processing: "Running at the provider",
+  completed: "Provider run complete",
+  capture_unusable: "Capture unusable — new capture needed",
+  technical_failure: "Provider or worker failure",
+  retry_scheduled: "Retry scheduled",
+  dead_lettered: "Processing dead-lettered",
+  cancelled: "Processing cancelled",
+};
+
+const PROCESSING_STYLES: Record<string, string> = {
+  capture_unusable: "text-warning",
+  technical_failure: "text-destructive",
+  dead_lettered: "text-destructive",
+  retry_scheduled: "text-warning",
+  processing: "text-muted-foreground",
+  queued: "text-muted-foreground",
+  submitted: "text-muted-foreground",
+  completed: "text-muted-foreground",
+  cancelled: "text-muted-foreground",
+};
+
+/** Neither an outage nor an unusable capture is the customer's fault. */
+const NO_ATTEMPT_PROCESSING = new Set([
+  "capture_unusable", "technical_failure", "retry_scheduled", "dead_lettered", "cancelled",
+]);
+
 export function VerificationSection({
   caseId, canWrite, onChanged,
 }: { caseId: string; canWrite: boolean; onChanged?: () => void }) {
@@ -48,17 +86,22 @@ export function VerificationSection({
   const [maxAttempts, setMaxAttempts] = useState(3);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<ProviderReadiness | null>(null);
   const { prompt, dialog } = usePromptDialog();
 
   const refresh = useCallback(async () => {
     try {
-      const [res, log] = await Promise.all([
+      const [res, log, ready] = await Promise.all([
         amlVerificationApi.listVerificationChecks(caseId),
         amlVerificationApi.listBiometricAccess(caseId).catch(() => ({ access_log: [] })),
+        // Readiness is advisory: staff need to know an electronic check cannot
+        // run right now before they chase the client for another capture.
+        amlVerificationApi.providerReadiness().catch(() => null),
       ]);
       setChecks(res.checks ?? []);
       setMaxAttempts(res.max_attempts ?? 3);
       setAccessLog(log.access_log ?? []);
+      setReadiness(ready);
       setError(null);
     } catch (e: any) {
       setError(e?.message ?? "Unable to load verification checks.");
@@ -78,6 +121,32 @@ export function VerificationSection({
     } catch (e: any) {
       toast({
         title: "Could not adjudicate",
+        description: e?.message ?? "Unknown error",
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Re-run the provider after a technical failure. The server refuses anything
+   * else with `retry_not_eligible`, and a retry never consumes a further
+   * customer attempt — so this is safe to offer whenever it is enabled.
+   */
+  const retryProcessing = async (check: AmlVerificationCheck) => {
+    setBusy(check.id);
+    try {
+      await amlVerificationApi.retryVerificationProcessing(check.id);
+      toast({
+        title: "Processing retried",
+        description: "The provider will run again. No further client attempt was used.",
+      });
+      await refresh();
+      onChanged?.();
+    } catch (e: any) {
+      toast({
+        title: "Could not retry processing",
         description: e?.message ?? "Unknown error",
         variant: "destructive",
       });
@@ -188,6 +257,29 @@ export function VerificationSection({
         </AlertDescription>
       </Alert>
 
+      {/* Provider readiness. Without this staff could not tell "the provider
+          refused to run" from "nobody has run it yet", and would chase the
+          client for another capture that could not be processed either. */}
+      {readiness?.idv && (() => {
+        const ready = readiness.idv.state === "ready_live";
+        return (
+          <Alert variant={ready ? "default" : "destructive"}>
+            <ShieldCheck className="h-4 w-4" />
+            <AlertTitle className="text-sm">
+              Electronic verification: {ready ? "available" : "not available"}
+            </AlertTitle>
+            <AlertDescription className="text-xs">
+              {ready
+                ? "The configured provider is live. Captures submitted by the client are processed automatically."
+                : "No live provider is available for this environment, so electronic checks cannot run. "
+                  + "Verify identity by document sighting until it is restored — no client attempt is "
+                  + "consumed while it is unavailable."}
+              {` (${readiness.idv.state.replace(/_/g, " ")})`}
+            </AlertDescription>
+          </Alert>
+        );
+      })()}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -220,14 +312,49 @@ export function VerificationSection({
                       <span className="font-medium">{c.party_label}</span>
                       <span className="ml-2 text-xs text-muted-foreground">
                         {c.check_type === "document_sighting" ? "Document sighting" : "Electronic check"}
+                        {/* An absent attempt number used to print
+                            "attempt undefined of 3" to compliance staff.
+                            `attempt_number` is nullable on rows created before
+                            the canonical model, so omit the clause rather than
+                            interpolate nothing. Found by the staff browser
+                            journey. */}
                         {c.check_type === "electronic_idv" &&
+                          Number.isFinite(Number(c.attempt_number)) &&
                           ` · attempt ${c.attempt_number} of ${maxAttempts}`}
                       </span>
                     </div>
-                    <Badge variant="outline" className={STATUS_STYLES[c.status] ?? ""}>
-                      {STATUS_LABELS[c.status] ?? c.status}
-                    </Badge>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {c.execution_mode === "simulation" && (
+                        <Badge variant="outline" className="text-warning">
+                          Test simulation — not compliance evidence
+                        </Badge>
+                      )}
+                      {c.processing_status && c.processing_status !== "completed" && (
+                        <Badge variant="outline" className={PROCESSING_STYLES[c.processing_status] ?? ""}>
+                          {PROCESSING_LABELS[c.processing_status] ?? c.processing_status}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className={STATUS_STYLES[c.status] ?? ""}>
+                        {STATUS_LABELS[c.status] ?? c.status}
+                      </Badge>
+                    </div>
                   </div>
+
+                  {/* Attempt accounting, stated rather than implied: an outage
+                      or an unusable capture must be visibly free. */}
+                  {c.check_type === "electronic_idv" && c.processing_status && (
+                    <div className="text-xs text-muted-foreground">
+                      {c.attempt_consumed
+                        ? "This attempt counted towards the client's allowance."
+                        : NO_ATTEMPT_PROCESSING.has(c.processing_status)
+                          ? "No client attempt was used."
+                          : "No client attempt has been used yet."}
+                      {c.provider_error_category &&
+                        ` · ${c.provider_error_category.replace(/_/g, " ")}`}
+                      {c.processing_attempts != null && c.processing_attempts > 1 &&
+                        ` · ${c.processing_attempts} processing attempts`}
+                    </div>
+                  )}
 
                   {c.check_type === "document_sighting" && c.outcome_detail && (
                     <div className="text-xs text-muted-foreground">
@@ -265,6 +392,13 @@ export function VerificationSection({
                           Run check
                         </Button>
                       )}
+                      {isRetryableProcessingStatus(c.processing_status) && (
+                        <Button size="sm" variant="outline" className="h-7 text-xs"
+                          onClick={() => retryProcessing(c)} disabled={busy === c.id}>
+                          {busy === c.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                          <RefreshCw className="mr-1.5 h-3 w-3" /> Retry processing
+                        </Button>
+                      )}
                       {c.has_biometric && (
                         <Button size="sm" variant="ghost" className="h-7 text-xs"
                           onClick={() => viewBiometric(c)} disabled={busy === c.id}>
@@ -295,7 +429,7 @@ export function VerificationSection({
                     {a.reason && <span className="text-muted-foreground"> · {a.reason}</span>}
                   </span>
                   <span className="shrink-0 text-muted-foreground">
-                    {new Date(a.created_at).toLocaleString()}
+                    {displayDateTime(a.created_at)}
                   </span>
                 </li>
               ))}

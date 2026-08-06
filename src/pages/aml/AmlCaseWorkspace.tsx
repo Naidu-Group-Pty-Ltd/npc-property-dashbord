@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardList,
+  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardCheck, ClipboardList,
   FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, Radar,
   ScanSearch, Scale, User, Wallet, History,
 } from "lucide-react";
@@ -35,6 +35,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
 import { amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import {
@@ -46,6 +47,10 @@ import {
 } from "@/lib/aml/amlMonitoringApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { VerificationSection } from "@/components/aml/VerificationSection";
+import { SubmissionReviewPanel } from "@/components/aml/SubmissionReviewPanel";
+import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificationHistoryPanel";
+import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
+import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import {
@@ -92,7 +97,7 @@ const GATE_LABELS: Record<string, string> = {
 
 type SectionKey =
   | "overview" | "identity" | "ownership"
-  | "counterparty" | "finance" | "documents"
+  | "counterparty" | "finance" | "documents" | "submission-review"
   | "risk" | "monitoring" | "requests" | "timeline";
 
 interface SectionDef {
@@ -117,6 +122,7 @@ const SECTION_GROUPS: Array<{ group: string; sections: SectionDef[] }> = [
       { key: "counterparty", label: "Purchase & Counterparty", icon: Handshake, visible: (a) => a.canInvestigate },
       { key: "finance", label: "Funding & Finance", icon: Wallet, visible: (a) => a.canInvestigate },
       { key: "documents", label: "Documents & Evidence", icon: FileText, visible: () => true },
+      { key: "submission-review", label: "Submission Review", icon: ClipboardCheck, visible: () => true },
     ],
   },
   {
@@ -142,6 +148,7 @@ const RAIL_STATE_META: Record<ProgressRailState, { icon: typeof Circle; classNam
 const isKnownSection = (value: string | null): value is SectionKey =>
   !!value &&
   SECTION_GROUPS.some((g) => g.sections.some((s) => s.key === value));
+
 
 export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
@@ -265,7 +272,7 @@ export default function AmlCaseWorkspace() {
                   <User className="h-3.5 w-3.5" /> Client record
                 </Link>
               )}
-              <span>Updated {new Date(caseRow.updated_at).toLocaleDateString()}</span>
+              <span>Updated {displayDate(caseRow.updated_at)}</span>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2" aria-label="Case status">
@@ -384,12 +391,25 @@ export default function AmlCaseWorkspace() {
           )}
           {section === "identity" && (
             <div className="space-y-4">
-              {/* Self-hosted verification: per-party attempts, document
-                  sightings and audited biometric access. */}
+              {/* ONE canonical identity-verification surface: per-party
+                  attempts, processing state, document sightings and audited
+                  biometric access. The legacy identity_checks history lives
+                  in its own collapsed read-only panel below — there are no
+                  two competing primary actions. */}
               <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
-              <VerificationTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <PartyVerificationPanel caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <PartyScreeningPanel caseId={caseRow.id} canWrite={canWrite} canAdjudicate={access.isMlro || access.roles.has("reviewer")} onChanged={load} />
+              <LegacyVerificationHistoryPanel caseId={caseRow.id} />
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
             </div>
+          )}
+          {section === "submission-review" && (
+            <SubmissionReviewPanel
+              caseId={caseRow.id}
+              canWrite={canWrite}
+              canDecide={access.isMlro || access.roles.has("reviewer")}
+              onChanged={load}
+            />
           )}
           {section === "ownership" && <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />}
           {section === "counterparty" && canInvestigate && (
@@ -445,7 +465,7 @@ export default function AmlCaseWorkspace() {
       {/* Activation provenance footnote for context, kept out of the header */}
       {activation && (
         <p className="text-xs text-muted-foreground">
-          Activated {activation.activated_at ? new Date(activation.activated_at).toLocaleDateString() : ""} —{" "}
+          Activated {activation.activated_at ? displayDate(activation.activated_at) : ""} —{" "}
           {caseRow.activation_timing === "conditional_agreement"
             ? "compliance runs under a conditional agreement; the service unlocks when the gate is approved."
             : "the designated service trigger had occurred at activation."}
@@ -489,7 +509,7 @@ function CaseOverviewSection({
                 <span className="text-muted-foreground">Not linked</span>
               )}
             />
-            <Row k="Opened" v={new Date(caseRow.opened_at).toLocaleDateString()} />
+            <Row k="Opened" v={displayDate(caseRow.opened_at)} />
           </CardContent>
         </Card>
 
@@ -615,7 +635,7 @@ function ConsentEvidenceCard({ caseId }: { caseId: string }) {
                     {d.accepted_at ? (
                       <>
                         <div className="text-success">
-                          {new Date(d.accepted_at).toLocaleString()}
+                          {displayDateTime(d.accepted_at)}
                         </div>
                         {d.accepted_by && (
                           <div className="text-muted-foreground">{d.accepted_by}</div>
@@ -775,7 +795,7 @@ function DocumentsEvidenceSection({
                     <div className="truncate">{r.label}</div>
                     <div className="text-xs text-muted-foreground">
                       {r.required ? "Required" : "Optional"}
-                      {r.due_at ? ` · due ${new Date(r.due_at).toLocaleDateString()}` : ""}
+                      {r.due_at ? ` · due ${displayDate(r.due_at)}` : ""}
                     </div>
                   </div>
                   <Badge variant="outline" className="capitalize">{String(r.status ?? "pending").replace(/_/g, " ")}</Badge>
@@ -800,7 +820,7 @@ function DocumentsEvidenceSection({
                   <div className="min-w-0 flex-1">
                     <div className="truncate">{d.filename}</div>
                     <div className="text-xs text-muted-foreground">
-                      Uploaded {new Date(d.uploaded_at).toLocaleString()}
+                      Uploaded {displayDateTime(d.uploaded_at)}
                       {d.rejection_reason ? ` · rejected: ${d.rejection_reason}` : ""}
                     </div>
                   </div>
@@ -858,7 +878,7 @@ function DocumentsEvidenceSection({
                       {String(e.reference_type ?? "reference").replace(/_/g, " ")}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleDateString()}
+                      {displayDate(e.created_at)}
                     </span>
                   </div>
                 </li>
@@ -1042,7 +1062,7 @@ function MonitoringReviewsSection({
         <CardContent className="space-y-2 text-sm">
           {ended ? (
             <>
-              <Row k="Ended" v={monitoring.relationship_ended_at ? new Date(monitoring.relationship_ended_at).toLocaleDateString() : "—"} />
+              <Row k="Ended" v={monitoring.relationship_ended_at ? displayDate(monitoring.relationship_ended_at) : "—"} />
               {monitoring.relationship_end_reason && (
                 <div className="rounded bg-muted/40 p-2 text-xs">{monitoring.relationship_end_reason}</div>
               )}
@@ -1059,20 +1079,20 @@ function MonitoringReviewsSection({
                 v={
                   monitoring.next_periodic_review_at
                     ? <span className={monitoring.next_periodic_review_at < today ? "text-warning" : ""}>
-                        {new Date(monitoring.next_periodic_review_at).toLocaleDateString()}
+                        {displayDate(monitoring.next_periodic_review_at)}
                         {monitoring.next_periodic_review_at < today ? " · due" : ""}
                       </span>
                     : <span className="text-muted-foreground">Not scheduled</span>
                 }
               />
-              <Row k="Last review" v={monitoring.last_periodic_review_at ? new Date(monitoring.last_periodic_review_at).toLocaleDateString() : "—"} />
+              <Row k="Last review" v={monitoring.last_periodic_review_at ? displayDate(monitoring.last_periodic_review_at) : "—"} />
               <Row
                 k="Screening refresh"
                 v={
                   monitoring.rescreen_due_at
                     ? <span className={monitoring.rescreen_overdue ? "text-warning" : ""}>
                         {monitoring.rescreen_overdue ? "Overdue since " : "Due "}
-                        {new Date(monitoring.rescreen_due_at).toLocaleDateString()}
+                        {displayDate(monitoring.rescreen_due_at)}
                       </span>
                     : <span className="text-muted-foreground">No screening on record</span>
                 }
@@ -1177,7 +1197,7 @@ function MonitoringReviewsSection({
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {r.due_at ? `Due ${new Date(r.due_at).toLocaleDateString()}` : "No deadline"}
+                          {r.due_at ? `Due ${displayDate(r.due_at)}` : "No deadline"}
                           {overdue ? " · overdue" : ""}
                           {r.extension_count ? ` · extended ${r.extension_count}×` : ""}
                         </div>
@@ -1470,9 +1490,9 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
                   <div className="min-w-0">
                     <div className="truncate">{t.property_address ?? t.reference ?? t.kind}</div>
                     <div className="text-xs text-muted-foreground">
-                      {t.settlement_date ? `Settles ${new Date(t.settlement_date).toLocaleDateString()}` : "No settlement date"}
+                      {t.settlement_date ? `Settles ${displayDate(t.settlement_date)}` : "No settlement date"}
                       {t.original_settlement_date && t.settlement_date !== t.original_settlement_date &&
-                        ` (moved from ${new Date(t.original_settlement_date).toLocaleDateString()})`}
+                        ` (moved from ${displayDate(t.original_settlement_date)})`}
                       {t.purchase_price ? ` · ${Number(t.purchase_price).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : ""}
                     </div>
                   </div>
@@ -1509,7 +1529,7 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
                           variant="outline"
                           className={`h-5 px-1.5 text-[10px] ${cp.delayed_cdd_deadline < today ? "border-destructive/50 text-destructive" : "border-warning/50 text-warning"}`}
                         >
-                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${new Date(cp.delayed_cdd_deadline).toLocaleDateString()}`}
+                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${displayDate(cp.delayed_cdd_deadline)}`}
                         </Badge>
                       )}
                     </div>
@@ -1755,7 +1775,7 @@ function ActionPanel({
   if (openRequests.length > 0) blockers.push(`${openRequests.length} client request${openRequests.length === 1 ? "" : "s"} awaiting a response.`);
 
   const nextAction =
-    stage === "client_submitted" ? { label: "Review the client submission", section: "documents" as SectionKey }
+    stage === "client_submitted" ? { label: "Review the client submission", section: "submission-review" as SectionKey }
     : stage === "decision_pending" ? { label: "Record the decision", section: "risk" as SectionKey }
     : stage === "enhanced_cdd" ? { label: "Work the additional-information items", section: "requests" as SectionKey }
     : stage === "client_in_progress" ? { label: "Check portal progress and chase requirements", section: "documents" as SectionKey }
@@ -1857,7 +1877,7 @@ function ActionPanel({
               {events.slice(0, 5).map((e) => (
                 <li key={e.id}>
                   <div className="line-clamp-2">{e.summary}</div>
-                  <div className="text-muted-foreground">{new Date(e.created_at).toLocaleString()}</div>
+                  <div className="text-muted-foreground">{displayDateTime(e.created_at)}</div>
                 </li>
               ))}
             </ul>

@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ProviderReadinessCard } from "@/components/aml/ProviderReadinessCard";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
@@ -150,7 +151,10 @@ export default function AmlConfiguration() {
           </TabsContent>
         )}
         <TabsContent value="providers" className="mt-4">
-          <ProvidersPanel summary={summary} canWrite={isMlro} onSaved={reload} />
+          <div className="space-y-4">
+            <ProviderReadinessCard />
+            <ProvidersPanel summary={summary} canWrite={isMlro} onSaved={reload} />
+          </div>
         </TabsContent>
         <TabsContent value="metrics" className="mt-4">
           <MetricsPanel />

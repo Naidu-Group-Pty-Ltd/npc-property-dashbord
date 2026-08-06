@@ -491,6 +491,34 @@ function envMode(): ProviderMode {
   return v === "live" ? "live" : "simulator";
 }
 
+import {
+  classifyEnvironment,
+  decideProvider,
+  ProviderResolutionError,
+  type AmlEnvironment,
+} from "../providerEnvironment.ts";
+
+export { ProviderResolutionError };
+
+export function currentEnvironment(): AmlEnvironment {
+  return classifyEnvironment({
+    amlEnvironment: Deno.env.get("AML_ENVIRONMENT"),
+    supabaseUrl: Deno.env.get("SUPABASE_URL"),
+  });
+}
+
+function selfHostedIdvConfigured(): boolean {
+  return Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")) &&
+    Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN"));
+}
+
+function adapterConfigured(capability: "idv" | "screening", key: string): boolean {
+  if (capability === "idv" && key === "selfhosted") return selfHostedIdvConfigured();
+  // Adapters without external configuration (e.g. local_lists screening)
+  // count as configured once wired.
+  return true;
+}
+
 export interface FactoryOptions {
   /** Tenant-resolved provider (see `resolveTenantProvider`). */
   resolved?: ResolvedProvider | null;
@@ -507,32 +535,39 @@ export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
   const mode: ProviderMode = opts.resolved?.mode ?? envMode();
   const key = (opts.resolved?.providerKey || opts.preferred || "simulator").toLowerCase();
 
-  if (mode === "simulator" || key === "simulator") return SIMULATOR_IDV;
-
-  const build = LIVE_IDV_ADAPTERS[key];
-  if (!build) {
-    throw new Error(
-      `[aml/providers] IDV provider "${key}" is set to live mode but no adapter is wired. ` +
-      `Configure the adapter or switch this provider back to simulator mode in AML › Configuration › Providers.`,
-    );
+  const decision = decideProvider({
+    environment: currentEnvironment(),
+    mode,
+    providerKey: key,
+    adapterWired: Boolean(LIVE_IDV_ADAPTERS[key]),
+    adapterConfigured: adapterConfigured("idv", key),
+  });
+  if (decision.kind === "refuse") {
+    // Fail closed and typed: production never falls back to the simulator,
+    // and a misconfiguration is never allowed to look like a customer who
+    // failed verification. Callers map the code to a safe response.
+    throw new ProviderResolutionError(decision.code, `[aml/providers] ${decision.message}`);
   }
-  return build(opts);
+  if (decision.kind === "simulator") return SIMULATOR_IDV;
+  return LIVE_IDV_ADAPTERS[key](opts);
 }
 
 export function getScreeningProvider(opts: FactoryOptions = {}): ScreeningProvider {
   const mode: ProviderMode = opts.resolved?.mode ?? envMode();
   const key = (opts.resolved?.providerKey || opts.preferred || "simulator").toLowerCase();
 
-  if (mode === "simulator" || key === "simulator") return SIMULATOR_SCREENING;
-
-  const build = LIVE_SCREENING_ADAPTERS[key];
-  if (!build) {
-    throw new Error(
-      `[aml/providers] Screening provider "${key}" is set to live mode but no adapter is wired. ` +
-      `Configure the adapter or switch this provider back to simulator mode in AML › Configuration › Providers.`,
-    );
+  const decision = decideProvider({
+    environment: currentEnvironment(),
+    mode,
+    providerKey: key,
+    adapterWired: Boolean(LIVE_SCREENING_ADAPTERS[key]),
+    adapterConfigured: adapterConfigured("screening", key),
+  });
+  if (decision.kind === "refuse") {
+    throw new ProviderResolutionError(decision.code, `[aml/providers] ${decision.message}`);
   }
-  return build(opts);
+  if (decision.kind === "simulator") return SIMULATOR_SCREENING;
+  return LIVE_SCREENING_ADAPTERS[key](opts);
 }
 
 /** Adverse media resolves to the same screening adapter, restricted to that scope. */

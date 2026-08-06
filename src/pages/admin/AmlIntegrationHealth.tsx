@@ -47,6 +47,7 @@ import {
 } from "@/lib/aml/amlTenantApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { PartnerEventsOpsCard } from "@/components/aml/PartnerEventsOpsCard";
+import { ProviderReadinessCard } from "@/components/aml/ProviderReadinessCard";
 
 const DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
 
@@ -373,6 +374,10 @@ export default function AmlIntegrationHealth() {
           )}
         </CardContent>
       </Card>
+
+      {/* IDV/screening provider preflight — what would actually run if staff
+          requested a verification right now, and why. */}
+      <ProviderReadinessCard />
 
       {/* Partner compliance events (Phase 6): outbox backlog, refresh
           obligations and arrangement reviews for the reliance domain. */}
