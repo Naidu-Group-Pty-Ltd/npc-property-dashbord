@@ -151,16 +151,34 @@ Deno.serve(async (req) => {
     const { operation } = body;
     if (!operation) return jsonResponse({ error: 'operation required' }, 400, corsHeaders);
 
-    // ── Resolve actor (partner vs staff) ──
-    // WP-11B/C cookie-only: a staff caller is identified by the host-prefixed
-    // `__Host-session_token` cookie (verifyAuth reads it). The command-centre
-    // header/body token is kept as a transitional signal. Portal users never
-    // carry the staff cookie, so its presence unambiguously means "staff".
+    // ── Resolve actor (partner vs client vs staff) ──
+    //
+    // Resolution order is EXPLICIT-CREDENTIAL-FIRST, and that ordering is the
+    // fix for a real cross-portal conflict.
+    //
+    // This used to decide "staff" purely from the presence of the
+    // `__Host-session_token` cookie, on the stated premise that "portal users
+    // never carry the staff cookie". That premise does not hold for the person
+    // this deployment is full of: someone whose address is registered in more
+    // than one portal, signed into the Command Centre in the same browser they
+    // use the Finance Portal from. The finance client calls this endpoint with
+    // `credentials: 'include'`, so the browser attaches the staff cookie
+    // alongside the finance token — and the old rule then threw the finance
+    // token away. Best case the broker silently acted as STAFF in their own
+    // portal (wrong actor, wrong permissions, wrong message attribution);
+    // worst case their staff session had expired and `verifyAuth` answered 401
+    // "Authentication required" while they held a perfectly valid finance
+    // session.
+    //
+    // A token the caller deliberately presented for THIS portal states intent
+    // in a way an ambiently-attached cookie never can, so it wins. Staff are
+    // unaffected: the Command Centre sends neither a finance nor a client
+    // portal token, so it still falls through to the staff branch.
+    const financeToken = extractFinancePortalToken(req.headers, body);
+    const portalToken = req.headers.get('x-portal-session-token') || body?.portal_session_token || null;
     const hasStaffCookie = /(?:^|;\s*)__Host-session_token=/.test(req.headers.get('cookie') || '');
     const commandCentreToken = req.headers.get('x-command-centre-session-token') || body?.command_centre_session_token || null;
-    const isStaffCaller = hasStaffCookie || !!commandCentreToken;
-    const financeToken = isStaffCaller ? null : extractFinancePortalToken(req.headers, body);
-    const portalToken = isStaffCaller ? null : (req.headers.get('x-portal-session-token') || body?.portal_session_token || null);
+    const isStaffCaller = !financeToken && !portalToken && (hasStaffCookie || !!commandCentreToken);
     let actor: { type: 'partner'; portalUserId: string; email: string; name: string }
              | { type: 'staff'; userId: string; username: string; authMethod?: string | null }
              | { type: 'client'; portalUserId: string; clientId: string; name: string }

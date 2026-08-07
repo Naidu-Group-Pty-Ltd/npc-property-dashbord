@@ -1,5 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { extractSessionToken, createCorsHeaders } from "../_shared/auth.ts"
+// `extractSessionToken` is deliberately NOT imported here: it reads the Command
+// Centre's `__Host-session_token`, and a staff cookie must never resolve a
+// client portal session. This function reads only the client portal's own
+// carriers (see `extractPortalSessionToken` below).
+import { createCorsHeaders } from "../_shared/auth.ts"
 
 function smartCapitalizeStr(name: string): string {
   if (!name) return '';

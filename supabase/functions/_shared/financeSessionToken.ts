@@ -15,6 +15,12 @@ export function extractFinanceSessionToken(headers: Headers, body?: Record<strin
       return name && value.length ? [[name, value.join('=')]] : [];
     }),
   );
-  const cookieToken = cookies['__Host-finance_session_token'] || cookies['__Host-session_token'];
+  // Only the Finance Portal's own cookie. The `__Host-session_token` fallback
+  // that used to sit here read the COMMAND CENTRE's cookie: it existed to prop
+  // up `finance-portal-accept-invite`, which was writing finance sessions into
+  // the staff cookie name. That is fixed at the source, so the fallback is
+  // removed — a staff cookie must never be offered as a finance credential, and
+  // a finance session must never be resolvable from one.
+  const cookieToken = cookies['__Host-finance_session_token'];
   return cookieToken ? decodeURIComponent(cookieToken) : null;
 }

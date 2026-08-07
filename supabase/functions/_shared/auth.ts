@@ -655,6 +655,49 @@ export function createClearSessionCookies(): string[] {
 }
 
 /**
+ * Client-portal-scoped session cookie.
+ *
+ * The Finance, Solicitor and Builder portals were each given a dedicated
+ * cookie name for the reason recorded under `createFinanceSessionCookie`. The
+ * Client Portal was the one that never got it: `client-portal-login`,
+ * `client-portal-logout` and `client-portal-accept-invite` all called
+ * `createSessionCookie`, so a client portal session was written into the
+ * Command Centre's own `__Host-session_token`.
+ *
+ * Two consequences, both of which show up as soon as one address is registered
+ * in more than one portal and a tester uses both in one browser — which is
+ * exactly how this deployment is being exercised:
+ *
+ *  - A client portal sign-in overwrote the staff cookie with a token that is
+ *    not in `user_sessions`, so the Command Centre's next call failed
+ *    `verifySession` and the person was bounced to the login screen with
+ *    "Authentication required" on a staff session that had not expired.
+ *  - `client-portal-logout` cleared `__Host-session_token`, so signing out of
+ *    the Client Portal silently signed the same browser out of the Command
+ *    Centre.
+ *
+ * A distinct `__Host-` name makes a client portal session unpresentable as a
+ * staff session and vice versa, which is what the other three portals already
+ * rely on. Nothing reads this cookie as a *client portal* credential today —
+ * that portal carries its token explicitly in the body and the
+ * `x-portal-session-token` header — so the rename removes a collision without
+ * changing how the Client Portal authenticates.
+ */
+export function createClientPortalSessionCookie(
+  sessionToken: string,
+  expiresAt: Date,
+  options?: { clear?: boolean }
+): string {
+  const maxAge = options?.clear ? 0 : Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+  const expires = options?.clear ? new Date(0).toUTCString() : expiresAt.toUTCString();
+  return `__Host-client_session_token=${options?.clear ? '' : sessionToken}; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}; Expires=${expires}; Path=/`;
+}
+
+export function createClearClientPortalSessionCookie(): string {
+  return createClientPortalSessionCookie('', new Date(0), { clear: true });
+}
+
+/**
  * Finance-portal-scoped session cookie. Uses a dedicated cookie name so it does
  * NOT collide with the main dashboard's `__Host-session_token` when a user is
  * signed into both apps on the same browser (both cookies are scoped to
