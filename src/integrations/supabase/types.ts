@@ -26754,6 +26754,7 @@ export type Database = {
       portal_terms_acceptances: {
         Row: {
           accepted_at: string
+          acknowledgements: Json | null
           builder_user_id: string | null
           id: string
           ip_hash: string | null
@@ -26764,6 +26765,7 @@ export type Database = {
         }
         Insert: {
           accepted_at?: string
+          acknowledgements?: Json | null
           builder_user_id?: string | null
           id?: string
           ip_hash?: string | null
@@ -26774,6 +26776,7 @@ export type Database = {
         }
         Update: {
           accepted_at?: string
+          acknowledgements?: Json | null
           builder_user_id?: string | null
           id?: string
           ip_hash?: string | null
@@ -26811,6 +26814,7 @@ export type Database = {
           content_markdown: string
           created_at: string
           created_by: string | null
+          document_hash: string | null
           effective_at: string
           id: string
           portal: string
@@ -26823,6 +26827,7 @@ export type Database = {
           content_markdown: string
           created_at?: string
           created_by?: string | null
+          document_hash?: string | null
           effective_at?: string
           id?: string
           portal: string
@@ -26835,6 +26840,7 @@ export type Database = {
           content_markdown?: string
           created_at?: string
           created_by?: string | null
+          document_hash?: string | null
           effective_at?: string
           id?: string
           portal?: string

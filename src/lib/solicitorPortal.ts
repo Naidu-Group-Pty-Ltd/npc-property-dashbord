@@ -27,6 +27,54 @@ export interface SolicitorPortalUser {
   has_completed_mandatory_onboarding: boolean;
 }
 
+/**
+ * The mandatory acknowledgments of the Portal Access, Confidentiality, Privacy
+ * and AML/CTF Compliance Passport Agreement, in the order the agreement sets.
+ *
+ * The wording is the agreement's own. It is duplicated here rather than parsed
+ * out of the stored Markdown because these five are the interface contract:
+ * `solicitor-portal-verify` refuses an acceptance that does not assert all five
+ * keys, and stores the asserted keys as the acknowledgment history. Changing a
+ * key here without changing `REQUIRED_TERMS_ACKNOWLEDGEMENTS` in that function
+ * locks every solicitor out of the portal, which is why both lists carry this
+ * note. Changing the *wording* is a change to the agreement: publish a new
+ * terms version, do not edit this in place.
+ */
+export const SOLICITOR_TERMS_ACKNOWLEDGEMENTS = [
+  {
+    key: 'global_confidentiality_privacy',
+    heading: 'Global confidentiality and privacy',
+    statement:
+      'I acknowledge that all information made available through the Portal is confidential and may include personal, sensitive, commercially confidential or legally privileged information. I agree that my organisation will access, use, protect and disclose that information only for an authorised client, transaction and lawful professional purpose.',
+  },
+  {
+    key: 'authority_binding_acceptance',
+    heading: 'Authority and binding acceptance',
+    statement:
+      'I confirm that I am authorised to accept this Agreement and legally bind the Partner Organisation identified above. I agree that my electronic acceptance will constitute execution of this Agreement on behalf of the Partner Organisation.',
+  },
+  {
+    key: 'portal_access',
+    heading: 'Portal access',
+    statement:
+      'I agree that the Partner Organisation will access and use the Portal only for authorised matters and will comply with the Portal access, privacy, confidentiality, security and audit requirements set out in this Agreement.',
+  },
+  {
+    key: 'binding_amlctf_arrangement',
+    heading: 'Binding AML/CTF arrangement',
+    statement:
+      'I acknowledge and agree that, where the applicable eligibility and legislative requirements are satisfied, this Agreement is intended to constitute a binding customer due-diligence agreement or arrangement between the Originating Organisation and Partner Organisation for the purposes of section 37A of the AML/CTF Act and section 6-29 of the AML/CTF Rules.',
+  },
+  {
+    key: 'independent_amlctf_responsibility',
+    heading: 'Independent AML/CTF responsibility',
+    statement:
+      'I acknowledge that access to an Aurixa AML/CTF Compliance Passport does not automatically authorise reliance or satisfy all of the Partner Organisation’s AML/CTF obligations. The Partner Organisation remains responsible for assessing, approving and recording reliance and for completing any additional, enhanced, ongoing or independent customer due diligence required.',
+  },
+] as const;
+
+export type SolicitorAcknowledgementKey = (typeof SOLICITOR_TERMS_ACKNOWLEDGEMENTS)[number]['key'];
+
 export async function invokeSolicitorFunction<T = any>(
   functionName: string,
   body: Record<string, unknown> = {},
