@@ -27,6 +27,15 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
  * same bytes.
  */
 
+/**
+ * Whether this acceptance has a copy, and whether it is the current one.
+ *
+ * Computed by the function, never here: which stored copies are current is a
+ * property of the document template, and the template lives on that side. A
+ * second copy of the rule in this file would be a second thing to remember.
+ */
+type CopyState = 'missing' | 'superseded' | 'current';
+
 interface AgreementRecord {
   acceptance_id: string;
   portal: string;
@@ -34,6 +43,7 @@ interface AgreementRecord {
   acknowledgements: string[] | null;
   agreement_storage_path: string | null;
   agreement_generated_at: string | null;
+  copy_state?: CopyState;
   version: string;
   title: string;
   document_hash: string | null;
@@ -79,7 +89,13 @@ export function PartnerAgreementsPanel({
 
   useEffect(() => { void load(); }, [load]);
 
-  const missingCopies = records.filter((record) => !record.agreement_storage_path).length;
+  // A copy produced by an earlier revision of the document counts as pending:
+  // two partners asking on the same day should receive the same document. The
+  // fallback covers a browser talking to a function deployed before
+  // `copy_state` existed.
+  const copyState = (record: AgreementRecord): CopyState =>
+    record.copy_state ?? (record.agreement_storage_path ? 'current' : 'missing');
+  const missingCopies = records.filter((record) => copyState(record) !== 'current').length;
 
   const saveMissing = async () => {
     setSaving(true);
@@ -121,8 +137,8 @@ export function PartnerAgreementsPanel({
       // and gets blocked, which used to leave nothing downloaded.
       await deliverSignedDownload(data.url as string, (data as any)?.file_name);
 
-      // The first download creates the copy, so the row's state has changed.
-      if (!record.agreement_storage_path) void load();
+      // A download that had to produce or re-issue the copy changed the row.
+      if (copyState(record) !== 'current') void load();
     } catch (e: any) {
       toast.error(e?.message || 'The copy could not be produced');
     } finally {
@@ -146,12 +162,13 @@ export function PartnerAgreementsPanel({
         <div className="flex shrink-0 items-center gap-2">
           {/* "Saved" should not depend on somebody having clicked Download.
               This produces and stores the copy for every executed agreement
-              that has not got one yet. */}
+              that has not got a current one — no copy at all, or one produced
+              before the document was last revised. */}
           {missingCopies > 0 ? (
             <Button variant="default" size="sm" onClick={() => void saveMissing()} disabled={saving} className="gap-2">
               {saving
                 ? <><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Saving…</>
-                : <><FileSignature className="h-4 w-4" aria-hidden /> Save {missingCopies} missing {missingCopies === 1 ? 'copy' : 'copies'}</>}
+                : <><FileSignature className="h-4 w-4" aria-hidden /> Save {missingCopies} {missingCopies === 1 ? 'copy' : 'copies'}</>}
             </Button>
           ) : null}
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="gap-2">
@@ -218,10 +235,15 @@ export function PartnerAgreementsPanel({
                       ) : null}
                     </TableCell>
                     <TableCell>
-                      {record.agreement_storage_path ? (
+                      {copyState(record) === 'current' ? (
                         <Badge variant="outline" className="gap-1 text-success">
                           <FileSignature className="h-3 w-3" aria-hidden /> Saved
                         </Badge>
+                      ) : copyState(record) === 'superseded' ? (
+                        // Not an error, and not "missing" either: there is a
+                        // copy, it was produced by an earlier version of the
+                        // document, and downloading re-issues it.
+                        <span className="text-xs text-muted-foreground">Earlier format</span>
                       ) : (
                         <span className="text-xs text-muted-foreground">Not saved yet</span>
                       )}
@@ -240,7 +262,7 @@ export function PartnerAgreementsPanel({
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
-                        variant={record.agreement_storage_path ? 'outline' : 'default'}
+                        variant={copyState(record) === 'current' ? 'outline' : 'default'}
                         size="sm"
                         className="gap-2"
                         disabled={downloading === record.acceptance_id}
@@ -250,7 +272,7 @@ export function PartnerAgreementsPanel({
                           <><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Preparing…</>
                         ) : (
                           <><Download className="h-4 w-4" aria-hidden />
-                            {record.agreement_storage_path ? 'Download' : 'Generate & download'}</>
+                            {copyState(record) === 'current' ? 'Download' : 'Generate & download'}</>
                         )}
                       </Button>
                     </TableCell>
