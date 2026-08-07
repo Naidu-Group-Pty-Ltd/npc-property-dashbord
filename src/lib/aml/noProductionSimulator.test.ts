@@ -117,3 +117,23 @@ describe('the configuration screen offers no simulator for identity verification
     expect(page).toMatch(/capability: "idv"[\s\S]{0,200}?mode: "live"/);
   });
 });
+
+describe('current KYC operational docs cannot drift back to the abandoned setup', () => {
+  const runbook = readFileSync('docs/aml/kyc-go-live-runbook.md', 'utf8');
+  const design = readFileSync('docs/aml/kyc-zero-cost-solution.md', 'utf8');
+
+  it('documents activation as live-only with no simulator rollback', () => {
+    expect(runbook).toContain('provider_key=selfhosted');
+    expect(runbook).toContain('mode=live');
+    expect(runbook).toContain('active=true');
+    expect(runbook).toContain('Do **not** switch IDV into a simulator mode during an outage.');
+    expect(runbook).not.toMatch(/Provider mode\s*[→-]+\s*simulator/i);
+    expect(design).toContain('There is no production simulator state and no simulator rollback procedure.');
+  });
+
+  it('does not nominate or infer a hosting vendor for the AML service', () => {
+    for (const doc of [runbook, design]) {
+      expect(doc).not.toMatch(/Cloud Run|\bGCP\b|\bgcloud\b|Fly\.io|Render\.com|Amazon Web Services|\bAWS\b|\bAzure\b/i);
+    }
+  });
+});
