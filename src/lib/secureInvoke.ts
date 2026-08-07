@@ -76,14 +76,32 @@ const COOKIE_CORS_MIGRATING_FUNCTIONS = new Set([
  * i.e. it is running a build older than this bundle. See
  * `describeStaleDeployment`.
  */
-const _uncredentialedFunctions = new Set<string>();
+const _uncredentialedUntil = new Map<string, number>();
+
+/**
+ * How long to trust that observation before trying the cookie again.
+ *
+ * Deliberately not forever. The state this memo describes is fixed by a
+ * DEPLOY, not by anything happening in this tab, so a permanent memo means an
+ * open tab keeps sending uncredentialed requests — and keeps failing — until
+ * someone thinks to reload it. Re-testing costs one refused preflight per
+ * function per window, which is nothing, and buys a tab that repairs itself
+ * minutes after the functions ship.
+ */
+const UNCREDENTIALED_RECHECK_MS = 5 * 60_000;
 
 /**
  * True when this function has been observed refusing the session cookie — the
  * signature of an edge function that has not been redeployed.
  */
 export function isStaleFunctionDeployment(functionName: string): boolean {
-  return _uncredentialedFunctions.has(functionName);
+  const until = _uncredentialedUntil.get(functionName);
+  if (until === undefined) return false;
+  if (Date.now() >= until) {
+    _uncredentialedUntil.delete(functionName);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -318,7 +336,7 @@ export async function invokeSecureFunction<T = any>(
     // to an uncredentialed retry is side-effect free. See
     // COOKIE_CORS_MIGRATING_FUNCTIONS.
     const preferredCredentials: RequestCredentials =
-      _uncredentialedFunctions.has(functionName) ? 'omit' : 'include';
+      isStaleFunctionDeployment(functionName) ? 'omit' : 'include';
     let response: Response;
     try {
       response = await sendRequest(preferredCredentials);
@@ -333,7 +351,7 @@ export async function invokeSecureFunction<T = any>(
         + '(function not yet redeployed with exact-origin CORS); retrying without the session cookie.',
       );
       response = await sendRequest('omit');
-      _uncredentialedFunctions.add(functionName);
+      _uncredentialedUntil.set(functionName, Date.now() + UNCREDENTIALED_RECHECK_MS);
     }
 
     const data = await response.json().catch(() => ({}));

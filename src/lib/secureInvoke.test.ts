@@ -77,6 +77,35 @@ describe('invokeSecureFunction CORS credentials', () => {
     expect(fetchMock.mock.calls[2][1]).toMatchObject({ credentials: 'omit' });
   });
 
+  // The memo describes a DEPLOY, not anything about this tab, so it has to
+  // expire — otherwise an open tab keeps failing after the functions ship,
+  // until someone thinks to reload it.
+  it('retries the cookie once the recheck window lapses, so a tab heals after a deploy', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(corsRejection())
+        .mockResolvedValue(okResponse());
+      vi.stubGlobal('fetch', fetchMock);
+
+      await invokeSecureFunction('import-from-url', { url: 'https://example.com' });
+      expect(isStaleFunctionDeployment('import-from-url')).toBe(true);
+
+      // Just inside the window: still uncredentialed.
+      vi.advanceTimersByTime(4 * 60_000);
+      await invokeSecureFunction('import-from-url', { url: 'https://example.com' });
+      expect(fetchMock.mock.calls.at(-1)?.[1]).toMatchObject({ credentials: 'omit' });
+
+      // Past it: the cookie is offered again with no reload.
+      vi.advanceTimersByTime(2 * 60_000);
+      expect(isStaleFunctionDeployment('import-from-url')).toBe(false);
+      await invokeSecureFunction('import-from-url', { url: 'https://example.com' });
+      expect(fetchMock.mock.calls.at(-1)?.[1]).toMatchObject({ credentials: 'include' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not retry a timeout as if it were a CORS refusal', async () => {
     const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
     const fetchMock = vi.fn().mockRejectedValue(abort);
