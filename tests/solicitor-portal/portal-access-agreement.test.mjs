@@ -8,8 +8,11 @@ const read = (path) => readFileSync(path, 'utf8');
 const migration = read('supabase/migrations/20260901000300_solicitor_portal_access_agreement.sql');
 const amendment = read('supabase/migrations/20260901000600_solicitor_agreement_four_acknowledgments.sql');
 const verify = read('supabase/functions/solicitor-portal-verify/index.ts');
-const portalLib = read('src/lib/solicitorPortal.ts');
+const sharedContract = read('supabase/functions/_shared/portalAgreement.ts');
+const portalLib = read('src/lib/portalAgreement.ts');
+const solicitorLib = read('src/lib/solicitorPortal.ts');
 const termsPage = read('src/pages/solicitor/SolicitorTerms.tsx');
+const consentWall = read('src/components/portal/PortalAgreementConsent.tsx');
 const authHook = read('src/hooks/useSolicitorPortalAuth.tsx');
 
 /** The agreement as currently published — the amended, four-acknowledgment text. */
@@ -84,14 +87,16 @@ test('the four mandatory acknowledgments agree across the page, the client and t
     'binding_amlctf_arrangement',
   ];
 
-  const serverList = verify.slice(
-    verify.indexOf('const REQUIRED_TERMS_ACKNOWLEDGEMENTS'),
-    verify.indexOf('] as const;', verify.indexOf('const REQUIRED_TERMS_ACKNOWLEDGEMENTS')),
+  const serverList = sharedContract.slice(
+    sharedContract.indexOf('export const REQUIRED_TERMS_ACKNOWLEDGEMENTS'),
+    sharedContract.indexOf('] as const;', sharedContract.indexOf('export const REQUIRED_TERMS_ACKNOWLEDGEMENTS')),
   );
   const clientList = portalLib.slice(
-    portalLib.indexOf('export const SOLICITOR_TERMS_ACKNOWLEDGEMENTS'),
-    portalLib.indexOf('] as const;', portalLib.indexOf('export const SOLICITOR_TERMS_ACKNOWLEDGEMENTS')),
+    portalLib.indexOf('export const PORTAL_TERMS_ACKNOWLEDGEMENTS'),
+    portalLib.indexOf('] as const;', portalLib.indexOf('export const PORTAL_TERMS_ACKNOWLEDGEMENTS')),
   );
+  // The Solicitor Portal reads the shared list under its own name.
+  assert.match(solicitorLib, /PORTAL_TERMS_ACKNOWLEDGEMENTS as SOLICITOR_TERMS_ACKNOWLEDGEMENTS/);
 
   const orderIn = (source) => keys
     .map((key) => ({ key, at: source.indexOf(key) }))
@@ -120,13 +125,13 @@ test('the four mandatory acknowledgments agree across the page, the client and t
 
 test('acceptance is refused unless every acknowledgment was asserted', () => {
   // The gate is the server's, not the checkbox's.
-  assert.match(verify, /REQUIRED_TERMS_ACKNOWLEDGEMENTS\.filter\(\(key\) => !submitted\.includes\(key\)\)/);
+  assert.match(sharedContract, /REQUIRED_TERMS_ACKNOWLEDGEMENTS\.filter\(\(key\) => !submitted\.includes\(key\)\)/);
   assert.match(verify, /ACKNOWLEDGEMENTS_INCOMPLETE/);
   assert.match(verify, /status: 400/);
 
   // Only the agreement's own keys are stored, and the acceptance record names
   // the exact document that was accepted.
-  assert.match(verify, /const acknowledgements = REQUIRED_TERMS_ACKNOWLEDGEMENTS\.filter\(\(key\) => submitted\.includes\(key\)\)/);
+  assert.match(sharedContract, /acknowledgements: REQUIRED_TERMS_ACKNOWLEDGEMENTS\.filter\(\(key\) => submitted\.includes\(key\)\)/);
   assert.match(verify, /portal_terms_acceptances'\)\.insert\(\{[^}]*acknowledgements/);
   assert.match(verify, /document_hash: terms\.document_hash \?\? null/);
   assert.match(verify, /select\('id, version, title, content_markdown, document_hash, effective_at'\)/);
@@ -137,14 +142,15 @@ test('acceptance is refused unless every acknowledgment was asserted', () => {
 });
 
 test('the consent wall renders the stored agreement rather than a copy of it', () => {
-  assert.match(termsPage, /terms\.content_markdown/);
-  assert.match(termsPage, /<ReactMarkdown/);
-  assert.match(termsPage, /SOLICITOR_TERMS_ACKNOWLEDGEMENTS\.map/);
-  assert.match(termsPage, /Accept Binding Agreement & Continue/);
-  assert.match(termsPage, /authorised to bind the Partner Organisation/);
-  assert.match(termsPage, /Statutory reliance is available only where/);
+  assert.match(consentWall, /terms\.content_markdown/);
+  assert.match(consentWall, /<ReactMarkdown/);
+  // The wall itself is shared with the Builder and Finance portals.
+  assert.match(termsPage, /<PortalAgreementConsent/);
+  assert.match(consentWall, /PORTAL_TERMS_ACKNOWLEDGEMENTS\.map/);
+  assert.match(consentWall, /PORTAL_AGREEMENT_ACCEPT_LABEL/);
+  assert.match(consentWall, /PORTAL_AGREEMENT_ACCEPTANCE_NOTICE/);
   // The page shows which document it is asking about.
-  assert.match(termsPage, /document hash/);
+  assert.match(consentWall, /document hash/);
 });
 
 test('the agreement hashes to a stable document hash', () => {
@@ -163,8 +169,8 @@ test('the withdrawn fifth acknowledgment is gone from everything that executes',
   const withdrawn = 'independent_amlctf_responsibility';
   assert.ok(!agreement.includes('Independent AML/CTF responsibility'),
     'the withdrawn acknowledgment is still in the published agreement');
-  assert.ok(!portalLib.includes(withdrawn), 'the page still offers the withdrawn acknowledgment');
-  assert.ok(!verify.includes(`'${withdrawn}'`), 'the server still requires the withdrawn acknowledgment');
+  assert.ok(!portalLib.includes(withdrawn), 'the pages still offer the withdrawn acknowledgment');
+  assert.ok(!sharedContract.includes(`'${withdrawn}'`), 'the server still requires the withdrawn acknowledgment');
 
   // It was withdrawn from the 2026-08-06 text, not from a document that never
   // had it — otherwise this test would pass against an unrelated change.

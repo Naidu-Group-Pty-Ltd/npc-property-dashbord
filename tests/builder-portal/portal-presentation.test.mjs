@@ -86,6 +86,14 @@ const ROUTES = [
   '/builder/settings',
 ];
 
+/**
+ * The agreement, the acknowledgments and the accept button are the shared
+ * partner-portal consent wall — the same component the Solicitor and Finance
+ * portals render. Builder Terms keeps its own chrome and its own routing.
+ */
+const consentWallCode = readFileSync(
+  join(root, 'src/components/portal/PortalAgreementConsent.tsx'), 'utf8');
+
 /** Committed files, so "untouched" is measured against the merge base. */
 const changedFiles = (() => {
   const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { cwd: root })
@@ -211,7 +219,6 @@ test('14. Terms names the configured company, not the organisation', () => {
   assert.match(termsCode, /\{companyName\} · Builder \/ Developer Portal/);
   // The organisation is appended as context, never substituted for the operator.
   assert.match(termsCode, /\{organisationName \? ` · \$\{organisationName\}` : ''\}/);
-  assert.match(termsCode, /of \{companyName\}\./);
 });
 
 test('15. onboarding uses the configured brand identity in its slides', () => {
@@ -319,12 +326,22 @@ test('27. Builder Terms structurally matches Solicitor Terms', () => {
     'rounded-xl bg-primary/10 p-2.5',
     'h-6 w-6 text-primary',
     'space-y-6 px-6 py-5 md:px-8 md:py-6',
-    'h-64 rounded-xl border border-border bg-muted/20 p-4 md:h-72',
-    'flex flex-col items-center justify-between gap-3 border-t border-border bg-muted/30 px-6 py-4 sm:flex-row md:px-8 md:py-5',
-    'w-full min-w-[200px] sm:w-auto',
   ]) {
     assert.ok(solTerms.includes(fragment), `the Solicitor reference no longer has: ${fragment}`);
     assert.ok(termsCode.includes(fragment), `Builder Terms is missing: ${fragment}`);
+  }
+
+  // The agreement panel, the acknowledgments and the accept button are no
+  // longer duplicated per portal to be kept in step — both pages render the one
+  // consent wall, so they cannot fall out of step.
+  for (const page of [solTerms, termsCode]) {
+    assert.match(page, /<PortalAgreementConsent/);
+  }
+  for (const fragment of [
+    'rounded-xl border border-border bg-muted/20 p-4',
+    'w-full min-w-[200px] sm:w-auto',
+  ]) {
+    assert.ok(consentWallCode.includes(fragment), `the shared consent wall is missing: ${fragment}`);
   }
   assert.match(termsCode, /max-w-3xl/);
   assert.match(solTerms, /max-w-3xl/);
@@ -333,45 +350,53 @@ test('27. Builder Terms structurally matches Solicitor Terms', () => {
   assert.doesNotMatch(termsCode, /solicitor-portal-theme/);
 });
 
-test('28. Builder keeps its own title and copy', () => {
-  assert.match(termsCode, /Terms &amp; Project Data Consent/);
+test('28. Builder keeps its own chrome around the shared agreement', () => {
+  // The document is the Portal Access, Confidentiality, Privacy and AML/CTF
+  // Compliance Passport Agreement — the same one the Solicitor and Finance
+  // portals present — so the heading is the shared heading. What stays Builder's
+  // is the portal line and the copy that says what this portal is for.
+  assert.match(termsCode, /Terms &amp; Privileged Data Consent/);
   assert.match(termsCode, /Builder \/ Developer Portal/);
   assert.match(termsCode,
     /Before accessing projects, inventory, transactions, construction records and shared\s*\n?\s*documents/);
-  assert.match(termsCode,
-    /project, inventory, transaction, construction, document and\s*\n?\s*communication data may be commercially sensitive or confidential/);
-  assert.match(termsCode, /limited to authorised organisation and project records/);
-  assert.match(termsCode, /may be logged and audited/);
-  // No conveyancing wording was carried across.
-  assert.doesNotMatch(termsCode, /conveyanc|privileg|settlement/i);
+  assert.match(termsCode, /<HardHat className="h-6 w-6 text-primary"/);
+  // Builder's own chrome still carries no conveyancing wording; the agreement
+  // itself is portal-neutral and lives in the database.
+  assert.doesNotMatch(termsCode, /conveyanc|settlement/i);
 });
 
 test('29. the server title, version and body remain authoritative', () => {
   assert.match(termsCode, /import \{ builderLoadGovernance, type BuilderTermsVersion \} from '@\/lib\/builderPortal'/);
   assert.match(termsCode, /void builderLoadGovernance\(\)\.then/);
   assert.match(termsCode, /setTerms\(data\?\.terms \?\? null\)/);
-  assert.match(termsCode, /\{terms\?\.title \|\| 'Builder \/ Developer Portal Terms'\}/);
-  assert.match(termsCode, /const versionLabel = terms\?\.version \|\| 'current';/);
-  assert.match(termsCode, /terms\?\.content_markdown/);
+  // The served row is handed straight to the wall, which renders its title,
+  // its version and its Markdown. Nothing about the document is stated here.
+  assert.match(termsCode, /terms=\{terms\}/);
+  assert.match(consentWallCode, /terms\?\.title \|\| PORTAL_AGREEMENT_TITLE/);
+  assert.match(consentWallCode, /Version \{terms\?\.version \|\| 'current'\}/);
+  assert.match(consentWallCode, /terms\.content_markdown/);
   assert.doesNotMatch(termsCode, /version\s*[=:]\s*['"][\d.]/);
   assert.doesNotMatch(termsCode, /(?:WHEREAS|hereby agrees?|Clause \d|Section \d\.\d)/i);
 });
 
-test('30. both checkboxes are required', () => {
-  assert.equal((termsCode.match(/<Checkbox\b/g) ?? []).length, 2);
-  assert.match(termsCode, /id="builder-agree-terms"/);
-  assert.match(termsCode, /id="builder-agree-project-data"/);
-  assert.match(termsCode, /htmlFor="builder-agree-terms"/);
-  assert.match(termsCode, /htmlFor="builder-agree-project-data"/);
-  assert.match(termsCode,
-    /const canProceed = Boolean\(terms\) && agreedTerms && agreedData && !submitting;/);
-  assert.match(termsCode, /disabled=\{!canProceed\}/);
-  assert.match(termsCode, /if \(!canProceed\) return;/);
+test('30. every mandatory acknowledgment is required', () => {
+  // Four acknowledgments now, rendered by the shared wall, and the button is
+  // dead until all of them are ticked. The page states none of them itself.
+  assert.equal((termsCode.match(/<Checkbox\b/g) ?? []).length, 0);
+  assert.match(consentWallCode, /PORTAL_TERMS_ACKNOWLEDGEMENTS\.map/);
+  assert.match(consentWallCode,
+    /const canProceed = Boolean\(terms\) && acceptedKeys\.length === PORTAL_TERMS_ACKNOWLEDGEMENTS\.length && !busy;/);
+  assert.match(consentWallCode, /disabled=\{!canProceed\}/);
+  // And the server refuses an acceptance that is missing any of them, so the
+  // checkboxes are not the only gate.
+  const verify = readFileSync(join(root, 'supabase/functions/builder-portal-verify/index.ts'), 'utf8');
+  assert.match(verify, /readAcknowledgements\(body\)/);
+  assert.match(verify, /ACKNOWLEDGEMENTS_INCOMPLETE/);
 });
 
-test('31. acceptTerms is called exactly once', () => {
-  assert.equal((termsCode.match(/acceptTerms\(\)/g) ?? []).length, 1);
-  assert.match(termsCode, /const result = await acceptTerms\(\);/);
+test('31. acceptTerms is called exactly once, carrying the acknowledgments', () => {
+  assert.equal((termsCode.match(/await acceptTerms\(/g) ?? []).length, 1);
+  assert.match(termsCode, /const result = await acceptTerms\(acknowledgements\);/);
   assert.doesNotMatch(termsCode, /invokeSecureFunction|supabase\.|\.rpc\(|useMutation/);
 });
 
@@ -385,9 +410,9 @@ test('32. onboarding is not bypassed', () => {
 });
 
 test('33. the Terms loading and error states stay accessible', () => {
-  assert.match(termsCode, /aria-live="polite"/);
-  assert.match(termsCode, /aria-busy=\{loading\}/);
-  assert.match(termsCode, /<span className="sr-only">Loading the current terms…<\/span>/);
+  assert.match(consentWallCode, /aria-live="polite"/);
+  assert.match(consentWallCode, /aria-busy=\{loading\}/);
+  assert.match(consentWallCode, /<span className="sr-only">Loading the current terms…<\/span>/);
   assert.match(termsCode, /<Alert variant="destructive" role="alert">/);
   assert.match(termsCode, /if \(loadError\) setError\(loadError\.message\)/);
   const handler = termsCode.slice(termsCode.indexOf('const handleAccept'),
