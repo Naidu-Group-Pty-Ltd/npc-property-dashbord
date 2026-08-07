@@ -211,6 +211,23 @@ describe("Defect E — auditable PEP determination", () => {
     expect(migration).toContain("'pep_determination', 7, 'AML/CTF Act s 107'");
   });
 
+  it("the supersession self-reference is checked at COMMIT, not inside the trigger's UPDATE", () => {
+    // The BEFORE INSERT trigger stamps the closing row's
+    // superseded_by_determination_id with NEW.id while NEW is not yet
+    // inserted. With an immediately-checked FK that UPDATE fails 23503, so
+    // recording ANY superseding determination errors — found by applying the
+    // migration to a real database and inserting a second determination.
+    // Deferring the check to commit (the new row exists by then) is the fix;
+    // the convergence block asserts it so a re-generated table cannot regress.
+    expect(migration).toMatch(
+      /superseded_by_determination_id uuid REFERENCES aml\.pep_determinations\(id\)\s*\n\s*DEFERRABLE INITIALLY DEFERRED/,
+    );
+    expect(migration).toContain(
+      "ALTER CONSTRAINT pep_determinations_superseded_by_determination_id_fkey",
+    );
+    expect(migration).toMatch(/condeferrable AND condeferred/);
+  });
+
   it("EDD, SoF/SoW and senior-manager approval are linked to the current determination", () => {
     const inputs = risk.slice(
       risk.indexOf("async function authoritativeMandatoryInputs"),
