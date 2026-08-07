@@ -102,7 +102,7 @@ Deno.serve(async (req: Request) => {
       // sign-in accepts.
       const { user, ambiguous } = await resolveStaffUserByIdentifier<{
         id: string; username: string; email: string | null; is_active: boolean;
-      }>(supabase, username || email, 'id, username, email, is_active', { activeOnly: false });
+      }>(supabase, String(username || email || ""), 'id, username, email, is_active', { activeOnly: false });
       const userError = ambiguous ? new Error('ambiguous identifier') : null;
 
 
