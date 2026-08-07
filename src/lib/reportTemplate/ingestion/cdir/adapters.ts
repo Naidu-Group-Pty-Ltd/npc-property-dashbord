@@ -319,14 +319,18 @@ function overlayToLayer(overlay: Overlay): CdirLayer {
       borderWidth: overlay.borderWidth,
     };
   }
+  // Fallback for overlay kinds with no dedicated CDIR layer (charts, etc.).
+  // Those variants carry no text styling fields, so read them defensively.
+  const rest = overlay as unknown as Record<string, unknown>;
   return {
     ...common,
     kind: 'text',
-    text: overlay.content,
-    fontFamily: String(overlay.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
-    fontSize: Number(overlay.fontSize ?? 12),
-    color: String(overlay.color ?? '#000000'),
+    text: typeof rest.content === 'string' ? rest.content : '',
+    fontFamily: String(rest.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
+    fontSize: Number(rest.fontSize ?? 12),
+    color: String(rest.color ?? '#000000'),
   };
+
 }
 
 function blockToLayers(block: Block): CdirLayer[] {
