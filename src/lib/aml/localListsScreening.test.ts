@@ -23,32 +23,53 @@ afterEach(() => {
   delete (globalThis as any).Deno;
 });
 
-/** Minimal thenable PostgREST-style builder over canned rows. */
+/**
+ * PostgREST-style thenable builder that honours eq/order/limit, so the
+ * provider's per-list freshness lookups behave as they would in the database.
+ */
 function fakeAdmin(tables: { syncs?: any[]; entries?: any[] }) {
-  const builder = (rows: any[]) => {
+  const makeBuilder = (table: string) => {
+    const filters: Array<[string, unknown]> = [];
+    let orderBy: { col: string; asc: boolean } | null = null;
+    let take: number | null = null;
     const b: any = {
-      then: (resolve: any) => Promise.resolve({ data: rows, error: null }).then(resolve),
+      select: () => b,
+      eq: (col: string, v: unknown) => { filters.push([col, v]); return b; },
+      order: (col: string, opts?: { ascending?: boolean }) => {
+        orderBy = { col, asc: opts?.ascending !== false }; return b;
+      },
+      limit: (n: number) => { take = n; return b; },
+      overlaps: () => b, not: () => b, is: () => b, in: () => b,
+      then: (resolve: any) => {
+        let rows = table === "sanctions_list_syncs"
+          ? [...(tables.syncs ?? [])] : [...(tables.entries ?? [])];
+        for (const [col, v] of filters) rows = rows.filter((r) => r[col] === v);
+        if (orderBy) {
+          const { col, asc } = orderBy;
+          rows.sort((x, y) => String(x[col] ?? "").localeCompare(String(y[col] ?? "")) * (asc ? 1 : -1));
+        }
+        if (take != null) rows = rows.slice(0, take);
+        return Promise.resolve({ data: rows, error: null }).then(resolve);
+      },
     };
-    for (const m of ["select", "eq", "order", "limit", "overlaps", "not", "is", "in"]) {
-      b[m] = () => b;
-    }
     return b;
   };
-  return {
-    schema: () => ({
-      from: (table: string) => builder(
-        table === "sanctions_list_syncs" ? (tables.syncs ?? []) : (tables.entries ?? []),
-      ),
-    }),
-  };
+  return { schema: () => ({ from: (table: string) => makeBuilder(table) }) };
 }
 
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3600 * 1000).toISOString();
 
+const sync = (list_code: string, over: Record<string, unknown> = {}) => ({
+  list_code, status: "succeeded",
+  started_at: over.completed_at ?? hoursAgo(2), completed_at: hoursAgo(2),
+  payload_sha256: `${list_code[0]}`.repeat(64), entry_count: 100,
+  ...over,
+});
+
 const FRESH_SYNCS = [
-  { list_code: "dfat", status: "succeeded", completed_at: hoursAgo(2), payload_sha256: "a".repeat(64), entry_count: 100 },
-  { list_code: "un", status: "succeeded", completed_at: hoursAgo(3), payload_sha256: "b".repeat(64), entry_count: 200 },
-  { list_code: "ofac", status: "succeeded", completed_at: hoursAgo(4), payload_sha256: "c".repeat(64), entry_count: 300 },
+  sync("dfat", { completed_at: hoursAgo(2), started_at: hoursAgo(2), payload_sha256: "a".repeat(64) }),
+  sync("un", { completed_at: hoursAgo(3), started_at: hoursAgo(3), payload_sha256: "b".repeat(64), entry_count: 200 }),
+  sync("ofac", { completed_at: hoursAgo(4), started_at: hoursAgo(4), payload_sha256: "c".repeat(64), entry_count: 300 }),
 ];
 
 async function provider(admin: any, config: Record<string, unknown> = {}) {
@@ -149,13 +170,52 @@ describe("sanctions freshness fails closed (Defect G)", () => {
   it("never produces a result when the DFAT sync is stale beyond the limit", async () => {
     const p = await provider(fakeAdmin({
       syncs: [
-        { list_code: "dfat", status: "succeeded", completed_at: hoursAgo(100), payload_sha256: "a".repeat(64), entry_count: 100 },
+        sync("dfat", { completed_at: hoursAgo(100), started_at: hoursAgo(100) }),
         ...FRESH_SYNCS.filter((s) => s.list_code !== "dfat"),
       ],
       entries: [],
     }));
     await expect(p.runScreening(request(["sanctions"])))
       .rejects.toThrow(/sanctions_list_unavailable/);
+  });
+
+  it("never produces a result when the latest DFAT sync attempt FAILED, even with a fresh success behind it", async () => {
+    // The list may be missing designations published since the failure —
+    // 'latest sync failed' is a fail-closed condition in its own right.
+    const p = await provider(fakeAdmin({
+      syncs: [
+        sync("dfat", { completed_at: hoursAgo(6), started_at: hoursAgo(6) }),
+        sync("dfat", { status: "failed", completed_at: null, started_at: hoursAgo(1), entry_count: 0 }),
+        ...FRESH_SYNCS.filter((s) => s.list_code !== "dfat"),
+      ],
+      entries: [],
+    }));
+    await expect(p.runScreening(request(["sanctions"])))
+      .rejects.toThrow(/latest sync attempt failed/);
+  });
+
+  it("refuses a 'successful' sync that published zero entries", async () => {
+    const p = await provider(fakeAdmin({
+      syncs: [
+        sync("dfat", { entry_count: 0 }),
+        ...FRESH_SYNCS.filter((s) => s.list_code !== "dfat"),
+      ],
+      entries: [],
+    }));
+    await expect(p.runScreening(request(["sanctions"])))
+      .rejects.toThrow(/sanctions_list_unavailable/);
+  });
+
+  it("a quieter list's fresh success is still seen when other lists sync more often", async () => {
+    // A batched recent-syncs window used to be able to push dfat's latest
+    // success out of view; the per-list lookups cannot.
+    const noisy = Array.from({ length: 80 }, (_, i) =>
+      sync("un", { completed_at: hoursAgo(1), started_at: hoursAgo(1), payload_sha256: String(i % 10).repeat(64) }));
+    const p = await provider(fakeAdmin({
+      syncs: [...noisy, sync("dfat"), sync("ofac")],
+      entries: [],
+    }));
+    await expect(p.runScreening(request(["sanctions"]))).resolves.toMatchObject({ status: "clear" });
   });
 
   it("honours a tenant-configured freshness limit", async () => {

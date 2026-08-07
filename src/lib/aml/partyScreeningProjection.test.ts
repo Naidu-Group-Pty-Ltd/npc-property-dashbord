@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   computeRefreshDueAt,
   isPartyScreeningMissing,
+  matchDedupKey,
   partyScreeningOutstanding,
   pepControlsRequired,
   pepDeterminationCurrent,
   pepDeterminationRequiredForRole,
+  pepEvidenceSatisfied,
   projectPartyScreeningState,
+  screeningClaimDecision,
 } from "../../../supabase/functions/_shared/aml/partyScreening.pure.ts";
 
 /**
@@ -135,6 +138,80 @@ describe("pepDeterminationCurrent — freshness for ongoing CDD", () => {
   it("superseded determinations are never current", () => {
     expect(pepDeterminationCurrent({ result: "pep", superseded_at: "2026-06-01T00:00:00Z" }, now)).toBe(false);
     expect(pepDeterminationCurrent(null, now)).toBe(false);
+  });
+});
+
+describe("pepEvidenceSatisfied — EDD and approval must be linked to the current determination", () => {
+  const determinedAt = "2026-06-01T00:00:00.000Z";
+  const base = {
+    latestPepDeterminedAt: determinedAt,
+    eddCompletedAt: "2026-07-01T00:00:00.000Z",
+    hasVerifiedSourceOfFunds: true,
+    hasVerifiedSourceOfWealth: true,
+    approvalResolvedAt: "2026-07-02T00:00:00.000Z",
+  };
+
+  it("evidence postdating the determination, with verified SoF and SoW, satisfies both controls", () => {
+    expect(pepEvidenceSatisfied(base)).toEqual({ eddComplete: true, approvalGranted: true });
+  });
+
+  it("an EDD completed BEFORE the PEP was known never considered it — not complete", () => {
+    expect(pepEvidenceSatisfied({ ...base, eddCompletedAt: "2026-05-01T00:00:00.000Z" }).eddComplete).toBe(false);
+  });
+
+  it("an approval granted for an earlier finding does not approve this one", () => {
+    expect(pepEvidenceSatisfied({ ...base, approvalResolvedAt: "2026-05-01T00:00:00.000Z" }).approvalGranted).toBe(false);
+  });
+
+  it("EDD without verified source of funds or wealth is not complete for a PEP", () => {
+    expect(pepEvidenceSatisfied({ ...base, hasVerifiedSourceOfFunds: false }).eddComplete).toBe(false);
+    expect(pepEvidenceSatisfied({ ...base, hasVerifiedSourceOfWealth: false }).eddComplete).toBe(false);
+  });
+
+  it("absent evidence satisfies nothing", () => {
+    expect(pepEvidenceSatisfied({ ...base, eddCompletedAt: null, approvalResolvedAt: null }))
+      .toEqual({ eddComplete: false, approvalGranted: false });
+  });
+});
+
+describe("screeningClaimDecision — duplicate events succeed, in-flight events retry", () => {
+  const now = Date.parse("2026-08-07T12:00:00.000Z");
+  const minutesAgo = (m: number) => new Date(now - m * 60_000).toISOString();
+
+  it.each(["queued", "error"])("%s is claimable", (state) => {
+    expect(screeningClaimDecision({ state }, now, 10)).toBe("claim");
+  });
+
+  it.each(["completed", "possible_match", "confirmed_match", "false_positive", "not_required", "not_started"])(
+    "%s is a duplicate/stale event — succeed silently", (state) => {
+      expect(screeningClaimDecision({ state }, now, 10)).toBe("obsolete");
+    });
+
+  it("fresh 'processing' RETRIES the event — silent success would orphan a dead worker's subject", () => {
+    expect(screeningClaimDecision({ state: "processing", updated_at: minutesAgo(2) }, now, 10))
+      .toBe("in_flight_retry");
+  });
+
+  it("stale 'processing' is reclaimable after the staleness window", () => {
+    expect(screeningClaimDecision({ state: "processing", updated_at: minutesAgo(11) }, now, 10))
+      .toBe("claim");
+  });
+});
+
+describe("matchDedupKey — redelivery cannot double-insert candidates", () => {
+  it("keys on the list's external id when present", () => {
+    expect(matchDedupKey({ details: { external_id: "DFAT-1" }, matchedName: "A", listName: "L" }))
+      .toBe("ext:DFAT-1");
+    // Provider-shape and row-shape carry the same key.
+    expect(matchDedupKey({ details: { external_id: "DFAT-1" }, matched_name: "B", list_name: "M" }))
+      .toBe("ext:DFAT-1");
+  });
+
+  it("falls back to name+list when the provider supplies no external id", () => {
+    expect(matchDedupKey({ details: {}, matchedName: "Person X", listName: "PEP Register" }))
+      .toBe("name:Person X|PEP Register");
+    expect(matchDedupKey({ details: {}, matched_name: "Person X", list_name: "PEP Register" }))
+      .toBe("name:Person X|PEP Register");
   });
 });
 

@@ -1771,7 +1771,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const methods = Array.isArray(body.methods) ? body.methods : [];
         const partySubjectId = body.party_screening_subject_id ? String(body.party_screening_subject_id) : null;
 
-        if (!caseId || !subjectName) return jsonResponse({ error: 'case_id and subject_name required' }, 400);
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
         if (!['not_pep', 'pep'].includes(result)) {
           return jsonResponse({ error: 'result must be not_pep or pep' }, 400);
         }
@@ -1800,14 +1800,35 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jsonResponse({ error: 'At least one method/source (e.g. list checked, register consulted) is required' }, 400);
         }
         const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, tenant_id').eq('id', caseId).maybeSingle();
+          .select('id, tenant_id, subject_display_name').eq('id', caseId).maybeSingle();
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Subject identity is DERIVED, never asserted: the determination is
+        // evidence about a specific person, and a caller-supplied name could
+        // attach an assessment of X to the record of Y. The party subject row
+        // (or the case subject) is the identity; a mismatched caller name is
+        // an error, not an override.
+        let derivedName = String(caseRow.subject_display_name ?? '').trim();
+        let derivedPartyType: string | null = null;
+        let derivedPartyId: string | null = null;
         if (partySubjectId) {
           const { data: partySubject } = await admin.schema('aml').from('party_screening_subjects')
-            .select('id, case_id').eq('id', partySubjectId).maybeSingle();
+            .select('id, case_id, screened_name, party_type, party_id').eq('id', partySubjectId).maybeSingle();
           if (!partySubject || String(partySubject.case_id) !== caseId) {
             return jsonResponse({ error: 'party_screening_subject_id does not belong to this case' }, 400);
           }
+          derivedName = String(partySubject.screened_name ?? '').trim();
+          derivedPartyType = partySubject.party_type ?? null;
+          derivedPartyId = partySubject.party_id ?? null;
+        }
+        if (!derivedName) {
+          return jsonResponse({ error: 'The subject has no recorded name to determine against' }, 409);
+        }
+        if (subjectName && subjectName.toLowerCase() !== derivedName.toLowerCase()) {
+          return jsonResponse({
+            error: `subject_name does not match the recorded subject ("${derivedName}") — the determination is recorded against the canonical identity`,
+            code: 'subject_identity_mismatch',
+          }, 400);
         }
 
         const now = new Date().toISOString();
@@ -1822,7 +1843,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select('id, row_hash').eq('case_id', caseId)
           .order('created_at', { ascending: false }).limit(1).maybeSingle();
         const detHashInput = JSON.stringify({
-          case_id: caseId, party_screening_subject_id: partySubjectId, subject_name: subjectName,
+          case_id: caseId, party_screening_subject_id: partySubjectId, subject_name: derivedName,
           result, pep_type: pepType, pep_relationship: pepRelationship,
           methods: cleanMethods, rationale, determined_by: userId,
           prev_hash: prevDet?.row_hash ?? null, created_at: now,
@@ -1830,13 +1851,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const detHashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(detHashInput));
         const detRowHash = Array.from(new Uint8Array(detHashBuf)).map((x) => x.toString(16).padStart(2, '0')).join('');
 
+        // Supersession of the prior current determination is NOT done here:
+        // the BEFORE INSERT trigger closes it in the same transaction as this
+        // insert, and the partial unique index guarantees a single current
+        // determination per subject scope even under concurrent writes.
         const { data: determination, error: detErr } = await admin.schema('aml').from('pep_determinations').insert({
           tenant_id: caseRow.tenant_id ?? 'default',
           case_id: caseId,
           party_screening_subject_id: partySubjectId,
-          party_type: body.party_type ? String(body.party_type) : null,
-          party_id: body.party_id ? String(body.party_id) : null,
-          subject_name: subjectName.slice(0, 300),
+          party_type: derivedPartyType,
+          party_id: derivedPartyId,
+          subject_name: derivedName.slice(0, 300),
           result,
           pep_type: result === 'pep' ? pepType : null,
           pep_relationship: result === 'pep' ? pepRelationship : null,
@@ -1853,22 +1878,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           prev_hash: prevDet?.row_hash ?? null,
           row_hash: detRowHash,
         }).select('*').single();
-        if (detErr) throw detErr;
-
-        // Supersede the previous current determination for the same subject
-        // scope — never edit or delete it.
-        let priorQuery = admin.schema('aml').from('pep_determinations')
-          .update({ superseded_at: now, superseded_by_determination_id: determination.id })
-          .eq('case_id', caseId).is('superseded_at', null).neq('id', determination.id);
-        priorQuery = partySubjectId
-          ? priorQuery.eq('party_screening_subject_id', partySubjectId)
-          : priorQuery.is('party_screening_subject_id', null);
-        await priorQuery;
+        if (detErr) {
+          if (String((detErr as any).code) === '23505') {
+            return jsonResponse({
+              error: 'Another determination for this subject was recorded at the same moment — reload and review it before recording again',
+              code: 'concurrent_determination',
+            }, 409);
+          }
+          throw detErr;
+        }
 
         await appendEvent(admin, caseId, result === 'pep' ? 'pep_sanctions_hit' : 'mlro_decision',
           result === 'pep'
-            ? `PEP determination recorded for ${subjectName}: ${pepType} PEP (${pepRelationship})`
-            : `PEP determination recorded for ${subjectName}: not a PEP`,
+            ? `PEP determination recorded for ${derivedName}: ${pepType} PEP (${pepRelationship})`
+            : `PEP determination recorded for ${derivedName}: not a PEP`,
           {
             pep_determination_id: determination.id,
             party_screening_subject_id: partySubjectId,

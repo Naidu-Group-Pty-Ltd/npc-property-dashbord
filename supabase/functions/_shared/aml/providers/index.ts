@@ -461,44 +461,71 @@ function makeLocalListsScreeningProvider(
         ? (config!.required_lists as string[]).map((l) => String(l).toLowerCase())
         : DEFAULT_REQUIRED_SANCTIONS_LISTS;
 
-      const { data: syncRows, error: syncErr } = await admin.schema("aml")
-        .from("sanctions_list_syncs")
-        .select("list_code, status, completed_at, payload_sha256, entry_count")
-        .eq("status", "succeeded")
-        .order("completed_at", { ascending: false })
-        .limit(60);
-      if (syncErr) throw new Error(`sanctions_list_unavailable: could not read sync evidence: ${syncErr.message}`);
+      // Per-list, targeted reads: a batched "recent syncs" window can push a
+      // quieter list's latest success out of the window and misreport it.
+      // Each list gets its own latest-success and latest-attempt lookup.
+      const latestSuccessFor = async (code: string) => {
+        const { data, error } = await admin.schema("aml").from("sanctions_list_syncs")
+          .select("list_code, status, completed_at, payload_sha256, entry_count")
+          .eq("list_code", code).eq("status", "succeeded")
+          .order("completed_at", { ascending: false }).limit(1);
+        if (error) throw new Error(`sanctions_list_unavailable: could not read sync evidence: ${error.message}`);
+        return (data ?? [])[0] ?? null;
+      };
+      const latestAttemptFor = async (code: string) => {
+        const { data, error } = await admin.schema("aml").from("sanctions_list_syncs")
+          .select("list_code, status, started_at, completed_at")
+          .eq("list_code", code)
+          .order("started_at", { ascending: false }).limit(1);
+        if (error) throw new Error(`sanctions_list_unavailable: could not read sync evidence: ${error.message}`);
+        return (data ?? [])[0] ?? null;
+      };
 
+      const cutoff = Date.now() - maxAgeHours * 3600 * 1000;
+      const allLists = [...new Set([...requiredLists, "dfat", "un", "ofac"])];
+      const listFreshness: Record<string, {
+        synced_at: string | null; fresh: boolean; required: boolean;
+        latest_attempt_status: string | null;
+      }> = {};
       const latestSuccess: Record<string, { completed_at: string; payload_sha256: string | null; entry_count: number }> = {};
-      for (const row of syncRows ?? []) {
-        const code = String(row.list_code).toLowerCase();
-        if (!latestSuccess[code] && row.completed_at) {
+      const failures: string[] = [];
+      for (const code of allLists) {
+        const [success, attempt] = await Promise.all([latestSuccessFor(code), latestAttemptFor(code)]);
+        // A "success" that published nothing is not screening data. The
+        // loader refuses zero-entry publishes; a zero here means evidence
+        // was tampered with or the loader's guard was bypassed.
+        const usable = success && success.completed_at && Number(success.entry_count ?? 0) > 0;
+        if (usable) {
           latestSuccess[code] = {
-            completed_at: String(row.completed_at),
-            payload_sha256: row.payload_sha256 ?? null,
-            entry_count: Number(row.entry_count ?? 0),
+            completed_at: String(success.completed_at),
+            payload_sha256: success.payload_sha256 ?? null,
+            entry_count: Number(success.entry_count ?? 0),
           };
         }
-      }
-      const cutoff = Date.now() - maxAgeHours * 3600 * 1000;
-      const listFreshness: Record<string, { synced_at: string | null; fresh: boolean; required: boolean }> = {};
-      for (const code of new Set([...requiredLists, "dfat", "un", "ofac"])) {
-        const latest = latestSuccess[code] ?? null;
+        const fresh = Boolean(usable && new Date(String(success.completed_at)).getTime() >= cutoff);
+        const attemptStatus = attempt?.status ? String(attempt.status) : null;
         listFreshness[code] = {
-          synced_at: latest?.completed_at ?? null,
-          fresh: Boolean(latest && new Date(latest.completed_at).getTime() >= cutoff),
+          synced_at: usable ? String(success.completed_at) : null,
+          fresh,
           required: requiredLists.includes(code),
+          latest_attempt_status: attemptStatus,
         };
+        if (!requiredLists.includes(code)) continue;
+        // Fail-closed conditions for a REQUIRED list (Australian TFS path):
+        // absent / never successfully loaded / stale beyond the limit — and a
+        // latest sync attempt that FAILED, even with an in-window success
+        // behind it: the list may be missing designations published since.
+        if (!usable) failures.push(`${code}: never successfully loaded`);
+        else if (!fresh) failures.push(`${code}: last successful sync ${success.completed_at} is older than ${maxAgeHours}h`);
+        else if (attemptStatus === "failed") failures.push(`${code}: the latest sync attempt failed`);
       }
-      const staleRequired = requiredLists.filter((code) => !listFreshness[code]?.fresh);
-      if (staleRequired.length > 0) {
+      if (failures.length > 0) {
         // The word `sanctions_list_unavailable` is load-bearing: consumers
         // categorise on it and record screening-incomplete, which can never
         // satisfy the AML gate and never reads as a customer outcome.
         throw new Error(
-          `sanctions_list_unavailable: required list(s) ${staleRequired.join(", ")} ` +
-          `have no successful sync within ${maxAgeHours}h — screening cannot be authoritative ` +
-          "until the sanctions refresh succeeds.",
+          `sanctions_list_unavailable: ${failures.join("; ")} — screening cannot be ` +
+          "authoritative until the sanctions refresh succeeds.",
         );
       }
 

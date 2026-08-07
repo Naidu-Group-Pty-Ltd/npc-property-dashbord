@@ -48,6 +48,19 @@ jobs:
       - name: Integration secrets — registry drift
         run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
 
+      # The AML screening/compliance programme: behavioural provider and
+      # projection/gate suites, the source contracts over the edge functions,
+      # the sanctions parser suite, and the two authorization-boundary
+      # inventories (EDD/MLRO and screening/PEP). None of these ran in CI
+      # before — the screening repair's guarantees only hold if a change that
+      # loosens them goes red here.
+      - name: AML — screening, gate, parser and boundary suites
+        run: |
+          npx vitest run src/lib/aml src/components/aml src/pages/aml
+          npm run test:aml-sanctions
+          npm run security:edd-boundary
+          npm run security:screening-boundary
+
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as

@@ -165,3 +165,77 @@ export const PEP_DETERMINATION_REQUIRED_ROLES = [
 export function pepDeterminationRequiredForRole(partyType: string): boolean {
   return (PEP_DETERMINATION_REQUIRED_ROLES as readonly string[]).includes(partyType);
 }
+
+/**
+ * Whether the PEP controls are satisfied by evidence LINKED to the current
+ * determination. An EDD case completed before the PEP was known never
+ * considered it, and an approval granted for an earlier finding does not
+ * approve this one — both must postdate the latest current PEP
+ * determination. EDD for a PEP is only complete once source of funds AND
+ * source of wealth are actually verified on the existing SoF/SoW records.
+ */
+export function pepEvidenceSatisfied(args: {
+  /** determined_at of the latest current (non-superseded) pep finding. */
+  latestPepDeterminedAt: string;
+  /** completed_at of the newest completed+approved EDD case, if any. */
+  eddCompletedAt?: string | null;
+  hasVerifiedSourceOfFunds: boolean;
+  hasVerifiedSourceOfWealth: boolean;
+  /** resolved_at of the newest approved pep_service_approval, if any. */
+  approvalResolvedAt?: string | null;
+}): { eddComplete: boolean; approvalGranted: boolean } {
+  const eddComplete = Boolean(
+    args.eddCompletedAt && args.eddCompletedAt >= args.latestPepDeterminedAt &&
+    args.hasVerifiedSourceOfFunds && args.hasVerifiedSourceOfWealth,
+  );
+  const approvalGranted = Boolean(
+    args.approvalResolvedAt && args.approvalResolvedAt >= args.latestPepDeterminedAt,
+  );
+  return { eddComplete, approvalGranted };
+}
+
+/* ─────────────────────────── worker claim rules ─────────────────────────── */
+
+export type ScreeningClaimDecision =
+  /** Claim and run the screening. */
+  | "claim"
+  /** Terminal or reset state — a duplicate/stale event; succeed silently. */
+  | "obsolete"
+  /**
+   * Another worker appears to hold it. The event must be RETRIED, not
+   * succeeded: succeeding would mark the event processed, and if the holder
+   * died the subject would stay 'processing' forever with nothing left to
+   * wake it. Retrying lets a later delivery either see the terminal state
+   * (holder finished) or reclaim after the staleness window (holder died).
+   */
+  | "in_flight_retry";
+
+export function screeningClaimDecision(
+  subject: { state: string; updated_at?: string | null },
+  nowMs: number,
+  staleMinutes: number,
+): ScreeningClaimDecision {
+  if (subject.state === "queued" || subject.state === "error") return "claim";
+  if (subject.state === "processing") {
+    const updated = subject.updated_at ? new Date(subject.updated_at).getTime() : 0;
+    return nowMs - updated >= staleMinutes * 60_000 ? "claim" : "in_flight_retry";
+  }
+  return "obsolete";
+}
+
+/**
+ * Stable identity for a screening match within one check, so redelivered
+ * events cannot double-insert candidates. The list's own external id wins;
+ * a provider that supplies none falls back to what the reviewer sees.
+ */
+export function matchDedupKey(match: {
+  details?: Record<string, unknown> | null;
+  matchedName?: string; matched_name?: string;
+  listName?: string | null; list_name?: string | null;
+}): string {
+  const externalId = String((match.details ?? {})["external_id"] ?? "");
+  if (externalId) return `ext:${externalId}`;
+  const name = match.matchedName ?? match.matched_name ?? "";
+  const list = match.listName ?? match.list_name ?? "";
+  return `name:${name}|${list}`;
+}

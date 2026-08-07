@@ -73,10 +73,19 @@ describe("Defect C — queueing a party creates real, idempotent screening work"
     expect(routing).toBeLessThan(catchAll);
   });
 
-  it("the consumer claims optimistically and walks away from replayed or concurrent deliveries", () => {
-    expect(screeningConsumer).toContain("if (!claimable) return");
-    expect(screeningConsumer).toContain("if (!claimed) return");
+  it("the consumer claims through the shared rule: duplicates succeed, in-flight deliveries retry", () => {
+    expect(screeningConsumer).toContain("screeningClaimDecision");
+    // A terminal-state duplicate succeeds silently; an in-flight subject
+    // throws so the event is retried — succeeding would mark the event
+    // processed and orphan a dead worker's 'processing' subject forever.
+    expect(screeningConsumer).toContain("if (decision === 'obsolete') return");
+    expect(screeningConsumer).toContain("screening_in_flight");
+    expect(screeningConsumer).not.toMatch(/if \(!claimed\) return;/);
     expect(screeningConsumer).toMatch(/state\.in\.\(queued,error\)/);
+  });
+
+  it("candidate inserts are keyed for redelivery idempotency", () => {
+    expect(screeningConsumer).toContain("matchDedupKey");
   });
 
   it("executes through the canonical engine — provider factory, metrics, screening_checks, screening_matches", () => {
@@ -165,11 +174,34 @@ describe("Defect E — auditable PEP determination", () => {
     expect(pepOp).toContain("self|family_member|close_associate");
   });
 
-  it("supersedes rather than edits, and the schema enforces classification and review indexing", () => {
-    expect(pepOp).toContain("superseded_at: now");
+  it("subject identity is derived from the canonical record, never asserted by the caller", () => {
+    expect(pepOp).toContain("subject_identity_mismatch");
+    expect(pepOp).toContain("subject_name: derivedName");
+    expect(pepOp).toContain("party_type: derivedPartyType");
+  });
+
+  it("supersession is atomic — a BEFORE INSERT trigger plus a one-current unique index, not an app-side update", () => {
+    expect(pepOp).not.toContain(".update({ superseded_at");
+    expect(pepOp).toContain("concurrent_determination");
+    expect(migration).toContain("trg_aml_pep_det_supersede");
+    expect(migration).toContain("BEFORE INSERT ON aml.pep_determinations");
+    expect(migration).toContain("idx_aml_pep_det_one_current");
     expect(migration).toContain("pep_result_requires_classification");
     expect(migration).toContain("idx_aml_pep_det_review");
     expect(migration).toContain("'pep_determination', 7, 'AML/CTF Act s 107'");
+  });
+
+  it("EDD, SoF/SoW and senior-manager approval are linked to the current determination", () => {
+    const inputs = risk.slice(
+      risk.indexOf("async function authoritativeMandatoryInputs"),
+      risk.indexOf("function blockingHolds"));
+    expect(inputs).toContain("pepEvidenceSatisfied");
+    expect(inputs).toContain("latestPepDeterminedAt");
+    expect(inputs).toContain("source_of_funds");
+    expect(inputs).toContain("source_of_wealth");
+    const resolveOp = risk.slice(risk.indexOf('op === "resolve_approval"'), risk.indexOf("list_senior_managers"));
+    expect(resolveOp).toContain("no_current_pep_determination");
+    expect(resolveOp).toContain("pep_determination_ids");
   });
 });
 
@@ -316,6 +348,39 @@ describe("Privacy — screening detail stays out of the portals", () => {
 
   it("the outbox event carries identifiers only", () => {
     expect(migration).not.toMatch(/jsonb_build_object\([\s\S]{0,200}(screened_name|date_of_birth|match)/);
+  });
+});
+
+describe("CI and security inventory", () => {
+  const ci = read(".github/workflows/ci.yml");
+  const pkg = read("package.json");
+
+  it("CI runs the AML suites, parser tests and both boundary inventories", () => {
+    expect(ci).toContain("npx vitest run src/lib/aml src/components/aml src/pages/aml");
+    expect(ci).toContain("npm run test:aml-sanctions");
+    expect(ci).toContain("npm run security:edd-boundary");
+    expect(ci).toContain("npm run security:screening-boundary");
+  });
+
+  it("the screening/PEP boundary inventory is a registered script", () => {
+    expect(pkg).toContain('"security:screening-boundary": "node scripts/security/check-aml-screening-boundary.mjs"');
+  });
+});
+
+describe("Sanctions freshness — round 2 hardening", () => {
+  it("a failed latest sync attempt fails closed in its own right", () => {
+    expect(providers).toContain('attemptStatus === "failed"');
+    expect(providers).toContain("latest sync attempt failed");
+  });
+
+  it("freshness reads are per-list, so a noisy list cannot hide a quiet one's state", () => {
+    expect(providers).toContain("latestSuccessFor");
+    expect(providers).toContain("latestAttemptFor");
+    expect(providers).toMatch(/eq\("list_code", code\)/);
+  });
+
+  it("a zero-entry 'success' is not screening data", () => {
+    expect(providers).toContain("Number(success.entry_count ?? 0) > 0");
   });
 });
 

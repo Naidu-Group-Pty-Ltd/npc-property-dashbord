@@ -19,6 +19,7 @@ import {
   partyScreeningOutstanding,
   pepControlsRequired,
   pepDeterminationCurrent,
+  pepEvidenceSatisfied,
 } from "../_shared/aml/partyScreening.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
@@ -174,7 +175,7 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
       .eq("status", "confirmed")
       .limit(1),
     admin.schema("aml").from("pep_determinations")
-      .select("id, result, pep_type, pep_relationship, superseded_at, review_due_at")
+      .select("id, result, pep_type, pep_relationship, superseded_at, review_due_at, determined_at")
       .eq("case_id", caseId).is("superseded_at", null),
     admin.schema("aml").from("cases").select("id, risk_rating").eq("id", caseId).maybeSingle(),
   ]);
@@ -197,19 +198,46 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
         seniorManagerApprovalRequired: acc.seniorManagerApprovalRequired || c.seniorManagerApprovalRequired,
       }), { eddRequired: false, seniorManagerApprovalRequired: false });
 
-    if (controls.eddRequired) {
-      const { data: doneEdd } = await admin.schema("aml").from("edd_cases")
-        .select("id").eq("case_id", caseId)
-        .eq("status", "completed").eq("mlro_decision", "approved").limit(1);
-      inputs.pep_edd_required = true;
-      inputs.edd_complete = (doneEdd ?? []).length > 0;
-    }
-    if (controls.seniorManagerApprovalRequired) {
-      const { data: granted } = await admin.schema("aml").from("approvals")
-        .select("id").eq("case_id", caseId)
-        .eq("kind", "pep_service_approval").eq("status", "approved").limit(1);
-      inputs.pep_approval_required = true;
-      inputs.pep_approval_granted = (granted ?? []).length > 0;
+    // Evidence must be LINKED to the current determination: an EDD case
+    // completed before the PEP was known never considered it, and an approval
+    // granted for an earlier finding does not approve this one. EDD for a PEP
+    // is only complete once source of funds AND source of wealth are verified
+    // on the existing SoF/SoW records — that is what the EDD is for.
+    const latestPepDeterminedAt = pepFindings
+      .map((d: any) => String(d.determined_at ?? ""))
+      .sort()
+      .at(-1) ?? "";
+    if (controls.eddRequired || controls.seniorManagerApprovalRequired) {
+      const [{ data: doneEdd }, { data: sofRows }, { data: sowRows }, { data: granted }] =
+        await Promise.all([
+          admin.schema("aml").from("edd_cases")
+            .select("id, completed_at").eq("case_id", caseId)
+            .eq("status", "completed").eq("mlro_decision", "approved")
+            .order("completed_at", { ascending: false }).limit(1),
+          admin.schema("aml").from("source_of_funds")
+            .select("id").eq("case_id", caseId).eq("verified", true).limit(1),
+          admin.schema("aml").from("source_of_wealth")
+            .select("id").eq("case_id", caseId).eq("verified", true).limit(1),
+          admin.schema("aml").from("approvals")
+            .select("id, resolved_at").eq("case_id", caseId)
+            .eq("kind", "pep_service_approval").eq("status", "approved")
+            .order("resolved_at", { ascending: false }).limit(1),
+        ]);
+      const evidence = pepEvidenceSatisfied({
+        latestPepDeterminedAt,
+        eddCompletedAt: (doneEdd ?? [])[0]?.completed_at ?? null,
+        hasVerifiedSourceOfFunds: (sofRows ?? []).length > 0,
+        hasVerifiedSourceOfWealth: (sowRows ?? []).length > 0,
+        approvalResolvedAt: (granted ?? [])[0]?.resolved_at ?? null,
+      });
+      if (controls.eddRequired) {
+        inputs.pep_edd_required = true;
+        inputs.edd_complete = evidence.eddComplete;
+      }
+      if (controls.seniorManagerApprovalRequired) {
+        inputs.pep_approval_required = true;
+        inputs.pep_approval_granted = evidence.approvalGranted;
+      }
     }
   }
   return inputs;
@@ -769,7 +797,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       // automatically the MLRO. A PEP service approval may only be resolved
       // by someone the organisation has explicitly designated a senior
       // manager — holding the mlro or reviewer role is not, on its own, that
-      // designation.
+      // designation. The approval is also LINKED: it approves the current
+      // PEP determinations as they stand, and those ids are recorded so the
+      // evidence says exactly what was approved. A later determination
+      // postdates the approval and re-opens the requirement (the risk inputs
+      // compare resolved_at against determined_at).
+      let approvedDeterminationIds: string[] = [];
       if (approval.kind === "pep_service_approval") {
         const { data: caseTenant } = await admin.schema("aml").from("cases")
           .select("tenant_id").eq("id", approval.case_id).maybeSingle();
@@ -783,12 +816,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             code: "senior_manager_designation_required",
           }, 403);
         }
+        const { data: currentDets } = await admin.schema("aml").from("pep_determinations")
+          .select("id, result").eq("case_id", approval.case_id).is("superseded_at", null);
+        approvedDeterminationIds = (currentDets ?? [])
+          .filter((d: any) => d.result === "pep").map((d: any) => String(d.id));
+        if (status === "approved" && approvedDeterminationIds.length === 0) {
+          return jr({
+            error: "There is no current PEP determination on this case to approve — record the determination first",
+            code: "no_current_pep_determination",
+          }, 409);
+        }
       }
       const { data, error } = await admin.schema("aml").from("approvals").update({
         status, approver_id: userId, note: note ?? null, resolved_at: new Date().toISOString(),
       }).eq("id", approval_id).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
-      if (data) await appendCaseEvent(admin, data.case_id, "mlro_decision", `Approval ${status} (${data.kind})`, { approval_id, note, kind: data.kind }, userId, userLabel);
+      if (data) await appendCaseEvent(admin, data.case_id, "mlro_decision", `Approval ${status} (${data.kind})`, {
+        approval_id, note, kind: data.kind,
+        ...(approvedDeterminationIds.length > 0 ? { pep_determination_ids: approvedDeterminationIds } : {}),
+      }, userId, userLabel);
       return jr({ approval: data });
     }
 

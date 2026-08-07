@@ -13,6 +13,8 @@
 -- ROLLBACK (exact):
 --   DROP TRIGGER IF EXISTS trg_aml_party_screening_outbox ON aml.party_screening_subjects;
 --   DROP FUNCTION IF EXISTS aml.tg_emit_party_screening_requested();
+--   DROP TRIGGER IF EXISTS trg_aml_pep_det_supersede ON aml.pep_determinations;
+--   DROP FUNCTION IF EXISTS aml.tg_supersede_prior_pep_determinations();
 --   DROP TABLE IF EXISTS aml.pep_determinations;
 --   DROP TABLE IF EXISTS aml.senior_manager_designations;
 --   DELETE FROM aml.mandatory_triggers WHERE key IN
@@ -112,6 +114,40 @@ CREATE INDEX IF NOT EXISTS idx_aml_pep_det_case
 CREATE INDEX IF NOT EXISTS idx_aml_pep_det_review
   ON aml.pep_determinations(review_due_at)
   WHERE superseded_at IS NULL AND review_due_at IS NOT NULL;
+
+-- Supersession is ATOMIC with the insert: a BEFORE INSERT trigger closes the
+-- previous current determination for the same subject scope inside the same
+-- transaction, so no crash or concurrent write can leave two current
+-- determinations — and the partial unique index makes that structural. An
+-- application-side "insert then update the old row" cannot give either
+-- guarantee.
+CREATE OR REPLACE FUNCTION aml.tg_supersede_prior_pep_determinations()
+RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = aml, public
+AS $$
+BEGIN
+  UPDATE aml.pep_determinations
+     SET superseded_at = now(),
+         superseded_by_determination_id = NEW.id
+   WHERE case_id = NEW.case_id
+     AND party_screening_subject_id IS NOT DISTINCT FROM NEW.party_screening_subject_id
+     AND superseded_at IS NULL;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_aml_pep_det_supersede ON aml.pep_determinations;
+CREATE TRIGGER trg_aml_pep_det_supersede
+  BEFORE INSERT ON aml.pep_determinations
+  FOR EACH ROW EXECUTE FUNCTION aml.tg_supersede_prior_pep_determinations();
+
+-- One current determination per (case, subject scope). NULL subject = the
+-- case subject, folded to a fixed sentinel so the index can see it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_aml_pep_det_one_current
+  ON aml.pep_determinations(
+    case_id,
+    COALESCE(party_screening_subject_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  WHERE superseded_at IS NULL;
 ALTER TABLE aml.pep_determinations ENABLE ROW LEVEL SECURITY;
 GRANT ALL ON aml.pep_determinations TO service_role;
 DO $$ BEGIN
@@ -179,6 +215,13 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_aml_party_screening_outbox') THEN
     RAISE EXCEPTION 'party screening outbox trigger did not converge';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_aml_pep_det_supersede') THEN
+    RAISE EXCEPTION 'PEP determination supersession trigger did not converge';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes
+      WHERE schemaname = 'aml' AND indexname = 'idx_aml_pep_det_one_current') THEN
+    RAISE EXCEPTION 'single-current-determination index did not converge';
   END IF;
   IF (SELECT count(*) FROM aml.mandatory_triggers
       WHERE key IN ('pep_edd_outstanding','pep_approval_outstanding')) < 2 THEN

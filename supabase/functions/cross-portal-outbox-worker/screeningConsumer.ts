@@ -20,14 +20,21 @@ import {
 } from '../_shared/aml/providers/index.ts';
 import {
   computeRefreshDueAt,
+  matchDedupKey,
   projectPartyScreeningState,
+  screeningClaimDecision,
 } from '../_shared/aml/partyScreening.pure.ts';
 
 /** Party screening asks the local lists exactly what they can answer. */
 const PARTY_SCREENING_SCOPE: ScreeningScope[] = ['sanctions'];
 
-/** A worker that died mid-run leaves 'processing'; reclaim after this. */
-const STUCK_PROCESSING_MINUTES = 15;
+/**
+ * A worker that died mid-run leaves 'processing'; reclaim after this. Must be
+ * shorter than the outbox's cumulative retry backoff before dead-lettering
+ * (attempts cap at 10, backoff 2^n capped at 1h) so an in-flight retry can
+ * still reclaim a dead worker's subject before the event dead-letters.
+ */
+const STUCK_PROCESSING_MINUTES = 10;
 
 async function sha256Hex(input: string): Promise<string> {
   const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
@@ -72,23 +79,34 @@ export async function processScreeningEvent(db: any, event: any): Promise<void> 
   if (loadErr) throw loadErr;
   if (!subject) return;
 
-  // Eligibility: only queued work (or a retry after a technical error, or a
-  // run a dead worker abandoned) is processed. A replayed/duplicate event on
-  // a subject that already completed or holds candidates walks away — that is
-  // what makes duplicate delivery idempotent.
-  const stuckCutoff = new Date(Date.now() - STUCK_PROCESSING_MINUTES * 60_000).toISOString();
-  const claimable = subject.state === 'queued' || subject.state === 'error' ||
-    (subject.state === 'processing' && String(subject.updated_at ?? '') < stuckCutoff);
-  if (!claimable) return;
+  // Eligibility (single shared rule — screeningClaimDecision):
+  //   queued/error            → claim and run;
+  //   terminal states         → duplicate/stale event, succeed silently;
+  //   fresh 'processing'      → someone else holds it: RETRY the event.
+  // Retrying the in-flight case matters: succeeding would mark the event
+  // processed, and if the holder had died the subject would sit in
+  // 'processing' forever with no event left to wake it. A retried delivery
+  // either finds the terminal state (holder finished) or reclaims once the
+  // staleness window passes (holder died).
+  const decision = screeningClaimDecision(subject, Date.now(), STUCK_PROCESSING_MINUTES);
+  if (decision === 'obsolete') return;
+  if (decision === 'in_flight_retry') {
+    throw new Error(`screening_in_flight: subject ${subjectId} is being processed by another worker — retry`);
+  }
 
-  // Optimistic claim — a concurrent worker loses the conditional update and
-  // walks away, so the provider runs at most once per event delivery.
+  // Optimistic claim — a concurrent worker loses the conditional update, so
+  // the provider runs at most once per delivery. The conditional predicate is
+  // authoritative; the JS decision above is only routing.
+  const stuckCutoff = new Date(Date.now() - STUCK_PROCESSING_MINUTES * 60_000).toISOString();
   const { data: claimed } = await db.schema('aml').from('party_screening_subjects')
     .update({ state: 'processing', updated_at: new Date().toISOString() })
     .eq('id', subjectId)
     .or(`state.in.(queued,error),and(state.eq.processing,updated_at.lt.${stuckCutoff})`)
     .select('id').maybeSingle();
-  if (!claimed) return;
+  if (!claimed) {
+    // Lost the race to a live worker an instant ago — same as in-flight.
+    throw new Error(`screening_in_flight: subject ${subjectId} was claimed concurrently — retry`);
+  }
 
   const technical = async (category: string, message: string) => {
     await db.schema('aml').from('party_screening_subjects').update({
@@ -216,12 +234,12 @@ export async function runScreeningForSubject(db: any, subject: any): Promise<voi
 
   if (result.matches.length > 0) {
     // Idempotency on redelivery after a partial failure: only insert
-    // candidates the check does not already carry.
+    // candidates the check does not already carry. Keyed on the list's own
+    // external id, falling back to name+list for providers that supply none.
     const { data: existingMatches } = await db.schema('aml').from('screening_matches')
-      .select('details').eq('screening_check_id', checkId);
-    const known = new Set((existingMatches ?? [])
-      .map((m: any) => String((m.details ?? {}).external_id ?? '')));
-    const fresh = result.matches.filter((m) => !known.has(String((m.details ?? {}).external_id ?? '')));
+      .select('details, matched_name, list_name').eq('screening_check_id', checkId);
+    const known = new Set((existingMatches ?? []).map((m: any) => matchDedupKey(m)));
+    const fresh = result.matches.filter((m) => !known.has(matchDedupKey(m)));
     if (fresh.length > 0) {
       const { error: matchErr } = await db.schema('aml').from('screening_matches').insert(
         fresh.map((m) => ({
