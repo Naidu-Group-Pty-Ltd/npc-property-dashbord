@@ -27,7 +27,7 @@ const config = read('supabase/config.toml');
 test('the copy contains the agreement, not a summary of it', () => {
   // The full rendered text is placed in the document. A "copy" that omitted the
   // agreement would be a receipt.
-  assert.match(doc, /<div class="agreement">\$\{agreementHtml\}<\/div>/);
+  assert.match(doc, /<div class="chapter-body agreement">\$\{agreementHtml\}/);
   // Rendered by the programme's one Markdown renderer rather than a second one.
   assert.match(fn, /import \{ renderMarkdown \} from '\.\.\/_shared\/reports\/markdown\.pure\.ts'/);
   // And a clipped legal document is refused rather than stored.
@@ -57,17 +57,22 @@ test('both parties and the execution detail are on the document', () => {
 });
 
 test('the document is white-label, with nothing about one operator baked in', () => {
-  // Every operator-side value is passed in and drawn from the Command Centre's
-  // brand configuration.
+  // Every operator-side value comes from the tenant's brand snapshot — the same
+  // one the ten report formats resolve — so the agreement carries their colour,
+  // their mark and their company details rather than a palette of its own.
   assert.doesNotMatch(doc, /Naidu|NPC Services|npcservices/i);
-  assert.match(doc, /brand\.companyName/);
-  assert.match(doc, /brand\.abn/);
-  assert.match(doc, /brand\.contactAddress/);
-  assert.match(fn, /const brandConfig = await getBrandConfig\(supabase\)/);
+  assert.match(doc, /resolveSnapshotBrand\(/);
+  assert.match(doc, /const contact = input\.snapshot\.company/);
+  assert.match(fn, /await fetchReportBrandSnapshot\(supabase/);
+
+  // And not one colour of its own. A literal here is the ninth brand gold; see
+  // docs/reports/DESIGN_SYSTEM.md §2.
+  const code = doc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.deepEqual(code.match(/#[0-9A-Fa-f]{3,8}\b/g) ?? [], []);
 
   // Snapshotted onto the acceptance, because branding is editable and an
   // executed agreement must keep saying what it said.
-  assert.match(fn, /agreement_brand_snapshot: brand/);
+  assert.match(fn, /agreement_brand_snapshot: snapshot/);
   assert.match(fn, /agreement_party_snapshot: party/);
   assert.match(migration, /agreement_brand_snapshot jsonb/);
 });
@@ -202,15 +207,17 @@ test('the copy is reachable from the partner row, not only from the tab', () => 
 test('a copy is saved without waiting for someone to click Download', () => {
   // "Retained" cannot mean "retained once a staff user happened to open it".
   assert.match(fn, /operation === 'save_missing_copies'/);
-  assert.match(fn, /\.is\('agreement_storage_path', null\)/);
+  // Both "no copy" and "a copy the template has moved on from" are picked up,
+  // by the document module's own rule rather than a second one in a query.
+  assert.match(fn, /!hasCurrentAgreementCopy\(record\.agreement_storage_path\)/);
   assert.match(panel, /operation: 'save_missing_copies'/);
-  assert.match(panel, /const missingCopies = records\.filter\(\(record\) => !record\.agreement_storage_path\)\.length/);
+  assert.match(panel, /records\.filter\(\(record\) => copyState\(record\) !== 'current'\)\.length/);
 
   // Bounded and sequential: a burst of renders from one click would take down
   // the PDF service the reports also use.
   assert.match(fn, /const MAX_BATCH = 25/);
-  assert.match(fn, /\.limit\(MAX_BATCH\)/);
-  assert.match(fn, /for \(const record of pending \?\? \[\]\)/);
+  assert.match(fn, /\.slice\(0, MAX_BATCH\)/);
+  assert.match(fn, /for \(const record of pending\)/);
   // One unrenderable record must not stop the rest.
   assert.match(fn, /failed\.push\(\{ acceptance_id: record\.acceptance_id/);
 
