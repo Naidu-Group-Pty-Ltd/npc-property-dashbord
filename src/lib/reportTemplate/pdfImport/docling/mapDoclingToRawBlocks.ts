@@ -142,10 +142,46 @@ function labelDefaultFontSize(label: DoclingTextLabel | undefined, level?: numbe
   }
 }
 
+/**
+ * Derive a font size from the measured box, mirroring the fallback that
+ * `ingestion/reconciliation/hybridPlan.ts` has always used.
+ *
+ * Only applied to boxes that plausibly hold a SINGLE line: for a wrapped
+ * paragraph the box height is a function of line count, not glyph size, so
+ * `height * 0.72` would produce an absurd size. A multi-line box therefore
+ * returns null and falls through to the label default, which is at least a
+ * reading-order-aware guess.
+ *
+ * Returns null rather than a default so the caller's `??` chain stays explicit.
+ */
+function boxDerivedFontSize(boxHeight: number, text: string | undefined): number | null {
+  if (!Number.isFinite(boxHeight) || boxHeight <= 0) return null;
+  // An explicit newline means the producer already knows this wraps.
+  if ((text ?? '').includes('\n')) return null;
+  const derived = boxHeight * 0.72;
+  // Outside these bounds the box is not describing one line of type.
+  if (derived < 4 || derived > 96) return null;
+  return Math.round(derived * 100) / 100;
+}
+
+/**
+ * Normalise a source weight WITHOUT discarding its precision.
+ *
+ * This used to return `n >= 600 ? 'bold' : 'normal'`, which destroyed the real
+ * grade before the schema ever saw it — so a source Light 300 became 400 and a
+ * SemiBold 600 became 700. Both substitutions are WIDER than the source, and
+ * widening text inside a bbox copied verbatim from the source is exactly how a
+ * text box ends up unable to hold its own contents.
+ *
+ * The numeric grade is preserved here and written to `fontWeightNumeric`
+ * downstream; `templateSchema` still derives the coarse enum for renderers that
+ * only understand normal/bold.
+ */
 function normaliseWeight(value: unknown): number | 'normal' | 'bold' | undefined {
   if (value === 'bold' || value === 'normal') return value;
   const n = Number(value);
-  if (Number.isFinite(n) && n > 0) return n >= 600 ? 'bold' : 'normal';
+  // CSS weights are 1-1000; anything outside that is not a weight.
+  if (Number.isFinite(n) && n >= 1 && n <= 1000) return Math.round(n);
   return undefined;
 }
 
@@ -212,7 +248,21 @@ function textItemToBlock(
     : item.label === 'section_header'
       ? Math.max(1, Math.min(6, Math.round(item.level ?? 2)))
       : undefined;
-  const fontSize = item.font?.size ?? labelDefaultFontSize(item.label, headingLevel);
+  // Font size, most-trustworthy source first.
+  //
+  // The label-derived table (22/18/15/13/12/11pt for h1..h6) is a LAST resort,
+  // not a second choice. It invents a size with no relationship to the source
+  // box, so a source heading actually set at 14pt was being re-rendered at 22pt
+  // inside its original ~16pt-tall bbox — a guaranteed overflow, and one of the
+  // direct causes of text boxes unable to hold their contents.
+  //
+  // The sibling non-Docling path (ingestion/reconciliation/hybridPlan.ts) has
+  // always derived a size from the box when the source does not state one; this
+  // mapper simply never did. `bbox.height * 0.72` approximates cap-height plus
+  // leading for a single-line box, and is clamped to sane typographic bounds.
+  const fontSize = item.font?.size
+    ?? boxDerivedFontSize(bbox.height, item.text)
+    ?? labelDefaultFontSize(item.label, headingLevel);
   const fontWeight = normaliseWeight(item.font?.weight)
     ?? weightFromFamilyName(item.font?.family)
     ?? labelDefaultWeight(item.label);

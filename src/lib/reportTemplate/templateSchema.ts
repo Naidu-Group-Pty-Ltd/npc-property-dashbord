@@ -281,12 +281,25 @@ export const TextOverlaySchema = BaseOverlay.extend({
   content: BindableStringSchema,
   fontFamily: BindableStringSchema.default('Helvetica'),
   fontSize: BindableNumberSchema.default(12),
+  // Coarse weight. A numeric value collapses to this enum, which is lossy on
+  // purpose for legacy templates — the exact grade belongs in
+  // `fontWeightNumeric` below, which every renderer prefers. A producer that
+  // knows the real weight MUST write both, or 300 renders as 400 and 600 as
+  // 700, and both are wider than the source inside a fixed-width box.
   fontWeight: z.preprocess((value) => {
     if (value === 'bold' || value === 'normal') return value;
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric >= 600 ? 'bold' : 'normal';
     return 'normal';
   }, z.enum(['normal', 'bold'])).default('normal'),
+  /**
+   * What happens when the text does not fit its box. Defaults to `visible`,
+   * preserving the export renderer's long-standing spill behaviour for every
+   * existing template; the editor canvas now honours the same value instead of
+   * always clipping. Imported overlays are the interesting case — see
+   * rendering/textOverlayStyle.pure.ts.
+   */
+  overflowPolicy: z.enum(['visible', 'clip']).optional(),
   fontStyle: z.enum(['normal', 'italic']).default('normal'),
   color: BindableColorSchema.default('#000000'),
   align: z.enum(['left', 'center', 'right', 'justify']).default('left'),

@@ -23,6 +23,7 @@ import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { makeCanvasRenderKey, pageWithoutOverlays } from '@/lib/reportTemplate/previewCache';
 import { normalizePageSize } from '@/lib/reportTemplate/rendering/pageGeometry';
 import { overlayPaintOrder } from '@/lib/reportTemplate/paintOrder';
+import { buildTextOverlayCssDecls, cssDeclsToReactStyle } from '@/lib/reportTemplate/rendering/textOverlayStyle.pure';
 import { screenToPagePoint, PALETTE_DRAG_MIME, parsePaletteDrag } from '@/lib/reportTemplate/overlayDropFactory';
 import type { Overlay, Page, ReportTemplate } from '@/lib/reportTemplate/templateSchema';
 import { templateEditorActions, useEditorTemplate, useTemplateEditorStore } from '@/stores/templateEditorStore';
@@ -775,27 +776,49 @@ function OverlayPreview({
   if (o.type === 'text') {
     const t: any = o;
     const color = previewCssColor(t.color, tokenColors, '#111111');
+    // Styled through the SAME builder as the export renderer — see
+    // rendering/textOverlayStyle.pure.ts. This preview used to hardcode
+    // `overflow:hidden` and `whiteSpace:'pre-wrap'`, which overrode the
+    // `whiteSpace:'nowrap'` the PDF importer deliberately sets on single-line
+    // text: the line wrapped and the wrapped remainder was then clipped. That
+    // is the "text boxes constrict their contents" defect, and it was visible
+    // ONLY in the editor because the export path never clipped.
+    const shared = cssDeclsToReactStyle(buildTextOverlayCssDecls({
+      fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
+      fontSizePt: Number(t.fontSize) || 12,
+      color,
+      fontWeightNumeric: t.fontWeightNumeric,
+      fontWeight: t.fontWeight,
+      fontStyle: t.fontStyle,
+      align: t.align,
+      lineHeight: t.lineHeight,
+      letterSpacingPt: t.letterSpacing,
+      paddingPt: {
+        top: t.paddingTop, right: t.paddingRight,
+        bottom: t.paddingBottom, left: t.paddingLeft,
+      },
+      verticalAlign: t.verticalAlign,
+      whiteSpace: t.whiteSpace,
+      textDecoration: t.textDecoration,
+      textTransform: t.textTransform,
+      hyphens: t.hyphens,
+      columns: t.columns,
+      columnGapPt: t.columnGap,
+      fontVariantNumeric: t.fontVariantNumeric,
+      maxLines: t.maxLines,
+      overflowPolicy: t.overflowPolicy,
+    }, { unit: 'px', scale: zoom }));
+
     const style: React.CSSProperties = {
       width: '100%', height: '100%',
-      padding: 0,
       margin: 0,
-      fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
-      fontSize: (Number(t.fontSize) || 12) * zoom,
-      fontWeight: t.fontWeight === 'bold' ? 700 : 400,
-      fontStyle: t.fontStyle || 'normal',
-      color,
-      textAlign: t.align || 'left',
-      lineHeight: t.lineHeight || 1.3,
-      letterSpacing: (t.letterSpacing || 0) * zoom,
-      overflow: 'hidden',
-      whiteSpace: 'pre-wrap',
+      ...(shared as React.CSSProperties),
       wordBreak: 'break-word',
       opacity: o.opacity ?? 1,
       background: 'transparent',
       border: 'none',
       outline: 'none',
       resize: 'none',
-      display: 'block',
     };
     if (editing) {
       return (

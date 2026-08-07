@@ -102,9 +102,18 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       fontSize,
       // Phase 6E — preserve a numeric weight grade (e.g. 300/600 derived from the
       // source font name) instead of collapsing every weight to bold/normal.
+      //
+      // `fontWeight` is coerced to the coarse normal/bold enum by templateSchema,
+      // so writing ONLY it loses the grade: 300 renders as 400 and 600 as 700,
+      // both wider than the source inside a source-sized box. `fontWeightNumeric`
+      // is the field every renderer actually prefers, so write both.
       fontWeight: (typeof block.style?.fontWeight === 'number'
         ? block.style.fontWeight
         : block.style?.fontWeight === 'bold' ? 'bold' : 'normal') as number | 'normal' | 'bold',
+      ...(typeof block.style?.fontWeight === 'number'
+        && block.style.fontWeight >= 100 && block.style.fontWeight <= 900
+        ? { fontWeightNumeric: Math.round(block.style.fontWeight) }
+        : {}),
       fontStyle: isFormula ? 'italic' : (block.style?.fontStyle ?? 'normal'),
       color: block.style?.color ?? '#111111',
       align: (block.style?.textAlign ?? 'left') as TextOverlay['align'],

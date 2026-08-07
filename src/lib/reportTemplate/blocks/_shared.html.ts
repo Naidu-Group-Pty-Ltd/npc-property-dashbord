@@ -11,6 +11,7 @@ import {
   resolveTokenReference,
 } from '../bindingResolver';
 import { shouldRenderOverlay } from '../renderVisibility';
+import { buildTextOverlayCssDecls } from '../rendering/textOverlayStyle.pure';
 
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
@@ -189,46 +190,36 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       const pr = Number(o.paddingRight ?? 0);
       const pb = Number(o.paddingBottom ?? 0);
       const pl = Number(o.paddingLeft ?? 0);
-      const valign = o.verticalAlign === 'middle' ? 'center'
-        : o.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
       const features = buildFontFeatures(o);
-      const decls: string[] = [
-        `color:${color}`,
-        `font-family:${esc(family)}`,
-        `font-size:${size}pt`,
-        `font-weight:${o.fontWeightNumeric ?? o.fontWeight ?? 'normal'}`,
-        `font-style:${o.fontStyle ?? 'normal'}`,
-        `text-align:${o.align ?? 'left'}`,
-        `line-height:${o.lineHeight ?? 1.3}`,
-        `letter-spacing:${o.letterSpacing ?? 0}pt`,
-        `padding:${pt}pt ${pr}pt ${pb}pt ${pl}pt`,
-        `display:flex`,
-        `flex-direction:column`,
-        `justify-content:${valign}`,
-      ];
-      if (o.textDecoration) decls.push(`text-decoration:${o.textDecoration}`);
-      if (o.textTransform === 'small-caps') decls.push(`font-variant-caps:small-caps`);
-      else if (o.textTransform) decls.push(`text-transform:${o.textTransform}`);
-      if (o.textShadow) decls.push(`text-shadow:${o.textShadow}`);
-      if (o.whiteSpace) decls.push(`white-space:${o.whiteSpace}`);
-      if (o.hyphens) decls.push(`hyphens:${o.hyphens}`, `-webkit-hyphens:${o.hyphens}`);
-      if (o.columns && o.columns > 1) {
-        decls.push(`columns:${o.columns}`);
-        if (o.columnGap != null) decls.push(`column-gap:${o.columnGap}pt`);
-      }
-      if (o.kerning === false) decls.push(`font-kerning:none`);
-      else if (o.kerning === true) decls.push(`font-kerning:normal`);
-      if (o.fontVariantNumeric && o.fontVariantNumeric !== 'normal') decls.push(`font-variant-numeric:${o.fontVariantNumeric}`);
-      if (features) decls.push(`font-feature-settings:${features}`);
-      if (o.fontVariationSettings) decls.push(`font-variation-settings:${o.fontVariationSettings}`);
-      if (o.maxLines && !o.columns) {
-        decls.push(
-          `display:-webkit-box`,
-          `-webkit-line-clamp:${o.maxLines}`,
-          `-webkit-box-orient:vertical`,
-          `overflow:hidden`,
-        );
-      }
+      // Shared with the editor canvas — see rendering/textOverlayStyle.pure.ts.
+      // The two surfaces used to build this list independently and disagreed on
+      // white-space, overflow, numeric weight, vertical align and padding.
+      const decls = buildTextOverlayCssDecls({
+        fontFamily: family,
+        fontSizePt: Number(size),
+        color,
+        fontWeightNumeric: o.fontWeightNumeric,
+        fontWeight: o.fontWeight,
+        fontStyle: o.fontStyle,
+        align: o.align,
+        lineHeight: o.lineHeight,
+        letterSpacingPt: o.letterSpacing,
+        paddingPt: { top: pt, right: pr, bottom: pb, left: pl },
+        verticalAlign: o.verticalAlign,
+        whiteSpace: o.whiteSpace,
+        textDecoration: o.textDecoration,
+        textTransform: o.textTransform,
+        textShadow: o.textShadow,
+        hyphens: o.hyphens,
+        columns: o.columns,
+        columnGapPt: o.columnGap,
+        kerning: o.kerning,
+        fontVariantNumeric: o.fontVariantNumeric,
+        fontFeatureSettings: features || null,
+        fontVariationSettings: o.fontVariationSettings,
+        maxLines: o.maxLines,
+        overflowPolicy: o.overflowPolicy,
+      }, { unit: 'pt', escapeFamily: esc });
       const style = `${base}${decls.join(';')};`;
       // Drop cap — render the first non-whitespace character as a floated span.
       const dc = o.dropCap;
