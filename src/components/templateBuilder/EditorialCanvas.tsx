@@ -860,6 +860,29 @@ function OverlayPreview({
       </div>
     );
   }
+  if (o.type === 'chart') {
+    // W3 — the iframe already paints the chart via the shared renderer, so the
+    // handle layer only needs a hit target plus a marker for a reconstruction
+    // that has not been corroborated against printed labels. Drawing the chart
+    // twice would let the two copies disagree, which is the whole failure mode
+    // the shared-renderer approach exists to prevent.
+    const preservation = (o as any).chartPreservation as
+      | { manualReviewRequired?: boolean; renderMode?: string } | undefined;
+    return (
+      <div
+        style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+        title={preservation?.renderMode ? `Chart · ${preservation.renderMode}` : 'Chart'}
+      >
+        {preservation?.manualReviewRequired ? (
+          <div
+            aria-label="Chart values need review"
+            className="absolute right-0 top-0 rounded-full bg-warning"
+            style={{ width: 8 * zoom, height: 8 * zoom }}
+          />
+        ) : null}
+      </div>
+    );
+  }
   if (o.type === 'image') {
     const src = typeof (o as any).src === 'string' && !(o as any).src.includes('{{') ? (o as any).src : '';
     return src ? (

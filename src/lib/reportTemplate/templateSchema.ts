@@ -519,12 +519,88 @@ export const VectorOverlaySchema = BaseOverlay.extend({
   paths: z.array(VectorPathSchema).default([]),
 });
 
+// ---------------------------------------------------------------------------
+// Chart overlay (W3) — a reconstructed chart as an EDITABLE object.
+//
+// Charts imported from a PDF were previously flattened to an image overlay even
+// when Docling had classified the picture as `bar_chart`: the class was carried
+// in meta and then dropped. This type is the destination that makes a chart
+// editable instead.
+//
+// Deliberately an OVERLAY rather than a Block, even though eleven data-bound
+// chart Blocks already exist with renderers and inspector panels. Every
+// downstream contract in the import path is keyed by overlay id — the plan
+// contract carries `overlays`, chart suppression takes overlay ids, the repair
+// ops target overlayId, and the editor canvas flattens blocks purely to harvest
+// their overlays and gives handles only to those. The block renderers are still
+// reused, through a thin adapter, because they read `block.props` and a chart
+// overlay carries the same prop shape.
+//
+// `series` is inline data, not a `dataPath` binding: an imported chart's numbers
+// come from the source document, not from report data. `dataPath` remains
+// available for the case where someone rebinds it afterwards.
+// ---------------------------------------------------------------------------
+export const ChartSeriesPointSchema = z.object({
+  label: z.string(),
+  value: z.number(),
+  /** Optional per-point colour captured from the source geometry. */
+  color: BindableColorSchema.optional(),
+});
+export type ChartSeriesPoint = z.infer<typeof ChartSeriesPointSchema>;
+
+export const ChartOverlayKindSchema = z.enum([
+  'bar', 'stacked-bar', 'line', 'area', 'pie', 'donut', 'scatter', 'radar',
+]);
+export type ChartOverlayKind = z.infer<typeof ChartOverlayKindSchema>;
+
+export const ChartOverlaySchema = BaseOverlay.extend({
+  type: z.literal('chart'),
+  chartKind: ChartOverlayKindSchema.default('bar'),
+  /** Inline series extracted from the source. Editable in the inspector. */
+  series: z.array(ChartSeriesPointSchema).default([]),
+  /** Optional binding, for a chart later rebound to live report data. */
+  dataPath: BindableStringSchema.optional(),
+  labelKey: z.string().optional(),
+  valueKey: z.string().optional(),
+  title: BindableStringSchema.optional(),
+  caption: BindableStringSchema.optional(),
+  accent: BindableColorSchema.optional(),
+  palette: z.array(z.string()).optional(),
+  orientation: z.enum(['vertical', 'horizontal']).optional(),
+  /**
+   * Provenance for a reconstructed chart. `sourceCropUrl` is retained even when
+   * the chart renders natively, so review can compare the reconstruction
+   * against the pixels it came from — the single most important affordance for
+   * catching a misread value before it reaches a client.
+   */
+  chartPreservation: z.object({
+    version: z.string(),
+    /** How this chart reached the page. */
+    renderMode: z.enum([
+      'verified-native-chart',
+      'native-with-source-reference',
+      'chart-source-crop',
+      'containment-fallback',
+    ]),
+    detectionMethod: z.string().optional(),
+    /** Hard-defect codes that vetoed a native reconstruction, if any. */
+    defects: z.array(z.string()).default([]),
+    /** Set when a human must confirm the numbers before the chart is trusted. */
+    manualReviewRequired: z.boolean().default(false),
+    sourceCropUrl: z.string().optional(),
+    sourceRegionId: z.string().optional(),
+    /** Goodness-of-fit of the axis scale calibration, when one was derived. */
+    axisScaleR2: z.number().optional(),
+  }).optional(),
+});
+
 export const OverlaySchema = z.discriminatedUnion('type', [
   TextOverlaySchema,
   ImageOverlaySchema,
   ShapeOverlaySchema,
   TextOnPathOverlaySchema,
   TableOverlaySchema,
+  ChartOverlaySchema,
   VectorOverlaySchema,
 ]);
 
