@@ -1,10 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeSecureFunction } from './secureInvoke';
+import {
+  describeAuthError,
+  invokeSecureFunction,
+  isAuthExhausted,
+  isStaleFunctionDeployment,
+  resetAuthFailures,
+} from './secureInvoke';
 
 const okResponse = () => ({
   ok: true,
   json: vi.fn().mockResolvedValue({ ok: true }),
+  headers: new Headers(),
+});
+
+/** What a function answers when it never received a credential to check. */
+const unauthorizedResponse = () => ({
+  ok: false,
+  status: 401,
+  json: vi.fn().mockResolvedValue({ error: 'Authentication required', code: 'auth_required' }),
   headers: new Headers(),
 });
 
@@ -72,6 +86,50 @@ describe('invokeSecureFunction CORS credentials', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.error?.code).toBe('provider_timeout');
+  });
+
+  // The regression this pins: a function that cannot receive the cookie has no
+  // credential to check, so it answers `401 Authentication required` — which the
+  // app rendered as "your session has expired" and sent the user to sign out and
+  // back in. Twice. The session was valid throughout; the function was simply
+  // running an older deployment.
+  it('blames the deployment, not the session, when the function refused the cookie', async () => {
+    resetAuthFailures();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(corsRejection())
+      .mockResolvedValue(unauthorizedResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await invokeSecureFunction('template-design-agent', { mode: 'design' });
+
+    expect(isStaleFunctionDeployment('template-design-agent')).toBe(true);
+    expect(result.error?.code).toBe('function_deployment_stale');
+    expect(result.error?.message).toContain('older deployment');
+    expect(result.error?.message).toContain('supabase functions deploy template-design-agent');
+    // The one thing it must never tell the user to do, because it cannot work.
+    expect(result.error?.message).not.toMatch(/sign in again|sign out, sign back in/i);
+  });
+
+  it('does not let an undeployed function be rewritten into "session expired"', () => {
+    // describeAuthError must leave the diagnosis alone — otherwise the accurate
+    // message is replaced by the misleading one at the point of display.
+    const staleMessage = 'The template-import-pdf service is running an older deployment that '
+      + 'cannot accept your sign-in cookie, so it rejected the request as unauthenticated.';
+    expect(describeAuthError(staleMessage)).toBeNull();
+  });
+
+  it('does not trip the global auth breaker for an undeployed function', async () => {
+    resetAuthFailures();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(corsRejection())
+      .mockResolvedValue(unauthorizedResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Well past GLOBAL_AUTH_FAIL_LIMIT. An undeployed function must not clear
+    // this tab's token or stop polling everywhere else in the app.
+    for (let i = 0; i < 8; i++) await invokeSecureFunction('import-from-url', { url: 'https://e.com' });
+
+    expect(isAuthExhausted()).toBe(false);
   });
 
   it('does not retry uncredentialed for functions outside the migrating set', async () => {

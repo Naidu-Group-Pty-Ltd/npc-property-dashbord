@@ -15,9 +15,21 @@ name: Deploy Supabase functions
 # workflow rather than a runbook entry: nothing is red, the merge is green, and
 # the only symptom is that the product does not change.
 #
-# Opt-in by secret. Without SUPABASE_ACCESS_TOKEN this reports what it *would*
-# deploy and stops — so adding the file does not start pushing code to anyone's
-# project, and does not paint `main` red for a repo that has not set it up.
+# WHICH IS EXACTLY WHAT THIS FILE THEN DID.
+#
+# It was originally opt-in by secret: without SUPABASE_ACCESS_TOKEN it reported
+# what it *would* deploy and exited GREEN, so that adding the file did not paint
+# `main` red for a repo that had not set it up yet. The secret was never added.
+# Every edge-function change since has merged, shown a green "Deploy Supabase
+# functions" check, and shipped nothing — reproducing, in the workflow written
+# to prevent it, the identical bug: a green merge and a product that does not
+# change. It cost two full debug cycles on the PDF import auth fix (PR #1978),
+# where the frontend shipped, the functions did not, and the surviving symptom
+# was a valid session being reported as expired.
+#
+# So the gate now FAILS when there is something to deploy and no credential to
+# deploy it with. A red check on an unconfigured repo is the cheapest possible
+# version of this lesson; a green one is the most expensive.
 
 on:
   push:
@@ -91,20 +103,34 @@ jobs:
             echo 'ready=false' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Report and stop when no credential is configured
+      - name: Fail when there is something to deploy and no credential
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true' }}
         run: |
           {
             echo '### Supabase functions NOT deployed'
             echo
-            echo 'No `SUPABASE_ACCESS_TOKEN` secret is set, so this run made no changes.'
+            echo 'No `SUPABASE_ACCESS_TOKEN` secret is set, so this run made no changes'
+            echo 'and the functions below are still running their previous code.'
             echo
-            echo 'Would have deployed:'
+            echo 'Not deployed:'
             echo
             for fn in ${{ steps.changed.outputs.list }}; do echo "- \`$fn\`"; done
             echo
-            echo 'Add the secret in Settings → Secrets → Actions to turn this on.'
+            echo 'Fix by either:'
+            echo
+            echo '1. adding `SUPABASE_ACCESS_TOKEN` in Settings → Secrets → Actions'
+            echo '   (generate one at https://supabase.com/dashboard/account/tokens), or'
+            echo '2. deploying by hand from a checkout of this commit:'
+            echo
+            echo '   ```sh'
+            echo '   supabase login'
+            for fn in ${{ steps.changed.outputs.list }}; do
+              echo "   supabase functions deploy $fn --project-ref dduzbchuswwbefdunfct"
+            done
+            echo '   ```'
           } >> "$GITHUB_STEP_SUMMARY"
+          echo '::error::Edge functions changed but no SUPABASE_ACCESS_TOKEN is configured — nothing was deployed. See the job summary.'
+          exit 1
 
       - uses: supabase/setup-cli@v1
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
@@ -138,5 +164,51 @@ jobs:
           # partial-deploy state this workflow exists to avoid.
           if [ -n "$failed" ]; then
             echo "::error::failed to deploy:$failed"
+            exit 1
+          fi
+
+      # "Deployed" is a claim about the CLI's exit code. This asks the running
+      # function instead, because the failure that started all this was invisible
+      # from the deploy side: the function answered 200, it just answered with
+      # the previous build's CORS policy.
+      #
+      # Only functions whose source says they must answer an exact origin are
+      # checked, so the rule is read from the code rather than restated here and
+      # cannot go stale. A wildcard answer means the browser will refuse to send
+      # the session cookie and every call arrives unauthenticated.
+      - name: Verify the deployed CORS contract
+        if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
+        env:
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'dduzbchuswwbefdunfct' }}
+          ORIGIN: ${{ vars.CORS_VERIFY_ORIGIN || 'https://command-centre.npcservices.com.au' }}
+        run: |
+          set -uo pipefail
+          bad=''
+          checked=0
+          for fn in ${{ steps.changed.outputs.list }}; do
+            src="supabase/functions/$fn/index.ts"
+            [ -f "$src" ] || continue
+            # Exact-origin by construction: createCorsHeaders(...), the
+            # withRequestOrigin wrapper, or createTokenAuthCorsHeaders(<origin>).
+            grep -qE 'createCorsHeaders\(|withRequestOrigin|createTokenAuthCorsHeaders\([^)[:space:]]' "$src" || continue
+            checked=$((checked + 1))
+            headers=$(curl -sS -m 30 -D - -o /dev/null -X OPTIONS \
+              "https://$PROJECT_REF.supabase.co/functions/v1/$fn" \
+              -H "Origin: $ORIGIN" \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: content-type,authorization,apikey' \
+              | tr -d '\r' || true)
+            acao=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
+            acac=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-credentials"{print tolower($2)}' | tail -1)
+            if [ "$acao" = "$ORIGIN" ] && [ "$acac" = "true" ]; then
+              echo "- \`$fn\` CORS verified (exact origin + credentials)" >> "$GITHUB_STEP_SUMMARY"
+            else
+              bad="$bad $fn"
+              echo "- \`$fn\` **CORS WRONG** — origin=\`${acao:-<none>}\` credentials=\`${acac:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          echo "verified $checked function(s)"
+          if [ -n "$bad" ]; then
+            echo "::error::deployed but answering the wrong CORS policy:$bad — the browser will not send the session cookie, so every call arrives unauthenticated."
             exit 1
           fi

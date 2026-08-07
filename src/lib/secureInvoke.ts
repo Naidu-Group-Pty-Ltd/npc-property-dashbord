@@ -70,8 +70,39 @@ const COOKIE_CORS_MIGRATING_FUNCTIONS = new Set([
 /**
  * Functions observed this session to still answer a wildcard origin. Remembered
  * so only the FIRST call to each pays for the failed credentialed preflight.
+ *
+ * Membership is also a DIAGNOSIS: the browser refusing a credentialed preflight
+ * proves the deployed function still answers `Access-Control-Allow-Origin: *`,
+ * i.e. it is running a build older than this bundle. See
+ * `describeStaleDeployment`.
  */
 const _uncredentialedFunctions = new Set<string>();
+
+/**
+ * True when this function has been observed refusing the session cookie — the
+ * signature of an edge function that has not been redeployed.
+ */
+export function isStaleFunctionDeployment(functionName: string): boolean {
+  return _uncredentialedFunctions.has(functionName);
+}
+
+/**
+ * The message to show when a function rejects us for being unauthenticated AND
+ * we already know it refused the session cookie.
+ *
+ * This exists because the honest answer and the misleading one are the same
+ * HTTP response. A function that cannot receive the cookie has no credential to
+ * check, so it answers `401 Authentication required` — which reads as "your
+ * session expired" and sends the user to sign out and back in, twice, while the
+ * session was valid the whole time and the real fault was an undeployed
+ * function. Signing in again cannot fix it, so the message must not ask for it.
+ */
+export function describeStaleDeployment(functionName: string): string {
+  return `The ${functionName} service is running an older deployment that cannot `
+    + 'accept your sign-in cookie, so it rejected the request as unauthenticated. '
+    + 'Your session is fine — signing out will not help. Redeploy the Supabase '
+    + `edge functions (supabase functions deploy ${functionName}).`;
+}
 
 /** Human-readable guidance for auth failures from secured edge functions. */
 export function describeAuthError(message: string | undefined | null): string | null {
@@ -335,6 +366,33 @@ export async function invokeSecureFunction<T = any>(
 
       const message = String(data?.error?.message || data?.error || data?.message || '');
       const isAuthFailure = isAuthFailureResponse(response.status, message);
+
+      // ── A function that refused the cookie cannot judge our session ──
+      // We watched this one reject a credentialed preflight, so it never saw a
+      // credential and its 401 says nothing about whether the user is signed
+      // in. Report the real fault instead of the response's wording, and do NOT
+      // trip the global auth breaker — an undeployed function must not clear
+      // this tab's token or stop polling everywhere else.
+      if (isAuthFailure && isStaleFunctionDeployment(functionName)) {
+        const staleMessage = describeStaleDeployment(functionName);
+        console.error('[invokeSecureFunction] Stale function deployment', {
+          functionName,
+          status: response.status,
+          serverMessage: message,
+          correlationId: responseCorrelationId,
+        });
+        return {
+          data: data as T,
+          error: {
+            message: staleMessage,
+            status: response.status,
+            functionName,
+            code: 'function_deployment_stale',
+            correlationId: responseCorrelationId,
+            retryable: false,
+          },
+        };
+      }
 
       // ── One-shot token refresh + retry on auth failure ──
       if (isAuthFailure && !options?._isRetry && functionName !== 'custom-auth-verify-v2') {
