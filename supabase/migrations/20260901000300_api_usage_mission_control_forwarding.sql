@@ -148,3 +148,85 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.api_usage_forwarding_status() TO service_role, authenticated;
+
+-- ─── Operator read model ─────────────────────────────────────────────────────
+--
+-- What the dashboard's Billing tab shows. Admin-gated inside the function
+-- rather than by RLS: `api_usage_log` is service-role-only by design, so a
+-- SECURITY DEFINER reader is the only way to surface it, and a definer that
+-- did not check the caller would hand every signed-in user the vendor spend.
+
+CREATE OR REPLACE FUNCTION public.api_usage_billing_breakdown(_days integer DEFAULT 30)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  _since timestamptz := now() - (GREATEST(COALESCE(_days, 30), 1) || ' days')::interval;
+  _out jsonb;
+BEGIN
+  IF NOT (public.has_role(auth.uid(), 'admin') OR public.has_role(auth.uid(), 'superadmin')) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'forbidden');
+  END IF;
+
+  SELECT jsonb_build_object(
+    'ok', true,
+    'since', _since,
+    'queue', public.api_usage_forwarding_status(),
+    'by_service', COALESCE((
+      SELECT jsonb_agg(x ORDER BY calls DESC)
+      FROM (
+        SELECT l.service_name,
+               COUNT(*) AS calls,
+               jsonb_build_object(
+                 'service_name', l.service_name,
+                 'secret_name', MAX(l.metadata->>'secret_name'),
+                 'calls', COUNT(*),
+                 'tokens', COALESCE(SUM(l.tokens_used), 0),
+                 'errors', COUNT(*) FILTER (WHERE l.status = 'error'),
+                 -- Our own estimate, for a sanity check against what Mission
+                 -- Control charges. It is not the invoice.
+                 'estimated_usd', ROUND(COALESCE(SUM(l.cost_estimate_usd), 0)::numeric, 4),
+                 'billed', COUNT(*) FILTER (WHERE l.mc_billing_reason = 'inherited'),
+                 'own_key', COUNT(*) FILTER (WHERE l.mc_billing_reason = 'byok'),
+                 'unbillable', COUNT(*) FILTER (WHERE l.mc_billing_reason IN ('unknown_secret','rate_missing')),
+                 'not_reported', COUNT(*) FILTER (WHERE l.mc_reported_at IS NULL)
+               ) AS x
+          FROM public.api_usage_log l
+         WHERE l.created_at >= _since
+         GROUP BY l.service_name
+      ) s
+    ), '[]'::jsonb),
+    'by_reason', COALESCE((
+      SELECT jsonb_object_agg(reason, n)
+      FROM (
+        SELECT COALESCE(mc_billing_reason, 'not_reported') AS reason, COUNT(*) AS n
+          FROM public.api_usage_log
+         WHERE created_at >= _since
+         GROUP BY 1
+      ) r
+    ), '{}'::jsonb),
+    -- Calls this deployment made that no map could attribute. These are the
+    -- ones that cost money and can never be recovered, so they are counted
+    -- separately rather than folded into a total.
+    'unmapped_services', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('service_name', service_name, 'calls', n) ORDER BY n DESC)
+      FROM (
+        SELECT service_name, COUNT(*) AS n
+          FROM public.api_usage_log
+         WHERE created_at >= _since
+           AND mc_last_error LIKE 'unmappable_service:%'
+         GROUP BY service_name
+      ) u
+    ), '[]'::jsonb)
+  ) INTO _out;
+
+  RETURN _out;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.api_usage_billing_breakdown(integer) FROM public;
+GRANT EXECUTE ON FUNCTION public.api_usage_billing_breakdown(integer) TO authenticated, service_role;
+
+-- `api_usage_forwarding_status` is called from the breakdown above (which is
+-- already gated) and by the worker. It must not be readable on its own by any
+-- signed-in user, so drop the blanket grant the first pass gave it.
+REVOKE EXECUTE ON FUNCTION public.api_usage_forwarding_status() FROM authenticated;

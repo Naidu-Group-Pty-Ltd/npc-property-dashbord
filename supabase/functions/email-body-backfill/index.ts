@@ -6,6 +6,7 @@
 //   supabase.functions.invoke('email-body-backfill', { body: { limit: 25 } })
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -21,7 +22,7 @@ const corsHeaders = {
 };
 
 async function getAccessToken(): Promise<string> {
-  const r = await fetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token`, {
+  const r = await meteredFetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({

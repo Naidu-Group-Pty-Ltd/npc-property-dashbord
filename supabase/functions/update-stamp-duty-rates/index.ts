@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts'
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts'
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -125,7 +126,7 @@ Deno.serve(async (req) => {
 
         try {
           // Use Firecrawl API directly to scrape the government website
-          const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {
+          const scrapeResponse = await meteredFetch('https://api.firecrawl.dev/v1/scrape', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${firecrawlApiKey}`,

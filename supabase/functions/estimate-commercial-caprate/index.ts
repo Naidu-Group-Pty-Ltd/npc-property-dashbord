@@ -8,6 +8,7 @@ import { checkModuleView } from "../_shared/permissions.ts";
 import { consumeRateLimit, enforceJsonBodyLimit, securityJsonError } from "../_shared/requestSecurity.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 interface Snapshot {
   propertyId?: string;
   dealId?: string;
@@ -161,7 +162,7 @@ Deno.serve(async (req) => {
       },
     }];
 
-    const aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResp = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

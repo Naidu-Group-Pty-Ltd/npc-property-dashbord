@@ -17,6 +17,7 @@ import { canUseAmlCapability, STEP_UP_CAPABILITIES } from "./policy.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -46,7 +47,7 @@ async function deliverCode(email: string, code: string, capability: string) {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   if (!apiKey) return { error: "Step-up email delivery is not configured" };
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await meteredFetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({

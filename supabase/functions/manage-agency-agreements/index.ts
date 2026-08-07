@@ -11,6 +11,7 @@ const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 // ─── DocuSign JWT Grant Auth ──────────────────────────────
 import { SignJWT, importPKCS8 } from 'https://deno.land/x/jose@v5.2.2/index.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 // Convert PKCS#1 PEM to PKCS#8 PEM
 function convertPkcs1ToPkcs8Pem(pem: string): string {

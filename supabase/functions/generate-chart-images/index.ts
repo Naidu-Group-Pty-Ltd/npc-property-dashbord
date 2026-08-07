@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
 
 const corsHeaders = {
@@ -78,7 +79,7 @@ ${chart.type === 'line' ? 'Include data point markers and grid lines' : ''}`;
         try {
           console.log(`Attempt ${retryCount + 1} for chart: ${chart.title}`);
           
-          response = await fetch('https://api.openai.com/v1/images/generations', {
+          response = await meteredFetch('https://api.openai.com/v1/images/generations', {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${openAIApiKey}`,

@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { verifyHuman } from '../_shared/auth_v2.ts';
 import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, getTrustedClientIp, securityJsonError } from '../_shared/requestSecurity.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token', 'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const MIME_TO_EXT: Record<string, string> = { 'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg' };
@@ -42,7 +43,7 @@ Deno.serve(async (req) => {
   try {
     for (const model of ['openai/gpt-4o-mini-transcribe', 'openai/gpt-4o-transcribe'].slice(0, MAX_ATTEMPTS)) {
       const form = new FormData(); form.append('model', model); form.append('file', new Blob([bytes], { type: mimeType }), `recording.${ext}`);
-      const upstream = await fetch('https://ai.gateway.lovable.dev/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: controller.signal });
+      const upstream = await meteredFetch('https://ai.gateway.lovable.dev/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: controller.signal });
       if (upstream.ok) { const data = await upstream.json().catch(() => ({})); return new Response(JSON.stringify({ transcript: String(data?.text ?? '').trim() }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
       console.warn('[market-voice] provider rejected request', { status: upstream.status, correlationId: auth.correlationId, model });
       if (![400, 404, 422].includes(upstream.status)) break;

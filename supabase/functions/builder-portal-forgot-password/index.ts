@@ -16,6 +16,7 @@ import { getBrandConfig } from '../_shared/brand-config.ts';
 import { hashSessionToken } from '../_shared/sessionHash.ts';
 import { validateBuilderPortalRequest } from '../_shared/builderSessionToken.ts';
 import { auditBuilderIdentity } from '../_shared/builderSessions.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -111,7 +112,7 @@ Deno.serve(async (req) => {
 
     if (resendApiKey) {
       try {
-        await fetch('https://api.resend.com/emails', {
+        await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendApiKey}` },
           body: JSON.stringify({

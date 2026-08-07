@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { generateOtp, hashResetToken } from "../_shared/resetTokens.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -90,7 +91,7 @@ Deno.serve(async (req) => {
       const brand = await getBrandConfig(supabase);
       const clientName = (portalUser.clients as any)?.primary_first_name || 'there';
       try {
-        const emailRes = await fetch('https://api.resend.com/emails', {
+        const emailRes = await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

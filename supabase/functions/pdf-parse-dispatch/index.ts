@@ -31,6 +31,7 @@ import {
 } from '../_shared/pdfCacheContract.pure.ts';
 import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 import { resolvePdfDescriptionTier } from '../_shared/pdfDescriptionTier.pure.ts';
+import { meteredFetch } from '../_shared/meteredFetch.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -706,7 +707,7 @@ async function callSidecarPlan(
     const maxChunkPages = typeof requestPayload?.max_chunk_pages === 'number' && Number.isFinite(requestPayload.max_chunk_pages)
       ? requestPayload.max_chunk_pages
       : null;
-    const res = await fetch(`${PARSE_URL.replace(/\/$/, '')}/plan`, {
+    const res = await meteredFetch(`${PARSE_URL.replace(/\/$/, '')}/plan`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -719,7 +720,7 @@ async function callSidecarPlan(
         max_chunk_pages: maxChunkPages,
         force_chunking: requestPayload?.force_chunked === true,
       }),
-    });
+    }, { secretName: 'PDF_PARSE_SERVICE_TOKEN', feature: 'pdf-parse/sidecar' });
     if (!res.ok) {
       console.warn('[pdf-parse-dispatch] /plan returned', res.status);
       return null;
@@ -790,7 +791,7 @@ async function dispatchChunkToSidecar(
     raster_format: 'png',
   };
   try {
-    const res = await fetch(`${PARSE_URL.replace(/\/$/, '')}/parse-chunk`, {
+    const res = await meteredFetch(`${PARSE_URL.replace(/\/$/, '')}/parse-chunk`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -798,7 +799,7 @@ async function dispatchChunkToSidecar(
         'X-Request-Id': jobId,
       },
       body: JSON.stringify(body),
-    });
+    }, { secretName: 'PDF_PARSE_SERVICE_TOKEN', feature: 'pdf-parse/sidecar' });
     if (res.status !== 202) {
       const text = await res.text().catch(() => '');
       console.error('[pdf-parse-dispatch] /parse-chunk non-202', { jobId, chunkIndex: chunk.chunk_index, status: res.status, text: text.slice(0, 300) });
@@ -1005,7 +1006,7 @@ async function runJob(
     for (let attempt = 1; attempt <= MAX_SIDECAR_ATTEMPTS; attempt++) {
       const attemptStarted = Date.now();
       try {
-        const parseRes = await fetch(`${PARSE_URL.replace(/\/$/, '')}/parse`, {
+        const parseRes = await meteredFetch(`${PARSE_URL.replace(/\/$/, '')}/parse`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1013,7 +1014,7 @@ async function runJob(
             'X-Request-Id': jobId,
           },
           body: JSON.stringify(parseBody),
-        });
+        }, { secretName: 'PDF_PARSE_SERVICE_TOKEN', feature: 'pdf-parse/sidecar' });
         const text = await parseRes.text().catch(() => '');
         if (parseRes.status === 202) {
           await appendAttempt(admin, jobId, { endpoint: '/parse', attempt, status: 202, ok: true, duration_ms: Date.now() - attemptStarted, mode: 'callback', selected_lane: selectedLane, requested_mode: mode, effective_mode: effectiveMode });

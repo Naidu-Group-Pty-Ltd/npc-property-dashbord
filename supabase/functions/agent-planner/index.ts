@@ -9,6 +9,7 @@ import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!;
@@ -87,7 +88,7 @@ async function planWithLLM(goal: string, skillPrompt?: string): Promise<Array<{ 
     { role: 'system', content: PLANNER_SYSTEM + (skillPrompt ? `\n\n===== ACTIVE SKILL =====\n${skillPrompt}` : '') },
     { role: 'user', content: `Goal:\n${goal}\n\nReturn ONLY JSON.` },
   ];
-  const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+  const res = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Lovable-API-Key': LOVABLE_API_KEY },
     body: JSON.stringify({ model: PLANNER_MODEL, messages, response_format: { type: 'json_object' } }),

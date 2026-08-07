@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { MultiSelectFilter } from '@/components/api-usage/MultiSelectFilter';
+import { BillingRecoveryTab } from '@/components/api-usage/BillingRecoveryTab';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import {
   Activity,
@@ -685,6 +686,7 @@ export default function ApiUsage() {
             <TabsTrigger value="budget" className={API_USAGE_TAB_TRIGGER}>Budget</TabsTrigger>
             <TabsTrigger value="performance" className={API_USAGE_TAB_TRIGGER}>Performance</TabsTrigger>
             <TabsTrigger value="services" className={API_USAGE_TAB_TRIGGER}>Services</TabsTrigger>
+            <TabsTrigger value="billing" className={API_USAGE_TAB_TRIGGER}>Key Billing</TabsTrigger>
             <TabsTrigger value="logs" className={API_USAGE_TAB_TRIGGER}>Logs</TabsTrigger>
           </TabsList>
         </DashboardThemeFrame>
@@ -1497,6 +1499,13 @@ export default function ApiUsage() {
         </TabsContent>
 
         {/* ==================== Logs Tab ==================== */}
+        {/* ==================== Key Billing Tab ==================== */}
+        {/* Whose key paid for each call, and what is escaping the meter. See
+            docs/integrations/API_USAGE_METERING.md. */}
+        <TabsContent value="billing" className="mt-4 min-w-0 space-y-4">
+          <BillingRecoveryTab />
+        </TabsContent>
+
         <TabsContent value="logs" className="mt-4 min-w-0 space-y-4">
           {data && (
             <>

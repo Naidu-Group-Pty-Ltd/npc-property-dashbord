@@ -5,6 +5,7 @@ import { validatePasswordStrength } from "../_shared/passwordValidation.ts";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 // Simple email sending via Resend REST API
 async function sendEmail(to: string, subject: string, html: string): Promise<{ success: boolean; error?: string }> {
@@ -15,7 +16,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ s
   
   try {
     const brand = await getBrandConfig();
-    const response = await fetch("https://api.resend.com/emails", {
+    const response = await meteredFetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${resendApiKey}`,

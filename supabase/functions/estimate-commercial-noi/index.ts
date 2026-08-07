@@ -10,6 +10,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { buildNoiPromptSnapshot } from "./promptSnapshot.ts";
 import { consumeRateLimit } from "../_shared/requestSecurity.ts";
 import { isRequestBody, readBoundedJson, RequestTooLargeError } from "./requestGuards.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 interface Snapshot {
   propertyId?: string;
   address?: string;
@@ -208,7 +209,7 @@ Deno.serve(async (req) => {
       },
     }];
 
-    const aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResp = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({

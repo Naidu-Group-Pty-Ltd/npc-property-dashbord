@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
 const MICROSOFT_TENANT_ID = Deno.env.get('MICROSOFT_TENANT_ID');
@@ -221,7 +222,7 @@ async function getFreeBusy(
 
   // Use /users/{first-email}/calendar/getSchedule instead of /me/ (no /me/ with app-only tokens)
   const scheduleEmail = emails[0];
-  const res = await fetch(
+  const res = await meteredFetch(
     `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(scheduleEmail)}/calendar/getSchedule`,
     {
       method: 'POST',
@@ -451,7 +452,7 @@ Deno.serve(async (req) => {
       // Test 1: Can we resolve the user in the directory?
       let userTest = { success: false, error: '' };
       try {
-        const userRes = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(testEmail)}?$select=id,displayName,mail,userPrincipalName`, {
+        const userRes = await meteredFetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(testEmail)}?$select=id,displayName,mail,userPrincipalName`, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         if (userRes.ok) {
