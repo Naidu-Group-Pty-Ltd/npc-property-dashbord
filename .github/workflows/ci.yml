@@ -144,7 +144,8 @@ jobs:
       - name: Unit tests (PDF-import sidecar, pure modules)
         run: |
           cd pdf-parse-service
-          python3 -m unittest test_lane_policy test_ocr_config test_operational_metrics test_chart_candidates -v
+          python3 -m unittest test_lane_policy test_ocr_config test_operational_metrics \
+            test_chart_candidates test_chart_series_wiring -v
 
       - name: Build
         run: npm run build
