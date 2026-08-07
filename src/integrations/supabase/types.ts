@@ -18929,8 +18929,10 @@ export type Database = {
           aggregate_type: string
           attempts: number
           available_at: string
+          causation_id: string | null
           correlation_id: string
           created_at: string
+          destination_class: string | null
           event_type: string
           event_version: number
           id: string
@@ -18939,7 +18941,10 @@ export type Database = {
           locked_at: string | null
           locked_by: string | null
           occurred_at: string
+          partner_case_link_id: string | null
+          partner_org_id: string | null
           payload: Json
+          payload_classification: string | null
           processed_at: string | null
         }
         Insert: {
@@ -18947,8 +18952,10 @@ export type Database = {
           aggregate_type: string
           attempts?: number
           available_at?: string
+          causation_id?: string | null
           correlation_id?: string
           created_at?: string
+          destination_class?: string | null
           event_type: string
           event_version?: number
           id?: string
@@ -18957,7 +18964,10 @@ export type Database = {
           locked_at?: string | null
           locked_by?: string | null
           occurred_at?: string
+          partner_case_link_id?: string | null
+          partner_org_id?: string | null
           payload?: Json
+          payload_classification?: string | null
           processed_at?: string | null
         }
         Update: {
@@ -18965,8 +18975,10 @@ export type Database = {
           aggregate_type?: string
           attempts?: number
           available_at?: string
+          causation_id?: string | null
           correlation_id?: string
           created_at?: string
+          destination_class?: string | null
           event_type?: string
           event_version?: number
           id?: string
@@ -18975,7 +18987,10 @@ export type Database = {
           locked_at?: string | null
           locked_by?: string | null
           occurred_at?: string
+          partner_case_link_id?: string | null
+          partner_org_id?: string | null
           payload?: Json
+          payload_classification?: string | null
           processed_at?: string | null
         }
         Relationships: []
@@ -36368,8 +36383,10 @@ export type Database = {
           aggregate_type: string
           attempts: number
           available_at: string
+          causation_id: string | null
           correlation_id: string
           created_at: string
+          destination_class: string | null
           event_type: string
           event_version: number
           id: string
@@ -36378,7 +36395,10 @@ export type Database = {
           locked_at: string | null
           locked_by: string | null
           occurred_at: string
+          partner_case_link_id: string | null
+          partner_org_id: string | null
           payload: Json
+          payload_classification: string | null
           processed_at: string | null
         }[]
         SetofOptions: {
