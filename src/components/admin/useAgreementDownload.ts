@@ -48,34 +48,9 @@ export function useAgreementDownload() {
         throw new Error((data as any)?.error || error?.message || 'The copy could not be produced');
       }
 
-      // A popup opened after an await is no longer inside the user's gesture, so
-      // `window.open` is silently swallowed by the blocker and the toast lies.
-      // Fetch the bytes and hand them to an anchor instead, which always lands.
-      const signedUrl = data.url as string;
-      const suggestedName = (data as any)?.file_name
-        || decodeURIComponent(signedUrl.split('download=')[1]?.split('&')[0] || '')
-        || 'executed-agreement.pdf';
-
-      let objectUrl: string | null = null;
-      try {
-        const res = await fetch(signedUrl, { credentials: 'omit' });
-        if (!res.ok) throw new Error(`The stored copy could not be read (${res.status})`);
-        objectUrl = URL.createObjectURL(await res.blob());
-      } catch {
-        objectUrl = null;
-      }
-
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl || signedUrl;
-      anchor.download = suggestedName;
-      anchor.rel = 'noopener noreferrer';
-      if (!objectUrl) anchor.target = '_blank';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl as string), 60_000);
-
+      await deliverSignedDownload(data.url as string, (data as any)?.file_name);
       toast.success('The executed agreement is downloading.');
+
 
     } catch (e: any) {
       toast.error(e?.message || 'The copy could not be produced');
