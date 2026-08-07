@@ -297,8 +297,23 @@ async function sha256Text(text: string): Promise<string> {
  * artifacts for the affected modes automatically — which is correct, the old
  * ones are lower-resolution than the contract now promises.
  */
-function requestedRasterDpi(mode: string): number {
-  return (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 300 : 200;
+function requestedRasterDpi(_mode: string): number {
+  // 300 for every mode that rasters at all, and the reason is the raster-only
+  // downgrade path. The quality gate decides AFTER the parse that a page cannot
+  // be rebuilt natively, and promotes that page's raster from alignment
+  // underlay to final output — see applyCriticalContainment / pageFidelityDecision.
+  // A mode-dependent DPI therefore means the pages that lost their native
+  // layers, and so have the least fidelity left, are also the ones stuck with
+  // the weakest asset. Rastering everything at the print floor removes the
+  // problem instead of requiring a second round trip to re-raster after the
+  // decision.
+  //
+  // Affordable because of the reference-mode transport: rasters are fetched by
+  // WeasyPrint from storage rather than base64-inlined into a 25 MB payload, so
+  // page count no longer bounds resolution. The remaining cost is sidecar
+  // parse time and memory, which scale with DPI^2 — dial back here first if a
+  // raster-heavy corpus regresses.
+  return 300;
 }
 
 // pdf-cache-contract-v2 fingerprint. Computed pre-plan from request-level policy

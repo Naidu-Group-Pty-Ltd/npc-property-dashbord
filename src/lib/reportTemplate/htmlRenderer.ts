@@ -533,8 +533,20 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
       blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));
     }
   }
-  // Final source-crop elements from the E6 plan (final-output only).
-  const regionCropsHtml = (!regionPlan || regionPlan.pageOutputStrategy === 'raster-only')
+  // Final source-crop elements from the E6 plan.
+  //
+  // These crops are rendered at SOURCE_SCENE_CROP_DPI (300), and chart regions
+  // at CHART_CROP_MIN_DPI (300) — materially sharper than the page raster
+  // underneath them. They used to be suppressed on raster-only pages, which
+  // meant the pages that had ALREADY lost their native layers, and so had the
+  // least fidelity left, were also denied the highest-resolution assets in the
+  // system. That is backwards: a raster-only page is exactly where a crisp
+  // chart or table crop earns the most.
+  //
+  // Painting them over the page raster is safe because both come from the same
+  // source page at the same geometry — the crop lands exactly on top of the
+  // region it was cut from, replacing a blurrier copy of itself.
+  const regionCropsHtml = !regionPlan
     ? '' : buildFinalCropElementsHtml(regionPlan, {
       escapeHtml,
       resolveSrc: (crop) => {
