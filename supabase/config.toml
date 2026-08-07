@@ -1187,3 +1187,9 @@ verify_jwt = false
 
 [functions.authenticated-data]
 verify_jwt = false
+
+# Cron-driven drain of `api_usage_log` into Mission Control's per-tenant API-key
+# metering. Auth is enforced in-function (INTERNAL_EDGE_SECRET or the cron
+# secret, constant-time compared) because pg_cron carries no user JWT.
+[functions.report-api-usage]
+verify_jwt = false
