@@ -58,6 +58,7 @@ export function PartnerAgreementsPanel({
   const [records, setRecords] = useState<AgreementRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +76,33 @@ export function PartnerAgreementsPanel({
   }, [portal]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const missingCopies = records.filter((record) => !record.agreement_storage_path).length;
+
+  const saveMissing = async () => {
+    setSaving(true);
+    try {
+      const { data, error } = await invokeSecureFunction('partner-agreement-records', {
+        operation: 'save_missing_copies',
+        portal,
+      });
+      if (error || !data?.success) {
+        throw new Error((data as any)?.error || error?.message || 'The copies could not be saved');
+      }
+      const failed = (data.failed ?? []) as { acceptance_id: string; error: string }[];
+      if (failed.length) {
+        // Named, not counted: an operator needs to know which record and why.
+        toast.warning(`Saved ${data.saved}. ${failed.length} could not be produced: ${failed[0].error}`);
+      } else {
+        toast.success(`Saved ${data.saved} executed ${data.saved === 1 ? 'agreement' : 'agreements'}.`);
+      }
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message || 'The copies could not be saved');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const download = async (record: AgreementRecord) => {
     setDownloading(record.acceptance_id);
@@ -111,10 +139,22 @@ export function PartnerAgreementsPanel({
             acceptance detail held for audit. Download the executed copy to supply it on request.
           </CardDescription>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="gap-2">
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden />
-          Refresh
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* "Saved" should not depend on somebody having clicked Download.
+              This produces and stores the copy for every executed agreement
+              that has not got one yet. */}
+          {missingCopies > 0 ? (
+            <Button variant="default" size="sm" onClick={() => void saveMissing()} disabled={saving} className="gap-2">
+              {saving
+                ? <><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Saving…</>
+                : <><FileSignature className="h-4 w-4" aria-hidden /> Save {missingCopies} missing {missingCopies === 1 ? 'copy' : 'copies'}</>}
+            </Button>
+          ) : null}
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="gap-2">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden />
+            Refresh
+          </Button>
+        </div>
       </CardHeader>
 
       <CardContent>
@@ -139,6 +179,7 @@ export function PartnerAgreementsPanel({
                   <TableHead>Accepted by</TableHead>
                   <TableHead>Accepted</TableHead>
                   <TableHead>Version</TableHead>
+                  <TableHead>Copy</TableHead>
                   <TableHead>Acknowledgments</TableHead>
                   <TableHead className="text-right">Executed copy</TableHead>
                 </TableRow>
@@ -171,6 +212,15 @@ export function PartnerAgreementsPanel({
                           {record.document_hash.slice(0, 12)}
                         </div>
                       ) : null}
+                    </TableCell>
+                    <TableCell>
+                      {record.agreement_storage_path ? (
+                        <Badge variant="outline" className="gap-1 text-success">
+                          <FileSignature className="h-3 w-3" aria-hidden /> Saved
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Not saved yet</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {record.acknowledgements?.length ? (

@@ -13,6 +13,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
+import { useAgreementDownload } from '@/components/admin/useAgreementDownload';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/AdminBuilderProjectsPanel';
 import { AdminBuilderInventoryPanel } from '@/components/admin/builder-portal/AdminBuilderInventoryPanel';
@@ -359,6 +360,7 @@ export default function BuilderPortalAdmin() {
    * tab mid-task.
    */
   const [primaryTab, setPrimaryTab] = useState('users');
+  const { downloadForUser, downloadingUserId } = useAgreementDownload();
   const [projectSection, setProjectSection] = useState('projects');
 
   const [confirm, setConfirm] = useState<ConfirmAction>(null);
@@ -1412,6 +1414,18 @@ export default function BuilderPortalAdmin() {
                                   >
                                     <LogOut className="mr-2 h-4 w-4" aria-hidden />
                                     Revoke sessions
+                                  </DropdownMenuItem>
+
+                                  {/* Where the question is actually asked. A
+                                      partner rings up wanting their agreement;
+                                      the staff user is looking at this row, not
+                                      at the Agreements tab. */}
+                                  <DropdownMenuItem
+                                    disabled={downloadingUserId === user.id}
+                                    onClick={() => void downloadForUser('builder', user.id, user.name)}
+                                  >
+                                    <FileSignature className="mr-2 h-4 w-4" aria-hidden />
+                                    {downloadingUserId === user.id ? 'Preparing agreement…' : 'Download agreement'}
                                   </DropdownMenuItem>
                           
                                   <DropdownMenuSeparator />

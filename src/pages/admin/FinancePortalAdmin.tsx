@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
+import { useAgreementDownload } from '@/components/admin/useAgreementDownload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +22,7 @@ import {
   Ban, CheckCircle2, History, Settings, Users, Copy,
   BarChart3, FileSpreadsheet, FileText, DollarSign, UserPlus,
   Pencil, Trash2, CircleDot, ShieldCheck,
+  FileSignature,
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -81,6 +83,7 @@ export default function FinancePortalAdmin() {
   const [assignmentsForUser, setAssignmentsForUser] = useState<FinanceUserRow | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editUser, setEditUser] = useState<FinanceUserRow | null>(null);
+  const { downloadForUser, downloadingUserId } = useAgreementDownload();
   const [deleteUser, setDeleteUser] = useState<FinanceUserRow | null>(null);
   const [inviteDialog, setInviteDialog] = useState<{ open: boolean; user: FinanceUserRow | null; isResend: boolean }>({ open: false, user: null, isResend: false });
   const [globalPermsForUser, setGlobalPermsForUser] = useState<FinanceUserRow | null>(null);
@@ -492,6 +495,20 @@ export default function FinancePortalAdmin() {
                                 <Pencil className="h-4 w-4 mr-2" />
                                 Edit Contact Details
                               </DropdownMenuItem>
+                              {/* Only a contact with a portal account can have
+                                  executed anything: the agreement is accepted in
+                                  the portal, by a portal user. */}
+                              {u.portal_user?.id ? (
+                                <DropdownMenuItem
+                                  disabled={downloadingUserId === u.portal_user.id}
+                                  onClick={() => void downloadForUser('finance', u.portal_user!.id, u.name)}
+                                >
+                                  <FileSignature className="h-4 w-4 mr-2" />
+                                  {downloadingUserId === u.portal_user.id
+                                    ? 'Preparing agreement…'
+                                    : 'Download agreement'}
+                                </DropdownMenuItem>
+                              ) : null}
                               <DropdownMenuSeparator />
                               {(u.status === 'no_access' || u.status === 'invite_expired') && (
                                 <DropdownMenuItem onClick={() => setInviteDialog({ open: true, user: u, isResend: false })}>

@@ -97,8 +97,9 @@ the acknowledgments that were asserted.
 | Concern | File |
 | --- | --- |
 | The document itself (pure, no I/O) | `supabase/functions/_shared/partnerAgreementDocument.pure.ts` |
-| List / download for the Command Centre | `supabase/functions/partner-agreement-records/index.ts` |
+| List / download / save for the Command Centre | `supabase/functions/partner-agreement-records/index.ts` |
 | The Command Centre section (all three tabs) | `src/components/admin/PartnerAgreementsPanel.tsx` |
+| The row action on a portal user | `src/components/admin/useAgreementDownload.ts` |
 | Columns, bucket and view | `supabase/migrations/20260901000900_partner_agreement_records.sql` |
 
 **Generated on first download, then kept.** Not at acceptance: an acceptance
@@ -108,6 +109,26 @@ The first request renders and stores; every later one serves the same bytes. The
 object is written with `upsert: false` and the path is stamped only while it is
 still null, so the copy a partner holds and the copy the operator holds are the
 same document.
+
+**Saved without waiting for a click.** "Retained" cannot mean "retained once a
+staff user happened to open it". The Agreements section offers **Save N missing
+copies** whenever a listed acceptance has no stored artefact;
+`save_missing_copies` renders them in one pass. It is bounded (`MAX_BATCH = 25`)
+and sequential on purpose — a burst of renders from one click would take down the
+PDF service the reports also use — and one unrenderable record is reported by id
+rather than stopping the rest.
+
+**Reachable from the row, not only from the tab.** The Agreements section is
+where agreements are audited; it is not where a staff user is standing when a
+partner rings and asks for their copy. **Download agreement** is therefore also
+in the "…" menu of every portal-user row in all three tabs, through
+`useAgreementDownload`. That path asks by *portal user*, because a row knows who
+it is and not which acceptance is current — the server resolves the most recent
+acceptance for that user, generates the copy if it does not exist yet, and mints
+the same short-lived signed URL. A partner who has never accepted returns
+`NO_AGREEMENT_ON_RECORD`, which the UI states plainly rather than surfacing a 404
+or an empty PDF. Finance shows the item only for a contact that has a portal
+account, since nothing else can have executed anything.
 
 **White-label.** The operator side is drawn from the Command Centre brand
 configuration and snapshotted onto the acceptance at generation, because
