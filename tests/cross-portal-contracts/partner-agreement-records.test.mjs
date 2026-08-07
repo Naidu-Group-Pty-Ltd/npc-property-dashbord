@@ -227,3 +227,46 @@ test('a copy is saved without waiting for someone to click Download', () => {
   // The panel says which rows are saved rather than leaving it implied.
   assert.match(panel, /Not saved yet/);
 });
+
+test('the Command Centre can tell when the service is older than the app', () => {
+  // Merging is not deploying, and the gap is silent by construction: the merge
+  // is green, the workflow runs, and the only symptom is a PDF that looks the
+  // way it looked before. That is how three portals' agreements kept coming out
+  // in the previous format for a day after the document was rebuilt.
+  //
+  // The frontend ships on the site build, which does deploy. So the app carries
+  // the revision it expects and the function reports the one it runs.
+  const revision = read('supabase/functions/_shared/partnerAgreementRevision.pure.ts');
+  assert.match(revision, /export const AGREEMENT_DOCUMENT_REVISION = \d+/);
+  // No imports at all: the browser must be able to read this number without
+  // pulling the report stylesheet into the bundle.
+  assert.doesNotMatch(revision, /^import /m);
+
+  // One definition. The document module re-exports rather than restating.
+  assert.match(doc, /export \{[\s\S]{0,200}AGREEMENT_DOCUMENT_REVISION[\s\S]{0,200}\} from '\.\/partnerAgreementRevision\.pure\.ts'/);
+  assert.doesNotMatch(doc, /const AGREEMENT_DOCUMENT_REVISION = /);
+
+  // Reported on both paths a copy can be produced through.
+  assert.match(fn, /document_revision: AGREEMENT_DOCUMENT_REVISION/);
+  assert.equal(fn.match(/document_revision: AGREEMENT_DOCUMENT_REVISION/g).length, 2);
+
+  // A function that reports nothing is a function deployed before this existed,
+  // which is precisely the state worth naming — so it reads as 1, not as
+  // "unknown, assume fine".
+  assert.match(revision, /const running = typeof reported === 'number' && Number\.isFinite\(reported\) \? reported : 1/);
+  assert.match(revision, /if \(running < expected\) return 'behind'/);
+
+  // And both surfaces say so: the panel in a banner, the row action in a toast
+  // after the file has already gone to a partner.
+  assert.match(panel, /agreementServiceState\(serviceRevision\) === 'behind'/);
+  assert.match(panel, /previous document format/);
+  assert.match(rowAction, /agreementServiceState\(/);
+  assert.match(rowAction, /previous document format/);
+  // Read through the bridge, so the app and the function share one number.
+  for (const [name, source] of [['panel', panel], ['row action', rowAction]]) {
+    assert.match(
+      source, /from '@\/lib\/reports\/partnerAgreement\/revision\.pure'/,
+      `${name} does not read the revision from the shared module`,
+    );
+  }
+});

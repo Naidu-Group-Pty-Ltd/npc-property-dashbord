@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Download, FileSignature, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Download, FileSignature, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { deliverSignedDownload } from './deliverSignedDownload';
 
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { agreementServiceState } from '@/lib/reports/partnerAgreement/revision.pure';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 /**
@@ -71,6 +73,14 @@ export function PartnerAgreementsPanel({
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  /**
+   * The document revision the deployed function reports.
+   *
+   * `null` until the first load, and **`null` afterwards means the function did
+   * not report one** — which is a function deployed before revisions existed,
+   * and therefore one still rendering the previous document.
+   */
+  const [serviceRevision, setServiceRevision] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +93,9 @@ export function PartnerAgreementsPanel({
       setRecords([]);
     } else {
       setRecords((data.records ?? []) as AgreementRecord[]);
+      setServiceRevision(
+        typeof (data as any).document_revision === 'number' ? (data as any).document_revision : 1,
+      );
     }
     setLoading(false);
   }, [portal]);
@@ -96,6 +109,11 @@ export function PartnerAgreementsPanel({
   const copyState = (record: AgreementRecord): CopyState =>
     record.copy_state ?? (record.agreement_storage_path ? 'current' : 'missing');
   const missingCopies = records.filter((record) => copyState(record) !== 'current').length;
+
+  // Merging is not deploying. When the function is behind this build, every
+  // copy it produces — from this panel and from the row action alike — is the
+  // previous document, and nothing else on the page would say so.
+  const serviceBehind = serviceRevision !== null && agreementServiceState(serviceRevision) === 'behind';
 
   const saveMissing = async () => {
     setSaving(true);
@@ -179,6 +197,23 @@ export function PartnerAgreementsPanel({
       </CardHeader>
 
       <CardContent>
+        {/* The one thing this panel cannot work out from its own data: whether
+            the service rendering these copies is the one this build expects.
+            Said here rather than left to be discovered in a partner's inbox —
+            which is how it was discovered the first time. */}
+        {serviceBehind ? (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangle className="h-4 w-4" aria-hidden />
+            <AlertTitle>Agreement service is running an earlier version</AlertTitle>
+            <AlertDescription>
+              Copies produced right now — from this section and from the Download agreement action
+              on a portal user — will be in the <strong>previous document format</strong>, not the
+              current one. The <code>partner-agreement-records</code> edge function needs deploying;
+              re-issue the copies from here once it is.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {loading ? (
           <div className="space-y-2" aria-busy="true">
             <span className="sr-only">Loading executed agreements…</span>

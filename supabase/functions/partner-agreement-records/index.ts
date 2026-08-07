@@ -45,9 +45,12 @@ import {
   agreementFileName,
   agreementStoragePath,
   buildPartnerAgreementDocument,
-  hasCurrentAgreementCopy,
   PORTAL_LABELS,
 } from '../_shared/partnerAgreementDocument.pure.ts';
+import {
+  AGREEMENT_DOCUMENT_REVISION,
+  hasCurrentAgreementCopy,
+} from '../_shared/partnerAgreementRevision.pure.ts';
 
 const BUCKET = 'partner-agreements';
 const SIGNED_URL_TTL_SECONDS = 300;
@@ -125,7 +128,11 @@ Deno.serve(async (req) => {
           : hasCurrentAgreementCopy(record.agreement_storage_path) ? 'current' : 'superseded',
       }));
 
-      return json({ success: true, records });
+      // The revision this deployment renders, so the Command Centre can say
+      // whether the service it is talking to is the one its own build expects.
+      // Merging is not deploying, and when those two diverge the only symptom
+      // is a PDF that looks wrong to whoever asked for it to look right.
+      return json({ success: true, records, document_revision: AGREEMENT_DOCUMENT_REVISION });
     }
 
     if (operation === 'download_record') {
@@ -209,6 +216,10 @@ Deno.serve(async (req) => {
         url: signed.signedUrl,
         file_name: agreementFileName(record.organisation_name, record.accepted_at),
         expires_in: SIGNED_URL_TTL_SECONDS,
+        // Reported on the download too, not only on the list: the row action in
+        // the portal-users table never calls `list_records`, and it is the path
+        // a partner's copy is most often supplied through.
+        document_revision: AGREEMENT_DOCUMENT_REVISION,
       });
     }
 

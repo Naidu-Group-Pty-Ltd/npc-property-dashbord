@@ -34,6 +34,7 @@
  * the Command Centre hand a partner "the" copy rather than "a" copy.
  */
 
+import { AGREEMENT_DOCUMENT_REVISION } from './partnerAgreementRevision.pure.ts';
 import type { CompanyDisclaimer } from './reportDesign/companyBlock.pure.ts';
 import { buildReportCss } from './reportDesign/css.pure.ts';
 import { resolveSnapshotBrand } from './reportDesign/documentBrand.pure.ts';
@@ -634,21 +635,21 @@ export const PORTAL_LABELS: Record<string, string> = {
 };
 
 /**
- * The revision of this template a stored copy was produced by.
+ * The revision, and the two helpers that read it off a path, live in
+ * `partnerAgreementRevision.pure.ts` — a module with no imports, because the
+ * Command Centre needs the same number and importing this file into the browser
+ * to read one integer would pull the whole report stylesheet into the bundle.
  *
- * A copy is written once and never overwritten — that is what lets the Command
- * Centre say the bytes a partner holds are the bytes it holds. It is also why
- * improving the document would otherwise reach only agreements executed after
- * the improvement: every copy already on disk would keep the old presentation
- * for ever, and two partners asking for their agreement on the same day would
- * receive two different-looking documents.
- *
- * So the revision is part of the object's path. A re-issue writes a **new**
- * object rather than replacing one, the old bytes stay exactly where they were,
- * and the acceptance points at the current copy. Bump this when the document's
- * presentation changes materially; `save_missing_copies` then re-issues.
+ * Re-exported here so every caller that already reaches for the document module
+ * keeps working, and so there is still exactly one definition.
  */
-export const AGREEMENT_DOCUMENT_REVISION = 2;
+export {
+  AGREEMENT_DOCUMENT_REVISION,
+  agreementRevisionForPath,
+  agreementServiceState,
+  hasCurrentAgreementCopy,
+  type AgreementServiceState,
+} from './partnerAgreementRevision.pure.ts';
 
 /**
  * `builder/2026/<acceptance id>.pdf` — sortable, and one object per acceptance
@@ -668,24 +669,6 @@ export function agreementStoragePath(
     : new Date(acceptedAt).getUTCFullYear().toString();
   const suffix = revision > 1 ? `-r${revision}` : '';
   return `${portal}/${year}/${acceptanceId}${suffix}.pdf`;
-}
-
-/** Which revision produced the copy at this path. */
-export function agreementRevisionForPath(path: string | null | undefined): number {
-  if (!path) return 0;
-  const match = /-r(\d+)\.pdf$/.exec(path);
-  return match ? Number(match[1]) : 1;
-}
-
-/**
- * Whether this acceptance has a copy produced by the current template.
- *
- * `false` covers both "no copy at all" and "a copy the template has moved on
- * from"; the caller treats them the same way, because from a partner's side
- * they are the same problem.
- */
-export function hasCurrentAgreementCopy(path: string | null | undefined): boolean {
-  return agreementRevisionForPath(path) >= AGREEMENT_DOCUMENT_REVISION;
 }
 
 /** `Partner-Agreement-Kopi-Jantan-Builders-2026-08-07.pdf`, or a safe fallback. */
