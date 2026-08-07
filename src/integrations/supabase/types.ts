@@ -36644,6 +36644,7 @@ export type Database = {
         Args: { p_email: string; p_max: number }
         Returns: {
           firm_id: string
+          invite_accepted_at: string
           reset_token: string
           status: string
           user_id: string
