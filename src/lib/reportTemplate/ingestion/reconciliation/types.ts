@@ -31,7 +31,11 @@ export interface ImportAsset {
   createdAt: string;
 }
 
-export type RawImportBlockType = 'text' | 'image' | 'shape' | 'table' | 'formula' | 'code' | 'vector' | 'unknown';
+// W3 — 'chart' lets the import IR carry a reconstructed chart at all. Without
+// it `pictureItemToBlock` had no choice but to emit `type: 'image'` even when
+// Docling had classified the picture as `bar_chart`: the class rode along in
+// meta and was then dropped, so a chart could only ever become a picture.
+export type RawImportBlockType = 'text' | 'image' | 'shape' | 'table' | 'formula' | 'code' | 'vector' | 'chart' | 'unknown';
 export type RawImportBlockSource = 'pdf-text' | 'ocr' | 'vision' | 'detected' | 'dom';
 
 export interface ImportBBox {
@@ -73,6 +77,24 @@ export interface RawImportBlock {
     listGroupId?: string;
     /** Monotonic reading-order index within the page (Docling document order). */
     readingOrder?: number;
+    /**
+     * W3 — a reconstructed chart, present only when the sidecar extracted
+     * series AND `chartArbitration` cleared it for native rendering. Absent
+     * means the chart stays a source crop, which is the safe default and by far
+     * the common case.
+     */
+    chartData?: {
+      chartKind: string;
+      series: Array<{ label: string; value: number; color?: string }>;
+      title?: string;
+      renderMode: string;
+      defects: string[];
+      manualReviewRequired: boolean;
+      sourceCropUrl?: string;
+      sourceRegionId?: string;
+      axisScaleR2?: number;
+      detectionMethod?: string;
+    };
     /** Parsed table cell grid — row-major strings, plus the header row count. */
     tableData?: {
       rows: string[][];

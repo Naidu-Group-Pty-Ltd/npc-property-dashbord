@@ -24,6 +24,7 @@ import type {
 import type { DoclingDocument, DoclingPageInfo, DoclingRasterByPage } from './doclingTypes';
 import { mapDoclingToRawBlocks } from './mapDoclingToRawBlocks';
 import { deriveNativeHeaderPolicy, TABLE_PRESERVATION_VERSION } from '../tableArbitration.pure';
+import { CHART_ARBITRATION_VERSION as CHART_PRESERVATION_VERSION } from '../chartArbitration.pure';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
 
@@ -122,6 +123,33 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       letterSpacing: block.style?.letterSpacing ?? 0,
       ...(isSingleLine ? { whiteSpace: 'nowrap' as const } : {}),
     } as TextOverlay;
+    return overlay;
+  }
+  // W3 — a chart the sidecar read AND arbitration cleared. `chartData` is only
+  // ever set for a native render mode; a chart that failed any hard defect
+  // arrives as an image block carrying its source crop, exactly as before.
+  if (block.type === 'chart' && block.meta?.chartData) {
+    const c = block.meta.chartData;
+    const overlay = {
+      ...base,
+      type: 'chart' as const,
+      chartKind: c.chartKind,
+      series: c.series,
+      ...(c.title ? { title: c.title } : {}),
+      chartPreservation: {
+        version: CHART_PRESERVATION_VERSION,
+        renderMode: c.renderMode,
+        defects: c.defects ?? [],
+        manualReviewRequired: Boolean(c.manualReviewRequired),
+        ...(c.detectionMethod ? { detectionMethod: c.detectionMethod } : {}),
+        // Retained even for a native chart: review needs to compare the
+        // reconstruction against the pixels it was read from, and that
+        // comparison is the last line of defence against a wrong number.
+        ...(c.sourceCropUrl ? { sourceCropUrl: c.sourceCropUrl } : {}),
+        ...(c.sourceRegionId ? { sourceRegionId: c.sourceRegionId } : {}),
+        ...(c.axisScaleR2 != null ? { axisScaleR2: c.axisScaleR2 } : {}),
+      },
+    } as unknown as Overlay;
     return overlay;
   }
   if (block.type === 'vector' && block.meta?.vector) {
