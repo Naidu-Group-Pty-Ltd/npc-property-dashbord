@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Download, FileSignature, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { deliverSignedDownload } from './deliverSignedDownload';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -114,9 +116,11 @@ export function PartnerAgreementsPanel({
       if (error || !data?.success || !data?.url) {
         throw new Error((data as any)?.error || error?.message || 'The copy could not be produced');
       }
-      // A signed URL with a short life; opened rather than fetched so the
-      // browser handles the download and nothing is held in memory here.
-      window.open(data.url as string, '_blank', 'noopener,noreferrer');
+      // A signed URL with a short life. It is fetched and handed to an anchor
+      // rather than opened: a popup after an await is outside the user gesture
+      // and gets blocked, which used to leave nothing downloaded.
+      await deliverSignedDownload(data.url as string, (data as any)?.file_name);
+
       // The first download creates the copy, so the row's state has changed.
       if (!record.agreement_storage_path) void load();
     } catch (e: any) {
