@@ -94,7 +94,12 @@ Deno.serve(async (req) => {
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
 
-    await supabase
+    // Store the code before sending it, and refuse to send one that was not
+    // stored. `reset_token` carries a partial UNIQUE index, so a collision with
+    // another account's live code fails this write — and an unchecked failure
+    // would email a code that no verification could ever match, which reads to
+    // the recipient exactly like the ambiguity bug did.
+    const { error: tokenError } = await supabase
       .from('solicitor_portal_users')
       .update({
         reset_token: otp,
@@ -102,6 +107,10 @@ Deno.serve(async (req) => {
         reset_attempts: 0,
       })
       .eq('id', user.id)
+    if (tokenError) {
+      console.error('[solicitor-portal-forgot-password] could not store reset code:', tokenError)
+      return genericOk();
+    }
 
     const brand = await getBrandConfig();
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
