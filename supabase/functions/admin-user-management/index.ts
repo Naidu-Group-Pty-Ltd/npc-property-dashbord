@@ -691,8 +691,12 @@ Deno.serve(async (req: Request) => {
           );
         }
 
-        // Hash the new password before storing
+        // Hash the new password before storing, and release any lockout —
+        // `finance-portal-change-password` already does this, and a lock left
+        // standing here would refuse the password the caller just chose.
         updates.password_hash = await hashPassword(new_password);
+        updates.failed_login_attempts = 0;
+        updates.locked_until = null;
       }
 
       // Only proceed if there are actual updates
@@ -1345,12 +1349,23 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // Releasing the lockout is part of the reset, not an extra.
+      //
+      // This is the action an administrator reaches for when a colleague
+      // cannot get in, so the account is very often locked at the moment it
+      // runs — the failed attempts that prompted the call are the same ones
+      // that tripped it. Writing only the hash hands back a password that is
+      // refused for the rest of the window, and refused as though it were
+      // wrong, so the administrator is told the reset worked and the colleague
+      // is still locked out. Same reasoning as admin-password-reset.
       const hashedPassword = await hashPassword(new_password);
       const { error } = await supabase
         .from('custom_users')
-        .update({ 
-          password_hash: hashedPassword, 
-          updated_at: new Date().toISOString() 
+        .update({
+          password_hash: hashedPassword,
+          failed_login_attempts: 0,
+          locked_until: null,
+          updated_at: new Date().toISOString()
         })
         .eq('id', user_id);
 

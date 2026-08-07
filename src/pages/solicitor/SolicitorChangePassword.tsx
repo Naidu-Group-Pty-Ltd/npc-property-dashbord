@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SolicitorAuthShell } from '@/components/solicitor-portal/SolicitorAuthShell';
@@ -70,9 +70,8 @@ export default function SolicitorChangePassword() {
 
         <div className="space-y-2">
           <Label htmlFor="current-password">Current password</Label>
-          <Input
+          <PasswordInput
             id="current-password"
-            type="password"
             autoComplete="current-password"
             required
             value={currentPassword}
@@ -82,9 +81,8 @@ export default function SolicitorChangePassword() {
 
         <div className="space-y-2">
           <Label htmlFor="new-password">New password</Label>
-          <Input
+          <PasswordInput
             id="new-password"
-            type="password"
             autoComplete="new-password"
             required
             value={password}
@@ -95,9 +93,8 @@ export default function SolicitorChangePassword() {
 
         <div className="space-y-2">
           <Label htmlFor="confirm-password">Confirm new password</Label>
-          <Input
+          <PasswordInput
             id="confirm-password"
-            type="password"
             autoComplete="new-password"
             required
             value={confirmPassword}

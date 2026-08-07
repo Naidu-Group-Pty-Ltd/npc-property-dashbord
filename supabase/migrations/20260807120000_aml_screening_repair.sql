@@ -104,11 +104,24 @@ CREATE TABLE IF NOT EXISTS aml.pep_determinations (
   determined_at timestamptz NOT NULL DEFAULT now(),
   review_due_at timestamptz,
   superseded_at timestamptz,
-  superseded_by_determination_id uuid REFERENCES aml.pep_determinations(id),
+  -- DEFERRABLE: the supersession trigger below runs BEFORE INSERT and stamps
+  -- the closing row's superseded_by_determination_id with NEW.id while the
+  -- new row does not exist yet. An immediately-checked self-reference fails
+  -- that UPDATE with a foreign-key violation, so every SUPERSEDING insert
+  -- would error; deferring the check to COMMIT (by which time the new row is
+  -- in place) keeps referential integrity without breaking the atomic
+  -- supersession.
+  superseded_by_determination_id uuid REFERENCES aml.pep_determinations(id)
+    DEFERRABLE INITIALLY DEFERRED,
   prev_hash text,
   row_hash text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- Converge a database where the table pre-existed with the immediate
+-- constraint (CREATE TABLE IF NOT EXISTS skips the new inline definition).
+ALTER TABLE aml.pep_determinations
+  ALTER CONSTRAINT pep_determinations_superseded_by_determination_id_fkey
+  DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX IF NOT EXISTS idx_aml_pep_det_case
   ON aml.pep_determinations(case_id, superseded_at);
 CREATE INDEX IF NOT EXISTS idx_aml_pep_det_review
@@ -222,6 +235,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_indexes
       WHERE schemaname = 'aml' AND indexname = 'idx_aml_pep_det_one_current') THEN
     RAISE EXCEPTION 'single-current-determination index did not converge';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+      WHERE conname = 'pep_determinations_superseded_by_determination_id_fkey'
+        AND condeferrable AND condeferred) THEN
+    RAISE EXCEPTION 'supersession self-reference is not deferred — every superseding determination would fail its FK check';
   END IF;
   IF (SELECT count(*) FROM aml.mandatory_triggers
       WHERE key IN ('pep_edd_outstanding','pep_approval_outstanding')) < 2 THEN

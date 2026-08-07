@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { deliverSignedDownload } from './deliverSignedDownload';
+
 
 /**
  * Download a partner's executed agreement from wherever the Command Centre is
@@ -48,10 +50,10 @@ export function useAgreementDownload() {
         throw new Error((data as any)?.error || error?.message || 'The copy could not be produced');
       }
 
-      // Opened rather than fetched: the browser handles the download and the
-      // signed URL never has to be held in memory here.
-      window.open(data.url as string, '_blank', 'noopener,noreferrer');
+      await deliverSignedDownload(data.url as string, (data as any)?.file_name);
       toast.success('The executed agreement is downloading.');
+
+
     } catch (e: any) {
       toast.error(e?.message || 'The copy could not be produced');
     } finally {

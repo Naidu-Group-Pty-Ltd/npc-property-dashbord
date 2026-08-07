@@ -91,13 +91,26 @@ jobs:
             echo 'ready=false' >> "$GITHUB_OUTPUT"
           fi
 
+      # Stays green on purpose (see the header), but no longer stays quiet.
+      #
+      # A job summary is only read by someone who already suspects a problem,
+      # and the state this reports is one nobody suspects: the merge is green,
+      # the workflow ran, and the functions on main are not the functions in
+      # production. That gap shipped a Command Centre password reset that had
+      # been fixed on main and still answered 401 in production, and the person
+      # locked out of their own account had no way to see why. A `::warning::`
+      # is annotated onto the run and the commit, so the undeployed state is
+      # visible from the merge itself rather than one click deeper.
       - name: Report and stop when no credential is configured
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true' }}
         run: |
+          echo "::warning title=Supabase functions NOT deployed::No SUPABASE_ACCESS_TOKEN secret is set. ${{ steps.changed.outputs.list }} changed on main but production still runs the previous version. Add the secret in Settings → Secrets → Actions."
           {
             echo '### Supabase functions NOT deployed'
             echo
             echo 'No `SUPABASE_ACCESS_TOKEN` secret is set, so this run made no changes.'
+            echo
+            echo '**Production is running the previous version of every function listed below.**'
             echo
             echo 'Would have deployed:'
             echo
