@@ -166,6 +166,29 @@ Deno.serve(async (req) => {
       metadata: { email: normalizedEmail },
     });
 
+    // Whether this partner has accepted the terms version that is current now.
+    // Read here so the app knows at sign-in, rather than discovering it on the
+    // first verify call.
+    const { data: currentTerms } = await supabase
+      .from('portal_terms_versions')
+      .select('id, version')
+      .eq('portal', 'finance')
+      .is('retired_at', null)
+      .lte('effective_at', new Date().toISOString())
+      .order('effective_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const { data: currentAcceptance } = currentTerms
+      ? await supabase
+          .from('portal_terms_acceptances')
+          .select('id')
+          .eq('terms_version_id', currentTerms.id)
+          .eq('finance_user_id', portalUser.id)
+          .maybeSingle()
+      : { data: null }
+    const hasAcceptedCurrentTerms = Boolean(currentTerms && currentAcceptance)
+    const currentTermsVersion = currentTerms?.version ?? null
+
     const sessionCookie = createFinanceSessionCookie(sessionToken, expiresAt)
 
     return new Response(
@@ -179,6 +202,10 @@ Deno.serve(async (req) => {
           company: contact.company,
           contact_type: contact.contact_type,
           has_accepted_terms: portalUser.has_accepted_terms,
+          // Version-aware, so an amended agreement is presented at the next
+          // sign-in rather than only to partners who never accepted anything.
+          has_accepted_current_terms: hasAcceptedCurrentTerms,
+          current_terms_version: currentTermsVersion,
           has_completed_onboarding: portalUser.has_completed_onboarding,
           must_change_password: !!portalUser.must_change_password,
         },

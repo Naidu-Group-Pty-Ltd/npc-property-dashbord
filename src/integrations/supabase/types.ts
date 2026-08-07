@@ -26756,6 +26756,7 @@ export type Database = {
           accepted_at: string
           acknowledgements: Json | null
           builder_user_id: string | null
+          finance_user_id: string | null
           id: string
           ip_hash: string | null
           portal: string
@@ -26767,6 +26768,7 @@ export type Database = {
           accepted_at?: string
           acknowledgements?: Json | null
           builder_user_id?: string | null
+          finance_user_id?: string | null
           id?: string
           ip_hash?: string | null
           portal: string
@@ -26778,6 +26780,7 @@ export type Database = {
           accepted_at?: string
           acknowledgements?: Json | null
           builder_user_id?: string | null
+          finance_user_id?: string | null
           id?: string
           ip_hash?: string | null
           portal?: string

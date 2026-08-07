@@ -1,34 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { useBrand } from '@/branding/useBrand';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Checkbox } from '@/components/ui/checkbox';
+import { PortalAgreementConsent } from '@/components/portal/PortalAgreementConsent';
+import type { PortalAcknowledgementKey, PortalTermsVersion } from '@/lib/portalAgreement';
 import { ShieldCheck, Users, Lock, Sparkles, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-
-const buildTermsBody = (brand: string) => `
-By accessing the Finance Partner Portal you agree to:
-
-1. Confidentiality. All client information accessible through this portal is strictly confidential. You will not disclose, reproduce, or distribute any client data outside the scope of your engagement with ${brand}.
-
-2. Authorised Use. You will only access records for clients you have been explicitly assigned to. Attempting to access unassigned clients is a breach of this agreement.
-
-3. Data Accuracy. Any updates you make to a client's financial profile must reflect documents and information provided to you by that client. You will retain supporting evidence for 7 years.
-
-4. Security. You will keep your login credentials private, enable strong passwords, and immediately notify ${brand} if you suspect compromise.
-
-5. Audit. All actions you perform in this portal (logins, views, edits, deletions, document uploads, messages) are logged and may be reviewed by ${brand} compliance.
-
-6. Compliance. You will comply with the Privacy Act 1988, the Australian Privacy Principles, NCCP Act obligations (where applicable), and any AML/CTF requirements.
-
-7. Termination. ${brand} may revoke your access at any time without notice if a breach is suspected.
-
-8. Indemnity. You indemnify ${brand} against losses arising from your misuse of the portal or any breach of these terms.
-
-This agreement is governed by the laws of New South Wales, Australia.
-`;
 
 const buildWizardSteps = (brand: string) => [
   {
@@ -49,27 +27,43 @@ const buildWizardSteps = (brand: string) => [
 ];
 
 export function FinancePortalOnboardingGate() {
-  const { user, acceptTerms, completeOnboarding } = useFinancePortalAuth();
+  const { user, acceptTerms, completeOnboarding, invokeFinanceFunction } = useFinancePortalAuth();
   const { settings: brandSettings } = useBrand();
   const brandName = brandSettings.companyName || 'the operator';
-  const TERMS_BODY = buildTermsBody(brandName);
   const WIZARD_STEPS = buildWizardSteps(brandName);
-  const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
+  const [terms, setTerms] = useState<PortalTermsVersion | null>(null);
+  const [termsLoading, setTermsLoading] = useState(true);
+
+  // The agreement is fetched whether or not the gate is currently showing it:
+  // the hook order cannot depend on which step is on screen.
+  useEffect(() => {
+    let cancelled = false;
+    void invokeFinanceFunction('finance-portal-verify', { action: 'get_governance' })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) toast.error(error?.message || 'Unable to load the current terms.');
+        setTerms((data?.terms as PortalTermsVersion | undefined) ?? null);
+        setTermsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [invokeFinanceFunction]);
 
   if (!user) return null;
 
-  const showTerms = !user.has_accepted_terms;
+  // Version-aware: a partner who accepted a superseded version has not accepted
+  // this one. `has_accepted_terms` alone would let an amended agreement go
+  // unread by everyone who was already through the door.
+  const showTerms = !user.has_accepted_current_terms;
   const showWizard = user.has_accepted_terms && !user.has_completed_onboarding;
 
   if (!showTerms && !showWizard) return null;
 
-  const handleAccept = async () => {
-    if (!agreed) return;
+  const handleAccept = async (acknowledgements: PortalAcknowledgementKey[]) => {
     setSubmitting(true);
     try {
-      await acceptTerms();
+      await acceptTerms(acknowledgements);
       setWizardStep(0);
     } catch (e: any) {
       toast.error(e?.message || 'Failed to accept terms. Please try again.');
@@ -97,31 +91,30 @@ export function FinancePortalOnboardingGate() {
   if (showTerms) {
     return (
       <Dialog open onOpenChange={() => { /* blocking */ }}>
-        <DialogContent className="max-w-2xl" onPointerDownOutside={e => e.preventDefault()} onEscapeKeyDown={e => e.preventDefault()}>
+        <DialogContent
+          className="max-h-[92vh] max-w-3xl overflow-y-auto"
+          onPointerDownOutside={e => e.preventDefault()}
+          onEscapeKeyDown={e => e.preventDefault()}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-primary" />
-              Finance Partner Portal — Terms of Use
+              Terms &amp; Privileged Data Consent
             </DialogTitle>
             <DialogDescription>
-              Please read and accept the terms below before proceeding.
+              {brandName} · Finance Partner Portal. Before accessing client financial records,
+              review and accept the terms of use below. Your acceptance is recorded against this
+              exact version.
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="h-72 rounded-md border bg-muted/30 p-4 text-sm leading-relaxed whitespace-pre-line">
-            {TERMS_BODY}
-          </ScrollArea>
-          <div className="flex items-start gap-3 rounded-md border bg-card p-3">
-            <Checkbox id="terms-agree" checked={agreed} onCheckedChange={v => setAgreed(!!v)} />
-            <label htmlFor="terms-agree" className="text-sm leading-snug cursor-pointer select-none">
-              I have read and agree to the Finance Partner Portal terms of use, including confidentiality, authorised use, security, audit and compliance obligations.
-            </label>
-          </div>
-          <DialogFooter>
-            <Button onClick={handleAccept} disabled={!agreed || submitting} className="gap-2">
-              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              Accept & Continue
-            </Button>
-          </DialogFooter>
+
+          <PortalAgreementConsent
+            terms={terms}
+            loading={termsLoading}
+            busy={submitting}
+            onAccept={(acknowledgements) => void handleAccept(acknowledgements)}
+            scrollHeightClassName="h-64 md:h-80"
+          />
         </DialogContent>
       </Dialog>
     );

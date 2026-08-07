@@ -28,53 +28,16 @@ export interface SolicitorPortalUser {
 }
 
 /**
- * The mandatory acknowledgments of the Portal Access, Confidentiality, Privacy
- * and AML/CTF Compliance Passport Agreement, in the order the agreement sets.
- *
- * The wording is the agreement's own. It is duplicated here rather than parsed
- * out of the stored Markdown because these four are the interface contract:
- * `solicitor-portal-verify` refuses an acceptance that does not assert all four
- * keys, and stores the asserted keys as the acknowledgment history. Changing a
- * key here without changing `REQUIRED_TERMS_ACKNOWLEDGEMENTS` in that function
- * locks every solicitor out of the portal, which is why both lists carry this
- * note. Changing the *wording* is a change to the agreement: publish a new
- * terms version, do not edit this in place.
- *
- * A fifth acknowledgment, "Independent AML/CTF responsibility", was withdrawn by
- * the operator in version 2026-08-07. Only the tick box went: section 9 of the
- * agreement still puts assessing, approving, recording and re-checking reliance
- * on the Partner Organisation, and section 7 still makes statutory reliance
- * conditional. Do not reinstate the key here without publishing a terms version
- * whose text carries the acknowledgment again.
+ * The Solicitor Portal's mandatory acknowledgments are the Portal Agreement's
+ * acknowledgments — the same four the Builder/Developer and Finance portals
+ * present. They live in `@/lib/portalAgreement` so that one agreement cannot
+ * end up with three lists; these aliases stay so the Solicitor Portal's own
+ * modules keep reading in its own vocabulary.
  */
-export const SOLICITOR_TERMS_ACKNOWLEDGEMENTS = [
-  {
-    key: 'global_confidentiality_privacy',
-    heading: 'Global confidentiality and privacy',
-    statement:
-      'I acknowledge that all information made available through the Portal is confidential and may include personal, sensitive, commercially confidential or legally privileged information. I agree that my organisation will access, use, protect and disclose that information only for an authorised client, transaction and lawful professional purpose.',
-  },
-  {
-    key: 'authority_binding_acceptance',
-    heading: 'Authority and binding acceptance',
-    statement:
-      'I confirm that I am authorised to accept this Agreement and legally bind the Partner Organisation identified above. I agree that my electronic acceptance will constitute execution of this Agreement on behalf of the Partner Organisation.',
-  },
-  {
-    key: 'portal_access',
-    heading: 'Portal access',
-    statement:
-      'I agree that the Partner Organisation will access and use the Portal only for authorised matters and will comply with the Portal access, privacy, confidentiality, security and audit requirements set out in this Agreement.',
-  },
-  {
-    key: 'binding_amlctf_arrangement',
-    heading: 'Binding AML/CTF arrangement',
-    statement:
-      'I acknowledge and agree that, where the applicable eligibility and legislative requirements are satisfied, this Agreement is intended to constitute a binding customer due-diligence agreement or arrangement between the Originating Organisation and Partner Organisation for the purposes of section 37A of the AML/CTF Act and section 6-29 of the AML/CTF Rules.',
-  },
-] as const;
-
-export type SolicitorAcknowledgementKey = (typeof SOLICITOR_TERMS_ACKNOWLEDGEMENTS)[number]['key'];
+export {
+  PORTAL_TERMS_ACKNOWLEDGEMENTS as SOLICITOR_TERMS_ACKNOWLEDGEMENTS,
+} from './portalAgreement';
+export type { PortalAcknowledgementKey as SolicitorAcknowledgementKey } from './portalAgreement';
 
 export async function invokeSolicitorFunction<T = any>(
   functionName: string,

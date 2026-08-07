@@ -1,3 +1,4 @@
+import type { PortalAcknowledgementKey } from '@/lib/portalAgreement';
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 
 interface FinancePortalUser {
@@ -8,6 +9,14 @@ interface FinancePortalUser {
   company: string | null;
   contact_type: string | null;
   has_accepted_terms: boolean;
+  /**
+   * Whether the partner has accepted the terms version that is current *now*.
+   * `has_accepted_terms` only records that they once accepted something, so an
+   * amended agreement would otherwise never be presented to anyone already
+   * through the door.
+   */
+  has_accepted_current_terms: boolean;
+  current_terms_version: string | null;
   has_completed_onboarding: boolean;
   must_change_password?: boolean;
 }
@@ -21,7 +30,7 @@ interface FinancePortalAuthContextType {
   verifyOTP: (email: string, otp: string) => Promise<{ error?: string; success?: boolean }>;
   resetPassword: (email: string, otp: string, newPassword: string) => Promise<{ error?: string; success?: boolean }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ error?: string; success?: boolean }>;
-  acceptTerms: () => Promise<void>;
+  acceptTerms: (acknowledgements: PortalAcknowledgementKey[]) => Promise<void>;
   completeOnboarding: () => Promise<void>;
   setSessionFromInvite: (sessionToken: string, user: FinancePortalUser) => void;
   invokeFinanceFunction: (
@@ -240,15 +249,21 @@ export function FinancePortalAuthProvider({ children }: { children: ReactNode })
     clearAuthState();
   }, []);
 
-  const acceptTerms = useCallback(async () => {
+  // The four acknowledgments are contractual statements, not a checkbox: the
+  // server refuses an acceptance that is missing any of them and stores the
+  // ones asserted as the acknowledgment history.
+  const acceptTerms = useCallback(async (acknowledgements: PortalAcknowledgementKey[]) => {
     try {
-      const { data, error } = await invokeFinanceFunction('finance-portal-verify', { action: 'accept_terms' });
+      const { data, error } = await invokeFinanceFunction('finance-portal-verify', {
+        action: 'accept_terms',
+        acknowledgements,
+      });
       if (error || !data?.success) {
         const msg = data?.error || error?.message || 'Failed to accept terms';
         console.error('Failed to accept finance portal terms:', msg);
         throw new Error(msg);
       }
-      setUser(prev => prev ? { ...prev, has_accepted_terms: true } : prev);
+      setUser(prev => prev ? { ...prev, has_accepted_terms: true, has_accepted_current_terms: true } : prev);
     } catch (e) {
       console.error('Failed to accept terms:', e);
       throw e;

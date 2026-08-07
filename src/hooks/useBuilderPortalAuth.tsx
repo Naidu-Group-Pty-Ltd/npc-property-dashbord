@@ -1,3 +1,4 @@
+import type { PortalAcknowledgementKey } from '@/lib/portalAgreement';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
 import {
   builderAcceptInvite,
@@ -36,7 +37,7 @@ interface BuilderPortalAuthContextType {
   signOut: () => Promise<void>;
   acceptInvite: (token: string, password: string) => Promise<{ error?: string }>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<{ error?: string }>;
-  acceptTerms: () => Promise<{ error?: string }>;
+  acceptTerms: (acknowledgements: PortalAcknowledgementKey[]) => Promise<{ error?: string }>;
   completeOnboarding: (stepKey?: string) => Promise<{ error?: string }>;
   selectOrganisation: (organisationId: string) => Promise<{ error?: string }>;
   refresh: () => Promise<void>;
@@ -123,8 +124,10 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
     return {};
   }, [checkSession]);
 
-  const acceptTerms = useCallback(async () => {
-    const { data, error } = await builderAcceptTerms();
+  // The four acknowledgments are contractual statements, and the server refuses
+  // an acceptance that is missing any of them, so they travel with the call.
+  const acceptTerms = useCallback(async (acknowledgements: PortalAcknowledgementKey[]) => {
+    const { data, error } = await builderAcceptTerms(acknowledgements);
     if (error || !data?.success) {
       return { error: (data as any)?.error || error?.message || 'Could not record your acceptance' };
     }

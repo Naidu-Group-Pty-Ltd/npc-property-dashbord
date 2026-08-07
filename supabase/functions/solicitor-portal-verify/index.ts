@@ -4,30 +4,8 @@ import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts"
 import { auditSolicitorIdentity, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
 import { hashSessionToken } from "../_shared/sessionHash.ts"
+import { ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, readAcknowledgements } from "../_shared/portalAgreement.ts"
 
-/**
- * The mandatory acknowledgments of the Portal Access, Confidentiality, Privacy
- * and AML/CTF Compliance Passport Agreement, in the order the agreement sets.
- *
- * This list is the server side of the same contract as
- * `SOLICITOR_TERMS_ACKNOWLEDGEMENTS` in `src/lib/solicitorPortal.ts`; the two
- * must agree. Enforcing it here rather than in the page is the point: the
- * acknowledgments are contractual statements — authority to bind and the
- * section 37A arrangement among them — and an acceptance recorded without them
- * would claim assent nobody gave.
- *
- * The fifth, `independent_amlctf_responsibility`, was withdrawn in terms version
- * 2026-08-07 and is deliberately absent. Removing a required key is the safe
- * direction to ship in: a browser still running the previous bundle sends five
- * keys, and only the four required here are looked for, so it keeps working
- * through the deploy. Adding one back is not — the page must ship first.
- */
-const REQUIRED_TERMS_ACKNOWLEDGEMENTS = [
-  'global_confidentiality_privacy',
-  'authority_binding_acceptance',
-  'portal_access',
-  'binding_amlctf_arrangement',
-] as const;
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -74,17 +52,12 @@ Deno.serve(async (req) => {
       const { data: terms } = await supabase.from('portal_terms_versions').select('id, version, document_hash').eq('portal','solicitor').is('retired_at',null).lte('effective_at',new Date().toISOString()).order('effective_at',{ascending:false}).limit(1).maybeSingle();
       if (!terms) return new Response(JSON.stringify({ error: 'Current terms unavailable' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-      // Every mandatory acknowledgment must be asserted. Unknown keys are
-      // dropped rather than stored: the acknowledgment history is a record of
-      // what this agreement asked, not of whatever the caller sent.
-      const submitted = Array.isArray(body.acknowledgements)
-        ? body.acknowledgements.filter((key): key is string => typeof key === 'string')
-        : [];
-      const acknowledgements = REQUIRED_TERMS_ACKNOWLEDGEMENTS.filter((key) => submitted.includes(key));
-      const missing = REQUIRED_TERMS_ACKNOWLEDGEMENTS.filter((key) => !submitted.includes(key));
+      // Every mandatory acknowledgment must be asserted. The list is shared
+      // with the Builder and Finance portals: one agreement, one gate.
+      const { acknowledgements, missing } = readAcknowledgements(body);
       if (missing.length > 0) {
         return new Response(
-          JSON.stringify({ error: 'All mandatory acknowledgments must be accepted before this agreement can be recorded.', code: 'ACKNOWLEDGEMENTS_INCOMPLETE', missing }),
+          JSON.stringify({ error: ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, code: 'ACKNOWLEDGEMENTS_INCOMPLETE', missing }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
       }
