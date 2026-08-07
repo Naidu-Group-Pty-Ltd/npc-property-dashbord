@@ -198,11 +198,14 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
         seniorManagerApprovalRequired: acc.seniorManagerApprovalRequired || c.seniorManagerApprovalRequired,
       }), { eddRequired: false, seniorManagerApprovalRequired: false });
 
-    // Evidence must be LINKED to the current determination: an EDD case
-    // completed before the PEP was known never considered it, and an approval
-    // granted for an earlier finding does not approve this one. EDD for a PEP
-    // is only complete once source of funds AND source of wealth are verified
-    // on the existing SoF/SoW records — that is what the EDD is for.
+    // Evidence must be LINKED to the current determination as one chain:
+    // a qualifying EDD case completed AFTER the determination, with verified
+    // source-of-funds AND source-of-wealth rows BELONGING to that EDD case
+    // (source_of_funds.edd_case_id / source_of_wealth.edd_case_id — the
+    // existing relationship). A verified SoF/SoW from an older or unrelated
+    // EDD establishes nothing about this finding, and a superseding
+    // determination invalidates the previous finding's evidence by moving
+    // the reference timestamp forward. Approvals postdate the determination.
     const latestPepDeterminedAt = pepFindings
       .map((d: any) => String(d.determined_at ?? ""))
       .sort()
@@ -213,11 +216,11 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
           admin.schema("aml").from("edd_cases")
             .select("id, completed_at").eq("case_id", caseId)
             .eq("status", "completed").eq("mlro_decision", "approved")
-            .order("completed_at", { ascending: false }).limit(1),
+            .order("completed_at", { ascending: false }).limit(20),
           admin.schema("aml").from("source_of_funds")
-            .select("id").eq("case_id", caseId).eq("verified", true).limit(1),
+            .select("edd_case_id").eq("case_id", caseId).eq("verified", true).limit(200),
           admin.schema("aml").from("source_of_wealth")
-            .select("id").eq("case_id", caseId).eq("verified", true).limit(1),
+            .select("edd_case_id").eq("case_id", caseId).eq("verified", true).limit(200),
           admin.schema("aml").from("approvals")
             .select("id, resolved_at").eq("case_id", caseId)
             .eq("kind", "pep_service_approval").eq("status", "approved")
@@ -225,9 +228,11 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
         ]);
       const evidence = pepEvidenceSatisfied({
         latestPepDeterminedAt,
-        eddCompletedAt: (doneEdd ?? [])[0]?.completed_at ?? null,
-        hasVerifiedSourceOfFunds: (sofRows ?? []).length > 0,
-        hasVerifiedSourceOfWealth: (sowRows ?? []).length > 0,
+        completedEddCases: (doneEdd ?? []).map((e: any) => ({
+          id: String(e.id), completed_at: e.completed_at ?? null,
+        })),
+        verifiedSofEddCaseIds: (sofRows ?? []).map((r: any) => r.edd_case_id ?? null),
+        verifiedSowEddCaseIds: (sowRows ?? []).map((r: any) => r.edd_case_id ?? null),
         approvalResolvedAt: (granted ?? [])[0]?.resolved_at ?? null,
       });
       if (controls.eddRequired) {

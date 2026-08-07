@@ -168,30 +168,46 @@ export function pepDeterminationRequiredForRole(partyType: string): boolean {
 
 /**
  * Whether the PEP controls are satisfied by evidence LINKED to the current
- * determination. An EDD case completed before the PEP was known never
- * considered it, and an approval granted for an earlier finding does not
- * approve this one — both must postdate the latest current PEP
- * determination. EDD for a PEP is only complete once source of funds AND
- * source of wealth are actually verified on the existing SoF/SoW records.
+ * determination, as one chain:
+ *
+ *   current PEP determination
+ *     → a qualifying EDD case COMPLETED AFTER that determination
+ *       → verified source of funds BELONGING to that EDD case
+ *       → verified source of wealth BELONGING to that EDD case
+ *
+ * An EDD case completed before the PEP was known never considered it. A
+ * verified SoF/SoW row from an older or unrelated EDD — or attached to no
+ * EDD at all — establishes nothing about this finding, so only rows whose
+ * `edd_case_id` is the qualifying EDD count. A superseding determination
+ * moves `latestPepDeterminedAt` forward, which structurally invalidates the
+ * previous finding's EDD and approval evidence. Missing evidence fails
+ * closed: the controls stay outstanding; nothing here is a customer finding.
  */
 export function pepEvidenceSatisfied(args: {
   /** determined_at of the latest current (non-superseded) pep finding. */
   latestPepDeterminedAt: string;
-  /** completed_at of the newest completed+approved EDD case, if any. */
-  eddCompletedAt?: string | null;
-  hasVerifiedSourceOfFunds: boolean;
-  hasVerifiedSourceOfWealth: boolean;
+  /** Completed + MLRO-approved EDD cases on the AML case. */
+  completedEddCases: Array<{ id: string; completed_at?: string | null }>;
+  /** `edd_case_id` of every VERIFIED source_of_funds row on the case. */
+  verifiedSofEddCaseIds: Array<string | null | undefined>;
+  /** `edd_case_id` of every VERIFIED source_of_wealth row on the case. */
+  verifiedSowEddCaseIds: Array<string | null | undefined>;
   /** resolved_at of the newest approved pep_service_approval, if any. */
   approvalResolvedAt?: string | null;
-}): { eddComplete: boolean; approvalGranted: boolean } {
-  const eddComplete = Boolean(
-    args.eddCompletedAt && args.eddCompletedAt >= args.latestPepDeterminedAt &&
-    args.hasVerifiedSourceOfFunds && args.hasVerifiedSourceOfWealth,
-  );
+}): { eddComplete: boolean; approvalGranted: boolean; qualifyingEddCaseId: string | null } {
+  const sofEdds = new Set(args.verifiedSofEddCaseIds.filter(Boolean).map(String));
+  const sowEdds = new Set(args.verifiedSowEddCaseIds.filter(Boolean).map(String));
+  const qualifying = args.completedEddCases.find((edd) =>
+    Boolean(edd.completed_at && edd.completed_at >= args.latestPepDeterminedAt) &&
+    sofEdds.has(String(edd.id)) && sowEdds.has(String(edd.id)));
   const approvalGranted = Boolean(
     args.approvalResolvedAt && args.approvalResolvedAt >= args.latestPepDeterminedAt,
   );
-  return { eddComplete, approvalGranted };
+  return {
+    eddComplete: Boolean(qualifying),
+    approvalGranted,
+    qualifyingEddCaseId: qualifying ? String(qualifying.id) : null,
+  };
 }
 
 /* ─────────────────────────── worker claim rules ─────────────────────────── */
@@ -221,6 +237,62 @@ export function screeningClaimDecision(
     return nowMs - updated >= staleMinutes * 60_000 ? "claim" : "in_flight_retry";
   }
   return "obsolete";
+}
+
+/**
+ * What to do with the screening check a claimed subject already points to.
+ *
+ *   - "resume_completed": the check holds a valid TERMINAL provider result
+ *     but the subject's projection never landed (the worker died between
+ *     persisting the result and finishing downstream work). The provider
+ *     must NOT run again and no second check may be created — the retry
+ *     finishes the interrupted persistence from the durable result.
+ *   - "rerun_provider": an unfinished attempt (in_progress / pending /
+ *     failed) — reuse the same check row and execute the provider.
+ *   - "new_check": no reusable attempt — either no check, a non-result
+ *     status, or a PREVIOUS round whose projection already completed (a
+ *     re-queued subject wants a fresh screening, not a replay of the old
+ *     result).
+ *
+ * The previous-round discriminator: completion writes the same timestamp to
+ * check.completed_at and subject.last_screened_at, so last_screened_at >=
+ * completed_at means that round finished; anything less (or null) means the
+ * terminal result was never projected.
+ */
+export type CheckReuseDecision = "resume_completed" | "rerun_provider" | "new_check";
+
+const TERMINAL_CHECK_STATUSES = ["clear", "review", "matched"];
+const UNFINISHED_CHECK_STATUSES = ["in_progress", "pending", "failed"];
+
+export function checkReuseDecision(
+  check: { status?: string | null; completed_at?: string | null } | null | undefined,
+  subject: { last_screened_at?: string | null },
+): CheckReuseDecision {
+  if (!check || !check.status) return "new_check";
+  if (UNFINISHED_CHECK_STATUSES.includes(String(check.status))) return "rerun_provider";
+  if (TERMINAL_CHECK_STATUSES.includes(String(check.status))) {
+    const projected = Boolean(
+      subject.last_screened_at && check.completed_at &&
+      subject.last_screened_at >= check.completed_at,
+    );
+    return projected ? "new_check" : "resume_completed";
+  }
+  return "new_check";
+}
+
+/**
+ * Whether a terminal check's durable state is sufficient to finish the
+ * interrupted persistence without the provider. Matches are persisted BEFORE
+ * the terminal status, so a terminal check normally has every candidate row;
+ * fewer rows than the recorded match_count means the durable state predates
+ * that ordering (or was damaged) and the attempt must re-run instead —
+ * reusing the same check row, never creating a second one.
+ */
+export function resumableFromDurableState(
+  summaryMatchCount: number,
+  matchRowCount: number,
+): boolean {
+  return matchRowCount >= summaryMatchCount;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkReuseDecision,
   computeRefreshDueAt,
   isPartyScreeningMissing,
   matchDedupKey,
@@ -9,6 +10,7 @@ import {
   pepDeterminationRequiredForRole,
   pepEvidenceSatisfied,
   projectPartyScreeningState,
+  resumableFromDurableState,
   screeningClaimDecision,
 } from "../../../supabase/functions/_shared/aml/partyScreening.pure.ts";
 
@@ -141,36 +143,131 @@ describe("pepDeterminationCurrent — freshness for ongoing CDD", () => {
   });
 });
 
-describe("pepEvidenceSatisfied — EDD and approval must be linked to the current determination", () => {
+describe("pepEvidenceSatisfied — one evidence chain, linked to the current determination", () => {
   const determinedAt = "2026-06-01T00:00:00.000Z";
+  const QUALIFYING_EDD = "edd-current";
+  const OLD_EDD = "edd-old-unrelated";
   const base = {
     latestPepDeterminedAt: determinedAt,
-    eddCompletedAt: "2026-07-01T00:00:00.000Z",
-    hasVerifiedSourceOfFunds: true,
-    hasVerifiedSourceOfWealth: true,
+    completedEddCases: [
+      { id: QUALIFYING_EDD, completed_at: "2026-07-01T00:00:00.000Z" },
+      { id: OLD_EDD, completed_at: "2026-01-01T00:00:00.000Z" },
+    ],
+    verifiedSofEddCaseIds: [QUALIFYING_EDD],
+    verifiedSowEddCaseIds: [QUALIFYING_EDD],
     approvalResolvedAt: "2026-07-02T00:00:00.000Z",
   };
 
-  it("evidence postdating the determination, with verified SoF and SoW, satisfies both controls", () => {
-    expect(pepEvidenceSatisfied(base)).toEqual({ eddComplete: true, approvalGranted: true });
+  it("A: qualifying EDD + verified SoF and SoW belonging to that EDD satisfies the requirement", () => {
+    expect(pepEvidenceSatisfied(base)).toEqual({
+      eddComplete: true, approvalGranted: true, qualifyingEddCaseId: QUALIFYING_EDD,
+    });
   });
 
-  it("an EDD completed BEFORE the PEP was known never considered it — not complete", () => {
-    expect(pepEvidenceSatisfied({ ...base, eddCompletedAt: "2026-05-01T00:00:00.000Z" }).eddComplete).toBe(false);
+  it("B: SoF from an older/unrelated EDD does not satisfy the current PEP requirement", () => {
+    expect(pepEvidenceSatisfied({ ...base, verifiedSofEddCaseIds: [OLD_EDD] }).eddComplete).toBe(false);
   });
 
-  it("an approval granted for an earlier finding does not approve this one", () => {
+  it("C: SoW from an older/unrelated EDD does not satisfy the current PEP requirement", () => {
+    expect(pepEvidenceSatisfied({ ...base, verifiedSowEddCaseIds: [OLD_EDD] }).eddComplete).toBe(false);
+  });
+
+  it("D: SoF and SoW both verified but both belonging to another EDD — blocked", () => {
+    expect(pepEvidenceSatisfied({
+      ...base, verifiedSofEddCaseIds: [OLD_EDD], verifiedSowEddCaseIds: [OLD_EDD],
+    }).eddComplete).toBe(false);
+  });
+
+  it("E: an EDD completed BEFORE the current determination never considered it — blocked", () => {
+    expect(pepEvidenceSatisfied({
+      ...base,
+      completedEddCases: [{ id: QUALIFYING_EDD, completed_at: "2026-05-01T00:00:00.000Z" }],
+    }).eddComplete).toBe(false);
+  });
+
+  it("F: an approval resolved before the current determination does not approve it", () => {
     expect(pepEvidenceSatisfied({ ...base, approvalResolvedAt: "2026-05-01T00:00:00.000Z" }).approvalGranted).toBe(false);
   });
 
-  it("EDD without verified source of funds or wealth is not complete for a PEP", () => {
-    expect(pepEvidenceSatisfied({ ...base, hasVerifiedSourceOfFunds: false }).eddComplete).toBe(false);
-    expect(pepEvidenceSatisfied({ ...base, hasVerifiedSourceOfWealth: false }).eddComplete).toBe(false);
+  it("G: a superseding determination invalidates evidence that applied to the previous one", () => {
+    const afterSupersession = pepEvidenceSatisfied({
+      ...base,
+      // The new determination moves the reference timestamp past all the
+      // evidence gathered for the previous finding.
+      latestPepDeterminedAt: "2026-08-01T00:00:00.000Z",
+    });
+    expect(afterSupersession).toEqual({
+      eddComplete: false, approvalGranted: false, qualifyingEddCaseId: null,
+    });
   });
 
-  it("absent evidence satisfies nothing", () => {
-    expect(pepEvidenceSatisfied({ ...base, eddCompletedAt: null, approvalResolvedAt: null }))
-      .toEqual({ eddComplete: false, approvalGranted: false });
+  it("H: missing verified SoF — blocked", () => {
+    expect(pepEvidenceSatisfied({ ...base, verifiedSofEddCaseIds: [] }).eddComplete).toBe(false);
+  });
+
+  it("I: missing verified SoW — blocked", () => {
+    expect(pepEvidenceSatisfied({ ...base, verifiedSowEddCaseIds: [] }).eddComplete).toBe(false);
+  });
+
+  it("SoF/SoW rows attached to no EDD at all establish nothing", () => {
+    expect(pepEvidenceSatisfied({
+      ...base, verifiedSofEddCaseIds: [null, undefined], verifiedSowEddCaseIds: [null],
+    }).eddComplete).toBe(false);
+  });
+
+  it("missing evidence fails closed without becoming a customer finding", () => {
+    expect(pepEvidenceSatisfied({
+      ...base, completedEddCases: [], verifiedSofEddCaseIds: [], verifiedSowEddCaseIds: [],
+      approvalResolvedAt: null,
+    })).toEqual({ eddComplete: false, approvalGranted: false, qualifyingEddCaseId: null });
+  });
+});
+
+describe("checkReuseDecision — one logical screening attempt, resumed not repeated", () => {
+  const completedAt = "2026-08-07T10:00:00.000Z";
+
+  it("a terminal check whose projection never landed is RESUMED — no provider re-run", () => {
+    for (const status of ["clear", "review", "matched"]) {
+      expect(checkReuseDecision(
+        { status, completed_at: completedAt }, { last_screened_at: null },
+      )).toBe("resume_completed");
+      expect(checkReuseDecision(
+        { status, completed_at: completedAt }, { last_screened_at: "2026-01-01T00:00:00.000Z" },
+      )).toBe("resume_completed");
+    }
+  });
+
+  it("a terminal check whose round already projected is a PREVIOUS round — re-queues get a fresh check", () => {
+    expect(checkReuseDecision(
+      { status: "review", completed_at: completedAt }, { last_screened_at: completedAt },
+    )).toBe("new_check");
+    expect(checkReuseDecision(
+      { status: "clear", completed_at: completedAt }, { last_screened_at: "2026-08-08T00:00:00.000Z" },
+    )).toBe("new_check");
+  });
+
+  it("an unfinished attempt re-runs the provider on the SAME check row", () => {
+    for (const status of ["in_progress", "pending", "failed"]) {
+      expect(checkReuseDecision(
+        { status, completed_at: null }, { last_screened_at: null },
+      )).toBe("rerun_provider");
+    }
+  });
+
+  it("no check, no status, or a non-result status means a fresh check", () => {
+    expect(checkReuseDecision(null, { last_screened_at: null })).toBe("new_check");
+    expect(checkReuseDecision({ status: "cancelled" }, { last_screened_at: null })).toBe("new_check");
+  });
+});
+
+describe("resumableFromDurableState — resume only when every candidate is on disk", () => {
+  it("all recorded candidates persisted → resumable", () => {
+    expect(resumableFromDurableState(0, 0)).toBe(true);
+    expect(resumableFromDurableState(2, 2)).toBe(true);
+  });
+  it("fewer rows than the recorded match count → not resumable (re-run same attempt)", () => {
+    expect(resumableFromDurableState(2, 1)).toBe(false);
+    expect(resumableFromDurableState(1, 0)).toBe(false);
   });
 });
 

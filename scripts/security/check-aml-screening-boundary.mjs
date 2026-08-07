@@ -80,6 +80,12 @@ assert.match(riskInputs, /source_of_funds/, "PEP EDD must consult verified sourc
 assert.match(riskInputs, /source_of_wealth/, "PEP EDD must consult verified source of wealth");
 assert.match(riskInputs, /latestPepDeterminedAt/,
   "EDD and approvals must be linked to the current determination's timestamp");
+assert.match(riskInputs, /verifiedSofEddCaseIds/,
+  "verified SoF must be tied to its EDD case, not counted case-wide");
+assert.match(riskInputs, /verifiedSowEddCaseIds/,
+  "verified SoW must be tied to its EDD case, not counted case-wide");
+assert.match(riskInputs, /select\("edd_case_id"\)/,
+  "SoF/SoW reads must carry the EDD linkage column");
 
 /* ── Provider selection stays server-side ────────────────────────────────── */
 const runScreening = slice(verification, 'case "run_screening"', 'case "list_screening"');
@@ -100,6 +106,12 @@ assert.match(consumer, /matchDedupKey/,
 assert.match(consumer, /state: 'error'/, "technical failure must project to error");
 assert.doesNotMatch(consumer, /state:\s*'completed'\s*,\s*\n\s*error_category/,
   "a technical failure must never project to completed");
+assert.match(consumer, /checkReuseDecision/,
+  "a terminal check must be resumed, never re-executed or duplicated");
+assert.ok(
+  consumer.indexOf("checkReuseDecision(linked, subject)") <
+    consumer.indexOf("resolveTenantProvider(db, tenantId"),
+  "recovery must be decided before any provider resolution");
 
 /* ── Migration invariants ────────────────────────────────────────────────── */
 assert.match(migration, /trg_aml_pep_det_supersede/,

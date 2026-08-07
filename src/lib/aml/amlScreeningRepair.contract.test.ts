@@ -104,9 +104,29 @@ describe("Defect C — queueing a party creates real, idempotent screening work"
 
   it("projects the party from canonical matches and links the check with list evidence", () => {
     expect(screeningConsumer).toContain("projectPartyScreeningState");
-    expect(screeningConsumer).toContain("screening_check_id: checkId");
+    expect(screeningConsumer).toContain("screening_check_id: args.checkId");
     expect(screeningConsumer).toContain("list_version");
     expect(screeningConsumer).toContain("refresh_due_at: computeRefreshDueAt");
+  });
+
+  it("a terminal check is resumed from durable state — decided BEFORE any provider resolution", () => {
+    expect(screeningConsumer).toContain("checkReuseDecision");
+    expect(screeningConsumer).toContain("resumableFromDurableState");
+    expect(screeningConsumer).toContain("completeCanonicalPersistence");
+    const resumeAt = screeningConsumer.indexOf("checkReuseDecision(linked, subject)");
+    const providerAt = screeningConsumer.indexOf("resolveTenantProvider(db, tenantId");
+    expect(resumeAt).toBeGreaterThan(-1);
+    expect(resumeAt).toBeLessThan(providerAt);
+  });
+
+  it("candidates are persisted BEFORE the terminal status, so a terminal check is always resumable", () => {
+    const body = screeningConsumer.slice(screeningConsumer.indexOf("let result;"));
+    const matchesAt = body.indexOf("from('screening_matches').insert");
+    const terminalAt = body.indexOf("status: result.status");
+    expect(matchesAt).toBeGreaterThan(-1);
+    expect(matchesAt).toBeLessThan(terminalAt);
+    // The durable summary carries the list versions recovery needs.
+    expect(body).toContain("list_versions: (result.raw as any)?.list_versions");
   });
 
   it("technical failure projects to error — retried and dead-lettered, never clear", () => {

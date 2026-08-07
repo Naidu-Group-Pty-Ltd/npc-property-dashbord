@@ -19,9 +19,11 @@ import {
   type ScreeningScope,
 } from '../_shared/aml/providers/index.ts';
 import {
+  checkReuseDecision,
   computeRefreshDueAt,
   matchDedupKey,
   projectPartyScreeningState,
+  resumableFromDurableState,
   screeningClaimDecision,
 } from '../_shared/aml/partyScreening.pure.ts';
 
@@ -147,23 +149,63 @@ export async function processScreeningEvent(db: any, event: any): Promise<void> 
  * the canonical screening tables, then project the subject from the result.
  */
 export async function runScreeningForSubject(db: any, subject: any): Promise<void> {
+  // Recovery first, provider resolution second: a check that already holds a
+  // valid terminal provider result is the SAME logical screening attempt.
+  // Re-running the provider — or opening a second check — because the worker
+  // died between persisting that result and finishing the projection would
+  // duplicate a completed execution. The retry instead FINISHES the
+  // interrupted persistence from the durable canonical record.
+  if (subject.screening_check_id) {
+    const { data: linked } = await db.schema('aml').from('screening_checks')
+      .select('id, status, completed_at, provider, result_summary, metadata')
+      .eq('id', subject.screening_check_id).maybeSingle();
+    // Only a check this subject's execution created is resumable evidence
+    // for it; anything else is treated as no reusable attempt.
+    const ownedBySubject = linked &&
+      String((linked.metadata ?? {}).party_screening_subject_id ?? '') === String(subject.id);
+    const decision = ownedBySubject ? checkReuseDecision(linked, subject) : 'new_check';
+    if (decision === 'resume_completed') {
+      const summary = (linked.result_summary ?? {}) as Record<string, unknown>;
+      const { data: rows } = await db.schema('aml').from('screening_matches')
+        .select('id').eq('screening_check_id', linked.id);
+      const summaryMatchCount = Number(summary['match_count'] ?? 0);
+      if (resumableFromDurableState(summaryMatchCount, (rows ?? []).length)) {
+        await completeCanonicalPersistence(db, subject, {
+          checkId: String(linked.id),
+          providerKey: String(linked.provider ?? subject.provider_key ?? 'unknown'),
+          completedAt: String(linked.completed_at ?? new Date().toISOString()),
+          listVersions: (summary['list_versions'] ?? {}) as Record<string, unknown>,
+          matchCount: summaryMatchCount,
+          scopesCovered: Array.isArray(summary['scopes_covered'])
+            ? (summary['scopes_covered'] as string[]) : PARTY_SCREENING_SCOPE,
+          recovered: true,
+        });
+        return;
+      }
+      // Durable state predates the matches-before-terminal ordering (or was
+      // damaged): the candidates cannot be reconstructed, so this attempt
+      // re-runs — reusing the SAME check row, never opening a second one.
+      // Fall through to the rerun path below.
+    }
+    if (decision !== 'new_check') {
+      // 'rerun_provider', or a non-resumable terminal check: reuse the row —
+      // one logical attempt, one screening_check.
+      subject = { ...subject, __reuse_check_id: String(linked.id) };
+    }
+  }
+
   const tenantId = String(subject.tenant_id ?? 'default');
   const resolved = await resolveTenantProvider(db, tenantId, 'pep_sanctions');
   const provider = getScreeningProvider({ resolved, admin: db });
 
-  // Reuse the unfinished canonical check from a failed attempt; a fresh
-  // screening round gets a fresh check so history accumulates, not mutates.
-  let checkId: string | null = null;
-  if (subject.screening_check_id) {
-    const { data: existing } = await db.schema('aml').from('screening_checks')
-      .select('id, status').eq('id', subject.screening_check_id).maybeSingle();
-    if (existing && ['in_progress', 'failed', 'pending'].includes(String(existing.status))) {
-      checkId = existing.id;
-      await db.schema('aml').from('screening_checks').update({
-        status: 'in_progress', provider: provider.name,
-        updated_at: new Date().toISOString(),
-      }).eq('id', checkId);
-    }
+  // Reuse the unfinished canonical check from an interrupted attempt; a
+  // fresh screening round gets a fresh check so history accumulates.
+  let checkId: string | null = subject.__reuse_check_id ?? null;
+  if (checkId) {
+    await db.schema('aml').from('screening_checks').update({
+      status: 'in_progress', provider: provider.name,
+      updated_at: new Date().toISOString(),
+    }).eq('id', checkId);
   }
   if (!checkId) {
     const { data: inserted, error: insertErr } = await db.schema('aml')
@@ -224,14 +266,11 @@ export async function runScreeningForSubject(db: any, subject: any): Promise<voi
     throw err;
   }
 
-  const now = new Date().toISOString();
-  await db.schema('aml').from('screening_checks').update({
-    status: result.status,
-    provider_reference: result.providerReference,
-    result_summary: result.summary,
-    completed_at: now,
-  }).eq('id', checkId);
-
+  // Persist candidates BEFORE the terminal status: a terminal check is the
+  // durable marker that the provider execution finished, so everything the
+  // projection needs must already be on disk when it appears. A crash before
+  // the terminal write re-runs the provider (dedup-keyed inserts absorb the
+  // overlap); a crash after it resumes WITHOUT the provider.
   if (result.matches.length > 0) {
     // Idempotency on redelivery after a partial failure: only insert
     // candidates the check does not already carry. Keyed on the list's own
@@ -257,41 +296,85 @@ export async function runScreeningForSubject(db: any, subject: any): Promise<voi
     }
   }
 
-  // Project the subject from the canonical match set — never from the raw
-  // result alone, so a rerun over an already-adjudicated check stays
-  // consistent with the recorded adjudications.
+  const now = new Date().toISOString();
+  await db.schema('aml').from('screening_checks').update({
+    status: result.status,
+    provider_reference: result.providerReference,
+    // list_versions travels into the durable summary so a resumed projection
+    // can stamp the subject's list evidence without the provider result.
+    // Canonical result metadata only — no payloads, no PII beyond the summary.
+    result_summary: { ...result.summary, list_versions: (result.raw as any)?.list_versions ?? {} },
+    completed_at: now,
+  }).eq('id', checkId);
+
+  await completeCanonicalPersistence(db, subject, {
+    checkId: String(checkId),
+    providerKey: provider.name,
+    completedAt: now,
+    listVersions: ((result.raw as any)?.list_versions ?? {}) as Record<string, unknown>,
+    matchCount: result.matches.length,
+    scopesCovered: ((result.summary as any)?.scopes_covered as string[]) ?? PARTY_SCREENING_SCOPE,
+    recovered: false,
+  });
+}
+
+/**
+ * The downstream persistence a terminal check requires: projection from the
+ * canonical match set, the subject's evidence stamps, and the case event.
+ * Used by the fresh path and by terminal-check recovery — the two must stay
+ * one code path so recovery cannot drift from normal completion. Projection
+ * reads match STATUSES, so recorded human adjudications (confirmed /
+ * dismissed) are honoured, never overwritten.
+ */
+export async function completeCanonicalPersistence(
+  db: any,
+  subject: any,
+  args: {
+    checkId: string;
+    providerKey: string;
+    completedAt: string;
+    listVersions: Record<string, unknown>;
+    matchCount: number;
+    scopesCovered: string[];
+    recovered: boolean;
+  },
+): Promise<void> {
   const { data: allMatches } = await db.schema('aml').from('screening_matches')
-    .select('status').eq('screening_check_id', checkId);
+    .select('status').eq('screening_check_id', args.checkId);
   const projected = projectPartyScreeningState((allMatches ?? []).map((m: any) => m.status));
 
   const intervalDays = await rescreenIntervalDays(db);
-  const listVersions = (result.raw as any)?.list_versions ?? {};
-  const listVersion = Object.entries(listVersions)
+  const listVersion = Object.entries(args.listVersions)
     .map(([code, v]) => `${code}:${v}`).join(' ').slice(0, 500) || null;
 
+  // last_screened_at is the check's completion time — on recovery that is
+  // when the screening actually happened, not when the retry landed. It also
+  // matches check.completed_at exactly, which is what marks this round's
+  // projection as done for the reuse decision.
   await db.schema('aml').from('party_screening_subjects').update({
     state: projected,
-    screening_check_id: checkId,
-    provider_key: provider.name,
+    screening_check_id: args.checkId,
+    provider_key: args.providerKey,
     list_version: listVersion,
-    last_screened_at: now,
-    refresh_due_at: computeRefreshDueAt(now, intervalDays),
+    last_screened_at: args.completedAt,
+    refresh_due_at: computeRefreshDueAt(args.completedAt, intervalDays),
     error_category: null,
-    updated_at: now,
+    updated_at: new Date().toISOString(),
   }).eq('id', subject.id);
 
   await appendCaseEvent(
     db, subject.case_id,
-    result.matches.length > 0 ? 'pep_sanctions_hit' : 'system',
-    result.matches.length > 0
-      ? `Party screening found ${result.matches.length} candidate match(es) for ${subject.screened_name} — human adjudication required`
-      : `Party screening ${projected} for ${subject.screened_name} via ${provider.name}`,
+    args.matchCount > 0 ? 'pep_sanctions_hit' : 'system',
+    args.matchCount > 0
+      ? `Party screening found ${args.matchCount} candidate match(es) for ${subject.screened_name} — human adjudication required`
+      : `Party screening ${projected} for ${subject.screened_name} via ${args.providerKey}`,
     {
       party_screening_subject_id: subject.id,
-      screening_check_id: checkId,
+      screening_check_id: args.checkId,
       state: projected,
-      match_count: result.matches.length,
-      scopes_covered: (result.summary as any)?.scopes_covered ?? PARTY_SCREENING_SCOPE,
+      match_count: args.matchCount,
+      scopes_covered: args.scopesCovered,
+      ...(args.recovered ? { recovered_from_interrupted_persistence: true } : {}),
     },
   );
 }
