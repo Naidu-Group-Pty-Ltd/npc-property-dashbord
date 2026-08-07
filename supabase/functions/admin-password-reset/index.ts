@@ -6,6 +6,8 @@ import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts";
+
 
 // Simple email sending via Resend REST API
 async function sendEmail(to: string, subject: string, html: string): Promise<{ success: boolean; error?: string }> {
