@@ -852,7 +852,12 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
         const html = typeof drawn === 'string' ? drawn : drawn?.html ?? '';
         if (!html.trim()) { notices.figuresDropped++; continue; }
         notices.figuresDrawn++;
-        const charged = typeof drawn === 'object' && typeof drawn.lines === 'number'
+        // `typeof null === 'object'`, so the null arm must be excluded
+        // explicitly before reading `.lines`. Unreachable with null at
+        // runtime anyway — a null draw produced an empty `html` and was
+        // dropped by the guard above — but the narrowing makes that visible
+        // to the type system instead of relying on it.
+        const charged = drawn !== null && typeof drawn === 'object' && typeof drawn.lines === 'number'
           ? drawn.lines
           : DEFAULT_FIGURE_LINES;
         if (!push('figure', html, charged)) break scan;
