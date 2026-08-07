@@ -1222,7 +1222,14 @@ Deno.serve(async (req) => {
       // bucket itself under our custom-auth model, so we mediate here.
       const path = typeof body.path === 'string' ? body.path : '';
       if (!path) return json({ error: 'path required' }, 400);
-      const expiresIn = Math.min(Math.max(Number(body.expires_in) || 300, 60), 300);
+      // Ceiling raised 300s -> 900s. A signed URL handed to WeasyPrint as a
+      // resource reference (rather than inlined as base64) must outlive the
+      // render that consumes it, and the render timeout is 600s. At 300s a
+      // long multi-page export would have had its images expire midway and
+      // silently drop to blank backgrounds. Still short-lived: this is a
+      // bearer credential for a private bucket, so the window is the render
+      // duration plus headroom and nothing more.
+      const expiresIn = Math.min(Math.max(Number(body.expires_in) || 300, 60), 900);
       const objectPath = path.startsWith(`${DIAGNOSTICS_BUCKET}/`)
         ? path.slice(DIAGNOSTICS_BUCKET.length + 1)
         : path;
