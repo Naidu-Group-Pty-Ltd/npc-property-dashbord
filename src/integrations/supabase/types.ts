@@ -2028,6 +2028,10 @@ export type Database = {
           created_at: string
           endpoint: string | null
           id: string
+          mc_attempts: number
+          mc_billing_reason: string | null
+          mc_last_error: string | null
+          mc_reported_at: string | null
           metadata: Json | null
           model_used: string | null
           prompt_tokens: number | null
@@ -2044,6 +2048,10 @@ export type Database = {
           created_at?: string
           endpoint?: string | null
           id?: string
+          mc_attempts?: number
+          mc_billing_reason?: string | null
+          mc_last_error?: string | null
+          mc_reported_at?: string | null
           metadata?: Json | null
           model_used?: string | null
           prompt_tokens?: number | null
@@ -2060,6 +2068,10 @@ export type Database = {
           created_at?: string
           endpoint?: string | null
           id?: string
+          mc_attempts?: number
+          mc_billing_reason?: string | null
+          mc_last_error?: string | null
+          mc_reported_at?: string | null
           metadata?: Json | null
           model_used?: string | null
           prompt_tokens?: number | null
@@ -34030,6 +34042,8 @@ export type Database = {
         Args: { p_case: Json; p_client_id: string }
         Returns: Json
       }
+      api_usage_billing_breakdown: { Args: { _days?: number }; Returns: Json }
+      api_usage_forwarding_status: { Args: never; Returns: Json }
       append_migration_upload_chunk: {
         Args: {
           _chunk_index: number
@@ -36311,6 +36325,20 @@ export type Database = {
         Returns: boolean
       }
       check_pdf_import_success_rate: { Args: never; Returns: undefined }
+      claim_api_usage_for_forwarding: {
+        Args: { _limit?: number }
+        Returns: {
+          created_at: string
+          endpoint: string
+          id: string
+          metadata: Json
+          model_used: string
+          request_count: number
+          service_name: string
+          status: string
+          tokens_used: number
+        }[]
+      }
       claim_builder_document_processing_jobs: {
         Args: { _limit?: number; _worker_id: string }
         Returns: {
@@ -37076,6 +37104,10 @@ export type Database = {
           p_username: string
         }
         Returns: string
+      }
+      mark_api_usage_forwarded: {
+        Args: { _failed?: Json; _reported?: Json }
+        Returns: Json
       }
       mark_commission_payout_paid: {
         Args: {
