@@ -22,6 +22,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { makeCanvasRenderKey, pageWithoutOverlays } from '@/lib/reportTemplate/previewCache';
 import { normalizePageSize } from '@/lib/reportTemplate/rendering/pageGeometry';
+import { PT_TO_PX } from '@/lib/templateLibrary/pageGeometry';
 import { overlayPaintOrder } from '@/lib/reportTemplate/paintOrder';
 import { buildTextOverlayCssDecls, cssDeclsToReactStyle } from '@/lib/reportTemplate/rendering/textOverlayStyle.pure';
 import { screenToPagePoint, PALETTE_DRAG_MIME, parsePaletteDrag } from '@/lib/reportTemplate/overlayDropFactory';
@@ -582,12 +583,30 @@ function EditorialCanvasImpl({
               height: pageH * zoom,
             }}
           >
-            {/* Iframe with the rendered page (visual only, pointer-events disabled) */}
+            {/* Iframe with the rendered page (visual only, pointer-events disabled).
+
+                The stage is sized in POINTS × zoom, but the document inside the
+                iframe lays out at `${size.width}pt`, and CSS fixes 1pt at 4/3 px.
+                Sized at `w-full h-full` the document was therefore 1.333× wider
+                than its viewport — overflowing, cut off, and permanently
+                misaligned with the overlay handles, which position at 1 CSS px
+                per point. Worse, the iframe content did not respond to `zoom` at
+                all, so the mismatch was constant at every zoom level.
+
+                Give the iframe its NATURAL pixel size and scale it back down by
+                zoom/PT_TO_PX, so one point on the handle layer is one point in
+                the document. Same pattern as TemplateDocumentPreview and
+                LiveHtmlPreview, which both got this right. */}
             <iframe
               title="Editor preview"
               srcDoc={html}
               sandbox="allow-same-origin"
-              className="absolute inset-0 w-full h-full border-0 pointer-events-none"
+              className="absolute left-0 top-0 border-0 pointer-events-none origin-top-left"
+              style={{
+                width: pageW * PT_TO_PX,
+                height: pageH * PT_TO_PX,
+                transform: `scale(${zoom / PT_TO_PX})`,
+              }}
             />
 
             {/* Alignment guides — magenta lines with a coordinate pill so

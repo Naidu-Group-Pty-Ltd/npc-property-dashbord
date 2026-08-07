@@ -224,7 +224,18 @@ if _OCR_LANG_RESOLUTION.changed:
     )
 # Lower bitmap threshold = OCR runs even on lightly-bitmapped regions.
 BITMAP_AREA_THRESHOLD = float(os.environ.get("DOCLING_BITMAP_AREA_THRESHOLD", "0.05"))
-IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "2.0"))
+# Picture-crop resolution, expressed as a multiplier on 72 DPI: 2.0 == 144 DPI,
+# 4.0 == 288 DPI. Docling RE-RENDERS a picture's page region at this scale
+# rather than extracting the embedded stream, so this is a hard ceiling on
+# embedded-image quality — a 600 DPI photograph in the source was permanently
+# resampled to 144 DPI before it ever reached the template, which is a large
+# part of the reported pixelation.
+#
+# Raised to 4.0 (288 DPI, just under the 300 DPI print floor). Cost scales with
+# the square, but it applies to picture REGIONS rather than whole pages, and the
+# per-page artifact caps still bound the total. Dial back via the env var if a
+# picture-dense corpus regresses cold-start memory.
+IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "4.0"))
 TABLE_MODE = os.environ.get("DOCLING_TABLE_MODE", "ACCURATE").strip().upper() or "ACCURATE"
 LAYOUT_MODEL = os.environ.get("DOCLING_LAYOUT_MODEL", "").strip() or None
 # Accelerator: AUTO lets Docling pick CUDA / MPS / CPU as available.

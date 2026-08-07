@@ -75,14 +75,44 @@ const DEFAULT_FONT_FAMILY = 'Helvetica';
 // Keep this boundary deliberately narrow so parser-controlled values cannot
 // trigger network/file fetches, SVG execution, binding resolution, or large
 // data-URI allocations during preview/export.
-const MAX_DOCLING_IMAGE_BYTES = 10 * 1024 * 1024;
+// Raised from 10 MB alongside the picture-crop DPI increase (DOCLING_IMAGES_SCALE
+// 2.0 -> 4.0): a legitimate full-bleed image at 288 DPI now exceeds the old
+// bound, and tripping it produces a grey placeholder rather than a picture.
+// This is an allocation guard, not a correctness one — the format allow-list
+// above it is what keeps the boundary narrow.
+const MAX_DOCLING_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOCLING_IMAGE_BASE64_LENGTH = Math.ceil(MAX_DOCLING_IMAGE_BYTES / 3) * 4;
 
-function safeDoclingImageUri(uri: unknown): string | undefined {
-  if (typeof uri !== 'string') return undefined;
+/** Why a picture URI was refused — surfaced so the drop is never silent. */
+export type DoclingImageRejection = 'not-a-string' | 'unsupported-format' | 'too-large';
+
+export interface DoclingImageUriResult {
+  uri?: string;
+  rejected?: DoclingImageRejection;
+  /** Decoded byte estimate, present when the reason is `too-large`. */
+  approxBytes?: number;
+}
+
+/**
+ * Validate a picture data URI.
+ *
+ * Returns the reason on refusal instead of a bare `undefined`. An oversize
+ * image previously vanished into a grey checkerboard with nothing anywhere
+ * explaining why, which is indistinguishable from a parse failure to whoever is
+ * reviewing the import.
+ */
+function inspectDoclingImageUri(uri: unknown): DoclingImageUriResult {
+  if (typeof uri !== 'string') return { rejected: 'not-a-string' };
   const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(uri);
-  if (!match || !match[1] || match[1].length > MAX_DOCLING_IMAGE_BASE64_LENGTH) return undefined;
-  return uri;
+  if (!match || !match[1]) return { rejected: 'unsupported-format' };
+  if (match[1].length > MAX_DOCLING_IMAGE_BASE64_LENGTH) {
+    return { rejected: 'too-large', approxBytes: Math.floor((match[1].length * 3) / 4) };
+  }
+  return { uri };
+}
+
+function safeDoclingImageUri(uri: unknown): string | undefined {
+  return inspectDoclingImageUri(uri).uri;
 }
 
 function nearestDesignFont(family: string | undefined, label?: DoclingTextLabel): string {
@@ -520,7 +550,8 @@ function pictureItemToBlock(
   if (bbox.width <= 0 || bbox.height <= 0) return null;
   const altText = pictureAltText(item);
   const pictureClass = topPictureClass(item);
-  const imageUri = safeDoclingImageUri(item.image?.uri);
+  const imageInspection = inspectDoclingImageUri(item.image?.uri);
+  const imageUri = imageInspection.uri;
   const imageDiagnosticsPath = item.image?.diagnostics_path;
   const displayText = altText || item.caption || (pictureClass ? `[${pictureClass}]` : '[image]');
   return {
@@ -540,6 +571,17 @@ function pictureItemToBlock(
       groupId: captionGroupId,
       imageUri,
       imageDiagnosticsPath,
+      // A refused picture renders as a grey placeholder. Recording WHY makes the
+      // difference between "the source had no image here" and "we dropped it"
+      // visible to review, instead of leaving a mystery box on the page.
+      ...(imageInspection.rejected && item.image?.uri != null
+        ? {
+            imageRejected: imageInspection.rejected,
+            ...(imageInspection.approxBytes != null
+              ? { imageApproxBytes: imageInspection.approxBytes }
+              : {}),
+          }
+        : {}),
     },
   };
 }

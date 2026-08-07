@@ -276,8 +276,29 @@ async function sha256Text(text: string): Promise<string> {
 
 // Requested raster DPI is a deterministic function of the requested mode; used
 // both for the parse request and for the cache fingerprint.
+/**
+ * The output-grade raster DPI for a mode.
+ *
+ * The dispatcher is the only layer that knows whether a page raster is a
+ * throwaway alignment underlay or the actual deliverable, so the DPI decision
+ * belongs here — `lane_policy.resolve_raster_dpi` treats an explicit request as
+ * the target and `DOCLING_RASTER_DPI` only as a fallback.
+ *
+ * Was a flat 200/144. At 144 DPI an A4 page is 1191px, which a Retina display
+ * at 100% zoom already upscales 1.33x — the reported pixelation — and which is
+ * 2.08x below the 300 DPI print floor. Pixel-perfect rasters ARE the output, so
+ * they go to the print floor. Hybrid rasters are nominally an editor underlay
+ * (see TemplateImportPagePlan.background.underlay), but the quality gate can
+ * later downgrade a hybrid page to raster-only and promote that same underlay
+ * to final output, so 144 is too weak a starting point; 200 matches what the
+ * design_heavy lane already demands.
+ *
+ * This value feeds computeCacheFingerprint, so changing it invalidates cached
+ * artifacts for the affected modes automatically — which is correct, the old
+ * ones are lower-resolution than the contract now promises.
+ */
 function requestedRasterDpi(mode: string): number {
-  return (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 200 : 144;
+  return (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 300 : 200;
 }
 
 // pdf-cache-contract-v2 fingerprint. Computed pre-plan from request-level policy
@@ -791,7 +812,9 @@ async function dispatchChunkToSidecar(
     include_doctags: true,
     include_markdown: requestPayload?.include_markdown !== false,
     redact_pii: Boolean(requestPayload?.redact_pii),
-    raster_dpi: (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 200 : 144,
+    // Same source as the cache fingerprint — a chunked page must not raster at a
+    // different grade from the monolithic path, or a cache hit serves the wrong one.
+    raster_dpi: requestedRasterDpi(mode),
     raster_format: 'png',
   };
   try {
@@ -986,7 +1009,7 @@ async function runJob(
     const includeMarkdown = requestPayload?.include_markdown === false ? false : true;
     const enablePictureDescription = (descriptionTier === 'on' || descriptionTier === 'premium')
       && (!plan || plan.requires_picture_description === true);
-    const rasterDpi = (effectiveMode === 'pixel_perfect' || effectiveMode === 'pixel-perfect') ? 200 : 144;
+    const rasterDpi = requestedRasterDpi(effectiveMode);
 
     const parseBody: Record<string, unknown> = {
       url: signedUrl,

@@ -278,7 +278,21 @@ class EffectiveLanePolicy:
     def resolve_raster_dpi(self, request_dpi: Optional[int], process_default: Optional[int]) -> int:
         """Effective raster DPI: explicit request → lane floor → process default →
         mode fallback, with the lane's DPI enforced as a *minimum* so a weaker
-        dispatcher default can never override a stronger lane policy."""
+        dispatcher default can never override a stronger lane policy.
+
+        NOTE ON `process_default` (`DOCLING_RASTER_DPI`): it is a FALLBACK, not a
+        floor, and deliberately so — `test_raster_dpi_floor` pins that
+        `resolve_raster_dpi(220, 300) == 220`. The caller knows the output grade
+        it needs; a site-wide default must not silently promote every alignment
+        underlay to 300 DPI and quadruple the render cost of work that is thrown
+        away after layout.
+
+        The consequence is that `DOCLING_RASTER_DPI` has no effect whenever the
+        caller passes an explicit value, which the dispatcher always does. That
+        is intended: **the DPI decision belongs to the dispatcher**, which is the
+        only layer that knows whether a raster is a throwaway underlay or the
+        deliverable. See `requestedRasterDpi()` in pdf-parse-dispatch.
+        """
         mode_fallback = 200 if "pixel" in (self.effective_mode or "") else 144
         candidates = [request_dpi, self.raster_dpi, process_default, mode_fallback]
         chosen = next((int(c) for c in candidates if c), mode_fallback)
