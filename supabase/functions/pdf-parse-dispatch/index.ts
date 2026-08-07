@@ -29,6 +29,7 @@ import {
   buildCacheContractFingerprintInput,
   PDF_CACHE_CONTRACT_VERSION,
 } from '../_shared/pdfCacheContract.pure.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 import { resolvePdfDescriptionTier } from '../_shared/pdfDescriptionTier.pure.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
@@ -1154,10 +1155,18 @@ async function recoverStuckJobs(admin: Admin): Promise<{ requeued: number; faile
 }
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  // Origin-aware: an allowlisted origin gets an exact ACAO + credentials so the
+  // HttpOnly `__Host-session_token` cookie authenticates the parse job. Anyone
+  // else keeps the historical wildcard token-auth answer.
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   const json = (b: unknown, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+
+  // Ambient cookie authority requires an exact-origin check; no-ops for
+  // token-only callers, which send no cookie.
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
 
   if (!PARSE_URL || !PARSE_TOKEN) {
     return json({ error: 'PDF_PARSE_SERVICE_URL / PDF_PARSE_SERVICE_TOKEN not configured' }, 503);

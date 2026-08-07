@@ -508,22 +508,39 @@ function lovablePreviewSuffixAllowed(origin: string): boolean {
   }
 }
 
-export function createCorsHeaders(origin: string | null = null): Record<string, string> {
-  const allowedOrigins = [
+/**
+ * The exact origins trusted for CREDENTIALED responses — i.e. the ones allowed
+ * to read a response carrying the staff session cookie.
+ */
+function credentialedOriginAllowlist(): string[] {
+  return [
     ...parseAllowedOrigins(),
     ...PROJECT_PREVIEW_ORIGINS,
     'http://localhost:5173',
     'http://localhost:8080',
   ];
+}
+
+/**
+ * Is this origin trusted to receive a credentialed CORS response?
+ *
+ * Exported because `createTokenAuthCorsHeaders` needs the same answer without
+ * inheriting `createCorsHeaders`'s "mismatched ACAO" behaviour for origins that
+ * are NOT on the list (see that function for why the difference matters).
+ */
+export function isAllowedOrigin(origin: string | null | undefined): boolean {
+  if (!origin) return false;
+  return credentialedOriginAllowlist().includes(origin) || lovablePreviewSuffixAllowed(origin);
+}
+
+export function createCorsHeaders(origin: string | null = null): Record<string, string> {
+  const allowedOrigins = credentialedOriginAllowlist();
 
   // Exact-origin allowlist only. Suffix matching is gated behind an explicit,
   // default-off preview flag (see lovablePreviewSuffixAllowed). A disallowed
   // origin gets a mismatched ACAO (allowedOrigins[0]) that the browser refuses
   // to expose to the caller.
-  const allowedOrigin = origin && (
-    allowedOrigins.includes(origin) ||
-    lovablePreviewSuffixAllowed(origin)
-  ) ? origin : allowedOrigins[0];
+  const allowedOrigin = isAllowedOrigin(origin) ? origin! : allowedOrigins[0];
 
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
@@ -542,24 +559,57 @@ export function createCorsHeaders(origin: string | null = null): Record<string, 
 }
 
 /**
- * CORS headers for TOKEN-authenticated endpoints (no cookies involved — the
- * app calls them with `credentials: 'omit'` and auth travels in the
- * Authorization header / `session_token` body field).
+ * CORS headers for endpoints that historically answered every origin with a
+ * wildcard because they authenticated on a Bearer token alone.
  *
- * Wildcard origin is deliberate: the origin-allowlist variant returned a
- * mismatched `Access-Control-Allow-Origin` for any origin missing from
- * `ALLOWED_ORIGINS`, which the browser surfaces as an opaque
- * "Failed to fetch" hard error on EVERY call — indistinguishable from an
- * outage. Authentication is enforced in-function, not by CORS.
+ * ## Why this now takes the request origin
+ *
+ * The wildcard was chosen to avoid a hard failure: the plain origin-allowlist
+ * variant answers a NON-allowlisted origin with a deliberately mismatched
+ * `Access-Control-Allow-Origin`, which the browser surfaces as an opaque
+ * "Failed to fetch" on EVERY call — indistinguishable from an outage.
+ *
+ * But a wildcard origin is only valid for an UNcredentialed request, so the
+ * app had to call these endpoints with `credentials: 'omit'`. That stripped the
+ * HttpOnly `__Host-session_token` cookie, and WP-11B/C Phase 4 had already made
+ * that cookie the SOLE session carrier (`extractSessionToken` reads nothing
+ * else). The only credential left was the HS256 access-token JWT — and the
+ * ES256 remediation (see `supabase/functions/authenticated-data/index.ts`)
+ * records that both projects now sign with ES256, so the browser holds no
+ * usable one. The result was every PDF template import failing 401
+ * "Authentication required", surfaced to the user as "Your sign-in session has
+ * expired", on a session that was perfectly valid.
+ *
+ * So: answer an ALLOWLISTED origin exactly, with credentials, and the cookie
+ * authenticates exactly as it does for the ~300 other functions. Answer anyone
+ * else with the old wildcard, so token-only and non-browser callers keep
+ * working and no origin ever gets the mismatched-ACAO hard failure. This is
+ * strictly narrower than the previous blanket wildcard for credentialed
+ * requests and identical to it for everything else.
+ *
+ * A function that accepts the cookie here MUST also run `enforceCsrf` (see
+ * `_shared/csrfGuard.ts`) — ambient cookie authority is what CSRF exploits.
  */
-export function createTokenAuthCorsHeaders(): Record<string, string> {
-  return {
-    'Access-Control-Allow-Origin': '*',
+export function createTokenAuthCorsHeaders(origin: string | null = null): Record<string, string> {
+  const base: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': CORS_ALLOWED_REQUEST_HEADERS,
     'Access-Control-Expose-Headers': CORS_EXPOSED_RESPONSE_HEADERS,
     'Access-Control-Max-Age': '86400',
+    // The answer now depends on the request origin, so caches must not serve
+    // one origin's CORS response to another.
+    'Vary': 'Origin',
   };
+
+  if (isAllowedOrigin(origin)) {
+    return {
+      ...base,
+      'Access-Control-Allow-Origin': origin!,
+      'Access-Control-Allow-Credentials': 'true',
+    };
+  }
+
+  return { ...base, 'Access-Control-Allow-Origin': '*' };
 }
 
 /**

@@ -9,6 +9,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 // E1 — Source Scene Graph V2 / Page Artifact Contract V3 lazy signed delivery.
 import { validatePageArtifactContractV3 } from '../_shared/pageArtifactContractV3.pure.ts';
 import { isSafeArtifactPath } from '../_shared/sourceSceneGraphV2.pure.ts';
@@ -811,13 +812,22 @@ const GOLDEN_RUN_SELECT =
   'id,run_id,run_batch_id,corpus_id,category,import_id,template_id,source_filename,engine_version,orchestrator_version,summary_version,import_status,run_status,run_decision,quality_gate_status,operator_decision,import_page_count,template_page_count,visual_qa_score,visual_qa_manual_review_required,repair_status,repair_final_score,repair_requires_fallback,repair_requires_manual_review,ai_reconciliation_status,ai_reconciliation_recommendation,export_parity_status,export_parity_mode,export_vs_source_score,editor_vs_source_score,export_vs_editor_score,warning_count,failure_count,warnings,failures,gate_summary,triage_summary,golden_regression_summary,baseline_comparison,created_by,created_at,updated_at';
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  // Origin-aware: an allowlisted origin gets an exact ACAO + credentials so the
+  // HttpOnly `__Host-session_token` cookie authenticates the import. Anyone else
+  // keeps the historical wildcard token-auth answer. See createTokenAuthCorsHeaders.
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+
+  // Cookie authority is ambient, so every cookie-carrying mutation needs an
+  // exact-origin check. No-ops for callers that send no cookie (token auth).
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
+
   try {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
     let body = await req.json().catch(() => ({}));

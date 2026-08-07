@@ -193,7 +193,7 @@ function scalarToText(v: number | boolean | null): string | null {
 }
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   const json = (b: unknown, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });

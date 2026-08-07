@@ -11,6 +11,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { analyzeReferenceImage, integrateBriefTokens, synthesisSystemAddendum, validateBriefSynthesis, type DesignBrief } from '../_shared/designBrief.ts';
 import { callClaudeReconstruct } from '../_shared/claudeReconstruct.ts';
 import { validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
@@ -528,13 +529,22 @@ CONVERSATIONAL RULES:
 - If the request is ambiguous, make the most tasteful interpretation and proceed; ask only when you genuinely cannot proceed.`;
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  // Origin-aware: an allowlisted origin gets an exact ACAO + credentials so the
+  // HttpOnly `__Host-session_token` cookie authenticates the caller. Anyone else
+  // keeps the historical wildcard token-auth answer.
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   const json = (b: unknown, status = 200) =>
     new Response(JSON.stringify(b), {
       status,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+
+  // This agent spends AI credits on ambient cookie authority, so an
+  // exact-origin check is mandatory. No-ops for callers that send no cookie.
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
+
   if (!LOVABLE_API_KEY && !ANTHROPIC_API_KEY) return json({ error: 'No AI provider configured (set LOVABLE_API_KEY or ANTHROPIC_API_KEY).' }, 500);
 
   try {
