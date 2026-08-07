@@ -224,6 +224,8 @@ import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLa
 const FinancePortalLogin = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalLogin"));
 const FinancePortalAcceptInvite = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAcceptInvite"));
 const FinancePortalChangePassword = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalChangePassword"));
+const FinancePortalTerms = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalTerms"));
+const FinancePortalOnboarding = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalOnboarding"));
 const FinancePortalDashboard = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalDashboard"));
 const FinancePortalClients = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClients"));
 const FinancePortalClientProfile = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientProfile"));
@@ -405,6 +407,24 @@ const App = () => (
                               <Route path="change-password" element={
                                 <FinancePortalProtectedRoute>
                                   <FinancePortalChangePassword />
+                                </FinancePortalProtectedRoute>
+                              } />
+                              {/*
+                                Governance gates, in the order the guard enforces:
+                                terms, then onboarding. Both sit OUTSIDE the portal
+                                layout so neither shares a tree with the welcome tour,
+                                and so each contains itself in the viewport instead of
+                                being squeezed into a dialog. Same shape as
+                                /solicitor/terms and /solicitor/onboarding.
+                              */}
+                              <Route path="terms" element={
+                                <FinancePortalProtectedRoute>
+                                  <FinancePortalTerms />
+                                </FinancePortalProtectedRoute>
+                              } />
+                              <Route path="onboarding" element={
+                                <FinancePortalProtectedRoute>
+                                  <FinancePortalOnboarding />
                                 </FinancePortalProtectedRoute>
                               } />
                               <Route path="" element={

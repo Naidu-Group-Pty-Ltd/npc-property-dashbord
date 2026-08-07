@@ -1,7 +1,17 @@
 /**
  * Batch 13 #67 — Onboarding tour for finance partners.
  * Highlights each sidebar destination on first login. Completion is cached in
- * localStorage and (optionally) persisted via finance_partner_ui_prefs.prefs.
+ * localStorage and the tour can be replayed via the `finance:start-tour` event.
+ *
+ * WHEN IT MAY RUN. Only once the partner is actually *in* the portal — the
+ * agreement accepted and onboarding complete. It used to auto-start on nothing
+ * but "a user exists", 900ms after the layout mounted, while the terms modal
+ * that shipped in the same tree was still open; the tour paints at `z-[60]` and
+ * the dialog at `z-50`, so the welcome card landed on top of the agreement.
+ * Terms and onboarding are their own routes now (`FinancePortalTerms`,
+ * `FinancePortalOnboarding`) and this layout does not mount until both are
+ * behind the partner, but the condition is asserted here as well: a tour is
+ * never the right thing to interrupt a consent wall with, whoever mounts it.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
@@ -49,14 +59,25 @@ export function FinanceOnboardingTour() {
   const [active, setActive] = useState(false);
   const [step, setStep] = useState(-1); // -1 = welcome
   const [pos, setPos] = useState({ top: 0, left: 0 });
+  const [centered, setCentered] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  // `has_accepted_current_terms` is absent, not false, against a
+  // finance-portal-verify that predates versioned acceptance — the same
+  // tolerance the route guard applies.
+  const acceptedTerms = user
+    ? (typeof user.has_accepted_current_terms === 'boolean'
+      ? user.has_accepted_current_terms
+      : user.has_accepted_terms)
+    : false;
+  const throughTheDoor = Boolean(user) && acceptedTerms && Boolean(user?.has_completed_onboarding);
+
   useEffect(() => {
-    if (!user) return;
+    if (!throughTheDoor) return;
     if (hasCompleted()) return;
     const t = setTimeout(() => setActive(true), 900);
     return () => clearTimeout(t);
-  }, [user]);
+  }, [throughTheDoor]);
 
   useEffect(() => {
     const onCustom = () => { resetFinanceTour(); setStep(-1); setActive(true); };
@@ -67,26 +88,38 @@ export function FinanceOnboardingTour() {
   const cleanup = useCallback(() => {
     STEPS.forEach(s => {
       const el = document.querySelector(s.selector) as HTMLElement | null;
-      if (el) { el.style.position = ''; el.style.zIndex = ''; el.style.boxShadow = ''; el.style.borderRadius = ''; }
+      if (!el) return;
+      el.style.position = ''; el.style.zIndex = ''; el.style.boxShadow = ''; el.style.borderRadius = '';
+      const shell = el.closest('aside') as HTMLElement | null;
+      if (shell) { shell.style.zIndex = ''; shell.style.position = ''; }
     });
   }, []);
 
   const position = useCallback((idx: number) => {
     if (idx < 0 || idx >= STEPS.length) return;
-    const s = STEPS[idx];
-    const el = document.querySelector(s.selector) as HTMLElement | null;
-    if (!el) return;
+    const el = document.querySelector(STEPS[idx].selector) as HTMLElement | null;
+    // A destination can be absent (feature-flagged out) or invisible (the
+    // sidebar is hidden below md). Either way there is nothing to point at, so
+    // the card is centred rather than left at the previous step's coordinates.
+    if (!el) { setCentered(true); return; }
     const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) { setCentered(true); return; }
+    setCentered(false);
+
+    // The sidebar is a glass surface, so `backdrop-filter` gives it its own
+    // stacking context and raising the nav item alone would leave the highlight
+    // trapped under the overlay. Raise the shell with it.
+    const shell = el.closest('aside') as HTMLElement | null;
+    if (shell) { shell.style.position = 'relative'; shell.style.zIndex = '60'; }
     el.style.position = 'relative';
-    el.style.zIndex = '60';
+    el.style.zIndex = '61';
     el.style.borderRadius = '12px';
     el.style.boxShadow = '0 0 0 4px hsl(var(--primary) / 0.35)';
-    const mobile = window.innerWidth < 768;
-    if (mobile) {
-      setPos({ top: Math.min(r.bottom + 12, window.innerHeight - 320), left: 16 });
-    } else {
-      setPos({ top: Math.max(r.top - 20, 80), left: r.right + 20 });
-    }
+
+    setPos({
+      top: Math.max(Math.min(r.top - 20, window.innerHeight - 260), 80),
+      left: r.right + 20,
+    });
   }, []);
 
   useEffect(() => {
@@ -94,12 +127,19 @@ export function FinanceOnboardingTour() {
     return () => cleanup();
   }, [step, position, cleanup]);
 
-  const finish = () => {
+  const finish = useCallback(() => {
     cleanup();
     markCompleted();
     setActive(false);
     setStep(-1);
-  };
+  }, [cleanup]);
+
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') finish(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [active, finish]);
 
   if (!active) return null;
   const isWelcome = step === -1;
@@ -108,13 +148,18 @@ export function FinanceOnboardingTour() {
 
   return (
     <>
-      <div className="fixed inset-0 z-50 bg-background dark:bg-black/55 backdrop-blur-sm" />
+      <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm dark:bg-black/60" />
       {isWelcome ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Finance portal tour"
+        >
           <div className="bg-card border border-border rounded-2xl shadow-2xl max-w-md w-full p-8 animate-in zoom-in-95 fade-in duration-300">
             <div className="text-center space-y-5">
               <div className="mx-auto w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-                <Sparkles className="h-8 w-8 text-primary" />
+                <Sparkles className="h-8 w-8 text-primary" aria-hidden />
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-foreground">Welcome to the Finance Portal</h2>
@@ -124,7 +169,7 @@ export function FinanceOnboardingTour() {
               </div>
               <div className="flex flex-col gap-3 pt-2">
                 <Button onClick={() => setStep(0)} size="lg" className="w-full gap-2">
-                  Start tour <ArrowRight className="h-4 w-4" />
+                  Start tour <ArrowRight className="h-4 w-4" aria-hidden />
                 </Button>
                 <Button onClick={finish} variant="ghost" size="sm" className="text-muted-foreground">
                   Skip for now
@@ -136,24 +181,37 @@ export function FinanceOnboardingTour() {
       ) : current && Icon ? (
         <div
           ref={ref}
-          className="fixed z-[60] w-[340px] md:w-[380px] animate-in fade-in slide-in-from-left-3 duration-200"
-          style={{ top: `${pos.top}px`, left: `${pos.left}px`, maxWidth: 'calc(100vw - 32px)' }}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Tour step ${step + 1} of ${STEPS.length}: ${current.title}`}
+          className={cn(
+            'fixed z-[62] w-[340px] md:w-[380px] animate-in duration-200 fade-in',
+            centered ? 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 zoom-in-95' : 'slide-in-from-left-3',
+          )}
+          style={centered
+            ? { maxWidth: 'calc(100vw - 32px)' }
+            : { top: `${pos.top}px`, left: `${pos.left}px`, maxWidth: 'calc(100vw - 32px)' }}
         >
           <div className="bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
             <div className="bg-primary/5 px-5 py-4 flex items-center justify-between border-b border-border">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-primary/10"><Icon className="h-5 w-5 text-primary" /></div>
+                <div className="p-2 rounded-xl bg-primary/10"><Icon className="h-5 w-5 text-primary" aria-hidden /></div>
                 <h3 className="font-semibold text-foreground text-base">{current.title}</h3>
               </div>
-              <button onClick={finish} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
-                <X className="h-4 w-4" />
+              <button
+                type="button"
+                onClick={finish}
+                aria-label="Close tour"
+                className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <X className="h-4 w-4" aria-hidden />
               </button>
             </div>
             <div className="px-5 py-4">
               <p className="text-sm text-muted-foreground leading-relaxed">{current.description}</p>
             </div>
             <div className="px-5 py-3 bg-muted/30 border-t border-border flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5" aria-hidden>
                 {STEPS.map((_, i) => (
                   <div key={i} className={cn(
                     'h-1.5 rounded-full transition-all duration-300',
@@ -169,8 +227,8 @@ export function FinanceOnboardingTour() {
                   className="gap-1.5 h-8"
                 >
                   {step === STEPS.length - 1
-                    ? <>Finish <CheckCircle2 className="h-3.5 w-3.5" /></>
-                    : <>Next <ArrowRight className="h-3.5 w-3.5" /></>}
+                    ? <>Finish <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /></>
+                    : <>Next <ArrowRight className="h-3.5 w-3.5" aria-hidden /></>}
                 </Button>
               </div>
             </div>

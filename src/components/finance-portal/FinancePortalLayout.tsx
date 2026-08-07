@@ -14,7 +14,6 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { FinancePortalOnboardingGate } from './FinancePortalOnboardingGate';
 import { FinancePortalNotificationBell } from './FinancePortalNotificationBell';
 import { FinanceCommandPalette } from './FinanceCommandPalette';
 import { QuickAddFab } from './QuickAddFab';
@@ -113,7 +112,12 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
 
   return (
     <div className="finance-portal-theme flex min-h-screen flex-col">
-      <FinancePortalOnboardingGate />
+      {/*
+        Terms and onboarding are NOT here. They are routes the guard reaches
+        before this layout mounts (`FinancePortalProtectedRoute`), which is what
+        keeps the welcome tour below from opening on top of an agreement the
+        partner has not read.
+      */}
       <FinanceCommandPalette />
       <KeyboardShortcutsDialog />
       <QuickAddFab />
