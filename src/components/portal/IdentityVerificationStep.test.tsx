@@ -264,7 +264,11 @@ describe('identity verification step', () => {
 
     renderStep();
 
-    expect(await screen.findByText(/adviser will verify your identity/i)).toBeTruthy();
+    // The documentary route is the route, not "nothing to do": the client is
+    // sent to upload their document rather than told to wait for an adviser
+    // who is in fact waiting on them.
+    expect(await screen.findByText(/verify your identity from your documents/i)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /upload identity document/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
   });
 
@@ -276,6 +280,8 @@ describe('identity verification step', () => {
     renderStep();
 
     expect(await screen.findByText(/nothing has been used up/i)).toBeTruthy();
+    // Even a transient outage offers the working route rather than only a wait.
+    expect(await screen.findByRole('button', { name: /upload identity document/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
   });
 
