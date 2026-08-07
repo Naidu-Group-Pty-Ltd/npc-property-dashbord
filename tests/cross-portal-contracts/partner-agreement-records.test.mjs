@@ -8,6 +8,7 @@ const migration = read('supabase/migrations/20260901000900_partner_agreement_rec
 const fn = read('supabase/functions/partner-agreement-records/index.ts');
 const doc = read('supabase/functions/_shared/partnerAgreementDocument.pure.ts');
 const panel = read('src/components/admin/PartnerAgreementsPanel.tsx');
+const rowAction = read('src/components/admin/useAgreementDownload.ts');
 const builderAdmin = read('src/pages/admin/BuilderPortalAdmin.tsx');
 const solicitorAdmin = read('src/pages/admin/SolicitorPortalAdmin.tsx');
 const financeAdmin = read('src/pages/admin/FinancePortalAdmin.tsx');
@@ -103,8 +104,9 @@ test('only the Command Centre reaches these, and only for its own portal', () =>
     'the permission check must precede the signed URL',
   );
 
-  // Writing is a mutation and the staff session is cookie-carried.
-  assert.match(fn, /if \(operation === 'download_record'\) \{\s*\n\s*const csrf = enforceCsrf\(req\)/);
+  // Writing is a mutation and the staff session is cookie-carried. Both
+  // operations that produce and store bytes pass the same guard.
+  assert.match(fn, /operation === 'download_record'[\s\S]{0,80}\) \{\s*\n\s*const csrf = enforceCsrf\(req\)/);
   // Downloading an executed agreement is an access event on a legal record.
   assert.match(fn, /action: 'partner_agreement_downloaded'/);
 });
@@ -163,4 +165,58 @@ test('the Command Centre view resolves both parties for all three portals', () =
   assert.match(migration, /ORDER BY m\.is_primary DESC NULLS LAST, m\.created_at/);
   // And the migration runs the view rather than only parsing it.
   assert.match(migration, /SELECT count\(\*\) INTO v_count FROM public\.partner_agreement_records/);
+});
+
+test('the copy is reachable from the partner row, not only from the tab', () => {
+  // The Agreements tab is where agreements are audited. It is not where a staff
+  // user is standing when a partner rings up and asks for their copy — that is
+  // the portal-users row, and the answer should be one menu item away.
+  for (const [name, source, portal, id] of [
+    ['builder', builderAdmin, 'builder', 'user.id'],
+    ['solicitor', solicitorAdmin, 'solicitor', 'u.id'],
+    ['finance', financeAdmin, 'finance', 'u.portal_user!.id'],
+  ]) {
+    assert.match(source, /Download agreement/, `${name} has no row action`);
+    assert.ok(
+      source.includes(`downloadForUser('${portal}', ${id}`),
+      `${name} does not download for its own portal and row`,
+    );
+    assert.match(source, /useAgreementDownload\(\)/, `${name} does not use the shared action`);
+  }
+
+  // Asked by user, because a row knows who it is and not which acceptance is
+  // current. The server resolves the most recent one.
+  assert.match(rowAction, /operation: 'download_record',\s*\n\s*portal,\s*\n\s*portal_user_id: portalUserId/);
+  assert.match(fn, /query\.eq\('portal_user_id', portalUserId\)\.eq\('portal', requestedPortal \?\? ''\)/);
+  assert.match(fn, /\.order\('accepted_at', \{ ascending: false \}\)\.limit\(1\)/);
+
+  // A partner who has not accepted is told so, rather than handed a 404 that
+  // reads like a bug or an empty PDF.
+  assert.match(fn, /NO_AGREEMENT_ON_RECORD/);
+  assert.match(rowAction, /NO_AGREEMENT_ON_RECORD/);
+
+  // Only a finance contact with a portal account can have executed anything.
+  assert.match(financeAdmin, /u\.portal_user\?\.id \? \(/);
+});
+
+test('a copy is saved without waiting for someone to click Download', () => {
+  // "Retained" cannot mean "retained once a staff user happened to open it".
+  assert.match(fn, /operation === 'save_missing_copies'/);
+  assert.match(fn, /\.is\('agreement_storage_path', null\)/);
+  assert.match(panel, /operation: 'save_missing_copies'/);
+  assert.match(panel, /const missingCopies = records\.filter\(\(record\) => !record\.agreement_storage_path\)\.length/);
+
+  // Bounded and sequential: a burst of renders from one click would take down
+  // the PDF service the reports also use.
+  assert.match(fn, /const MAX_BATCH = 25/);
+  assert.match(fn, /\.limit\(MAX_BATCH\)/);
+  assert.match(fn, /for \(const record of pending \?\? \[\]\)/);
+  // One unrenderable record must not stop the rest.
+  assert.match(fn, /failed\.push\(\{ acceptance_id: record\.acceptance_id/);
+
+  // And it is a mutation, so it passes the CSRF guard.
+  assert.match(fn, /operation === 'download_record' \|\| operation === 'save_missing_copies'\) \{\s*\n\s*const csrf = enforceCsrf\(req\)/);
+
+  // The panel says which rows are saved rather than leaving it implied.
+  assert.match(panel, /Not saved yet/);
 });

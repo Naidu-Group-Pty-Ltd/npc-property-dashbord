@@ -7,7 +7,18 @@
  *
  * Operations
  *   list_records     { portal }        — who has executed what, and whether a copy exists
- *   download_record  { acceptance_id } — a signed URL for the copy, generating it if absent
+ *   download_record  { acceptance_id }              — a signed URL for that copy
+ *   download_record  { portal, portal_user_id }     — the same, for whoever that
+ *                                                     partner's most recent
+ *                                                     acceptance belongs to
+ *   save_missing_copies { portal }     — generate and store the copy for every
+ *                                        executed agreement in this portal that
+ *                                        does not have one yet
+ *
+ * The second form exists because of where the question is asked. A staff user
+ * fielding "can you send me our agreement?" is looking at the partner's row in
+ * the portal-users table, not at the Agreements tab. A row knows who it is; it
+ * does not know which acceptance is current, and it should not have to.
  *
  * This function serves the INTERNAL surface only. It resolves a Command Centre
  * session and never accepts a portal session cookie (ADR 018), and it is gated
@@ -38,6 +49,8 @@ import {
 
 const BUCKET = 'partner-agreements';
 const SIGNED_URL_TTL_SECONDS = 300;
+/** How many copies one `save_missing_copies` call will render. */
+const MAX_BATCH = 25;
 
 /** The admin module that owns each portal's agreements. */
 const MODULE_BY_PORTAL: Record<string, string> = {
@@ -75,7 +88,7 @@ Deno.serve(async (req) => {
 
     // 2. `download_record` can write the artefact, so it is a mutation and the
     //    staff session is cookie-carried.
-    if (operation === 'download_record') {
+    if (operation === 'download_record' || operation === 'save_missing_copies') {
       const csrf = enforceCsrf(req);
       if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
     }
@@ -104,18 +117,37 @@ Deno.serve(async (req) => {
 
     if (operation === 'download_record') {
       const acceptanceId = typeof body.acceptance_id === 'string' ? body.acceptance_id : null;
-      if (!acceptanceId) return json({ error: 'An acceptance id is required' }, 400);
+      const portalUserId = typeof body.portal_user_id === 'string' ? body.portal_user_id : null;
+      const requestedPortal = typeof body.portal === 'string' ? body.portal : null;
+      if (!acceptanceId && !portalUserId) {
+        return json({ error: 'An acceptance id or a portal user id is required' }, 400);
+      }
 
       // The record is read server-side before anything is authorised: a browser
       // -supplied portal would otherwise let a Finance-only user name a
       // solicitor acceptance and have it checked against the Finance module.
-      const { data: record, error: recordError } = await supabase
-        .from('partner_agreement_records')
-        .select('*')
-        .eq('acceptance_id', acceptanceId)
-        .maybeSingle();
+      //
+      // By user, the newest acceptance wins. A partner who accepted an earlier
+      // version and then the current one has two; the copy they are asking for
+      // is the one in force.
+      let query = supabase.from('partner_agreement_records').select('*');
+      query = acceptanceId
+        ? query.eq('acceptance_id', acceptanceId)
+        : query.eq('portal_user_id', portalUserId).eq('portal', requestedPortal ?? '')
+            .order('accepted_at', { ascending: false }).limit(1);
+
+      const { data: rows, error: recordError } = await query;
       if (recordError) throw recordError;
-      if (!record) return json({ error: 'Agreement record not found' }, 404);
+      const record = Array.isArray(rows) ? rows[0] : rows;
+
+      if (!record) {
+        // A partner who has not accepted has no copy. Said plainly, with a code
+        // the caller can act on, rather than as a 404 that reads like a bug.
+        return json({
+          error: 'This partner has not accepted the agreement yet, so there is no copy to supply.',
+          code: 'NO_AGREEMENT_ON_RECORD',
+        }, 404);
+      }
 
       const module = MODULE_BY_PORTAL[record.portal as string];
       if (!module) return json({ error: 'Agreement record not found' }, 404);
@@ -159,6 +191,53 @@ Deno.serve(async (req) => {
         url: signed.signedUrl,
         file_name: agreementFileName(record.organisation_name, record.accepted_at),
         expires_in: SIGNED_URL_TTL_SECONDS,
+      });
+    }
+
+    if (operation === 'save_missing_copies') {
+      const portal = typeof body.portal === 'string' ? body.portal : null;
+      if (!portal || !PORTALS.includes(portal)) {
+        return json({ error: 'A known portal is required' }, 400);
+      }
+
+      const authz = await requireModulePermission(
+        supabase, { userId: auth.userId, authMethod: auth.authMethod },
+        MODULE_BY_PORTAL[portal], 'can_view',
+      );
+      if (!authz.ok) return createForbiddenResponse(authz.error || 'Not authorized', corsHeaders);
+
+      const { data: pending, error: pendingError } = await supabase
+        .from('partner_agreement_records')
+        .select('*')
+        .eq('portal', portal)
+        .is('agreement_storage_path', null)
+        .order('accepted_at', { ascending: true })
+        .limit(MAX_BATCH);
+      if (pendingError) throw pendingError;
+
+      // Sequential, and bounded. Each render is a call to the PDF service, and
+      // a burst of them from one click is a good way to take that service down
+      // for the reports that also depend on it. What is not generated in this
+      // pass is generated in the next.
+      const saved: string[] = [];
+      const failed: { acceptance_id: string; error: string }[] = [];
+      for (const record of pending ?? []) {
+        try {
+          await generateAgreementCopy(supabase, record);
+          saved.push(record.acceptance_id);
+        } catch (e: any) {
+          // One unrenderable record must not stop the rest: report it and move
+          // on, so the operator learns which one and why.
+          console.error('[partner-agreement-records] generation failed:', record.acceptance_id, e);
+          failed.push({ acceptance_id: record.acceptance_id, error: e?.message ?? 'render failed' });
+        }
+      }
+
+      return json({
+        success: true,
+        saved: saved.length,
+        failed,
+        remaining: (pending ?? []).length === MAX_BATCH ? 'more' : 'none',
       });
     }
 
