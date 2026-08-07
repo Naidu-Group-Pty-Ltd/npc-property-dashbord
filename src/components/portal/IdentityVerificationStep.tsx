@@ -152,15 +152,33 @@ export function IdentityVerificationStep({
           </CardTitle>
           <CardDescription>
             {availability === 'manual_verification_required'
-              ? 'The photo check is not available for your case. Your adviser will verify your identity from your documents instead — there is nothing you need to do here, and no disadvantage to you.'
-              : 'The photo check is temporarily unavailable. Nothing has been used up. Please come back shortly, or upload your identity document and your adviser will take it from there.'}
+              ? 'We will verify your identity from your documents instead of a photo check. '
+                + 'Please make sure your identity document is uploaded on the previous step — '
+                + 'your adviser checks it from there. There is no disadvantage to you.'
+              : 'The photo check is temporarily unavailable and nothing has been used up. '
+                + 'You can upload your identity document instead and your adviser will take it '
+                + 'from there, or come back shortly to try the photo check again.'}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex justify-between">
+        {/*
+          The documentary route is not "nothing to do" — it is the route, and it
+          needs the client to upload a document on the Documents step. This card
+          used to say an adviser would arrange it and offered only Back/Continue,
+          so a client whose provider was unavailable was told to wait for
+          something that was waiting on them.
+        */}
+        <CardContent className="flex flex-wrap items-center justify-between gap-2">
           <Button variant="outline" onClick={onBack}>
             <ArrowLeft className="mr-1 h-4 w-4" /> Back
           </Button>
-          <Button onClick={onNext}>Continue <ArrowRight className="ml-1 h-4 w-4" /></Button>
+          <div className="flex gap-2">
+            <Button onClick={onBack}>
+              <ArrowLeft className="mr-1 h-4 w-4" /> Upload identity document
+            </Button>
+            <Button variant="outline" onClick={onNext}>
+              Skip for now <ArrowRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );

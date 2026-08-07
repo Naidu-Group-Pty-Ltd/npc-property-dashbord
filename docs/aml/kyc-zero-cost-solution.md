@@ -236,3 +236,58 @@ live + inactive   -> electronic verification disabled; documentary route remains
 ```
 
 There is no production simulator state and no simulator rollback procedure.
+
+## 11. Licence and capability evidence
+
+This section is the compliance record for why the stack is lawful to run
+commercially and what it does not establish. It was lost in an earlier
+documentation rewrite; it is restored here because an AUSTRAC reviewer will ask
+these exact questions and `amlPortalContracts.test.ts` pins the answers.
+
+### Model weights are permissive, including the weights
+
+| Model | File | Licence |
+|---|---|---|
+| Face detection | `face_detection_yunet_2023mar.onnx` | Apache-2.0 *including* its weights |
+| Face recognition | `face_recognition_sface_2021dec.onnx` | Apache-2.0 *including* its weights |
+
+Both come from `opencv/opencv_zoo`, pinned by revision and verified by SHA-256
+at image build time.
+
+Apache-2.0 obliges us to retain attribution, so it is recorded here and in the
+service's `NOTICE`: SFace is the work of the **Shenzhen Institute of Artificial
+Intelligence and Robotics for Society**.
+
+Do **not** substitute InsightFace/ArcFace weights, including indirectly via
+CompreFace or DeepFace defaults. Those are licensed for non-commercial research
+only, and using them here would make this deployment a licence breach. The
+whole reason `face_recognition_sface` was chosen is that its weights carry the
+same permissive licence as its code.
+
+### Sanctions data comes from the primary sources
+
+Screening reads the **DFAT Consolidated List** (Australia), the UN Consolidated
+List and the OFAC SDN list, downloaded and parsed from the issuing bodies
+directly.
+
+We deliberately do **not** aggregate through OpenSanctions. Its consolidated
+data is published under **CC-BY-NC**, and a fee-earning AML programme is a
+commercial use — so the convenient path is the one we cannot take.
+
+### No DVS — say so rather than imply parity
+
+This stack does not connect to the Document Verification Service. We are
+therefore **not checking against the issuing authority**: a face may match a
+document while the document itself is never confirmed genuine. That is why the
+adapter records `document_authenticity` as a warning, never a pass, and why the
+strongest outcome electronic verification can reach is a referral to a human.
+
+The **compensating control** is that every electronic result is adjudicated by
+a person before it moves the service gate, and higher-risk matters use the
+original/certified-document sighting process instead.
+
+### The upgrade path needs no schema rework
+
+Adding DVS later is a new `check_type = 'dvs'` row against the same canonical
+`aml.verification_checks` model — **no schema change**, no migration of existing
+evidence, and no change to the portal or the worker.
