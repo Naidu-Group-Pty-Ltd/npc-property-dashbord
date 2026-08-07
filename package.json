@@ -76,6 +76,7 @@
     "security:registry": "node scripts/security/check-function-registry.mjs",
     "security:static": "node scripts/security/scan-auth-patterns.mjs",
     "security:edd-boundary": "node scripts/security/check-aml-edd-mlro-boundary.mjs",
+    "security:screening-boundary": "node scripts/security/check-aml-screening-boundary.mjs",
     "security:edge-check": "node scripts/security/check-edge-functions.mjs",
     "security:finance-handoff-authz": "node scripts/security/check-finance-handoff-authz.mjs",
     "security:finance-leaderboard-authz": "node scripts/security/check-finance-leaderboard-authz.mjs",
