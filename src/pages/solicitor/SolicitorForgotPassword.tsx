@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, MailCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SolicitorAuthShell } from '@/components/solicitor-portal/SolicitorAuthShell';
@@ -141,9 +142,8 @@ export default function SolicitorForgotPassword() {
         <form onSubmit={handleReset} className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="reset-password">New password</Label>
-            <Input
+            <PasswordInput
               id="reset-password"
-              type="password"
               autoComplete="new-password"
               required
               value={password}
@@ -153,9 +153,8 @@ export default function SolicitorForgotPassword() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="reset-confirm">Confirm new password</Label>
-            <Input
+            <PasswordInput
               id="reset-confirm"
-              type="password"
               autoComplete="new-password"
               required
               value={confirmPassword}

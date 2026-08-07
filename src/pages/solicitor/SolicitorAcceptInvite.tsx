@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SolicitorAuthShell } from '@/components/solicitor-portal/SolicitorAuthShell';
@@ -144,9 +145,8 @@ export default function SolicitorAcceptInvite() {
 
         <div className="space-y-2">
           <Label htmlFor="invite-password">Create a password</Label>
-          <Input
+          <PasswordInput
             id="invite-password"
-            type="password"
             autoComplete="new-password"
             required
             value={password}
@@ -157,9 +157,8 @@ export default function SolicitorAcceptInvite() {
 
         <div className="space-y-2">
           <Label htmlFor="invite-confirm">Confirm password</Label>
-          <Input
+          <PasswordInput
             id="invite-confirm"
-            type="password"
             autoComplete="new-password"
             required
             value={confirmPassword}

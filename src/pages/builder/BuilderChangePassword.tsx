@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { BuilderAuthShell } from '@/components/builder-portal/BuilderAuthShell';
@@ -83,9 +84,8 @@ export default function BuilderChangePassword() {
 
         <div className="space-y-2">
           <Label htmlFor="builder-current-password">Current password</Label>
-          <Input
+          <PasswordInput
             id="builder-current-password"
-            type="password"
             autoComplete="current-password"
             required
             value={currentPassword}
@@ -95,9 +95,8 @@ export default function BuilderChangePassword() {
 
         <div className="space-y-2">
           <Label htmlFor="builder-next-password">New password</Label>
-          <Input
+          <PasswordInput
             id="builder-next-password"
-            type="password"
             autoComplete="new-password"
             required
             value={password}
@@ -111,9 +110,8 @@ export default function BuilderChangePassword() {
 
         <div className="space-y-2">
           <Label htmlFor="builder-next-confirm">Confirm new password</Label>
-          <Input
+          <PasswordInput
             id="builder-next-confirm"
-            type="password"
             autoComplete="new-password"
             required
             value={confirmPassword}
