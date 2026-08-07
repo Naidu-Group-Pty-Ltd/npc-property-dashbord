@@ -32,7 +32,13 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 
-LANE_ENFORCEMENT_VERSION = "extractor-lane-policy-v2"
+# v3: the process-level `force_full_page_ocr_default` is no longer derived from
+# OCR *availability* (see app.py GLOBAL_CAPABILITIES), and formula/code
+# enrichment now default off. Lane intents in LANE_PROFILES are unchanged, but
+# every INHERIT cell resolves differently, so v2 artifacts must never be reused
+# for a v3 request. The dispatcher's LANE_POLICY_VERSION mirror is bumped in
+# lockstep — deploy the sidecar and dispatcher together (G3).
+LANE_ENFORCEMENT_VERSION = "extractor-lane-policy-v3"
 
 # Sentinel: "inherit the globally configured default for this field."
 INHERIT = "__inherit_global__"

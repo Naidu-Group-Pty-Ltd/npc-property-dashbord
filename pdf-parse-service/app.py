@@ -80,6 +80,12 @@ from lane_policy import (
     normalize_lane,
 )
 
+# OCR language contract (pure; unit-tested in test_ocr_config.py without Docling).
+from ocr_languages import (
+    OCR_LANGUAGE_CONTRACT_VERSION,
+    resolve_ocr_languages,
+)
+
 # G2 — Sidecar Operational Metrics V1 (pure; unit-tested in test_operational_metrics.py).
 from operational_metrics import (
     OperationalMetricsAccumulator,
@@ -194,13 +200,28 @@ PREWARM_ON_STARTUP = _env_bool("DOCLING_PREWARM_ON_STARTUP", True)
 # Phase B/D toggles. Expensive enrichments remain available as explicit opt-ins.
 ENABLE_PICTURE_CLASSIFICATION = _env_bool("ENABLE_PICTURE_CLASSIFICATION", True)
 ENABLE_PICTURE_DESCRIPTION_DEFAULT = _env_bool("ENABLE_PICTURE_DESCRIPTION", False)
-ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", True)
-ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", True)
+# Formula and code enrichment target scientific papers and source listings. This
+# product ingests property and finance PDFs, where both load extra models and
+# add per-page work for no measured benefit — so they are opt-in, not opt-out.
+ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", False)
+ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", False)
 # OCR fallback and full-page OCR are resource-intensive and must be enabled explicitly.
 ENABLE_OCR_FALLBACK = _env_bool("ENABLE_OCR_FALLBACK", False)
 FORCE_FULL_PAGE_OCR = _env_bool("DOCLING_FORCE_FULL_PAGE_OCR", False)
-# Multi-language OCR — order matters; first match wins per region.
-OCR_LANGS = [s.strip() for s in os.environ.get("DOCLING_OCR_LANGS", "en,fr,de,es,zh,ja,ko,ar").split(",") if s.strip()]
+# Multi-language OCR. Resolved through the pure `ocr_languages` contract, which
+# aliases non-EasyOCR spellings (`zh` -> `ch_sim`), drops unknown codes, and
+# reduces incompatible script mixes to a constructible group. Without it an
+# unconstructible language list fails the whole conversion rather than degrading
+# the OCR pass — see ocr_languages.py.
+_OCR_LANG_RESOLUTION = resolve_ocr_languages(os.environ.get("DOCLING_OCR_LANGS"))
+OCR_LANGS = list(_OCR_LANG_RESOLUTION.languages)
+if _OCR_LANG_RESOLUTION.changed:
+    LOG.warning(
+        "DOCLING_OCR_LANGS adjusted for EasyOCR compatibility: using %s (group=%s, dropped=%s)",
+        OCR_LANGS,
+        _OCR_LANG_RESOLUTION.primary_group,
+        _OCR_LANG_RESOLUTION.dropped,
+    )
 # Lower bitmap threshold = OCR runs even on lightly-bitmapped regions.
 BITMAP_AREA_THRESHOLD = float(os.environ.get("DOCLING_BITMAP_AREA_THRESHOLD", "0.05"))
 IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "2.0"))
@@ -215,13 +236,30 @@ INCLUDE_MARKDOWN_DEFAULT = _env_bool("DOCLING_INCLUDE_MARKDOWN_DEFAULT", True)
 # G1 — the process-level capability ceilings + configured defaults handed to the
 # pure lane-policy resolver. A lane can never enable a feature disabled here.
 GLOBAL_CAPABILITIES = GlobalCapabilities(
+    # OCR *availability*. Forcing full-page OCR implies needing OCR at all, so
+    # either flag raises the ceiling.
     ocr=(ENABLE_OCR_FALLBACK or FORCE_FULL_PAGE_OCR),
     picture_description=ENABLE_PICTURE_DESCRIPTION_DEFAULT,
     picture_classification=ENABLE_PICTURE_CLASSIFICATION,
     formula=ENABLE_FORMULA_ENRICHMENT,
     code=ENABLE_CODE_ENRICHMENT,
     fitz=(_FITZ_AVAILABLE and ENABLE_FITZ_LAYERS),
-    force_full_page_ocr_default=(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK),
+    # OCR *forcing* — deliberately NOT `(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK)`.
+    #
+    # These two fields were previously the same expression, which made "OCR is
+    # available" and "OCR every page of every document" a single switch. The
+    # `unplanned` lane inherits this default, so enabling the fallback silently
+    # forced full-page OCR across the largest slice of production traffic — on
+    # documents whose measured `ocr_page_ratio` was 0.0.
+    #
+    # Setting ENABLE_OCR_FALLBACK=false was not a workaround: `ocr` is a hard
+    # ceiling (lane_policy rule 4), so that would have left `ocr_scanned` unable
+    # to OCR a genuinely scanned document. There was no env-var combination for
+    # "OCR available, not forced" — hence the decoupling here.
+    #
+    # `ocr_scanned` still forces full-page OCR: its lane profile sets
+    # force_full_page_ocr=True authoritatively, capped only by the `ocr` ceiling.
+    force_full_page_ocr_default=FORCE_FULL_PAGE_OCR,
     default_table_mode=TABLE_MODE,
     images_scale=IMAGES_SCALE,
     raster_dpi_default=RASTER_DPI,
@@ -2812,6 +2850,11 @@ def _docling_capabilities() -> dict[str, Any]:
             "global_ocr_fallback": ENABLE_OCR_FALLBACK,
             "lane_aware_ocr": True,
             "ocr_langs": OCR_LANGS,
+            # Language resolution is reported in full: an operator who configures
+            # a code EasyOCR cannot build needs to see that it was dropped here,
+            # rather than discover it as a failed conversion.
+            "ocr_language_resolution": _OCR_LANG_RESOLUTION.as_dict(),
+            "ocr_language_contract_version": OCR_LANGUAGE_CONTRACT_VERSION,
             "bitmap_area_threshold": BITMAP_AREA_THRESHOLD,
         },
         "tables": {

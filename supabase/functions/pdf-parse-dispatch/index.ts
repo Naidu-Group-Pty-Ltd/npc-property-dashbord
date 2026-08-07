@@ -60,7 +60,11 @@ const STATUS_SAFE_FIELDS = [
 // behavior changes so stale-policy artifacts are never reused.
 // G1: bumped to v2 alongside the sidecar's extractor-lane-policy-v2 so cached
 // v1-semantics artifacts are never reused for v2 lane behavior.
-const LANE_POLICY_VERSION = 'extractor-lane-policy-v2';
+// v3: mirrors the sidecar decoupling `force_full_page_ocr_default` from OCR
+// availability and defaulting formula/code enrichment off. Every INHERIT cell in
+// the lane matrix resolves differently, so v2 artifacts must not be reused.
+// Deploy this function and the sidecar image together (LANE-POLICY.md G3).
+const LANE_POLICY_VERSION = 'extractor-lane-policy-v3';
 const REDACTION_POLICY_VERSION = 'redaction-policy-v1';
 const PARSE_PROVIDER = 'docling';
 const DEFAULT_SERVICE_CLASS = 'default';

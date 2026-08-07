@@ -145,6 +145,29 @@ is the one whose page budget is fitted block by block against real renders rathe
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
 
+## The PDF-import sidecar (Docling)
+Template Builder's PDF import runs through one Cloud Run container,
+`pdf-parse-service/`, dispatched by `pdf-parse-dispatch`. Read
+[`docs/pdf-import/SIDECAR_PERFORMANCE_PROGRAMME.md`](./docs/pdf-import/SIDECAR_PERFORMANCE_PROGRAMME.md)
+before changing its deployment, its Docling options or the watchdog: it records
+what the production ledger measured against what the deploy docs assumed, and
+they disagreed on nearly every point — **43% of 76 jobs failed**, one 94-page
+job took 357s while another took 46,424s, and 42% of a healthy job's wall clock
+was cross-Pacific IO to Supabase.
+
+Two rules that keep biting. **OCR availability is not OCR forcing** — they were a
+single expression until lane-policy v3, so enabling the fallback force-OCR'd
+every page of 44% of traffic; and disabling it would have stopped `ocr_scanned`
+OCR-ing a genuine scan, because the capability is a hard ceiling. **The sidecar
+and the dispatcher share `LANE_POLICY_VERSION` and must deploy together**, or the
+cache fingerprint serves stale-semantics artifacts.
+
+Sidecar options live in `app.py`'s `GLOBAL_CAPABILITIES`, the lane matrix in
+`lane_policy.py`, and the OCR language contract in `ocr_languages.py` — a
+mistyped language code is not inert, it fails the whole conversion (`zh` is not
+an EasyOCR code and cost 9 production jobs). Those three modules are pure and
+gated by `ci.yml`; nothing else in `pdf-parse-service/` runs in CI.
+
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the
 visual editor: `/admin/template-builder/converter` extracts a template's section
