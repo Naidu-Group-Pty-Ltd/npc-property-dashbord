@@ -39,6 +39,11 @@ import type { CriticalContainmentPolicy } from './criticalVisualContainment.pure
 import { buildEmbeddedFontFace, type FontFaceEntry } from './fontFaceBuilder';
 import { fontLookupKey, resolveSourceFontFamily, lookupEmbeddedFamily } from './fontResolver';
 import { recommendFidelityMode } from './recommendFidelityMode';
+import {
+  bridgePageCharts,
+  readSceneChartRegions,
+  type BridgedChart,
+} from './sourceChartBridge.pure';
 import { stripTransientRasterUrls } from './stripTransientRasterUrls';
 import type {
   DoclingDocument,
@@ -381,6 +386,52 @@ async function manifestToRastersByPage(payload: unknown): Promise<DoclingRasterB
 }
 
 
+/**
+ * Load the charts the sidecar read, keyed by page number.
+ *
+ * `pages-manifest.json` carries a `regions_path` per page plus a
+ * `chart_region_count`, so only pages that actually contain a chart are
+ * fetched — most imports download nothing extra at all.
+ *
+ * Fail-open throughout. Every failure path returns fewer charts, never an
+ * error: a chart that does not arrive here stays a source crop, which is the
+ * behaviour that shipped for a year and is always a correct outcome. An import
+ * must never fail because a chart could not be reconstructed.
+ */
+async function loadSourceChartsByPage(
+  manifestPath: string | null,
+): Promise<Record<number, BridgedChart[]>> {
+  if (!manifestPath) return {};
+  try {
+    const manifest = await downloadJson<{
+      pages?: Array<{ page_no?: number; regions_path?: string; chart_region_count?: number }>;
+    }>(manifestPath);
+    const pages = manifest?.pages;
+    if (!Array.isArray(pages)) return {};
+
+    const withCharts = pages.filter(
+      (p) => Number(p?.chart_region_count ?? 0) > 0 && typeof p?.regions_path === 'string',
+    );
+    if (!withCharts.length) return {};
+
+    const out: Record<number, BridgedChart[]> = {};
+    await Promise.all(withCharts.map(async (page) => {
+      const pageNo = Number(page.page_no ?? 0);
+      if (!Number.isFinite(pageNo) || pageNo <= 0) return;
+      try {
+        const payload = await downloadJson<unknown>(page.regions_path as string);
+        const bridged = bridgePageCharts(readSceneChartRegions(payload));
+        if (bridged.length) out[pageNo] = bridged;
+      } catch {
+        // One unreadable page must not cost the others their charts.
+      }
+    }));
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 interface ConsumerGuardrailReport {
   version: string;
   ok: boolean;
@@ -698,12 +749,22 @@ export async function extractPdfViaDocling(
       embeddedFontFamilies[fontLookupKey(f.basename)] = built.family;
     }
 
+    // W3 — collect any charts the sidecar managed to read. The scene graph is
+    // published on `pages-manifest.json`, which the job payload already exposes;
+    // nothing downloaded it before, so extracted chart series were written and
+    // never read. Fail-open by design: any problem here leaves every chart as a
+    // source crop, which is the existing behaviour and always correct.
+    const sourceChartsByPage = await loadSourceChartsByPage(
+      job.result_payload?.per_page_docling_manifest_path ?? null,
+    );
+
     const plan = mapDoclingToPagePlan(doclingDoc, {
       importId,
       mode: effectiveMode,
       rastersByPage: rasters,
       engineVersion: job.engine_version ?? 'docling',
       embeddedFontFamilies,
+      sourceChartsByPage,
     });
 
     const template = applyTemplateImportPlan(plan, {

@@ -95,6 +95,86 @@ describe('chart overlay — schema', () => {
   });
 });
 
+describe('chart overlay — the full bridge', () => {
+  /** A Docling doc with one picture, at the same place as a scene-graph chart. */
+  function docWithPicture(bbox = { l: 50, t: 100, r: 250, b: 250 }) {
+    return {
+      pages: { 1: { page_no: 1, size: { width: 595, height: 842 } } },
+      texts: [], tables: [], vectors: [],
+      pictures: [{
+        self_ref: '#/pictures/0',
+        prov: [{ page_no: 1, bbox: { ...bbox, coord_origin: 'TOPLEFT' } }],
+        annotations: [{ kind: 'classification', predicted_classes: [{ class_name: 'bar_chart', confidence: 0.9 }] }],
+      }],
+    } as never;
+  }
+
+  const bridged = [{
+    regionId: 'src-p0001-chrt-0001',
+    // Same top-left, y-down, PDF-point space as the Docling picture above.
+    bbox: { x: 50, y: 100, width: 200, height: 150 },
+    chartKind: 'bar',
+    series: [{ label: 'Q1', value: 200 }, { label: 'Q2', value: 100 }],
+    title: 'Portfolio mix',
+    renderMode: 'native-with-source-reference',
+    defects: [],
+    manualReviewRequired: true,
+    axisScaleR2: 0.9999,
+    sourceRegionId: 'src-p0001-chrt-0001',
+    cropPath: 'job/regions/chart-1.png',
+  }];
+
+  it('a matching picture becomes an editable chart overlay', async () => {
+    const { mapDoclingToPagePlan } = await import(
+      '@/lib/reportTemplate/pdfImport/docling/mapDoclingToPagePlan');
+    const plan = mapDoclingToPagePlan(docWithPicture(), {
+      importId: 'i1', mode: 'semantic',
+      sourceChartsByPage: { 1: bridged as never },
+    });
+    const chart = plan.pages[0].overlays.find((o) => o.type === 'chart') as
+      | { series: unknown[]; chartPreservation: { manualReviewRequired: boolean } } | undefined;
+    expect(chart).toBeDefined();
+    expect(chart!.series).toHaveLength(2);
+    expect(chart!.chartPreservation.manualReviewRequired).toBe(true);
+    // ...and it is no longer an image.
+    expect(plan.pages[0].overlays.some((o) => o.type === 'image')).toBe(false);
+  });
+
+  it('a picture nowhere near the chart stays an image', async () => {
+    const { mapDoclingToPagePlan } = await import(
+      '@/lib/reportTemplate/pdfImport/docling/mapDoclingToPagePlan');
+    const plan = mapDoclingToPagePlan(
+      docWithPicture({ l: 400, t: 600, r: 550, b: 750 }),
+      { importId: 'i1', mode: 'semantic', sourceChartsByPage: { 1: bridged as never } },
+    );
+    expect(plan.pages[0].overlays.some((o) => o.type === 'chart')).toBe(false);
+    expect(plan.pages[0].overlays.some((o) => o.type === 'image')).toBe(true);
+  });
+
+  it('with no bridged charts every picture keeps its existing behaviour', async () => {
+    const { mapDoclingToPagePlan } = await import(
+      '@/lib/reportTemplate/pdfImport/docling/mapDoclingToPagePlan');
+    const plan = mapDoclingToPagePlan(docWithPicture(), { importId: 'i1', mode: 'semantic' });
+    expect(plan.pages[0].overlays.some((o) => o.type === 'chart')).toBe(false);
+  });
+
+  it('one chart cannot be claimed by two pictures', async () => {
+    // Two overlapping pictures must not both display the same numbers.
+    const doc = docWithPicture();
+    (doc as unknown as { pictures: unknown[] }).pictures.push({
+      self_ref: '#/pictures/1',
+      prov: [{ page_no: 1, bbox: { l: 52, t: 102, r: 252, b: 252, coord_origin: 'TOPLEFT' } }],
+      annotations: [],
+    });
+    const { mapDoclingToPagePlan } = await import(
+      '@/lib/reportTemplate/pdfImport/docling/mapDoclingToPagePlan');
+    const plan = mapDoclingToPagePlan(doc, {
+      importId: 'i1', mode: 'semantic', sourceChartsByPage: { 1: bridged as never },
+    });
+    expect(plan.pages[0].overlays.filter((o) => o.type === 'chart')).toHaveLength(1);
+  });
+});
+
 describe('chart overlay — the mapper path', () => {
   it('a cleared chart block becomes a chart overlay carrying its provenance', async () => {
     const { mapDoclingToPagePlan } = await import(
