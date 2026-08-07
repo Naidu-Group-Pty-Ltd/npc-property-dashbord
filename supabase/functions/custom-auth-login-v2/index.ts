@@ -3,6 +3,8 @@ import { verifyPassword, isLegacyPassword, hashPassword } from "../_shared/passw
 import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
+import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts"
+
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
