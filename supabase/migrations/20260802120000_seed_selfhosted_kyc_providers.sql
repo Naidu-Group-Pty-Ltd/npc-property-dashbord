@@ -1,20 +1,12 @@
--- Seed the zero-cost KYC providers so going live is a toggle, not a data-entry
--- exercise (docs/aml/kyc-go-live-runbook.md).
+-- Seed the zero-cost KYC providers with the production IDV architecture spelled out.
 --
--- Both rows are inserted in SIMULATOR mode. That is not a placeholder — it is
--- the safe state. `getIdvProvider` returns the deterministic simulator whenever
--- mode is 'simulator' regardless of provider_key, so this migration changes no
--- behaviour whatsoever. It exists so that AML › Configuration › Providers shows
--- the two correct provider keys already spelled right, and go-live becomes
--- "switch mode to live" once the service is deployed and the lists are loaded.
+-- Identity verification is always the existing `selfhosted` provider in live mode.
+-- Runtime readiness still fails closed until the service URL/token are configured and
+-- the real service health probe succeeds, so an active row cannot manufacture a result.
+-- Screening keeps its separate simulator behaviour; that is not on the customer IDV path.
 --
--- Switching to live BEFORE the service is reachable is safe by design: the
--- adapter throws rather than degrading, so a misconfiguration surfaces as an
--- error to staff instead of a customer who appears to have failed verification.
---
--- Priority is placed AFTER any provider the tenant already has, so an existing
--- configured provider keeps winning resolution. Nothing here can silently take
--- over a tenant that already made a choice.
+-- Priority is placed AFTER any provider the tenant already has. A later forward migration
+-- locks IDV to `selfhosted` and disables historical alternative IDV rows.
 --
 -- Additive and idempotent (UNIQUE (tenant_id, capability, provider_key)).
 --
@@ -35,13 +27,8 @@ SELECT
             WHERE p.tenant_id = t.tenant_id AND p.capability = 'idv'), 0) + 1,
   0,
   'AUD',
-  -- Seeded INACTIVE. This row used to be seeded active in simulator mode so
-  -- that go-live was "a toggle"; in production that showed an active identity
-  -- provider on the configuration screen while every request refused to
-  -- execute it, because production must never run the simulator. See
-  -- 20260807000000_no_simulator_idv_in_production.sql.
-  false,
-  'simulator',
+  true,
+  'live',
   'AML_VERIFICATION_SERVICE_TOKEN',
   jsonb_build_object(
     'stack', 'zero-cost',
@@ -70,11 +57,6 @@ SELECT
   true,
   'simulator',
   NULL,
-  -- The threshold is recorded here rather than left to a code default because
-  -- an AUSTRAC reviewer will ask what it was set to and why. 0.72 is
-  -- deliberately low: we have no commercial aggregator's alias and
-  -- transliteration corpus, so we buy recall with reviewer time. Every score
-  -- above it goes to a human — nothing auto-clears.
   jsonb_build_object(
     'match_threshold', 0.72,
     'threshold_rationale',
