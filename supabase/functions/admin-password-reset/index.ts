@@ -301,12 +301,12 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Find user
-      const { data: user, error: userError } = await supabase
-        .from('custom_users')
-        .select('id')
-        .eq('username', username)
-        .single();
+      // Find user (username or email, case-insensitive — same resolver as login)
+      const { user, ambiguous } = await resolveStaffUserByIdentifier<{ id: string }>(
+        supabase, username, 'id', { activeOnly: false },
+      );
+      const userError = ambiguous ? new Error('ambiguous identifier') : null;
+
 
       if (userError || !user) {
         return new Response(
