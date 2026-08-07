@@ -112,13 +112,16 @@ for (const rawLine of transportSrcRaw.split('\n')) {
 // function on that transport may never answer with a wildcard origin; it needs
 // the exact-origin allowlist (`createCorsHeaders`, or the `withRequestOrigin`
 // wrapper in `_shared/corsOrigin.ts`). This is what broke the AML/CTF surface.
-const tokenAuthMatch = transportSrcRaw.match(/TOKEN_AUTH_FUNCTIONS\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
-const TOKEN_AUTH = new Set(
-  tokenAuthMatch ? [...tokenAuthMatch[1].matchAll(/['"]([a-z0-9-]+)['"]/gi)].map((m) => m[1]) : [],
-);
-if (!tokenAuthMatch) {
-  errors.push(`${SHARED_TRANSPORT}: could not parse TOKEN_AUTH_FUNCTIONS — the credentialed-CORS gate depends on it.`);
-}
+//
+// There is no longer an exemption list. `TOKEN_AUTH_FUNCTIONS` used to name the
+// five import/render functions that answered `*` and were therefore called with
+// `credentials: 'omit'` — which stripped the HttpOnly session cookie, the only
+// carrier `extractSessionToken` reads since WP-11B/C Phase 4, and left them
+// depending on an access-token JWT the ES256 remediation made unobtainable.
+// Every PDF template import 401'd. They now answer an allowlisted origin
+// exactly, via `createTokenAuthCorsHeaders(origin)`, so they are held to the
+// same rule as everything else.
+const TOKEN_AUTH = new Set();
 
 // `invokeSecureFunction` is not the only transport. The Finance, Solicitor and
 // Builder portals each post to edge functions through their own wrapper, and
@@ -186,7 +189,11 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
   // Several functions keep a now-dead wildcard literal but actually build their
   // real headers with createCorsHeaders(origin), or have the origin rewritten
   // per request by withRequestOrigin — those answer an exact origin.
-  const usesSharedOrigin = /createCorsHeaders\s*\(/.test(src) || /withRequestOrigin/.test(src);
+  // `createTokenAuthCorsHeaders(origin)` counts too, but ONLY when it is passed
+  // an origin: the no-argument form still answers `*` to everyone.
+  const usesSharedOrigin = /createCorsHeaders\s*\(/.test(src)
+    || /withRequestOrigin/.test(src)
+    || /createTokenAuthCorsHeaders\s*\(\s*[^)\s]/.test(src);
 
   // (a) A credentialed request whose response carries a wildcard origin is
   //     rejected by the browser itself, opaquely, as "Failed to fetch".
@@ -199,6 +206,26 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
     && /["']Access-Control-Allow-Origin["']\s*:\s*["']\*["']/.test(src)
   ) {
     errors.push(`${path}: answers \`Access-Control-Allow-Origin: *\` but is called with credentials through ${credentialedVias.join(', ')}. Browsers reject a credentialed response with a wildcard origin, so every call fails as "Failed to fetch". Use createCorsHeaders(origin), or wrap the handler with withRequestOrigin (_shared/corsOrigin.ts).`);
+  }
+
+  // (a2) Same failure, one level of indirection away: the shared token-auth
+  //      helper answers `*` unless it is given the request origin. A function
+  //      reached by a credentialed transport must pass it — unless the handler
+  //      is wrapped in `withRequestOrigin`, which rewrites the origin on the
+  //      way out and makes the helper's own answer irrelevant.
+  if (
+    credentialedVias.length
+    && !/withRequestOrigin/.test(src)
+    && /createTokenAuthCorsHeaders\s*\(\s*\)/.test(src)
+  ) {
+    errors.push(`${path}: calls \`createTokenAuthCorsHeaders()\` with no origin, which answers \`Access-Control-Allow-Origin: *\`, but is called with credentials through ${credentialedVias.join(', ')}. Browsers reject a credentialed response with a wildcard origin. Pass the request origin: \`createTokenAuthCorsHeaders(req.headers.get('origin'))\`.`);
+  }
+
+  // (a3) Accepting the session cookie means accepting ambient authority, which
+  //      is exactly what CSRF exploits. Every cookie-reachable function must
+  //      run the shared guard (it no-ops when no cookie is present).
+  if (credentialedVias.length && /createTokenAuthCorsHeaders\s*\(/.test(src) && !/enforceCsrf\s*\(/.test(src)) {
+    errors.push(`${path}: answers an exact origin with credentials (so the HttpOnly session cookie reaches it) but never calls \`enforceCsrf(req)\` from _shared/csrfGuard.ts. Cookie authority is ambient — add the guard.`);
   }
 
   // (b) Every custom header its callers attach must survive its preflight.

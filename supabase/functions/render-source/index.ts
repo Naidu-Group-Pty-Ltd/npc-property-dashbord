@@ -46,7 +46,10 @@ function assertFetchable(rawUrl: string): void {
 
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  // Origin-aware: an allowlisted origin gets an exact ACAO + credentials so the
+  // HttpOnly `__Host-session_token` cookie authenticates the render. Anyone else
+  // keeps the historical wildcard token-auth answer.
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
