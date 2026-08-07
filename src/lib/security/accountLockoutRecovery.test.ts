@@ -66,6 +66,31 @@ describe('a password reset releases the sign-in lockout', () => {
   });
 });
 
+/**
+ * `admin-user-management` carries two more password writes, and both are worse
+ * to get wrong than the self-service reset: `reset_user_password` is what an
+ * administrator reaches for *because* a colleague is locked out, so the account
+ * is locked more often than not when it runs. Leaving the lock standing tells
+ * the administrator the reset succeeded while the colleague stays locked out —
+ * a failure neither of them can see from where they are standing.
+ */
+describe('administrator-driven password writes release the lockout too', () => {
+  const admin = fn('admin-user-management');
+
+  it('clears the counters wherever it writes a password hash', () => {
+    expect(admin).toMatch(/password_hash/);
+
+    // One site builds an update object literal, the other assigns onto an
+    // `updates` bag, so both spellings count. Both sites must clear — a single
+    // occurrence would leave whichever one it is not.
+    const attempts = admin.match(/failed_login_attempts(:\s*0|\s*=\s*0)/g) ?? [];
+    const locks = admin.match(/locked_until(:\s*null|\s*=\s*null)/g) ?? [];
+
+    expect(attempts.length).toBeGreaterThanOrEqual(2);
+    expect(locks.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('a locked Command Centre account is told that it is locked', () => {
   const login = fn('custom-auth-login-v2');
 
