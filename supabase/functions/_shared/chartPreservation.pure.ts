@@ -163,7 +163,12 @@ export function buildChartRenderPlanForRegions(
 
   const charts = regions.filter((r) => r?.type === 'chart');
   const chartPlans: ChartRegionRenderPlan[] = [];
-  const modeCounts: Record<ChartRenderMode, number> = { 'chart-crop': 0, 'containment-fallback': 0 };
+  const modeCounts: Record<ChartRenderMode, number> = {
+    'verified-native-chart': 0,
+    'native-with-source-reference': 0,
+    'chart-crop': 0,
+    'containment-fallback': 0,
+  };
   let suppressedTotal = 0;
   let completeCharts = 0;
   let chartsWithCrop = 0;
