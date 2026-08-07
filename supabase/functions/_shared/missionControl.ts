@@ -926,3 +926,81 @@ export async function getFeedbackPrompt(
     feedbackUrl: validateFeedbackUrl(body.feedback_url),
   };
 }
+
+// ─── API-key usage metering ──────────────────────────────────────────────────
+//
+// This deployment may be running on API keys it does not own. A workspace
+// provisioned by Mission Control boots with the prime's OpenAI, Resend, Domain
+// and Cotality keys forwarded into its Supabase project, and every call made on
+// one of those is billed to the prime's vendor account. Mission Control
+// recharges that usage per tenant — and charges nothing for a key this
+// workspace supplied itself, which it knows from its own record of what it
+// forwarded rather than from anything we assert here.
+//
+// Batched, never on the request path. The caller is a cron-driven worker
+// draining `api_usage_log`; a metering hop in front of a client's report would
+// trade user-visible latency for a billing nicety, and would lose the call
+// outright whenever Mission Control was slow.
+
+export interface UsageReportEvent {
+  secret_name: string;
+  quantity: number;
+  idempotency_key: string;
+  model?: string | null;
+  feature?: string | null;
+  status?: "success" | "error";
+  occurred_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface UsageReportOutcome {
+  idempotency_key: string;
+  ok: boolean;
+  billable?: boolean;
+  billing_reason?: string;
+  duplicate?: boolean;
+  error?: string;
+}
+
+export interface UsageReportResult {
+  accepted: number;
+  rejected: number;
+  billable: number;
+  results: UsageReportOutcome[];
+}
+
+/** Mission Control's own cap on one batch. Sending more is a 400, not a truncation. */
+export const USAGE_REPORT_MAX_EVENTS = 200;
+
+/**
+ * Report a batch of third-party API calls for metering.
+ *
+ * Per-event outcomes come back rather than one verdict: a malformed event must
+ * not cost us the other 199 in the batch, and the caller needs to know exactly
+ * which rows to mark as delivered.
+ */
+export async function reportApiUsage(events: UsageReportEvent[]): Promise<UsageReportResult> {
+  if (events.length === 0) return { accepted: 0, rejected: 0, billable: 0, results: [] };
+  if (events.length > USAGE_REPORT_MAX_EVENTS) {
+    throw new MissionControlError(
+      "batch_too_large",
+      `reportApiUsage accepts at most ${USAGE_REPORT_MAX_EVENTS} events, got ${events.length}`,
+      400,
+    );
+  }
+  const res = await mcFetch("/api/public/usage/report", {
+    method: "POST",
+    body: JSON.stringify({
+      tenant_ref: AGENCY_TENANT_REF,
+      display_name: AGENCY_DISPLAY_NAME,
+      events,
+    }),
+  });
+  const body = await parseOrThrow(res);
+  return {
+    accepted: Number(body.accepted ?? 0),
+    rejected: Number(body.rejected ?? 0),
+    billable: Number(body.billable ?? 0),
+    results: Array.isArray(body.results) ? (body.results as UsageReportOutcome[]) : [],
+  };
+}

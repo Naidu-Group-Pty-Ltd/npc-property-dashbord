@@ -2428,6 +2428,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "report-api-usage": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "billing",
+      "reviewed": true,
+      "notes": "Drains api_usage_log into Mission Control per-tenant API-key metering. Auth: INTERNAL_EDGE_SECRET or cron secret, constant-time compared. Reads a billing queue - never public."
+    },
     "report-engine-agent": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",

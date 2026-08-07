@@ -48,6 +48,20 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+## API usage metering (this deployment may be spending someone else's money)
+A workspace provisioned by Aurixa Mission Control boots with the **prime's own
+vendor keys** forwarded into its Supabase project — OpenAI, Resend, Domain,
+Cotality, Lovable — so every model token and property lookup it makes is billed
+to the prime's accounts and recharged per tenant. A key the workspace supplies
+itself is charged at nothing. Read
+[`docs/integrations/API_USAGE_METERING.md`](./docs/integrations/API_USAGE_METERING.md)
+before touching `_shared/logApiUsage.ts`, adding a vendor API call, or changing
+`service_name` on an existing one: an unmapped service is metered here and
+**never billed**, because guessing which credential a call spent bills the wrong
+tenant. The map is `_shared/apiUsageBilling.pure.ts` and nowhere else. It also
+records the gap that costs the most — only 27 of 412 edge functions call
+`logApiUsage` at all, so most vendor spend is currently invisible to any meter.
+
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
 else here.** The design system renders **0.14%** of the documents this product

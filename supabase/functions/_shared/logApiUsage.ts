@@ -2,6 +2,20 @@
  * Shared API Usage Logger
  * Logs external API consumption (tokens, cost, model) to api_usage_log table.
  * Fire-and-forget: errors are caught and logged, never thrown.
+ *
+ * BILLING: every row written here is also a billing event. This deployment may
+ * be running on API keys it does not own — a workspace provisioned by Mission
+ * Control boots with the prime's vendor keys forwarded into its Supabase
+ * project — so the `report-api-usage` worker drains these rows into Mission
+ * Control, which recharges calls made on a forwarded key and charges nothing
+ * for a key the workspace supplied itself.
+ *
+ * Two consequences for call sites:
+ *   • `service_name` must be one the map in `apiUsageBilling.pure.ts` knows, or
+ *     the call is metered here and never billed. Add new vendors there.
+ *   • A call site that knows exactly which credential it spent can say so with
+ *     `metadata: { secret_name: "OPENROUTER_API_KEY" }`, which wins over the
+ *     map. That is how a new vendor gets billed before the map learns about it.
  */
 
 export interface ApiUsageEntry {
