@@ -333,15 +333,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("id, subject_display_name, subject_type").eq("id", caseId).maybeSingle();
         if (!caseRow) return jr({ error: "Case not found" }, 404);
 
-        const scope: ScreeningScope[] = Array.isArray(body.scope) && body.scope.length
+        const requestedScope: ScreeningScope[] = Array.isArray(body.scope)
           ? body.scope.filter((s: string) => ["pep", "sanctions", "adverse_media", "watchlist"].includes(s))
-          : ["pep", "sanctions", "adverse_media"];
+          : [];
         const tenantId = await resolveTenantId(admin, caseId);
-        const capability = scope.length === 1 && scope[0] === "adverse_media" ? "adverse_media" : "pep_sanctions";
+        const capability = requestedScope.length === 1 && requestedScope[0] === "adverse_media"
+          ? "adverse_media" : "pep_sanctions";
         const resolved = await resolveTenantProvider(admin, tenantId, capability);
         let provider;
         try {
-          provider = getScreeningProvider({ resolved, preferred: body.provider });
+          // Server-side selection only: tenant + capability + provider_configs
+          // + factory. The request body used to be able to steer this with a
+          // provider hint — a browser must never choose the authoritative
+          // screening provider, so no hint is passed.
+          provider = getScreeningProvider({ resolved, admin });
         } catch (resolutionErr: any) {
           if (resolutionErr instanceof ProviderResolutionError) {
             return jr({
@@ -352,6 +357,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }
           throw resolutionErr;
         }
+
+        // Default to what the resolved provider actually covers, never to a
+        // wish-list. The old default of pep+sanctions+adverse_media recorded
+        // checks nobody performed; a caller may still request wider scopes,
+        // and the provider then reports them truthfully as not covered.
+        const scope: ScreeningScope[] = requestedScope.length
+          ? requestedScope
+          : provider.supportedScopes;
 
         const idempotencyKey = `aml-scr-${caseId}-${Date.now()}`;
         let reservation: { jobId: string } | null = null;
@@ -433,18 +446,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         } catch (e: any) {
           if (reservation) await cancelTokens(reservation.jobId, "screening_failed");
           // Same contract as IDV: an unreachable provider is not a screening
-          // outcome and never renders as a failure against the subject.
+          // outcome and never renders as a failure against the subject. Stale
+          // or missing list data is the same shape of condition — screening
+          // incomplete, never "clear", never "matched".
+          const listDataStale = /sanctions_list_unavailable/.test(String(e?.message ?? ""));
+          const errorCategory = listDataStale ? "list_data_unavailable" : "provider_unavailable";
           await admin.schema("aml").from("screening_checks").update({
             status: "pending",
             result_summary: {
-              error_category: "provider_unavailable",
+              error_category: errorCategory,
               error: String(e?.message ?? "provider_failure").slice(0, 300),
             },
             completed_at: new Date().toISOString(),
           }).eq("id", inserted.id);
           return jr({
-            error: "The screening provider could not be reached. No result was produced — try again once Integration Health shows the provider is available.",
-            code: "provider_unavailable",
+            error: listDataStale
+              ? "The sanctions list data is missing or stale, so screening cannot produce an authoritative result. No result was recorded — re-run once the sanctions refresh has succeeded."
+              : "The screening provider could not be reached. No result was produced — try again once Integration Health shows the provider is available.",
+            code: errorCategory,
           }, 502);
         }
       }
@@ -511,6 +530,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           : disposition === "dismissed" ? "dismissed" : "escalated";
         const { data: updatedMatch } = await admin.schema("aml").from("screening_matches")
           .update({ status: nextStatus }).eq("id", matchId).select().single();
+
+        // Party screening state is a projection of canonical match state:
+        // resolving a match here re-derives any party subject that references
+        // the same screening check, so the two vocabularies cannot drift.
+        const { projectPartyScreeningState } = await import("../_shared/aml/partyScreening.pure.ts");
+        const { data: linkedSubjects } = await admin.schema("aml").from("party_screening_subjects")
+          .select("id").eq("screening_check_id", match.screening_check_id);
+        if ((linkedSubjects ?? []).length > 0) {
+          const { data: allMatches } = await admin.schema("aml").from("screening_matches")
+            .select("status").eq("screening_check_id", match.screening_check_id);
+          const projected = projectPartyScreeningState(
+            (allMatches ?? []).map((m: any) => m.status));
+          for (const subject of linkedSubjects ?? []) {
+            await admin.schema("aml").from("party_screening_subjects").update({
+              state: projected,
+              adjudicated_by: userId,
+              adjudicated_at: now,
+              adjudication_note: rationale,
+              updated_at: now,
+            }).eq("id", subject.id);
+          }
+        }
 
         await appendCaseEvent(admin, match.case_id, "mlro_decision",
           `Match ${match.matched_name} ${disposition} (${match.list_name ?? match.match_type})`,

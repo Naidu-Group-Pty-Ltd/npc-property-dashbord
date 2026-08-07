@@ -83,21 +83,54 @@ function screeningSubjects() {
     'not_required', 'not_started', 'queued', 'processing', 'completed',
     'possible_match', 'confirmed_match', 'false_positive', 'error',
   ];
-  return states.map((state, i) => ({
-    id: `sc000000-0000-4000-8000-0000000000${String(i + 10).padStart(2, '0')}`,
-    case_id: STAFF_CASE_ID,
-    party_type: PARTY_TYPES[i % PARTY_TYPES.length],
-    party_id: `pa000000-0000-4000-8000-0000000000${String(i + 40).padStart(2, '0')}`,
-    screened_name: `Synthetic Screened ${i + 1}`,
-    required: true,
-    state,
-    last_screened_at: state === 'not_started' || state === 'not_required' ? null : nowIso(-3),
-    refresh_due_at: state === 'completed' ? nowIso(-1) : nowIso(30),
-    adjudicated_at: state === 'confirmed_match' ? nowIso(-1) : null,
-    adjudication_note: state === 'confirmed_match' ? 'Synthetic adjudication note' : null,
-    screening_check_id: state === 'not_started' || state === 'not_required' ? null : `ch000000-0000-4000-8000-0000000000${String(i + 50).padStart(2, '0')}`,
-    error_category: state === 'error' ? 'provider_unavailable' : null,
-  }));
+  return states.map((state, i) => {
+    const screeningCheckId = state === 'not_started' || state === 'not_required'
+      ? null : `ch000000-0000-4000-8000-0000000000${String(i + 50).padStart(2, '0')}`;
+    return {
+      id: `sc000000-0000-4000-8000-0000000000${String(i + 10).padStart(2, '0')}`,
+      case_id: STAFF_CASE_ID,
+      party_type: PARTY_TYPES[i % PARTY_TYPES.length],
+      party_id: `pa000000-0000-4000-8000-0000000000${String(i + 40).padStart(2, '0')}`,
+      screened_name: `Synthetic Screened ${i + 1}`,
+      required: true,
+      state,
+      last_screened_at: state === 'not_started' || state === 'not_required' ? null : nowIso(-3),
+      refresh_due_at: state === 'completed' ? nowIso(-1) : nowIso(30),
+      adjudicated_at: state === 'confirmed_match' ? nowIso(-1) : null,
+      adjudication_note: state === 'confirmed_match' ? 'Synthetic adjudication note' : null,
+      screening_check_id: screeningCheckId,
+      error_category: state === 'error' ? 'provider_unavailable' : null,
+      // Canonical candidates: adjudication happens per screening match, so a
+      // possible_match subject carries the open candidates staff inspect.
+      matches: state === 'possible_match'
+        ? [{
+            id: 'sm000000-0000-4000-8000-000000000001',
+            screening_check_id: screeningCheckId,
+            match_type: 'sanctions', list_name: 'DFAT Consolidated List (Australia)',
+            matched_name: 'Synthetic Listed Person', score: 0.91, jurisdiction: 'AU',
+            status: 'open', details: { external_id: 'DFAT-SYN-1' },
+          }]
+        : state === 'confirmed_match'
+          ? [{
+              id: 'sm000000-0000-4000-8000-000000000002',
+              screening_check_id: screeningCheckId,
+              match_type: 'sanctions', list_name: 'UN Consolidated List',
+              matched_name: 'Synthetic Confirmed Person', score: 0.95, jurisdiction: 'UN',
+              status: 'confirmed', details: { external_id: 'UN-SYN-2' },
+            }]
+          : [],
+      pep_determination: state === 'completed'
+        ? {
+            id: 'pd000000-0000-4000-8000-000000000001',
+            party_screening_subject_id: `sc000000-0000-4000-8000-0000000000${String(i + 10).padStart(2, '0')}`,
+            subject_name: `Synthetic Screened ${i + 1}`, result: 'not_pep',
+            pep_type: null, pep_relationship: null,
+            determined_at: nowIso(-2), determined_by_label: 'synthetic-reviewer',
+            review_due_at: nowIso(300), superseded_at: null,
+          }
+        : null,
+    };
+  });
 }
 
 function verificationRows() {
@@ -275,11 +308,30 @@ export async function installStaffBackend(
         case 'unlink_party_verification':
           return { link: { id: body?.link_id, case_id: STAFF_CASE_ID, party_type: 'case_subject', party_id: null, verification_check_id: 'vc000000-0000-4000-8000-000000000001', relationship: 'subject', authoritative: true, linked_at: nowIso(-4), unlinked_at: nowIso(), unlink_reason: body?.reason ?? null } };
         case 'list_party_screening':
-          return { subjects: screeningSubjects() };
+          return { subjects: screeningSubjects(), case_pep_determination: null };
         case 'queue_party_screening':
           return { subject: { ...screeningSubjects()[1], id: body?.subject_id } };
         case 'adjudicate_party_screening':
-          return { subject: { ...screeningSubjects()[4], id: body?.subject_id, adjudication_note: body?.note ?? null } };
+          // Canonical semantics: the resolved match comes back with the
+          // re-projected subject.
+          return {
+            subject: { ...screeningSubjects()[4], id: body?.subject_id, adjudication_note: body?.note ?? null },
+            match: { id: body?.match_id, status: body?.outcome === 'confirmed_match' ? 'confirmed' : 'dismissed' },
+          };
+        case 'list_pep_determinations':
+          return { determinations: [] };
+        case 'record_pep_determination':
+          return {
+            determination: {
+              id: 'pd000000-0000-4000-8000-000000000099',
+              party_screening_subject_id: body?.party_screening_subject_id ?? null,
+              subject_name: body?.subject_name ?? 'Synthetic Screened',
+              result: body?.result ?? 'not_pep',
+              pep_type: body?.pep_type ?? null, pep_relationship: body?.pep_relationship ?? null,
+              determined_at: nowIso(), determined_by_label: 'synthetic-reviewer',
+              review_due_at: nowIso(365), superseded_at: null,
+            },
+          };
         case 'accept_submission':
         case 'escalate_submission':
         case 'supersede_submission':

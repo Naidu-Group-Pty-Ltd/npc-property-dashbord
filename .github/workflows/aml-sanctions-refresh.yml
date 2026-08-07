@@ -9,8 +9,12 @@ name: AML sanctions refresh
 #   SUPABASE_URL                  project URL
 #   SUPABASE_SERVICE_ROLE_KEY     service role key (writes aml.sanctions_entries)
 #
-# Without those secrets the job is skipped rather than failed, so a fork or a
-# freshly-cloned repo does not show a permanently red schedule.
+# Missing credentials FAIL the job. The scheduled run is the production
+# refresh: silently downgrading it to a dry run is how a list goes stale
+# while the schedule stays green — and the screening provider now fails
+# closed on stale DFAT data, so every screening would start erroring with
+# nothing on this side ever having turned red. A deliberate dry run remains
+# available via workflow_dispatch with dry_run=true (no credentials needed).
 
 on:
   schedule:
@@ -61,24 +65,28 @@ jobs:
 
       - name: Check credentials
         id: creds
+        if: github.event.inputs.dry_run != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — running a dry run only."
+          # A refresh run without write credentials is an operational fault,
+          # not a reason to quietly do nothing. Fail loudly (never echoing the
+          # values); an intentional dry run is requested explicitly via
+          # workflow_dispatch dry_run=true and skips this check entirely.
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not configured — the scheduled sanctions refresh cannot write, so the list WILL go stale and screening will fail closed. Configure the repository secrets, or run workflow_dispatch with dry_run=true for a deliberate dry run."
+            exit 1
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Load sanctions lists
-        if: steps.creds.outputs.configured == 'true' && github.event.inputs.dry_run != 'true'
+        if: github.event.inputs.dry_run != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node scripts/aml/load-sanctions-lists.mjs --list "${{ github.event.inputs.lists || 'un,ofac,dfat' }}"
 
-      - name: Dry run (no credentials, or dry run requested)
-        if: steps.creds.outputs.configured != 'true' || github.event.inputs.dry_run == 'true'
+      - name: Dry run (explicitly requested)
+        if: github.event.inputs.dry_run == 'true'
         run: node scripts/aml/load-sanctions-lists.mjs --dry-run --list "${{ github.event.inputs.lists || 'un,ofac' }}"
