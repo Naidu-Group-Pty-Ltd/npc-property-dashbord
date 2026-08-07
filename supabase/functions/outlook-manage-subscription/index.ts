@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireSuperadmin } from '../_shared/authz.ts';
 import { logSecurityEvent } from '../_shared/auth_v2.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -122,7 +123,7 @@ Deno.serve(async (req) => {
         expirationDateTime: subscription.expirationDateTime,
       });
 
-      const response = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
+      const response = await meteredFetch('https://graph.microsoft.com/v1.0/subscriptions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -159,7 +160,7 @@ Deno.serve(async (req) => {
 
     } else if (action === 'list') {
       // List all subscriptions
-      const response = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
+      const response = await meteredFetch('https://graph.microsoft.com/v1.0/subscriptions', {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
@@ -173,7 +174,7 @@ Deno.serve(async (req) => {
 
     } else if (action === 'renew') {
       // List and renew all subscriptions
-      const listResponse = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
+      const listResponse = await meteredFetch('https://graph.microsoft.com/v1.0/subscriptions', {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
@@ -185,7 +186,7 @@ Deno.serve(async (req) => {
       const renewed = [];
 
       for (const sub of subscriptions) {
-        const renewResponse = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${sub.id}`, {
+        const renewResponse = await meteredFetch(`https://graph.microsoft.com/v1.0/subscriptions/${sub.id}`, {
           method: 'PATCH',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
@@ -211,7 +212,7 @@ Deno.serve(async (req) => {
 
     } else if (action === 'delete') {
       // Delete all subscriptions
-      const listResponse = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
+      const listResponse = await meteredFetch('https://graph.microsoft.com/v1.0/subscriptions', {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
@@ -223,7 +224,7 @@ Deno.serve(async (req) => {
       const deleted = [];
 
       for (const sub of subscriptions) {
-        const deleteResponse = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${sub.id}`, {
+        const deleteResponse = await meteredFetch(`https://graph.microsoft.com/v1.0/subscriptions/${sub.id}`, {
           method: 'DELETE',
           headers: {
             'Authorization': `Bearer ${accessToken}`

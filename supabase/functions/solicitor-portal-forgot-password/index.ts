@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -108,7 +109,7 @@ Deno.serve(async (req) => {
 
     if (resendApiKey) {
       try {
-        await fetch('https://api.resend.com/emails', {
+        await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

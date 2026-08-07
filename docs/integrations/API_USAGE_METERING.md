@@ -27,7 +27,8 @@ record of what it forwarded.
 | file | role |
 |---|---|
 | `_shared/logApiUsage.ts` | already writes every metered call to `api_usage_log` — unchanged, and still the only place call sites touch |
-| `_shared/apiUsageBilling.pure.ts` | `service_name` → the secret name it spent, and what one unit of it is. Pure, tested |
+| `_shared/meteredFetch.ts` | drop-in `fetch` that resolves the credential from the URL and meters the call |
+| `_shared/apiUsageBilling.pure.ts` | `service_name` and vendor host → the secret name spent, and what one unit of it is. Pure, tested |
 | `report-api-usage/` | cron worker that drains the queue into Mission Control |
 | `_shared/missionControl.ts` | `reportApiUsage()` — the only place that talks to the metering API |
 | migration `…_api_usage_mission_control_forwarding.sql` | the queue columns and the claim/mark RPCs |
@@ -86,17 +87,66 @@ lands as `rate_missing` on its dashboard.
 `service_name` is a vendor, not a credential: `google-maps` and `google-ai` are
 the same vendor and separate bills. Keep them apart.
 
-## Instrumentation coverage is the real limit
+## `meteredFetch` — how a call gets metered now
 
-Only calls that reach `logApiUsage` are metered at all. At the time of writing,
-27 of this repo's edge functions call it, against ~30 distinct billable
-credentials referenced across all 412. Everything else — Resend sends, Domain
-and Cotality lookups, DocuSign envelopes, WeasyPrint renders — makes real vendor
-calls that no meter sees.
+Instrumenting by hand meant a rule ("remember to log") that decays the moment
+somebody adds the next function, and one chance per call site to attribute the
+spend to the wrong credential. `_shared/meteredFetch.ts` wraps the thing the
+author was already writing instead:
 
-That gap costs money silently and it is not visible from the billing dashboard,
-which can only show what it was told about. Instrumenting a function is a
-one-line `logApiUsage` call and it is the highest-value work left in this area.
+```ts
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+
+const res = await meteredFetch("https://api.resend.com/emails", init);
+```
+
+That is the whole change. The URL already says which credential it spends, so
+`secretForUrl` resolves it; token-priced vendors have their token count read off
+the response via `clone()` so the caller's body is untouched; the log write is
+fire-and-forget and cannot fail the call that earns the revenue. It builds its
+own service-role client from env, so no plumbing reaches the call site.
+
+Two rules it cannot infer for you:
+
+- **Self-hosted sidecars need an explicit credential.** WeasyPrint, the PDF
+  parser and the AML service take their URL from env and have no fixed host, so
+  they pass `{ secretName: "WEASYPRINT_SERVICE_TOKEN" }`.
+- **A request that consumes more than one unit must say so.** One Resend call
+  can send 50 emails; pass `{ quantity: 50 }`.
+
+Never add `meteredFetch` to a call site that already calls `logApiUsage` for the
+same request — that bills the tenant twice, which is worse than not billing.
+
+## Instrumentation coverage
+
+Coverage bounds everything: a call that never reaches `logApiUsage` or
+`meteredFetch` is invisible to the meter, and the billing dashboard can only
+show what it was told about.
+
+| | edge functions metered |
+|---|---|
+| Before | 27 of 413 |
+| After the sweep | **61 of 413** |
+
+The sweep converted 51 direct vendor `fetch` calls across 38 functions, plus two
+shared clients that cover many routes at once — `weasyprintClient.ts` (all
+eleven PDF render routes) and the PDF-parse sidecar dispatcher.
+
+### What is deliberately still uninstrumented
+
+**Everything routed through `_shared/llmRouter.ts`.** The router is the obvious
+choke point — one swap in `fetchWithTimeout` would meter the gateway, OpenAI,
+Anthropic, Perplexity, OpenRouter and Gemini together — but its callers are
+split: 11 already call `logApiUsage` themselves and 16 meter nothing. Metering
+the router without first removing those 11 legacy call sites would **double-bill
+them**, and over-billing a customer is a worse failure than under-metering.
+Moving meter ownership down into the router and deleting the redundant call
+sites is the correct fix and belongs in its own change, where the 11 edits can
+be verified individually.
+
+The remaining uninstrumented functions that touch a billable credential are
+mostly those 16 llmRouter callers plus a handful whose vendor URL is assembled
+from a variable the sweep could not resolve statically.
 
 ## Deployment
 

@@ -5,6 +5,7 @@ import { callLLMRaw } from '../_shared/llmRouter.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { resolvePrompt } from '../_shared/engine-prompts.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -110,7 +111,7 @@ async function queryPerplexity(
   apiKey: string,
   systemPrompt?: string
 ): Promise<PerplexityResult> {
-  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+  const response = await meteredFetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,

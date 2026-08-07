@@ -8,6 +8,7 @@ import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, create
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkModuleView } from "../_shared/permissions.ts";
 import { assertSafeRecordingUrl } from "./recordingUrlPolicy.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const MAX_RECORDING_REDIRECTS = 3;
 
@@ -75,7 +76,7 @@ Deno.serve(async (req) => {
 
     if (vapiApiKey && row.vapi_call_id) {
       try {
-        const r = await fetch(`https://api.vapi.ai/call/${row.vapi_call_id}`, {
+        const r = await meteredFetch(`https://api.vapi.ai/call/${row.vapi_call_id}`, {
           headers: { 'Authorization': `Bearer ${vapiApiKey}` },
         });
         if (r.ok) {

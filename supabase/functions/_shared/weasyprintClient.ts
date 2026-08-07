@@ -16,6 +16,7 @@
  *    silent downgrade to a lesser renderer ships a client a document that does
  *    not look like the one that was approved.
  */
+import { meteredFetch } from './meteredFetch.ts';
 
 /**
  * What the file declares itself to be.
@@ -298,7 +299,11 @@ export async function renderPdfWithDiagnostics(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? WEASYPRINT_TIMEOUT_MS);
   try {
-    const res = await fetch(`${config.url}/render`, {
+    // BILLING: the render container is our own Cloud Run compute and the cost
+    // is real, so it is metered like any vendor. The host comes from env and
+    // varies per deployment, so the credential is named explicitly rather than
+    // inferred from the URL. One swap here covers all eleven render routes.
+    const res = await meteredFetch(`${config.url}/render`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -322,7 +327,7 @@ export async function renderPdfWithDiagnostics(
         strict: options.strict === true,
       }),
       signal: controller.signal,
-    });
+    }, { secretName: 'WEASYPRINT_SERVICE_TOKEN', feature: 'weasyprint/render' });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`WeasyPrint render failed (${res.status}): ${body.slice(0, 400)}`);

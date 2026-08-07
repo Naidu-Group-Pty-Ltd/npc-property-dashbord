@@ -6,6 +6,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 import { callInternalFunction } from '../_shared/internalCall.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -49,7 +50,7 @@ async function synthesise(userLabel: string, cadence: string, items: Array<{ q: 
     items.map((it, i) => `## Topic ${i + 1}\n**Q:** ${it.q}\n\n**A:** ${it.a}\n\nCitations: ${it.citations.join(', ') || 'none'}`).join('\n\n---\n\n'),
   ].join('\n');
   try {
-    const r = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const r = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Lovable-API-Key': LOVABLE_API_KEY },
       body: JSON.stringify({ model: DIGEST_MODEL, messages: [{ role: 'user', content: prompt }] }),

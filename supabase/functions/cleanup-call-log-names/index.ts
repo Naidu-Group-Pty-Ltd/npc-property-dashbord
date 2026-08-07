@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 /**
  * Smart capitalization for names - handles edge cases like:
  * - All uppercase or all lowercase names
@@ -121,7 +122,7 @@ async function fetchCustomerFromGoHighLevelById(
   }
 
   try {
-    const response = await fetch(`https://services.leadconnectorhq.com/contacts/${contactId}`, {
+    const response = await meteredFetch(`https://services.leadconnectorhq.com/contacts/${contactId}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${ghlApiKey}`,

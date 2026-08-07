@@ -3,6 +3,11 @@ import {
   normalizeServiceName,
   resolveServiceBinding,
   knownBillableSecrets,
+  secretForUrl,
+  meteredHosts,
+  serviceNameForSecret,
+  unitForSecret,
+  isTokenPriced,
   toReportableEvent,
   type UsageLogRow,
 } from "../../../supabase/functions/_shared/apiUsageBilling.pure";
@@ -151,5 +156,107 @@ describe("toReportableEvent", () => {
   it("reports when the call happened, not when it was drained", () => {
     const e = toReportableEvent(row({ created_at: "2026-07-31T23:59:00.000Z" }));
     expect(e!.occurred_at).toBe("2026-07-31T23:59:00.000Z");
+  });
+});
+
+describe("secretForUrl", () => {
+  it("resolves each metered vendor host to its credential", () => {
+    const cases: Array<[string, string]> = [
+      ["https://api.openai.com/v1/chat/completions", "OPENAI_API_KEY"],
+      ["https://api.anthropic.com/v1/messages", "ANTHROPIC_API_KEY"],
+      ["https://ai.gateway.lovable.dev/v1/chat/completions", "LOVABLE_API_KEY"],
+      ["https://api.resend.com/emails", "RESEND_API_KEY"],
+      ["https://graph.microsoft.com/v1.0/me/messages", "MICROSOFT_CLIENT_SECRET"],
+      ["https://maps.googleapis.com/maps/api/geocode/json?address=x", "GOOGLE_MAPS_API_KEY"],
+      ["https://services.leadconnectorhq.com/conversations/messages", "GOHIGHLEVEL_API_KEY"],
+      ["https://api.firecrawl.dev/v1/scrape", "FIRECRAWL_API_KEY"],
+      ["https://api.vapi.ai/call", "VAPI_API_KEY"],
+      ["https://graph.facebook.com/v19.0/act_1/insights", "META_ADS_ACCESS_TOKEN"],
+    ];
+    for (const [url, secret] of cases) {
+      expect(secretForUrl(url), url).toBe(secret);
+    }
+  });
+
+  it("matches a regional subdomain but not a lookalike domain", () => {
+    // Suffix matching has to be on a dot boundary, or `notresend.com` bills
+    // against our Resend key.
+    expect(secretForUrl("https://api.eu.resend.com/emails")).toBe("RESEND_API_KEY");
+    expect(secretForUrl("https://notresend.com/emails")).toBeNull();
+    expect(secretForUrl("https://api.openai.com.evil.test/v1")).toBeNull();
+  });
+
+  it("never meters our own infrastructure or free public data", () => {
+    // Charging a tenant for an esm.sh import or an ABS statistics call would
+    // be indefensible, and the noise would bury the spend that matters.
+    for (const url of [
+      "https://esm.sh/@supabase/supabase-js@2",
+      "https://deno.land/std/http/server.ts",
+      "https://dduzbchuswwbefdunfct.supabase.co/rest/v1/clients",
+      "https://api.data.abs.gov.au/data/x",
+      "https://www.rba.gov.au/statistics/x.csv",
+      "https://command-centre.npcservices.com.au/api/x",
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    ]) {
+      expect(secretForUrl(url), url).toBeNull();
+    }
+  });
+
+  it("returns null for an unparseable or unknown URL rather than guessing", () => {
+    expect(secretForUrl("not a url")).toBeNull();
+    expect(secretForUrl("https://some-vendor-we-never-heard-of.com/x")).toBeNull();
+  });
+
+  it("resolves every mapped host to a credential the forwarder can bill", () => {
+    // A host that resolves to a secret no binding knows would meter under a
+    // name Mission Control has no rate for — caught here, not on an invoice.
+    for (const host of meteredHosts()) {
+      const secret = secretForUrl(`https://${host}/x`);
+      expect(secret, host).not.toBeNull();
+      expect(serviceNameForSecret(secret!), host).toBeTruthy();
+      expect(resolveServiceBinding(serviceNameForSecret(secret!))?.secretName).toBe(secret);
+    }
+  });
+});
+
+describe("unitForSecret / isTokenPriced", () => {
+  it("prices model calls per token and everything else per unit", () => {
+    expect(isTokenPriced("OPENAI_API_KEY")).toBe(true);
+    expect(isTokenPriced("LOVABLE_API_KEY")).toBe(true);
+    expect(isTokenPriced("RESEND_API_KEY")).toBe(false);
+    expect(unitForSecret("RESEND_API_KEY")).toBe("email");
+    expect(unitForSecret("COTALITY_API_KEY")).toBe("lookup");
+    expect(unitForSecret("VAPI_API_KEY")).toBe("minute");
+  });
+
+  it("falls back to a per-request unit for an unknown secret", () => {
+    expect(unitForSecret("SOMETHING_NEW")).toBe("request");
+    expect(isTokenPriced("SOMETHING_NEW")).toBe(false);
+  });
+});
+
+describe("toReportableEvent — multi-unit calls", () => {
+  it("bills a batched send for what it actually sent", () => {
+    // One Resend request can carry 50 recipients; request_count on the row is
+    // 1, so the call site declares the real number in metadata.
+    const e = toReportableEvent(
+      row({
+        service_name: "resend",
+        tokens_used: 0,
+        request_count: 1,
+        metadata: { request_count: 50 },
+      }),
+    );
+    expect(e!.secret_name).toBe("RESEND_API_KEY");
+    expect(e!.quantity).toBe(50);
+  });
+
+  it("ignores a nonsense declared count and falls back to the row", () => {
+    for (const bad of [0, -5, "many", null]) {
+      const e = toReportableEvent(
+        row({ service_name: "resend", tokens_used: 0, metadata: { request_count: bad } }),
+      );
+      expect(e!.quantity, String(bad)).toBe(1);
+    }
   });
 });

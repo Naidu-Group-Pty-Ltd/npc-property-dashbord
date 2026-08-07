@@ -122,6 +122,152 @@ const BINDINGS: Record<string, ServiceBinding> = {
   },
 };
 
+/**
+ * Vendor hostname → the credential a request to it spends.
+ *
+ * This is what lets metering be added to a call site without the author having
+ * to know, or remember, which secret backs the endpoint they are calling — the
+ * URL already says. It is the difference between instrumenting 92 edge
+ * functions by hand and changing `fetch(` to `meteredFetch(`.
+ *
+ * Matched on exact host or a dot-suffix, so `api.eu.resend.com` resolves the
+ * same as `api.resend.com` but `notresend.com` never does. Longest match wins,
+ * so a more specific host can override a broader one.
+ *
+ * Hosts absent here are not metered. That is deliberate: esm.sh, deno.land,
+ * the ABS, the RBA and our own Supabase project cost nothing per call, and
+ * metering them would bury the spend that matters in noise.
+ */
+const HOST_SECRETS: Record<string, string> = {
+  // ── Keyed on the vendor's own domain, so regional and versioned subdomains
+  //    (api.eu.resend.com, api-uat.corelogic.asia) resolve without an entry each.
+  //    Safe here because the whole domain belongs to one vendor and one bill.
+  // AI
+  "openai.com": "OPENAI_API_KEY",
+  "anthropic.com": "ANTHROPIC_API_KEY",
+  "perplexity.ai": "PERPLEXITY_API_KEY",
+  "openrouter.ai": "OPENROUTER_API_KEY",
+  // Email
+  "resend.com": "RESEND_API_KEY",
+  // Property data
+  "domain.com.au": "DOMAIN_API_KEY",
+  "corelogic.asia": "COTALITY_API_KEY",
+  "cotality.com": "COTALITY_API_KEY",
+  "airtable.com": "AIRTABLE_TOKEN",
+  "firecrawl.dev": "FIRECRAWL_API_KEY",
+  // Voice
+  "vapi.ai": "VAPI_API_KEY",
+  // Documents and rendering
+  "gamma.app": "GAMMA_API_KEY",
+  "api2pdf.com": "API2PDF_API_KEY",
+  "docusign.net": "DOCUSIGN_INTEGRATION_KEY",
+  "docusign.com": "DOCUSIGN_INTEGRATION_KEY",
+  // CRM and marketing
+  "leadconnectorhq.com": "GOHIGHLEVEL_API_KEY",
+  "gohighlevel.com": "GOHIGHLEVEL_API_KEY",
+  "manychat.com": "MANYCHAT_API_KEY",
+
+  // ── Host-specific, because the parent domain is shared across products that
+  //    are billed separately or not at all. `googleapis.com` alone would catch
+  //    Cloud Storage; `microsoft.com` would catch everything Microsoft runs;
+  //    `facebook.com` would catch the consumer site. Longest match wins, so
+  //    these still beat any broader entry.
+  "ai.gateway.lovable.dev": "LOVABLE_API_KEY",
+  "generativelanguage.googleapis.com": "GEMINI_API_KEY",
+  "maps.googleapis.com": "GOOGLE_MAPS_API_KEY",
+  "places.googleapis.com": "GOOGLE_MAPS_API_KEY",
+  "routes.googleapis.com": "GOOGLE_MAPS_API_KEY",
+  "graph.microsoft.com": "MICROSOFT_CLIENT_SECRET",
+  "login.microsoftonline.com": "MICROSOFT_CLIENT_SECRET",
+  "graph.facebook.com": "META_ADS_ACCESS_TOKEN",
+};
+
+/**
+ * Hosts we reach that are ours, or free, and must never be metered as vendor
+ * spend. Listed rather than inferred so adding one is a decision on the record.
+ */
+const NEVER_METERED = [
+  "esm.sh",
+  "deno.land",
+  "jsr.io",
+  "supabase.co",
+  "supabase.com",
+  "w3.org",
+  "openxmlformats.org",
+  "purl.org",
+  "data.gov.au",
+  "abs.gov.au",
+  "rba.gov.au",
+  "bom.gov.au",
+  "challenges.cloudflare.com",
+  "npcservices.com.au",
+  "lovable.app",
+  "lovableproject.com",
+];
+
+function hostMatches(host: string, candidate: string): boolean {
+  return host === candidate || host.endsWith(`.${candidate}`);
+}
+
+/**
+ * Which credential a URL spends, or null when the host is not a metered vendor.
+ *
+ * Self-hosted sidecars (WeasyPrint, the PDF parser, the AML service) have no
+ * fixed hostname — their URLs come from env — so they are resolved by the
+ * caller passing an explicit secret name rather than guessed from the host.
+ */
+export function secretForUrl(url: string): string | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (NEVER_METERED.some((n) => hostMatches(host, n))) return null;
+
+  let best: { secret: string; length: number } | null = null;
+  for (const [candidate, secret] of Object.entries(HOST_SECRETS)) {
+    if (!hostMatches(host, candidate)) continue;
+    // Longest match wins so a specific host can override a broader suffix.
+    if (!best || candidate.length > best.length) best = { secret, length: candidate.length };
+  }
+  return best?.secret ?? null;
+}
+
+/** The unit a secret is metered in, for callers that only know the secret. */
+export function unitForSecret(secretName: string): UsageUnit {
+  for (const binding of Object.values(BINDINGS)) {
+    if (binding.secretName === secretName) return binding.unit;
+  }
+  return "request";
+}
+
+/** True when this secret is priced per token rather than per call. */
+export function isTokenPriced(secretName: string): boolean {
+  for (const binding of Object.values(BINDINGS)) {
+    if (binding.secretName === secretName) return binding.quantityFrom === "tokens";
+  }
+  return false;
+}
+
+/** Every vendor host this repo knows how to attribute. */
+export function meteredHosts(): string[] {
+  return Object.keys(HOST_SECRETS).sort();
+}
+
+/**
+ * A stable `service_name` for a secret, for callers that resolved the
+ * credential first (a metered fetch knows the host, not the historical label).
+ * Round-trips through `resolveServiceBinding`, so a name this returns is always
+ * one the forwarder can map back.
+ */
+export function serviceNameForSecret(secretName: string): string {
+  for (const [service, binding] of Object.entries(BINDINGS)) {
+    if (binding.secretName === secretName) return service;
+  }
+  return secretName.toLowerCase();
+}
+
 /** 'Lovable-AI Gateway' → 'lovableaigateway'. */
 export function normalizeServiceName(service: string): string {
   return (service ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -191,10 +337,17 @@ export function toReportableEvent(row: UsageLogRow): ReportableEvent | null {
     ? declared
     : binding.secretName;
 
+  // A per-call vendor usually consumes one unit per row, but not always: one
+  // Resend request can send 50 emails and one Vapi call can run 12 minutes.
+  // `metadata.request_count` lets the call site say so; the column itself
+  // defaults to 1 and `logApiUsage` has no parameter for it.
+  const declaredCount = Number(row.metadata?.request_count);
   const quantity =
     binding.quantityFrom === "tokens"
       ? Number(row.tokens_used ?? 0)
-      : Math.max(Number(row.request_count ?? 1), 1);
+      : Number.isFinite(declaredCount) && declaredCount > 0
+        ? declaredCount
+        : Math.max(Number(row.request_count ?? 1), 1);
 
   if (!Number.isFinite(quantity) || quantity <= 0) return null;
 

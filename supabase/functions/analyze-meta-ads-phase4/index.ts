@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callLLMRaw } from '../_shared/llmRouter.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ interface MarketEvent {
 // ─── Perplexity Integration ──────────────────────────────────────────────────
 
 async function queryPerplexity(prompt: string, apiKey: string, systemPrompt?: string): Promise<{ content: string; citations: string[] }> {
-  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+  const response = await meteredFetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,

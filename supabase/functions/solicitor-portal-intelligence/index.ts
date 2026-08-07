@@ -46,6 +46,7 @@ import {
   computePortfolioKpis,
   normaliseAnalysisPayload,
 } from "../_shared/legalIntelligence.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const MODEL = "google/gemini-3.6-flash";
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -306,7 +307,7 @@ Deno.serve(async (req) => {
         const estimatedInputTokens=Math.ceil(bytes.length/3); if(estimatedInputTokens>policy.max_input_tokens)throw new Error('AI_INPUT_TOKEN_CAP');
         const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),Math.min(120,policy.timeout_seconds)*1000);
         const requestBody=JSON.stringify({model,max_tokens:policy.max_output_tokens,messages:[{role:'system',content:prompt.content},{role:'user',content:[{type:'text',text:`Review this Australian contract for jurisdiction ${matter.property_state||'AU'}. Assistive output only.`},filePart]}],tools:[CONTRACT_ANALYSIS_TOOL],tool_choice:{type:'function',function:{name:CONTRACT_ANALYSIS_TOOL.function.name}}});
-        let aiResponse:Response|undefined; try { for(let attempt=0;attempt<2;attempt++){aiResponse=await fetch('https://ai.gateway.lovable.dev/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json','X-Correlation-ID':correlationId},body:requestBody});if(!(aiResponse.status===429||aiResponse.status>=500)||attempt===1)break;await new Promise(resolve=>setTimeout(resolve,500));} } finally { clearTimeout(timeout); }
+        let aiResponse:Response|undefined; try { for(let attempt=0;attempt<2;attempt++){aiResponse=await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json','X-Correlation-ID':correlationId},body:requestBody});if(!(aiResponse.status===429||aiResponse.status>=500)||attempt===1)break;await new Promise(resolve=>setTimeout(resolve,500));} } finally { clearTimeout(timeout); }
         if(!aiResponse)throw new Error('AI_PROVIDER_NO_RESPONSE');
         if(!aiResponse.ok)throw new Error(`AI_PROVIDER_${aiResponse.status}`);
         const aiData=await aiResponse.json(); const toolCall=aiData?.choices?.[0]?.message?.tool_calls?.[0]; if(!toolCall)throw new Error('AI_STRUCTURED_OUTPUT_MISSING');

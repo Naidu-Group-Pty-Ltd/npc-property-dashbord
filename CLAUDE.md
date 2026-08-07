@@ -58,9 +58,14 @@ itself is charged at nothing. Read
 before touching `_shared/logApiUsage.ts`, adding a vendor API call, or changing
 `service_name` on an existing one: an unmapped service is metered here and
 **never billed**, because guessing which credential a call spent bills the wrong
-tenant. The map is `_shared/apiUsageBilling.pure.ts` and nowhere else. It also
-records the gap that costs the most — only 27 of 412 edge functions call
-`logApiUsage` at all, so most vendor spend is currently invisible to any meter.
+tenant. The map is `_shared/apiUsageBilling.pure.ts` and nowhere else.
+
+New vendor calls should use `_shared/meteredFetch.ts` rather than `fetch` — it
+resolves the credential from the URL and logs the call itself, so metering
+cannot be forgotten. Never add it to a call site that already calls
+`logApiUsage` for the same request: that bills the tenant twice, which is worse
+than not billing. That constraint is why everything behind `_shared/llmRouter.ts`
+is still uninstrumented; the doc explains what it would take to fix.
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
