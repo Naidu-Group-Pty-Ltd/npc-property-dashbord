@@ -11,6 +11,7 @@ import {
   resolveTokenReference,
 } from '../bindingResolver';
 import { shouldRenderOverlay } from '../renderVisibility';
+import { buildTextOverlayCssDecls } from '../rendering/textOverlayStyle.pure';
 
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
@@ -20,6 +21,26 @@ export interface HtmlBlockContext extends ResolveContext {
 }
 
 export type HtmlBlockRenderer = (block: Block, ctx: HtmlBlockContext) => string;
+
+/**
+ * Late-bound lookup for the chart renderers, registered by `blocks/index.ts`.
+ *
+ * `charts.html.ts` imports this module, so this module cannot import it back.
+ * Rather than duplicate chart drawing code to dodge the cycle — which would put
+ * imported charts and authored charts on separate renderers that drift — the
+ * chart overlay case resolves its renderer at call time from a registry that
+ * `blocks/index.ts` populates, since that module already imports both sides.
+ */
+type ChartOverlayRendererLookup = (kind: string) => HtmlBlockRenderer | null;
+let chartOverlayRendererLookup: ChartOverlayRendererLookup | null = null;
+
+export function registerChartOverlayRenderers(lookup: ChartOverlayRendererLookup): void {
+  chartOverlayRendererLookup = lookup;
+}
+
+function getChartOverlayRenderer(kind: string): HtmlBlockRenderer | null {
+  return chartOverlayRendererLookup ? chartOverlayRendererLookup(kind) : null;
+}
 
 export function esc(s: unknown): string {
   return String(s ?? '')
@@ -189,46 +210,36 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       const pr = Number(o.paddingRight ?? 0);
       const pb = Number(o.paddingBottom ?? 0);
       const pl = Number(o.paddingLeft ?? 0);
-      const valign = o.verticalAlign === 'middle' ? 'center'
-        : o.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
       const features = buildFontFeatures(o);
-      const decls: string[] = [
-        `color:${color}`,
-        `font-family:${esc(family)}`,
-        `font-size:${size}pt`,
-        `font-weight:${o.fontWeightNumeric ?? o.fontWeight ?? 'normal'}`,
-        `font-style:${o.fontStyle ?? 'normal'}`,
-        `text-align:${o.align ?? 'left'}`,
-        `line-height:${o.lineHeight ?? 1.3}`,
-        `letter-spacing:${o.letterSpacing ?? 0}pt`,
-        `padding:${pt}pt ${pr}pt ${pb}pt ${pl}pt`,
-        `display:flex`,
-        `flex-direction:column`,
-        `justify-content:${valign}`,
-      ];
-      if (o.textDecoration) decls.push(`text-decoration:${o.textDecoration}`);
-      if (o.textTransform === 'small-caps') decls.push(`font-variant-caps:small-caps`);
-      else if (o.textTransform) decls.push(`text-transform:${o.textTransform}`);
-      if (o.textShadow) decls.push(`text-shadow:${o.textShadow}`);
-      if (o.whiteSpace) decls.push(`white-space:${o.whiteSpace}`);
-      if (o.hyphens) decls.push(`hyphens:${o.hyphens}`, `-webkit-hyphens:${o.hyphens}`);
-      if (o.columns && o.columns > 1) {
-        decls.push(`columns:${o.columns}`);
-        if (o.columnGap != null) decls.push(`column-gap:${o.columnGap}pt`);
-      }
-      if (o.kerning === false) decls.push(`font-kerning:none`);
-      else if (o.kerning === true) decls.push(`font-kerning:normal`);
-      if (o.fontVariantNumeric && o.fontVariantNumeric !== 'normal') decls.push(`font-variant-numeric:${o.fontVariantNumeric}`);
-      if (features) decls.push(`font-feature-settings:${features}`);
-      if (o.fontVariationSettings) decls.push(`font-variation-settings:${o.fontVariationSettings}`);
-      if (o.maxLines && !o.columns) {
-        decls.push(
-          `display:-webkit-box`,
-          `-webkit-line-clamp:${o.maxLines}`,
-          `-webkit-box-orient:vertical`,
-          `overflow:hidden`,
-        );
-      }
+      // Shared with the editor canvas — see rendering/textOverlayStyle.pure.ts.
+      // The two surfaces used to build this list independently and disagreed on
+      // white-space, overflow, numeric weight, vertical align and padding.
+      const decls = buildTextOverlayCssDecls({
+        fontFamily: family,
+        fontSizePt: Number(size),
+        color,
+        fontWeightNumeric: o.fontWeightNumeric,
+        fontWeight: o.fontWeight,
+        fontStyle: o.fontStyle,
+        align: o.align,
+        lineHeight: o.lineHeight,
+        letterSpacingPt: o.letterSpacing,
+        paddingPt: { top: pt, right: pr, bottom: pb, left: pl },
+        verticalAlign: o.verticalAlign,
+        whiteSpace: o.whiteSpace,
+        textDecoration: o.textDecoration,
+        textTransform: o.textTransform,
+        textShadow: o.textShadow,
+        hyphens: o.hyphens,
+        columns: o.columns,
+        columnGapPt: o.columnGap,
+        kerning: o.kerning,
+        fontVariantNumeric: o.fontVariantNumeric,
+        fontFeatureSettings: features || null,
+        fontVariationSettings: o.fontVariationSettings,
+        maxLines: o.maxLines,
+        overflowPolicy: o.overflowPolicy,
+      }, { unit: 'pt', escapeFamily: esc });
       const style = `${base}${decls.join(';')};`;
       // Drop cap — render the first non-whitespace character as a floated span.
       const dc = o.dropCap;
@@ -301,6 +312,47 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
         return withCascadeWrapper(`<div style="${base}border-top:${sw}pt solid ${stroke};"></div>`, overlay as any, ctx);
       }
       return withCascadeWrapper(`<div style="${base}background:${esc(fill)};border:${sw}pt solid ${stroke};border-radius:${radius};"></div>`, overlay as any, ctx);
+    }
+    case 'chart': {
+      // W3 — a reconstructed chart, rendered by DELEGATING to the eleven
+      // data-bound chart renderers that already exist as blocks. They take
+      // `(block, ctx)` and read `block.props`, and `readSeries` falls back to
+      // `props.data` with `label`/`value` keys — exactly the shape a chart
+      // overlay carries — so no chart drawing code is duplicated here.
+      //
+      // Rendering the SAME function the block path uses is the point: an
+      // imported chart and an authored chart are the same pixels, and a fix to
+      // either reaches both.
+      const o: any = overlay;
+      const renderer = getChartOverlayRenderer(String(o.chartKind ?? 'bar'));
+      if (!renderer) return '';
+      const synthetic = {
+        id: overlay.id,
+        type: `chart-${o.chartKind ?? 'bar'}`,
+        props: {
+          // Inline series from the source document. `dataPath` wins when
+          // present, for a chart someone has since rebound to report data.
+          data: Array.isArray(o.series) ? o.series : [],
+          ...(o.dataPath ? { dataPath: o.dataPath } : {}),
+          ...(o.labelKey ? { labelKey: o.labelKey } : {}),
+          ...(o.valueKey ? { valueKey: o.valueKey } : {}),
+          ...(o.title ? { title: o.title } : {}),
+          ...(o.caption ? { caption: o.caption } : {}),
+          ...(o.accent ? { accent: o.accent } : {}),
+          ...(o.palette ? { palette: o.palette } : {}),
+          ...(o.orientation ? { orientation: o.orientation } : {}),
+          x: overlay.x, y: overlay.y, width: overlay.width, height: overlay.height,
+        },
+      } as unknown as Block;
+      const svg = renderer(synthetic, ctx as HtmlBlockContext);
+      // The block renderers position themselves absolutely from props.x/y, so
+      // the overlay wrapper carries only transform/opacity/effects — width and
+      // height are already expressed inside.
+      return withCascadeWrapper(
+        `<div style="position:absolute;left:0;top:0;opacity:${opacity};transform:rotate(${rotation}deg);transform-origin:top left;${z}${fx}">${svg}</div>`,
+        overlay as any,
+        ctx,
+      );
     }
     case 'vector': {
       // R0 — editable vector geometry (icons/logos captured as SVG paths).

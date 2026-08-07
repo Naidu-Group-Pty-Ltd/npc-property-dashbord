@@ -24,6 +24,8 @@ import type {
 import type { DoclingDocument, DoclingPageInfo, DoclingRasterByPage } from './doclingTypes';
 import { mapDoclingToRawBlocks } from './mapDoclingToRawBlocks';
 import { deriveNativeHeaderPolicy, TABLE_PRESERVATION_VERSION } from '../tableArbitration.pure';
+import { CHART_ARBITRATION_VERSION as CHART_PRESERVATION_VERSION } from '../chartArbitration.pure';
+import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pure';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
 
@@ -38,6 +40,12 @@ export interface DoclingPlanOptions {
   lockBelowConfidence?: number;
   /** Phase 3: source-font-name → embedded `@font-face` family (for full fonts). */
   embeddedFontFamilies?: Record<string, string>;
+  /**
+   * W3 — charts the sidecar read and arbitration cleared, keyed by page number.
+   * A picture that matches one becomes an editable chart; everything else keeps
+   * its existing behaviour and becomes an image.
+   */
+  sourceChartsByPage?: Record<number, BridgedChart[]>;
 }
 
 // Phase 4: lowered 0.7 → 0.6 now that reconstruction (vectors/typography/fonts) is
@@ -46,6 +54,51 @@ export interface DoclingPlanOptions {
 // still renders identically either way.
 const DEFAULT_LOCK_THRESHOLD = 0.6;
 const MAX_OVERLAY_NAME_LENGTH = 64;
+
+/**
+ * Promote a picture block to a chart block when the sidecar read a chart at the
+ * same place on the page.
+ *
+ * Both bboxes are top-left, y-down, PDF points — `normalize_bbox` in the
+ * sidecar and `bboxToTopLeft` in the raw-block mapper each say so — which is
+ * what makes a direct geometric match valid. See sourceChartBridge.pure.ts for
+ * why that is worth stating rather than assuming.
+ *
+ * A chart binds to at most one picture: once matched it is removed from the
+ * pool, so two adjacent pictures cannot both claim the same reconstruction and
+ * end up displaying identical numbers.
+ */
+function promotePicturesToCharts(
+  blocks: RawImportBlock[],
+  charts: readonly BridgedChart[],
+): RawImportBlock[] {
+  if (!charts.length) return blocks;
+  const available = [...charts];
+  return blocks.map((block) => {
+    if (block.type !== 'image' || !available.length) return block;
+    const match = matchChartToPicture(block.bbox, available);
+    if (!match) return block;
+    available.splice(available.indexOf(match), 1);
+    return {
+      ...block,
+      type: 'chart' as const,
+      meta: {
+        ...(block.meta ?? {}),
+        chartData: {
+          chartKind: match.chartKind,
+          series: match.series,
+          ...(match.title ? { title: match.title } : {}),
+          renderMode: match.renderMode,
+          defects: match.defects,
+          manualReviewRequired: match.manualReviewRequired,
+          ...(match.axisScaleR2 != null ? { axisScaleR2: match.axisScaleR2 } : {}),
+          ...(match.detectionMethod ? { detectionMethod: match.detectionMethod } : {}),
+          sourceRegionId: match.sourceRegionId,
+        },
+      },
+    };
+  });
+}
 
 function pageId(pageNo: number): string {
   return `docling-page-${pageNo}`;
@@ -102,9 +155,18 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       fontSize,
       // Phase 6E — preserve a numeric weight grade (e.g. 300/600 derived from the
       // source font name) instead of collapsing every weight to bold/normal.
+      //
+      // `fontWeight` is coerced to the coarse normal/bold enum by templateSchema,
+      // so writing ONLY it loses the grade: 300 renders as 400 and 600 as 700,
+      // both wider than the source inside a source-sized box. `fontWeightNumeric`
+      // is the field every renderer actually prefers, so write both.
       fontWeight: (typeof block.style?.fontWeight === 'number'
         ? block.style.fontWeight
         : block.style?.fontWeight === 'bold' ? 'bold' : 'normal') as number | 'normal' | 'bold',
+      ...(typeof block.style?.fontWeight === 'number'
+        && block.style.fontWeight >= 100 && block.style.fontWeight <= 900
+        ? { fontWeightNumeric: Math.round(block.style.fontWeight) }
+        : {}),
       fontStyle: isFormula ? 'italic' : (block.style?.fontStyle ?? 'normal'),
       color: block.style?.color ?? '#111111',
       align: (block.style?.textAlign ?? 'left') as TextOverlay['align'],
@@ -113,6 +175,33 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       letterSpacing: block.style?.letterSpacing ?? 0,
       ...(isSingleLine ? { whiteSpace: 'nowrap' as const } : {}),
     } as TextOverlay;
+    return overlay;
+  }
+  // W3 — a chart the sidecar read AND arbitration cleared. `chartData` is only
+  // ever set for a native render mode; a chart that failed any hard defect
+  // arrives as an image block carrying its source crop, exactly as before.
+  if (block.type === 'chart' && block.meta?.chartData) {
+    const c = block.meta.chartData;
+    const overlay = {
+      ...base,
+      type: 'chart' as const,
+      chartKind: c.chartKind,
+      series: c.series,
+      ...(c.title ? { title: c.title } : {}),
+      chartPreservation: {
+        version: CHART_PRESERVATION_VERSION,
+        renderMode: c.renderMode,
+        defects: c.defects ?? [],
+        manualReviewRequired: Boolean(c.manualReviewRequired),
+        ...(c.detectionMethod ? { detectionMethod: c.detectionMethod } : {}),
+        // Retained even for a native chart: review needs to compare the
+        // reconstruction against the pixels it was read from, and that
+        // comparison is the last line of defence against a wrong number.
+        ...(c.sourceCropUrl ? { sourceCropUrl: c.sourceCropUrl } : {}),
+        ...(c.sourceRegionId ? { sourceRegionId: c.sourceRegionId } : {}),
+        ...(c.axisScaleR2 != null ? { axisScaleR2: c.axisScaleR2 } : {}),
+      },
+    } as unknown as Overlay;
     return overlay;
   }
   if (block.type === 'vector' && block.meta?.vector) {
@@ -314,7 +403,18 @@ export function mapDoclingToPagePlan(
 ): TemplateImportPlan {
   const mapped = mapDoclingToRawBlocks(doc, { embeddedFontFamilies: opts.embeddedFontFamilies });
   const pages: TemplateImportPagePlan[] = mapped.pages.map((page) =>
-    pagePlanForPage(page, mapped.byPage[page.page_no] ?? [], opts, doc),
+    pagePlanForPage(
+      page,
+      // W3 — join the sidecar's chart reads onto Docling's picture blocks here,
+      // rather than inside mapDoclingToRawBlocks, so that mapper stays a pure
+      // function of the Docling document and knows nothing about scene graphs.
+      promotePicturesToCharts(
+        mapped.byPage[page.page_no] ?? [],
+        opts.sourceChartsByPage?.[page.page_no] ?? [],
+      ),
+      opts,
+      doc,
+    ),
   );
   const warnings: ImportWarning[] = pages.flatMap((p) => p.warnings);
   const editableElementsCreated = pages.reduce(

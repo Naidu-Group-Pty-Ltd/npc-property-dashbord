@@ -142,6 +142,24 @@ jobs:
           python3 -m pip install --quiet --break-system-packages pillow
           cd scripts/reports && python3 -m unittest test_measure_pages -v
 
+      # The PDF-import sidecar's pure modules — lane policy, OCR language
+      # contract, operational metrics — import no Docling and need no model
+      # download, so they are cheap to gate here.
+      #
+      # Nothing ran them before. test_ocr_config.py already encoded the rule
+      # that EasyOCR cannot construct a reader from an incompatible script mix,
+      # and the shipped default drifted to `en,fr,de,es,zh,ja,ko,ar` anyway —
+      # `zh` is not even an EasyOCR code. That failed 9 of 33 production parses
+      # before anyone looked. An unrun test is not a test.
+      #
+      # Only dependency-free modules belong here; anything importing docling,
+      # httpx or fitz is covered by pdf-vnext-j1-container-gate.yml instead.
+      - name: Unit tests (PDF-import sidecar, pure modules)
+        run: |
+          cd pdf-parse-service
+          python3 -m unittest test_lane_policy test_ocr_config test_operational_metrics \
+            test_chart_candidates test_chart_series_wiring -v
+
       - name: Build
         run: npm run build
 

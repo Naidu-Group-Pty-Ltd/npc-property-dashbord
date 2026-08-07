@@ -73,7 +73,8 @@ export async function routeReportThroughTemplate(
         continue;
       }
 
-      const preparedSchema = await preloadImages(schema).catch(() => schema);
+      // Reference mode — WeasyPrint fetches assets itself. See weasyPreview.ts.
+      const preparedSchema = await preloadImages(schema, { mode: 'reference' }).catch(() => schema);
       const { html } = renderTemplateToHtml(preparedSchema, {
         data: bindingData,
         customCss: tplRow.custom_css ?? undefined,

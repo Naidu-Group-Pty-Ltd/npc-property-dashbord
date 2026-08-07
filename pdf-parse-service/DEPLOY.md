@@ -40,15 +40,26 @@ two secrets stored on the Supabase project:
 - Access to the Supabase project `dduzbchuswwbefdunfct` (to update the two
   secrets above after the URL is known).
 
-Pick a region close to your Supabase project (Supabase is in AWS but Cloud Run
-latency is dominated by Docling parse time, so `us-central1` or `australia-southeast1`
-both work well — pick the one closest to your users).
+**Deploy in the same region as the Supabase project.** This page used to say
+latency was "dominated by Docling parse time" and that any region worked. The
+sidecar's own operational metrics disagree: on the measured jobs
+`artifact_upload_ms` was **19.0s of a 45.2s** invocation — 42% of wall clock —
+because the service ran in `us-central1` while the Supabase project it uploads
+every artifact to is in `ap-southeast-1`. Every artifact upload, source download
+and callback crossed the Pacific twice.
+
+Supabase project `dduzbchuswwbefdunfct` is in **ap-southeast-1 (Singapore)**, so
+the co-located Cloud Run region is `asia-southeast1`, which is also Tier-1
+priced. `australia-southeast1` is Tier-2 (~20% more) and is *not* closer to the
+data; choose it only if a contractual AU-residency obligation applies — and note
+that moving Cloud Run alone does not achieve residency while Supabase remains in
+Singapore.
 
 ```bash
 export GCP_PROJECT=<YOUR_GCP_PROJECT_ID>
-export REGION=us-central1
+export REGION=asia-southeast1
 export SERVICE=pdf-parse-service
-export IMAGE=gcr.io/$GCP_PROJECT/$SERVICE:docling-2.14.0-phaseD-waveD
+export IMAGE=gcr.io/$GCP_PROJECT/$SERVICE:docling-2.14.0-lanepolicy-v3
 ```
 
 ---
@@ -103,8 +114,9 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --platform managed \
   --allow-unauthenticated \
+  --no-cpu-throttling \
   --cpu 2 \
-  --memory 4Gi \
+  --memory 8Gi \
   --concurrency 2 \
   --timeout 300 \
   --min-instances 0 \
@@ -113,8 +125,6 @@ gcloud run deploy "$SERVICE" \
   --set-env-vars "PDF_PARSE_SERVICE_TOKEN=$PDF_PARSE_SERVICE_TOKEN" \
   --set-env-vars "ENABLE_PICTURE_CLASSIFICATION=true" \
   --set-env-vars "ENABLE_PICTURE_DESCRIPTION=false" \
-  --set-env-vars "ENABLE_FORMULA_ENRICHMENT=true" \
-  --set-env-vars "ENABLE_CODE_ENRICHMENT=true" \
   --set-env-vars "ENABLE_OCR_FALLBACK=true" \
   --set-env-vars "DOCLING_PREWARM_ON_STARTUP=true" \
   --set-env-vars "DOCLING_IMAGES_SCALE=2.0" \
@@ -123,11 +133,31 @@ gcloud run deploy "$SERVICE" \
 
 Notes:
 
+- **`--no-cpu-throttling` is not optional.** `/parse` returns `202` immediately
+  and runs the whole Docling pipeline in a FastAPI background task
+  (`app.py: background_tasks.add_task(_run_async_job, req)`). Cloud Run allocates
+  CPU *during request processing*; work continuing after the response is sent is
+  throttled toward zero until another request wakes the instance. Without this
+  flag the production ledger shows two 94-page jobs completing in 357s and
+  46,424s respectively — a 130x spread on identical work, with a chunked p90 of
+  37,857s. It changes billing to instance-based (~$0.000018/vCPU-s over instance
+  lifetime), which at ~60 jobs/month is roughly $1 and still near the free tier.
 - `--allow-unauthenticated` is safe because every request must carry the
   `Authorization: Bearer $PDF_PARSE_SERVICE_TOKEN` header — Cloud Run IAM is
   bypassed but our app-level auth blocks anything else.
-- `--concurrency 2` keeps Docling memory bounded (each request can hold
-  ~1.5 GB while parsing a large PDF).
+- `--memory 8Gi` with `--concurrency 2`: each request can hold ~1.5 GB while
+  parsing a large PDF, and the resident model weights are on top of that. At
+  4 GiB two concurrent heavy parses were tight enough to plausibly explain the
+  observed `sidecar_error 503` failures. Either 8 GiB at concurrency 2, or stay
+  at 4 GiB and drop to `--concurrency 1` — not 4 GiB at concurrency 2.
+- `ENABLE_FORMULA_ENRICHMENT` / `ENABLE_CODE_ENRICHMENT` are **deliberately
+  absent** — both now default to `false` in `app.py`. They target scientific
+  papers and source listings; on property and finance PDFs they load extra
+  models and add per-page work for no measured benefit. Set them explicitly only
+  if a document class actually needs them.
+- `ENABLE_OCR_FALLBACK=true` no longer implies full-page OCR on every page. Those
+  two behaviours were the same expression until lane-policy v3; see the OCR note
+  below.
 - `--timeout 300` is the production request deadline; very large scanned PDFs
   should fail cleanly with the sidecar error taxonomy instead of monopolising a
   worker indefinitely.
@@ -137,7 +167,37 @@ Notes:
   FastAPI process is accepting requests; app startup also pre-warms Docling with
   a one-page sample unless `DOCLING_PREWARM_ON_STARTUP=false`.
 - Bump `--min-instances 1` only once usage justifies the ~$25/mo idle cost —
-  cold starts are ~30 s.
+  cold starts are ~30 s. At the measured volume (~60 jobs/month) this would be
+  the single largest line item on the whole deployment and would *triple* the
+  bill. `--no-cpu-throttling` plus the boot prewarm addresses the same symptom
+  for roughly $1/month; do that first and re-measure before considering this.
+
+### OCR forcing (lane-policy v3)
+
+`ENABLE_OCR_FALLBACK` and `DOCLING_FORCE_FULL_PAGE_OCR` used to be the same
+switch: `app.py` derived both the `ocr` capability ceiling and
+`force_full_page_ocr_default` from `(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK)`.
+Because the `unplanned` lane inherits the forcing default, enabling the fallback
+silently ran full-page EasyOCR on every page of every document on that lane —
+44% of production traffic — including native-text PDFs whose measured
+`ocr_page_ratio` was `0.0`.
+
+Turning the fallback off was not a workaround: `ocr` is a hard ceiling
+(`LANE-POLICY.md` rule 4), so that would have left the `ocr_scanned` lane unable
+to OCR a genuinely scanned document. There was no env-var combination for "OCR
+available, not forced".
+
+Since v3 the two are independent:
+
+- `ENABLE_OCR_FALLBACK=true` → OCR is *available* to lanes that want it.
+- `DOCLING_FORCE_FULL_PAGE_OCR=true` → lanes inheriting the default also *force*
+  it. Leave this off.
+- `ocr_scanned` forces full-page OCR either way, capped only by the `ocr` ceiling.
+
+`/capabilities` reports `global_force_full_page_ocr_default`, which before v3
+showed `FORCE_FULL_PAGE_OCR` alone while the code used the combined expression —
+so the endpoint advertised the intended behaviour rather than the real one. It
+is now accurate.
 
 When the command finishes, copy the printed **Service URL**:
 
@@ -263,9 +323,11 @@ gcloud run services update-traffic "$SERVICE" \
 | `PDF_PARSE_SERVICE_TOKEN` | _(required)_ | Bearer token enforced on `/parse` and `/raster`. |
 | `ENABLE_PICTURE_CLASSIFICATION` | `true` | Classify pictures (chart/table/photo/etc). |
 | `ENABLE_PICTURE_DESCRIPTION` | `false` | VLM-generated captions (slow; opt-in per job). |
-| `ENABLE_FORMULA_ENRICHMENT` | `true` | Emit LaTeX for detected formulas. |
-| `ENABLE_CODE_ENRICHMENT` | `true` | Detect code blocks + language. |
-| `ENABLE_OCR_FALLBACK` | `false` | Run EasyOCR on text-less pages (heavy). |
+| `ENABLE_FORMULA_ENRICHMENT` | `false` | Emit LaTeX for detected formulas. Off by default — scientific-paper feature, no measured benefit on property/finance PDFs. |
+| `ENABLE_CODE_ENRICHMENT` | `false` | Detect code blocks + language. Off by default, same reason. |
+| `ENABLE_OCR_FALLBACK` | `false` | Make EasyOCR *available* as a fallback on text-less pages. Since lane-policy v3 this no longer also forces full-page OCR — use `DOCLING_FORCE_FULL_PAGE_OCR` for that. |
+| `DOCLING_FORCE_FULL_PAGE_OCR` | `false` | Force full-page OCR as the process-wide default for lanes that inherit it (`unplanned`). The `ocr_scanned` lane forces it regardless. |
+| `DOCLING_OCR_LANGS` | `en` | EasyOCR languages. Resolved through `ocr_languages.py`: non-EasyOCR spellings are aliased (`zh` → `ch_sim`), unknown codes dropped, and incompatible script mixes reduced to one constructible group. |
 | `DOCLING_PREWARM_ON_STARTUP` | `true` | Convert a one-page sample at boot so Docling models are loaded before the first real import. |
 | `DOCLING_IMAGES_SCALE` | `2.0` | Picture crop DPI multiplier (1.0 = 72 dpi). |
 | `DOCLING_LAYOUT_MODEL` | _(unset)_ | Override layout model id, e.g. `docling-models/layout-heron`. |

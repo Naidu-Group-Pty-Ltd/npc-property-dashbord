@@ -61,7 +61,11 @@ const STATUS_SAFE_FIELDS = [
 // behavior changes so stale-policy artifacts are never reused.
 // G1: bumped to v2 alongside the sidecar's extractor-lane-policy-v2 so cached
 // v1-semantics artifacts are never reused for v2 lane behavior.
-const LANE_POLICY_VERSION = 'extractor-lane-policy-v2';
+// v3: mirrors the sidecar decoupling `force_full_page_ocr_default` from OCR
+// availability and defaulting formula/code enrichment off. Every INHERIT cell in
+// the lane matrix resolves differently, so v2 artifacts must not be reused.
+// Deploy this function and the sidecar image together (LANE-POLICY.md G3).
+const LANE_POLICY_VERSION = 'extractor-lane-policy-v3';
 const REDACTION_POLICY_VERSION = 'redaction-policy-v1';
 const PARSE_PROVIDER = 'docling';
 const DEFAULT_SERVICE_CLASS = 'default';
@@ -273,8 +277,44 @@ async function sha256Text(text: string): Promise<string> {
 
 // Requested raster DPI is a deterministic function of the requested mode; used
 // both for the parse request and for the cache fingerprint.
-function requestedRasterDpi(mode: string): number {
-  return (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 200 : 144;
+/**
+ * The output-grade raster DPI for a mode.
+ *
+ * The dispatcher is the only layer that knows whether a page raster is a
+ * throwaway alignment underlay or the actual deliverable, so the DPI decision
+ * belongs here — `lane_policy.resolve_raster_dpi` treats an explicit request as
+ * the target and `DOCLING_RASTER_DPI` only as a fallback.
+ *
+ * Was a flat 200/144. At 144 DPI an A4 page is 1191px, which a Retina display
+ * at 100% zoom already upscales 1.33x — the reported pixelation — and which is
+ * 2.08x below the 300 DPI print floor. Pixel-perfect rasters ARE the output, so
+ * they go to the print floor. Hybrid rasters are nominally an editor underlay
+ * (see TemplateImportPagePlan.background.underlay), but the quality gate can
+ * later downgrade a hybrid page to raster-only and promote that same underlay
+ * to final output, so 144 is too weak a starting point; 200 matches what the
+ * design_heavy lane already demands.
+ *
+ * This value feeds computeCacheFingerprint, so changing it invalidates cached
+ * artifacts for the affected modes automatically — which is correct, the old
+ * ones are lower-resolution than the contract now promises.
+ */
+function requestedRasterDpi(_mode: string): number {
+  // 300 for every mode that rasters at all, and the reason is the raster-only
+  // downgrade path. The quality gate decides AFTER the parse that a page cannot
+  // be rebuilt natively, and promotes that page's raster from alignment
+  // underlay to final output — see applyCriticalContainment / pageFidelityDecision.
+  // A mode-dependent DPI therefore means the pages that lost their native
+  // layers, and so have the least fidelity left, are also the ones stuck with
+  // the weakest asset. Rastering everything at the print floor removes the
+  // problem instead of requiring a second round trip to re-raster after the
+  // decision.
+  //
+  // Affordable because of the reference-mode transport: rasters are fetched by
+  // WeasyPrint from storage rather than base64-inlined into a 25 MB payload, so
+  // page count no longer bounds resolution. The remaining cost is sidecar
+  // parse time and memory, which scale with DPI^2 — dial back here first if a
+  // raster-heavy corpus regresses.
+  return 300;
 }
 
 // pdf-cache-contract-v2 fingerprint. Computed pre-plan from request-level policy
@@ -788,7 +828,9 @@ async function dispatchChunkToSidecar(
     include_doctags: true,
     include_markdown: requestPayload?.include_markdown !== false,
     redact_pii: Boolean(requestPayload?.redact_pii),
-    raster_dpi: (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 200 : 144,
+    // Same source as the cache fingerprint — a chunked page must not raster at a
+    // different grade from the monolithic path, or a cache hit serves the wrong one.
+    raster_dpi: requestedRasterDpi(mode),
     raster_format: 'png',
   };
   try {
@@ -983,7 +1025,7 @@ async function runJob(
     const includeMarkdown = requestPayload?.include_markdown === false ? false : true;
     const enablePictureDescription = (descriptionTier === 'on' || descriptionTier === 'premium')
       && (!plan || plan.requires_picture_description === true);
-    const rasterDpi = (effectiveMode === 'pixel_perfect' || effectiveMode === 'pixel-perfect') ? 200 : 144;
+    const rasterDpi = requestedRasterDpi(effectiveMode);
 
     const parseBody: Record<string, unknown> = {
       url: signedUrl,
@@ -1204,7 +1246,14 @@ Deno.serve(async (req) => {
       // bucket itself under our custom-auth model, so we mediate here.
       const path = typeof body.path === 'string' ? body.path : '';
       if (!path) return json({ error: 'path required' }, 400);
-      const expiresIn = Math.min(Math.max(Number(body.expires_in) || 300, 60), 300);
+      // Ceiling raised 300s -> 900s. A signed URL handed to WeasyPrint as a
+      // resource reference (rather than inlined as base64) must outlive the
+      // render that consumes it, and the render timeout is 600s. At 300s a
+      // long multi-page export would have had its images expire midway and
+      // silently drop to blank backgrounds. Still short-lived: this is a
+      // bearer credential for a private bucket, so the window is the render
+      // duration plus headroom and nothing more.
+      const expiresIn = Math.min(Math.max(Number(body.expires_in) || 300, 60), 900);
       const objectPath = path.startsWith(`${DIAGNOSTICS_BUCKET}/`)
         ? path.slice(DIAGNOSTICS_BUCKET.length + 1)
         : path;

@@ -80,6 +80,12 @@ from lane_policy import (
     normalize_lane,
 )
 
+# OCR language contract (pure; unit-tested in test_ocr_config.py without Docling).
+from ocr_languages import (
+    OCR_LANGUAGE_CONTRACT_VERSION,
+    resolve_ocr_languages,
+)
+
 # G2 — Sidecar Operational Metrics V1 (pure; unit-tested in test_operational_metrics.py).
 from operational_metrics import (
     OperationalMetricsAccumulator,
@@ -149,6 +155,15 @@ RASTER_DPI = int(os.environ.get("DOCLING_RASTER_DPI", "300"))
 # below; keep this check self-contained so module import order doesn't matter.)
 ENABLE_FITZ_LAYERS = os.environ.get("DOCLING_ENABLE_FITZ_LAYERS", "true").strip().lower() not in {"", "0", "false", "no"}
 MAX_VECTORS_PER_PAGE = int(os.environ.get("DOCLING_MAX_VECTORS_PER_PAGE", "400"))
+# Per-span extents shipped per text line, so the client can reconcile a
+# mixed-style line rather than collapse it to its widest span. Bounded because
+# the count is attacker-influenced and this rides on every text item.
+MAX_SPANS_PER_LINE = int(os.environ.get("DOCLING_MAX_SPANS_PER_LINE", "24"))
+# Measured line records shipped per text item, for the same reason.
+MAX_MEASURED_LINES = int(os.environ.get("DOCLING_MAX_MEASURED_LINES", "64"))
+# Bumped when the shape of `item.source_measure` changes, so a consumer can tell
+# a missing measurement from one it does not understand.
+SOURCE_MEASURE_VERSION = "source-measure-v1"
 MIN_VECTOR_SIZE_PT = float(os.environ.get("DOCLING_MIN_VECTOR_SIZE_PT", "1.0"))
 # Phase 3: font metadata extraction (names + embeddable programs).
 MAX_FONTS = int(os.environ.get("DOCLING_MAX_FONTS", "48"))
@@ -194,16 +209,42 @@ PREWARM_ON_STARTUP = _env_bool("DOCLING_PREWARM_ON_STARTUP", True)
 # Phase B/D toggles. Expensive enrichments remain available as explicit opt-ins.
 ENABLE_PICTURE_CLASSIFICATION = _env_bool("ENABLE_PICTURE_CLASSIFICATION", True)
 ENABLE_PICTURE_DESCRIPTION_DEFAULT = _env_bool("ENABLE_PICTURE_DESCRIPTION", False)
-ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", True)
-ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", True)
+# Formula and code enrichment target scientific papers and source listings. This
+# product ingests property and finance PDFs, where both load extra models and
+# add per-page work for no measured benefit — so they are opt-in, not opt-out.
+ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", False)
+ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", False)
 # OCR fallback and full-page OCR are resource-intensive and must be enabled explicitly.
 ENABLE_OCR_FALLBACK = _env_bool("ENABLE_OCR_FALLBACK", False)
 FORCE_FULL_PAGE_OCR = _env_bool("DOCLING_FORCE_FULL_PAGE_OCR", False)
-# Multi-language OCR — order matters; first match wins per region.
-OCR_LANGS = [s.strip() for s in os.environ.get("DOCLING_OCR_LANGS", "en,fr,de,es,zh,ja,ko,ar").split(",") if s.strip()]
+# Multi-language OCR. Resolved through the pure `ocr_languages` contract, which
+# aliases non-EasyOCR spellings (`zh` -> `ch_sim`), drops unknown codes, and
+# reduces incompatible script mixes to a constructible group. Without it an
+# unconstructible language list fails the whole conversion rather than degrading
+# the OCR pass — see ocr_languages.py.
+_OCR_LANG_RESOLUTION = resolve_ocr_languages(os.environ.get("DOCLING_OCR_LANGS"))
+OCR_LANGS = list(_OCR_LANG_RESOLUTION.languages)
+if _OCR_LANG_RESOLUTION.changed:
+    LOG.warning(
+        "DOCLING_OCR_LANGS adjusted for EasyOCR compatibility: using %s (group=%s, dropped=%s)",
+        OCR_LANGS,
+        _OCR_LANG_RESOLUTION.primary_group,
+        _OCR_LANG_RESOLUTION.dropped,
+    )
 # Lower bitmap threshold = OCR runs even on lightly-bitmapped regions.
 BITMAP_AREA_THRESHOLD = float(os.environ.get("DOCLING_BITMAP_AREA_THRESHOLD", "0.05"))
-IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "2.0"))
+# Picture-crop resolution, expressed as a multiplier on 72 DPI: 2.0 == 144 DPI,
+# 4.0 == 288 DPI. Docling RE-RENDERS a picture's page region at this scale
+# rather than extracting the embedded stream, so this is a hard ceiling on
+# embedded-image quality — a 600 DPI photograph in the source was permanently
+# resampled to 144 DPI before it ever reached the template, which is a large
+# part of the reported pixelation.
+#
+# Raised to 4.0 (288 DPI, just under the 300 DPI print floor). Cost scales with
+# the square, but it applies to picture REGIONS rather than whole pages, and the
+# per-page artifact caps still bound the total. Dial back via the env var if a
+# picture-dense corpus regresses cold-start memory.
+IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "4.0"))
 TABLE_MODE = os.environ.get("DOCLING_TABLE_MODE", "ACCURATE").strip().upper() or "ACCURATE"
 LAYOUT_MODEL = os.environ.get("DOCLING_LAYOUT_MODEL", "").strip() or None
 # Accelerator: AUTO lets Docling pick CUDA / MPS / CPU as available.
@@ -215,13 +256,30 @@ INCLUDE_MARKDOWN_DEFAULT = _env_bool("DOCLING_INCLUDE_MARKDOWN_DEFAULT", True)
 # G1 — the process-level capability ceilings + configured defaults handed to the
 # pure lane-policy resolver. A lane can never enable a feature disabled here.
 GLOBAL_CAPABILITIES = GlobalCapabilities(
+    # OCR *availability*. Forcing full-page OCR implies needing OCR at all, so
+    # either flag raises the ceiling.
     ocr=(ENABLE_OCR_FALLBACK or FORCE_FULL_PAGE_OCR),
     picture_description=ENABLE_PICTURE_DESCRIPTION_DEFAULT,
     picture_classification=ENABLE_PICTURE_CLASSIFICATION,
     formula=ENABLE_FORMULA_ENRICHMENT,
     code=ENABLE_CODE_ENRICHMENT,
     fitz=(_FITZ_AVAILABLE and ENABLE_FITZ_LAYERS),
-    force_full_page_ocr_default=(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK),
+    # OCR *forcing* — deliberately NOT `(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK)`.
+    #
+    # These two fields were previously the same expression, which made "OCR is
+    # available" and "OCR every page of every document" a single switch. The
+    # `unplanned` lane inherits this default, so enabling the fallback silently
+    # forced full-page OCR across the largest slice of production traffic — on
+    # documents whose measured `ocr_page_ratio` was 0.0.
+    #
+    # Setting ENABLE_OCR_FALLBACK=false was not a workaround: `ocr` is a hard
+    # ceiling (lane_policy rule 4), so that would have left `ocr_scanned` unable
+    # to OCR a genuinely scanned document. There was no env-var combination for
+    # "OCR available, not forced" — hence the decoupling here.
+    #
+    # `ocr_scanned` still forces full-page OCR: its lane profile sets
+    # force_full_page_ocr=True authoritatively, capped only by the `ocr` ceiling.
+    force_full_page_ocr_default=FORCE_FULL_PAGE_OCR,
     default_table_mode=TABLE_MODE,
     images_scale=IMAGES_SCALE,
     raster_dpi_default=RASTER_DPI,
@@ -885,6 +943,34 @@ def _page_text_lines(page) -> list[dict]:
             lbbox = line.get("bbox") or dom.get("bbox") or [0, 0, 0, 0]
             origin = dom.get("origin") or [lbbox[0], lbbox[3]]
             flags = int(dom.get("flags") or 0)
+            # The MEASURED advance width of this line, in the source's own font.
+            #
+            # It was always computed — `lbbox` is right here — and was used only
+            # to infer alignment and leading, then dropped. That made it
+            # impossible for the client to tell whether its substituted font
+            # rendered the same text wider than the original, which is precisely
+            # why imported text overflows a box copied verbatim from the source.
+            # A ratio needs both terms; this is the one nobody was sending.
+            measured_width = max(0.0, float(lbbox[2]) - float(lbbox[0]))
+            # Per-span extents let the client reconcile a mixed-style line
+            # instead of collapsing it to its widest span. Bounded so a
+            # pathological line cannot inflate the artifact.
+            span_extents = []
+            for sp in spans[:MAX_SPANS_PER_LINE]:
+                sb = sp.get("bbox") or [0, 0, 0, 0]
+                try:
+                    sw = max(0.0, float(sb[2]) - float(sb[0]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                text = str(sp.get("text") or "")
+                if not text:
+                    continue
+                span_extents.append({
+                    "width": sw,
+                    "chars": len(text),
+                    "size": float(sp.get("size") or 0.0),
+                    "font": str(sp.get("font") or ""),
+                })
             lines.append({
                 "bbox": [float(lbbox[0]), float(lbbox[1]), float(lbbox[2]), float(lbbox[3])],
                 "origin_y": float(origin[1]),
@@ -893,6 +979,9 @@ def _page_text_lines(page) -> list[dict]:
                 "bold": bool(flags & 16),
                 "italic": bool(flags & 2),
                 "color": _fitz_span_color_to_hex(dom.get("color")),
+                "measured_width": measured_width,
+                "char_count": sum(len(str(sp.get("text") or "")) for sp in spans),
+                "spans": span_extents,
             })
     return lines
 
@@ -1022,6 +1111,25 @@ def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> No
             font["italic"] = True
         if "text_align" not in item:
             item["text_align"] = _infer_alignment(matched, ix0, ix1)
+        # The measurement the client cannot make for itself: how much space this
+        # text occupies IN THE SOURCE'S OWN FONT. The client knows what its
+        # substituted font renders; without this it has no second term, so it
+        # cannot tell "the box is right and the font is wide" from "the box is
+        # wrong", and every remedy would be guesswork.
+        item["source_measure"] = {
+            "version": SOURCE_MEASURE_VERSION,
+            "lineCount": len(matched),
+            "measuredWidthPt": round(max((m.get("measured_width") or 0.0) for m in matched), 3),
+            "totalCharCount": sum(int(m.get("char_count") or 0) for m in matched),
+            "lines": [
+                {
+                    "widthPt": round(float(m.get("measured_width") or 0.0), 3),
+                    "charCount": int(m.get("char_count") or 0),
+                    "sizePt": round(float(m.get("size") or 0.0), 2),
+                }
+                for m in matched[:MAX_MEASURED_LINES]
+            ],
+        }
 
 
 def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
@@ -2812,6 +2920,11 @@ def _docling_capabilities() -> dict[str, Any]:
             "global_ocr_fallback": ENABLE_OCR_FALLBACK,
             "lane_aware_ocr": True,
             "ocr_langs": OCR_LANGS,
+            # Language resolution is reported in full: an operator who configures
+            # a code EasyOCR cannot build needs to see that it was dropped here,
+            # rather than discover it as a failed conversion.
+            "ocr_language_resolution": _OCR_LANG_RESOLUTION.as_dict(),
+            "ocr_language_contract_version": OCR_LANGUAGE_CONTRACT_VERSION,
             "bitmap_area_threshold": BITMAP_AREA_THRESHOLD,
         },
         "tables": {

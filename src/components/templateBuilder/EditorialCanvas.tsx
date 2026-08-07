@@ -22,7 +22,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { makeCanvasRenderKey, pageWithoutOverlays } from '@/lib/reportTemplate/previewCache';
 import { normalizePageSize } from '@/lib/reportTemplate/rendering/pageGeometry';
+import { PT_TO_PX } from '@/lib/templateLibrary/pageGeometry';
 import { overlayPaintOrder } from '@/lib/reportTemplate/paintOrder';
+import { buildTextOverlayCssDecls, cssDeclsToReactStyle } from '@/lib/reportTemplate/rendering/textOverlayStyle.pure';
 import { screenToPagePoint, PALETTE_DRAG_MIME, parsePaletteDrag } from '@/lib/reportTemplate/overlayDropFactory';
 import type { Overlay, Page, ReportTemplate } from '@/lib/reportTemplate/templateSchema';
 import { templateEditorActions, useEditorTemplate, useTemplateEditorStore } from '@/stores/templateEditorStore';
@@ -581,12 +583,30 @@ function EditorialCanvasImpl({
               height: pageH * zoom,
             }}
           >
-            {/* Iframe with the rendered page (visual only, pointer-events disabled) */}
+            {/* Iframe with the rendered page (visual only, pointer-events disabled).
+
+                The stage is sized in POINTS × zoom, but the document inside the
+                iframe lays out at `${size.width}pt`, and CSS fixes 1pt at 4/3 px.
+                Sized at `w-full h-full` the document was therefore 1.333× wider
+                than its viewport — overflowing, cut off, and permanently
+                misaligned with the overlay handles, which position at 1 CSS px
+                per point. Worse, the iframe content did not respond to `zoom` at
+                all, so the mismatch was constant at every zoom level.
+
+                Give the iframe its NATURAL pixel size and scale it back down by
+                zoom/PT_TO_PX, so one point on the handle layer is one point in
+                the document. Same pattern as TemplateDocumentPreview and
+                LiveHtmlPreview, which both got this right. */}
             <iframe
               title="Editor preview"
               srcDoc={html}
               sandbox="allow-same-origin"
-              className="absolute inset-0 w-full h-full border-0 pointer-events-none"
+              className="absolute left-0 top-0 border-0 pointer-events-none origin-top-left"
+              style={{
+                width: pageW * PT_TO_PX,
+                height: pageH * PT_TO_PX,
+                transform: `scale(${zoom / PT_TO_PX})`,
+              }}
             />
 
             {/* Alignment guides — magenta lines with a coordinate pill so
@@ -775,27 +795,49 @@ function OverlayPreview({
   if (o.type === 'text') {
     const t: any = o;
     const color = previewCssColor(t.color, tokenColors, '#111111');
+    // Styled through the SAME builder as the export renderer — see
+    // rendering/textOverlayStyle.pure.ts. This preview used to hardcode
+    // `overflow:hidden` and `whiteSpace:'pre-wrap'`, which overrode the
+    // `whiteSpace:'nowrap'` the PDF importer deliberately sets on single-line
+    // text: the line wrapped and the wrapped remainder was then clipped. That
+    // is the "text boxes constrict their contents" defect, and it was visible
+    // ONLY in the editor because the export path never clipped.
+    const shared = cssDeclsToReactStyle(buildTextOverlayCssDecls({
+      fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
+      fontSizePt: Number(t.fontSize) || 12,
+      color,
+      fontWeightNumeric: t.fontWeightNumeric,
+      fontWeight: t.fontWeight,
+      fontStyle: t.fontStyle,
+      align: t.align,
+      lineHeight: t.lineHeight,
+      letterSpacingPt: t.letterSpacing,
+      paddingPt: {
+        top: t.paddingTop, right: t.paddingRight,
+        bottom: t.paddingBottom, left: t.paddingLeft,
+      },
+      verticalAlign: t.verticalAlign,
+      whiteSpace: t.whiteSpace,
+      textDecoration: t.textDecoration,
+      textTransform: t.textTransform,
+      hyphens: t.hyphens,
+      columns: t.columns,
+      columnGapPt: t.columnGap,
+      fontVariantNumeric: t.fontVariantNumeric,
+      maxLines: t.maxLines,
+      overflowPolicy: t.overflowPolicy,
+    }, { unit: 'px', scale: zoom }));
+
     const style: React.CSSProperties = {
       width: '100%', height: '100%',
-      padding: 0,
       margin: 0,
-      fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
-      fontSize: (Number(t.fontSize) || 12) * zoom,
-      fontWeight: t.fontWeight === 'bold' ? 700 : 400,
-      fontStyle: t.fontStyle || 'normal',
-      color,
-      textAlign: t.align || 'left',
-      lineHeight: t.lineHeight || 1.3,
-      letterSpacing: (t.letterSpacing || 0) * zoom,
-      overflow: 'hidden',
-      whiteSpace: 'pre-wrap',
+      ...(shared as React.CSSProperties),
       wordBreak: 'break-word',
       opacity: o.opacity ?? 1,
       background: 'transparent',
       border: 'none',
       outline: 'none',
       resize: 'none',
-      display: 'block',
     };
     if (editing) {
       return (
@@ -815,6 +857,29 @@ function OverlayPreview({
     return (
       <div style={{ ...style, pointerEvents: 'none' }}>
         {String(t.content ?? '')}
+      </div>
+    );
+  }
+  if (o.type === 'chart') {
+    // W3 — the iframe already paints the chart via the shared renderer, so the
+    // handle layer only needs a hit target plus a marker for a reconstruction
+    // that has not been corroborated against printed labels. Drawing the chart
+    // twice would let the two copies disagree, which is the whole failure mode
+    // the shared-renderer approach exists to prevent.
+    const preservation = (o as any).chartPreservation as
+      | { manualReviewRequired?: boolean; renderMode?: string } | undefined;
+    return (
+      <div
+        style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+        title={preservation?.renderMode ? `Chart · ${preservation.renderMode}` : 'Chart'}
+      >
+        {preservation?.manualReviewRequired ? (
+          <div
+            aria-label="Chart values need review"
+            className="absolute right-0 top-0 rounded-full bg-warning"
+            style={{ width: 8 * zoom, height: 8 * zoom }}
+          />
+        ) : null}
       </div>
     );
   }

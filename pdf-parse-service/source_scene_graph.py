@@ -32,6 +32,17 @@ import re
 import unicodedata
 from typing import Any, Optional
 
+# W3 — deterministic chart series extraction. Pure and separately tested; this
+# module supplies the evidence, `chart_candidates` does the arithmetic.
+from chart_candidates import (
+    CHART_CANDIDATE_CONTRACT_VERSION,
+    AxisTick,
+    account_numeric_tokens,
+    extract_bar_series,
+    fit_axis_scale,
+    smallest_tick_interval,
+)
+
 # ── Contract versions ───────────────────────────────────────────────────────
 
 SOURCE_SCENE_GRAPH_VERSION = "source-scene-graph-v2"
@@ -987,7 +998,191 @@ def build_page_regions(
     # E3 — attach chart ⇢ child relationships + semantic labels (deterministic).
     assign_chart_relationships(regions)
 
+    # W3 — read each chart's series from source geometry, where the evidence
+    # supports it. Runs AFTER relationships because it needs the axis-tick child
+    # regions that step attached. Never raises and never fabricates: a chart it
+    # cannot read is left exactly as it was, at extractionState 'crop_only'.
+    extract_chart_series(regions, vectors or [], page_width, page_height)
+
     return regions, page_problems
+
+
+def _axis_tick_value(text: str) -> Optional[float]:
+    """The number an axis tick label states, or None when it states none.
+
+    Strips only presentation — currency symbols, thousands separators, a percent
+    sign. It never rescales: a tick reading "50%" is the number 50 on an axis
+    whose unit is percent, and inventing 0.5 here would silently change what
+    every bar on that chart means.
+    """
+    s = (text or "").strip()
+    if not AXIS_TICK_RE.match(s):
+        return None
+    cleaned = s.replace(",", "").replace("%", "").strip()
+    for sym in ("$", "£", "€"):
+        cleaned = cleaned.replace(sym, "")
+    try:
+        v = float(cleaned.strip())
+    except ValueError:
+        return None
+    return v if math.isfinite(v) else None
+
+
+def extract_chart_series(
+    regions: list[dict],
+    vectors: list[dict],
+    page_width: float,
+    page_height: float,
+) -> None:
+    """Read each chart's series from the source geometry it was drawn with.
+
+    The material was always here. `_page_vectors` ships one item per PyMuPDF
+    drawing with its own rect and fill; `assign_chart_relationships` has already
+    sorted the surrounding text into axis ticks and legend entries. What was
+    missing was anyone pairing the two — so `structuredDataPath` stayed None and
+    `extractionState` stayed 'crop_only' with a comment saying the engine could
+    not extract series.
+
+    The arithmetic lives in `chart_candidates` (pure, separately tested); this
+    function's job is to assemble evidence in ONE coordinate space and to be
+    honest about what it could not do. Every failure path leaves the chart
+    untouched at 'crop_only', because a chart rendered as a picture is correct
+    and a chart rebuilt from a bad read is not.
+
+    In-place, deterministic, never raises.
+    """
+    charts = [r for r in regions if r.get("type") == "chart" and isinstance(r.get("bbox"), dict)]
+    if not charts:
+        return
+
+    by_id = {r["id"]: r for r in regions if isinstance(r, dict) and r.get("id")}
+
+    # Vectors arrive in PDF points; region bboxes are normalized page space.
+    # Convert once, through the same helper the region path uses, so ticks,
+    # chart bounds and bars are all measured in the same units — otherwise the
+    # fitted scale is meaningless in a way no test on either side would catch.
+    normalized_vectors: list[dict] = []
+    for vec in vectors:
+        vbbox = _vector_bbox(vec, page_width, page_height)
+        if vbbox is None:
+            continue
+        normalized_vectors.append({
+            "bbox": {
+                "l": float(vbbox.get("x") or 0.0),
+                "t": float(vbbox.get("y") or 0.0),
+                "r": float(vbbox.get("x") or 0.0) + float(vbbox.get("width") or 0.0),
+                "b": float(vbbox.get("y") or 0.0) + float(vbbox.get("height") or 0.0),
+            },
+            "fill": _first_path_fill(vec),
+        })
+
+    for chart in charts:
+        try:
+            _extract_one_chart_series(chart, by_id, normalized_vectors)
+        except Exception as exc:  # pragma: no cover - defensive
+            meta = chart.get("chart")
+            if isinstance(meta, dict):
+                meta.setdefault("problems", []).append(f"series_extraction_failed:{type(exc).__name__}")
+
+
+def _first_path_fill(vec: dict) -> Optional[Any]:
+    """A drawing's fill, taken from its first path. `_page_vectors` emits one
+    path per item, so there is nothing to reconcile."""
+    paths = vec.get("paths")
+    if isinstance(paths, list) and paths and isinstance(paths[0], dict):
+        return paths[0].get("fill")
+    return vec.get("fill")
+
+
+def _extract_one_chart_series(chart: dict, by_id: dict, normalized_vectors: list[dict]) -> None:
+    meta = chart.get("chart")
+    if not isinstance(meta, dict):
+        return
+    chart_type = str(meta.get("chartType") or "unknown")
+    cbbox = chart["bbox"]
+
+    # Only bar charts are read today. A pie's value lives in its wedge sweep
+    # angle, which means parsing arc commands out of path data — real work that
+    # does not exist yet, and guessing at it would be exactly the failure this
+    # module is built to avoid. Everything else stays a crop, honestly.
+    if chart_type != "bar":
+        meta.setdefault("problems", []).append(f"series_extraction_unsupported:{chart_type}")
+        return
+
+    cx0 = float(cbbox.get("x") or 0.0)
+    cy0 = float(cbbox.get("y") or 0.0)
+    cw = float(cbbox.get("width") or 0.0)
+    ch = float(cbbox.get("height") or 0.0)
+    if cw <= 0 or ch <= 0:
+        return
+
+    # Split the axis-tick children by which edge band they sit in. A vertical
+    # bar chart carries its VALUE scale on the left; a horizontal one carries it
+    # along the bottom. Ticks that are not numeric are categories, not scale.
+    left_band = cx0 + cw * CHART_EDGE_BAND
+    bottom_band = cy0 + ch * (1.0 - CHART_EDGE_BAND)
+    y_ticks: list[AxisTick] = []
+    x_ticks: list[AxisTick] = []
+    for rid in meta.get("axisLabelRegionIds") or []:
+        child = by_id.get(rid)
+        if not isinstance(child, dict) or not isinstance(child.get("bbox"), dict):
+            continue
+        raw = ((child.get("text") or {}).get("raw") or "").strip()
+        value = _axis_tick_value(raw)
+        if value is None:
+            continue
+        ccx, ccy = _bbox_center(child["bbox"])
+        if ccx <= left_band:
+            y_ticks.append(AxisTick(position=ccy, value=value))
+        elif ccy >= bottom_band:
+            x_ticks.append(AxisTick(position=ccx, value=value))
+
+    horizontal = False
+    scale = fit_axis_scale(y_ticks)
+    ticks_used = y_ticks
+    if scale is None:
+        scale = fit_axis_scale(x_ticks)
+        ticks_used = x_ticks
+        horizontal = scale is not None
+    if scale is None:
+        meta.setdefault("problems", []).append("axis_scale_underdetermined")
+        return
+
+    region_rect = (cx0, cy0, cx0 + cw, cy0 + ch)
+    category_labels = [
+        lbl for lbl in (meta.get("axisLabels") or [])
+        if _axis_tick_value(lbl) is None
+    ]
+    series = extract_bar_series(
+        normalized_vectors, region_rect, scale,
+        labels=category_labels or None,
+        horizontal=horizontal,
+    )
+    if not series:
+        meta.setdefault("problems", []).append("no_bars_extracted")
+        return
+
+    # Everything the arbitration layer needs to decide, including the evidence
+    # that could veto this. Reporting a poor fit is the whole point: a scale
+    # that did not fit is information, not something to hide behind a number.
+    accounted = [str(t.value) for t in ticks_used] + list(meta.get("legendText") or [])
+    numeric_raw = [
+        n.get("raw") for n in (meta.get("numericValues") or [])
+        if isinstance(n, dict) and n.get("raw")
+    ] or [str(n) for n in (meta.get("numericValues") or []) if not isinstance(n, dict)]
+
+    meta["structuredSeries"] = [s.as_dict() for s in series]
+    meta["seriesCount"] = 1
+    meta["categoryCount"] = len(series)
+    meta["axisScale"] = scale.as_dict()
+    meta["smallestTickInterval"] = smallest_tick_interval(ticks_used)
+    meta["unaccountedNumericTokens"] = account_numeric_tokens(numeric_raw, accounted)
+    meta["chartOrientation"] = "horizontal" if horizontal else "vertical"
+    # 'structured_partial' rather than 'complete': the numbers were read, and
+    # whether they may be TRUSTED is the arbitration layer's call, not this
+    # module's. Nothing here promotes a chart to native rendering.
+    meta["extractionState"] = "structured_partial"
+    meta["extractionContract"] = CHART_CANDIDATE_CONTRACT_VERSION
 
 
 def _chart_metadata(cls: Optional[str], caption: Optional[str], *, signals: Optional[dict] = None) -> dict:

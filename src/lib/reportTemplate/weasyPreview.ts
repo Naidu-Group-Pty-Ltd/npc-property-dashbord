@@ -65,7 +65,12 @@ export async function renderTemplateViaWeasyPrint(
   template: ReportTemplate,
   opts: WeasyPreviewOptions = {},
 ): Promise<WeasyPreviewResult> {
-  const prepared = await preloadImages(template);
+  // Reference mode: WeasyPrint fetches assets itself via its safe_url_fetcher
+  // rather than receiving them base64-inlined. Inlining is bounded by the
+  // service's 25 MB MAX_HTML_BYTES, and an A4 page raster costs ~5.9 MB inlined
+  // at 200 DPI and ~13.3 MB at 300 — so an inlined pixel-perfect export blows
+  // the cap at roughly two pages, while production imports average 18.5.
+  const prepared = await preloadImages(template, { mode: 'reference' });
   if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
 
   const { html } = renderTemplateToHtml(prepared, {

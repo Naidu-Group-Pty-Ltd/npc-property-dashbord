@@ -239,7 +239,9 @@ export function ExportPipelineDialog({
       setPreloading(true);
       const tplForExport = buildTemplateForExport();
       const tplForRender = assetSummary.images.length
-        ? await preloadImages(tplForExport).catch(() => tplForExport)
+        // Reference mode — WeasyPrint fetches assets itself rather than
+        // receiving them inlined against its 25 MB payload cap.
+        ? await preloadImages(tplForExport, { mode: 'reference' }).catch(() => tplForExport)
         : tplForExport;
       setPreloading(false);
 

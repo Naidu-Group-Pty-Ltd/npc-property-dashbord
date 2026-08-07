@@ -75,14 +75,44 @@ const DEFAULT_FONT_FAMILY = 'Helvetica';
 // Keep this boundary deliberately narrow so parser-controlled values cannot
 // trigger network/file fetches, SVG execution, binding resolution, or large
 // data-URI allocations during preview/export.
-const MAX_DOCLING_IMAGE_BYTES = 10 * 1024 * 1024;
+// Raised from 10 MB alongside the picture-crop DPI increase (DOCLING_IMAGES_SCALE
+// 2.0 -> 4.0): a legitimate full-bleed image at 288 DPI now exceeds the old
+// bound, and tripping it produces a grey placeholder rather than a picture.
+// This is an allocation guard, not a correctness one — the format allow-list
+// above it is what keeps the boundary narrow.
+const MAX_DOCLING_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOCLING_IMAGE_BASE64_LENGTH = Math.ceil(MAX_DOCLING_IMAGE_BYTES / 3) * 4;
 
-function safeDoclingImageUri(uri: unknown): string | undefined {
-  if (typeof uri !== 'string') return undefined;
+/** Why a picture URI was refused — surfaced so the drop is never silent. */
+export type DoclingImageRejection = 'not-a-string' | 'unsupported-format' | 'too-large';
+
+export interface DoclingImageUriResult {
+  uri?: string;
+  rejected?: DoclingImageRejection;
+  /** Decoded byte estimate, present when the reason is `too-large`. */
+  approxBytes?: number;
+}
+
+/**
+ * Validate a picture data URI.
+ *
+ * Returns the reason on refusal instead of a bare `undefined`. An oversize
+ * image previously vanished into a grey checkerboard with nothing anywhere
+ * explaining why, which is indistinguishable from a parse failure to whoever is
+ * reviewing the import.
+ */
+function inspectDoclingImageUri(uri: unknown): DoclingImageUriResult {
+  if (typeof uri !== 'string') return { rejected: 'not-a-string' };
   const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(uri);
-  if (!match || !match[1] || match[1].length > MAX_DOCLING_IMAGE_BASE64_LENGTH) return undefined;
-  return uri;
+  if (!match || !match[1]) return { rejected: 'unsupported-format' };
+  if (match[1].length > MAX_DOCLING_IMAGE_BASE64_LENGTH) {
+    return { rejected: 'too-large', approxBytes: Math.floor((match[1].length * 3) / 4) };
+  }
+  return { uri };
+}
+
+function safeDoclingImageUri(uri: unknown): string | undefined {
+  return inspectDoclingImageUri(uri).uri;
 }
 
 function nearestDesignFont(family: string | undefined, label?: DoclingTextLabel): string {
@@ -142,10 +172,46 @@ function labelDefaultFontSize(label: DoclingTextLabel | undefined, level?: numbe
   }
 }
 
+/**
+ * Derive a font size from the measured box, mirroring the fallback that
+ * `ingestion/reconciliation/hybridPlan.ts` has always used.
+ *
+ * Only applied to boxes that plausibly hold a SINGLE line: for a wrapped
+ * paragraph the box height is a function of line count, not glyph size, so
+ * `height * 0.72` would produce an absurd size. A multi-line box therefore
+ * returns null and falls through to the label default, which is at least a
+ * reading-order-aware guess.
+ *
+ * Returns null rather than a default so the caller's `??` chain stays explicit.
+ */
+function boxDerivedFontSize(boxHeight: number, text: string | undefined): number | null {
+  if (!Number.isFinite(boxHeight) || boxHeight <= 0) return null;
+  // An explicit newline means the producer already knows this wraps.
+  if ((text ?? '').includes('\n')) return null;
+  const derived = boxHeight * 0.72;
+  // Outside these bounds the box is not describing one line of type.
+  if (derived < 4 || derived > 96) return null;
+  return Math.round(derived * 100) / 100;
+}
+
+/**
+ * Normalise a source weight WITHOUT discarding its precision.
+ *
+ * This used to return `n >= 600 ? 'bold' : 'normal'`, which destroyed the real
+ * grade before the schema ever saw it — so a source Light 300 became 400 and a
+ * SemiBold 600 became 700. Both substitutions are WIDER than the source, and
+ * widening text inside a bbox copied verbatim from the source is exactly how a
+ * text box ends up unable to hold its own contents.
+ *
+ * The numeric grade is preserved here and written to `fontWeightNumeric`
+ * downstream; `templateSchema` still derives the coarse enum for renderers that
+ * only understand normal/bold.
+ */
 function normaliseWeight(value: unknown): number | 'normal' | 'bold' | undefined {
   if (value === 'bold' || value === 'normal') return value;
   const n = Number(value);
-  if (Number.isFinite(n) && n > 0) return n >= 600 ? 'bold' : 'normal';
+  // CSS weights are 1-1000; anything outside that is not a weight.
+  if (Number.isFinite(n) && n >= 1 && n <= 1000) return Math.round(n);
   return undefined;
 }
 
@@ -212,7 +278,21 @@ function textItemToBlock(
     : item.label === 'section_header'
       ? Math.max(1, Math.min(6, Math.round(item.level ?? 2)))
       : undefined;
-  const fontSize = item.font?.size ?? labelDefaultFontSize(item.label, headingLevel);
+  // Font size, most-trustworthy source first.
+  //
+  // The label-derived table (22/18/15/13/12/11pt for h1..h6) is a LAST resort,
+  // not a second choice. It invents a size with no relationship to the source
+  // box, so a source heading actually set at 14pt was being re-rendered at 22pt
+  // inside its original ~16pt-tall bbox — a guaranteed overflow, and one of the
+  // direct causes of text boxes unable to hold their contents.
+  //
+  // The sibling non-Docling path (ingestion/reconciliation/hybridPlan.ts) has
+  // always derived a size from the box when the source does not state one; this
+  // mapper simply never did. `bbox.height * 0.72` approximates cap-height plus
+  // leading for a single-line box, and is clamped to sane typographic bounds.
+  const fontSize = item.font?.size
+    ?? boxDerivedFontSize(bbox.height, item.text)
+    ?? labelDefaultFontSize(item.label, headingLevel);
   const fontWeight = normaliseWeight(item.font?.weight)
     ?? weightFromFamilyName(item.font?.family)
     ?? labelDefaultWeight(item.label);
@@ -470,7 +550,8 @@ function pictureItemToBlock(
   if (bbox.width <= 0 || bbox.height <= 0) return null;
   const altText = pictureAltText(item);
   const pictureClass = topPictureClass(item);
-  const imageUri = safeDoclingImageUri(item.image?.uri);
+  const imageInspection = inspectDoclingImageUri(item.image?.uri);
+  const imageUri = imageInspection.uri;
   const imageDiagnosticsPath = item.image?.diagnostics_path;
   const displayText = altText || item.caption || (pictureClass ? `[${pictureClass}]` : '[image]');
   return {
@@ -490,6 +571,17 @@ function pictureItemToBlock(
       groupId: captionGroupId,
       imageUri,
       imageDiagnosticsPath,
+      // A refused picture renders as a grey placeholder. Recording WHY makes the
+      // difference between "the source had no image here" and "we dropped it"
+      // visible to review, instead of leaving a mystery box on the page.
+      ...(imageInspection.rejected && item.image?.uri != null
+        ? {
+            imageRejected: imageInspection.rejected,
+            ...(imageInspection.approxBytes != null
+              ? { imageApproxBytes: imageInspection.approxBytes }
+              : {}),
+          }
+        : {}),
     },
   };
 }

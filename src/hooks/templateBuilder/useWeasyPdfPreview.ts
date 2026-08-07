@@ -54,7 +54,8 @@ export function useWeasyPdfPreview({ enabled, template, sampleData, customCss, n
     // Mark attempted immediately so a failed render doesn't auto-retry forever.
     setRenderedKey(contentKey);
     try {
-      const prepared = await preloadImages(template);
+      // Reference mode — WeasyPrint fetches assets itself. See weasyPreview.ts.
+      const prepared = await preloadImages(template, { mode: 'reference' });
       if (runId !== runIdRef.current) return;
       // Production parity: render via WeasyPrint (same engine as final PDFs).
       const { html } = renderTemplateToHtml(prepared, {

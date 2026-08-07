@@ -33,13 +33,13 @@ RUN python -c "import importlib.util; spec=importlib.util.find_spec('docling.uti
 
 # Runtime application and G1/G2/E1 support modules. Explicit file list (never a
 # broad `COPY *.py`) so a new runtime dependency is a deliberate, reviewable change.
-COPY app.py lane_policy.py operational_metrics.py source_scene_graph.py ./
+COPY app.py chart_candidates.py lane_policy.py ocr_languages.py operational_metrics.py source_scene_graph.py ./
 
 # Catch missing runtime modules and syntax errors during image build rather than
 # after Cloud Run creates a revision. `source_scene_graph` must import WITHOUT
 # initialising Docling models or Pillow (Pillow is imported lazily at runtime).
-RUN python -m py_compile app.py lane_policy.py operational_metrics.py source_scene_graph.py \
-    && python -c "import lane_policy, operational_metrics, source_scene_graph"
+RUN python -m py_compile app.py chart_candidates.py lane_policy.py ocr_languages.py operational_metrics.py source_scene_graph.py \
+    && python -c "import chart_candidates, lane_policy, ocr_languages, operational_metrics, source_scene_graph"
 
 # Cloud Run expects the container to listen on $PORT.
 EXPOSE 8080
