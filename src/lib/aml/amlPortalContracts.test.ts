@@ -1092,9 +1092,10 @@ describe("self-hosted verification stack", () => {
     expect(branch).not.toMatch(/opensanctions/i);
   });
 
-  it("never auto-clears a screening match", () => {
+  it("never auto-clears a screening match, and never clears a scope it did not check", () => {
     const branch = providers.slice(providers.indexOf("makeLocalListsScreeningProvider"));
-    expect(branch).toContain('matches.length === 0 ? "clear" : "review"');
+    expect(branch).toContain('matches.length > 0 ? "review"');
+    expect(branch).toContain('scopesNotCovered.length > 0 ? "review"');
     expect(branch).toContain("scopes_not_covered");
   });
 

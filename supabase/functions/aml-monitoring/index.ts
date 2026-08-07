@@ -643,7 +643,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const caseRow = caseRes.data;
       if (!caseRow) return jr({ error: "Case not found" }, 404);
       if (!await hasTenantAccess(caseRow.tenant_id)) return jr({ error: "AML role required for case tenant" }, 403);
-      const [reviewsRes, alertsRes, eddRes, screenRes] = await Promise.all([
+      const [reviewsRes, alertsRes, eddRes, screenRes, partyScrRes, pepRes] = await Promise.all([
         aml.from("existing_customer_reviews").select("*").eq("case_id", caseId)
           .order("due_at", { ascending: true, nullsFirst: false }).limit(50),
         aml.from("alerts").select("id, title, severity, status, created_at, assigned_to")
@@ -652,6 +652,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq("case_id", caseId).in("status", ["open", "in_progress", "awaiting_client", "awaiting_mlro"]).limit(20),
         aml.from("screening_checks").select("completed_at").eq("case_id", caseId)
           .not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(1).maybeSingle(),
+        aml.from("party_screening_subjects")
+          .select("id, screened_name, party_type, required, state, last_screened_at, refresh_due_at, error_category")
+          .eq("case_id", caseId),
+        aml.from("pep_determinations")
+          .select("id, subject_name, result, review_due_at")
+          .eq("case_id", caseId).is("superseded_at", null),
       ]);
 
       const reviews = reviewsRes.data ?? [];
@@ -668,6 +674,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         ? new Date(new Date(lastScreened).getTime() + rescreenDays * 24 * 3600 * 1000).toISOString()
         : null;
 
+      // Per-party rollup: the case summary reflects the most urgent required
+      // screening state across parties, not just the latest case-level check.
+      const partySubjects = (partyScrRes.data ?? []).filter((s: any) => s.required && s.state !== "not_required");
+      const URGENCY: string[] = ["confirmed_match", "possible_match", "error", "processing", "queued", "not_started"];
+      let mostUrgent: string | null = null;
+      for (const stateName of URGENCY) {
+        if (partySubjects.some((s: any) => s.state === stateName)) { mostUrgent = stateName; break; }
+      }
+      const overdueParties = partySubjects.filter((s: any) =>
+        ["completed", "false_positive"].includes(String(s.state)) &&
+        s.refresh_due_at && s.refresh_due_at < nowIso);
+      if (!mostUrgent && overdueParties.length > 0) mostUrgent = "refresh_overdue";
+      const nextPartyRefresh = partySubjects
+        .map((s: any) => s.refresh_due_at).filter(Boolean).sort()[0] ?? null;
+      const pepReviewDue = (pepRes.data ?? [])
+        .filter((d: any) => d.review_due_at && d.review_due_at < nowIso);
+
       return jr({
         monitoring: {
           monitoring_status: caseRow.monitoring_status ?? "active",
@@ -681,6 +704,22 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           last_screened_at: lastScreened,
           rescreen_due_at: rescreenDueAt,
           rescreen_overdue: Boolean(rescreenDueAt && rescreenDueAt < nowIso),
+          party_screening: {
+            required_count: partySubjects.length,
+            most_urgent_state: mostUrgent,
+            outstanding_count: partySubjects.filter((s: any) =>
+              ["not_started", "queued", "processing", "error"].includes(String(s.state))).length,
+            unresolved_count: partySubjects.filter((s: any) => s.state === "possible_match").length,
+            confirmed_count: partySubjects.filter((s: any) => s.state === "confirmed_match").length,
+            refresh_overdue_count: overdueParties.length,
+            next_refresh_due_at: nextPartyRefresh,
+          },
+          pep: {
+            current_determinations: (pepRes.data ?? []).length,
+            review_due_count: pepReviewDue.length,
+            next_review_due_at: (pepRes.data ?? [])
+              .map((d: any) => d.review_due_at).filter(Boolean).sort()[0] ?? null,
+          },
           open_reviews: openReviews,
           overdue_review_count: overdueReviews.length,
           recent_reviews: reviews.slice(0, 10),
@@ -816,6 +855,62 @@ async function runScheduledScans(admin: any) {
     }
   }
 
+  // Party-aware screening currency. The per-party work list carries its own
+  // last_screened_at / refresh_due_at; the case-level pass above cannot see
+  // it. Rescreens go through the SAME canonical execution path as a staff
+  // queue action — the transition to 'queued' emits aml.screening.requested
+  // transactionally and the cross-portal worker runs the screening engine.
+  let partiesRequeued = 0;
+  let partiesNeverScreened = 0;
+  const nowIso2 = new Date().toISOString();
+  // A required party that has never completed screening — including a party
+  // reconciled after the case was screened — is queued for real work, not
+  // just flagged. Candidates awaiting adjudication are never auto-requeued.
+  const { data: neverScreened } = await aml.from("party_screening_subjects")
+    .select("id, case_id, state")
+    .eq("required", true).eq("state", "not_started").limit(200);
+  for (const s of neverScreened ?? []) {
+    if (isEnded(s.case_id)) continue;
+    const { error } = await aml.from("party_screening_subjects")
+      .update({ state: "queued", updated_at: nowIso2 })
+      .eq("id", s.id).eq("state", "not_started");
+    if (!error) partiesNeverScreened++;
+  }
+  // A satisfied screening past its refresh date is due again.
+  const { data: partyOverdue } = await aml.from("party_screening_subjects")
+    .select("id, case_id, state, refresh_due_at")
+    .eq("required", true).in("state", ["completed", "false_positive"])
+    .not("refresh_due_at", "is", null).lt("refresh_due_at", nowIso2).limit(200);
+  for (const s of partyOverdue ?? []) {
+    if (isEnded(s.case_id)) continue;
+    const { error } = await aml.from("party_screening_subjects")
+      .update({ state: "queued", error_category: null, updated_at: nowIso2 })
+      .eq("id", s.id).in("state", ["completed", "false_positive"]);
+    if (!error) partiesRequeued++;
+  }
+
+  // PEP determinations due for review: raised as alerts for a human — a
+  // lapsed determination needs reconsideration, which no scan can do.
+  let pepReviewAlerts = 0;
+  const { data: pepDue } = await aml.from("pep_determinations")
+    .select("id, case_id, subject_name, review_due_at")
+    .is("superseded_at", null).not("review_due_at", "is", null)
+    .lt("review_due_at", nowIso2).limit(200);
+  for (const d of pepDue ?? []) {
+    if (isEnded(d.case_id)) continue;
+    const { count } = await aml.from("alerts").select("id", { count: "exact", head: true })
+      .eq("case_id", d.case_id).eq("status", "open")
+      .eq("title", "PEP determination review due");
+    if ((count ?? 0) > 0) continue;
+    const { data: alert } = await aml.from("alerts").insert({
+      case_id: d.case_id, severity: "high", status: "open",
+      title: "PEP determination review due",
+      summary: `PEP determination for ${d.subject_name} passed its review date ${String(d.review_due_at).slice(0, 10)} — reconsider it under ongoing CDD`,
+      metadata: { pep_determination_id: d.id, review_due_at: d.review_due_at },
+    }).select("*").single();
+    if (alert) { created.push(alert); pepReviewAlerts++; }
+  }
+
   // Escalate overdue existing-customer reviews to remediation_required.
   const { data: overdue } = await aml.from("existing_customer_reviews")
     .select("id, case_id, due_at, status, priority")
@@ -856,6 +951,9 @@ async function runScheduledScans(admin: any) {
     alerts_created: created.length,
     reviews_escalated: (overdue ?? []).length,
     periodic_reviews_raised: periodicRaised,
+    party_screenings_requeued: partiesRequeued,
+    party_screenings_started: partiesNeverScreened,
+    pep_review_alerts: pepReviewAlerts,
   };
 }
 

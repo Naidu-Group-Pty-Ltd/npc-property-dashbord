@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.ts"
 
 const SESSION_HOURS = 12;
 
@@ -125,7 +125,12 @@ Deno.serve(async (req) => {
       entity_id: portalUser.id,
     });
 
-    const sessionCookie = createSessionCookie(sessionToken, expiresAt)
+    // A Finance Portal session must be written into the Finance Portal cookie.
+    // This used to call `createSessionCookie`, which writes a finance session
+    // token into the Command Centre's `__Host-session_token` — overwriting the
+    // staff cookie with a token that is not in `user_sessions`, so the next
+    // Command Centre call in that browser failed `verifySession`.
+    const sessionCookie = createFinanceSessionCookie(sessionToken, expiresAt)
 
     return new Response(
       JSON.stringify({

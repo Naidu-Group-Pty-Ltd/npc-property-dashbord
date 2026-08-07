@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
       })
 
     const clientData = portalUser.clients as any
-    const sessionCookie = createSessionCookie(sessionToken, expiresAt)
+    const sessionCookie = createClientPortalSessionCookie(sessionToken, expiresAt)
 
     return new Response(
       JSON.stringify({

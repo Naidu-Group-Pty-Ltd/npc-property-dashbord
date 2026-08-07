@@ -26755,6 +26755,11 @@ export type Database = {
         Row: {
           accepted_at: string
           acknowledgements: Json | null
+          agreement_brand_snapshot: Json | null
+          agreement_generated_at: string | null
+          agreement_party_snapshot: Json | null
+          agreement_pdf_bytes: number | null
+          agreement_storage_path: string | null
           builder_user_id: string | null
           finance_user_id: string | null
           id: string
@@ -26767,6 +26772,11 @@ export type Database = {
         Insert: {
           accepted_at?: string
           acknowledgements?: Json | null
+          agreement_brand_snapshot?: Json | null
+          agreement_generated_at?: string | null
+          agreement_party_snapshot?: Json | null
+          agreement_pdf_bytes?: number | null
+          agreement_storage_path?: string | null
           builder_user_id?: string | null
           finance_user_id?: string | null
           id?: string
@@ -26779,6 +26789,11 @@ export type Database = {
         Update: {
           accepted_at?: string
           acknowledgements?: Json | null
+          agreement_brand_snapshot?: Json | null
+          agreement_generated_at?: string | null
+          agreement_party_snapshot?: Json | null
+          agreement_pdf_bytes?: number | null
+          agreement_storage_path?: string | null
           builder_user_id?: string | null
           finance_user_id?: string | null
           id?: string
@@ -26809,6 +26824,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "solicitor_portal_users"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_terms_acceptances_terms_version_id_fkey"
+            columns: ["terms_version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_records"
+            referencedColumns: ["terms_version_id"]
           },
           {
             foreignKeyName: "portal_terms_acceptances_terms_version_id_fkey"
@@ -33815,6 +33837,27 @@ export type Database = {
           source_id: string | null
           source_key: string | null
           would_publish: number | null
+        }
+        Relationships: []
+      }
+      partner_agreement_records: {
+        Row: {
+          acceptance_id: string | null
+          accepted_at: string | null
+          accepted_by_email: string | null
+          accepted_by_name: string | null
+          acknowledgements: Json | null
+          agreement_generated_at: string | null
+          agreement_pdf_bytes: number | null
+          agreement_storage_path: string | null
+          document_hash: string | null
+          organisation_name: string | null
+          organisation_trading_name: string | null
+          portal: string | null
+          portal_user_id: string | null
+          terms_version_id: string | null
+          title: string | null
+          version: string | null
         }
         Relationships: []
       }

@@ -255,11 +255,25 @@ export const amlCasesApi = {
 
   /* ── Party-scoped screening (Stage 16) ── */
   listPartyScreening: (case_id: string) =>
-    invoke<{ subjects: AmlPartyScreeningSubject[] }>({ op: "list_party_screening", case_id }),
+    invoke<{ subjects: AmlPartyScreeningSubject[]; case_pep_determination: AmlPepDetermination | null }>({ op: "list_party_screening", case_id }),
   queuePartyScreening: (subject_id: string, freshness_days?: number) =>
     invoke<{ subject: AmlPartyScreeningSubject; skipped?: boolean; code?: string }>({ op: "queue_party_screening", subject_id, freshness_days }),
-  adjudicatePartyScreening: (subject_id: string, outcome: "confirmed_match" | "false_positive", note: string) =>
-    invoke<{ subject: AmlPartyScreeningSubject }>({ op: "adjudicate_party_screening", subject_id, outcome, note }),
+  // Adjudication resolves the CANONICAL screening match (same semantics as
+  // aml-verification resolve_match); the party state is a projection of it.
+  adjudicatePartyScreening: (subject_id: string, match_id: string, outcome: "confirmed_match" | "false_positive", note: string) =>
+    invoke<{ subject: AmlPartyScreeningSubject; match: AmlScreeningCandidateMatch }>({ op: "adjudicate_party_screening", subject_id, match_id, outcome, note }),
+  listPepDeterminations: (case_id: string) =>
+    invoke<{ determinations: AmlPepDetermination[] }>({ op: "list_pep_determinations", case_id }),
+  recordPepDetermination: (payload: {
+    case_id: string; subject_name: string; result: "not_pep" | "pep";
+    party_screening_subject_id?: string | null; party_type?: string; party_id?: string;
+    pep_type?: "foreign" | "domestic" | "international_organisation";
+    pep_relationship?: "self" | "family_member" | "close_associate";
+    position_held?: string; jurisdiction?: string; holds_position_currently?: boolean;
+    methods: Array<{ source: string; reference?: string; note?: string }>;
+    rationale: string; review_months?: number;
+  }) =>
+    invoke<{ determination: AmlPepDetermination }>({ op: "record_pep_determination", ...payload }),
 };
 
 export interface AmlReconciliationItem {
@@ -280,12 +294,32 @@ export interface AmlPartyVerificationLink {
   metadata?: Record<string, unknown>;
 }
 
+export interface AmlScreeningCandidateMatch {
+  id: string; screening_check_id: string; match_type: string;
+  list_name: string | null; matched_name: string; score: number | null;
+  jurisdiction: string | null; status: "open" | "confirmed" | "dismissed" | "escalated";
+  details?: Record<string, unknown>;
+}
+
+export interface AmlPepDetermination {
+  id: string; party_screening_subject_id: string | null; subject_name: string;
+  result: "not_pep" | "pep";
+  pep_type: "foreign" | "domestic" | "international_organisation" | null;
+  pep_relationship: "self" | "family_member" | "close_associate" | null;
+  determined_at: string; determined_by_label: string | null;
+  review_due_at: string | null; superseded_at: string | null;
+}
+
 export interface AmlPartyScreeningSubject {
   id: string; case_id: string; party_type: string; party_id: string | null;
   screened_name: string; required: boolean; state: string;
   last_screened_at: string | null; refresh_due_at: string | null;
   adjudicated_at: string | null; adjudication_note: string | null;
   screening_check_id: string | null; error_category: string | null;
+  /** Canonical candidate matches for this subject's screening check (staff-side). */
+  matches?: AmlScreeningCandidateMatch[];
+  /** Current (non-superseded) PEP determination for this party, if any. */
+  pep_determination?: AmlPepDetermination | null;
 }
 
 export interface AmlSubmissionReview {

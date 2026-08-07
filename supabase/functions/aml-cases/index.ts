@@ -31,6 +31,10 @@ import {
   toActivationClientResult,
   type ClientSearchRow,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
+import {
+  isPartyScreeningMissing,
+  projectPartyScreeningState,
+} from "../_shared/aml/partyScreening.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
@@ -1144,7 +1148,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const diff = diffSubmissions(snap.sections ?? [], prevSnap.sections ?? []);
 
         const [{ data: reqs }, { data: docs }, { data: consents }, { data: recon },
-               { data: checks }, { data: screening }, { data: openReqs }, { data: assessment }] = await Promise.all([
+               { data: checks }, { data: screening }, { data: openReqs }, { data: assessment },
+               { data: pepDets }] = await Promise.all([
           admin.schema('aml').from('document_requirements').select('*').eq('case_id', caseId),
           admin.schema('aml').from('documents')
             .select('id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, reviewed_at, client_safe_rejection_reason, internal_review_note, version_number, previous_document_id, replacement_document_id')
@@ -1159,6 +1164,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             .eq('case_id', caseId).in('status', ['open', 'responded']),
           admin.schema('aml').from('risk_assessments').select('id, created_at, rating, score')
             .eq('case_id', caseId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          admin.schema('aml').from('pep_determinations')
+            .select('id, determined_at').eq('case_id', caseId),
         ]);
 
         // Risk staleness: any canonical verification outcome or reconciliation
@@ -1169,6 +1176,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           if ((checks ?? []).some((c: any) => c.completed_at && new Date(c.completed_at).getTime() > since)) staleReasons.push('verification_changed');
           if ((recon ?? []).some((r: any) => new Date(r.updated_at ?? r.created_at).getTime() > since)) staleReasons.push('party_reconciliation_changed');
           if ((screening ?? []).some((s: any) => s.adjudicated_at && new Date(s.adjudicated_at).getTime() > since)) staleReasons.push('screening_adjudicated');
+          if ((pepDets ?? []).some((d: any) => d.determined_at && new Date(d.determined_at).getTime() > since)) staleReasons.push('pep_determination_recorded');
           if (new Date(current.submitted_at).getTime() > since) staleReasons.push('new_submission');
           if (submissionDiffIsMaterial(diff)) staleReasons.push('material_information_changed');
         } else {
@@ -1182,8 +1190,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         for (const r of (recon ?? [])) {
           if (r.resolution_status === 'open') missing.push(`party_reconciliation:${r.declared_name}`);
         }
+        // Every non-terminal state is outstanding — queued and processing are
+        // work not yet done, and a technical error must stay outstanding and
+        // retryable, never read as clear. A satisfied screening past its
+        // refresh date is outstanding again. (Shared rule: partyScreening.pure.ts.)
+        const nowIso = new Date().toISOString();
         for (const s of (screening ?? [])) {
-          if (s.required && ['not_started', 'possible_match'].includes(s.state)) missing.push(`screening:${s.screened_name}`);
+          if (isPartyScreeningMissing(s, nowIso)) missing.push(`screening:${s.screened_name}`);
         }
 
         return jsonResponse({
@@ -1480,12 +1493,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           await admin.schema('aml').from('party_field_provenance').insert(provenance);
         }
 
-        // Screening work follows reconciliation, never precedes it.
+        // Screening work follows reconciliation, never precedes it. The
+        // subject carries every identifying detail the declaration already
+        // holds — matching on a bare display name wastes the matcher's
+        // DOB/alias tolerance. Nothing is invented: absent stays absent.
         if (['linked', 'created'].includes(resolution) && item.screening_required) {
+          const declared = (item.declared_payload ?? {}) as Record<string, unknown>;
+          const declaredDob = typeof declared.date_of_birth === 'string' ? declared.date_of_birth : null;
+          const declaredCountry = typeof declared.country === 'string' ? declared.country
+            : typeof declared.nationality === 'string' ? declared.nationality : null;
+          const declaredAliases = Array.isArray(declared.aliases)
+            ? declared.aliases.filter((a) => typeof a === 'string').slice(0, 20)
+            : [];
           await admin.schema('aml').from('party_screening_subjects').insert({
             case_id: item.case_id, party_type: partyType ?? item.declared_role,
             party_id: partyId ?? null, reconciliation_item_id: item.id,
             screened_name: item.declared_name, required: true, state: 'not_started',
+            aliases: declaredAliases,
+            date_of_birth: declaredDob,
+            country: declaredCountry,
           });
         }
 
@@ -1567,9 +1593,39 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       case 'list_party_screening': {
         const caseId = String(body.case_id ?? '');
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
-        const { data } = await admin.schema('aml').from('party_screening_subjects')
-          .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
-        return jsonResponse({ subjects: data ?? [] });
+        const [{ data: subjects }, { data: determinations }] = await Promise.all([
+          admin.schema('aml').from('party_screening_subjects')
+            .select('*').eq('case_id', caseId).order('created_at', { ascending: true }),
+          admin.schema('aml').from('pep_determinations')
+            .select('id, party_screening_subject_id, subject_name, result, pep_type, pep_relationship, determined_at, determined_by_label, review_due_at, superseded_at')
+            .eq('case_id', caseId).is('superseded_at', null),
+        ]);
+        // Staff adjudicate the actual canonical candidates, so the panel
+        // needs to show them. Staff-side only — this response never reaches
+        // the Client or Finance portals.
+        const checkIds = (subjects ?? []).map((s: any) => s.screening_check_id).filter(Boolean);
+        let matchesByCheck: Record<string, any[]> = {};
+        if (checkIds.length > 0) {
+          const { data: matches } = await admin.schema('aml').from('screening_matches')
+            .select('id, screening_check_id, match_type, list_name, matched_name, score, jurisdiction, status, details')
+            .in('screening_check_id', checkIds).order('score', { ascending: false });
+          for (const m of matches ?? []) {
+            (matchesByCheck[m.screening_check_id] ??= []).push(m);
+          }
+        }
+        const detBySubject = new Map<string, any>();
+        for (const d of determinations ?? []) {
+          if (d.party_screening_subject_id) detBySubject.set(String(d.party_screening_subject_id), d);
+        }
+        const caseLevelPep = (determinations ?? []).find((d: any) => !d.party_screening_subject_id) ?? null;
+        return jsonResponse({
+          subjects: (subjects ?? []).map((s: any) => ({
+            ...s,
+            matches: s.screening_check_id ? (matchesByCheck[s.screening_check_id] ?? []) : [],
+            pep_determination: detBySubject.get(String(s.id)) ?? null,
+          })),
+          case_pep_determination: caseLevelPep,
+        });
       }
 
       case 'queue_party_screening': {
@@ -1579,6 +1635,18 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
           .select('*').eq('id', subjectId).maybeSingle();
         if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+        // Already in flight — the queued event exists; do not emit another.
+        if (['queued', 'processing'].includes(subject.state)) {
+          return jsonResponse({ skipped: true, code: 'already_in_progress', subject });
+        }
+        // Candidates must be adjudicated through the canonical matches, not
+        // papered over by a re-screen.
+        if (['possible_match', 'confirmed_match'].includes(subject.state)) {
+          return jsonResponse({
+            error: 'This subject has candidate or confirmed matches — adjudicate them before re-screening',
+            code: 'adjudication_required',
+          }, 409);
+        }
         // Freshness window: do not re-screen the same party inside it.
         const freshnessDays = Math.min(Math.max(Number(body.freshness_days ?? 90) || 90, 1), 365);
         if (subject.last_screened_at &&
@@ -1586,8 +1654,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             ['completed', 'false_positive'].includes(subject.state)) {
           return jsonResponse({ skipped: true, code: 'within_freshness_window', subject });
         }
+        // The transition to 'queued' emits aml.screening.requested through the
+        // transactional outbox trigger; the cross-portal worker executes it
+        // against the canonical screening engine.
         const { data: updated, error } = await admin.schema('aml').from('party_screening_subjects')
-          .update({ state: 'queued', updated_at: new Date().toISOString() })
+          .update({ state: 'queued', error_category: null, updated_at: new Date().toISOString() })
           .eq('id', subjectId).select('*').single();
         if (error) throw error;
         await appendEvent(admin, subject.case_id, 'system',
@@ -1600,22 +1671,236 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!(roles.has('reviewer') || roles.has('mlro'))) {
           return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
         }
+        // Adjudication happens on the CANONICAL screening match, exactly as
+        // aml-verification resolve_match does it — hash-chained resolution
+        // row, match status change, then the party state is re-derived from
+        // the full canonical match set. Updating party_screening_subjects
+        // alone can no longer manufacture or bury a sanctions finding.
         const subjectId = String(body.subject_id ?? '');
+        const matchId = String(body.match_id ?? '');
         const outcome = String(body.outcome ?? '');
         const note = String(body.note ?? '').trim();
         if (!subjectId || !['confirmed_match', 'false_positive'].includes(outcome)) {
           return jsonResponse({ error: 'subject_id and outcome (confirmed_match|false_positive) required' }, 400);
         }
+        if (!matchId) {
+          return jsonResponse({
+            error: 'match_id required — party adjudication resolves the canonical screening match, not the projection',
+            code: 'canonical_match_required',
+          }, 400);
+        }
         if (note.length < 5) return jsonResponse({ error: 'An adjudication note is required' }, 400);
+
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+        if (!subject.screening_check_id) {
+          return jsonResponse({
+            error: 'No canonical screening exists for this subject yet — run the screening first',
+            code: 'no_canonical_screening',
+          }, 409);
+        }
+        const { data: match } = await admin.schema('aml').from('screening_matches')
+          .select('*').eq('id', matchId).maybeSingle();
+        if (!match) return jsonResponse({ error: 'Match not found' }, 404);
+        if (String(match.screening_check_id) !== String(subject.screening_check_id)) {
+          return jsonResponse({ error: 'That match does not belong to this subject\'s screening', code: 'cross_check_denied' }, 403);
+        }
+
+        const disposition = outcome === 'confirmed_match' ? 'confirmed' : 'dismissed';
+        const { data: prevRes } = await admin.schema('aml').from('match_resolutions')
+          .select('row_hash').eq('match_id', matchId).order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const prevHash = prevRes?.row_hash ?? null;
+        const now = new Date().toISOString();
+        const resHashInput = JSON.stringify({
+          match_id: matchId, case_id: match.case_id, disposition, rationale: note,
+          resolved_by: userId, prev_hash: prevHash, created_at: now,
+        });
+        const resHashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(resHashInput));
+        const rowHash = Array.from(new Uint8Array(resHashBuf)).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+        const { data: resolution, error: resErr } = await admin.schema('aml').from('match_resolutions').insert({
+          match_id: matchId, case_id: match.case_id, disposition, rationale: note,
+          resolved_by: userId, resolved_by_label: userEmail,
+          prev_hash: prevHash, row_hash: rowHash, created_at: now,
+        }).select('*').single();
+        if (resErr) throw resErr;
+        await admin.schema('aml').from('screening_matches')
+          .update({ status: disposition }).eq('id', matchId);
+
+        // Party state is a projection of the canonical match set.
+        const { data: allMatches } = await admin.schema('aml').from('screening_matches')
+          .select('status').eq('screening_check_id', subject.screening_check_id);
+        const projected = projectPartyScreeningState((allMatches ?? []).map((m: any) => m.status));
         const { data: updated, error } = await admin.schema('aml').from('party_screening_subjects').update({
-          state: outcome, adjudicated_by: userId, adjudicated_at: new Date().toISOString(),
-          adjudication_note: note, updated_at: new Date().toISOString(),
+          state: projected, adjudicated_by: userId, adjudicated_at: now,
+          adjudication_note: note, updated_at: now,
         }).eq('id', subjectId).select('*').single();
         if (error) throw error;
+
         await appendEvent(admin, updated.case_id, 'mlro_decision',
-          `Party screening adjudicated ${outcome}: ${updated.screened_name}`,
-          { party_screening_subject_id: subjectId, outcome }, userId, userEmail);
-        return jsonResponse({ subject: updated });
+          `Party screening match ${match.matched_name} ${disposition} for ${updated.screened_name} → ${projected}`,
+          { party_screening_subject_id: subjectId, match_id: matchId, disposition,
+            resolution_id: resolution?.id, projected_state: projected }, userId, userEmail);
+        return jsonResponse({ subject: updated, match: { ...match, status: disposition }, resolution });
+      }
+
+      /* ═══════════ PEP determinations (screening repair) ═══════════ */
+      // A determination records who was assessed, the result, how it was
+      // reached, by whom, when, and why the conclusion was reasonable —
+      // AUSTRAC's "records to show how you've established if a person is a
+      // PEP". Staff-side only; never projected to Client or Finance portals.
+      case 'list_pep_determinations': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data } = await admin.schema('aml').from('pep_determinations')
+          .select('*').eq('case_id', caseId).order('determined_at', { ascending: false });
+        return jsonResponse({ determinations: data ?? [] });
+      }
+
+      case 'record_pep_determination': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        const subjectName = String(body.subject_name ?? '').trim();
+        const result = String(body.result ?? '');
+        const rationale = String(body.rationale ?? '').trim();
+        const pepType = body.pep_type ? String(body.pep_type) : null;
+        const pepRelationship = body.pep_relationship ? String(body.pep_relationship) : null;
+        const methods = Array.isArray(body.methods) ? body.methods : [];
+        const partySubjectId = body.party_screening_subject_id ? String(body.party_screening_subject_id) : null;
+
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        if (!['not_pep', 'pep'].includes(result)) {
+          return jsonResponse({ error: 'result must be not_pep or pep' }, 400);
+        }
+        if (result === 'pep') {
+          if (!['foreign', 'domestic', 'international_organisation'].includes(pepType ?? '')) {
+            return jsonResponse({ error: 'pep_type (foreign|domestic|international_organisation) is required for a pep result' }, 400);
+          }
+          if (!['self', 'family_member', 'close_associate'].includes(pepRelationship ?? '')) {
+            return jsonResponse({ error: 'pep_relationship (self|family_member|close_associate) is required for a pep result' }, 400);
+          }
+        }
+        if (rationale.length < 10) {
+          return jsonResponse({ error: 'A rationale of at least 10 characters is required — record why the conclusion was reasonable' }, 400);
+        }
+        // Sources/methods are the evidence trail: at least one, references
+        // and metadata only. A "not PEP" with no recorded method is a guess,
+        // not a determination.
+        const cleanMethods = methods
+          .filter((m: any) => m && typeof m === 'object' && typeof m.source === 'string' && m.source.trim())
+          .map((m: any) => ({
+            source: String(m.source).slice(0, 300),
+            reference: typeof m.reference === 'string' ? m.reference.slice(0, 500) : null,
+            note: typeof m.note === 'string' ? m.note.slice(0, 500) : null,
+          })).slice(0, 20);
+        if (cleanMethods.length === 0) {
+          return jsonResponse({ error: 'At least one method/source (e.g. list checked, register consulted) is required' }, 400);
+        }
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, tenant_id, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Subject identity is DERIVED, never asserted: the determination is
+        // evidence about a specific person, and a caller-supplied name could
+        // attach an assessment of X to the record of Y. The party subject row
+        // (or the case subject) is the identity; a mismatched caller name is
+        // an error, not an override.
+        let derivedName = String(caseRow.subject_display_name ?? '').trim();
+        let derivedPartyType: string | null = null;
+        let derivedPartyId: string | null = null;
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml').from('party_screening_subjects')
+            .select('id, case_id, screened_name, party_type, party_id').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({ error: 'party_screening_subject_id does not belong to this case' }, 400);
+          }
+          derivedName = String(partySubject.screened_name ?? '').trim();
+          derivedPartyType = partySubject.party_type ?? null;
+          derivedPartyId = partySubject.party_id ?? null;
+        }
+        if (!derivedName) {
+          return jsonResponse({ error: 'The subject has no recorded name to determine against' }, 409);
+        }
+        if (subjectName && subjectName.toLowerCase() !== derivedName.toLowerCase()) {
+          return jsonResponse({
+            error: `subject_name does not match the recorded subject ("${derivedName}") — the determination is recorded against the canonical identity`,
+            code: 'subject_identity_mismatch',
+          }, 400);
+        }
+
+        const now = new Date().toISOString();
+        // Freshness: reconsidered during ongoing CDD. Default review cycle 12
+        // months; callers may set an earlier date but never disable review.
+        const reviewMonths = Math.min(Math.max(Number(body.review_months ?? 12) || 12, 1), 36);
+        const reviewDue = new Date();
+        reviewDue.setUTCMonth(reviewDue.getUTCMonth() + reviewMonths);
+
+        // Hash-chain within the case, like match_resolutions.
+        const { data: prevDet } = await admin.schema('aml').from('pep_determinations')
+          .select('id, row_hash').eq('case_id', caseId)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const detHashInput = JSON.stringify({
+          case_id: caseId, party_screening_subject_id: partySubjectId, subject_name: derivedName,
+          result, pep_type: pepType, pep_relationship: pepRelationship,
+          methods: cleanMethods, rationale, determined_by: userId,
+          prev_hash: prevDet?.row_hash ?? null, created_at: now,
+        });
+        const detHashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(detHashInput));
+        const detRowHash = Array.from(new Uint8Array(detHashBuf)).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+        // Supersession of the prior current determination is NOT done here:
+        // the BEFORE INSERT trigger closes it in the same transaction as this
+        // insert, and the partial unique index guarantees a single current
+        // determination per subject scope even under concurrent writes.
+        const { data: determination, error: detErr } = await admin.schema('aml').from('pep_determinations').insert({
+          tenant_id: caseRow.tenant_id ?? 'default',
+          case_id: caseId,
+          party_screening_subject_id: partySubjectId,
+          party_type: derivedPartyType,
+          party_id: derivedPartyId,
+          subject_name: derivedName.slice(0, 300),
+          result,
+          pep_type: result === 'pep' ? pepType : null,
+          pep_relationship: result === 'pep' ? pepRelationship : null,
+          position_held: typeof body.position_held === 'string' ? body.position_held.slice(0, 300) : null,
+          jurisdiction: typeof body.jurisdiction === 'string' ? body.jurisdiction.slice(0, 100) : null,
+          holds_position_currently: typeof body.holds_position_currently === 'boolean'
+            ? body.holds_position_currently : null,
+          methods: cleanMethods,
+          rationale,
+          determined_by: userId,
+          determined_by_label: userEmail,
+          determined_at: now,
+          review_due_at: reviewDue.toISOString(),
+          prev_hash: prevDet?.row_hash ?? null,
+          row_hash: detRowHash,
+        }).select('*').single();
+        if (detErr) {
+          if (String((detErr as any).code) === '23505') {
+            return jsonResponse({
+              error: 'Another determination for this subject was recorded at the same moment — reload and review it before recording again',
+              code: 'concurrent_determination',
+            }, 409);
+          }
+          throw detErr;
+        }
+
+        await appendEvent(admin, caseId, result === 'pep' ? 'pep_sanctions_hit' : 'mlro_decision',
+          result === 'pep'
+            ? `PEP determination recorded for ${derivedName}: ${pepType} PEP (${pepRelationship})`
+            : `PEP determination recorded for ${derivedName}: not a PEP`,
+          {
+            pep_determination_id: determination.id,
+            party_screening_subject_id: partySubjectId,
+            result, pep_type: result === 'pep' ? pepType : null,
+            pep_relationship: result === 'pep' ? pepRelationship : null,
+            methods: cleanMethods, review_due_at: determination.review_due_at,
+          }, userId, userEmail);
+
+        return jsonResponse({ determination });
       }
 
       default:

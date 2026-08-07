@@ -213,7 +213,7 @@ export default function Auth() {
     login: settings.companyName
       ? `Sign in to the ${settings.companyName} Command Centre.`
       : 'Sign in to access the Command Centre.',
-    forgot: 'Enter your username and we\'ll send a one-time reset code.',
+    forgot: 'Enter your username or email and we\'ll send a one-time reset code.',
     otp: emailHint ? `Enter the 6-digit code sent to ${emailHint}.` : 'Enter the 6-digit code we sent you.',
     reset: 'Choose a strong new password to secure your account.',
   };
@@ -390,14 +390,14 @@ export default function Auth() {
                   {mode === 'login' && (
                     <form onSubmit={handleLogin} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
                       <div className="space-y-1.5">
-                        <Label htmlFor="admin-username" className="text-xs font-medium">Username</Label>
+                        <Label htmlFor="admin-username" className="text-xs font-medium">Username or email</Label>
                         <div className="relative">
                           <UserIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                           <Input
                             id="admin-username"
                             value={username}
                             onChange={e => setUsername(e.target.value)}
-                            placeholder="Enter your username"
+                            placeholder="Username or email address"
                             autoComplete="username"
                             required
                             disabled={isLoading}
@@ -458,14 +458,14 @@ export default function Auth() {
                   {mode === 'forgot' && (
                     <form onSubmit={handleRequestOTP} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
                       <div className="space-y-1.5">
-                        <Label htmlFor="forgot-admin-username" className="text-xs font-medium">Username</Label>
+                        <Label htmlFor="forgot-admin-username" className="text-xs font-medium">Username or email</Label>
                         <div className="relative">
                           <UserIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                           <Input
                             id="forgot-admin-username"
                             value={username}
                             onChange={e => setUsername(e.target.value)}
-                            placeholder="Enter your username"
+                            placeholder="Username or email address"
                             required
                             disabled={isLoading}
                             className={iconInputCls}

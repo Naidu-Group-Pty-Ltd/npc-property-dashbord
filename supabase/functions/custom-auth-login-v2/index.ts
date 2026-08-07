@@ -3,6 +3,8 @@ import { verifyPassword, isLegacyPassword, hashPassword } from "../_shared/passw
 import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
+import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts"
+
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -78,23 +80,27 @@ Deno.serve(async (req) => {
       console.log('Turnstile verification passed')
     }
 
-    // Query custom_users table for the user
-    const { data: user, error: userError } = await supabase
-      .from('custom_users')
-      .select('*')
-      .eq('username', username)
-      .eq('is_active', true)
-      .single()
+    // Resolve the identifier against `custom_users` only. Either the username or
+    // the account email is accepted, trimmed and case-insensitively — portal
+    // accounts sharing that email are irrelevant here and are never consulted.
+    const { user, ambiguous } = await resolveStaffUserByIdentifier<Record<string, any>>(
+      supabase,
+      username,
+    );
 
-    if (userError || !user) {
+    if (ambiguous || !user) {
       // Timing normalization: hash a dummy password so unknown accounts take
       // roughly as long as wrong-password attempts (Phase 6 / 11.4).
       await verifyPassword(password, '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy').catch(() => {});
+      if (ambiguous) {
+        console.warn('Login identifier matched multiple active staff accounts — refusing to guess');
+      }
       return new Response(
         JSON.stringify({ error: 'Invalid username or password' }), 
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
+
 
     // Validate password using bcrypt (with legacy plaintext fallback)
     const isValid = await verifyPassword(password, user.password_hash);

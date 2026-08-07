@@ -6,7 +6,12 @@ const SESSION_HOURS = 12;
 
 function extractSessionToken(req: Request, body: any): string | null {
   const cookies = parseCookies(req.headers.get('cookie'));
-  const financeCookie = cookies['__Host-finance_session'] || cookies.finance_session;
+  // `__Host-finance_session_token` is the name `createFinanceSessionCookie`
+  // actually writes. This read asked for `__Host-finance_session`, which
+  // nothing has ever set, so the cookie branch was dead and every change of
+  // password fell through to the header carrier below — logging a
+  // `[wp11c.legacy_fallback]` warning for a client that was behaving correctly.
+  const financeCookie = cookies['__Host-finance_session_token'] || cookies.finance_session;
   if (financeCookie) return decodeURIComponent(financeCookie);
 
   const header = req.headers.get('x-finance-session-token') || req.headers.get('x-session-token');
