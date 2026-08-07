@@ -193,10 +193,13 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
     inputs.pep = pepFindings.some((d: any) => d.pep_relationship === "self") ? "direct" : "associate";
     const controls = pepFindings
       .map((d: any) => pepControlsRequired(d, caseRow?.risk_rating ?? null))
-      .reduce((acc, c) => ({
-        eddRequired: acc.eddRequired || c.eddRequired,
-        seniorManagerApprovalRequired: acc.seniorManagerApprovalRequired || c.seniorManagerApprovalRequired,
-      }), { eddRequired: false, seniorManagerApprovalRequired: false });
+      .reduce(
+        (acc: { eddRequired: boolean; seniorManagerApprovalRequired: boolean },
+         c: { eddRequired: boolean; seniorManagerApprovalRequired: boolean }) => ({
+          eddRequired: acc.eddRequired || c.eddRequired,
+          seniorManagerApprovalRequired: acc.seniorManagerApprovalRequired || c.seniorManagerApprovalRequired,
+        }),
+        { eddRequired: false, seniorManagerApprovalRequired: false });
 
     // Evidence must be LINKED to the current determination as one chain:
     // a qualifying EDD case completed AFTER the determination, with verified
