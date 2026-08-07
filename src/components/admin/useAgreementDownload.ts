@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { deliverSignedDownload } from './deliverSignedDownload';
+
 
 /**
  * Download a partner's executed agreement from wherever the Command Centre is
