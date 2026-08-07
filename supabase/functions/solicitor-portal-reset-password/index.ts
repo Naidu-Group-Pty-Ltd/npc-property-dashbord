@@ -42,7 +42,15 @@ Deno.serve(async (req) => {
     })
     const user = Array.isArray(data) ? data[0] : data
 
-    if (consumeError || !user || user.status === 'not_found') {
+    // The client is told the same thing either way — an unknown account and a
+    // broken lookup must not be distinguishable from outside. The log line is
+    // the difference, and its absence is why a function that raised on every
+    // single call looked exactly like users mistyping their codes.
+    if (consumeError) {
+      console.error('[solicitor-portal-reset-password] reset-attempt RPC failed:', consumeError)
+      return json({ error: 'Invalid or expired code' }, 400)
+    }
+    if (!user || user.status === 'not_found') {
       return json({ error: 'Invalid or expired code' }, 400)
     }
 
@@ -71,7 +79,14 @@ Deno.serve(async (req) => {
 
     const passwordHash = await hashPassword(new_password)
 
-    await supabase
+    // `consume_solicitor_portal_reset_attempt` returns the account as
+    // `user_id`; there is no `id` column in its result. The update below used
+    // `user.id`, which is undefined, so PostgREST was asked for `id=eq.undefined`
+    // — and the result was never checked, so the endpoint answered "success"
+    // while the password stayed exactly as it was. Anyone who got past the code
+    // check was told their password had been changed and then could not sign in
+    // with it.
+    const { error: updateError } = await supabase
       .from('solicitor_portal_users')
       .update({
         password_hash: passwordHash,
@@ -88,9 +103,13 @@ Deno.serve(async (req) => {
         // so the account stops showing as "invited" forever in the Command Centre.
         ...(user.invite_accepted_at ? {} : { invite_accepted_at: new Date().toISOString(), invite_token: null, invite_token_expires_at: null }),
       })
-      .eq('id', user.id)
-    const revoked = await revokeAllSolicitorSessions(supabase, user.id, 'password_reset');
-    await auditSolicitorIdentity(supabase, req, { userId: user.id, firmId: user.firm_id, action: 'sessions_revoked_after_password_reset', metadata: { revoked } });
+      .eq('id', user.user_id)
+    // A reset that did not write is not a reset. Reporting success here is how
+    // the previous failure stayed hidden.
+    if (updateError) throw updateError;
+
+    const revoked = await revokeAllSolicitorSessions(supabase, user.user_id, 'password_reset');
+    await auditSolicitorIdentity(supabase, req, { userId: user.user_id, firmId: user.firm_id, action: 'sessions_revoked_after_password_reset', metadata: { revoked } });
 
     await supabase.from('solicitor_portal_activity_log').insert({
       solicitor_user_id: user.user_id,

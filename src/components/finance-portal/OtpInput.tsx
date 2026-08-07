@@ -17,31 +17,41 @@ export function OtpInput({ value, onChange, length = 6, disabled = false }: OtpI
     inputsRef.current[clamped]?.focus();
   };
 
+  /**
+   * The code has no holes: a digit typed into a box beyond the filled length
+   * lands in the first empty box, and the caret follows it there.
+   *
+   * The previous version wrote the digit at the box's own index into a
+   * space-padded array and then stripped the spaces, so typing into box 3 of an
+   * empty field put that digit in box 1 while the caret moved to box 4 — the
+   * value and what the user could see disagreed from that point on.
+   */
   const handleChange = useCallback((index: number, char: string) => {
     const digit = char.replace(/\D/g, '').slice(0, 1);
     if (!digit) return;
 
-    const arr = value.padEnd(length, ' ').split('').slice(0, length);
-    arr[index] = digit;
-    const newVal = arr.join('').replace(/ /g, '');
-    onChange(newVal.slice(0, length));
+    const target = Math.min(index, value.length);
+    const arr = value.split('');
+    arr[target] = digit;
+    onChange(arr.join('').slice(0, length));
 
-    if (index < length - 1) {
-      focusInput(index + 1);
-    }
+    focusInput(target + 1);
   }, [value, length, onChange]);
 
   const handleKeyDown = useCallback((index: number, e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Backspace') {
       e.preventDefault();
-      const arr = value.padEnd(length, ' ').split('').slice(0, length);
-      if (arr[index] && arr[index] !== ' ') {
-        arr[index] = ' ';
-        onChange(arr.join('').replace(/ /g, ''));
+      const arr = value.split('');
+      if (arr[index]) {
+        arr.splice(index, 1);
+        onChange(arr.join(''));
       } else if (index > 0) {
-        arr[index - 1] = ' ';
-        onChange(arr.join('').replace(/ /g, ''));
-        focusInput(index - 1);
+        const previous = Math.min(index - 1, arr.length - 1);
+        if (previous >= 0) {
+          arr.splice(previous, 1);
+          onChange(arr.join(''));
+        }
+        focusInput(previous < 0 ? 0 : previous);
       }
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
