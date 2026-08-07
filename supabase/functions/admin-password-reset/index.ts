@@ -97,15 +97,14 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Find user by username or email
-      let query = supabase.from('custom_users').select('id, username, email, is_active');
-      if (username) {
-        query = query.eq('username', username);
-      } else if (email) {
-        query = query.eq('email', email);
-      }
+      // Either identifier resolves through the same case-insensitive
+      // username-or-email resolver, so the reset journey accepts exactly what
+      // sign-in accepts.
+      const { user, ambiguous } = await resolveStaffUserByIdentifier<{
+        id: string; username: string; email: string | null; is_active: boolean;
+      }>(supabase, username || email, 'id, username, email, is_active', { activeOnly: false });
+      const userError = ambiguous ? new Error('ambiguous identifier') : null;
 
-      const { data: user, error: userError } = await query.single();
 
       if (userError || !user) {
         // Don't reveal if user exists
