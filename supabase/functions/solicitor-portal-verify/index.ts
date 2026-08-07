@@ -12,16 +12,21 @@ import { hashSessionToken } from "../_shared/sessionHash.ts"
  * This list is the server side of the same contract as
  * `SOLICITOR_TERMS_ACKNOWLEDGEMENTS` in `src/lib/solicitorPortal.ts`; the two
  * must agree. Enforcing it here rather than in the page is the point: the
- * acknowledgments are contractual statements — authority to bind, the section
- * 37A arrangement, the Partner Organisation's own AML/CTF responsibility — and
- * an acceptance recorded without them would claim assent nobody gave.
+ * acknowledgments are contractual statements — authority to bind and the
+ * section 37A arrangement among them — and an acceptance recorded without them
+ * would claim assent nobody gave.
+ *
+ * The fifth, `independent_amlctf_responsibility`, was withdrawn in terms version
+ * 2026-08-07 and is deliberately absent. Removing a required key is the safe
+ * direction to ship in: a browser still running the previous bundle sends five
+ * keys, and only the four required here are looked for, so it keeps working
+ * through the deploy. Adding one back is not — the page must ship first.
  */
 const REQUIRED_TERMS_ACKNOWLEDGEMENTS = [
   'global_confidentiality_privacy',
   'authority_binding_acceptance',
   'portal_access',
   'binding_amlctf_arrangement',
-  'independent_amlctf_responsibility',
 ] as const;
 
 Deno.serve(async (req) => {

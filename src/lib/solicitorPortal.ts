@@ -32,13 +32,20 @@ export interface SolicitorPortalUser {
  * and AML/CTF Compliance Passport Agreement, in the order the agreement sets.
  *
  * The wording is the agreement's own. It is duplicated here rather than parsed
- * out of the stored Markdown because these five are the interface contract:
- * `solicitor-portal-verify` refuses an acceptance that does not assert all five
+ * out of the stored Markdown because these four are the interface contract:
+ * `solicitor-portal-verify` refuses an acceptance that does not assert all four
  * keys, and stores the asserted keys as the acknowledgment history. Changing a
  * key here without changing `REQUIRED_TERMS_ACKNOWLEDGEMENTS` in that function
  * locks every solicitor out of the portal, which is why both lists carry this
  * note. Changing the *wording* is a change to the agreement: publish a new
  * terms version, do not edit this in place.
+ *
+ * A fifth acknowledgment, "Independent AML/CTF responsibility", was withdrawn by
+ * the operator in version 2026-08-07. Only the tick box went: section 9 of the
+ * agreement still puts assessing, approving, recording and re-checking reliance
+ * on the Partner Organisation, and section 7 still makes statutory reliance
+ * conditional. Do not reinstate the key here without publishing a terms version
+ * whose text carries the acknowledgment again.
  */
 export const SOLICITOR_TERMS_ACKNOWLEDGEMENTS = [
   {
@@ -64,12 +71,6 @@ export const SOLICITOR_TERMS_ACKNOWLEDGEMENTS = [
     heading: 'Binding AML/CTF arrangement',
     statement:
       'I acknowledge and agree that, where the applicable eligibility and legislative requirements are satisfied, this Agreement is intended to constitute a binding customer due-diligence agreement or arrangement between the Originating Organisation and Partner Organisation for the purposes of section 37A of the AML/CTF Act and section 6-29 of the AML/CTF Rules.',
-  },
-  {
-    key: 'independent_amlctf_responsibility',
-    heading: 'Independent AML/CTF responsibility',
-    statement:
-      'I acknowledge that access to an Aurixa AML/CTF Compliance Passport does not automatically authorise reliance or satisfy all of the Partner Organisation’s AML/CTF obligations. The Partner Organisation remains responsible for assessing, approving and recording reliance and for completing any additional, enhanced, ongoing or independent customer due diligence required.',
   },
 ] as const;
 

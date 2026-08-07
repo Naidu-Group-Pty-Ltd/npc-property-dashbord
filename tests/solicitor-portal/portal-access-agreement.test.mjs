@@ -6,12 +6,16 @@ import test from 'node:test';
 const read = (path) => readFileSync(path, 'utf8');
 
 const migration = read('supabase/migrations/20260901000300_solicitor_portal_access_agreement.sql');
+const amendment = read('supabase/migrations/20260901000600_solicitor_agreement_four_acknowledgments.sql');
 const verify = read('supabase/functions/solicitor-portal-verify/index.ts');
 const portalLib = read('src/lib/solicitorPortal.ts');
 const termsPage = read('src/pages/solicitor/SolicitorTerms.tsx');
 const authHook = read('src/hooks/useSolicitorPortalAuth.tsx');
 
-const agreement = migration.slice(migration.indexOf('$md$') + 4, migration.lastIndexOf('$md$'));
+/** The agreement as currently published — the amended, four-acknowledgment text. */
+const agreement = amendment.slice(amendment.indexOf('$md$') + 4, amendment.lastIndexOf('$md$'));
+/** The superseded 2026-08-06 text, kept under test because its acceptances are. */
+const originalAgreement = migration.slice(migration.indexOf('$md$') + 4, migration.lastIndexOf('$md$'));
 
 test('the published agreement carries every section of the executed document', () => {
   const sections = [
@@ -72,13 +76,12 @@ test('publishing the agreement supersedes the old terms without rewriting them',
   assert.match(migration, /jsonb_typeof\(acknowledgements\) = 'array'/);
 });
 
-test('the five mandatory acknowledgments agree across the page, the client and the server', () => {
+test('the four mandatory acknowledgments agree across the page, the client and the server', () => {
   const keys = [
     'global_confidentiality_privacy',
     'authority_binding_acceptance',
     'portal_access',
     'binding_amlctf_arrangement',
-    'independent_amlctf_responsibility',
   ];
 
   const serverList = verify.slice(
@@ -150,4 +153,48 @@ test('the agreement hashes to a stable document hash', () => {
   const hash = createHash('sha256').update(agreement, 'utf8').digest('hex');
   assert.equal(hash.length, 64);
   assert.ok(agreement.length > 15000, 'agreement is shorter than the migration asserts');
+});
+
+test('the withdrawn fifth acknowledgment is gone from everything that executes', () => {
+  // The operator withdrew "Independent AML/CTF responsibility" as a tick box in
+  // version 2026-08-07. It must not survive in the published document, in the
+  // list the page renders, or in the list the server requires — a key required
+  // on the server that the page no longer offers locks every solicitor out.
+  const withdrawn = 'independent_amlctf_responsibility';
+  assert.ok(!agreement.includes('Independent AML/CTF responsibility'),
+    'the withdrawn acknowledgment is still in the published agreement');
+  assert.ok(!portalLib.includes(withdrawn), 'the page still offers the withdrawn acknowledgment');
+  assert.ok(!verify.includes(`'${withdrawn}'`), 'the server still requires the withdrawn acknowledgment');
+
+  // It was withdrawn from the 2026-08-06 text, not from a document that never
+  // had it — otherwise this test would pass against an unrelated change.
+  assert.ok(originalAgreement.includes('Independent AML/CTF responsibility'));
+
+  // Only the tick box went. The obligation it restated is substantive and lives
+  // in section 9, which must still be there in full.
+  assert.match(agreement, /## 9\. Partner Organisation responsibilities/);
+  assert.match(agreement, /Reliance does not transfer the Partner Organisation.s AML\/CTF responsibility/);
+  assert.match(agreement, /undertake additional, enhanced or independent customer due diligence where required/);
+  assert.match(agreement, /stop relying where it no longer has reasonable grounds/);
+
+  // And the rest of the document is untouched: the amendment removed one block
+  // and changed nothing else.
+  const removed = originalAgreement.length - agreement.length;
+  assert.ok(removed > 300 && removed < 500,
+    `the amendment changed ${removed} characters; it should only remove one acknowledgment`);
+  assert.equal(agreement, originalAgreement.slice(0, agreement.length),
+    'the amended agreement is not a clean truncation of the text it supersedes');
+});
+
+test('the amendment publishes a new version rather than editing the accepted one', () => {
+  // Section 16 of the agreement: a material change gets a new version, a new
+  // document hash, and a fresh acceptance. Acceptances are keyed to a version
+  // id, so editing 2026-08-06 in place would restate what its signatories
+  // agreed to.
+  assert.match(amendment, /'2026-08-07'/);
+  assert.match(amendment, /SET retired_at = now\(\)[\s\S]*?AND version <> '2026-08-07'/);
+  assert.doesNotMatch(amendment, /DELETE FROM public\.portal_terms_versions/);
+  assert.doesNotMatch(amendment, /UPDATE public\.portal_terms_versions\s*\n\s*SET content_markdown/);
+  assert.match(amendment, /the withdrawn fifth acknowledgment is still in the published agreement/);
+  assert.match(amendment, /section 9 no longer carries the Partner Organisation AML\/CTF responsibility/);
 });
