@@ -26797,6 +26797,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "portal_terms_acceptances_finance_user_id_fkey"
+            columns: ["finance_user_id"]
+            isOneToOne: false
+            referencedRelation: "finance_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "portal_terms_acceptances_solicitor_user_id_fkey"
             columns: ["solicitor_user_id"]
             isOneToOne: false
@@ -34128,6 +34135,7 @@ export type Database = {
       }
       builder_accept_current_terms: {
         Args: {
+          _acknowledgements?: Json
           _builder_user_id: string
           _ip_hash?: string
           _session_id: string
