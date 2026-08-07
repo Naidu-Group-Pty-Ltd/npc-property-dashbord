@@ -143,9 +143,47 @@ test('the Finance Portal gate is version-aware', () => {
   // `has_accepted_terms` only records that the partner once accepted
   // something. Gating on it would mean an amended agreement is never shown to
   // anyone already through the door.
-  assert.match(financeGate, /const showTerms = !user\.has_accepted_current_terms/);
+  assert.match(financeGate, /!user\.has_accepted_current_terms/);
   assert.match(financeVerify, /const hasAcceptedCurrentTerms = Boolean\(currentTerms && currentAcceptance\)/);
   assert.match(financeVerify, /has_accepted_current_terms: hasAcceptedCurrentTerms/);
   assert.match(read('supabase/functions/finance-portal-login/index.ts'), /has_accepted_current_terms: hasAcceptedCurrentTerms/);
   assert.match(financeVerify, /action === 'get_governance'/);
+});
+
+/**
+ * Migrations, edge functions and the site build ship on three separate tracks
+ * here, and the site build is the fastest of the three. Anything that assumes
+ * they land together is a regression waiting for the next merge — these tests
+ * pin the two places where that assumption would take a portal down.
+ */
+
+test('a not-yet-deployed function can still record a builder acceptance', () => {
+  // The deployed `builder-portal-verify` calls the RPC with four named
+  // arguments. The cascade migration replaces that function with a five-argument
+  // one, so the fifth must carry a default or every builder acceptance fails
+  // with "function does not exist" until the function deploys.
+  assert.match(cascade, /_acknowledgements jsonb DEFAULT NULL\)/);
+});
+
+test('the Finance gate does not lock partners out of an un-upgraded deployment', () => {
+  // `has_accepted_current_terms` is absent, not false, when the app is running
+  // against a finance-portal-verify that predates versioned acceptance. Reading
+  // absent as "has not accepted" blocks every finance partner behind a document
+  // that deployment cannot serve.
+  assert.match(financeGate, /typeof user\.has_accepted_current_terms === 'boolean'/);
+  assert.match(financeGate, /\? !user\.has_accepted_current_terms\s*\n\s*: !user\.has_accepted_terms;/);
+  assert.match(
+    read('src/hooks/useFinancePortalAuth.tsx'),
+    /has_accepted_current_terms\?: boolean;/,
+    'the field is typed as always present, which is what caused the lockout',
+  );
+});
+
+test('a partner is told why the agreement is missing rather than shown a dead button', () => {
+  assert.match(financeGate, /const termsUnavailable = !termsLoading && !terms;/);
+  assert.match(financeGate, /The current terms could not be loaded, so they cannot be accepted yet/);
+  assert.match(financeGate, /Nothing has\s*\n?\s*been recorded against your account/);
+  assert.match(financeGate, /onClick=\{loadTerms\}/);
+  // Gating still happens: an unloadable document does not become a way in.
+  assert.match(financeGate, /if \(!showTerms && !showWizard\) return null;/);
 });

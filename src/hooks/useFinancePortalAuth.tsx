@@ -14,9 +14,15 @@ interface FinancePortalUser {
    * `has_accepted_terms` only records that they once accepted something, so an
    * amended agreement would otherwise never be presented to anyone already
    * through the door.
+   *
+   * OPTIONAL on purpose. Migrations, edge functions and the site build ship on
+   * three separate tracks in this repo, so the app can be running against a
+   * `finance-portal-verify` that predates version-aware acceptance and does not
+   * send this field. Absent is not the same as false, and treating it as false
+   * locks every finance partner out — see `FinancePortalOnboardingGate`.
    */
-  has_accepted_current_terms: boolean;
-  current_terms_version: string | null;
+  has_accepted_current_terms?: boolean;
+  current_terms_version?: string | null;
   has_completed_onboarding: boolean;
   must_change_password?: boolean;
 }
