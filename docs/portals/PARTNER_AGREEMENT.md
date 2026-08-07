@@ -118,6 +118,25 @@ purpose — a burst of renders from one click would take down the PDF service th
 reports also use — and one unrenderable record is reported by id rather than
 stopping the rest.
 
+**The service reports which document it renders.** Merging is not deploying, and
+in this repo that gap is not hypothetical — `deploy-supabase-functions.yml` is
+opt-in by a `SUPABASE_ACCESS_TOKEN` secret that has never been set, so it reports
+what it *would* deploy and exits green (PR #1981 makes that red). On 2026-08-08
+the document was rebuilt on the design system, merged, shown green, and every
+agreement downloaded from all three portals kept coming out in the previous
+format, because the function rendering them was still the previous function.
+Nothing anywhere said so.
+
+The frontend ships on the site build, which *does* deploy. So
+`AGREEMENT_DOCUMENT_REVISION` lives in its own dependency-free module
+(`_shared/partnerAgreementRevision.pure.ts`, bridged into `src/`), the app
+carries the revision it expects, and `list_records` and `download_record` both
+report the revision the function is actually running. A function that reports
+**no** revision is read as revision 1 rather than as "unknown, assume fine" —
+that is exactly a pre-revision deployment. The Agreements section then shows a
+banner, and the row action warns after the download, because that path never
+calls `list_records` and is where a copy is most often supplied from.
+
 **A revision is part of the path.** Write-once is what lets the Command Centre
 say the bytes a partner holds are the bytes it holds — and it is also why
 improving the document would otherwise reach only agreements executed after the

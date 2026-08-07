@@ -24,6 +24,7 @@ import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 import {
   AGREEMENT_DOCUMENT_REVISION,
   agreementRevisionForPath,
+  agreementServiceState,
   agreementStoragePath,
   buildPartnerAgreementDocument,
   hasCurrentAgreementCopy,
@@ -250,5 +251,29 @@ describe('partner agreement — stored copies carry their revision', () => {
     expect(hasCurrentAgreementCopy(null)).toBe(false);
     expect(hasCurrentAgreementCopy(`builder/2026/${ACCEPTANCE}.pdf`)).toBe(false);
     expect(hasCurrentAgreementCopy(agreementStoragePath('builder', ACCEPTANCE, ACCEPTED))).toBe(true);
+  });
+});
+
+describe('partner agreement — the service reports which document it renders', () => {
+  it('reads "no revision reported" as revision 1, not as "assume fine"', () => {
+    // A function that reports nothing is a function deployed before revisions
+    // existed — so it renders the previous document. Treating the absent field
+    // as "unknown, carry on" would hide the one state this exists to surface.
+    expect(agreementServiceState(undefined, 2)).toBe('behind');
+    expect(agreementServiceState(null, 2)).toBe('behind');
+    expect(agreementServiceState(1, 2)).toBe('behind');
+  });
+
+  it('is quiet when the service matches, and when it is ahead', () => {
+    expect(agreementServiceState(2, 2)).toBe('current');
+    // A function ahead of the app is the ordinary order of a staged deploy: the
+    // copies it writes are newer than the app can describe, not older than the
+    // ones it promises.
+    expect(agreementServiceState(3, 2)).toBe('ahead');
+  });
+
+  it('defaults to the revision this build produces', () => {
+    expect(agreementServiceState(AGREEMENT_DOCUMENT_REVISION)).toBe('current');
+    expect(agreementServiceState(AGREEMENT_DOCUMENT_REVISION - 1)).toBe('behind');
   });
 });

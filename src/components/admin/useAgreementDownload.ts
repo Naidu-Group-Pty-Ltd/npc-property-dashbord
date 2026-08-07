@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
+import { agreementServiceState } from '@/lib/reports/partnerAgreement/revision.pure';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { deliverSignedDownload } from './deliverSignedDownload';
 
@@ -51,9 +52,21 @@ export function useAgreementDownload() {
       }
 
       await deliverSignedDownload(data.url as string, (data as any)?.file_name);
-      toast.success('The executed agreement is downloading.');
 
-
+      // Which document did they just hand a partner? This action never calls
+      // `list_records`, so the panel's banner cannot help here — and this is the
+      // path a copy is most often supplied through, with a partner waiting on
+      // the phone. A function older than this build renders the previous
+      // format, and saying so afterwards is far better than not saying it.
+      const revision = (data as any)?.document_revision;
+      if (agreementServiceState(typeof revision === 'number' ? revision : 1) === 'behind') {
+        toast.warning(
+          'Downloaded in the previous document format — the agreement service has not been '
+          + 'deployed yet. Re-issue from the Agreements section once it has.',
+        );
+      } else {
+        toast.success('The executed agreement is downloading.');
+      }
     } catch (e: any) {
       toast.error(e?.message || 'The copy could not be produced');
     } finally {
