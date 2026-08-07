@@ -345,11 +345,27 @@ Deno.serve(async (req: Request) => {
       // Hash the new password with bcrypt
       const hashedPassword = await hashPassword(new_password);
 
-      // Update password with bcrypt hash
+      // Update password with bcrypt hash, and release the sign-in lockout.
+      //
+      // Clearing `failed_login_attempts` / `locked_until` is not housekeeping —
+      // without it the reset does not restore access. Someone resets their
+      // password *because* sign-in was refusing them, and the attempts that
+      // sent them here are usually the same ones that tripped the lockout. Leave
+      // the lock standing and the new password is rejected for the rest of the
+      // lockout window with a message about the password being wrong, so the
+      // reset reads as having silently failed and the owner resets again.
+      //
+      // The lock exists to slow an attacker guessing a password. Proving
+      // control of the account's mailbox and setting a new password answers
+      // that far more strongly than waiting out the timer, which is why
+      // client-, finance-, solicitor- and builder-portal-reset-password all
+      // clear it here. Command Centre was the only one that did not.
       const { error: updateError } = await supabase
         .from('custom_users')
-        .update({ 
+        .update({
           password_hash: hashedPassword,
+          failed_login_attempts: 0,
+          locked_until: null,
           updated_at: new Date().toISOString()
         })
         .eq('id', user.id);

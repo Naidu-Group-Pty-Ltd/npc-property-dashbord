@@ -102,25 +102,46 @@ Deno.serve(async (req) => {
     }
 
 
+    // A locked account is told so, and told for how long.
+    //
+    // This branch used to be folded into the invalid-credentials response: a
+    // locked account and a wrong password both answered 401 "Invalid username
+    // or password". The lockout was therefore invisible, and it is entered
+    // precisely when someone is already unsure of their password — so the
+    // account owner reads five failed attempts as "my password is wrong",
+    // resets it, and the very next sign-in still says the password is wrong for
+    // up to LOCKOUT_MINUTES. The reset looks broken when nothing about it is.
+    //
+    // Finance, Solicitor, Client and Builder already answer 429 with the
+    // remaining minutes. That does let someone who has just locked an account
+    // infer it exists — an inference they can only draw about an account they
+    // were already able to lock, and one every other portal in this deployment
+    // has accepted. Command Centre was the sole holdout, so it matches them.
+    if (user.locked_until && new Date(user.locked_until) > new Date()) {
+      const minutesLeft = Math.ceil((new Date(user.locked_until).getTime() - Date.now()) / 60000);
+      console.log(`Login refused for user ${username}: account locked for ${minutesLeft} more minute(s)`);
+      return new Response(
+        JSON.stringify({ error: `Account temporarily locked after too many failed attempts. Try again in ${minutesLeft} minute(s).` }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // Validate password using bcrypt (with legacy plaintext fallback)
     const isValid = await verifyPassword(password, user.password_hash);
 
-    const isLocked = user.locked_until && new Date(user.locked_until) > new Date();
-    if (!isValid || isLocked) {
-      if (!isValid && !isLocked) {
-        const newAttempts = (user.failed_login_attempts || 0) + 1;
-        const updates: Record<string, number | string> = { failed_login_attempts: newAttempts };
-        if (newAttempts >= MAX_FAILED_ATTEMPTS) {
-          const lockUntil = new Date();
-          lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
-          updates.locked_until = lockUntil.toISOString();
-          updates.failed_login_attempts = 0;
-        }
-        await supabase.from('custom_users').update(updates).eq('id', user.id);
+    if (!isValid) {
+      const newAttempts = (user.failed_login_attempts || 0) + 1;
+      const updates: Record<string, number | string> = { failed_login_attempts: newAttempts };
+      if (newAttempts >= MAX_FAILED_ATTEMPTS) {
+        const lockUntil = new Date();
+        lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
+        updates.locked_until = lockUntil.toISOString();
+        updates.failed_login_attempts = 0;
       }
+      await supabase.from('custom_users').update(updates).eq('id', user.id);
       console.log(`Login failed for user ${username}: incorrect password`);
       return new Response(
-        JSON.stringify({ error: 'Invalid username or password' }), 
+        JSON.stringify({ error: 'Invalid username or password' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
