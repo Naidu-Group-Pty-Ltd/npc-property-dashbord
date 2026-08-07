@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/AdminBuilderProjectsPanel';
 import { AdminBuilderInventoryPanel } from '@/components/admin/builder-portal/AdminBuilderInventoryPanel';
@@ -51,6 +52,7 @@ import {
   Archive, Ban, BriefcaseBusiness, Building2, Copy, FolderKanban, Hammer, Handshake, HardHat,
   KeyRound, Loader2, LogOut, Mail, MessageSquare, MoreHorizontal, Package, Pencil, Plus, Power,
   RefreshCw, RotateCcw, ShieldCheck, ShieldOff, Star, Trash2, Truck, UserCheck, UserPlus, Users,
+  FileSignature,
 } from 'lucide-react';
 
 /**
@@ -1017,7 +1019,18 @@ export default function BuilderPortalAdmin() {
             <Handshake className="h-4 w-4 shrink-0" aria-hidden />
             Transactions
           </TabsTrigger>
+          {/* No badge: the panel loads its own rows, and a count this page has
+              not fetched would be a guess. */}
+          <TabsTrigger value="agreements" className="shrink-0 gap-2">
+            <FileSignature className="h-4 w-4 shrink-0" aria-hidden />
+            Agreements
+          </TabsTrigger>
         </TabsList>
+
+        {/* ------------------------------------------------------ agreements */}
+        <TabsContent value="agreements" className="mt-4">
+          <PartnerAgreementsPanel portal="builder" partnerNoun="builder or developer" />
+        </TabsContent>
 
         {/* ---------------------------------------------------- organisations */}
         <TabsContent value="organisations" className="mt-4">

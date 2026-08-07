@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -581,6 +582,13 @@ export default function FinancePortalAdmin() {
           )}
         </CardContent>
         </Card>
+      </DashboardThemeFrame>
+
+      {/* Executed Partner Portal Agreements. The same panel the Builder and
+          Solicitor tabs carry: one agreement, one record of it. This page has no
+          tab strip, so it sits as its own section under the contacts table. */}
+      <DashboardThemeFrame variant="section" className="p-0">
+        <PartnerAgreementsPanel portal="finance" partnerNoun="finance partner" />
       </DashboardThemeFrame>
 
       <ClientAssignmentsDialog

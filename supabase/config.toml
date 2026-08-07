@@ -909,6 +909,9 @@ request_timeout = 1500
 verify_jwt = false
 request_timeout = 1500
 
+[functions.partner-agreement-records]
+verify_jwt = true
+
 [functions.pdf-import-diagnostics]
 # Superadmin role re-checked inside the function against user_roles.
 verify_jwt = false

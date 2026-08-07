@@ -58,18 +58,21 @@ const MOVED_MODULES = ['inventory', 'construction', 'delivery', 'collaboration',
 // 1–3. The primary bar
 // ---------------------------------------------------------------------------
 
-test('1. exactly five primary tabs are rendered', () => {
-  assert.equal(primaryTabValues.length, 5,
-    `expected 5 primary tabs, found ${primaryTabValues.length}: ${primaryTabValues.join(', ')}`);
+test('1. exactly six primary tabs are rendered', () => {
+  // Five from the original brief, plus Agreements — the executed Partner Portal
+  // Agreement records, which the Solicitor and Finance surfaces carry too.
+  assert.equal(primaryTabValues.length, 6,
+    `expected 6 primary tabs, found ${primaryTabValues.length}: ${primaryTabValues.join(', ')}`);
 });
 
 test('2. the primary tabs are in the required order', () => {
   assert.deepEqual(primaryTabValues,
-    ['users', 'organisations', 'memberships', 'projects', 'transactions']);
-  // The labels read as the brief specifies, in the same order.
+    ['users', 'organisations', 'memberships', 'projects', 'transactions', 'agreements']);
+  // The labels read as the brief specifies, in the same order. Agreements is
+  // appended rather than inserted: the five the brief fixed keep their places.
   const labels = [...primaryList.matchAll(/aria-hidden \/>\s*\n\s*([A-Z][A-Za-z ]+)\n/g)].map((m) => m[1].trim());
   assert.deepEqual(labels,
-    ['Portal users', 'Organisations', 'Organisation Access', 'Projects', 'Transactions']);
+    ['Portal users', 'Organisations', 'Organisation Access', 'Projects', 'Transactions', 'Agreements']);
 });
 
 test('3. Portal users is the default active tab', () => {

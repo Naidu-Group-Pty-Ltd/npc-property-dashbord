@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -19,6 +20,7 @@ import { formatDistanceToNow } from 'date-fns';
 import {
   Briefcase, Building2, Gavel, History, Link2, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
   Settings2, Shield, Trash2, Unlock, UserCheck, Users, UserX,
+  FileSignature,
 } from 'lucide-react';
 import { IntegrationHealthPanel } from '@/components/admin/solicitor-portal/IntegrationHealthPanel';
 import { CollaborationHealthPanel } from '@/components/admin/solicitor-portal/CollaborationHealthPanel';
@@ -224,7 +226,13 @@ export default function SolicitorPortalAdmin() {
           <TabsTrigger value="matters" className="gap-2"><Briefcase className="h-4 w-4" /> Matters</TabsTrigger>
           <TabsTrigger value="cases" className="gap-2"><Link2 className="h-4 w-4" /> Transaction Cases</TabsTrigger>
           <TabsTrigger value="integrations" className="gap-2"><RefreshCw className="h-4 w-4" /> Integration Health</TabsTrigger>
+          <TabsTrigger value="agreements" className="gap-2"><FileSignature className="h-4 w-4" /> Agreements</TabsTrigger>
         </TabsList>
+
+        {/* ───────────── AGREEMENTS ───────────── */}
+        <TabsContent value="agreements" className="mt-4">
+          <PartnerAgreementsPanel portal="solicitor" partnerNoun="legal practice" />
+        </TabsContent>
 
         {/* ───────────── USERS ───────────── */}
         <TabsContent value="users" className="mt-4">

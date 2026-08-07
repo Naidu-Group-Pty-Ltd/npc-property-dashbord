@@ -86,3 +86,37 @@ Three parts ship separately, and **merging is not deploying**:
 
 The safe order is migration → functions → frontend. A published version with no
 way to store an acceptance gates a portal on an agreement nobody can accept.
+
+## The executed copy
+
+An acceptance row is a fact about a document; it is not the document. Every
+acceptance can produce a **PDF of the agreement as executed** — the full text,
+both parties named, the version and document hash, the acceptance timestamp, and
+the acknowledgments that were asserted.
+
+| Concern | File |
+| --- | --- |
+| The document itself (pure, no I/O) | `supabase/functions/_shared/partnerAgreementDocument.pure.ts` |
+| List / download for the Command Centre | `supabase/functions/partner-agreement-records/index.ts` |
+| The Command Centre section (all three tabs) | `src/components/admin/PartnerAgreementsPanel.tsx` |
+| Columns, bucket and view | `supabase/migrations/20260901000900_partner_agreement_records.sql` |
+
+**Generated on first download, then kept.** Not at acceptance: an acceptance
+must never fail because a renderer is down, and every acceptance already taken —
+including those from before this existed — must still be able to produce a copy.
+The first request renders and stores; every later one serves the same bytes. The
+object is written with `upsert: false` and the path is stamped only while it is
+still null, so the copy a partner holds and the copy the operator holds are the
+same document.
+
+**White-label.** The operator side is drawn from the Command Centre brand
+configuration and snapshotted onto the acceptance at generation, because
+branding is editable and an executed agreement must keep saying what it said.
+
+**Who can reach it.** `partner-agreements` is a private bucket with a
+service-role policy and no `anon`/`authenticated` policy at all; the view is
+granted to `service_role` only. A Command Centre user reaches a copy through
+`partner-agreement-records`, which checks the admin module permission **of the
+portal the record belongs to** — read from the record, never from the request —
+before minting a 5-minute signed URL. Each download is written to
+`security_audit_log`.
