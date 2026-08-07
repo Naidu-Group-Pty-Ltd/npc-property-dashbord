@@ -155,6 +155,15 @@ RASTER_DPI = int(os.environ.get("DOCLING_RASTER_DPI", "300"))
 # below; keep this check self-contained so module import order doesn't matter.)
 ENABLE_FITZ_LAYERS = os.environ.get("DOCLING_ENABLE_FITZ_LAYERS", "true").strip().lower() not in {"", "0", "false", "no"}
 MAX_VECTORS_PER_PAGE = int(os.environ.get("DOCLING_MAX_VECTORS_PER_PAGE", "400"))
+# Per-span extents shipped per text line, so the client can reconcile a
+# mixed-style line rather than collapse it to its widest span. Bounded because
+# the count is attacker-influenced and this rides on every text item.
+MAX_SPANS_PER_LINE = int(os.environ.get("DOCLING_MAX_SPANS_PER_LINE", "24"))
+# Measured line records shipped per text item, for the same reason.
+MAX_MEASURED_LINES = int(os.environ.get("DOCLING_MAX_MEASURED_LINES", "64"))
+# Bumped when the shape of `item.source_measure` changes, so a consumer can tell
+# a missing measurement from one it does not understand.
+SOURCE_MEASURE_VERSION = "source-measure-v1"
 MIN_VECTOR_SIZE_PT = float(os.environ.get("DOCLING_MIN_VECTOR_SIZE_PT", "1.0"))
 # Phase 3: font metadata extraction (names + embeddable programs).
 MAX_FONTS = int(os.environ.get("DOCLING_MAX_FONTS", "48"))
@@ -934,6 +943,34 @@ def _page_text_lines(page) -> list[dict]:
             lbbox = line.get("bbox") or dom.get("bbox") or [0, 0, 0, 0]
             origin = dom.get("origin") or [lbbox[0], lbbox[3]]
             flags = int(dom.get("flags") or 0)
+            # The MEASURED advance width of this line, in the source's own font.
+            #
+            # It was always computed — `lbbox` is right here — and was used only
+            # to infer alignment and leading, then dropped. That made it
+            # impossible for the client to tell whether its substituted font
+            # rendered the same text wider than the original, which is precisely
+            # why imported text overflows a box copied verbatim from the source.
+            # A ratio needs both terms; this is the one nobody was sending.
+            measured_width = max(0.0, float(lbbox[2]) - float(lbbox[0]))
+            # Per-span extents let the client reconcile a mixed-style line
+            # instead of collapsing it to its widest span. Bounded so a
+            # pathological line cannot inflate the artifact.
+            span_extents = []
+            for sp in spans[:MAX_SPANS_PER_LINE]:
+                sb = sp.get("bbox") or [0, 0, 0, 0]
+                try:
+                    sw = max(0.0, float(sb[2]) - float(sb[0]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                text = str(sp.get("text") or "")
+                if not text:
+                    continue
+                span_extents.append({
+                    "width": sw,
+                    "chars": len(text),
+                    "size": float(sp.get("size") or 0.0),
+                    "font": str(sp.get("font") or ""),
+                })
             lines.append({
                 "bbox": [float(lbbox[0]), float(lbbox[1]), float(lbbox[2]), float(lbbox[3])],
                 "origin_y": float(origin[1]),
@@ -942,6 +979,9 @@ def _page_text_lines(page) -> list[dict]:
                 "bold": bool(flags & 16),
                 "italic": bool(flags & 2),
                 "color": _fitz_span_color_to_hex(dom.get("color")),
+                "measured_width": measured_width,
+                "char_count": sum(len(str(sp.get("text") or "")) for sp in spans),
+                "spans": span_extents,
             })
     return lines
 
@@ -1071,6 +1111,25 @@ def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> No
             font["italic"] = True
         if "text_align" not in item:
             item["text_align"] = _infer_alignment(matched, ix0, ix1)
+        # The measurement the client cannot make for itself: how much space this
+        # text occupies IN THE SOURCE'S OWN FONT. The client knows what its
+        # substituted font renders; without this it has no second term, so it
+        # cannot tell "the box is right and the font is wide" from "the box is
+        # wrong", and every remedy would be guesswork.
+        item["source_measure"] = {
+            "version": SOURCE_MEASURE_VERSION,
+            "lineCount": len(matched),
+            "measuredWidthPt": round(max((m.get("measured_width") or 0.0) for m in matched), 3),
+            "totalCharCount": sum(int(m.get("char_count") or 0) for m in matched),
+            "lines": [
+                {
+                    "widthPt": round(float(m.get("measured_width") or 0.0), 3),
+                    "charCount": int(m.get("char_count") or 0),
+                    "sizePt": round(float(m.get("size") or 0.0), 2),
+                }
+                for m in matched[:MAX_MEASURED_LINES]
+            ],
+        }
 
 
 def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
