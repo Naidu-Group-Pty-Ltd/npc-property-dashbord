@@ -66,6 +66,15 @@ export interface HtmlRenderOptions {
    */
   showReferenceUnderlay?: boolean;
   /**
+   * Editor opt-in: render the reconstructed native layers on a RASTER-ONLY
+   * page (`outputStrategy: 'raster-only'`), which final output suppresses in
+   * favour of the source raster. The editor canvas needs them — they are what
+   * the person edits — and without this flag a raster-only page whose raster
+   * URL is resolved at request time renders as nothing at all. Maps to the
+   * page-policy option of the same name (`resolvePageRenderPlan`).
+   */
+  showReconstructedLayers?: boolean;
+  /**
    * E7 (runtime-only): map an E6 final-crop region id → an ephemeral image src
    * (signed/object/data URL) to hydrate final source-crop elements at paint
    * time. Never persisted; when omitted, crops render as locked placeholders so
@@ -761,6 +770,7 @@ export function renderTemplateToHtml(
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;
     (pageCtx as any)._showReferenceUnderlay = !!options.showReferenceUnderlay;
+    (pageCtx as any)._showReconstructedLayers = !!options.showReconstructedLayers;
     // pageCtx is built fresh rather than spread from ctxBase, so every private
     // flag has to be re-set here. Missing this one meant `includeBookmarks:
     // false` was read as `undefined` at paint time and the PDF outline metadata

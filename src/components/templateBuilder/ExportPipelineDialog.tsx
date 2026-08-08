@@ -12,6 +12,7 @@ import { Sparkles, ExternalLink, Loader2, RefreshCw, FileWarning, CheckCircle2, 
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { resolveAuthBearer, describeAuthError, isAuthFailureResponse } from '@/lib/secureInvoke';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { downloadTemplateAsHtml } from '@/lib/reportTemplate/htmlExporter';
 import { downloadTemplateAsDocx } from '@/lib/reportTemplate/docxExporter';
@@ -256,17 +257,22 @@ export function ExportPipelineDialog({
 
       // 3) Call edge function
       toast.loading('Rendering PDF on WeasyPrint…', { id: toastId });
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token;
+      // WP-11B/C cookie-only sessions: the Bearer comes from resolveAuthBearer
+      // (mirrored token → native session → cookie re-mint) and the HttpOnly
+      // session cookie rides on credentials:'include' — supabase.auth alone is
+      // null for custom-auth staff, which made every export 401 after the
+      // functions fleet moved to cookie-only auth.
+      const { token } = await resolveAuthBearer({ refreshIfMissing: true });
       const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
       const url = `https://${projectId}.supabase.co/functions/v1/render-template-pdf`;
-      const res = await fetch(url, {
+      const sendRequest = (credentials: RequestCredentials) => fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           apikey: (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY,
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
+        credentials,
         body: JSON.stringify({
           html,
           fileName: `${(templateName || 'template').replace(/[^a-z0-9]+/gi, '-')}-${mode}.pdf`,
@@ -284,8 +290,24 @@ export function ExportPipelineDialog({
           includeBookmarks,
         }),
       });
+      let res: Response;
+      try {
+        res = await sendRequest('include');
+      } catch (err) {
+        // A wildcard-CORS build rejects credentialed requests at the preflight
+        // (nothing dispatched), so one uncredentialed retry is side-effect free.
+        if ((err as Error)?.name === 'AbortError') throw err;
+        res = await sendRequest('omit');
+      }
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const message = String((json as any)?.error?.message || (json as any)?.error || '');
+        if (isAuthFailureResponse(res.status, message)) {
+          throw new Error(describeAuthError(message || 'authentication required')
+            ?? 'Your sign-in session has expired. Sign out, sign back in, and try again.');
+        }
+        throw new Error((json as any)?.error || `HTTP ${res.status}`);
+      }
 
       toast.success(`Export ready (${(json.bytes / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, { id: toastId });
       if (templateId) void logTemplateAudit(templateId, 'exported_pdf', undefined, { variant, mode, bytes: json.bytes });
