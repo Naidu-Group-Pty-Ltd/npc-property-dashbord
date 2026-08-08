@@ -86,7 +86,8 @@ CREATE TABLE aml.provider_configs (id uuid PRIMARY KEY DEFAULT gen_random_uuid()
   tenant_id text NOT NULL DEFAULT 'default' REFERENCES aml.tenant_settings(tenant_id) ON DELETE CASCADE,
   capability text NOT NULL, provider_key text NOT NULL, display_label text,
   priority integer NOT NULL DEFAULT 1, cost_per_unit_cents integer NOT NULL DEFAULT 0,
-  currency text NOT NULL DEFAULT 'AUD', active boolean NOT NULL DEFAULT true, secret_ref text,
+  currency text NOT NULL DEFAULT 'AUD', active boolean NOT NULL DEFAULT true,
+  mode text NOT NULL DEFAULT 'simulator', secret_ref text,
   config jsonb NOT NULL DEFAULT '{}'::jsonb, last_health_at timestamptz, last_health_status text,
   last_health_message text, created_by uuid, created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE (tenant_id, capability, provider_key));
@@ -105,6 +106,22 @@ CREATE OR REPLACE FUNCTION public.has_any_aml_role(_user_id uuid) RETURNS boolea
   LANGUAGE sql STABLE AS $$ SELECT false $$;
 CREATE OR REPLACE FUNCTION aml.has_any_aml_role(_user_id uuid) RETURNS boolean
   LANGUAGE sql STABLE AS $$ SELECT false $$;
+-- Production carries this guard and the local rehearsal did not, which is why
+-- the migration passed here and failed against dduzbchuswwbefdunfct. Modelled
+-- now so the gap cannot reopen.
+CREATE OR REPLACE FUNCTION aml.tg_reject_simulator_idv() RETURNS trigger
+  LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF NEW.capability = 'idv' AND NEW.mode = 'simulator' THEN
+    RAISE EXCEPTION
+      'Identity-verification providers are live-only. Configure the selfhosted provider as live.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $fn$;
+CREATE TRIGGER trg_aml_reject_simulator_idv
+  BEFORE INSERT OR UPDATE ON aml.provider_configs
+  FOR EACH ROW EXECUTE FUNCTION aml.tg_reject_simulator_idv();
 SQL
 
 echo "Applying the verification-check migration chain…"
@@ -182,6 +199,9 @@ ok "provider_events.verification_check_id exists" \
    "$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='aml' AND table_name='provider_events' AND column_name='verification_check_id'")" "1"
 ok "didit provider row is seeded INACTIVE" \
    "$(q "SELECT active FROM aml.provider_configs WHERE provider_key='didit'")" "f"
+# Live-only: the column default is 'simulator' and production rejects that.
+ok "didit provider row is mode=live (production rejects simulator idv)" \
+   "$(q "SELECT mode FROM aml.provider_configs WHERE provider_key='didit'")" "live"
 
 # 7. Re-applying must be a no-op.
 reerrs=$(psql_ -q -f supabase/migrations/20260908000000_*.sql 2>&1 | grep -ci 'ERROR' || true)

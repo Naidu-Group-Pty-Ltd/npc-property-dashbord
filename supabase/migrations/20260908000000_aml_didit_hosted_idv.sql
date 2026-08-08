@@ -142,11 +142,23 @@ CREATE INDEX IF NOT EXISTS idx_aml_provider_events_verification_check
 -- No credential is ever stored here — `secret_ref` names the secret, and the
 -- value lives only in the function environment.
 -- ─────────────────────────────────────────────────────────────────────────
+-- `mode` is stated explicitly and must stay that way. The column defaults to
+-- 'simulator', and production carries a trigger — aml.tg_reject_simulator_idv(),
+-- BEFORE INSERT OR UPDATE — that raises check_violation on any `idv` row in
+-- simulator mode. Omitting `mode` therefore made this migration impossible to
+-- apply to production: it failed with
+--   23514: Identity-verification providers are live-only.
+-- Found by applying it to dduzbchuswwbefdunfct on 2026-08-08, not by review;
+-- the local rehearsal database has no such trigger, so it passed there.
+--
+-- 'live' is also the only correct value: there is no Didit simulator, and
+-- decideProvider() refuses a live-only provider left in simulator mode. The
+-- row is still seeded INACTIVE — mode says HOW it would run, not WHETHER.
 INSERT INTO aml.provider_configs
   (tenant_id, capability, provider_key, display_label, priority,
-   cost_per_unit_cents, currency, active, secret_ref, config)
+   cost_per_unit_cents, currency, active, mode, secret_ref, config)
 SELECT 'default', 'idv', 'didit', 'Didit (hosted identity verification)', 10,
-       0, 'AUD', false, 'DIDIT_API_KEY',
+       0, 'AUD', false, 'live', 'DIDIT_API_KEY',
        jsonb_build_object(
          'flow', 'hosted_session',
          'workflow_id', '',
