@@ -8,11 +8,12 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Sparkles, ExternalLink, Loader2, RefreshCw, FileWarning, CheckCircle2, Image as ImageIcon, FileCode } from 'lucide-react';
+import { Sparkles, ExternalLink, Loader2, RefreshCw, FileWarning, CheckCircle2, Image as ImageIcon, FileCode, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
+import { downloadUrlAsFile } from '@/lib/downloadFile';
 import { downloadTemplateAsHtml } from '@/lib/reportTemplate/htmlExporter';
 import { downloadTemplateAsDocx } from '@/lib/reportTemplate/docxExporter';
 import { downloadTemplateAsPptx } from '@/lib/reportTemplate/pptxExporter';
@@ -286,9 +287,19 @@ export function ExportPipelineDialog({
       if (renderError) throw new Error(describeAuthError(renderError.message) ?? renderError.message);
       if (!json?.url) throw new Error('WeasyPrint render returned no document URL');
 
-      toast.success(`Export ready (${((json.bytes ?? 0) / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, { id: toastId });
       if (templateId) void logTemplateAudit(templateId, 'exported_pdf', undefined, { variant, mode, bytes: json.bytes });
-      window.open(json.url, '_blank', 'noopener');
+      // Save the PDF rather than `window.open` it. A render takes tens of
+      // seconds, so by the time it resolves the click that started it no
+      // longer counts as user activation and the popup is blocked silently —
+      // the export "succeeded" and the person got nothing. See downloadFile.ts.
+      const exportFileName = `${(templateName || 'template').replace(/[^a-z0-9]+/gi, '-')}-${mode}.pdf`;
+      const signedUrl = json.url;
+      await downloadUrlAsFile(signedUrl, exportFileName);
+      toast.success(`Export ready (${((json.bytes ?? 0) / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, {
+        id: toastId,
+        description: exportFileName,
+        action: { label: 'Open', onClick: () => window.open(signedUrl, '_blank', 'noopener') },
+      });
       await loadJobs();
     } catch (e: any) {
       toast.error(`Export failed: ${e?.message ?? e}`, { id: toastId });
@@ -487,11 +498,23 @@ export function ExportPipelineDialog({
                         </div>
                       </div>
                       {j.signed_url && (
-                        <Button size="sm" variant="outline" asChild>
-                          <a href={j.signed_url} target="_blank" rel="noopener noreferrer">
-                            <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open
-                          </a>
-                        </Button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              void downloadUrlAsFile(j.signed_url!, j.file_name)
+                                .catch((e: Error) => toast.error(e.message));
+                            }}
+                          >
+                            <Download className="h-3.5 w-3.5 mr-1" /> Download
+                          </Button>
+                          <Button size="sm" variant="ghost" asChild>
+                            <a href={j.signed_url} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open
+                            </a>
+                          </Button>
+                        </div>
                       )}
                     </li>
                   ))}
