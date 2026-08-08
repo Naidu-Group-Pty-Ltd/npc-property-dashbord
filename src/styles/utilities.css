@@ -649,3 +649,102 @@ nav[aria-label='pagination'] > ul {
     background-color: hsl(var(--muted));
   }
 }
+
+/* ── Native date/time picker affordance ───────────────────────────
+   Chromium renders `::-webkit-calendar-picker-indicator` as a near-black
+   glyph, which is invisible on the dark glass inputs (Reminders Hub, both
+   the Client and Team forms). Invert it and tint it with the brand token so
+   the calendar/clock button is actually discoverable, and give it a real
+   tap target. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator,
+input[type="week"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  opacity: 0.85;
+  cursor: pointer;
+  padding: 4px;
+  margin-inline-start: 4px;
+  border-radius: 6px;
+  min-width: 20px;
+  min-height: 20px;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover,
+input[type="week"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  background: hsl(var(--primary) / 0.18);
+}
+
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="time"]::-webkit-calendar-picker-indicator,
+.dark input[type="month"]::-webkit-calendar-picker-indicator,
+.dark input[type="week"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) sepia(1) saturate(4) hue-rotate(5deg) brightness(1.05);
+}
+
+/* Firefox / Safari have no indicator pseudo-element, so the visible cue is
+   the field itself: keep the typed value legible rather than the UA grey. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  color-scheme: light dark;
+}
+
+/* ── Platform scrollbar language ──────────────────────────────────
+   The premium thumb defined above is now the default everywhere rather
+   than an opt-in class, so no surface falls back to the chunky OS bar with
+   stepper arrows. Opt-outs (`.scrollbar-hide`, `.scrollbar-thin`) still win
+   because they are declared in the utilities layer. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--primary) / 0.42) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--primary) / 0.5),
+    hsl(var(--primary) / 0.26)
+  );
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+  transition: background 0.2s ease;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--primary) / 0.78),
+    hsl(var(--primary) / 0.46)
+  );
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: hsl(var(--primary) / 0.9);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-button,
+*::-webkit-scrollbar-corner {
+  display: none;
+  height: 0;
+  width: 0;
+}

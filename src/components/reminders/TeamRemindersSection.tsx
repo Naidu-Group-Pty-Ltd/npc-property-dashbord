@@ -290,11 +290,21 @@ export function TeamRemindersSection() {
           </CardContent>
         </Card>
       ) : (
-        <Button onClick={() => setShowAdd(true)} variant="outline" className="group relative h-12 w-full gap-2 overflow-hidden rounded-2xl border-brand-200/45 bg-[linear-gradient(135deg,#fde68a,#f59e0b_52%,#b45309)] font-bold text-black shadow-[0_18px_48px_rgba(245,158,11,0.22),0_14px_34px_rgba(0,0,0,0.30)] transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-100/80 hover:bg-brand-400 hover:text-black hover:shadow-[0_0_44px_rgba(245,158,11,0.34),0_20px_46px_rgba(0,0,0,0.36)] focus-visible:ring-2 focus-visible:ring-brand-200/90 focus-visible:ring-offset-2 focus-visible:ring-offset-black">
-          <Plus className="h-4 w-4" />
-          Add Team Reminder
-        </Button>
+        <div className="flex justify-end">
+          <Button
+            aria-label="Add a new team reminder"
+            onClick={() => setShowAdd(true)}
+            variant="outline"
+            className="group h-11 w-full shrink-0 gap-2 rounded-xl border-brand-300/40 bg-brand-400/10 px-4 text-sm font-semibold text-brand-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-200 hover:border-brand-200/60 hover:bg-brand-400/18 hover:text-brand-50 hover:shadow-[0_0_24px_rgba(245,158,11,0.18)] focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black sm:h-12 sm:w-auto"
+          >
+            <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
+            <span>New Team Reminder</span>
+          </Button>
+        </div>
       )}
+
+
+
 
       {/* List */}
       {isLoading ? (
