@@ -22,7 +22,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { LayoutGrid, Maximize2, Minus, MousePointer2, Plus } from 'lucide-react';
+import { LayoutGrid, Maximize2, Minus, MousePointer2, Plus, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -60,6 +60,19 @@ interface WorkflowCanvasProps {
   /** Outcome of the last run, keyed by node id. Empty until one has been run. */
   runStepStatuses?: Map<string, string>;
   onDropCatalogNode: (catalogId: string, position: Vec2) => void;
+  /**
+   * Opens the step library. The canvas cannot do this itself — the library is
+   * a sibling panel, and below `lg` it is not on screen at all — so the empty
+   * state hands the request back to the page.
+   */
+  onBrowseSteps?: () => void;
+  /**
+   * A step was picked *without* being moved — a tap or an Enter, i.e. "show me
+   * this one". The page uses it to reveal the settings panel where that panel
+   * is not already docked. Deliberately not fired for a drag: selection starts
+   * at pointer-down, and opening a modal panel there would abandon the drag.
+   */
+  onOpenNodeSettings?: (nodeId: string) => void;
 }
 
 /**
@@ -94,6 +107,8 @@ export function WorkflowCanvas({
   flaggedNodeIds,
   runStepStatuses,
   onDropCatalogNode,
+  onBrowseSteps,
+  onOpenNodeSettings,
 }: WorkflowCanvasProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState>({ kind: 'none' });
@@ -295,6 +310,10 @@ export function WorkflowCanvas({
           if (store.spliceTargetEdgeId) {
             store.spliceNodeIntoEdge(drag.nodeId, store.spliceTargetEdgeId);
           }
+        } else if (!event.shiftKey && !event.metaKey && !event.ctrlKey) {
+          // Pressed and released without moving: a request to look at the step,
+          // not to place it. Modifier-held presses are extending a selection.
+          onOpenNodeSettings?.(drag.nodeId);
         }
         store.setSpliceTarget(null);
         setGuides([]);
@@ -559,7 +578,11 @@ export function WorkflowCanvas({
                   onHoverChange={(hovering) =>
                     setHoveredNodeId((current) => (hovering ? node.id : current === node.id ? null : current))
                   }
-                  onSelect={(id) => useWorkflowStore.getState().selectNode(id)}
+                  onSelect={(id) => {
+                    // The keyboard route onto a step — Enter on a focused card.
+                    useWorkflowStore.getState().selectNode(id);
+                    onOpenNodeSettings?.(id);
+                  }}
                   onDelete={(id) => useWorkflowStore.getState().removeNode(id)}
                   onDuplicate={(id) => useWorkflowStore.getState().duplicateNode(id)}
                   onToggleDisabled={(id) => useWorkflowStore.getState().toggleDisabled(id)}
@@ -578,6 +601,38 @@ export function WorkflowCanvas({
                 />
               )}
             </div>
+
+            {/* A blank canvas is otherwise indistinguishable from a broken
+                one, and below `lg` the step library is not on screen to
+                suggest otherwise. */}
+            {graph.nodes.length === 0 && (
+              <div
+                data-canvas-overlay="empty"
+                className="pointer-events-none absolute inset-0 grid place-items-center p-6"
+              >
+                <div className="glass-raised pointer-events-auto max-w-sm rounded-2xl p-6 text-center">
+                  <span className="mx-auto grid h-11 w-11 place-items-center rounded-full border border-border">
+                    <Zap className="h-5 w-5 text-primary" aria-hidden="true" />
+                  </span>
+                  <p className="mt-3 text-sm font-semibold text-foreground">Nothing on the canvas yet</p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    A workflow begins with a trigger — the thing that decides when it runs, like a
+                    client being added or a report finishing. Add one, then wire the follow-up
+                    steps onto it.
+                  </p>
+                  {onBrowseSteps && (
+                    <Button size="sm" className="mt-4" onClick={onBrowseSteps}>
+                      <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                      Browse the step library
+                    </Button>
+                  )}
+                  <p className="mt-3 text-[11px] text-muted-foreground">
+                    Drag a step onto the canvas, or drag from a step's right-hand dot to add the
+                    next one.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Controls */}
             <div

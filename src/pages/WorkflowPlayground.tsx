@@ -6,11 +6,12 @@
  * surface, and chrome around it costs the thing you are actually building.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
   FlaskConical,
+  Library,
   Loader2,
   PanelRightClose,
   PanelRightOpen,
@@ -18,6 +19,7 @@ import {
   Plus,
   Redo2,
   Save,
+  Settings2,
   Undo2,
   Zap,
 } from 'lucide-react';
@@ -52,8 +54,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import { useFillViewportHeight } from '@/hooks/useFillViewportHeight';
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useIntegrationCredentials } from '@/hooks/useIntegrationCredentials';
@@ -74,6 +84,36 @@ import { RunPanel } from '@/components/workflow/RunPanel';
 import { WorkflowStatusControl } from '@/components/workflow/WorkflowStatusControl';
 import { suggestedPosition } from '@/components/workflow/canvasGeometry';
 
+/**
+ * Widths at which the step library and the settings panel are docked beside
+ * the canvas. Below them the same panels are reached as slide-overs — they are
+ * not optional extras, they are the only way to add a step and the only way to
+ * configure one, so a width that hides both leaves an unusable canvas.
+ *
+ * These mirror Tailwind's `lg` and `xl`, which the docked columns are keyed to.
+ */
+const PALETTE_DOCKED = '(min-width: 1024px)';
+const INSPECTOR_DOCKED = '(min-width: 1280px)';
+
+/** True while the query matches. Used only to dismiss a slide-over that the
+ * viewport has just grown a docked equivalent for — otherwise it would sit
+ * over the canvas it duplicates, modal and unaskable-for. */
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches,
+  );
+
+  useEffect(() => {
+    const list = window.matchMedia(query);
+    const onChange = () => setMatches(list.matches);
+    onChange();
+    list.addEventListener('change', onChange);
+    return () => list.removeEventListener('change', onChange);
+  }, [query]);
+
+  return matches;
+}
+
 export default function WorkflowPlayground() {
   const { canView, canEdit, loading: permissionsLoading } = useModulePermissions('integrations');
   const { toast } = useToast();
@@ -92,6 +132,25 @@ export default function WorkflowPlayground() {
   const [runPanelOpen, setRunPanelOpen] = useState(false);
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [paletteSheetOpen, setPaletteSheetOpen] = useState(false);
+  const [inspectorSheetOpen, setInspectorSheetOpen] = useState(false);
+
+  const paletteDocked = useMediaQuery(PALETTE_DOCKED);
+  const inspectorDocked = useMediaQuery(INSPECTOR_DOCKED);
+
+  // The canvas is full-bleed, so it has to know what is left of the viewport
+  // after the app chrome above it — which differs between the desktop and
+  // mobile shells and moves again when a billing banner mounts.
+  const canvasShellRef = useRef<HTMLDivElement>(null);
+  const canvasHeight = useFillViewportHeight(canvasShellRef, '[data-mobile-nav]');
+
+  useEffect(() => {
+    if (paletteDocked) setPaletteSheetOpen(false);
+  }, [paletteDocked]);
+
+  useEffect(() => {
+    if (inspectorDocked) setInspectorSheetOpen(false);
+  }, [inspectorDocked]);
 
   const runs = useWorkflowRuns(openWorkflow?.id ?? null);
 
@@ -121,6 +180,14 @@ export default function WorkflowPlayground() {
   const hasTrigger = useMemo(
     () => graph.nodes.some((n) => getCatalogNode(n.type)?.kind === 'trigger'),
     [graph.nodes],
+  );
+
+  /** Blocking issues, counted for the collapsed settings button — the readiness
+   * rail is inside the panel, so without this the reason Test run is disabled
+   * is only visible once you open the thing that explains it. */
+  const blockingCount = useMemo(
+    () => issues.filter((i) => i.severity === 'blocking').length,
+    [issues],
   );
 
   // Warn before losing unsaved canvas work to a reload or tab close.
@@ -268,12 +335,35 @@ export default function WorkflowPlayground() {
 
   const handleAddNode = useCallback((catalogId: string) => {
     useWorkflowStore.getState().addNode(catalogId, suggestedPosition(useWorkflowStore.getState().graph));
+    // The slide-over covers the canvas it just added to, so it stands down
+    // once the step is placed. The docked library stays put.
+    setPaletteSheetOpen(false);
   }, []);
 
-  const focusNode = useCallback((nodeId: string) => {
-    useWorkflowStore.getState().selectNode(nodeId);
-    setInspectorOpen(true);
-  }, []);
+  /**
+   * Puts the step library in front of the person, docked or not. When it is
+   * already docked beside the canvas, opening it means putting the cursor in
+   * its search box — offering a slide-over copy of a panel that is visibly on
+   * screen would just be confusing.
+   */
+  const openStepLibrary = useCallback(() => {
+    if (!paletteDocked) {
+      setPaletteSheetOpen(true);
+      return;
+    }
+    document.querySelector<HTMLInputElement>('[data-step-library-search]')?.focus();
+  }, [paletteDocked]);
+
+  const focusNode = useCallback(
+    (nodeId: string) => {
+      useWorkflowStore.getState().selectNode(nodeId);
+      setInspectorOpen(true);
+      // Below `xl` the settings column does not exist, so revealing it means
+      // opening the slide-over — otherwise "fix this" points at nothing.
+      if (!inspectorDocked) setInspectorSheetOpen(true);
+    },
+    [inspectorDocked],
+  );
 
   if (permissionsLoading) {
     return (
@@ -304,7 +394,11 @@ export default function WorkflowPlayground() {
     const runnable = isRunnable(issues);
 
     return (
-      <div className="flex h-[calc(100vh-4rem)] flex-col">
+      <div
+        ref={canvasShellRef}
+        className="flex min-h-[20rem] flex-col"
+        style={canvasHeight ? { height: canvasHeight } : undefined}
+      >
         <header className="flex flex-wrap items-center gap-2 border-b border-border/60 bg-card/60 px-3 py-2 backdrop-blur">
           <Button
             variant="ghost"
@@ -337,6 +431,21 @@ export default function WorkflowPlayground() {
           </div>
 
           <div className="flex items-center gap-1">
+            {/* Below `lg` the docked library is not rendered, and dragging a
+                step in is the only other way to add one — which needs a step
+                on the canvas to drag from. Without this button a narrow
+                viewport cannot build anything at all. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="lg:hidden"
+              disabled={!canEdit}
+              onClick={() => setPaletteSheetOpen(true)}
+            >
+              <Library className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              Add step
+            </Button>
+
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -369,12 +478,16 @@ export default function WorkflowPlayground() {
               <TooltipContent>Redo</TooltipContent>
             </Tooltip>
 
+            {/* Two buttons rather than one branching on a media query: at `xl`
+                the panel is a column that collapses, below it the same content
+                is a slide-over. CSS decides which is offered, so neither can
+                be shown for a panel that does not exist at that width. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
+                  className="hidden h-8 w-8 xl:inline-flex"
                   onClick={() => setInspectorOpen((open) => !open)}
                   aria-label={inspectorOpen ? 'Hide the settings panel' : 'Show the settings panel'}
                   aria-expanded={inspectorOpen}
@@ -388,6 +501,27 @@ export default function WorkflowPlayground() {
               </TooltipTrigger>
               <TooltipContent>{inspectorOpen ? 'Hide settings' : 'Show settings'}</TooltipContent>
             </Tooltip>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="xl:hidden"
+              aria-label="Step settings and checks"
+              onClick={() => setInspectorSheetOpen(true)}
+            >
+              <Settings2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
+              <span className="max-w-[7rem] truncate">
+                {selectedNode ? selectedNode.label?.trim() || getCatalogNode(selectedNode.type)?.name : 'Settings'}
+              </span>
+              {blockingCount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="ml-1.5 h-4 min-w-4 justify-center border-destructive/50 bg-destructive/15 px-1 text-[10px] tabular-nums text-foreground"
+                >
+                  {blockingCount}
+                </Badge>
+              )}
+            </Button>
 
             <Button variant="outline" size="sm" onClick={handleSave} disabled={!canEdit || saving || !dirty}>
               {saving ? (
@@ -480,6 +614,11 @@ export default function WorkflowPlayground() {
                 onDropCatalogNode={(catalogId, position) =>
                   useWorkflowStore.getState().addNode(catalogId, position)
                 }
+                onBrowseSteps={canEdit ? openStepLibrary : undefined}
+                onOpenNodeSettings={() => {
+                  setInspectorOpen(true);
+                  if (!inspectorDocked) setInspectorSheetOpen(true);
+                }}
               />
             </main>
 
@@ -535,6 +674,80 @@ export default function WorkflowPlayground() {
             </div>
           )}
         </div>
+
+        {/* The same two panels the wide layout docks, for the widths that
+            cannot dock them. Rendered unconditionally: they are only openable
+            from buttons CSS hides once a docked equivalent exists, and an
+            effect closes them if the viewport grows past that point. */}
+        <Sheet open={paletteSheetOpen} onOpenChange={setPaletteSheetOpen}>
+          {/* `pt` clears the sheet's own close button, which is absolutely
+              positioned at the top right with a 44px touch target below `sm`.
+              `overflow-hidden` hands scrolling to the panel's own scroll area
+              rather than letting the sheet scroll the whole panel. */}
+          <SheetContent
+            side="left"
+            className="flex w-[21rem] max-w-[90vw] flex-col overflow-hidden p-0 pt-16 sm:pt-10"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>Step library</SheetTitle>
+              <SheetDescription>
+                Choose a step to add to the canvas.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="min-h-0 flex-1">
+              <NodePalette
+                configuredIntegrations={configured}
+                credentialsLoaded={credentialsLoaded}
+                onAddNode={handleAddNode}
+                hasTrigger={hasTrigger}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+
+        <Sheet open={inspectorSheetOpen} onOpenChange={setInspectorSheetOpen}>
+          <SheetContent
+            side="right"
+            className="flex w-[22rem] max-w-[92vw] flex-col overflow-hidden p-0 pt-16 sm:pt-10"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>Step settings and checks</SheetTitle>
+              <SheetDescription>
+                Configure the selected step, and see what still blocks a run.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="min-h-0 flex-1">
+              <NodeInspector
+                node={selectedNode}
+                graph={graph}
+                configured={
+                  !selectedNode ||
+                  !getCatalogNode(selectedNode.type)?.integrationId ||
+                  configured.has(getCatalogNode(selectedNode.type)?.integrationId as string)
+                }
+                credentialsLoaded={credentialsLoaded}
+                onChange={(key, value) =>
+                  selectedNode && useWorkflowStore.getState().updateConfig(selectedNode.id, key, value)
+                }
+                onRename={(label) =>
+                  selectedNode && useWorkflowStore.getState().renameNode(selectedNode.id, label)
+                }
+                onClose={() => setInspectorSheetOpen(false)}
+              />
+            </div>
+            <div className="max-h-[45%] shrink-0 border-t border-border/60">
+              <ReadinessRail
+                issues={issues}
+                credentialsLoading={credentialsLoading}
+                nodeCount={graph.nodes.length}
+                onFocusNode={(nodeId) => {
+                  useWorkflowStore.getState().selectNode(nodeId);
+                  setInspectorOpen(true);
+                }}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
 
         <AlertDialog open={liveConfirmOpen} onOpenChange={setLiveConfirmOpen}>
           <AlertDialogContent>
