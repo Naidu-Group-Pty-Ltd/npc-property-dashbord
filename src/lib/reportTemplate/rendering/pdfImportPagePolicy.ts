@@ -212,6 +212,29 @@ export function shouldRenderPageBackgroundImage(
 }
 
 /**
+ * Last-resort guarantee that a page renders SOMETHING.
+ *
+ * A raster-only page suppresses its native layers because the source raster is
+ * the final output — but that raster is not stored on the template. Its URL is
+ * signed at render time from `meta.sourceRasterRef`, and a signing failure
+ * (expired credential, storage hiccup, an export path that never resolved it)
+ * leaves the page with no raster AND no native blocks: a blank sheet, silently,
+ * in a client's PDF. That is strictly worse than the reconstruction the page
+ * already carries.
+ *
+ * So: when the plan suppressed native blocks and the raster did not actually
+ * paint, render the native blocks after all. Both layers can never appear
+ * together — this only fires when the raster is absent — so it cannot
+ * reintroduce the double-render this policy exists to prevent.
+ */
+export function shouldFallBackToNativeBlocks(
+  plan: { renderNativeBlocks: boolean },
+  rasterPainted: boolean,
+): boolean {
+  return !plan.renderNativeBlocks && !rasterPainted;
+}
+
+/**
  * Apply a policy to a page: writes the typed `meta.pdfImport` policy AND keeps
  * the legacy `background` flags consistent so every renderer (typed-aware or
  * legacy) agrees. Returns a new page; never mutates the input.

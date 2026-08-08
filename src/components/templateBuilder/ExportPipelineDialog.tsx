@@ -12,7 +12,7 @@ import { Sparkles, ExternalLink, Loader2, RefreshCw, FileWarning, CheckCircle2, 
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { resolveAuthBearer, describeAuthError, isAuthFailureResponse } from '@/lib/secureInvoke';
+import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { downloadTemplateAsHtml } from '@/lib/reportTemplate/htmlExporter';
 import { downloadTemplateAsDocx } from '@/lib/reportTemplate/docxExporter';
@@ -255,25 +255,20 @@ export function ExportPipelineDialog({
         includeBookmarks,
       });
 
-      // 3) Call edge function
+      // 3) Call edge function through the app's one transport. The hand-rolled
+      // fetch this replaces addressed
+      // `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/…`,
+      // and this project defines no Vite Supabase variables at build time, so
+      // the bundle resolved that to `https://undefined.supabase.co` and the
+      // export never left the browser. invokeSecureFunction hardcodes the
+      // project URL and anon key, carries the HttpOnly session cookie, and
+      // refreshes-and-retries once on an auth failure.
       toast.loading('Rendering PDF on WeasyPrint…', { id: toastId });
-      // WP-11B/C cookie-only sessions: the Bearer comes from resolveAuthBearer
-      // (mirrored token → native session → cookie re-mint) and the HttpOnly
-      // session cookie rides on credentials:'include' — supabase.auth alone is
-      // null for custom-auth staff, which made every export 401 after the
-      // functions fleet moved to cookie-only auth.
-      const { token } = await resolveAuthBearer({ refreshIfMissing: true });
-      const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
-      const url = `https://${projectId}.supabase.co/functions/v1/render-template-pdf`;
-      const sendRequest = (credentials: RequestCredentials) => fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY,
-          Authorization: `Bearer ${token}`,
-        },
-        credentials,
-        body: JSON.stringify({
+      const { data: json, error: renderError } = await invokeSecureFunction<{
+        url?: string; bytes?: number; durationMs?: number;
+      }>(
+        'render-template-pdf',
+        {
           html,
           fileName: `${(templateName || 'template').replace(/[^a-z0-9]+/gi, '-')}-${mode}.pdf`,
           templateId,
@@ -288,28 +283,13 @@ export function ExportPipelineDialog({
           assetCount: assetSummary.total,
           pageRange: pageRange || null,
           includeBookmarks,
-        }),
-      });
-      let res: Response;
-      try {
-        res = await sendRequest('include');
-      } catch (err) {
-        // A wildcard-CORS build rejects credentialed requests at the preflight
-        // (nothing dispatched), so one uncredentialed retry is side-effect free.
-        if ((err as Error)?.name === 'AbortError') throw err;
-        res = await sendRequest('omit');
-      }
-      const json = await res.json();
-      if (!res.ok) {
-        const message = String((json as any)?.error?.message || (json as any)?.error || '');
-        if (isAuthFailureResponse(res.status, message)) {
-          throw new Error(describeAuthError(message || 'authentication required')
-            ?? 'Your sign-in session has expired. Sign out, sign back in, and try again.');
-        }
-        throw new Error((json as any)?.error || `HTTP ${res.status}`);
-      }
+        },
+        { timeoutMs: 10 * 60_000 },
+      );
+      if (renderError) throw new Error(describeAuthError(renderError.message) ?? renderError.message);
+      if (!json?.url) throw new Error('WeasyPrint render returned no document URL');
 
-      toast.success(`Export ready (${(json.bytes / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, { id: toastId });
+      toast.success(`Export ready (${((json.bytes ?? 0) / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, { id: toastId });
       if (templateId) void logTemplateAudit(templateId, 'exported_pdf', undefined, { variant, mode, bytes: json.bytes });
       window.open(json.url, '_blank', 'noopener');
       await loadJobs();

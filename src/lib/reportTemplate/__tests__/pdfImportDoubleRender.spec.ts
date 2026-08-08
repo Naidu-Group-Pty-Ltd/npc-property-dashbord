@@ -40,6 +40,7 @@ import {
   pixelFallbackPolicy,
   resolvePageOutputPolicy,
   resolvePageRenderPlan,
+  shouldFallBackToNativeBlocks,
   shouldRenderPageBackgroundImage,
 } from '../rendering/pdfImportPagePolicy';
 
@@ -198,6 +199,81 @@ describe('the renderer, at the seam where it actually went wrong', () => {
     const { html } = renderTemplateToHtml(template, {});
     expect(html, 'the source raster should still be the page').toContain(PDF_IMPORT_ASSET_BUCKET);
     expect(html, 'the reconstruction must not overprint it').not.toContain('Lot 60941 Cloverton,');
+  });
+});
+
+describe('the other way to ship a broken page: rendering nothing at all', () => {
+  /**
+   * The invariant above says a raster-only page must not ALSO paint its native
+   * blocks. Its shadow is that such a page paints nothing when the raster is
+   * missing — and the raster is not stored on the template. `page.background
+   * .imageUrl` is stripped at save; the URL is signed at render time from
+   * `meta.sourceRasterRef`. So any export whose signing step fails, or which
+   * never ran it, hands the client a blank sheet where the content was.
+   *
+   * The reconstruction is still sitting in the page's blocks. Rendering it is
+   * strictly better than rendering nothing, and it cannot double-render:
+   * this only fires when the raster did not paint.
+   */
+  const RASTER_ONLY_UNSIGNED = {
+    version: 1,
+    tokens: {},
+    pages: [{
+      id: 'p2',
+      name: 'Capacity at a glance',
+      size: { width: 595, height: 842 },
+      // Exactly what a stored raster-only page looks like: policy + ref, and
+      // NO imageUrl (stripTransientRasterUrls removed it at save). The ref is
+      // copied verbatim from `report_templates.schema` for the import that
+      // reproduced the outage, so the fixture cannot drift from the shape the
+      // schema actually accepts.
+      meta: {
+        pdfImport: pixelFallbackPolicy(),
+        sourceRasterRef: {
+          kind: 'pdf_import_raster_ref',
+          jobId: '60341c12-0db2-41fd-9106-9d1eea1ea5cb',
+          manifestPath: '60341c12-0db2-41fd-9106-9d1eea1ea5cb/rasters-manifest.json',
+          pageNo: 2,
+          path: '60341c12-0db2-41fd-9106-9d1eea1ea5cb/pages/page-002.png',
+          width: 2479,
+          height: 3508,
+          mime: 'image/png',
+          dpi: 300,
+        },
+      },
+      background: { color: '#FFFFFF' },
+      blocks: [{
+        id: 'b1',
+        type: 'free',
+        props: {},
+        overlays: [{
+          id: 'o1', type: 'text', content: 'Borrowing capacity $856,932',
+          x: 51, y: 120, width: 400, height: 40, color: '#111111', fontSize: 18,
+        }],
+      }],
+    }],
+  };
+
+  it('renders the reconstruction when the source raster never resolved', () => {
+    const { html } = renderTemplateToHtml(RASTER_ONLY_UNSIGNED as never, {});
+    expect(html, 'a page with no raster must not come out empty')
+      .toContain('Borrowing capacity $856,932');
+  });
+
+  it('still suppresses the reconstruction once the raster IS resolved', () => {
+    const signed = JSON.parse(JSON.stringify(RASTER_ONLY_UNSIGNED));
+    signed.pages[0].background.imageUrl = RASTER;
+    const { html } = renderTemplateToHtml(signed, {});
+    expect(html, 'the raster is the page').toContain(PDF_IMPORT_ASSET_BUCKET);
+    expect(html, 'and must not be overprinted').not.toContain('Borrowing capacity $856,932');
+  });
+
+  it('the rule itself: fall back only when blocks are suppressed AND no raster painted', () => {
+    expect(shouldFallBackToNativeBlocks({ renderNativeBlocks: false }, false)).toBe(true);
+    expect(shouldFallBackToNativeBlocks({ renderNativeBlocks: false }, true)).toBe(false);
+    // A native page never needs the fallback — it already renders its blocks.
+    expect(shouldFallBackToNativeBlocks({ renderNativeBlocks: true }, false)).toBe(false);
+    expect(shouldFallBackToNativeBlocks({ renderNativeBlocks: true }, true)).toBe(false);
   });
 });
 

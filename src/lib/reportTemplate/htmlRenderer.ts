@@ -13,7 +13,7 @@ import {
   type Tokens,
   parseTemplate,
 } from './templateSchema';
-import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
+import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks } from './rendering/pdfImportPagePolicy';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -504,9 +504,11 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // PDF-import reference underlays are editor-canvas-only alignment aids; in
   // preview/print/export the reconstructed overlays ARE the page, and painting
   // the source raster behind them would double-render every element.
+  let sourceRasterPainted = false;
   if (page.background?.imageUrl && shouldRenderPageBackgroundImage(page, pageRenderPlan)) {
     const url = resolveBindable(page.background.imageUrl, ctxBase);
     if (url) {
+      sourceRasterPainted = true;
       // Full-page source rasters set imageFit:'fill' so the reference exactly
       // covers the page box (no aspect-ratio crop/stretch). Decorative images
       // keep the historical 'cover' default.
@@ -551,7 +553,14 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
     ? ({ ...ctxBase, _pdfSuppressedOverlayIds: suppressedOverlays } as ResolveContext)
     : ctxBase;
   const blocks: string[] = [];
-  if (pageRenderPlan.renderNativeBlocks) {
+  // …and if the raster that was supposed to BE this page never resolved, the
+  // reconstruction renders after all rather than shipping a blank sheet. The
+  // raster URL is signed at render time and is simply absent whenever that
+  // signing fails, so this is the difference between a degraded page and an
+  // empty one. See `shouldFallBackToNativeBlocks`.
+  const renderNativeBlocks = pageRenderPlan.renderNativeBlocks
+    || shouldFallBackToNativeBlocks(pageRenderPlan, sourceRasterPainted);
+  if (renderNativeBlocks) {
     for (const block of sortBlocksForPaint(page.blocks)) {
       if (!shouldRenderBlock(block, ctxBase)) continue;
       blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));
