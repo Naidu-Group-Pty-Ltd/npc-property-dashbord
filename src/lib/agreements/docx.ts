@@ -194,7 +194,7 @@ function spacer(after = 120): Paragraph {
 
 // ── Cells ───────────────────────────────────────────────────────────────────
 
-function cell(children: Child[], width: number, opts: { fill?: string; span?: number; valign?: (typeof VerticalAlign)[keyof typeof VerticalAlign] } = {}): TableCell {
+function cell(children: Child[], width: number, opts: { fill?: string; span?: number; valign?: 'top' | 'center' | 'bottom' } = {}): TableCell {
   return new TableCell({
     width: { size: width, type: WidthType.DXA },
     columnSpan: opts.span,

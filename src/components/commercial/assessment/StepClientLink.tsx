@@ -297,10 +297,13 @@ export function StepClientLink({
       <div>
         <h2 className="ci-step-heading">Save and link</h2>
         <p className="ci-step-description">
-          The assessment is complete and stands on its own. Linking it to a client is optional, happens
-          here and nowhere earlier, and never changes client data without your explicit instruction.
+          The assessment is complete and stands on its own. From here you can either{' '}
+          <span className="font-medium text-foreground">link it to an existing client</span> or{' '}
+          <span className="font-medium text-foreground">create a new client</span> — both are optional,
+          happen here and nowhere earlier, and never change client data without your explicit instruction.
         </p>
       </div>
+
 
       {!canLink ? (
         <div className="ci-warning-row ci-warning-warning">
