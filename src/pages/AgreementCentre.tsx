@@ -19,8 +19,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ArrowRight, FileSignature, Loader2, Plus, RefreshCw, Search, Vault,
+  ArrowRight, Download, FileSignature, FileStack, Loader2, Plus, RefreshCw, Search, Vault,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   AGREEMENT_DASHBOARD_GROUPS,
@@ -31,7 +32,13 @@ import {
   agreementTemplate,
   type AgreementStatus,
 } from '@/lib/agreements';
-import { useAgreementCentreList } from '@/hooks/useAgreementCentre';
+import {
+  downloadTemplateDocx,
+  downloadTemplatePdf,
+  useAgreementCentreList,
+  useIssuerDefaults,
+} from '@/hooks/useAgreementCentre';
+import type { AgreementTemplateKey } from '@/lib/agreements';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 
@@ -54,8 +61,22 @@ export default function AgreementCentre() {
   const [group, setGroup] = useState<GroupKey>('all');
   const [search, setSearch] = useState('');
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState<string | null>(null);
 
   const { data: agreements = [], isLoading, isFetching, refetch } = useAgreementCentreList();
+  const { data: issuer } = useIssuerDefaults();
+
+  const exportTemplate = async (templateKey: AgreementTemplateKey, kind: 'pdf' | 'docx') => {
+    try {
+      setDownloadingTemplate(`${templateKey}:${kind}`);
+      if (kind === 'pdf') await downloadTemplatePdf(templateKey);
+      else await downloadTemplateDocx(templateKey, issuer);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Template download failed');
+    } finally {
+      setDownloadingTemplate(null);
+    }
+  };
 
   useEffect(() => {
     document.title = 'Agreements | Command Centre';
@@ -104,6 +125,9 @@ export default function AgreementCentre() {
             </Button>
             <Button variant="outline" onClick={() => setGroup('executed_vault')}>
               <Vault className="mr-2 h-4 w-4" /> Executed Agreements
+            </Button>
+            <Button variant="outline" onClick={() => setTemplatePickerOpen(true)}>
+              <FileStack className="mr-2 h-4 w-4" /> Templates
             </Button>
             <Button onClick={() => setTemplatePickerOpen(true)}>
               <Plus className="mr-2 h-4 w-4" /> Create Agreement
@@ -249,19 +273,18 @@ export default function AgreementCentre() {
       <Dialog open={templatePickerOpen} onOpenChange={setTemplatePickerOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Select agreement template</DialogTitle>
+            <DialogTitle>Agreement templates</DialogTitle>
             <DialogDescription>
               Two locked templates. The wording is fixed — you configure parties, branding and the
-              commercial schedule.
+              commercial schedule. Configure and issue digitally, or download the white-labelled
+              template to send through your own platform (DocuSign, PandaDoc, …).
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             {AGREEMENT_TEMPLATE_SUMMARIES.map((template) => (
-              <Link
+              <div
                 key={template.key}
-                to={`/partner-agreements/new?direction=${directionForTemplateKey(template.key)}`}
-                onClick={() => setTemplatePickerOpen(false)}
-                className="group rounded-xl border border-border bg-card/50 p-4 transition-colors hover:border-primary/50 hover:bg-accent/10"
+                className="group flex flex-col rounded-xl border border-border bg-card/50 p-4 transition-colors hover:border-primary/50"
               >
                 <div className="flex items-center justify-center gap-2 rounded-lg bg-muted/40 px-2 py-3 text-center">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -275,11 +298,40 @@ export default function AgreementCentre() {
                 <h3 className="mt-3 font-serif text-base font-semibold leading-snug text-foreground">
                   {template.title}
                 </h3>
-                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{template.referralFlow}</p>
-                <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
-                  Configure agreement <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-                </span>
-              </Link>
+                <p className="mt-1.5 flex-1 text-xs leading-relaxed text-muted-foreground">{template.referralFlow}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+                  <Button asChild size="sm">
+                    <Link
+                      to={`/partner-agreements/new?direction=${directionForTemplateKey(template.key)}`}
+                      onClick={() => setTemplatePickerOpen(false)}
+                    >
+                      Configure <ArrowRight className="ml-1 h-3 w-3" />
+                    </Link>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={downloadingTemplate !== null}
+                    onClick={() => exportTemplate(template.key, 'pdf')}
+                  >
+                    {downloadingTemplate === `${template.key}:pdf`
+                      ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      : <Download className="mr-1 h-3 w-3" />}
+                    PDF
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={downloadingTemplate !== null}
+                    onClick={() => exportTemplate(template.key, 'docx')}
+                  >
+                    {downloadingTemplate === `${template.key}:docx`
+                      ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      : <Download className="mr-1 h-3 w-3" />}
+                    DOCX
+                  </Button>
+                </div>
+              </div>
             ))}
           </div>
         </DialogContent>

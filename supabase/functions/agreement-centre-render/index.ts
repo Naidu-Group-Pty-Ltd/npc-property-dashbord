@@ -37,6 +37,7 @@ import {
   AGREEMENTS_BUCKET,
   SIGNED_URL_TTL_SECONDS,
   executionContextFromSignatures,
+  loadIssuerDefaults,
   renderAgreementPdf,
   renderAndStoreVersionPdf,
 } from '../_shared/agreements/render.ts';
@@ -80,6 +81,44 @@ Deno.serve(async (req) => {
     if (!authz.ok) return createForbiddenResponse(authz.error || 'Not authorized', corsHeaders);
 
     const operation = typeof body.operation === 'string' ? body.operation : null;
+
+    // ─── TEMPLATE (no agreement row) ────────────────────────
+    // The white-labelled template itself, for users sending through an
+    // external platform (DocuSign, PandaDoc, …): the full pack including the
+    // partner email page, the issuer's own details prefilled from settings,
+    // every other field printing its original bracket text.
+    if (operation === 'template') {
+      const templateKey = body.template_key === 'finance_referral_commission'
+        ? 'finance_referral_commission' as const
+        : 'strategic_property_referral' as const;
+      const issuer = await loadIssuerDefaults(supabase);
+      const pseudoRow = {
+        id: `template-${templateKey}`,
+        direction: templateKey === 'strategic_property_referral'
+          ? 'inbound_property_referral' : 'outbound_finance_referral',
+        document_version: '2.0',
+        // The tenant is the buyer's agency in both templates.
+        principal_legal_name: issuer.legalName ?? issuer.companyName,
+        principal_trading_name: issuer.companyName,
+        principal_abn: issuer.abn,
+        principal_address: issuer.address,
+        principal_contact_email: issuer.email,
+        schedule_extras: {},
+      };
+      const rendered = await renderAgreementPdf(supabase, supabaseUrl, {
+        row: pseudoRow as never,
+        versionLabel: 'Template',
+        statusKey: null,
+        includeTemplatePack: true,
+      });
+      const title = agreementTemplate(templateKey).title;
+      return json({
+        pdf_base64: toBase64(rendered.pdf),
+        gaps: rendered.gaps,
+        file_name: `${title.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-')}-template.pdf`,
+      });
+    }
+
     const id = typeof body.id === 'string' ? body.id : null;
     if (!id) return json({ error: 'id_required' }, 400);
 

@@ -18,6 +18,7 @@ import {
   agreementTemplate,
   type AgreementFieldValues,
   type AgreementStatus,
+  type AgreementTemplateKey,
 } from '@/lib/agreements';
 import { buildAgreementDocx, agreementDocxFileName } from '@/lib/agreements/docx';
 
@@ -315,9 +316,20 @@ export function useAgreementCentreMutations() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const createPartner = useMutation({
+    mutationFn: (params: { company_name: string; contact_name?: string; email: string; abn?: string }) =>
+      call<{ partner: PartnerOption }>({ action: 'create_partner', ...params }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'partners'] });
+      toast.success('Finance partner created');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return {
     create, update, transition, recordReview, issueToPartner, withdraw,
     counterSign, resolveChangeRequest, setOwner, newVersion, deleteDraft,
+    createPartner,
   };
 }
 
@@ -357,6 +369,39 @@ export async function downloadAgreementPdf(id: string, kind: 'draft' | 'issued' 
   } else if (data.url) {
     window.open(data.url, '_blank', 'noopener');
   }
+}
+
+/**
+ * The white-labelled template itself — no agreement row required. For users
+ * who send through an external platform (DocuSign, PandaDoc, …): the full
+ * pack including the partner email page, the tenant's own details prefilled,
+ * every negotiable field printing its original bracket text.
+ */
+export async function downloadTemplatePdf(templateKey: AgreementTemplateKey) {
+  const data = await callRender<{ pdf_base64: string; file_name: string }>({
+    operation: 'template', template_key: templateKey,
+  });
+  saveBlob(base64ToBlob(data.pdf_base64, 'application/pdf'), data.file_name);
+}
+
+export async function downloadTemplateDocx(
+  templateKey: AgreementTemplateKey,
+  issuer?: IssuerDefaults | null,
+) {
+  const values: AgreementFieldValues = issuer ? {
+    ba_legal_name: issuer.legalName ?? issuer.companyName,
+    ba_trading_name: issuer.companyName,
+    ba_abn_acn: issuer.abn,
+    ba_address: issuer.address,
+    ba_email: issuer.email,
+    ba_display_name: issuer.companyName ?? issuer.legalName,
+    company_name: issuer.companyName ?? issuer.legalName,
+    company_phone: issuer.phone,
+    company_email: issuer.email,
+    company_website: issuer.website,
+  } : {};
+  const blob = await buildAgreementDocx(templateKey, values);
+  saveBlob(blob, agreementDocxFileName(agreementTemplate(templateKey).title, null, 'template'));
 }
 
 /** Client-built DOCX from the same locked content and values. */
