@@ -31,6 +31,7 @@ import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import {
   PARTNER_VISIBLE_STATUSES,
+  isPartnerVisible,
   agreementTemplate,
   templateKeyForDirection,
   CHANGE_REQUEST_SECTIONS,
@@ -70,18 +71,43 @@ const PARTNER_ROW_FIELDS = [
   'upfront_share_pct', 'trail_share_pct', 'commission_basis', 'payment_cycle',
   'cleared_funds_required', 'clawback_treatment', 'clawback_repayment_days',
   'schedule_extras',
-  'issued_at', 'first_viewed_at', 'accepted_at', 'executed_at', 'withdrawn_at',
+  // `voided_at` but never `void_reason`: the partner is entitled to know the
+  // document is dead and when, not to read the issuer's internal note about
+  // why. `archived_at` is absent for the same reason it does not appear
+  // anywhere else here — filing is the issuer's business, not the partner's.
+  'issued_at', 'first_viewed_at', 'accepted_at', 'executed_at', 'withdrawn_at', 'voided_at',
   'created_at', 'updated_at',
 ] as const;
 
 /** Event types a partner's timeline shows. Internal workflow events stay internal. */
 const PARTNER_EVENT_TYPES = new Set([
   'issued', 'reissued', 'partner_viewed', 'accepted', 'partner_signed',
-  'counter_signed', 'fully_executed', 'withdrawn', 'changes_requested',
+  'counter_signed', 'fully_executed', 'withdrawn', 'void', 'changes_requested',
   'change_request_resolved', 'change_request_declined',
 ]);
 
 const SECTION_KEYS = new Set(CHANGE_REQUEST_SECTIONS.map((section) => section.key));
+
+/**
+ * Event types whose summary and payload carry the issuer's internal note.
+ *
+ * The Command Centre labels that field "recorded in the activity history" and
+ * people write things in it they would not say to the counterparty — "duplicate,
+ * created in error", "partner failed compliance". The timeline rows go to the
+ * partner verbatim, so these two are re-stated in neutral terms and their
+ * payload dropped. The partner is told the fact and the date; the reason stays
+ * on our side.
+ */
+const REASON_BEARING_EVENTS: Record<string, string> = {
+  withdrawn: 'Agreement withdrawn by the issuing organisation',
+  void: 'Agreement voided by the issuing organisation',
+};
+
+function partnerEventView(event: Record<string, unknown>) {
+  const neutral = REASON_BEARING_EVENTS[String(event.event_type)];
+  if (!neutral) return event;
+  return { ...event, summary: neutral, payload: {} };
+}
 
 function partnerView(row: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -192,7 +218,7 @@ Deno.serve(async (req) => {
         .eq('finance_agent_contact_id', financeContactId)
         .maybeSingle();
       if (!data) return null;
-      if (!(PARTNER_VISIBLE_STATUSES as readonly string[]).includes(data.status)) return null;
+      if (!isPartnerVisible(data.status, data.issued_at as string | null)) return null;
       return data;
     }
 
@@ -200,7 +226,11 @@ Deno.serve(async (req) => {
     if (operation === 'list' || operation === null) {
       const { data, error } = await supabase.from(TABLE).select('*')
         .eq('finance_agent_contact_id', financeContactId)
+        // Both halves of `isPartnerVisible`, as a query: the partner sees what
+        // they were actually sent — including that it was later voided — and
+        // never an agreement that stayed on our side of the wall.
         .in('status', PARTNER_VISIBLE_STATUSES as unknown as string[])
+        .not('issued_at', 'is', null)
         .order('issued_at', { ascending: false, nullsFirst: false });
       if (error) throw error;
 
@@ -258,8 +288,9 @@ Deno.serve(async (req) => {
         versions: versionsRes.data ?? [],
         change_requests: requestsRes.data ?? [],
         signatures: signaturesRes.data ?? [],
-        events: (eventsRes.data ?? []).filter((event: { event_type: string }) =>
-          PARTNER_EVENT_TYPES.has(event.event_type)),
+        events: (eventsRes.data ?? [])
+          .filter((event: { event_type: string }) => PARTNER_EVENT_TYPES.has(event.event_type))
+          .map(partnerEventView),
       });
     }
 

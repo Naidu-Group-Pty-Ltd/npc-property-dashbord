@@ -21,12 +21,18 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ArrowRight, FileSignature, FileStack, Loader2, Plus, RefreshCw, Search, Vault,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Archive, ArchiveRestore, ArrowRight, Ban, FileSignature, FileStack, Loader2,
+  MoreHorizontal, Plus, RefreshCw, Search, Trash2, Vault,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   AGREEMENT_DASHBOARD_GROUPS,
   AGREEMENT_PRIMARY_ACTIONS,
+  agreementDispositionFromRow,
   templateKeyForDirection,
   agreementTemplate,
   type AgreementStatus,
@@ -36,6 +42,7 @@ import {
   docxBrandFrom,
   downloadTemplateDocx,
   useAgreementCentreList,
+  useAgreementCentreMutations,
   useIssuerDefaults,
 } from '@/hooks/useAgreementCentre';
 import { loadDocxLogo } from '@/lib/agreements/docx';
@@ -43,6 +50,9 @@ import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 import TemplateLibraryDialog from '@/components/agreement-centre/TemplateLibraryDialog';
+import AgreementDispositionDialog, {
+  type DispositionMode,
+} from '@/components/agreement-centre/AgreementDispositionDialog';
 
 type GroupKey = 'all' | 'executed_vault' | (typeof AGREEMENT_DASHBOARD_GROUPS)[number]['key'];
 
@@ -63,10 +73,35 @@ export default function AgreementCentre() {
   const [group, setGroup] = useState<GroupKey>('all');
   const [search, setSearch] = useState('');
   const [templatesOpen, setTemplatesOpen] = useState(false);
+  /** The archive is a separate list, not a filter over the working one. */
+  const [view, setView] = useState<'working' | 'archived'>('working');
+  const [disposition, setDisposition] = useState<
+    { mode: DispositionMode; agreement: PartnerAgreement } | null
+  >(null);
 
-  const { data: agreements = [], isLoading, isFetching, refetch } = useAgreementCentreList();
+  const { data, isLoading, isFetching, refetch } = useAgreementCentreList(
+    view === 'archived' ? 'only' : 'exclude',
+  );
+  const agreements = data?.agreements ?? [];
+  const archivedCount = data?.archivedCount ?? 0;
   const { data: issuer } = useIssuerDefaults();
   const { settings: brandSettings } = useBrand();
+  const { voidAgreement, archive, restore, deleteAgreement } = useAgreementCentreMutations();
+
+  const dispositionPending = voidAgreement.isPending || archive.isPending
+    || restore.isPending || deleteAgreement.isPending;
+
+  const runDisposition = (input: { reason?: string }) => {
+    if (!disposition) return;
+    const id = disposition.agreement.id;
+    const done = { onSuccess: () => setDisposition(null) };
+    switch (disposition.mode) {
+      case 'void': return voidAgreement.mutate({ id, reason: input.reason ?? '' }, done);
+      case 'archive': return archive.mutate({ id, reason: input.reason }, done);
+      case 'restore': return restore.mutate(id, done);
+      case 'delete': return deleteAgreement.mutate({ id }, done);
+    }
+  };
 
   /**
    * The template download. The mark is fetched here rather than inside the
@@ -128,9 +163,27 @@ export default function AgreementCentre() {
             <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh">
               <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
             </Button>
-            <Button variant="outline" onClick={() => setGroup('executed_vault')}>
+            <Button
+              variant="outline"
+              onClick={() => { setView('working'); setGroup('executed_vault'); }}
+            >
               <Vault className="mr-2 h-4 w-4" /> Executed Agreements
             </Button>
+            {/* Only offered once something is in there — an empty archive is
+                not a destination, and the count is the reassurance that
+                archiving did not lose anything. */}
+            {archivedCount > 0 || view === 'archived' ? (
+              <Button
+                variant={view === 'archived' ? 'secondary' : 'outline'}
+                onClick={() => {
+                  setView(view === 'archived' ? 'working' : 'archived');
+                  setGroup('all');
+                }}
+              >
+                <Archive className="mr-2 h-4 w-4" />
+                Archived{archivedCount > 0 ? ` (${archivedCount})` : ''}
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setTemplatesOpen(true)}>
               <FileStack className="mr-2 h-4 w-4" /> Templates
             </Button>
@@ -139,6 +192,17 @@ export default function AgreementCentre() {
             </Button>
           </div>
         </header>
+
+        {view === 'archived' ? (
+          <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+            <Archive className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Archived agreements.</span>{' '}
+              Nothing here has been changed — an archived agreement keeps its status and,
+              if it is active, still governs commission. Restore one to work on it again.
+            </p>
+          </div>
+        ) : null}
 
         {/* Status counters — compact and operational, not oversized KPI cards. */}
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-9">
@@ -188,6 +252,20 @@ export default function AgreementCentre() {
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
+            ) : filtered.length === 0 && view === 'archived' ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                <Archive className="h-10 w-10 text-muted-foreground" />
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">The archive is empty</p>
+                  <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                    Archiving takes a settled or abandoned agreement out of the working list
+                    without changing anything about it.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={() => { setView('working'); setGroup('all'); }}>
+                  Back to the working list
+                </Button>
+              </div>
             ) : filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
                 <FileSignature className="h-10 w-10 text-muted-foreground" />
@@ -223,11 +301,13 @@ export default function AgreementCentre() {
                       <TableHead>Status</TableHead>
                       <TableHead>Execution</TableHead>
                       <TableHead className="text-right">Next step</TableHead>
+                      <TableHead className="w-10" aria-label="Actions" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.map((agreement) => {
                       const templateKey = templateKeyForDirection(agreement.direction);
+                      const can = agreementDispositionFromRow(agreement);
                       return (
                         <TableRow
                           key={agreement.id}
@@ -269,6 +349,50 @@ export default function AgreementCentre() {
                               <ArrowRight className="h-3 w-3" />
                             </span>
                           </TableCell>
+                          {/* The row navigates; this cell must not. */}
+                          <TableCell onClick={(event) => event.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  aria-label={`Actions for ${agreement.partner_legal_name}`}
+                                >
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuItem onSelect={() => navigate(`/partner-agreements/${agreement.id}`)}>
+                                  <ArrowRight className="mr-2 h-4 w-4" /> Open agreement
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                {can.canRestore ? (
+                                  <DropdownMenuItem onSelect={() => setDisposition({ mode: 'restore', agreement })}>
+                                    <ArchiveRestore className="mr-2 h-4 w-4" /> Restore
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {can.canVoid ? (
+                                  <DropdownMenuItem onSelect={() => setDisposition({ mode: 'void', agreement })}>
+                                    <Ban className="mr-2 h-4 w-4" /> Void agreement
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {can.canArchive ? (
+                                  <DropdownMenuItem onSelect={() => setDisposition({ mode: 'archive', agreement })}>
+                                    <Archive className="mr-2 h-4 w-4" /> Archive
+                                  </DropdownMenuItem>
+                                ) : null}
+                                {can.canDelete ? (
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onSelect={() => setDisposition({ mode: 'delete', agreement })}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
+                                  </DropdownMenuItem>
+                                ) : null}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -284,6 +408,14 @@ export default function AgreementCentre() {
         open={templatesOpen}
         onOpenChange={setTemplatesOpen}
         onDownload={exportTemplate}
+      />
+
+      <AgreementDispositionDialog
+        mode={disposition?.mode ?? null}
+        agreementLabel={disposition?.agreement.partner_legal_name ?? ''}
+        pending={dispositionPending}
+        onOpenChange={(open) => { if (!open) setDisposition(null); }}
+        onConfirm={runDisposition}
       />
     </>
   );

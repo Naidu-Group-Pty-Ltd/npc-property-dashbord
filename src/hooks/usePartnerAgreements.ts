@@ -106,6 +106,14 @@ export interface PartnerAgreement {
   withdrawn_at?: string | null;
   executed_pdf_storage_path?: string | null;
 
+  // Disposition. `archived_at` is filing state and deliberately not a status:
+  // an archived agreement keeps every consequence of the one it has.
+  voided_at?: string | null;
+  void_reason?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  archived_by_label?: string | null;
+  archive_reason?: string | null;
 
   created_by: string | null;
   updated_by: string | null;
