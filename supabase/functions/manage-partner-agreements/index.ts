@@ -85,6 +85,21 @@ const STATUSES = new Set<string>(AGREEMENT_STATUSES);
 /** Long enough that "n/a" does not satisfy the void audit trail. */
 const MIN_VOID_REASON = 6;
 
+/**
+ * `verifyAuth` reports an internal caller as the literal string
+ * `'service_role'`, and every "who did this" column here is a UUID. Writing
+ * the string into one does not fail a type check anywhere — it fails in
+ * Postgres, at the moment of the write, with `invalid input syntax for type
+ * uuid`, taking the whole action down with it.
+ *
+ * Two call sites already spelled this guard out inline. It is a function now
+ * because the disposition actions added more, and a rule enforced by
+ * remembering is not enforced.
+ */
+function staffId(actorId: string | null): string | null {
+  return !actorId || actorId === 'service_role' ? null : actorId;
+}
+
 /** Status transitions permitted by the agreement engine — shared with the UIs. */
 const TRANSITIONS: Record<string, string[]> = AGREEMENT_TRANSITIONS;
 
@@ -160,7 +175,7 @@ async function logEvent(
   const { error } = await supabase.from(EVENTS_TABLE).insert({
     agreement_id: agreementId,
     event_type: eventType,
-    actor_id: actorId,
+    actor_id: staffId(actorId),
     actor_label: actorLabel,
     summary,
     payload,
@@ -172,7 +187,7 @@ async function logEvent(
     agreement_id: agreementId,
     scope_type: 'agreement',
     scope_id: agreementId,
-    actor_id: actorId,
+    actor_id: staffId(actorId),
     actor_label: actorLabel,
     severity: eventType === 'terminated' || eventType === 'void' ? 'critical' : 'info',
     category: 'lifecycle',
@@ -407,7 +422,7 @@ Deno.serve(async (req) => {
           abn: abn || null,
           contact_type: 'external',
           is_active: true,
-          created_by: actorId === 'service_role' ? null : actorId,
+          created_by: staffId(actorId),
         })
         .select('id, name, email, company, abn')
         .single();
@@ -483,9 +498,9 @@ Deno.serve(async (req) => {
           ...payload,
           status: 'draft',
           version: 1,
-          created_by: actorId,
-          updated_by: actorId,
-          agreement_owner_id: actorId,
+          created_by: staffId(actorId),
+          updated_by: staffId(actorId),
+          agreement_owner_id: staffId(actorId),
           agreement_owner_label: actorLabel,
         })
         .select()
@@ -527,7 +542,7 @@ Deno.serve(async (req) => {
 
       const { data, error } = await supabase
         .from(TABLE)
-        .update({ ...payload, updated_by: actorId })
+        .update({ ...payload, updated_by: staffId(actorId) })
         .eq('id', id)
         .select()
         .single();
@@ -592,7 +607,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const patch: Record<string, unknown> = { status: nextStatus, updated_by: actorId };
+      const patch: Record<string, unknown> = { status: nextStatus, updated_by: staffId(actorId) };
       if (nextStatus === 'active') patch.activated_at = new Date().toISOString();
       if (nextStatus === 'sent_for_signature' && existing.status !== 'partner_review') {
         patch.docusign_sent_at = new Date().toISOString();
@@ -642,7 +657,7 @@ Deno.serve(async (req) => {
 
       const nextStatus = decision === 'approved' ? 'approved_for_issue' : 'draft';
       const { data, error } = await supabase.from(TABLE)
-        .update({ status: nextStatus, updated_by: actorId })
+        .update({ status: nextStatus, updated_by: staffId(actorId) })
         .eq('id', id).eq('status', 'pending_review')
         .select().single();
       if (error) throw error;
@@ -650,7 +665,7 @@ Deno.serve(async (req) => {
       await supabase.from(REVIEWS_TABLE).insert({
         agreement_id: id,
         decision,
-        reviewer_id: actorId,
+        reviewer_id: staffId(actorId),
         reviewer_label: actorLabel,
         notes: notes ?? null,
       });
@@ -736,7 +751,7 @@ Deno.serve(async (req) => {
         brand_snapshot: snapshot,
         changed_fields: changedFields,
         status: 'issued',
-        issued_by: actorId,
+        issued_by: staffId(actorId),
         issued_by_label: actorLabel,
       }).select().single();
       if (versionError) throw versionError;
@@ -755,7 +770,7 @@ Deno.serve(async (req) => {
         issued_at: new Date().toISOString(),
         issued_version_id: version.id,
         sent_via: 'partner_portal',
-        updated_by: actorId,
+        updated_by: staffId(actorId),
       }).eq('id', id).eq('status', 'approved_for_issue').select().single();
       if (updateError) throw updateError;
 
@@ -764,7 +779,7 @@ Deno.serve(async (req) => {
         .update({
           status: 'resolved',
           resolved_in_version_id: version.id,
-          resolved_by: actorId,
+          resolved_by: staffId(actorId),
           resolved_by_label: actorLabel,
           resolved_at: new Date().toISOString(),
           resolution_note: `Addressed in version ${label}`,
@@ -811,7 +826,7 @@ Deno.serve(async (req) => {
       const { data, error } = await supabase.from(TABLE).update({
         status: 'withdrawn',
         withdrawn_at: new Date().toISOString(),
-        updated_by: actorId,
+        updated_by: staffId(actorId),
       }).eq('id', id).select().single();
       if (error) throw error;
 
@@ -867,7 +882,7 @@ Deno.serve(async (req) => {
         signatory_title: signatory_title ?? null,
         signature_typed,
         signature_method: 'typed_electronic',
-        staff_user_id: actorId === 'service_role' ? null : actorId,
+        staff_user_id: staffId(actorId),
       });
       if (signatureError) {
         if (/duplicate|unique/i.test(signatureError.message)) {
@@ -908,7 +923,7 @@ Deno.serve(async (req) => {
         executed_at: executedAt,
         executed_pdf_storage_path: executedPath,
         signed_pdf_storage_path: executedPath,
-        updated_by: actorId,
+        updated_by: staffId(actorId),
       }).eq('id', id).eq('status', 'partially_signed').select().single();
       if (updateError) throw updateError;
 
@@ -956,7 +971,7 @@ Deno.serve(async (req) => {
 
       const { data, error } = await supabase.from(CHANGE_REQUESTS_TABLE).update({
         status: resolution,
-        resolved_by: actorId,
+        resolved_by: staffId(actorId),
         resolved_by_label: actorLabel,
         resolved_at: new Date().toISOString(),
         resolution_note: resolution_note ?? null,
@@ -977,7 +992,7 @@ Deno.serve(async (req) => {
       const { data, error } = await supabase.from(TABLE).update({
         agreement_owner_id: owner_id ?? null,
         agreement_owner_label: owner_label ?? null,
-        updated_by: actorId,
+        updated_by: staffId(actorId),
       }).eq('id', id).select().single();
       if (error) throw error;
       await logEvent(supabase, id, 'owner_changed', actorId, actorLabel,
@@ -1007,8 +1022,8 @@ Deno.serve(async (req) => {
       clone.status = 'draft';
       clone.version = (existing.version ?? 1) + 1;
       clone.supersedes_agreement_id = existing.id;
-      clone.created_by = actorId;
-      clone.updated_by = actorId;
+      clone.created_by = staffId(actorId);
+      clone.updated_by = staffId(actorId);
 
       const { data, error } = await supabase.from(TABLE).insert(clone).select().single();
       if (error) throw error;
@@ -1054,7 +1069,7 @@ Deno.serve(async (req) => {
         status: 'void',
         voided_at: voidedAt,
         void_reason: reason,
-        updated_by: actorId,
+        updated_by: staffId(actorId),
       }).eq('id', id).eq('status', existing.status).select().single();
       if (error) throw error;
 
@@ -1107,10 +1122,10 @@ Deno.serve(async (req) => {
       const note = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim() : null;
       const { data, error } = await supabase.from(TABLE).update({
         archived_at: archiving ? new Date().toISOString() : null,
-        archived_by: archiving ? actorId : null,
+        archived_by: archiving ? staffId(actorId) : null,
         archived_by_label: archiving ? actorLabel : null,
         archive_reason: archiving ? note : null,
-        updated_by: actorId,
+        updated_by: staffId(actorId),
       }).eq('id', id).select().single();
       if (error) throw error;
 
@@ -1164,7 +1179,7 @@ Deno.serve(async (req) => {
         agreement_id: id,
         scope_type: 'agreement',
         scope_id: id,
-        actor_id: actorId,
+        actor_id: staffId(actorId),
         actor_label: actorLabel,
         severity: 'critical',
         category: 'lifecycle',
