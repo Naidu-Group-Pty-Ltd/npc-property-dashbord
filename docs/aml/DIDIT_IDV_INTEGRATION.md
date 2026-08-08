@@ -186,10 +186,12 @@ that never reached the people it was made for. That is what left customers on
 the cross-device QR screen after `is_desktop_allowed` had already been
 corrected.
 
-Didit cannot tell you this happened: editing a published workflow mutates the
-version **in place**, so a session created before the edit and the live
-workflow after it both report `workflow_version: 1`. There is no obsolete
-version number to compare.
+Didit's version number cannot tell you this happened. Measured on this
+account: changing a **setting** (`is_desktop_allowed`) left the published
+workflow at version 1, while editing the **graph** (`documents_allowed`)
+created version 2. So a session and the live workflow can report the same
+version across a change that matters. There is no version comparison that
+answers the question.
 
 So the marker is NPC's. `aml.provider_configs.config.workflow_revised_at` is an
 ISO-8601 instant, **set by whoever changes the Didit workflow**:
@@ -286,6 +288,27 @@ can see:
 - **Give it room.** A viewfinder inside a fixed-height box with its controls
   below the fold is a usability failure that reads to the customer as a broken
   camera.
+
+### Which screens the customer sees
+
+The provider's documented journey is: **Start screen → country & document
+selection → ID capture → liveness + face match → outcome.**
+
+The Start screen is **mandatory** — there is no supported way to remove it, and
+white label only rebrands it. Selection is **auto-skipped when the workflow
+allows a single document type**; NPC keeps four (passport, driver licence, ID
+card, residence permit) so it still appears, with country preselected because
+only Australia is enabled. Capture-review and OCR-data-review screens are
+already off (`is_image_capture_review_screen_enabled`,
+`is_ocr_id_verification_data_review_enabled`).
+
+The official web SDK (`@didit-protocol/sdk-web`) does **not** remove any of
+them: it is an iframe wrapper around the same session URL. NPC's own embed
+grants a superset of its `allow` list and pins the exact origin of the minted
+URL, where the SDK accepts any `*.didit.me` host. There is nothing to gain by
+adopting it — but its source is the authoritative list of the `postMessage`
+events an embedded session sends, and only `completed`, `cancelled`, `error`
+and `close_request` are terminal.
 
 ### The flag is necessary, not sufficient
 
