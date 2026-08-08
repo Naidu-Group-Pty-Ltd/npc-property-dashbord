@@ -6,8 +6,8 @@
  * Model Hub remains the place to manage model selection at the account level.
  */
 
-import { f, opt, out, outs, provider } from './builders';
-import type { CatalogNode } from '../types';
+import { f, opt, out, outs, provider } from './builders.pure.ts';
+import type { CatalogNode } from '../types.pure.ts';
 
 /** Chat-style providers all return the same envelope. */
 const COMPLETION_OUTPUTS = outs(

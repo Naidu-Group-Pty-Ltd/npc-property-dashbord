@@ -7,8 +7,8 @@
  * image and a set of comparable sales without dropping to a raw HTTP node.
  */
 
-import { f, opt, outs, provider } from './builders';
-import type { CatalogNode } from '../types';
+import { f, opt, outs, provider } from './builders.pure.ts';
+import type { CatalogNode } from '../types.pure.ts';
 
 const ADDRESS_FIELD = f.expr('address', 'Address', {
   required: true,

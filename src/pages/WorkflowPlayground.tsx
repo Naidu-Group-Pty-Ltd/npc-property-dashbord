@@ -326,7 +326,7 @@ export default function WorkflowPlayground() {
               : 'Workflow set back to draft',
         description:
           next === 'live'
-            ? 'Marked ready. Triggers are not dispatched automatically yet, so start it with Test run or Run live.'
+            ? 'Its trigger will start it from now on, within about a minute of the event.'
             : undefined,
       });
     },

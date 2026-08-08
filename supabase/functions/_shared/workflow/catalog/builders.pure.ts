@@ -13,7 +13,7 @@ import type {
   NodeCategoryId,
   NodeField,
   NodeOutput,
-} from '../types';
+} from '../types.pure.ts';
 
 type FieldOpts = Partial<Omit<NodeField, 'key' | 'label' | 'type'>>;
 

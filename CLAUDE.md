@@ -48,6 +48,22 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+## Workflow Playground (the automation canvas)
+Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
+the run engine, the trigger-capture triggers or the dispatcher. One engine serves
+three callers — a test run, a live run a person starts, and a workflow a captured
+event dispatches with nobody watching — so it lives in
+`supabase/functions/_shared/workflow/` and `src/lib/workflow/*` are one-line
+shims onto it. Those modules must parse under Deno: no `@/` aliases, explicit
+`.ts` extensions.
+
+Two things the doc records that keep biting. **Nothing is captured unless a live
+workflow listens for it**, so an empty `workflow_trigger_events` on a deployment
+with no live workflows is correct rather than broken. And **live execution
+performs 8 of 252 catalog steps** — everything else simulates and says so;
+extending it is per-vendor work, and a new vendor call that skips
+`_shared/meteredFetch.ts` is billed to nobody.
+
 ## API usage metering (this deployment may be spending someone else's money)
 A workspace provisioned by Aurixa Mission Control boots with the **prime's own
 vendor keys** forwarded into its Supabase project — OpenAI, Resend, Domain,

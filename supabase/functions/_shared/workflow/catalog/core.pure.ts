@@ -10,8 +10,8 @@
  * needs a matching source; do not invent events the platform cannot emit.
  */
 
-import { f, native, opt, outs } from './builders';
-import type { CatalogNode } from '../types';
+import { f, native, opt, outs } from './builders.pure.ts';
+import type { CatalogNode } from '../types.pure.ts';
 
 const CLIENT_OUTPUTS = outs(
   'clientId:string:Client ID',

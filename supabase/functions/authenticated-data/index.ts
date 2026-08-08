@@ -57,6 +57,15 @@ interface TableRule {
   module?: string;
   /** Column that must equal the resolved user id. Applied as a mandatory filter. */
   ownerColumn?: string;
+  /**
+   * Column stamped with the caller on INSERT only.
+   *
+   * Unlike `ownerColumn` this is not an access rule: it does not narrow reads,
+   * and — the reason it is a separate field — it is not rewritten on UPDATE.
+   * `created_by` records who made the row, and a colleague saving an edit must
+   * not become its author.
+   */
+  insertOwnerColumn?: string;
   /** Reads allowed to any verified session (policy is `true`). */
   openRead?: boolean;
   /** Staff roles permitted, checked against user_roles. */
@@ -114,7 +123,12 @@ const TABLES: Record<string, TableRule> = {
   chart_configurations:    { openRead: true, module: 'charts' },
   template_components:     { module: 'templates', ownerColumn: 'created_by', openRead: true },
   template_comments:       { ownerColumn: 'author_id', openRead: true },
-  workflows:               { roles: ['superadmin', 'admin'] },
+  // `created_by` is stamped on creation because a workflow dispatched by a
+  // captured event has no operator: it is the recorded author whose authority
+  // its steps run under, and whom a notification falls back to. A workflow with
+  // no author can still be built and test-run; it just cannot address anyone
+  // when it runs unattended, and the step says so.
+  workflows:               { roles: ['superadmin', 'admin'], insertOwnerColumn: 'created_by' },
   workflow_runs:           { roles: ['superadmin', 'admin'] },
   workflow_run_steps:      { roles: ['superadmin', 'admin'] },
   workflow_trigger_events: { roles: ['superadmin', 'admin'] },
@@ -230,10 +244,14 @@ Deno.serve(async (req) => {
   let body: string | undefined;
   if (!isRead && req.body) {
     const raw = await req.text();
-    if (raw && rule.ownerColumn) {
+    // `ownerColumn` is stamped on every write it governs; `insertOwnerColumn`
+    // only on creation, so an edit by a colleague does not reassign authorship.
+    const stampColumn = rule.ownerColumn
+      ?? (req.method === 'POST' ? rule.insertOwnerColumn : undefined);
+    if (raw && stampColumn) {
       try {
         const parsed = JSON.parse(raw);
-        const stamp = (row: Record<string, unknown>) => ({ ...row, [rule.ownerColumn!]: userId });
+        const stamp = (row: Record<string, unknown>) => ({ ...row, [stampColumn]: userId });
         body = JSON.stringify(Array.isArray(parsed) ? parsed.map(stamp) : stamp(parsed));
       } catch { body = raw; }
     } else {
