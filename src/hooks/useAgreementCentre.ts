@@ -136,12 +136,21 @@ async function callRender<T>(payload: Record<string, unknown>): Promise<T> {
 
 // ── Queries ──────────────────────────────────────────────────────────────────
 
-export function useAgreementCentreList() {
+/**
+ * The working list, or the archive.
+ *
+ * `archived_count` rides along with either so the archive is reachable from
+ * the working view without a second request — an archived agreement that
+ * cannot be found again is indistinguishable from a deleted one.
+ */
+export function useAgreementCentreList(archived: 'exclude' | 'only' = 'exclude') {
   return useQuery({
-    queryKey: ['agreement-centre', 'list'],
+    queryKey: ['agreement-centre', 'list', archived],
     queryFn: async () => {
-      const data = await call<{ agreements: PartnerAgreement[] }>({ action: 'list' });
-      return data.agreements ?? [];
+      const data = await call<{ agreements: PartnerAgreement[]; archived_count: number }>({
+        action: 'list', archived,
+      });
+      return { agreements: data.agreements ?? [], archivedCount: data.archived_count ?? 0 };
     },
   });
 }
@@ -311,11 +320,46 @@ export function useAgreementCentreMutations() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const deleteDraft = useMutation({
-    mutationFn: (id: string) => call<{ success: boolean }>({ action: 'delete_draft', id }),
+  // ── Disposition ────────────────────────────────────────────────────────
+  // Three different acts, three different mutations, three different
+  // sentences afterwards. The server re-derives every one of these rules; the
+  // UI only decides which buttons are worth showing.
+
+  const voidAgreement = useMutation({
+    mutationFn: (params: { id: string; reason: string }) =>
+      call<{ agreement: PartnerAgreement }>({ action: 'void_agreement', ...params }),
+    onSuccess: (res) => {
+      invalidate(res.agreement.id);
+      toast.success('Agreement voided');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const archive = useMutation({
+    mutationFn: (params: { id: string; reason?: string }) =>
+      call<{ agreement: PartnerAgreement }>({ action: 'archive', ...params }),
+    onSuccess: (res) => {
+      invalidate(res.agreement.id);
+      toast.success('Archived — find it under Archived, or restore it any time');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const restore = useMutation({
+    mutationFn: (id: string) => call<{ agreement: PartnerAgreement }>({ action: 'restore', id }),
+    onSuccess: (res) => {
+      invalidate(res.agreement.id);
+      toast.success('Restored to the working list');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const deleteAgreement = useMutation({
+    mutationFn: (params: { id: string; reason?: string }) =>
+      call<{ success: boolean }>({ action: 'delete_agreement', ...params }),
     onSuccess: () => {
       invalidate();
-      toast.success('Draft deleted');
+      toast.success('Agreement deleted');
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -332,7 +376,8 @@ export function useAgreementCentreMutations() {
 
   return {
     create, update, transition, recordReview, issueToPartner, withdraw,
-    counterSign, resolveChangeRequest, setOwner, newVersion, deleteDraft,
+    counterSign, resolveChangeRequest, setOwner, newVersion,
+    voidAgreement, archive, restore, deleteAgreement,
     createPartner,
   };
 }

@@ -15,6 +15,17 @@
  *   issuer_defaults      tenant identity for wizard prefill
  *   validate_issue       the pre-issue validation panel, server-computed
  *
+ * …and disposition — the three ways an agreement leaves the working list:
+ *
+ *   void_agreement       declare it of no effect (reasoned, permanent, cascades)
+ *   archive / restore    file it away and bring it back (reversible, no effect
+ *                        on status, commission or the partner's copy)
+ *   delete_agreement     destroy a row that never left the building
+ *
+ * Every one of those re-derives its own eligibility from the database rather
+ * than trusting what the browser thought was possible, using the same pure
+ * rules the UI greys the buttons out with (`lifecycle.pure.ts`).
+ *
  * Authorisation: staff session + the `agreements` module, deny-by-default —
  * reads need can_view, mutations can_edit (`_shared/authz.ts`, not the
  * allow-by-default `_shared/permissions.ts`). The transition map is the shared
@@ -38,6 +49,10 @@ import {
   AGREEMENT_STATUSES,
   EDITABLE_STATUSES,
   IN_FLIGHT_STATUSES,
+  agreementDeleteVerdict,
+  archiveRefusal,
+  canArchive,
+  canVoid,
   versionLabel,
   templateKeyForDirection,
   projectFieldValues,
@@ -66,6 +81,9 @@ const SIGNATURES_TABLE = 'partner_agreement_signatures';
 
 const DIRECTIONS = new Set(['inbound_property_referral', 'outbound_finance_referral']);
 const STATUSES = new Set<string>(AGREEMENT_STATUSES);
+
+/** Long enough that "n/a" does not satisfy the void audit trail. */
+const MIN_VOID_REASON = 6;
 
 /** Status transitions permitted by the agreement engine — shared with the UIs. */
 const TRANSITIONS: Record<string, string[]> = AGREEMENT_TRANSITIONS;
@@ -242,6 +260,25 @@ Deno.serve(async (req) => {
     );
     if (!authz.ok) return createForbiddenResponse(authz.error || 'Not authorized', corsHeaders);
 
+    // An archived agreement is out of the working list, so work on it is work
+    // nobody can see. Restoring first is one click and makes the row visible
+    // to the next person who wonders why it moved. Deletion and restore are
+    // the exceptions — both are how an archived row legitimately leaves.
+    const ARCHIVE_BLOCKED_ACTIONS = new Set([
+      'update', 'transition', 'record_review', 'issue_to_partner', 'withdraw',
+      'counter_sign', 'resolve_change_request', 'new_version', 'void_agreement',
+    ]);
+    if (ARCHIVE_BLOCKED_ACTIONS.has(action) && typeof body.id === 'string' && body.id) {
+      const { data: archiveCheck } = await supabase
+        .from(TABLE).select('archived_at').eq('id', body.id).maybeSingle();
+      if (archiveCheck?.archived_at) {
+        return json({
+          error: 'agreement_archived',
+          message: 'This agreement is archived. Restore it to the working list before changing it.',
+        }, corsHeaders, 409);
+      }
+    }
+
     // ─── LIST ───────────────────────────────────────────────
     if (action === 'list') {
       let query = supabase.from(TABLE).select('*').order('created_at', { ascending: false });
@@ -249,9 +286,24 @@ Deno.serve(async (req) => {
       if (body.status && STATUSES.has(body.status)) query = query.eq('status', body.status);
       if (body.finance_agent_contact_id) query = query.eq('finance_agent_contact_id', body.finance_agent_contact_id);
 
+      // The working list excludes the archive by default — that is the whole
+      // point of archiving. `only` is the archive view, `all` is for anything
+      // that must not be fooled by a filing decision.
+      const archived = body.archived === 'only' || body.archived === 'all' ? body.archived : 'exclude';
+      if (archived === 'exclude') query = query.is('archived_at', null);
+      if (archived === 'only') query = query.not('archived_at', 'is', null);
+
       const { data, error } = await query;
       if (error) throw error;
-      return json({ agreements: data ?? [] }, corsHeaders);
+
+      // The archived count travels with the working list so the UI can offer
+      // the archive without a second round trip — and so a user who archived
+      // something can see where it went.
+      const { count: archivedCount } = await supabase
+        .from(TABLE).select('id', { count: 'exact', head: true })
+        .not('archived_at', 'is', null);
+
+      return json({ agreements: data ?? [], archived_count: archivedCount ?? 0 }, corsHeaders);
     }
 
     // ─── GET (with events, versions, reviews, change requests, signatures) ──
@@ -381,6 +433,9 @@ Deno.serve(async (req) => {
     }
 
     // ─── DUPLICATE CHECK (warn, never block) ────────────────
+    // Deliberately blind to `archived_at`: an archived agreement that is still
+    // live is still a duplicate, and a warning that a tidy-up can switch off
+    // is not a warning.
     if (action === 'duplicate_check') {
       const { finance_agent_contact_id, direction } = body;
       if (!finance_agent_contact_id) return json({ agreements: [] }, corsHeaders);
@@ -510,6 +565,12 @@ Deno.serve(async (req) => {
       if (nextStatus === 'partner_review') {
         return json({ error: 'use_issue_action', message: 'Use the Issue to Partner action to send an agreement to the portal.' }, corsHeaders, 409);
       }
+      // Voiding requires a reason, cascades to the issued version rows and
+      // tells the partner. A generic status flip does none of that, and used
+      // to write its reason into `termination_reason` — the wrong column.
+      if (nextStatus === 'void') {
+        return json({ error: 'use_void_action', message: 'Use the Void action, which records why and notifies the partner.' }, corsHeaders, 409);
+      }
 
       // Activation gate — a live agreement must carry executable commercial terms.
       if (nextStatus === 'active') {
@@ -541,7 +602,6 @@ Deno.serve(async (req) => {
         patch.termination_reason = reason ?? null;
         patch.termination_date = body.termination_date ?? new Date().toISOString().slice(0, 10);
       }
-      if (nextStatus === 'void') patch.termination_reason = reason ?? null;
 
       const { data, error } = await supabase.from(TABLE).update(patch).eq('id', id).select().single();
       if (error) throw error;
@@ -961,16 +1021,166 @@ Deno.serve(async (req) => {
       return json({ agreement: data }, corsHeaders);
     }
 
-    // ─── DELETE DRAFT ───────────────────────────────────────
-    if (action === 'delete_draft') {
+    // ─── VOID (declare the agreement of no effect) ──────────
+    if (action === 'void_agreement') {
+      const { id } = body;
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+      if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
+      // Voiding is permanent and appears in the compliance chain as critical.
+      // An unexplained one is worse than useless to whoever reads it later.
+      if (reason.length < MIN_VOID_REASON) {
+        return json({
+          error: 'reason_required',
+          message: `Record why this agreement is being voided (at least ${MIN_VOID_REASON} characters). It is permanent and appears in the audit record.`,
+        }, corsHeaders, 422);
+      }
+
+      const { data: existing } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
+      if (!existing) return json({ error: 'not_found' }, corsHeaders, 404);
+      if (existing.status === 'void') {
+        return json({ error: 'already_void', message: 'This agreement is already void.' }, corsHeaders, 409);
+      }
+      if (!canVoid(existing.status)) {
+        return json({
+          error: 'transition_not_allowed',
+          message: existing.status === 'active'
+            ? 'A fully executed agreement cannot be voided — the parties were bound. Terminate it, or supersede it with a new version.'
+            : `An agreement in "${existing.status}" cannot be voided.`,
+        }, corsHeaders, 409);
+      }
+
+      const voidedAt = new Date().toISOString();
+      const { data, error } = await supabase.from(TABLE).update({
+        status: 'void',
+        voided_at: voidedAt,
+        void_reason: reason,
+        updated_by: actorId,
+      }).eq('id', id).eq('status', existing.status).select().single();
+      if (error) throw error;
+
+      // Anything still standing as live in front of the partner stops being
+      // live. Executed version rows are never touched — an executed document
+      // is history, and this row could not have reached void carrying one.
+      await supabase.from(VERSIONS_TABLE)
+        .update({ status: 'withdrawn' })
+        .eq('agreement_id', id)
+        .in('status', ['issued', 'superseded']);
+
+      await logEvent(supabase, id, 'void', actorId, actorLabel,
+        `Agreement voided — ${reason}`, { from: existing.status, reason });
+
+      // Only tell a partner about a document they were actually sent.
+      if (existing.issued_at) {
+        await notifyPartner(supabase, existing.finance_agent_contact_id, {
+          type: 'agreement_voided',
+          title: 'Agreement voided',
+          body: 'The issuing organisation has voided this agreement. It is of no effect and cannot be executed.',
+          link: `/finance/agreements/${id}`,
+          agreementId: id,
+        });
+      }
+
+      return json({ agreement: data }, corsHeaders);
+    }
+
+    // ─── ARCHIVE / RESTORE (a filing decision, nothing more) ─
+    if (action === 'archive' || action === 'restore') {
       const { id } = body;
       if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
 
-      const { data: existing } = await supabase.from(TABLE).select('id, status').eq('id', id).maybeSingle();
+      const { data: existing } = await supabase.from(TABLE)
+        .select('id, status, archived_at, partner_legal_name').eq('id', id).maybeSingle();
       if (!existing) return json({ error: 'not_found' }, corsHeaders, 404);
-      if (existing.status !== 'draft') {
-        return json({ error: 'only_drafts_deletable' }, corsHeaders, 409);
+
+      if (action === 'archive') {
+        if (existing.archived_at) {
+          return json({ error: 'already_archived', message: 'This agreement is already archived.' }, corsHeaders, 409);
+        }
+        if (!canArchive(existing.status)) {
+          return json({ error: 'not_archivable', message: archiveRefusal(existing.status) }, corsHeaders, 409);
+        }
+      } else if (!existing.archived_at) {
+        return json({ error: 'not_archived', message: 'This agreement is not archived.' }, corsHeaders, 409);
       }
+
+      const archiving = action === 'archive';
+      const note = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim() : null;
+      const { data, error } = await supabase.from(TABLE).update({
+        archived_at: archiving ? new Date().toISOString() : null,
+        archived_by: archiving ? actorId : null,
+        archived_by_label: archiving ? actorLabel : null,
+        archive_reason: archiving ? note : null,
+        updated_by: actorId,
+      }).eq('id', id).select().single();
+      if (error) throw error;
+
+      await logEvent(supabase, id, archiving ? 'archived' : 'restored', actorId, actorLabel,
+        archiving
+          ? `Agreement archived${note ? ` — ${note}` : ''}`
+          : 'Agreement restored to the working list',
+        { status: existing.status, note });
+
+      return json({ agreement: data }, corsHeaders);
+    }
+
+    // ─── DELETE (only what never left the building) ─────────
+    // `delete_draft` is the original name and keeps working; both land here,
+    // which also closes the hole in the old rule — it checked only that the
+    // status said "draft", and a reverted agreement the partner had already
+    // seen says exactly that.
+    if (action === 'delete_agreement' || action === 'delete_draft') {
+      const { id } = body;
+      if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
+
+      const { data: existing } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
+      if (!existing) return json({ error: 'not_found' }, corsHeaders, 404);
+
+      // Counted here rather than inferred from the row: the row's own columns
+      // can be cleared by a revision, the child tables cannot.
+      const [versions, signatures, successors] = await Promise.all([
+        supabase.from(VERSIONS_TABLE).select('id', { count: 'exact', head: true }).eq('agreement_id', id),
+        supabase.from(SIGNATURES_TABLE).select('id', { count: 'exact', head: true }).eq('agreement_id', id),
+        supabase.from(TABLE).select('id', { count: 'exact', head: true }).eq('supersedes_agreement_id', id),
+      ]);
+
+      const verdict = agreementDeleteVerdict({
+        status: existing.status,
+        issuedVersionCount: versions.count ?? 0,
+        signatureCount: signatures.count ?? 0,
+        issuedAt: existing.issued_at ?? null,
+        executedPdfPath: existing.executed_pdf_storage_path ?? null,
+        supersededByCount: successors.count ?? 0,
+      });
+      if (!verdict.ok) {
+        return json({ error: verdict.code, message: verdict.reason }, corsHeaders, 409);
+      }
+
+      // Written BEFORE the delete and straight into the compliance chain
+      // rather than through `logEvent`: `partner_agreement_events` cascades
+      // away with the row, while `partner_compliance_audit_events` keeps the
+      // agreement id as its `chain_key` after the foreign key goes null. The
+      // deletion of a record is itself a record.
+      await recordPartnerAudit(supabase, {
+        agreement_id: id,
+        scope_type: 'agreement',
+        scope_id: id,
+        actor_id: actorId,
+        actor_label: actorLabel,
+        severity: 'critical',
+        category: 'lifecycle',
+        action: 'agreement_deleted',
+        target_type: 'partner_agreement',
+        target_id: id,
+        description: `Agreement permanently deleted (${existing.status}) — ${existing.partner_legal_name}`,
+        metadata: {
+          status: existing.status,
+          direction: existing.direction,
+          partner_legal_name: existing.partner_legal_name,
+          version: existing.version,
+          created_at: existing.created_at,
+          reason: typeof body.reason === 'string' ? body.reason.trim() || null : null,
+        },
+      });
 
       const { error } = await supabase.from(TABLE).delete().eq('id', id);
       if (error) throw error;
@@ -978,6 +1188,9 @@ Deno.serve(async (req) => {
     }
 
     // ─── RESOLVE EFFECTIVE SCHEDULE (used by commission engine) ──
+    // Also deliberately blind to `archived_at`, and this one matters most:
+    // archiving is one person tidying one list, and it must never be able to
+    // change what a partner gets paid.
     if (action === 'effective_schedule') {
       const { finance_agent_contact_id, direction } = body;
       if (!finance_agent_contact_id) return json({ error: 'finance_agent_contact_id_required' }, corsHeaders, 400);
