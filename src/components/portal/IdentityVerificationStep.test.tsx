@@ -10,14 +10,16 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
  */
 
 const verificationStatus = vi.fn();
+const startHostedVerification = vi.fn();
 vi.mock('@/lib/aml/amlPortalApi', () => ({
   amlPortalApi: {
     verificationStatus: (...a: unknown[]) => verificationStatus(...a),
     requestVerificationUpload: vi.fn(),
     submitVerification: vi.fn(),
+    startHostedVerification: (...a: unknown[]) => startHostedVerification(...a),
   },
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import { IdentityVerificationStep } from './IdentityVerificationStep';
 
@@ -101,6 +103,7 @@ const renderStep = () => render(
 
 beforeEach(() => {
   verificationStatus.mockReset();
+  startHostedVerification.mockReset();
   URL.createObjectURL = vi.fn(() => 'blob:capture');
   URL.revokeObjectURL = vi.fn();
 });
@@ -292,5 +295,155 @@ describe('identity verification step', () => {
     renderStep();
 
     expect(await screen.findByRole('button', { name: /start/i })).toBeTruthy();
+  });
+});
+
+/**
+ * The hosted-provider flow, rendered for real.
+ *
+ * A live run against the provider's own page is not possible here — outbound
+ * browser traffic is blocked in this environment — so what is verified is the
+ * half NPC owns: that the server decides the flow, that the session comes from
+ * our backend, that the frame is built with the permissions the capture needs,
+ * and that finishing in that frame cannot mark anybody verified.
+ */
+describe('hosted provider flow', () => {
+  const hostedStatus = (over: Record<string, unknown> = {}) =>
+    status({ provider_flow: 'hosted', ...over });
+
+  it('opens the provider session inside the portal, from a server-minted URL', async () => {
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: 'https://verify.didit.me/session/TOKEN',
+      message: 'Follow the steps to verify your identity.',
+    });
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+
+    await waitFor(() => expect(startHostedVerification).toHaveBeenCalled());
+    // The session is requested from OUR backend for THIS party — never a
+    // generic workflow link, which would arrive with no way to correlate it.
+    expect(startHostedVerification).toHaveBeenCalledWith('case-1', {
+      party_id: null, party_label: 'You',
+    });
+
+    const frame = await waitFor(() => {
+      const el = document.querySelector('iframe');
+      if (!el) throw new Error('no iframe');
+      return el;
+    });
+    expect(frame.getAttribute('src')).toBe('https://verify.didit.me/session/TOKEN');
+  });
+
+  it('delegates the camera into the frame', async () => {
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
+    });
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    const frame = await waitFor(() => {
+      const el = document.querySelector('iframe');
+      if (!el) throw new Error('no iframe');
+      return el;
+    });
+
+    // Without this the provider's capture step fails with a permission error
+    // the customer cannot act on.
+    expect(frame.getAttribute('allow')).toContain('camera');
+    const sandbox = frame.getAttribute('sandbox') ?? '';
+    expect(sandbox).toContain('allow-scripts');
+    // Required for the camera: a Permissions-Policy grant cannot be delegated
+    // to the opaque origin an iframe gets without it.
+    expect(sandbox).toContain('allow-same-origin');
+  });
+
+  it('offers the new-tab route for browsers that block embedded camera access', async () => {
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
+    });
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+
+    const link = await screen.findByRole('link', { name: /new tab/i });
+    expect(link.getAttribute('href')).toBe('https://verify.didit.me/session/TOKEN');
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+  });
+
+  it('never captures a document or selfie itself when hosted is active', async () => {
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
+    });
+    const camera = mockCamera();
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy());
+
+    // The provider owns the capture; NPC opening a camera here would collect a
+    // second copy of the customer's face for no purpose it can serve.
+    expect(camera.getUserMedia).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /take photo/i })).toBeNull();
+  });
+
+  it('"I have finished" re-reads the server and asserts nothing itself', async () => {
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
+    });
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy());
+
+    const callsBefore = verificationStatus.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /i have finished/i }));
+    });
+
+    // The customer saying they are done is a hint to re-read, not evidence.
+    await waitFor(() =>
+      expect(verificationStatus.mock.calls.length).toBeGreaterThan(callsBefore));
+    // The party still reads as the server reports it — not "verified".
+    expect(screen.queryByText(/verified/i)).toBeNull();
+  });
+
+  it('an already-open session is reported, not duplicated', async () => {
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: false, code: 'already_processing',
+      message: 'Your verification is already open.',
+    });
+
+    renderStep();
+    // `findByRole` must stay OUTSIDE act(): awaiting a query inside it blocks
+    // the microtask flush the query itself is waiting on.
+    const start = await screen.findByRole('button', { name: /^start$/i });
+    await act(async () => { fireEvent.click(start); });
+
+    // No frame is opened against a URL we do not have, and the step re-reads.
+    await waitFor(() => expect(document.querySelector('iframe')).toBeNull());
+    expect(startHostedVerification).toHaveBeenCalled();
+  });
+
+  it('falls back to NPC capture when the server says the flow is capture', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status({ provider_flow: 'capture' }));
+
+    renderStep();
+    const startBtn = await screen.findByRole('button', { name: /^start$/i });
+    fireEvent.click(startBtn);
+    await act(async () => { await Promise.resolve(); });
+
+    // The self-hosted path is untouched: the camera dialog, not a frame.
+    expect(startHostedVerification).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(await screen.findByText(/photograph your ID/i)).toBeTruthy();
   });
 });

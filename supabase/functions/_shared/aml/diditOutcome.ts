@@ -106,15 +106,37 @@ export async function appendDiditCaseEvent(
   }
 }
 
+/**
+ * The canonical columns this module needs off `aml.verification_checks`.
+ *
+ * Declared explicitly because postgrest-js infers row types from the literal
+ * text of `.select()`, and gives up on a string it cannot parse — returning
+ * `GenericStringError` instead of a row. Callers select these columns and
+ * assert this type, so the shape is stated once here rather than being at the
+ * mercy of how the select string happens to be formatted.
+ */
+export interface HostedCheckRow {
+  id: string;
+  case_id: string;
+  party_id: string | null;
+  party_label: string | null;
+  provider: string | null;
+  provider_reference: string | null;
+  outcome_detail: Record<string, unknown> | null;
+  processing_status: string | null;
+  status: string | null;
+  attempt_consumed: boolean | null;
+}
+
+/** The exact column list callers must select to satisfy `HostedCheckRow`. */
+export const HOSTED_CHECK_COLUMNS =
+  'id, case_id, party_id, party_label, provider, provider_reference, '
+  + 'outcome_detail, processing_status, status, attempt_consumed';
+
 export interface ApplyDecisionArgs {
   db: any;
   /** The canonical row, loaded fresh. */
-  check: {
-    id: string; case_id: string; party_id: string | null; party_label: string | null;
-    provider_reference: string | null; outcome_detail: Record<string, unknown> | null;
-    processing_status: string | null; status: string | null;
-    attempt_consumed: boolean | null;
-  };
+  check: HostedCheckRow;
   /** The authoritative decision, retrieved server-side. Never a webhook body. */
   decision: Record<string, unknown>;
   expectedWorkflowId: string;

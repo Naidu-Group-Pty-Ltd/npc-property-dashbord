@@ -226,3 +226,14 @@ The webhook destination is configured in the Didit console (or via MCP) as
 | `src/lib/aml/diditWebhookSecurity.test.ts` | signature, replay window, constant-time compare, receiver ordering, routing safety, session gates |
 | `src/lib/aml/diditIdempotency.test.ts` | the ugly cases — duplicate/concurrent/crashed/out-of-order deliveries — run functionally against the real settling logic |
 | `src/lib/aml/diditAmlScope.test.ts` | Didit AML never enabled, no case/screening writes, portal privacy boundary, no credential under `src/` |
+| `src/components/portal/IdentityVerificationStep.test.tsx` | the hosted flow rendered for real — server-minted session, camera delegated into the frame, new-tab fallback, no NPC capture, and "I have finished" asserting nothing |
+
+Two harnesses go further than unit tests, because the failures that matter most
+here are wiring failures — and wiring is invisible to a unit test:
+
+| Command | What it actually runs |
+|---|---|
+| `npm run test:didit-webhook` | boots the REAL `didit-webhook` function as a Deno process and drives it over HTTP with genuinely signed requests against an in-memory PostgREST + Didit stand-in. 20 scenarios, 75 assertions: duplicate/concurrent/crashed/out-of-order deliveries, bad signatures, stale timestamps, tampered bodies, wrong workflow, wrong party, every status, and a decision API outage. |
+| `npm run test:didit-migration` | applies the migration chain to a throwaway PostgreSQL and asserts the behaviour the SQL exists for: a selfhosted check still emits `aml.verification.requested`, a hosted check emits nothing, a second active hosted session is refused with 23505, releasing an abandoned one frees the slot, and re-applying is a no-op. |
+
+Neither needs credentials or network access to Didit.

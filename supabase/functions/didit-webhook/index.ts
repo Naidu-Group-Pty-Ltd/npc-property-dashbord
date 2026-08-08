@@ -35,7 +35,10 @@ import {
   verifyDiditWebhook, fetchDiditDecision, DiditApiError,
 } from '../_shared/aml/providers/diditClient.ts';
 import { diditWorkflowId, resolveTenantProvider, currentEnvironment } from '../_shared/aml/providers/index.ts';
-import { applyDiditDecision, DiditCorrelationError } from '../_shared/aml/diditOutcome.ts';
+import {
+  applyDiditDecision, DiditCorrelationError,
+  HOSTED_CHECK_COLUMNS, type HostedCheckRow,
+} from '../_shared/aml/diditOutcome.ts';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -172,12 +175,12 @@ Deno.serve(async (req) => {
    * caller-supplied `case_id` would be an open door onto any case in the
    * system, and the payload does not get to choose which row it settles.
    */
-  const { data: check } = await admin.schema('aml').from('verification_checks')
-    .select('id, case_id, party_id, party_label, provider, provider_reference, '
-      + 'outcome_detail, processing_status, status, attempt_consumed')
+  const { data: checkRow } = await admin.schema('aml').from('verification_checks')
+    .select(HOSTED_CHECK_COLUMNS)
     .eq('provider', 'didit')
     .eq('provider_reference', sessionId)
     .maybeSingle();
+  const check = checkRow as HostedCheckRow | null;
 
   if (!check) {
     // A session NPC did not create, or one whose row is gone. Accepted so it
@@ -239,7 +242,7 @@ Deno.serve(async (req) => {
   try {
     const result = await applyDiditDecision({
       db: admin,
-      check: check as any,
+      check,
       decision,
       expectedWorkflowId,
       source: 'webhook',

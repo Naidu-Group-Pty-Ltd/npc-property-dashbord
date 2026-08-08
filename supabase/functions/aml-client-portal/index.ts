@@ -215,7 +215,10 @@ async function loadConsentState(admin: any, caseId: string): Promise<ConsentStat
   const { data: rows, error } = await admin.schema('aml').from('consents')
     .select('kind, version, accepted_at').eq('case_id', caseId);
   if (error) throw error;
-  const accepted = (rows ?? []).map((r: any) => ({
+  // Annotated because `admin` is `any`, so `rows` is too — leaving `accepted`
+  // inferred made it `any` and the callbacks below implicitly-any, which
+  // `deno check` rejects. The shape is already declared on ConsentState.
+  const accepted: ConsentState['accepted'] = (rows ?? []).map((r: any) => ({
     code: String(r.kind), version: String(r.version), accepted_at: r.accepted_at,
   }));
   // Acceptance is version-specific: republishing the catalogue re-asks.
