@@ -10,6 +10,7 @@
  */
 import {
   getIdvProvider,
+  idvFlowFor,
   resolveTenantProvider,
   runWithMetrics,
   currentEnvironment,
@@ -56,6 +57,32 @@ export async function processVerificationEvent(db: any, event: any): Promise<voi
   if (!check) return;
   if (check.superseded_at || check.status !== 'pending') return;
   if (!['submitted', 'queued', 'retry_scheduled'].includes(check.processing_status ?? 'submitted')) return;
+
+  /**
+   * A hosted-session check is not this worker's to process.
+   *
+   * Didit owns the capture: there is no document in `aml-documents` and no
+   * selfie in `aml-biometrics`, because the customer never uploaded one to us.
+   * Reaching `runProviderForCheck` would download nothing, throw
+   * `storage_unreadable:document`, and stamp a technical failure on a check
+   * whose outcome is on its way from a webhook — the customer's journey shows
+   * an error for a verification that is proceeding normally.
+   *
+   * The database trigger (20260908000000) already declines to emit
+   * `aml.verification.requested` for these, so in a converged deployment no
+   * such event exists. This is the second lock: a legacy event still in the
+   * outbox from before that migration, or a hand-inserted one, must also find
+   * the door shut. Returning without claiming leaves the row untouched.
+   */
+  if (idvFlowFor(check.provider) === 'hosted_session') return;
+
+  /**
+   * Belt and braces for the same defect, expressed as the precondition the
+   * body below actually has: this worker downloads `document_reference`, so a
+   * check without one can only produce a technical failure. Any future hosted
+   * provider is covered by this line without touching it.
+   */
+  if (!check.document_reference) return;
 
   // Optimistic claim — a concurrent worker loses the conditional update and
   // walks away, so the provider is called at most once per event delivery.

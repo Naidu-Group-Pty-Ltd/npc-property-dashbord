@@ -69,6 +69,63 @@ export interface IdvProvider {
   runIdv(req: IdvRequest): Promise<IdvResult>;
 }
 
+/**
+ * How an IDV provider gets its evidence.
+ *
+ * `capture` is the original shape and the only one the pipeline had: NPC
+ * collects a document photograph and a selfie into its own private buckets,
+ * the outbox worker downloads them, and `runIdv()` is a synchronous call with
+ * two base64 images in it.
+ *
+ * `hosted_session` is a genuinely different animal. The provider owns the
+ * capture UI, the customer completes it there, and the outcome arrives later on
+ * a signed webhook. Forcing that through `runIdv()` would mean NPC downloading
+ * a customer's images and posting them to a provider that never asked for them
+ * — a second copy of the most sensitive data we hold, moved for no reason.
+ *
+ * So the two flows are declared rather than blurred, and every caller that
+ * cares asks `idvFlowFor()` which one it is dealing with. The worker uses it to
+ * stay away from hosted checks; the portal uses it to choose between the camera
+ * and the embed.
+ */
+export type IdvFlow = "capture" | "hosted_session";
+
+export interface HostedIdvSession {
+  sessionId: string;
+  /**
+   * The provider-hosted verification URL for THIS customer.
+   *
+   * Handed to their browser and never persisted: it embeds their session
+   * token, so storing it would put a live credential in the case record.
+   */
+  url: string;
+  status: string;
+  workflowId: string | null;
+  workflowVersion: number | null;
+  expiresAt: string | null;
+}
+
+export interface HostedIdvSessionRequest {
+  /** Opaque correlation handle. Never a name, email, or document number. */
+  vendorData: string;
+  /** Internal identifiers only — echoed back on every webhook. */
+  metadata: Record<string, unknown>;
+  callbackUrl?: string | null;
+  /** Sandbox-only deterministic outcome; ignored by a live application. */
+  sandboxScenario?: string | null;
+}
+
+export interface HostedIdvProvider {
+  readonly name: string;
+  readonly mode: ProviderMode;
+  readonly flow: "hosted_session";
+  /** The workflow NPC configured. Decisions from any other workflow are refused. */
+  readonly workflowId: string;
+  createSession(req: HostedIdvSessionRequest): Promise<HostedIdvSession>;
+  /** Authoritative server-to-server read. Never the webhook body. */
+  fetchDecision(sessionId: string): Promise<Record<string, unknown>>;
+}
+
 export interface ScreeningProvider {
   readonly name: string;
   readonly mode: ProviderMode;
@@ -662,6 +719,77 @@ const LIVE_IDV_ADAPTERS: Record<string, (opts: FactoryOptions) => IdvProvider> =
   // "frankie":       () => makeFrankieIdvProvider(),
   // "trulioo":       () => makeTruliooIdvProvider(),
 };
+
+/**
+ * Providers that own their own capture UI. Deliberately a SEPARATE registry
+ * from `LIVE_IDV_ADAPTERS`: a hosted provider has no `runIdv()`, and putting
+ * one in the capture registry would let the outbox worker pick it up and try
+ * to post it images.
+ */
+const HOSTED_IDV_ADAPTERS: Record<string, (opts: FactoryOptions) => HostedIdvProvider> = {
+  // Didit — ID Verification + Face Match 1:1 + Passive Liveness.
+  // See docs/aml/DIDIT_IDV_INTEGRATION.md.
+  "didit": (opts) => makeDiditIdvProvider(opts),
+};
+
+/** Which flow a provider key implies. Unknown keys read as `capture`. */
+export function idvFlowFor(providerKey: string | null | undefined): IdvFlow {
+  return HOSTED_IDV_ADAPTERS[String(providerKey ?? "").toLowerCase()]
+    ? "hosted_session"
+    : "capture";
+}
+
+/**
+ * The workflow id NPC will accept decisions from.
+ *
+ * Tenant provider configuration wins so the workflow can be changed without a
+ * deploy, with the environment as the fallback. It is not a secret — it names
+ * a workflow, it authorises nothing — but it is still never sent to a browser,
+ * because a client that learns it learns which modules NPC runs.
+ */
+export function diditWorkflowId(resolved?: ResolvedProvider | null): string | null {
+  const fromConfig = resolved?.config?.["workflow_id"];
+  if (typeof fromConfig === "string" && fromConfig) return fromConfig;
+  return Deno.env.get("DIDIT_WORKFLOW_ID") || null;
+}
+
+function makeDiditIdvProvider(opts: FactoryOptions): HostedIdvProvider {
+  const apiKey = Deno.env.get("DIDIT_API_KEY") || "";
+  const workflowId = diditWorkflowId(opts.resolved) ?? "";
+
+  return {
+    name: "didit",
+    mode: "live",
+    flow: "hosted_session",
+    workflowId,
+    async createSession(req) {
+      if (!apiKey || !workflowId) {
+        // Loud, and never a customer outcome. Matches the self-hosted
+        // adapter's refusal: a misconfigured provider must not look like a
+        // customer who failed verification.
+        throw new Error(
+          "[aml/providers] didit IDV is active but DIDIT_API_KEY / workflow id are not set.",
+        );
+      }
+      const { createDiditSession } = await import("./diditClient.ts");
+      const created = await createDiditSession({
+        apiKey, workflowId,
+        vendorData: req.vendorData,
+        metadata: req.metadata,
+        callback: req.callbackUrl ?? null,
+        sandboxScenario: req.sandboxScenario ?? null,
+      });
+      return created;
+    },
+    async fetchDecision(sessionId) {
+      if (!apiKey) {
+        throw new Error("[aml/providers] didit IDV is active but DIDIT_API_KEY is not set.");
+      }
+      const { fetchDiditDecision } = await import("./diditClient.ts");
+      return await fetchDiditDecision(apiKey, sessionId);
+    },
+  };
+}
 const LIVE_SCREENING_ADAPTERS: Record<string, (opts: FactoryOptions) => ScreeningProvider> = {
   // Screening against lists we hold, downloaded from official primary sources.
   "local_lists": (opts) => makeLocalListsScreeningProvider(opts.admin, opts.resolved?.config),
@@ -724,6 +852,7 @@ import {
   decideProvider,
   ProviderResolutionError,
   type AmlEnvironment,
+  type ProviderDecision,
 } from "../providerEnvironment.ts";
 
 export { ProviderResolutionError };
@@ -814,8 +943,25 @@ export async function cachedSelfHostedIdvHealth(): Promise<SelfHostedHealth> {
   return value;
 }
 
-function adapterConfigured(capability: "idv" | "screening", key: string): boolean {
+/**
+ * Didit needs three things, and the webhook secret is one of them.
+ *
+ * Without it no decision can ever be accepted, so a deployment holding only
+ * the API key would happily create (chargeable) sessions whose results NPC
+ * could never receive — every customer stranded mid-flow. "Configured" has to
+ * mean the whole round trip, not just the outbound half.
+ */
+function diditIdvConfigured(resolved?: ResolvedProvider | null): boolean {
+  return Boolean(Deno.env.get("DIDIT_API_KEY"))
+    && Boolean(Deno.env.get("DIDIT_WEBHOOK_SECRET"))
+    && Boolean(diditWorkflowId(resolved));
+}
+
+function adapterConfigured(
+  capability: "idv" | "screening", key: string, resolved?: ResolvedProvider | null,
+): boolean {
   if (capability === "idv" && key === "selfhosted") return selfHostedIdvConfigured();
+  if (capability === "idv" && key === "didit") return diditIdvConfigured(resolved);
   // Adapters without external configuration (e.g. local_lists screening)
   // count as configured once wired.
   return true;
@@ -833,17 +979,39 @@ export interface FactoryOptions {
   admin?: any;
 }
 
-export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
+/**
+ * Shared resolution for both IDV flows, so the wiring/configuration policy is
+ * applied once rather than once per factory.
+ */
+function decideIdv(opts: FactoryOptions): { decision: ProviderDecision; key: string } {
   const mode: ProviderMode = opts.resolved?.mode ?? envMode();
   const key = (opts.resolved?.providerKey || opts.preferred || "simulator").toLowerCase();
 
-  const decision = decideProvider({
-    environment: currentEnvironment(),
-    mode,
-    providerKey: key,
-    adapterWired: Boolean(LIVE_IDV_ADAPTERS[key]),
-    adapterConfigured: adapterConfigured("idv", key),
-  });
+  return {
+    key,
+    decision: decideProvider({
+      environment: currentEnvironment(),
+      mode,
+      providerKey: key,
+      // Either registry counts as wired. Without this a Didit tenant config
+      // would be refused as "no adapter wired" even though one exists.
+      adapterWired: Boolean(LIVE_IDV_ADAPTERS[key]) || Boolean(HOSTED_IDV_ADAPTERS[key]),
+      adapterConfigured: adapterConfigured("idv", key, opts.resolved),
+    }),
+  };
+}
+
+/**
+ * The capture-flow IDV provider (self-hosted today, simulator off-production).
+ *
+ * Refuses a hosted provider outright rather than returning something with no
+ * `runIdv()`. That refusal is load-bearing: the outbox worker calls this, and
+ * a Didit check reaching it would try to download NPC captures that do not
+ * exist and record `storage_unreadable:document` — a technical failure against
+ * a customer whose verification was never NPC's to run.
+ */
+export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
+  const { decision, key } = decideIdv(opts);
   if (decision.kind === "refuse") {
     // Fail closed and typed: production never falls back to the simulator,
     // and a misconfiguration is never allowed to look like a customer who
@@ -851,7 +1019,48 @@ export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
     throw new ProviderResolutionError(decision.code, `[aml/providers] ${decision.message}`);
   }
   if (decision.kind === "simulator") return SIMULATOR_IDV;
+  if (HOSTED_IDV_ADAPTERS[key]) {
+    throw new ProviderResolutionError(
+      "provider_misconfigured",
+      `[aml/providers] "${key}" is a hosted-session provider and has no capture-mode ` +
+      "runIdv(). Use getHostedIdvProvider(); the customer completes capture on the " +
+      "provider's own UI and the outcome arrives by signed webhook.",
+    );
+  }
   return LIVE_IDV_ADAPTERS[key](opts);
+}
+
+/**
+ * The hosted-session IDV provider. Throws unless the resolved provider really
+ * is one, so a caller can never quietly get the simulator or the self-hosted
+ * adapter where it expected a session.
+ */
+export function getHostedIdvProvider(opts: FactoryOptions = {}): HostedIdvProvider {
+  const { decision, key } = decideIdv(opts);
+  if (decision.kind === "refuse") {
+    throw new ProviderResolutionError(decision.code, `[aml/providers] ${decision.message}`);
+  }
+  if (!HOSTED_IDV_ADAPTERS[key]) {
+    throw new ProviderResolutionError(
+      "provider_misconfigured",
+      `[aml/providers] "${key}" is not a hosted-session IDV provider.`,
+    );
+  }
+  return HOSTED_IDV_ADAPTERS[key](opts);
+}
+
+/**
+ * The flow the tenant's configured IDV provider implies, resolved server-side.
+ *
+ * The browser never supplies this and never learns the provider key — it is
+ * told only which of the two experiences to render.
+ */
+export async function resolveIdvFlow(
+  admin: any, tenantId = "default",
+): Promise<{ flow: IdvFlow; providerKey: string; resolved: ResolvedProvider | null }> {
+  const resolved = await resolveTenantProvider(admin, tenantId, "idv");
+  const providerKey = (resolved?.providerKey ?? "simulator").toLowerCase();
+  return { flow: idvFlowFor(providerKey), providerKey, resolved };
 }
 
 export function getScreeningProvider(opts: FactoryOptions = {}): ScreeningProvider {

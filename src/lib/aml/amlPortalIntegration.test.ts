@@ -149,9 +149,15 @@ describe("client-safe readiness", () => {
   });
   it("the selfie upload URL is gated on availability, attempts and no active processing", () => {
     const uploadBlock = portalFn.slice(portalFn.indexOf("case 'request_verification_upload_url'"), portalFn.indexOf("case 'list_requirements'"));
-    expect(uploadBlock).toContain("clientSafeIdvAvailability");
+    // `clientSafeIdvState` resolves availability AND which flow is active; the
+    // gate is the same one, now also answering "does NPC capture at all?".
+    expect(uploadBlock).toContain("clientSafeIdvState");
+    expect(uploadBlock).toContain("availability !== 'available'");
     expect(uploadBlock).toContain("attempts_exhausted");
     expect(uploadBlock).toContain("already_processing");
+    // A hosted provider owns the capture, so NPC must not collect a second
+    // copy of the customer's face (APP 3).
+    expect(uploadBlock).toContain("hosted_verification_required");
   });
   it("submission itself re-checks availability server-side", () => {
     expect(idvBlock).toContain("clientSafeIdvAvailability");
