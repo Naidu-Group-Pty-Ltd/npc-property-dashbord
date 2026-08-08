@@ -62,6 +62,14 @@ export interface DocxPalette {
   accentInk: string;
   /** A pale wash of the brand colour, for header bands and label cells. */
   accentWash: string;
+  /**
+   * The cover canvas — the brand deepened until white display type carries
+   * on it. A vivid brand at full strength vibrates behind 30pt serif; pulled
+   * toward ink it reads as a material instead of a highlight.
+   */
+  accentDeep: string;
+  /** Muted companion text ON the deep canvas (eyebrows, descriptors). */
+  onDeepMuted: string;
   /** Body text. Near-black rather than black: black prints heavier than it reads. */
   ink: string;
   /** Secondary text — labels, captions, the things that support a value. */
@@ -164,10 +172,20 @@ function luminance(hex: string): number {
 export function resolveDocxPalette(brandColour: unknown): DocxPalette {
   const accent = toDocxHex(brandColour);
   const brandLuminance = luminance(accent);
+  // The canvas must end up dark enough for white type whatever the brand is:
+  // a light brand is pulled down hard, a mid brand moderately, a dark brand
+  // barely at all.
+  const accentDeep = brandLuminance > 0.5
+    ? shade(accent, 0.62)
+    : brandLuminance > 0.15
+      ? shade(accent, 0.38)
+      : shade(accent, 0.12);
   return {
     accent,
     accentInk: brandLuminance > 0.35 ? shade(accent, 0.45) : accent,
-    accentWash: tint(accent, 0.9),
+    accentWash: tint(accent, 0.92),
+    accentDeep,
+    onDeepMuted: tint(accentDeep, 0.62),
     ink: '1A1A1A',
     mutedInk: '6B6B6B',
     rule: 'D9D6D0',
