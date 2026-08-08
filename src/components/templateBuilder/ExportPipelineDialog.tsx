@@ -13,12 +13,11 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
-import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { downloadTemplateAsHtml } from '@/lib/reportTemplate/htmlExporter';
 import { downloadTemplateAsDocx } from '@/lib/reportTemplate/docxExporter';
 import { downloadTemplateAsPptx } from '@/lib/reportTemplate/pptxExporter';
 import { logTemplateAudit } from '@/lib/reportTemplate/templateAuditLog';
-import { preloadImages } from '@/lib/reportTemplate/imagePreloader';
+import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
 import { lintTemplate, type LintIssue } from '@/lib/reportTemplate/lintTemplate';
 import { analyzeExportCapability, type ExportCapabilityReport } from '@/lib/reportTemplate/exportCapability';
 import type { ReportTemplate } from '@/lib/reportTemplate/templateSchema';
@@ -236,33 +235,31 @@ export function ExportPipelineDialog({
     setRunning(true);
     const toastId = toast.loading('Preparing export…');
     try {
-      // 1) Preload remote images into the template WeasyPrint will receive.
+      // 1+2) Resolve render-time assets and compile, in one step that cannot
+      // be skipped. This used to run `preloadImages` only when
+      // `assetSummary.images.length` was non-zero — a count of `https://…png`
+      // strings already in the template. A stored PDF import has none (the
+      // raster URLs are stripped at save; only `meta.sourceRasterRef` paths
+      // remain), so the resolution was skipped for exactly the templates that
+      // depend on it and every raster-only page exported blank.
       setPreloading(true);
       const tplForExport = buildTemplateForExport();
-      const tplForRender = assetSummary.images.length
-        // Reference mode — WeasyPrint fetches assets itself rather than
-        // receiving them inlined against its 25 MB payload cap.
-        ? await preloadImages(tplForExport, { mode: 'reference' }).catch(() => tplForExport)
-        : tplForExport;
-      setPreloading(false);
-
-      // 2) Compile HTML server-friendly with page-range + theme applied
       toast.loading('Compiling HTML…', { id: toastId });
-      const { html } = renderTemplateToHtml(tplForRender, {
+      const { html, unresolvedRasterPages } = await compileTemplateHtmlForPdf(tplForExport, {
         data: sampleData,
         title: templateName || 'Template Export',
         customCss: customCss || undefined,
         includeBookmarks,
       });
+      setPreloading(false);
+      const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
+      if (degraded) toast.warning(degraded);
 
-      // 3) Call edge function through the app's one transport. The hand-rolled
-      // fetch this replaces addressed
-      // `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/…`,
-      // and this project defines no Vite Supabase variables at build time, so
-      // the bundle resolved that to `https://undefined.supabase.co` and the
-      // export never left the browser. invokeSecureFunction hardcodes the
-      // project URL and anon key, carries the HttpOnly session cookie, and
-      // refreshes-and-retries once on an auth failure.
+      // 3) Call the edge function through the app's one transport, rather
+      // than a hand-rolled fetch built on Vite env vars only the hosting build
+      // defines. invokeSecureFunction hardcodes the project URL and anon key,
+      // carries the HttpOnly session cookie, and refreshes-and-retries once on
+      // an auth failure.
       toast.loading('Rendering PDF on WeasyPrint…', { id: toastId });
       const { data: json, error: renderError } = await invokeSecureFunction<{
         url?: string; bytes?: number; durationMs?: number;
@@ -279,7 +276,7 @@ export function ExportPipelineDialog({
           optimizeImages,
           themeId: themeId === '__active__' ? template.activeThemeId ?? null : themeId,
           pageMasterId: template.defaultPageMasterId ?? null,
-          pageCount: tplForRender.pages.length,
+          pageCount: tplForExport.pages.length,
           assetCount: assetSummary.total,
           pageRange: pageRange || null,
           includeBookmarks,
