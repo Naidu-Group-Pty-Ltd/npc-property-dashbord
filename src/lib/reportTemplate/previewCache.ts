@@ -90,38 +90,16 @@ export function makePreviewKey(
   return templateContentKey(template) + SEP + stableJson(sampleData) + SEP + (customCss ?? '');
 }
 
-const pageBackgroundKeyByIdentity = new WeakMap<object, string>();
-
-/** Remove canvas overlays from the iframe input; React renders them separately. */
-export function pageWithoutOverlays(page: Page): Page {
-  return {
-    ...page,
-    blocks: page.blocks.map((block) => ({ ...block, overlays: [] })),
-  };
-}
-
-/**
- * Content key for a page's *background* — the page with all overlays stripped.
- * Memoized per page object: an overlay commit creates a new page object and
- * re-serializes once, but yields the same string, so the canvas iframe key is
- * unchanged (no reload).
- */
-function pageBackgroundKey(page: Page): string {
-  const hit = pageBackgroundKeyByIdentity.get(page);
-  if (hit !== undefined) return hit;
-  const out = JSON.stringify(pageWithoutOverlays(page));
-  pageBackgroundKeyByIdentity.set(page, out);
-  return out;
-}
-
 /**
  * Stable content key for the editorial canvas iframe.
  *
- * The canvas hides overlays (`.tpl-overlay{display:none}`) and draws its own
- * selection handles, so the rendered page *background* does NOT depend on overlay
- * geometry. We strip overlays from the key so moving/resizing/adding/removing an
- * overlay does not force an iframe reload on every pointer tick — only a real
- * change to the page background (block props/order, tokens, css, data) does.
+ * R3 — the canvas iframe renders the FULL page, overlays included: it is the
+ * single renderer of overlay pixels, and the React layer above it draws only
+ * hit-targets and selection chrome. The key therefore includes overlay content:
+ * a *committed* overlay change rebuilds the srcDoc (the canvas double-buffers
+ * the swap so nothing flashes), while transient drag state never touches the
+ * template — the canvas mirrors live geometry onto the iframe DOM directly via
+ * `[data-overlay-id]`, so no pointer tick ever forces a reload.
  */
 export function makeCanvasRenderKey(
   template: ReportTemplate,
@@ -132,7 +110,7 @@ export function makeCanvasRenderKey(
   return (
     templateMetaKey(template) +
     SEP +
-    pageBackgroundKey(page) +
+    stableJson(page) +
     SEP +
     stableJson(sampleData) +
     SEP +

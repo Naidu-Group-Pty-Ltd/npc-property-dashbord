@@ -46,6 +46,8 @@ export interface DoclingPlanOptions {
    * its existing behaviour and becomes an image.
    */
   sourceChartsByPage?: Record<number, BridgedChart[]>;
+  /** R1 — width measurer for tracked-text spacing derivation (browser: canvas). */
+  measureTextWidth?: import('../detrackText.pure').WidthMeasurer | null;
 }
 
 // Phase 4: lowered 0.7 → 0.6 now that reconstruction (vectors/typography/fonts) is
@@ -401,7 +403,10 @@ export function mapDoclingToPagePlan(
   doc: DoclingDocument,
   opts: DoclingPlanOptions,
 ): TemplateImportPlan {
-  const mapped = mapDoclingToRawBlocks(doc, { embeddedFontFamilies: opts.embeddedFontFamilies });
+  const mapped = mapDoclingToRawBlocks(doc, {
+    embeddedFontFamilies: opts.embeddedFontFamilies,
+    measureTextWidth: opts.measureTextWidth,
+  });
   const pages: TemplateImportPagePlan[] = mapped.pages.map((page) =>
     pagePlanForPage(
       page,

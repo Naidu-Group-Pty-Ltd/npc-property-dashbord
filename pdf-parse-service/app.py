@@ -132,7 +132,7 @@ LOG = logging.getLogger("pdf-parse-service")
 SERVICE_TOKEN = os.environ.get("PDF_PARSE_SERVICE_TOKEN", "").strip()
 SERVICE_TOKEN_NEXT = os.environ.get("PDF_PARSE_SERVICE_TOKEN_NEXT", "").strip()
 SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v1"
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v1+coverage-ranges-v1"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -169,6 +169,10 @@ MIN_VECTOR_SIZE_PT = float(os.environ.get("DOCLING_MIN_VECTOR_SIZE_PT", "1.0"))
 MAX_FONTS = int(os.environ.get("DOCLING_MAX_FONTS", "48"))
 MAX_FONT_BYTES = int(os.environ.get("DOCLING_MAX_FONT_BYTES", str(512 * 1024)))
 MAX_EMBEDDED_FONT_BYTES = int(os.environ.get("DOCLING_MAX_EMBEDDED_FONT_BYTES", str(4 * 1024 * 1024)))
+# CSS unicode-range segments per embedded face. Dropping a segment only sends
+# those glyphs to the stack fallback — safe direction — so the cap keeps the
+# LARGEST segments rather than refusing to scope at all.
+MAX_COVERAGE_RANGES = int(os.environ.get("DOCLING_MAX_COVERAGE_RANGES", "64"))
 
 # Wave F-Option-3 storage upload config.
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -1126,6 +1130,11 @@ def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> No
                     "widthPt": round(float(m.get("measured_width") or 0.0), 3),
                     "charCount": int(m.get("char_count") or 0),
                     "sizePt": round(float(m.get("size") or 0.0), 2),
+                    # Per-span extents. For tracked (letter-spaced) text the PDF
+                    # draws one span per WORD, so span char-counts are the only
+                    # surviving record of word boundaries — the extracted string
+                    # loses them. Already bounded by MAX_SPANS_PER_LINE.
+                    "spans": m.get("spans") or [],
                 }
                 for m in matched[:MAX_MEASURED_LINES]
             ],
@@ -1145,6 +1154,46 @@ def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
                 "confidence": v.get("confidence", 0.9),
             })
     return vectors
+
+
+def _cmap_coverage_ranges(font) -> list[str] | None:
+    """CSS `unicode-range` segments for the codepoints this font ACTUALLY maps.
+
+    Returns None when the cmap cannot be read (no `valid_codepoints`, an
+    exception, or an empty set). The caller treats None as "coverage unknown"
+    and refuses to embed a SUBSET on it: a face declared without a range claims
+    every codepoint, and a subset that claims codepoints it lacks is precisely
+    the gibberish-glyph / vanished-space failure this exists to prevent.
+
+    Adjacent codepoints coalesce into `U+0041-005A`-style segments. Beyond
+    MAX_COVERAGE_RANGES segments, the largest segments win and the tail is
+    dropped — an un-listed codepoint merely falls to the stack fallback.
+    """
+    try:
+        cps = sorted({
+            int(c) for c in font.valid_codepoints()
+            if 0 < int(c) <= 0x10FFFF
+        })
+    except Exception:
+        return None
+    if not cps:
+        return None
+    segments: list[tuple[int, int]] = []
+    start = prev = cps[0]
+    for c in cps[1:]:
+        if c == prev + 1:
+            prev = c
+            continue
+        segments.append((start, prev))
+        start = prev = c
+    segments.append((start, prev))
+    if len(segments) > MAX_COVERAGE_RANGES:
+        largest = sorted(segments, key=lambda s: s[1] - s[0], reverse=True)
+        segments = sorted(largest[:MAX_COVERAGE_RANGES])
+    return [
+        f"U+{a:04X}" if a == b else f"U+{a:04X}-{b:04X}"
+        for a, b in segments
+    ]
 
 
 def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
@@ -1226,7 +1275,25 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                             # A functional cmap maps at least one probe; per-glyph
                             # stack fallback covers whatever the subset lacks.
                             if hits >= 1 and len(buf) <= MAX_FONT_BYTES:
-                                entry["_buf"] = buf  # one per family; budgeted on emit
+                                # R2 — enumerate the cmap's REAL coverage so the
+                                # client can scope the @font-face with
+                                # unicode-range. The browser then uses this face
+                                # only for codepoints it truly has and falls per
+                                # glyph to the stack fallback for the rest — no
+                                # tofu, no wrong glyphs, no vanishing spaces.
+                                #
+                                # A SUBSET whose coverage cannot be read does not
+                                # embed at all: without a range the browser would
+                                # claim every codepoint for a face that has few,
+                                # which is exactly the gibberish-glyph failure.
+                                # A full font without coverage still embeds
+                                # (real cmap; the pre-subset behaviour).
+                                ranges = _cmap_coverage_ranges(font)
+                                if ranges is not None:
+                                    entry["coverage_ranges"] = ranges
+                                    entry["_buf"] = buf
+                                elif not entry["subset"]:
+                                    entry["_buf"] = buf
                     except Exception as exc:  # pragma: no cover
                         LOG.warning("fitz extract_font xref=%s failed: %s", xref, exc)
                 prev = by_name.get(key)
