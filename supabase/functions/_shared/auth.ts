@@ -461,6 +461,15 @@ export const CORS_ALLOWED_REQUEST_HEADERS = [
   'x-portal-request',
   'x-session-id',
   'x-generation-run-id',
+  // PostgREST headers sent by supabase-js when a query is routed through the
+  // `authenticated-data` gateway. Omitting them failed the CORS preflight, so
+  // every gateway read/write surfaced as a bare "Failed to fetch".
+  'prefer',
+  'accept-profile',
+  'content-profile',
+  'range',
+  'range-unit',
+  'x-supabase-api-version',
 ].join(', ');
 
 /**
@@ -477,7 +486,11 @@ export const CORS_EXPOSED_RESPONSE_HEADERS = [
   'x-tokens-reserved',
   'x-tokens-estimated',
   'x-duration-ms',
+  // PostgREST count/pagination metadata; `count: 'exact'` reads this back.
+  'content-range',
+  'content-profile',
 ].join(', ');
+
 
 function parseAllowedOrigins(): string[] {
   const raw = Deno.env.get('ALLOWED_ORIGINS') || '';
