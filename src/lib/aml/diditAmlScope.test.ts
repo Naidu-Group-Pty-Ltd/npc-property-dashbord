@@ -195,8 +195,9 @@ describe('portal privacy boundary', () => {
   it('the frontend cannot mark anybody verified', () => {
     // It may listen for a "something happened" nudge from the frame — see the
     // origin test below — but there is no return-URL status and no local
-    // status assertion anywhere.
-    expect(step).not.toContain('postMessage');
+    // status assertion anywhere. Code only: the comments explaining the
+    // listener necessarily name the mechanism.
+    expect(codeOnly(step)).not.toContain('postMessage');
     expect(step).not.toMatch(/status:\s*['"]verified['"]/);
     // Completion only ever triggers a server re-read.
     expect(step).toContain('await load()');

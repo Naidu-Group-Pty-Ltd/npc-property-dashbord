@@ -350,6 +350,61 @@ export function IdentityVerificationStep({
  * capture pipeline needs (downloads, presentation, storage access, pointer
  * lock) and turn that into an unexplained handoff to a second device.
  */
+/**
+ * Unprefixed event names that mean "this flow has ended".
+ *
+ * Terminal only. Anything else — `verification_started`, a step notification,
+ * an unrecognised name — is ignored so the frame stays mounted. Failure and
+ * error belong here too: they are terminal, and they still lead nowhere but a
+ * server re-read.
+ */
+const HOSTED_TERMINAL_EVENTS = new Set([
+  'verification_completed',
+  'verification_complete',
+  'verification_failed',
+  'verification_error',
+]);
+
+/**
+ * Namespaced terminal events, matched by shape rather than by vendor name.
+ *
+ * Providers namespace their events (`<vendor>:completed`). Matching the shape
+ * keeps the vendor's name out of the portal bundle, which is the same reason
+ * the expected origin is derived from the server-minted URL rather than
+ * written down here.
+ *
+ * The colon is load-bearing. A step notification is `<vendor>:step_completed`,
+ * and a substring test for "completed" would catch it — closing the dialog in
+ * the middle of the customer's document capture. Requiring the separator
+ * immediately before the terminal word does not.
+ */
+const HOSTED_TERMINAL_NAMESPACED = /^[a-z][a-z0-9-]*:(completed|failed|error)$/;
+
+/**
+ * Whether a message means the hosted journey has ended.
+ *
+ * Reads a NAME and nothing else. It cannot reach a status, a decision or a
+ * score, so there is no field an embedded page could set to influence an
+ * identity outcome — the strongest thing any message can do is cause NPC to
+ * re-read what its own server already knows.
+ *
+ * Recognising too little is safe (the customer presses "I have finished");
+ * recognising too much throws them out of a working flow. Hence terminal-only,
+ * matched exactly.
+ */
+function isHostedTerminalMessage(data: unknown): boolean {
+  let name = '';
+  if (typeof data === 'string') {
+    name = data;
+  } else if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    for (const key of ['type', 'event', 'name']) {
+      if (typeof d[key] === 'string') { name = d[key] as string; break; }
+    }
+  }
+  return HOSTED_TERMINAL_EVENTS.has(name) || HOSTED_TERMINAL_NAMESPACED.test(name);
+}
+
 const HOSTED_IFRAME_ALLOW = [
   'camera',
   'microphone',
@@ -402,16 +457,21 @@ function HostedVerificationDialog({
   }, [onClose]);
 
   /**
-   * Didit posts lifecycle messages while the embedded app boots and moves
-   * between steps. Only its documented `verification_complete` event means the
-   * hosted journey has finished. Treating every same-origin message as
-   * completion unmounted the iframe during startup, which appeared to the
-   * customer as a white panel that vanished after a few seconds.
+   * The provider posts lifecycle messages while the embedded app boots and
+   * moves between steps; only a terminal one means the journey has finished.
+   * Treating every same-origin message as completion unmounted the iframe
+   * during startup, which the customer saw as a white panel that vanished
+   * after a few seconds.
    *
-   * The origin is still derived from the server-minted session URL rather than
-   * hardcoded, and the source must be this exact iframe. The payload is used
-   * only to recognize the documented completion event; status/decision fields
-   * remain untrusted and the only action is to re-read server state.
+   * Three checks, all of which must pass: the origin (derived from the
+   * server-minted session URL, never hardcoded, so the portal still does not
+   * name a provider), the source (this exact frame, so a popup or a nested
+   * frame cannot speak for it), and the event name against a terminal
+   * allow-list.
+   *
+   * Only the NAME is read. Nothing in the payload can reach an identity
+   * outcome, because the sole action available here is to re-read what the
+   * server already knows.
    */
   const origin = useMemo(() => {
     try { return new URL(url).origin; } catch { return null; }
@@ -422,7 +482,7 @@ function HostedVerificationDialog({
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== origin) return;
       if (event.source !== iframeRef.current?.contentWindow) return;
-      if (event.data?.type !== 'verification_complete') return;
+      if (!isHostedTerminalMessage(event.data)) return;
       void done();
     };
     window.addEventListener('message', onMessage);

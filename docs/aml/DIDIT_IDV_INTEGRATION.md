@@ -153,9 +153,70 @@ second", which silently drops the outcome and strands the customer.
 
 ## Sessions
 
+### `POST /v3/session/` is an upsert, not a create
+
+**It deduplicates on `workflow_id + vendor_data`.** Measured against the live
+API rather than inferred: two calls with the same pair returned byte-identical
+`session_id` and session token, left `session_number` unchanged, and merely
+overwrote `metadata`. Changing one character of `vendor_data` returned a
+genuinely new session.
+
+That is why `vendor_data` is scoped to the attempt —
+`npc:<case>:<party|primary>:<capture-sequence>`. With a case-and-party-only key
+there was no way to ask for a session under a new configuration: the key was
+stable for the life of the case, so every request for seven days returned the
+same session, whatever had changed in between.
+
+The counter is `capture_sequence`, which already existed on the row. It is
+server-generated, monotonic per case and party, and carries no PII. It is **not
+a charged attempt** — attempts are counted from settled outcomes
+(`verification_attempts_used`), so re-minting for a technical reason costs the
+customer nothing.
+
+`parseVendorData` accepts both the three-part and four-part forms. Sessions
+minted before attempt scoping stay valid for seven days, and refusing to parse
+them would strand a live customer's decision.
+
+### Stale configuration
+
+A session is created against the workflow as it stood at that instant. Combined
+with the dedup above, a customer who pressed Start before a workflow change was
+pinned to the old configuration until the session expired — a reconfiguration
+that never reached the people it was made for. That is what left customers on
+the cross-device QR screen after `is_desktop_allowed` had already been
+corrected.
+
+Didit cannot tell you this happened: editing a published workflow mutates the
+version **in place**, so a session created before the edit and the live
+workflow after it both report `workflow_version: 1`. There is no obsolete
+version number to compare.
+
+So the marker is NPC's. `aml.provider_configs.config.workflow_revised_at` is an
+ISO-8601 instant, **set by whoever changes the Didit workflow**:
+
+```sql
+UPDATE aml.provider_configs
+   SET config = jsonb_set(config, '{workflow_revised_at}',
+                          to_jsonb('<the workflow's updated_at>'::text), true)
+ WHERE tenant_id = 'default' AND capability = 'idv' AND provider_key = 'didit';
+```
+
+`start_hosted_verification` releases any in-flight session created before it and
+mints a fresh one. That release is a **technical supersede**: `status` and
+`attempt_consumed` are untouched, no identity outcome is written, and the
+timeline entry is categorised `technical`. Forgetting to set the marker is safe
+in the boring direction — the guard does nothing, which is how it behaved
+before it existed.
+
+### One session per party
+
 At most one in-flight hosted session per party, enforced by a partial unique
 index (`uq_aml_verification_active_hosted_session`) rather than by check-then-insert,
 because every lost race is a real session NPC pays for.
+
+The attempt scope does not weaken this. Repeated requests for the *same*
+attempt still produce the same key and therefore the same session, so a
+double-click cannot buy two. Only a new attempt gets a new key.
 
 A double-click, refresh, second tab or backend timeout all land on the same
 session: the portal reconciles the existing check against Didit and returns the
@@ -226,6 +287,15 @@ can see:
   below the fold is a usability failure that reads to the customer as a broken
   camera.
 
+### The flag is necessary, not sufficient
+
+Correcting the workflow does not reach a customer who already has a session.
+See "Stale configuration" under **Sessions** — the session is pinned to the
+configuration it was minted under, and the provider will hand the same session
+back for the same `vendor_data`. After changing the workflow, set
+`config.workflow_revised_at`; without it the fix reaches nobody who had already
+pressed Start.
+
 One more to rule out if same-device capture still fails: a
 `Permissions-Policy: camera=()` response header on the *portal's own document*
 blocks the camera regardless of the iframe's `allow`. Check the document
@@ -275,6 +345,7 @@ The webhook destination is configured in the Didit console (or via MCP) as
 | `src/lib/aml/diditAmlScope.test.ts` | Didit AML never enabled, no case/screening writes, portal privacy boundary, no credential under `src/` |
 | `src/components/portal/IdentityVerificationStep.test.tsx` | the hosted flow rendered for real — server-minted session, the full documented permission set delegated, no sandbox, no failure warning before a failure, the fallback behind an explicit ask, and neither "I have finished" nor a provider message asserting anything |
 | `src/lib/aml/idvAdapterReadiness.test.ts` | wiring comes from the registry, not a hardcoded key — hosted and capture providers both report correctly, `wired` stays distinct from `configured`, and readiness never carries a credential |
+| `src/lib/aml/diditSessionLifecycle.test.ts` | a session minted under superseded configuration is not returned, a new attempt gets a genuinely new session while the same attempt stays idempotent, correlation still resolves case/party/attempt, and superseding costs no attempt and writes no outcome |
 
 Two harnesses go further than unit tests, because the failures that matter most
 here are wiring failures — and wiring is invisible to a unit test:

@@ -349,7 +349,7 @@ describe('session creation gates', () => {
   });
 
   it('uses an opaque vendor_data and internal-only metadata', () => {
-    expect(block).toContain('buildVendorData(c.id, partyId)');
+    expect(block).toContain('buildVendorData(c.id, partyId, captureSequence)');
     expect(block).toContain('verification_check_id: created.id');
     // No customer identifiers travel to the provider as correlation data.
     const meta = block.slice(block.indexOf('metadata: {'), block.indexOf('});', block.indexOf('metadata: {')));
