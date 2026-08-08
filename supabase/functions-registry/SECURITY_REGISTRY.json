@@ -752,6 +752,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "dispatch-workflow-triggers": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "workflow-playground",
+      "reviewed": true,
+      "notes": "Drains workflow_trigger_events and runs the live workflows a captured event starts. Accepts only HMAC-signed pg_cron calls (verifySignedInternal, caller allow-list [\"pg_cron\"]); holds service-role to claim events and record runs. Step execution goes through _shared/workflow/stepExecutor.ts, whose allow-list is the same one execute-workflow-step enforces."
+    },
     "domain-data-service": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",

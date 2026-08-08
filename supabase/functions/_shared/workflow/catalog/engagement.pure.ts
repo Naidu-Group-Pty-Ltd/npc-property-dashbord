@@ -6,8 +6,8 @@
  * than blocking it, because there are legitimate reasons to send unattended.
  */
 
-import { DELIVERY_OUTPUTS, f, opt, outs, provider, recordOutputs } from './builders';
-import type { CatalogNode } from '../types';
+import { DELIVERY_OUTPUTS, f, opt, outs, provider, recordOutputs } from './builders.pure.ts';
+import type { CatalogNode } from '../types.pure.ts';
 
 const EMAIL_FIELDS = [
   f.expr('to', 'To', { required: true, placeholder: '{{trigger.email}}' }),

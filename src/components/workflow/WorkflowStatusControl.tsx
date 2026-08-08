@@ -46,10 +46,12 @@ const PRESENTATION: Record<Status, { label: string; className: string; icon: typ
     label: 'Live',
     className: 'border-success/40 bg-success/10 text-success',
     icon: Radio,
-    // Deliberately not "its trigger will start it". Nothing dispatches triggers
-    // yet, and a status that quietly implies otherwise would have people
-    // waiting on a workflow that is never going to fire.
-    blurb: 'Marked ready to run. Triggers are not dispatched automatically yet — start it with Test run or Run live.',
+    // This used to say triggers were not dispatched, because they were not:
+    // events were captured and nothing drained them. `dispatch-workflow-triggers`
+    // now does, once a minute, so the status finally means what it says — and
+    // the blurb names the cadence, because "live" without a number invites
+    // people to stand and watch for something that is up to a minute away.
+    blurb: 'Its trigger starts it. Captured events are dispatched about once a minute; Test run and Run live still work.',
   },
   paused: {
     label: 'Paused',

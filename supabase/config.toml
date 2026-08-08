@@ -387,6 +387,11 @@ request_timeout = 120
 [functions.estimate-property-expenses]
 verify_jwt = true
 
+[functions.dispatch-workflow-triggers]
+# pg_cron presents the anon key at the gateway; authority is the HMAC envelope
+# the function verifies itself (verifySignedInternal, caller "pg_cron").
+verify_jwt = false
+
 [functions.execute-workflow-step]
 verify_jwt = true
 

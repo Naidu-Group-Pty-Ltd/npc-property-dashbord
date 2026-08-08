@@ -38,8 +38,10 @@ export function MobileNav() {
 
   const isMoreActive = !mobileNavItems.some(item => isActive(item.url));
 
+  // `data-mobile-nav` lets a full-bleed surface measure how much of the
+  // viewport bottom this covers; see useFillViewportHeight.
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 lg:hidden">
+    <div data-mobile-nav className="fixed bottom-0 left-0 right-0 z-50 lg:hidden">
       {/* Toggle pill - always visible */}
       <div className="flex justify-center">
         <button

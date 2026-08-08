@@ -78,7 +78,13 @@ export function useWorkflows() {
   const refresh = useCallback(async () => {
     // Without a token every query is anonymous and RLS returns nothing, which
     // would render as "no workflows yet" rather than as a sign-in problem.
-    if (!isAuthenticated) return;
+    // `loading` has to be cleared on the way out: it starts true, so returning
+    // early left the library showing loading skeletons for ever — and the
+    // effect re-runs the moment a session resolves, so nothing is lost.
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const { data, error: queryError } = await supabase

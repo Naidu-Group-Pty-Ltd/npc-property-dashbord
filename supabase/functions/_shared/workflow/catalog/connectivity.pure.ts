@@ -11,8 +11,8 @@
  * arbitrary endpoint pushes people back to writing code elsewhere.
  */
 
-import { f, native, opt, outs, provider } from './builders';
-import type { CatalogNode } from '../types';
+import { f, native, opt, outs, provider } from './builders.pure.ts';
+import type { CatalogNode } from '../types.pure.ts';
 
 /** Lets a step point at a different server than the saved default. */
 const SERVER_OVERRIDE = f.text('serverUrl', 'Server', {

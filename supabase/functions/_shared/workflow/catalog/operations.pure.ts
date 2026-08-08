@@ -6,8 +6,8 @@
  * without anyone having to parse a vendor-specific response shape in a code node.
  */
 
-import { f, opt, outs, provider, recordOutputs } from './builders';
-import type { CatalogNode } from '../types';
+import { f, opt, outs, provider, recordOutputs } from './builders.pure.ts';
+import type { CatalogNode } from '../types.pure.ts';
 
 /** Every identity or screening check resolves to the same decision shape. */
 const SCREENING_OUTPUTS = outs(

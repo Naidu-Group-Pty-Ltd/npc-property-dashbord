@@ -65,8 +65,17 @@ jobs:
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as
       # the step above: after the report suites it would never run while they are red.
+      #
+      # The page spec is named explicitly because it does not live under either
+      # of those paths, and it is the one that guards the reported failure: the
+      # step library and the settings panel are docked columns keyed to `lg` and
+      # `xl`, and a change that drops the slide-over route below those widths
+      # leaves a canvas that can be panned and zoomed and nothing else. Every
+      # other workflow test would still pass.
       - name: Workflow Playground — catalog, graph and canvas
-        run: npx vitest run src/lib/workflow src/components/workflow
+        run: >
+          npx vitest run src/lib/workflow src/components/workflow
+          src/pages/__tests__/workflowPlaygroundAccess.spec.tsx
 
       # Golden-render isolation guard, run as its own step so a renderer
       # regression (anything that changes the WeasyPrint/jsPDF output, incl. the

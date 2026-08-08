@@ -107,6 +107,9 @@ export function NodePalette({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search steps, apps or keywords"
             aria-label="Search the step library"
+            // The canvas's empty state focuses this when the library is
+            // already docked; see openStepLibrary in WorkflowPlayground.
+            data-step-library-search
             className="pl-8"
           />
         </div>

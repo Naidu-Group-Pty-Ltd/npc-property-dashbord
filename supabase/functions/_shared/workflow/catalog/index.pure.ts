@@ -7,14 +7,13 @@
  * key renders as unconfigured and blocks activation.
  */
 
-import { INTEGRATIONS } from '@/lib/integrations/registry';
-import type { CatalogNode } from '../types';
-import { CONNECTIVITY_NODES } from './connectivity';
-import { CORE_NODES } from './core';
-import { INTELLIGENCE_NODES } from './intelligence';
-import { PROPERTY_NODES } from './property';
-import { ENGAGEMENT_NODES } from './engagement';
-import { OPERATIONS_NODES } from './operations';
+import type { CatalogNode } from '../types.pure.ts';
+import { CONNECTIVITY_NODES } from './connectivity.pure.ts';
+import { CORE_NODES } from './core.pure.ts';
+import { INTELLIGENCE_NODES } from './intelligence.pure.ts';
+import { PROPERTY_NODES } from './property.pure.ts';
+import { ENGAGEMENT_NODES } from './engagement.pure.ts';
+import { OPERATIONS_NODES } from './operations.pure.ts';
 
 export const CATALOG: CatalogNode[] = [
   ...CORE_NODES,
@@ -40,15 +39,6 @@ export const LOGIC = CATALOG.filter((n) => n.kind === 'logic');
 export const COVERED_INTEGRATIONS = new Set(
   CATALOG.map((n) => n.integrationId).filter((id): id is string => Boolean(id)),
 );
-
-/**
- * Integrations with no node yet. Surfaced in the palette as a short "not wired
- * up yet" list rather than hidden, so the gap is visible instead of silently
- * looking like the integration does not exist.
- */
-export function uncoveredIntegrations() {
-  return INTEGRATIONS.filter((i) => !COVERED_INTEGRATIONS.has(i.id));
-}
 
 /** Lowercased haystack for the palette's search box. */
 export function nodeSearchIndex(node: CatalogNode): string {

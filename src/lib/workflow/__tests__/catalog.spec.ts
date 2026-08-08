@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { INTEGRATIONS } from '@/lib/integrations/registry';
+import { INTEGRATION_CATEGORIES, INTEGRATIONS } from '@/lib/integrations/registry';
 import { CATALOG, COVERED_INTEGRATIONS, getCatalogNode, searchCatalog } from '../catalog';
+import { INTEGRATION_CATEGORY_IDS } from '../types';
 
 describe('node catalog integrity', () => {
+  /**
+   * `types.pure.ts` restates the category union rather than importing it: it has
+   * to parse under Deno, where `@/lib/integrations/registry` resolves to nothing.
+   * Restating means the two can drift, so the drift is what is asserted.
+   */
+  it('agrees with the integration registry about the category list', () => {
+    expect([...INTEGRATION_CATEGORY_IDS].sort()).toEqual(
+      INTEGRATION_CATEGORIES.map((c) => c.id).sort(),
+    );
+  });
+
   it('gives every integration in the registry at least one operation', () => {
     const missing = INTEGRATIONS.filter((i) => !COVERED_INTEGRATIONS.has(i.id)).map((i) => i.id);
     expect(missing).toEqual([]);
