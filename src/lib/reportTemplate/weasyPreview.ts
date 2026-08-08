@@ -11,7 +11,7 @@
  * Calls are cached in-memory by SHA-1 of the compiled HTML so re-rendering an
  * unchanged template returns the previous signed URL instantly.
  */
-import { resolveAuthBearer, describeAuthError, isAuthFailureResponse } from '@/lib/secureInvoke';
+import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
 import { preloadImages } from './imagePreloader';
 import { renderTemplateToHtml } from './htmlRenderer';
 import type { ReportTemplate } from './templateSchema';
@@ -37,6 +37,8 @@ export interface WeasyPreviewResult {
 const cache = new Map<string, { url: string; fileName: string; bytes?: number; expiresAt: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1h (signed URL lives 24h, refresh well before)
 const MAX_CACHE = 32;
+/** A print-resolution render is minutes, not seconds. */
+const RENDER_TIMEOUT_MS = 10 * 60_000;
 
 async function sha1(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
@@ -87,64 +89,33 @@ export async function renderTemplateViaWeasyPrint(
     return { url: hit.url, fileName: hit.fileName, bytes: hit.bytes, cached: true };
   }
 
-  // WP-11B/C cookie-only sessions: the staff session travels in the HttpOnly
-  // `__Host-session_token` cookie, so the request MUST go out with
-  // `credentials: 'include'` — and the Bearer comes from `resolveAuthBearer`
-  // (mirrored access token → native supabase-js session → cookie re-mint),
-  // NOT from `supabase.auth.getSession()` alone, which is null for every
-  // custom-auth user. This call site predated that migration; after the
-  // functions fleet redeployed with cookie-only auth, every render call 401'd
-  // "Authentication required" and ALL WeasyPrint previews/exports failed.
-  const { token } = await resolveAuthBearer({ refreshIfMissing: true });
-  const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
-  const anonKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (!projectId || !anonKey) {
-    throw new Error('Supabase env not configured (VITE_SUPABASE_PROJECT_ID / VITE_SUPABASE_PUBLISHABLE_KEY)');
-  }
-
-  const url = `https://${projectId}.supabase.co/functions/v1/render-template-pdf`;
-  const sendRequest = (credentials: RequestCredentials) => fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: anonKey,
-      Authorization: `Bearer ${token}`,
-    },
-    credentials,
-    body: JSON.stringify({
+  // Goes through `invokeSecureFunction` — the app's one transport — rather
+  // than a hand-rolled fetch. The previous copy addressed the function as
+  // `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/…`, and
+  // this project defines no Vite Supabase variables at build time, so the
+  // bundle resolved that to `https://undefined.supabase.co` and no render
+  // request ever left the browser. See `weasyRenderClient.ts` for the full
+  // account; the shared transport also carries the cookie session and
+  // refreshes-and-retries once when the access token has gone stale.
+  const { data, error } = await invokeSecureFunction<{
+    url?: string; fileName?: string; bytes?: number;
+  }>(
+    'render-template-pdf',
+    {
       html,
       fileName,
       templateId: opts.templateId ?? null,
       templateName: opts.templateName ?? null,
       mode: opts.mode ?? 'preview',
-    }),
-    signal: opts.signal,
-  });
-
-  let res: Response;
-  try {
-    res = await sendRequest('include');
-  } catch (err) {
-    // A function still running a wildcard-CORS build rejects a credentialed
-    // request at the PREFLIGHT — nothing was dispatched — so one uncredentialed
-    // retry is side-effect free (same pattern as invokeSecureFunction).
-    if ((err as Error)?.name === 'AbortError') throw err;
-    res = await sendRequest('omit');
-  }
-
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const message = String(json?.error?.message || json?.error || '');
-    if (isAuthFailureResponse(res.status, message)) {
-      throw new Error(describeAuthError(message || 'authentication required')
-        ?? 'Your sign-in session has expired. Sign out, sign back in, and try again.');
-    }
-    throw new Error(json?.error || `WeasyPrint render failed (HTTP ${res.status})`);
-  }
+    },
+    { timeoutMs: RENDER_TIMEOUT_MS, signal: opts.signal },
+  );
+  if (error) throw new Error(describeAuthError(error.message) ?? error.message);
+  if (!data?.url) throw new Error('WeasyPrint render returned no document URL');
   const result: WeasyPreviewResult = {
-    url: String(json.url),
-    fileName: String(json.fileName ?? fileName),
-    bytes: typeof json.bytes === 'number' ? json.bytes : undefined,
+    url: String(data.url),
+    fileName: String(data.fileName ?? fileName),
+    bytes: typeof data.bytes === 'number' ? data.bytes : undefined,
     cached: false,
   };
   cache.set(key, { ...result, expiresAt: Date.now() + CACHE_TTL_MS });
