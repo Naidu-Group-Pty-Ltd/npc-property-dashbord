@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Loader2, ShieldCheck, CheckCircle2, AlertTriangle, Camera, ArrowRight, ArrowLeft, RefreshCw,
@@ -332,22 +332,57 @@ export function IdentityVerificationStep({
 /* ─────────────────────────── hosted verification ────────────────────────── */
 
 /**
+ * The permissions the hosted flow is delegated.
+ *
+ * `camera` is the one that decides whether this works at all — without it the
+ * provider's capture step dies on a permission error the customer cannot act
+ * on. The rest are the documented embed set: `autoplay` and `encrypted-media`
+ * for the liveness video pipeline (a blocked stream reads to the provider as
+ * "this device cannot capture"), `clipboard-write` and `picture-in-picture`
+ * because the integration snippet grants them, and the motion sensors for the
+ * document-tilt and liveness steps.
+ *
+ * There is deliberately NO `sandbox` attribute. The documented embed does not
+ * use one, and the one we had bought nothing: a cross-origin frame already
+ * granted `allow-same-origin allow-scripts` is not meaningfully contained by
+ * it — the same-origin policy, not the sandbox, is what stops the provider
+ * reading this page. What it could do is silently withhold something the
+ * capture pipeline needs (downloads, presentation, storage access, pointer
+ * lock) and turn that into an unexplained handoff to a second device.
+ */
+const HOSTED_IFRAME_ALLOW = [
+  'camera',
+  'microphone',
+  'autoplay',
+  'encrypted-media',
+  'fullscreen',
+  'clipboard-write',
+  'picture-in-picture',
+  'accelerometer',
+  'gyroscope',
+  'magnetometer',
+].join('; ');
+
+/**
  * The provider's own verification flow, embedded in the portal.
  *
- * Two things this component deliberately does NOT do.
+ * ## It never reports an outcome
  *
- * It never reports an outcome. There is no message listener, no return-URL
- * parameter and no "finished" callback wired to anything that changes state:
- * the identity result reaches NPC on a signed server-to-server webhook and
- * nowhere else. Everything here is a UX signal, so the most it can say is
- * "we are checking".
+ * There is no path from this component to an identity decision. The `message`
+ * listener below is origin-checked and does exactly one thing — re-read server
+ * state — because the identity result reaches NPC on a signed
+ * server-to-server webhook and nowhere else. Nothing the frame, the customer
+ * or a return URL says can mark anybody verified; the strongest claim this
+ * screen can make is "we are checking".
  *
- * And it never assumes the iframe works. Embedded camera permission is
- * genuinely unreliable — iOS in-app browsers, locked-down managed devices, and
- * any host that declines to delegate `camera` all fail in ways the customer
- * cannot diagnose. So the new-tab route is offered from the start as an equal
- * option rather than hidden behind a failure nobody can detect from inside the
- * frame.
+ * ## Capturing on this device is the normal path
+ *
+ * Handing the customer off to a second device is the provider's fallback for
+ * one that genuinely cannot capture, and it should stay that way. It became
+ * the default because the workflow carried `is_desktop_allowed = false`, which
+ * tells the provider to refuse desktop capture outright — fixed in the
+ * workflow, not here. This component's job is to not re-create the problem:
+ * full permissions, no sandbox, and enough room that the capture UI is usable.
  */
 function HostedVerificationDialog({
   party, url, onClose,
@@ -357,90 +392,104 @@ function HostedVerificationDialog({
   onClose: () => void | Promise<void>;
 }) {
   const [closing, setClosing] = useState(false);
+  /** Revealed on request. Not shown up front — nothing has failed yet. */
+  const [showFallback, setShowFallback] = useState(false);
 
-  const done = async () => {
+  const done = useCallback(async () => {
     setClosing(true);
     await onClose();
-  };
+  }, [onClose]);
+
+  /**
+   * A message from the frame means "something happened in there" and nothing
+   * more. The origin is checked, the payload is deliberately NOT inspected,
+   * and the only action is to re-read the server's own view. A frame cannot
+   * talk NPC into an identity outcome because no code path exists from here to
+   * one.
+   *
+   * The origin is derived from the session URL the server minted rather than
+   * written down here, so the portal still never names a provider — and a
+   * different one, or a different environment of the same one, keeps working.
+   */
+  const origin = useMemo(() => {
+    try { return new URL(url).origin; } catch { return null; }
+  }, [url]);
+
+  useEffect(() => {
+    if (!origin) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== origin) return;
+      void done();
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [origin, done]);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-background/80 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`Verify ${party.label}`}
     >
-      <Card className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden">
-        <CardHeader>
+      {/*
+        Full-bleed on a phone, where the capture UI needs every pixel it can
+        get, and a generous panel on a desktop. The old fixed `h-[60vh]` inside
+        a `max-w-2xl` card squeezed a camera viewfinder into a small inner
+        scroll box with the controls below the fold.
+      */}
+      <Card className="flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-none sm:h-[min(90vh,900px)] sm:rounded-lg">
+        <CardHeader className="shrink-0 py-3">
           <CardTitle className="text-base">Verify your identity</CardTitle>
-          <CardDescription>
-            Follow the steps in the window below. You will photograph your identity document
-            and then your face. It takes about a minute.
-          </CardDescription>
         </CardHeader>
 
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-0 sm:px-4 sm:pb-4">
           <iframe
             src={url}
             title="Identity verification"
-            className="h-[60vh] w-full rounded-md border"
-            /*
-             * The permissions the hosted flow needs. `camera` is the one that
-             * matters — without delegating it the provider's capture step
-             * fails with a permission error the customer cannot act on. The
-             * motion sensors are used for the document-tilt and liveness
-             * steps; `fullscreen` for the capture view.
-             */
-            allow="camera; microphone; fullscreen; accelerometer; gyroscope; magnetometer"
-            /*
-             * `allow-same-origin` here means "keep your OWN origin", not "share
-             * ours". Without it the frame is given an opaque origin, and a
-             * Permissions-Policy grant cannot be delegated to an opaque origin
-             * — so the camera would be blocked no matter what `allow` says,
-             * and the provider could not keep its own session state either.
-             *
-             * It does not weaken the boundary: the document inside is
-             * cross-origin, so the same-origin policy still stops it reading
-             * this page — which holds the portal session token. (The
-             * combination IS unsafe for a SAME-origin frame, which could then
-             * drop its own sandbox; that is not this.)
-             */
-            sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-modals"
+            className="min-h-0 w-full flex-1 border-0 sm:rounded-md sm:border"
+            allow={HOSTED_IFRAME_ALLOW}
+            allowFullScreen
           />
 
-          <Alert>
-            <AlertDescription className="text-xs">
-              Camera not working in this window? Some browsers block it inside an embedded
-              frame.{' '}
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline underline-offset-2"
-              >
-                Open the verification in a new tab
-              </a>{' '}
-              instead — it is the same secure session.
-            </AlertDescription>
-          </Alert>
-
-          <div className="flex flex-wrap justify-between gap-2 pt-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3 sm:px-0 sm:pb-0">
             <Button variant="ghost" size="sm" onClick={done} disabled={closing}>
               Cancel
             </Button>
-            {/*
-              The customer telling us they are finished is a hint to re-read
-              server state, not evidence that anything passed. The status they
-              land on is whatever the server says — which, until the webhook
-              arrives, is "with our team".
-            */}
-            <Button size="sm" onClick={done} disabled={closing}>
-              {closing ? (
-                <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
+
+            <div className="flex items-center gap-3">
+              {/*
+                Offered quietly, and only when asked for. Leading with "camera
+                not working?" told every customer something had gone wrong
+                before anything had.
+              */}
+              {showFallback ? (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs underline underline-offset-2"
+                >
+                  Open in a new tab
+                </a>
               ) : (
-                <>I have finished <ArrowRight className="ml-1 h-4 w-4" /></>
+                <button
+                  type="button"
+                  onClick={() => setShowFallback(true)}
+                  className="text-xs text-muted-foreground underline underline-offset-2"
+                >
+                  Having trouble?
+                </button>
               )}
-            </Button>
+
+              <Button size="sm" onClick={done} disabled={closing}>
+                {closing ? (
+                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
+                ) : (
+                  <>I have finished <ArrowRight className="ml-1 h-4 w-4" /></>
+                )}
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

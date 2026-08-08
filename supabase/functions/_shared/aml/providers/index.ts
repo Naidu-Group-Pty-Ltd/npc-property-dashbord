@@ -732,6 +732,29 @@ const HOSTED_IDV_ADAPTERS: Record<string, (opts: FactoryOptions) => HostedIdvPro
   "didit": (opts) => makeDiditIdvProvider(opts),
 };
 
+/**
+ * Whether an IDV provider key is wired and configured, and which flow it uses.
+ *
+ * Exported so the staff readiness endpoint asks the registry instead of
+ * re-deciding for itself. `aml-verification` used to hardcode
+ * `wired = key === "selfhosted"`, which reported a correctly configured Didit
+ * as "misconfigured" on the Command Centre card — and, worse, made the
+ * "Ask client to verify" request tell the customer to upload a document and
+ * skip the selfie while the portal was offering them the photo flow. Two
+ * places deciding the same thing is how that happened; there is now one.
+ */
+export function idvAdapterReadiness(
+  providerKey: string | null | undefined,
+  resolved?: ResolvedProvider | null,
+): { wired: boolean; configured: boolean; flow: IdvFlow } {
+  const key = String(providerKey ?? "").toLowerCase();
+  return {
+    wired: Boolean(LIVE_IDV_ADAPTERS[key]) || Boolean(HOSTED_IDV_ADAPTERS[key]),
+    configured: adapterConfigured("idv", key, resolved),
+    flow: idvFlowFor(key),
+  };
+}
+
 /** Which flow a provider key implies. Unknown keys read as `capture`. */
 export function idvFlowFor(providerKey: string | null | undefined): IdvFlow {
   return HOSTED_IDV_ADAPTERS[String(providerKey ?? "").toLowerCase()]

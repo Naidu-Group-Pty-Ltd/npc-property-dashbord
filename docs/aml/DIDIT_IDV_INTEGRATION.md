@@ -185,6 +185,53 @@ signed URLs to the customer's ID photograph and liveness video; NPC never
 fetches or persists them. Not holding a duplicate copy of the biometrics is the
 point of using a hosted provider.
 
+## The workflow flag that decides whether the customer uses one device or two
+
+**`is_desktop_allowed` defaults to `false` on a newly created workflow, and it
+is the single most consequential setting on it.**
+
+With it off, Didit refuses desktop capture outright. The customer does not get
+a camera — they get a full-screen QR code and "continue on another device" as
+the *primary* experience, with same-device capture nowhere. That is what
+production shipped with, and it is not diagnosable from this repo: the portal
+code is identical either way, the session is created normally, the API returns
+200, and the only difference is what the provider's own page decides to render
+inside the frame. The second "I have finished"-style button customers reported
+was the handoff screen's own control, not a duplicate of ours.
+
+Read it back after any workflow change:
+
+```
+didit_workflow_get → { "is_desktop_allowed": true, "status": "published" }
+```
+
+Both the live and sandbox `NPC Identity Verification` workflows are set to
+`true`. Do not create a replacement workflow without setting it.
+
+### What the embed must not withhold
+
+The flag is the cause, but the frame can re-create the symptom. The provider
+decides a device "cannot capture" from what actually works inside the iframe,
+so a withheld capability becomes a device handoff rather than an error anyone
+can see:
+
+- **Delegate the provider's full documented `allow` set**, not just `camera`.
+  `autoplay` and `encrypted-media` were missing, and the liveness pipeline is a
+  video stream — a blocked one reads as "no camera".
+- **No `sandbox` attribute.** On a cross-origin frame already granted
+  `allow-same-origin allow-scripts` it contains nothing the same-origin policy
+  is not already containing, and it silently withholds capabilities (downloads,
+  presentation, storage access, pointer lock) that the capture uses.
+- **Give it room.** A viewfinder inside a fixed-height box with its controls
+  below the fold is a usability failure that reads to the customer as a broken
+  camera.
+
+One more to rule out if same-device capture still fails: a
+`Permissions-Policy: camera=()` response header on the *portal's own document*
+blocks the camera regardless of the iframe's `allow`. Check the document
+request's response headers in DevTools — a header seen on a Cloudflare
+challenge page (`HTTP 403`, `cf-mitigated: challenge`) is not the app's.
+
 ## Configuration
 
 Provider selection is **server-side only**. The browser is told `capture` or
@@ -226,7 +273,8 @@ The webhook destination is configured in the Didit console (or via MCP) as
 | `src/lib/aml/diditWebhookSecurity.test.ts` | signature, replay window, constant-time compare, receiver ordering, routing safety, session gates |
 | `src/lib/aml/diditIdempotency.test.ts` | the ugly cases — duplicate/concurrent/crashed/out-of-order deliveries — run functionally against the real settling logic |
 | `src/lib/aml/diditAmlScope.test.ts` | Didit AML never enabled, no case/screening writes, portal privacy boundary, no credential under `src/` |
-| `src/components/portal/IdentityVerificationStep.test.tsx` | the hosted flow rendered for real — server-minted session, camera delegated into the frame, new-tab fallback, no NPC capture, and "I have finished" asserting nothing |
+| `src/components/portal/IdentityVerificationStep.test.tsx` | the hosted flow rendered for real — server-minted session, the full documented permission set delegated, no sandbox, no failure warning before a failure, the fallback behind an explicit ask, and neither "I have finished" nor a provider message asserting anything |
+| `src/lib/aml/idvAdapterReadiness.test.ts` | wiring comes from the registry, not a hardcoded key — hosted and capture providers both report correctly, `wired` stays distinct from `configured`, and readiness never carries a credential |
 
 Two harnesses go further than unit tests, because the failures that matter most
 here are wiring failures — and wiring is invisible to a unit test:

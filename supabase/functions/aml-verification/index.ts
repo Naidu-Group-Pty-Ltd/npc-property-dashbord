@@ -15,6 +15,7 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   getIdvProvider,
+  idvAdapterReadiness,
   getScreeningProvider,
   resolveTenantProvider,
   runWithMetrics,
@@ -891,14 +892,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           const mode = resolved?.mode ??
             ((Deno.env.get("AML_PROVIDER_MODE") || "").toLowerCase() === "live" ? "live" : "simulator");
           const key = (resolved?.providerKey ?? "simulator").toLowerCase();
-          const secrets = capability === "idv" ? {
-            AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
-            AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
-          } : {};
-          const wired = capability === "idv" ? key === "selfhosted" : key === "local_lists";
-          const configured = capability === "idv"
-            ? Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")) && Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN"))
-            : true;
+          // Wiring and configuration come from the provider registry rather
+          // than from a second opinion here. `idvAdapterReadiness` knows about
+          // BOTH registries — capture (selfhosted) and hosted-session (didit) —
+          // so a correctly configured hosted provider no longer reports as
+          // misconfigured on the Command Centre card.
+          const idvReadiness = capability === "idv"
+            ? idvAdapterReadiness(key, resolved) : null;
+          // Secret PRESENCE only, and only the ones the active flow actually
+          // needs. Never a value.
+          const secrets = capability !== "idv" ? {}
+            : idvReadiness?.flow === "hosted_session" ? {
+              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              DIDIT_WEBHOOK_SECRET: Boolean(Deno.env.get("DIDIT_WEBHOOK_SECRET")),
+            } : {
+              AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
+              AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
+            };
+          const wired = capability === "idv" ? Boolean(idvReadiness?.wired) : key === "local_lists";
+          const configured = capability === "idv" ? Boolean(idvReadiness?.configured) : true;
           const wantsSimulator = mode === "simulator" || key === "simulator";
           let state: string;
           // Live health of the actual service, not an inference from secrets.
@@ -929,6 +941,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return {
             capability,
             configured_provider: resolved?.providerKey ?? null,
+            // Which experience the client will get. Lets the Command Centre
+            // word its client request correctly instead of assuming capture.
+            idv_flow: idvReadiness?.flow ?? null,
             mode,
             adapter_wired: wired,
             secrets_present: secrets,
