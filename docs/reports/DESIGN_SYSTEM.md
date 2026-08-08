@@ -136,7 +136,7 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
   structure.pure.ts    ✅ REPORT_ARCHETYPES, buildSpine(), validateSpine()
   assets.pure.ts       ✅ inline policy, slot fallback chains, budget
   snapshot.pure.ts     ✅ ReportBrandSnapshot, fingerprint, palette/contact adapters
-  defaultAssets.generated.ts ✅ GENERATED — the house cover art and mark, inlined
+  (the house cover art and mark are NOT here — see "Where the house artwork lives")
   charts.pure.ts       ✅ 16 SVG charts, palette-driven, sized in points
 
 src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
