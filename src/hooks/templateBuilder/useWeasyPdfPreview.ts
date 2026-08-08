@@ -10,8 +10,7 @@
  *   re-renders explicitly via `refresh()`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
-import { preloadImages } from '@/lib/reportTemplate/imagePreloader';
+import { compileTemplateHtmlForPdf } from '@/lib/reportTemplate/compileTemplateForPdf';
 import { makePreviewKey } from '@/lib/reportTemplate/previewCache';
 import { renderHtmlToPdfUrl, pdfFileNameFor } from '@/lib/reportTemplate/weasyRenderClient';
 import type { ReportTemplate } from '@/lib/reportTemplate/templateSchema';
@@ -54,17 +53,17 @@ export function useWeasyPdfPreview({ enabled, template, sampleData, customCss, n
     // Mark attempted immediately so a failed render doesn't auto-retry forever.
     setRenderedKey(contentKey);
     try {
-      // Reference mode — WeasyPrint fetches assets itself. See weasyPreview.ts.
-      const prepared = await preloadImages(template, { mode: 'reference' });
-      if (runId !== runIdRef.current) return;
-      // Production parity: render via WeasyPrint (same engine as final PDFs).
-      const { html } = renderTemplateToHtml(prepared, {
+      // Production parity: resolve assets and compile through the one shared
+      // path (see compileTemplateForPdf.ts), then render via WeasyPrint — the
+      // same engine as final PDFs.
+      const { html } = await compileTemplateHtmlForPdf(template, {
         data: sampleData,
         title: name || 'Template Preview',
         customCss: customCss || undefined,
         cascadeMetadata,
         cascadeDebug,
       });
+      if (runId !== runIdRef.current) return;
       const url = await renderHtmlToPdfUrl({
         html,
         fileName: pdfFileNameFor(name, '-preview'),

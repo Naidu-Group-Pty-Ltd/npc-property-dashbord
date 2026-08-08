@@ -1,19 +1,18 @@
 /**
  * The render calls must go through the app's ONE transport.
  *
- * Every WeasyPrint preview and every template PDF export was dead in
- * production because these call sites addressed the edge function as
- * `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/…`. This
- * project defines no Vite Supabase variables at build time — there is no
- * `.env` and `vite.config.ts` declares no fallback — so Vite could not inline
- * the value and the shipped bundle computed `https://undefined.supabase.co`.
- * The requests never left the browser: the edge logs recorded nothing at all
- * while the UI reported a network error or "authentication required".
+ * These call sites used to address the edge function as
+ * `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/…`. The
+ * hosting build defines that variable, so it worked in production — but the
+ * repo ships no `.env` and `vite.config.ts` declares no fallback, so a repo or
+ * CI build compiled the render path, and only the render path, into a request
+ * to `https://undefined.supabase.co`. Nothing else in the app is exposed to
+ * that: `integrations/supabase/client.ts` and `secureInvoke.ts` hardcode the
+ * project.
  *
- * These tests pin the two properties that failure violated: the render goes
- * through `invokeSecureFunction` (which hardcodes the project URL and anon key,
- * exactly like `integrations/supabase/client.ts`), and no render module reads
- * a Supabase URL out of `import.meta.env`.
+ * These tests pin the properties that removes: the render goes through
+ * `invokeSecureFunction`, and no render module reads a Supabase URL out of
+ * `import.meta.env` or hand-rolls a fetch to the functions gateway.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

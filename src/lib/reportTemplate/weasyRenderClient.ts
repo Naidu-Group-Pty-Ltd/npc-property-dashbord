@@ -7,21 +7,22 @@
  * routing both through here.
  *
  * TRANSPORT: this goes through `invokeSecureFunction`, the same transport the
- * rest of the app uses, and must keep doing so. The hand-rolled `fetch` that
- * lived here built its URL from `import.meta.env.VITE_SUPABASE_PROJECT_ID` —
- * a variable this project does not define at build time (there is no `.env`,
- * and `vite.config.ts` defines no fallback), so Vite could not inline it and
- * the bundle computed `https://undefined.supabase.co/functions/v1/…` at
- * runtime. Every WeasyPrint preview and every template PDF export failed
- * before it left the browser: the edge logs recorded no request at all, while
- * the UI reported a network error or "authentication required". The same fetch
- * also predated cookie-only sessions, so even against the right host it
- * carried no credential the function accepts.
+ * rest of the app uses, and must keep doing so.
  *
- * `invokeSecureFunction` hardcodes the project URL and anon key (like
- * `integrations/supabase/client.ts` does), resolves the bearer, sends the
- * HttpOnly session cookie, refreshes-and-retries once on an auth failure, and
- * normalises the error. Do not reintroduce a bare `fetch` here.
+ * The hand-rolled `fetch` it replaces built its URL from
+ * `import.meta.env.VITE_SUPABASE_PROJECT_ID` and its apikey from
+ * `VITE_SUPABASE_PUBLISHABLE_KEY`. The hosting build defines those, so it did
+ * work in production — but nothing else in the app depends on them:
+ * `integrations/supabase/client.ts` and `secureInvoke.ts` both hardcode the
+ * project precisely because the repo ships no `.env` and `vite.config.ts`
+ * declares no fallback. A repo or CI build therefore compiled this call site
+ * into a request to `https://undefined.supabase.co`, and only this call site.
+ * That is one environment away from a dead render path, for no benefit.
+ *
+ * `invokeSecureFunction` hardcodes the project URL and anon key like the rest
+ * of the app, resolves the bearer, sends the HttpOnly session cookie,
+ * refreshes-and-retries once on an auth failure, and normalises the error. Do
+ * not reintroduce a bare `fetch` here.
  */
 import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
 

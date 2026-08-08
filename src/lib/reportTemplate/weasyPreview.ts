@@ -12,8 +12,7 @@
  * unchanged template returns the previous signed URL instantly.
  */
 import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
-import { preloadImages } from './imagePreloader';
-import { renderTemplateToHtml } from './htmlRenderer';
+import { compileTemplateHtmlForPdf } from './compileTemplateForPdf';
 import type { ReportTemplate } from './templateSchema';
 
 export interface WeasyPreviewOptions {
@@ -67,19 +66,19 @@ export async function renderTemplateViaWeasyPrint(
   template: ReportTemplate,
   opts: WeasyPreviewOptions = {},
 ): Promise<WeasyPreviewResult> {
-  // Reference mode: WeasyPrint fetches assets itself via its safe_url_fetcher
-  // rather than receiving them base64-inlined. Inlining is bounded by the
-  // service's 25 MB MAX_HTML_BYTES, and an A4 page raster costs ~5.9 MB inlined
-  // at 200 DPI and ~13.3 MB at 300 — so an inlined pixel-perfect export blows
-  // the cap at roughly two pages, while production imports average 18.5.
-  const prepared = await preloadImages(template, { mode: 'reference' });
-  if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
-
-  const { html } = renderTemplateToHtml(prepared, {
+  // One shared compile step: resolve the page rasters, then render. The
+  // resolution uses reference mode, so WeasyPrint fetches the rasters itself
+  // rather than receiving them base64-inlined — inlining is bounded by the
+  // service's 25 MB MAX_HTML_BYTES, and an A4 page raster costs ~5.9 MB at
+  // 200 DPI and ~13.3 MB at 300, so an inlined pixel-perfect export blows the
+  // cap at roughly two pages while production imports average 18.5.
+  // See compileTemplateForPdf.ts for what skipping the step cost.
+  const { html } = await compileTemplateHtmlForPdf(template, {
     data: opts.data ?? {},
     title: opts.title ?? 'Template Preview',
     customCss: opts.customCss,
   });
+  if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
 
   const fileName = (opts.fileName || 'template-preview.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = await sha1(`${opts.templateId ?? ''}::${opts.mode ?? 'preview'}::${html}`);
@@ -90,13 +89,9 @@ export async function renderTemplateViaWeasyPrint(
   }
 
   // Goes through `invokeSecureFunction` — the app's one transport — rather
-  // than a hand-rolled fetch. The previous copy addressed the function as
-  // `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/…`, and
-  // this project defines no Vite Supabase variables at build time, so the
-  // bundle resolved that to `https://undefined.supabase.co` and no render
-  // request ever left the browser. See `weasyRenderClient.ts` for the full
-  // account; the shared transport also carries the cookie session and
-  // refreshes-and-retries once when the access token has gone stale.
+  // than a hand-rolled fetch built on Vite env vars that only the hosting
+  // build defines. See `weasyRenderClient.ts`; the shared transport carries
+  // the cookie session and refreshes-and-retries once on an auth failure.
   const { data, error } = await invokeSecureFunction<{
     url?: string; fileName?: string; bytes?: number;
   }>(

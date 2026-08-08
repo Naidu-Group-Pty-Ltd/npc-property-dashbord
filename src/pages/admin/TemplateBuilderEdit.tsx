@@ -111,6 +111,7 @@ import {
 // jsPDF preview retired — PDF tab now renders via WeasyPrint for production parity.
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { renderHtmlToPdfUrl, pdfFileNameFor } from '@/lib/reportTemplate/weasyRenderClient';
+import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
 import {
   buildCascadeActivationReadiness,
   buildCascadeAnchorSuggestions,
@@ -1926,7 +1927,10 @@ export default function TemplateBuilderEdit() {
                   if (!confirmRendererPreflight('render with WeasyPrint')) return;
                   const toastId = toast.loading('Rendering via WeasyPrint…');
                   try {
-                    const { html } = renderTemplateToHtml(template, {
+                    // Compiles through the shared path so the page rasters are
+                    // resolved first. Calling renderTemplateToHtml directly (as
+                    // this did) produced a PDF that was blank from page 2 on.
+                    const { html, unresolvedRasterPages } = await compileTemplateHtmlForPdf(template, {
                       data: sampleData,
                       title: name || 'Template Preview',
                       customCss: customCss || undefined,
@@ -1940,7 +1944,9 @@ export default function TemplateBuilderEdit() {
                       mode: 'preview',
                     });
                     window.open(url, '_blank', 'noopener');
-                    toast.success('WeasyPrint render ready', { id: toastId });
+                    const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
+                    if (degraded) toast.warning(degraded, { id: toastId });
+                    else toast.success('WeasyPrint render ready', { id: toastId });
                   } catch (e: any) {
                     toast.error(`WeasyPrint failed: ${e?.message ?? e}`, { id: toastId });
                   }
