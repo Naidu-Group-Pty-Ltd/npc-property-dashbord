@@ -29856,6 +29856,36 @@ export type Database = {
           },
         ]
       }
+      report_default_assets: {
+        Row: {
+          asset_key: string
+          byte_length: number | null
+          created_at: string
+          data_uri: string
+          id: string
+          mime_type: string
+          updated_at: string
+        }
+        Insert: {
+          asset_key: string
+          byte_length?: number | null
+          created_at?: string
+          data_uri: string
+          id?: string
+          mime_type: string
+          updated_at?: string
+        }
+        Update: {
+          asset_key?: string
+          byte_length?: number | null
+          created_at?: string
+          data_uri?: string
+          id?: string
+          mime_type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       report_engine_audit: {
         Row: {
           after_value: Json | null
