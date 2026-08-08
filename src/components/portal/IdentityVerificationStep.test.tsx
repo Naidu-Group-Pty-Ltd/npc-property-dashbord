@@ -412,16 +412,37 @@ describe('hosted provider flow', () => {
     expect(screen.getAllByRole('button', { name: /i have finished/i })).toHaveLength(1);
   });
 
-  it('a provider message only re-reads server state — it cannot mark verified', async () => {
-    await openHosted();
+  it('ignores provider lifecycle messages until verification is complete', async () => {
+    const frame = await openHosted();
     const callsBefore = verificationStatus.mock.calls.length;
 
-    // The payload is deliberately not inspected. Even one that claims success
-    // can do no more than make NPC ask its own server what happened.
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', {
         origin: 'https://verify.didit.me',
-        data: { status: 'Approved', verified: true, decision: 'passed' },
+        source: frame.contentWindow,
+        data: { type: 'verification_started', sessionId: 'session-1' },
+      }));
+      await Promise.resolve();
+    });
+
+    expect(verificationStatus.mock.calls.length).toBe(callsBefore);
+    expect(document.querySelector('iframe')).toBeTruthy();
+  });
+
+  it('a provider completion message only re-reads server state — it cannot mark verified', async () => {
+    const frame = await openHosted();
+    const callsBefore = verificationStatus.mock.calls.length;
+
+    // The completion payload can claim success, but it can do no more than make
+    // NPC ask its own server what happened. Status/decision fields are ignored.
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://verify.didit.me',
+        source: frame.contentWindow,
+        data: {
+          type: 'verification_complete', sessionId: 'session-1',
+          status: 'Approved', verified: true, decision: 'passed',
+        },
       }));
     });
 

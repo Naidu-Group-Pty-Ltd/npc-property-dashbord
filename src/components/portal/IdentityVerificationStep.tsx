@@ -394,6 +394,7 @@ function HostedVerificationDialog({
   const [closing, setClosing] = useState(false);
   /** Revealed on request. Not shown up front — nothing has failed yet. */
   const [showFallback, setShowFallback] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const done = useCallback(async () => {
     setClosing(true);
@@ -401,15 +402,16 @@ function HostedVerificationDialog({
   }, [onClose]);
 
   /**
-   * A message from the frame means "something happened in there" and nothing
-   * more. The origin is checked, the payload is deliberately NOT inspected,
-   * and the only action is to re-read the server's own view. A frame cannot
-   * talk NPC into an identity outcome because no code path exists from here to
-   * one.
+   * Didit posts lifecycle messages while the embedded app boots and moves
+   * between steps. Only its documented `verification_complete` event means the
+   * hosted journey has finished. Treating every same-origin message as
+   * completion unmounted the iframe during startup, which appeared to the
+   * customer as a white panel that vanished after a few seconds.
    *
-   * The origin is derived from the session URL the server minted rather than
-   * written down here, so the portal still never names a provider — and a
-   * different one, or a different environment of the same one, keeps working.
+   * The origin is still derived from the server-minted session URL rather than
+   * hardcoded, and the source must be this exact iframe. The payload is used
+   * only to recognize the documented completion event; status/decision fields
+   * remain untrusted and the only action is to re-read server state.
    */
   const origin = useMemo(() => {
     try { return new URL(url).origin; } catch { return null; }
@@ -419,6 +421,8 @@ function HostedVerificationDialog({
     if (!origin) return;
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== origin) return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type !== 'verification_complete') return;
       void done();
     };
     window.addEventListener('message', onMessage);
@@ -445,6 +449,7 @@ function HostedVerificationDialog({
 
         <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-0 sm:px-4 sm:pb-4">
           <iframe
+            ref={iframeRef}
             src={url}
             title="Identity verification"
             className="min-h-0 w-full flex-1 border-0 sm:rounded-md sm:border"
