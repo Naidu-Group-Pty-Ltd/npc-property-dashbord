@@ -301,6 +301,9 @@ export function TeamRemindersSection() {
             <span>New Team Reminder</span>
           </Button>
         </div>
+      )}
+
+
 
 
       {/* List */}
