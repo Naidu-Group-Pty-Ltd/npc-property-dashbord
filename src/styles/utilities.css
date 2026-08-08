@@ -651,24 +651,37 @@ nav[aria-label='pagination'] > ul {
 }
 
 /* ── Native date/time picker affordance ───────────────────────────
-   Chromium renders `::-webkit-calendar-picker-indicator` as a near-black
-   glyph, which is invisible on the dark glass inputs (Reminders Hub, both
-   the Client and Team forms). Invert it and tint it with the brand token so
-   the calendar/clock button is actually discoverable, and give it a real
-   tap target. */
+   Chromium draws `::-webkit-calendar-picker-indicator` in whatever polarity
+   the UA picked for the field — a near-black glyph when it resolves the input
+   as light, a white one when it resolves it as dark. A plain `invert(1)` fixes
+   the first case and *breaks* the second, which is why the calendar button was
+   visible for some users and invisible for others on the very same page.
+
+   `brightness(0)` collapses the glyph to solid black whatever it started as,
+   so the following invert + tint always lands on the same brand gold. This is
+   global and unconditional, so it holds for both Reminders tabs and every
+   other native date/time field in the platform. */
 input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="month"]::-webkit-calendar-picker-indicator,
 input[type="week"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  opacity: 0.85;
   cursor: pointer;
   padding: 4px;
   margin-inline-start: 4px;
   border-radius: 6px;
-  min-width: 20px;
-  min-height: 20px;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  min-width: 22px;
+  min-height: 22px;
+  filter: brightness(0) invert(1) sepia(1) saturate(6) hue-rotate(2deg) brightness(1.05);
+  transition: filter 0.15s ease, background 0.15s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="time"]::-webkit-calendar-picker-indicator:hover,
+input[type="month"]::-webkit-calendar-picker-indicator:hover,
+input[type="week"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  background: hsl(var(--primary) / 0.14);
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator:hover,
@@ -676,25 +689,39 @@ input[type="time"]::-webkit-calendar-picker-indicator:hover,
 input[type="month"]::-webkit-calendar-picker-indicator:hover,
 input[type="week"]::-webkit-calendar-picker-indicator:hover,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
-  opacity: 1;
-  background: hsl(var(--primary) / 0.18);
-}
-
-.dark input[type="date"]::-webkit-calendar-picker-indicator,
-.dark input[type="time"]::-webkit-calendar-picker-indicator,
-.dark input[type="month"]::-webkit-calendar-picker-indicator,
-.dark input[type="week"]::-webkit-calendar-picker-indicator,
-.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) sepia(1) saturate(4) hue-rotate(5deg) brightness(1.05);
+  background: hsl(var(--primary) / 0.28);
+  filter: brightness(0) invert(1) sepia(1) saturate(8) hue-rotate(2deg) brightness(1.2);
 }
 
 /* Firefox / Safari have no indicator pseudo-element, so the visible cue is
-   the field itself: keep the typed value legible rather than the UA grey. */
+   the field itself: pin the polarity so the typed value and any UA-drawn
+   affordance stay legible on our dark glass. */
 input[type="date"],
 input[type="time"],
+input[type="month"],
+input[type="week"],
 input[type="datetime-local"] {
-  color-scheme: light dark;
+  color-scheme: dark;
 }
+
+/* Light theme flips the polarity back: the tinted glyph needs to be dark
+   enough to read on a light field. */
+:root:not(.dark) input[type="date"],
+:root:not(.dark) input[type="time"],
+:root:not(.dark) input[type="month"],
+:root:not(.dark) input[type="week"],
+:root:not(.dark) input[type="datetime-local"] {
+  color-scheme: light;
+}
+
+:root:not(.dark) input[type="date"]::-webkit-calendar-picker-indicator,
+:root:not(.dark) input[type="time"]::-webkit-calendar-picker-indicator,
+:root:not(.dark) input[type="month"]::-webkit-calendar-picker-indicator,
+:root:not(.dark) input[type="week"]::-webkit-calendar-picker-indicator,
+:root:not(.dark) input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: brightness(0) sepia(1) saturate(6) hue-rotate(2deg) brightness(0.75);
+}
+
 
 /* ── Platform scrollbar language ──────────────────────────────────
    The premium thumb defined above is now the default everywhere rather
