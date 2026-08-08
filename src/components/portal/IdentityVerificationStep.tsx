@@ -38,6 +38,10 @@ const UNAVAILABLE_CODES = [
   'temporarily_unavailable',
   'attempts_exhausted',
   'already_processing',
+  // The server switched to a hosted provider while this dialog was open. Not a
+  // capture failure — hand it back to the step, which re-reads and renders the
+  // hosted flow instead.
+  'hosted_verification_required',
 ];
 
 /** A signed-URL PUT that failed, carrying the object it was writing. */
@@ -68,6 +72,8 @@ export function IdentityVerificationStep({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeParty, setActiveParty] = useState<AmlVerificationParty | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  /** An open hosted session: the party plus the URL the server just minted. */
+  const [hosted, setHosted] = useState<{ party: AmlVerificationParty; url: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -98,13 +104,39 @@ export function IdentityVerificationStep({
       const stillAllowed = fresh.parties.find(
         (p) => (p.party_id ?? null) === (party.party_id ?? null))?.can_attempt;
       if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
+
+      /**
+       * A hosted provider runs its own capture. The session is minted by our
+       * backend — never a generic workflow link, which would arrive with no
+       * way to tie the result back to this case and party.
+       */
+      if ((fresh.provider_flow ?? 'capture') === 'hosted') {
+        const res = await amlPortalApi.startHostedVerification(caseId, {
+          party_id: party.party_id, party_label: party.label,
+        });
+        if (res.verification_url) {
+          setHosted({ party, url: res.verification_url });
+        } else {
+          // Already in flight or already settled server-side. Re-read rather
+          // than guessing, and never assert an outcome from here.
+          toast.info(res.message);
+          await load();
+        }
+        return;
+      }
+
       setActiveParty(party);
     } catch (e: any) {
+      if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {
+        toast.info(e.message);
+        await load();
+        return;
+      }
       setLoadError(e?.message ?? 'Unable to check verification availability.');
     } finally {
       setStarting(null);
     }
-  }, [caseId]);
+  }, [caseId, load]);
 
   if (loadError) {
     return (
@@ -285,7 +317,134 @@ export function IdentityVerificationStep({
           onUnavailable={async () => { setActiveParty(null); await load(); }}
         />
       )}
+
+      {hosted && (
+        <HostedVerificationDialog
+          party={hosted.party}
+          url={hosted.url}
+          onClose={async () => { setHosted(null); await load(); }}
+        />
+      )}
     </Card>
+  );
+}
+
+/* ─────────────────────────── hosted verification ────────────────────────── */
+
+/**
+ * The provider's own verification flow, embedded in the portal.
+ *
+ * Two things this component deliberately does NOT do.
+ *
+ * It never reports an outcome. There is no message listener, no return-URL
+ * parameter and no "finished" callback wired to anything that changes state:
+ * the identity result reaches NPC on a signed server-to-server webhook and
+ * nowhere else. Everything here is a UX signal, so the most it can say is
+ * "we are checking".
+ *
+ * And it never assumes the iframe works. Embedded camera permission is
+ * genuinely unreliable — iOS in-app browsers, locked-down managed devices, and
+ * any host that declines to delegate `camera` all fail in ways the customer
+ * cannot diagnose. So the new-tab route is offered from the start as an equal
+ * option rather than hidden behind a failure nobody can detect from inside the
+ * frame.
+ */
+function HostedVerificationDialog({
+  party, url, onClose,
+}: {
+  party: AmlVerificationParty;
+  url: string;
+  onClose: () => void | Promise<void>;
+}) {
+  const [closing, setClosing] = useState(false);
+
+  const done = async () => {
+    setClosing(true);
+    await onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Verify ${party.label}`}
+    >
+      <Card className="flex max-h-full w-full max-w-2xl flex-col overflow-hidden">
+        <CardHeader>
+          <CardTitle className="text-base">Verify your identity</CardTitle>
+          <CardDescription>
+            Follow the steps in the window below. You will photograph your identity document
+            and then your face. It takes about a minute.
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+          <iframe
+            src={url}
+            title="Identity verification"
+            className="h-[60vh] w-full rounded-md border"
+            /*
+             * The permissions the hosted flow needs. `camera` is the one that
+             * matters — without delegating it the provider's capture step
+             * fails with a permission error the customer cannot act on. The
+             * motion sensors are used for the document-tilt and liveness
+             * steps; `fullscreen` for the capture view.
+             */
+            allow="camera; microphone; fullscreen; accelerometer; gyroscope; magnetometer"
+            /*
+             * `allow-same-origin` here means "keep your OWN origin", not "share
+             * ours". Without it the frame is given an opaque origin, and a
+             * Permissions-Policy grant cannot be delegated to an opaque origin
+             * — so the camera would be blocked no matter what `allow` says,
+             * and the provider could not keep its own session state either.
+             *
+             * It does not weaken the boundary: the document inside is
+             * cross-origin, so the same-origin policy still stops it reading
+             * this page — which holds the portal session token. (The
+             * combination IS unsafe for a SAME-origin frame, which could then
+             * drop its own sandbox; that is not this.)
+             */
+            sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-modals"
+          />
+
+          <Alert>
+            <AlertDescription className="text-xs">
+              Camera not working in this window? Some browsers block it inside an embedded
+              frame.{' '}
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                Open the verification in a new tab
+              </a>{' '}
+              instead — it is the same secure session.
+            </AlertDescription>
+          </Alert>
+
+          <div className="flex flex-wrap justify-between gap-2 pt-1">
+            <Button variant="ghost" size="sm" onClick={done} disabled={closing}>
+              Cancel
+            </Button>
+            {/*
+              The customer telling us they are finished is a hint to re-read
+              server state, not evidence that anything passed. The status they
+              land on is whatever the server says — which, until the webhook
+              arrives, is "with our team".
+            */}
+            <Button size="sm" onClick={done} disabled={closing}>
+              {closing ? (
+                <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
+              ) : (
+                <>I have finished <ArrowRight className="ml-1 h-4 w-4" /></>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

@@ -101,6 +101,18 @@ export interface AmlVerificationStatus {
    * upload URL. Client-safe by construction — never a provider name.
    */
   availability?: 'available' | 'temporarily_unavailable' | 'manual_verification_required';
+  /**
+   * Which verification experience to render, decided server-side.
+   *
+   * `capture` — NPC's own camera flow, uploading to NPC storage.
+   * `hosted`  — the provider runs the capture on its own UI, embedded here.
+   *
+   * Deliberately two words and no more. The portal never learns which provider
+   * is configured, and cannot ask for one: sending a provider name from the
+   * browser would be a client selecting its own authority. Absent on an older
+   * server, which is why it defaults to `capture` at every read site.
+   */
+  provider_flow?: 'capture' | 'hosted';
   parties: AmlVerificationParty[];
 }
 
@@ -130,6 +142,20 @@ export const amlPortalApi = {
   requestVerificationUpload: (case_id: string, kind: 'document' | 'selfie') =>
     call<{ upload_url: string; token: string; path: string; bucket: string }>(
       'request_verification_upload_url', { case_id, kind }),
+  /**
+   * Open (or resume) a provider-hosted verification session.
+   *
+   * Returns a URL and nothing else. There is no session token to hold, no
+   * provider name, and no configuration — and completing the flow in that
+   * window does NOT mark anybody verified. The identity outcome arrives on a
+   * signed server-to-server webhook; this call only opens the door.
+   */
+  startHostedVerification: (case_id: string, params: {
+    party_id?: string | null; party_label?: string;
+  }) => call<{
+    started: boolean; resumed?: boolean;
+    verification_url?: string; message: string; code?: string;
+  }>('start_hosted_verification', { case_id, ...params }),
   submitVerification: (case_id: string, params: {
     party_id?: string | null; party_label?: string;
     document_storage_path: string; selfie_storage_path: string;

@@ -15,6 +15,14 @@ verify_jwt = false
 [functions.aml-provider-webhook]
 verify_jwt = false
 
+# Didit calls this from their own servers and cannot carry a Supabase JWT.
+# The HMAC signature over the raw body (X-Signature + X-Timestamp, verified in
+# _shared/aml/providers/diditClient.ts) IS the authentication boundary: it is
+# checked before any service-role database access, and no unsigned or stale
+# request can change AML state.
+[functions.didit-webhook]
+verify_jwt = false
+
 [functions.aml-risk]
 verify_jwt = false
 

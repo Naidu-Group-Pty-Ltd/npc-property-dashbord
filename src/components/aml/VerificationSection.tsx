@@ -491,13 +491,36 @@ export function VerificationSection({
                     </ul>
                   )}
 
+                  {/*
+                    Hosted-provider evidence, read from the canonical row.
+                    There is no separate Didit record to consult — the summary
+                    written into `outcome_detail` IS the evidence, and it is
+                    allow-listed at the boundary: statuses, scores and warning
+                    categories only. No image, no session URL, no session
+                    token, no document data.
+                  */}
+                  {c.outcome_detail?.didit && (
+                    <DiditEvidence detail={c.outcome_detail.didit} reference={c.provider_reference} />
+                  )}
+
                   {c.failure_reason && (
                     <div className="text-xs text-destructive">{c.failure_reason}</div>
                   )}
 
                   {canWrite && (
                     <div className="flex flex-wrap gap-2 pt-1">
-                      {["pending", "in_progress"].includes(c.status) && c.check_type === "electronic_idv" && (
+                      {/*
+                        "Run check" adjudicates NPC-held captures through the
+                        self-hosted service. A hosted-provider check has none —
+                        the customer captured on the provider's UI and NPC
+                        stored no images — so pressing it could only produce a
+                        storage error against a client whose verification is
+                        proceeding normally somewhere else. Offer it only where
+                        there is something to run.
+                      */}
+                      {["pending", "in_progress"].includes(c.status)
+                        && c.check_type === "electronic_idv"
+                        && c.provider !== "didit" && (
                         <Button size="sm" variant="outline" className="h-7 text-xs"
                           onClick={() => adjudicate(c)} disabled={busy === c.id}>
                           {busy === c.id && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
@@ -551,6 +574,82 @@ export function VerificationSection({
       )}
 
       {dialog}
+    </div>
+  );
+}
+
+/* ──────────────────────── hosted-provider evidence ───────────────────────── */
+
+/** Per-feature status → the tone staff read it in. */
+const DIDIT_FEATURE_TONE: Record<string, string> = {
+  Approved: "text-success",
+  Declined: "text-destructive",
+  "In Review": "text-warning",
+  "Not Finished": "text-muted-foreground",
+};
+
+/**
+ * What a hosted identity verification established, for the adjudicator.
+ *
+ * Shows the three modules NPC requires by name and states plainly when one did
+ * not run — because that is precisely the case where an `Approved` session must
+ * NOT read as a pass, and a reviewer looking at a referral needs to see why.
+ *
+ * Everything rendered here comes from the allow-listed summary written at the
+ * webhook boundary. There is no code path from this component to a raw
+ * provider payload, an image, or a session credential.
+ */
+function DiditEvidence({ detail, reference }: {
+  detail: Record<string, any>;
+  reference: string | null;
+}) {
+  const features: any[] = Array.isArray(detail.features) ? detail.features : [];
+  const missing = features.filter((f) => !f.executed);
+
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="text-muted-foreground">
+        Didit hosted verification
+        {detail.session_status && ` · ${detail.session_status}`}
+        {detail.environment === "sandbox" && (
+          <span className="ml-1.5 text-warning">sandbox — not compliance evidence</span>
+        )}
+      </div>
+
+      {features.length > 0 && (
+        <ul className="flex flex-wrap gap-x-3 gap-y-1">
+          {features.map((f) => (
+            <li
+              key={f.feature}
+              className={f.executed
+                ? (DIDIT_FEATURE_TONE[f.status] ?? "text-warning")
+                : "text-warning"}
+              title={(f.warnings ?? []).join(", ")}
+            >
+              {f.label ?? f.feature}: {f.executed ? f.status : "not run"}
+              {typeof f.score === "number" && ` (${Math.round(f.score)})`}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {missing.length > 0 && (
+        <div className="text-warning">
+          Required evidence incomplete — {missing.map((f) => f.label ?? f.feature).join(", ")}
+          {" "}did not produce a result, so this cannot be recorded as a pass.
+        </div>
+      )}
+
+      {reference && (
+        <div className="text-muted-foreground">Provider session {reference}</div>
+      )}
+
+      {/* An identity result is not an AML outcome. Stated on the record the
+          adjudicator actually reads, because "verified" is the word most
+          likely to be mistaken for "cleared". */}
+      <div className="text-muted-foreground">
+        Identity evidence only — screening, PEP, EDD and risk are assessed separately.
+      </div>
     </div>
   );
 }

@@ -11,6 +11,10 @@
  *   - save_questionnaire           { case_id, section, payload, submit? }
  *   - get_consents                 { case_id }          → current AUSTRAC-referenced catalogue + acceptance state
  *   - record_consent               { case_id, kind, version?, payload? }
+ *   - verification_status          { case_id }          → per-party state + which flow to render
+ *   - start_hosted_verification    { case_id, party_id?, party_label? }
+ *                                                      → provider-hosted session URL (never stored)
+ *   - submit_verification          { case_id, ... }     → self-hosted capture path only
  *   - list_requirements            { case_id }
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
  *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
@@ -26,11 +30,21 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
 import {
   getIdvProvider,
+  getHostedIdvProvider,
+  idvFlowFor,
+  diditWorkflowId,
   resolveTenantProvider,
   cachedSelfHostedIdvHealth,
+  currentEnvironment,
   ProviderResolutionError,
+  type IdvFlow,
 } from "../_shared/aml/providers/index.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+import { buildVendorData } from "../_shared/aml/providers/didit.pure.ts";
+import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
+import {
+  applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
+} from "../_shared/aml/diditOutcome.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -407,9 +421,84 @@ async function activeProcessingCheck(
  * environment classification, secret presence) NEVER crosses this boundary —
  * the portal learns only whether capture may proceed.
  */
-async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'temporarily_unavailable' | 'manual_verification_required'> {
+/**
+ * The in-flight hosted-session check for this party, if any.
+ *
+ * Deliberately has NO staleness bound, unlike `activeProcessingCheck`. A
+ * hosted session lives for days, so timing one out would offer a second
+ * (chargeable) session to a customer who still has one open. Release is by
+ * reconciliation instead: the caller asks the provider what actually happened
+ * to the session and retires it only on a real expiry or abandonment.
+ */
+async function activeHostedCheck(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<any | null> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('id, case_id, party_id, party_label, provider, provider_reference, '
+      + 'outcome_detail, processing_status, status, attempt_consumed')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv')
+    .eq('provider', 'didit')
+    .in('processing_status', ['submitted', 'queued', 'processing'])
+    .is('superseded_at', null);
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+  if (error) throw error;
+  const row = (data ?? [])[0] ?? null;
+  // A row whose session creation never completed holds no session to resume.
+  return row?.provider_reference ? row : null;
+}
+
+/**
+ * Retire a hosted check without touching identity state.
+ *
+ * `status` and `attempt_consumed` are left alone on purpose: releasing a
+ * session the customer never finished is housekeeping, not a finding against
+ * them. The guard on `attempt_consumed` makes it impossible to retire a check
+ * that already produced an outcome.
+ */
+async function releaseHostedCheck(
+  admin: any, checkId: string, reason: string,
+): Promise<void> {
+  await admin.schema('aml').from('verification_checks').update({
+    processing_status: 'cancelled',
+    superseded_at: new Date().toISOString(),
+    superseded_reason: reason.slice(0, 200),
+    updated_at: new Date().toISOString(),
+  })
+    .eq('id', checkId)
+    .eq('attempt_consumed', false)
+    .in('processing_status', ['submitted', 'queued', 'processing']);
+}
+
+type IdvAvailability = 'available' | 'temporarily_unavailable' | 'manual_verification_required';
+
+/**
+ * Availability AND which of the two experiences to render, resolved together.
+ *
+ * The flow is server-decided and the browser is told only `capture` or
+ * `hosted` — never the provider key, never the workflow id, never whether a
+ * secret is present. A client that could name the provider could reason about
+ * NPC's configuration; one that could choose it would be selecting its own
+ * authority.
+ */
+async function clientSafeIdvState(
+  admin: any,
+): Promise<{ availability: IdvAvailability; flow: IdvFlow }> {
+  let flow: IdvFlow = 'capture';
   try {
     const resolved = await resolveTenantProvider(admin, 'default', 'idv');
+    flow = idvFlowFor(resolved?.providerKey);
+
+    if (flow === 'hosted_session') {
+      // Throws ProviderResolutionError when the adapter is unwired or its
+      // configuration (API key, webhook secret, workflow id) is incomplete.
+      // No network probe: creating a session to test one would be a chargeable
+      // call on every portal page load.
+      getHostedIdvProvider({ resolved, admin });
+      return { availability: 'available', flow };
+    }
+
     const provider = getIdvProvider({ resolved, admin });
 
     // Resolution only proves the provider is *configured*. Two secrets can
@@ -418,19 +507,29 @@ async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'tem
     // also probed — cached, because this runs on every portal page load.
     if (provider.name === 'selfhosted') {
       const health = await cachedSelfHostedIdvHealth();
-      if (!health.reachable || health.status !== 'ok') return 'temporarily_unavailable';
+      if (!health.reachable || health.status !== 'ok') {
+        return { availability: 'temporarily_unavailable', flow };
+      }
     }
-    return 'available';
+    return { availability: 'available', flow };
   } catch (err: any) {
     if (err instanceof ProviderResolutionError) {
       // Not configured / simulator blocked → the adviser will arrange manual
       // sighting; transient misconfiguration reads as temporary.
-      return err.code === 'provider_misconfigured'
-        ? 'temporarily_unavailable'
-        : 'manual_verification_required';
+      return {
+        availability: err.code === 'provider_misconfigured'
+          ? 'temporarily_unavailable'
+          : 'manual_verification_required',
+        flow,
+      };
     }
-    return 'temporarily_unavailable';
+    return { availability: 'temporarily_unavailable', flow };
   }
+}
+
+/** Back-compat shim for the call sites that only need the availability word. */
+async function clientSafeIdvAvailability(admin: any): Promise<IdvAvailability> {
+  return (await clientSafeIdvState(admin)).availability;
 }
 
 
@@ -817,10 +916,14 @@ Deno.serve(async (req) => {
         const parties = await verificationParties(admin, c.id);
         // Client-safe availability only — never provider names, environment
         // classification, secret presence or internal health detail.
-        const availability = await clientSafeIdvAvailability(admin);
+        const { availability, flow } = await clientSafeIdvState(admin);
         return jsonResponse({
           enabled: true,
           availability,
+          // Which experience to render, and nothing more. `hosted` does not
+          // name Didit, and the portal has no way to ask for one flow or the
+          // other — it is told.
+          provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture',
           max_attempts: MAX_VERIFICATION_ATTEMPTS,
           // The biometric consent is separate (APP 3.3) and is what unlocks
           // the facial check specifically.
@@ -830,12 +933,283 @@ Deno.serve(async (req) => {
         });
       }
 
+      /**
+       * Start (or recover) a provider-hosted verification session.
+       *
+       * Everything the self-hosted path gates on is gated here too — portal
+       * session, case ownership, party, the consent catalogue, the separate
+       * biometric consent, the attempt ceiling, one-in-flight, and provider
+       * readiness. What is deliberately absent is any capture: when a hosted
+       * provider is active NPC never asks the customer to upload an identity
+       * document or a selfie into its own storage, because the provider does
+       * that itself and a second copy would be collection without purpose.
+       *
+       * Returns the hosted URL and nothing else. The URL embeds the customer's
+       * session token, so it is handed to their browser and never persisted,
+       * logged, or written to the timeline.
+       */
+      case 'start_hosted_verification': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        const partyId = body.party_id ? String(body.party_id) : null;
+        const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
+
+        // The biometric consent must exist BEFORE a face is captured, and the
+        // hosted flow captures one. Consent after collection is not consent
+        // (APP 3.3) — and the provider's UI opens the camera immediately, so
+        // this gate has to sit in front of the session, not the result.
+        const { data: bioConsent } = await admin.schema('aml').from('consents')
+          .select('id, version').eq('case_id', c.id).eq('kind', 'biometric_collection')
+          .order('accepted_at', { ascending: false }).limit(1).maybeSingle();
+        if (!bioConsent) {
+          return jsonResponse({
+            error: 'Please accept the facial verification consent before continuing.',
+            code: 'biometric_consent_required',
+          }, 403);
+        }
+
+        const { availability, flow } = await clientSafeIdvState(admin);
+        if (flow !== 'hosted_session') {
+          // The tenant is not on a hosted provider. Never fall back to one on
+          // a client's say-so: provider selection is server-side.
+          return jsonResponse({
+            error: 'Verification is temporarily unavailable. Please try again shortly.',
+            code: 'temporarily_unavailable',
+          }, 409);
+        }
+        if (availability !== 'available') {
+          return jsonResponse({
+            error: availability === 'manual_verification_required'
+              ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+              : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: availability,
+          }, 409);
+        }
+
+        const used = await verificationAttemptsUsed(admin, c.id, partyId);
+        if (used >= MAX_VERIFICATION_ATTEMPTS) {
+          return jsonResponse({
+            error: 'You have used all available attempts. A member of our team will contact you to complete verification another way.',
+            code: 'attempts_exhausted',
+            attempts_used: used,
+            max_attempts: MAX_VERIFICATION_ATTEMPTS,
+          }, 409);
+        }
+
+        const resolved = await resolveTenantProvider(admin, 'default', 'idv');
+        const provider = getHostedIdvProvider({ resolved, admin });
+        const workflowId = diditWorkflowId(resolved) ?? '';
+        const environment = currentEnvironment();
+
+        /**
+         * An existing in-flight session for this party.
+         *
+         * This is what makes a double-click, a refresh, a second tab and a
+         * backend timeout-after-creation all safe: the customer is returned to
+         * the session they already have rather than being given a second
+         * (chargeable) one. The URL is re-read from the provider, because NPC
+         * never stored it.
+         */
+        let existing = await activeHostedCheck(admin, c.id, partyId);
+        if (existing) {
+          try {
+            const decision = await provider.fetchDecision(String(existing.provider_reference));
+            const result = await applyDiditDecision({
+              db: admin, check: existing as any, decision,
+              expectedWorkflowId: workflowId, source: 'portal_reconcile', environment,
+            });
+            if (result.kind === 'in_flight') {
+              const url = typeof decision['session_url'] === 'string' ? decision['session_url'] : '';
+              if (url) {
+                return jsonResponse({
+                  started: true, resumed: true, verification_url: url,
+                  message: 'Your verification is already open. Continue where you left off.',
+                });
+              }
+              // No URL to return them to; treat the session as unusable and
+              // fall through to creating a fresh one below.
+            }
+            if (result.kind === 'applied' || result.kind === 'already_applied') {
+              // It finished while nobody was looking. Report the settled state
+              // rather than starting another session.
+              return jsonResponse({
+                started: false, code: 'already_processing',
+                message: 'Your verification has been received. We will update you shortly.',
+              });
+            }
+            // 'released' — expired/abandoned. The slot is free; carry on.
+            existing = null;
+          } catch (e) {
+            if (e instanceof DiditCorrelationError) {
+              // The stored session does not correlate. Do not reuse it and do
+              // not settle anything from it; retire it and start cleanly.
+              await releaseHostedCheck(admin, String(existing.id), `correlation_failed:${e.code}`);
+              existing = null;
+            } else if (e instanceof DiditApiError) {
+              // Cannot tell whether the old session is still usable. Refusing
+              // is the safe answer: creating another would risk two live
+              // sessions for one party. Nothing is consumed.
+              return jsonResponse({
+                error: 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+                code: 'temporarily_unavailable',
+              }, 409);
+            } else {
+              throw e;
+            }
+          }
+        }
+
+        // Row first, session second. The canonical check is what the webhook
+        // correlates against, so it has to exist before a session can arrive
+        // — the reverse order loses any decision that beats the insert.
+        const captureSequence = await nextCaptureSequence(admin, c.id, partyId);
+        const idempotencyKey = 'portal-didit-' + await sha256Hex(
+          `${c.id}|${partyId ?? 'subject'}|${captureSequence}`);
+
+        let created: any;
+        const { data: inserted, error: insErr } = await admin.schema('aml')
+          .from('verification_checks').insert({
+            case_id: c.id,
+            party_id: partyId,
+            party_label: partyLabel,
+            check_type: 'electronic_idv',
+            attempt_number: captureSequence,
+            capture_sequence: captureSequence,
+            status: 'pending',
+            provider: 'didit',
+            processing_status: 'queued',
+            attempt_consumed: false,
+            execution_mode: 'live',
+            environment,
+            idempotency_key: idempotencyKey,
+            // No document_reference and no biometric_storage_path: the
+            // provider owns the capture, so NPC holds no copy. The outbox
+            // trigger keys on document_reference being NULL to keep this row
+            // out of the self-hosted image worker.
+            biometric_consent_id: bioConsent.id,
+            outcome_detail: { submitted_from: 'client_portal', flow: 'hosted_session' },
+          }).select('*').single();
+
+        if (insErr) {
+          // 23505 on the active-session index: a concurrent request won.
+          // Idempotent success — the customer has a session, they just did not
+          // create this one.
+          if (insErr.code === '23505') {
+            return jsonResponse({
+              started: false, code: 'already_processing',
+              message: 'Your verification is already open. Please continue in the window that opened.',
+            });
+          }
+          if (insErr.code === '23514') {
+            return jsonResponse({
+              error: 'You have used all available attempts.', code: 'attempts_exhausted',
+            }, 409);
+          }
+          throw insErr;
+        }
+        created = inserted;
+
+        try {
+          const session = await provider.createSession({
+            // Opaque and stable. Never a name, email, document number or DOB.
+            vendorData: buildVendorData(c.id, partyId),
+            // Internal identifiers only — echoed back on every webhook.
+            metadata: {
+              verification_check_id: created.id,
+              capture_sequence: captureSequence,
+            },
+          });
+
+          await admin.schema('aml').from('verification_checks').update({
+            provider_reference: session.sessionId,
+            provider_attempt_reference: session.sessionId,
+            processing_status: 'processing',
+            processing_started_at: new Date().toISOString(),
+            outcome_detail: {
+              ...(created.outcome_detail ?? {}),
+              didit_session: {
+                // Identifiers only. The hosted URL and the session token are
+                // NOT stored: the URL embeds the token, so persisting it would
+                // put a live credential in the case record.
+                session_id: session.sessionId,
+                workflow_id: session.workflowId,
+                workflow_version: session.workflowVersion,
+                status: session.status,
+                expires_at: session.expiresAt,
+              },
+            },
+            updated_at: new Date().toISOString(),
+          }).eq('id', created.id);
+
+          await appendDiditCaseEvent(admin, c.id,
+            `Identity verification session created for ${partyLabel}`,
+            {
+              verification_check_id: created.id,
+              provider: 'didit',
+              provider_reference: session.sessionId,
+              capture_sequence: captureSequence,
+              attempt_consumed: false,
+              scope: 'identity_verification_only',
+            });
+
+          return jsonResponse({
+            started: true,
+            resumed: false,
+            // The one thing the browser gets. Not stored anywhere on our side.
+            verification_url: session.url,
+            message: 'Follow the steps to verify your identity.',
+          });
+        } catch (e) {
+          /**
+           * Session creation failed. This is OUR failure and it must cost the
+           * customer nothing: the row is retired rather than left in flight
+           * (which would block their next attempt behind the active-session
+           * index), `status` stays `pending`, and no attempt is consumed.
+           */
+          const category = e instanceof DiditApiError
+            ? (e.category === 'timeout' ? 'timeout'
+              : e.category === 'provider_not_configured' ? 'provider_not_configured'
+                : e.category === 'provider_rejected_request' ? 'provider_misconfigured'
+                  : 'provider_unavailable')
+            : 'provider_unavailable';
+          await admin.schema('aml').from('verification_checks').update({
+            processing_status: 'cancelled',
+            provider_error_category: category,
+            superseded_at: new Date().toISOString(),
+            superseded_reason: 'session_creation_failed',
+            failure_reason: String((e as Error)?.message ?? 'session_creation_failed').slice(0, 300),
+            updated_at: new Date().toISOString(),
+          }).eq('id', created.id).eq('attempt_consumed', false);
+
+          console.error('[aml-client-portal] didit session creation failed', category);
+          return jsonResponse({
+            error: 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: 'temporarily_unavailable',
+          }, 409);
+        }
+      }
+
       case 'submit_verification': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
 
         const consentState = await loadConsentState(admin, c.id);
         if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        // A hosted provider owns the capture. Accepting NPC-stored images here
+        // would create the duplicate collection this integration exists to
+        // avoid, and would queue a check the self-hosted worker would then try
+        // to process.
+        if ((await clientSafeIdvState(admin)).flow === 'hosted_session') {
+          return jsonResponse({
+            error: 'Please complete verification in the window provided.',
+            code: 'hosted_verification_required',
+          }, 409);
+        }
 
         const partyId = body.party_id ? String(body.party_id) : null;
         const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
@@ -1009,7 +1383,17 @@ Deno.serve(async (req) => {
         // a face against a dead provider would be collection without purpose
         // (APP 3) — the gate sits on the upload URL, before any capture UI.
         if (kind === 'selfie') {
-          const availability = await clientSafeIdvAvailability(admin);
+          const { availability, flow } = await clientSafeIdvState(admin);
+          // When the provider owns the capture, NPC has no purpose for a
+          // selfie of its own — collecting one anyway would be collection
+          // without a purpose that can be served (APP 3), and would put a
+          // second copy of the customer's face in our storage for nothing.
+          if (flow === 'hosted_session') {
+            return jsonResponse({
+              error: 'Please complete verification in the window provided.',
+              code: 'hosted_verification_required',
+            }, 409);
+          }
           if (availability !== 'available') {
             return jsonResponse({
               error: availability === 'manual_verification_required'

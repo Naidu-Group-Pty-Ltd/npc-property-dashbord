@@ -737,6 +737,14 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "didit-webhook": {
+      "verify_jwt": false,
+      "exposure_class": "webhook-secret",
+      "owner": "aml-didit-idv",
+      "reviewed": true,
+      "reviewed_in": "didit-hosted-idv-integration",
+      "notes": "Didit hosted IDV callback. HMAC-SHA256 over the raw body (X-Signature) plus a 300s X-Timestamp window is the auth boundary; verified before any service-role access. Never trusts the body's decision - the authoritative result is re-read server-side."
+    },
     "dispatch-marketing-reports": {
       "verify_jwt": false,
       "exposure_class": "cron-worker",
