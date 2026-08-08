@@ -36,9 +36,13 @@ import {
 import {
   useAgreementCentreDetail,
   useAgreementCentreMutations,
+  docxBrandFrom,
   downloadAgreementDocx,
   downloadAgreementPdf,
+  useIssuerDefaults,
 } from '@/hooks/useAgreementCentre';
+import { loadDocxLogo } from '@/lib/agreements/docx';
+import { useBrand } from '@/branding/BrandProvider';
 import DigitalAgreementView, { agreementSectionNav } from '@/components/agreement-centre/DigitalAgreementView';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 import AgreementTimeline from '@/components/agreement-centre/AgreementTimeline';
@@ -51,6 +55,8 @@ export default function AgreementCentreDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data, isLoading } = useAgreementCentreDetail(id ?? null);
+  const { data: issuer } = useIssuerDefaults();
+  const { settings: brandSettings } = useBrand();
   const {
     transition, recordReview, issueToPartner, withdraw, counterSign,
     resolveChangeRequest, newVersion,
@@ -103,7 +109,12 @@ export default function AgreementCentreDetail() {
     if (!agreement) return;
     try {
       setDownloading(kind);
-      if (kind === 'docx') await downloadAgreementDocx(agreement);
+      if (kind === 'docx') {
+        const logo = await loadDocxLogo(brandSettings?.reportLogo ?? brandSettings?.sidebarLogo ?? null);
+        await downloadAgreementDocx(agreement, docxBrandFrom(
+          issuer, brandSettings?.brandColor ?? brandSettings?.primaryColor ?? null, logo,
+        ));
+      }
       else await downloadAgreementPdf(agreement.id, kind);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Download failed');
