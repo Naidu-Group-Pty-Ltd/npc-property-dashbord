@@ -88,11 +88,15 @@ describe("AmlCases — register shell", () => {
     expect(screen.getByRole("group", { name: "Saved views" })).toBeInTheDocument();
     expect(screen.getByRole("search", { name: "Filter the case register" })).toBeInTheDocument();
     expect(await screen.findByText("1 case")).toBeInTheDocument();
-    // Status text, not raw enums or colour-only pills.
-    expect(screen.getAllByText("Client submitted").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("HIGH").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Under review").length).toBeGreaterThan(0); // service gate label
+    // The work-queue columns: where in the process, how risky, may the
+    // service proceed, and what is waiting. Status is text, never a raw
+    // enum and never colour alone.
+    expect(screen.getAllByText("Verify").length).toBeGreaterThan(0); // macro phase
+    expect(screen.getAllByText("HIGH").length).toBeGreaterThan(0); // risk
+    expect(screen.getAllByText("Under review").length).toBeGreaterThan(0); // service readiness
+    expect(screen.getAllByText("Submission to review").length).toBeGreaterThan(0); // attention
     expect(screen.queryByText("kyc_complete")).not.toBeInTheDocument();
+    expect(screen.queryByText("client_submitted")).not.toBeInTheDocument();
   });
 
   it("applies a saved view from the ?view= deep link with a single filtered fetch", async () => {
@@ -103,7 +107,7 @@ describe("AmlCases — register shell", () => {
     // The view seeds the initial filter state, so the mount never issues an
     // unfiltered request that could race the filtered one.
     expect(list).toHaveBeenCalledTimes(1);
-    const chip = screen.getByRole("button", { name: "Awaiting decision" });
+    const chip = screen.getByRole("button", { name: "Ready for decision" });
     expect(chip).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -139,22 +143,25 @@ describe("AmlCases — register shell", () => {
   it("activates a row with the keyboard and opens the dialog while the workspace flag is off", async () => {
     setup();
     const row = await screen.findByRole("link", {
-      name: `Open case AML-2026-00001 for Avery Client`,
+      name: /Open case AML-2026-00001 for Avery Client/,
     });
     fireEvent.keyDown(row, { key: "Enter" });
     expect(screen.getByTestId("workspace-dialog")).toHaveAttribute("data-case-id", CASE_ID);
   });
 
-  it("renders mobile cards with stage, risk and gate in text", async () => {
+  it("renders mobile cards with attention, phase, risk and readiness in text", async () => {
     setup();
     await screen.findByText("1 case");
-    // The mobile card is a real button with an accessible name.
+    // The mobile card is a real button whose accessible name carries the
+    // reason it needs attention, so nothing is conveyed by colour alone.
     const card = screen.getByRole("button", {
-      name: `Open case AML-2026-00001 for Avery Client`,
+      name: /Open case AML-2026-00001 for Avery Client/,
     });
-    expect(within(card).getByText("Client submitted")).toBeInTheDocument();
-    expect(within(card).getByText("HIGH")).toBeInTheDocument();
-    expect(within(card).getByText("Under review")).toBeInTheDocument();
+    expect(card).toHaveAccessibleName(/waiting for review/i);
+    expect(within(card).getByText("Submission to review")).toBeInTheDocument();
+    expect(within(card).getByText("Verify")).toBeInTheDocument();
+    expect(within(card).getByText("Risk: HIGH")).toBeInTheDocument();
+    expect(within(card).getByText("Service: Under review")).toBeInTheDocument();
   });
 
   it("shows an inline retryable error when the register fails to load", async () => {
