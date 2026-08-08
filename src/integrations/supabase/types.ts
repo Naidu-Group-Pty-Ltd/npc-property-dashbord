@@ -26464,6 +26464,45 @@ export type Database = {
           },
         ]
       }
+      pdf_import_watchdog_config: {
+        Row: {
+          chunk_stall_grace: string
+          chunked_no_inflight_grace: string
+          id: boolean
+          monolithic_dispatched_grace: string
+          monolithic_undispatched_grace: string
+          note: string | null
+          recoverable_window: string
+          template_import_stale_grace: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          chunk_stall_grace?: string
+          chunked_no_inflight_grace?: string
+          id?: boolean
+          monolithic_dispatched_grace?: string
+          monolithic_undispatched_grace?: string
+          note?: string | null
+          recoverable_window?: string
+          template_import_stale_grace?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          chunk_stall_grace?: string
+          chunked_no_inflight_grace?: string
+          id?: boolean
+          monolithic_dispatched_grace?: string
+          monolithic_undispatched_grace?: string
+          note?: string | null
+          recoverable_window?: string
+          template_import_stale_grace?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       permission_invite_tokens: {
         Row: {
           created_at: string
