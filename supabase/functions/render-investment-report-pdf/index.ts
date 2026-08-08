@@ -3124,20 +3124,25 @@ export async function buildHtml(
       <rect width='210' height='297' fill='url(%23sheen)'/>
       <rect width='210' height='297' filter='url(%23nz)'/>
     </svg>`)}`;
-  // Inlined, not fetched. This used to be an absolute `lovable.app` URL — a
-  // preview host — on a client-facing premium PDF: every render made an
-  // outbound fetch the SSRF guard had to allow, a 404 printed a blank cover
-  // with nothing raised, and re-issuing an old report depended on that host
-  // still serving that path. Same bytes, no network. See
-  // `scripts/reportDesign/buildDefaultAssets.ts`.
-  const coverArtSrc = NPC_HOUSE_COVER_ART;
+  // Loaded from the database, not fetched from a host. This used to be an
+  // absolute `lovable.app` URL — a preview host — on a client-facing premium
+  // PDF: every render made an outbound fetch the SSRF guard had to allow, a 404
+  // printed a blank cover with nothing raised, and re-issuing an old report
+  // depended on that host still serving that path. It then lived inlined in the
+  // function source, which broke deploys for unrelated functions (see the note
+  // at the top of this file). It is a `data:` URI either way by the time the
+  // renderer sees it. See `scripts/reportDesign/buildDefaultAssets.ts`.
+  const coverArtSrc = await loadHouseCoverArt();
+  const coverBgImg = coverArtSrc
+    ? `<img class="cover-bg" src="${coverArtSrc}" alt="" />`
+    : "";
   const coverHtml = design.coverStyle === "image"
     ? `<section class="cover cover-clean">
-        <img class="cover-bg" src="${coverArtSrc}" alt="" />
+        ${coverBgImg}
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
       </section>`
     : `<section class="cover cover-${design.coverStyle}">
-        <img class="cover-bg" src="${coverArtSrc}" alt="" />
+        ${coverBgImg}
         <div class="cover-scrim"></div>
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
         <div class="cover-masthead">${esc(String(brandName).toUpperCase())}</div>
