@@ -24507,6 +24507,86 @@ export type Database = {
           },
         ]
       }
+      partner_agreement_change_requests: {
+        Row: {
+          agreement_id: string
+          comment: string
+          created_at: string
+          id: string
+          requested_by_label: string | null
+          requested_by_portal_user_id: string | null
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          resolved_by_label: string | null
+          resolved_in_version_id: string | null
+          section_key: string
+          status: string
+          version_id: string | null
+        }
+        Insert: {
+          agreement_id: string
+          comment: string
+          created_at?: string
+          id?: string
+          requested_by_label?: string | null
+          requested_by_portal_user_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_by_label?: string | null
+          resolved_in_version_id?: string | null
+          section_key: string
+          status?: string
+          version_id?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          comment?: string
+          created_at?: string
+          id?: string
+          requested_by_label?: string | null
+          requested_by_portal_user_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_by_label?: string | null
+          resolved_in_version_id?: string | null
+          section_key?: string
+          status?: string
+          version_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_change_requests_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_change_requests_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_change_requests_resolved_in_version_id_fkey"
+            columns: ["resolved_in_version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_change_requests_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       partner_agreement_events: {
         Row: {
           actor_id: string | null
@@ -24555,11 +24635,213 @@ export type Database = {
           },
         ]
       }
+      partner_agreement_reviews: {
+        Row: {
+          agreement_id: string
+          created_at: string
+          decision: string
+          id: string
+          notes: string | null
+          reviewer_id: string | null
+          reviewer_label: string | null
+        }
+        Insert: {
+          agreement_id: string
+          created_at?: string
+          decision: string
+          id?: string
+          notes?: string | null
+          reviewer_id?: string | null
+          reviewer_label?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          created_at?: string
+          decision?: string
+          id?: string
+          notes?: string | null
+          reviewer_id?: string | null
+          reviewer_label?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_reviews_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_reviews_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_agreement_signatures: {
+        Row: {
+          agreement_id: string
+          id: string
+          ip_hash: string | null
+          legal_entity: string | null
+          party_role: string
+          portal_user_id: string | null
+          signatory_name: string
+          signatory_title: string | null
+          signature_method: string
+          signature_typed: string
+          signed_at: string
+          staff_user_id: string | null
+          user_agent_hash: string | null
+          version_id: string
+        }
+        Insert: {
+          agreement_id: string
+          id?: string
+          ip_hash?: string | null
+          legal_entity?: string | null
+          party_role: string
+          portal_user_id?: string | null
+          signatory_name: string
+          signatory_title?: string | null
+          signature_method?: string
+          signature_typed: string
+          signed_at?: string
+          staff_user_id?: string | null
+          user_agent_hash?: string | null
+          version_id: string
+        }
+        Update: {
+          agreement_id?: string
+          id?: string
+          ip_hash?: string | null
+          legal_entity?: string | null
+          party_role?: string
+          portal_user_id?: string | null
+          signatory_name?: string
+          signatory_title?: string | null
+          signature_method?: string
+          signature_typed?: string
+          signed_at?: string
+          staff_user_id?: string | null
+          user_agent_hash?: string | null
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_signatures_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_signatures_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_signatures_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_agreement_versions: {
+        Row: {
+          agreement_id: string
+          brand_snapshot: Json | null
+          changed_fields: Json
+          created_at: string
+          document_revision: number
+          executed_at: string | null
+          executed_pdf_bytes: number | null
+          executed_pdf_storage_path: string | null
+          field_values: Json
+          id: string
+          issue_sequence: number
+          issued_at: string
+          issued_by: string | null
+          issued_by_label: string | null
+          pdf_storage_path: string | null
+          status: string
+          template_content_hash: string
+          template_key: string
+          version_label: string
+        }
+        Insert: {
+          agreement_id: string
+          brand_snapshot?: Json | null
+          changed_fields?: Json
+          created_at?: string
+          document_revision?: number
+          executed_at?: string | null
+          executed_pdf_bytes?: number | null
+          executed_pdf_storage_path?: string | null
+          field_values?: Json
+          id?: string
+          issue_sequence: number
+          issued_at?: string
+          issued_by?: string | null
+          issued_by_label?: string | null
+          pdf_storage_path?: string | null
+          status?: string
+          template_content_hash: string
+          template_key: string
+          version_label: string
+        }
+        Update: {
+          agreement_id?: string
+          brand_snapshot?: Json | null
+          changed_fields?: Json
+          created_at?: string
+          document_revision?: number
+          executed_at?: string | null
+          executed_pdf_bytes?: number | null
+          executed_pdf_storage_path?: string | null
+          field_values?: Json
+          id?: string
+          issue_sequence?: number
+          issued_at?: string
+          issued_by?: string | null
+          issued_by_label?: string | null
+          pdf_storage_path?: string | null
+          status?: string
+          template_content_hash?: string
+          template_key?: string
+          version_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_versions_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_versions_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       partner_agreements: {
         Row: {
+          accepted_at: string | null
           accrued_entitlements_resolved_at: string | null
           accrued_entitlements_snapshot: Json | null
           activated_at: string | null
+          agreement_owner_id: string | null
+          agreement_owner_label: string | null
           clawback_repayment_days: number | null
           clawback_treatment: string | null
           cleared_funds_required: boolean
@@ -24580,6 +24862,8 @@ export type Database = {
           duplicate_referral_rule: string | null
           effective_date: string | null
           exclusions: string | null
+          executed_at: string | null
+          executed_pdf_storage_path: string | null
           executed_under_s127: boolean
           fee_amount: number | null
           fee_cap: number | null
@@ -24587,6 +24871,7 @@ export type Database = {
           fee_model: Database["public"]["Enums"]["partner_fee_model"] | null
           fee_percentage: number | null
           finance_agent_contact_id: string | null
+          first_viewed_at: string | null
           governing_state: string
           gst_treatment:
             | Database["public"]["Enums"]["partner_gst_treatment"]
@@ -24596,6 +24881,8 @@ export type Database = {
           invoice_process:
             | Database["public"]["Enums"]["partner_invoice_process"]
             | null
+          issued_at: string | null
+          issued_version_id: string | null
           notes: string | null
           partner_abn: string | null
           partner_acl_number: string | null
@@ -24647,11 +24934,15 @@ export type Database = {
           updated_by: string | null
           upfront_share_pct: number | null
           version: number
+          withdrawn_at: string | null
         }
         Insert: {
+          accepted_at?: string | null
           accrued_entitlements_resolved_at?: string | null
           accrued_entitlements_snapshot?: Json | null
           activated_at?: string | null
+          agreement_owner_id?: string | null
+          agreement_owner_label?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
           cleared_funds_required?: boolean
@@ -24672,6 +24963,8 @@ export type Database = {
           duplicate_referral_rule?: string | null
           effective_date?: string | null
           exclusions?: string | null
+          executed_at?: string | null
+          executed_pdf_storage_path?: string | null
           executed_under_s127?: boolean
           fee_amount?: number | null
           fee_cap?: number | null
@@ -24679,6 +24972,7 @@ export type Database = {
           fee_model?: Database["public"]["Enums"]["partner_fee_model"] | null
           fee_percentage?: number | null
           finance_agent_contact_id?: string | null
+          first_viewed_at?: string | null
           governing_state?: string
           gst_treatment?:
             | Database["public"]["Enums"]["partner_gst_treatment"]
@@ -24688,6 +24982,8 @@ export type Database = {
           invoice_process?:
             | Database["public"]["Enums"]["partner_invoice_process"]
             | null
+          issued_at?: string | null
+          issued_version_id?: string | null
           notes?: string | null
           partner_abn?: string | null
           partner_acl_number?: string | null
@@ -24739,11 +25035,15 @@ export type Database = {
           updated_by?: string | null
           upfront_share_pct?: number | null
           version?: number
+          withdrawn_at?: string | null
         }
         Update: {
+          accepted_at?: string | null
           accrued_entitlements_resolved_at?: string | null
           accrued_entitlements_snapshot?: Json | null
           activated_at?: string | null
+          agreement_owner_id?: string | null
+          agreement_owner_label?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
           cleared_funds_required?: boolean
@@ -24764,6 +25064,8 @@ export type Database = {
           duplicate_referral_rule?: string | null
           effective_date?: string | null
           exclusions?: string | null
+          executed_at?: string | null
+          executed_pdf_storage_path?: string | null
           executed_under_s127?: boolean
           fee_amount?: number | null
           fee_cap?: number | null
@@ -24771,6 +25073,7 @@ export type Database = {
           fee_model?: Database["public"]["Enums"]["partner_fee_model"] | null
           fee_percentage?: number | null
           finance_agent_contact_id?: string | null
+          first_viewed_at?: string | null
           governing_state?: string
           gst_treatment?:
             | Database["public"]["Enums"]["partner_gst_treatment"]
@@ -24780,6 +25083,8 @@ export type Database = {
           invoice_process?:
             | Database["public"]["Enums"]["partner_invoice_process"]
             | null
+          issued_at?: string | null
+          issued_version_id?: string | null
           notes?: string | null
           partner_abn?: string | null
           partner_acl_number?: string | null
@@ -24831,6 +25136,7 @@ export type Database = {
           updated_by?: string | null
           upfront_share_pct?: number | null
           version?: number
+          withdrawn_at?: string | null
         }
         Relationships: [
           {
@@ -38339,10 +38645,14 @@ export type Database = {
         | "terminated"
         | "superseded"
         | "void"
-      partner_commission_basis: "gross" | "net_of_aggregator"
+        | "approved_for_issue"
+        | "partner_review"
+        | "changes_requested"
+        | "withdrawn"
+      partner_commission_basis: "gross" | "net_of_aggregator" | "other"
       partner_fee_model: "fixed_fee" | "percentage_of_fee" | "tiered" | "other"
       partner_gst_treatment: "plus_gst" | "inclusive_of_gst" | "not_applicable"
-      partner_invoice_process: "tax_invoice" | "rcti"
+      partner_invoice_process: "tax_invoice" | "rcti" | "other"
       payout_status: "draft" | "pending" | "paid" | "cancelled"
       pf_client_task_status:
         | "pending"
@@ -39135,11 +39445,15 @@ export const Constants = {
         "terminated",
         "superseded",
         "void",
+        "approved_for_issue",
+        "partner_review",
+        "changes_requested",
+        "withdrawn",
       ],
-      partner_commission_basis: ["gross", "net_of_aggregator"],
+      partner_commission_basis: ["gross", "net_of_aggregator", "other"],
       partner_fee_model: ["fixed_fee", "percentage_of_fee", "tiered", "other"],
       partner_gst_treatment: ["plus_gst", "inclusive_of_gst", "not_applicable"],
-      partner_invoice_process: ["tax_invoice", "rcti"],
+      partner_invoice_process: ["tax_invoice", "rcti", "other"],
       payout_status: ["draft", "pending", "paid", "cancelled"],
       pf_client_task_status: [
         "pending",
