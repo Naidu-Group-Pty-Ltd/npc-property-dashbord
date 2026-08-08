@@ -39,6 +39,7 @@ import {
   uploadFormDataWithProgress,
 } from '@/lib/documentUpload';
 import { getActorLabel, getConflictReason, getSurfaceLabel, getVersionNumber } from '@/lib/syncDisplay';
+import { getPortalSessionToken } from '@/lib/portalSession';
 
 interface FailedUploadItem {
   id: string;
@@ -84,19 +85,13 @@ const UPLOAD_CATEGORIES = [
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
-const PORTAL_SESSION_KEY = 'portal_session_token';
 const PORTAL_UPLOAD_MODE_SCOPE = 'portal-documents';
 
 function getSessionToken(): string | null {
-  try {
-    return sessionStorage.getItem(PORTAL_SESSION_KEY) || localStorage.getItem(PORTAL_SESSION_KEY);
-  } catch {
-    try {
-      return localStorage.getItem(PORTAL_SESSION_KEY);
-    } catch {
-      return null;
-    }
-  }
+  // In-memory only: `client-portal-verify` repopulates it from the HttpOnly
+  // cookie on load. It used to come from localStorage, where the storage access
+  // could throw — hence the nested try/catch that used to live here.
+  return getPortalSessionToken();
 }
 
 export default function PortalDocuments() {

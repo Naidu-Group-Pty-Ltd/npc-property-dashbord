@@ -107,6 +107,65 @@ const CASES = [
     find: "if (existingDigest && existingDigest.status === 'published') return json",
     replace: "if (false) return json",
   },
+  {
+    gate: 'check-auth-rate-limit-coverage.mjs',
+    file: 'supabase/functions/custom-auth-login-v2/index.ts',
+    what: 'the staff login stops consuming a source-keyed rate limit',
+    find: 'const rateLimit = await enforceAuthRateLimit(supabase, req, {',
+    replace: 'const rateLimit = await noopRateLimit(supabase, req, {',
+  },
+  {
+    gate: 'check-auth-rate-limit-coverage.mjs',
+    file: 'supabase/functions/client-portal-forgot-password/index.ts',
+    what: 'a recovery limiter goes back to the caller-controlled X-Forwarded-For',
+    find: 'const gate = await beginAuthRateLimit(supabase, req, {',
+    replace:
+      "const _ip = req.headers.get('x-forwarded-for'); const gate = await beginAuthRateLimit(supabase, req, {",
+  },
+  {
+    gate: 'check-password-leak-coverage.mjs',
+    file: 'supabase/functions/client-portal-reset-password/index.ts',
+    what: 'a reset path stops breach-checking the new password',
+    find: 'const strength = await validatePasswordStrength(new_password)',
+    replace: 'const strength = { isValid: true, error: null }',
+  },
+  {
+    gate: 'check-password-leak-coverage.mjs',
+    file: 'supabase/functions/_shared/passwordValidation.ts',
+    what: 'the shared policy stops reaching the Have I Been Pwned check',
+    find: 'checkLeakedPasswordWithTimeout',
+    replace: 'noopLeakCheck',
+    all: true,
+  },
+  {
+    gate: 'check-portal-session-client-storage.mjs',
+    file: 'src/hooks/usePortalData.ts',
+    what: 'the client portal token goes back into localStorage',
+    find: "import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';",
+    replace:
+      "const PORTAL_SESSION_KEY = 'portal_session_token';\n" +
+      "const portalSessionHeaders = () => ({ 'x-portal-session-token': localStorage.getItem(PORTAL_SESSION_KEY) || '' });\n" +
+      'const portalSessionBodyFields = () => ({});',
+  },
+  {
+    gate: 'check-admin-authorization-server-side.mjs',
+    file: 'supabase/functions/admin-user-management/index.ts',
+    what: 'a privileged action is handled before the superadmin gate',
+    find: "    // Actions that don't require superadmin auth\n    if (action === 'verify_invite') {",
+    replace:
+      "    // Actions that don't require superadmin auth\n" +
+      "    if (action === 'delete_user') { /* moved above the gate */ }\n" +
+      "    if (action === 'verify_invite') {",
+  },
+  {
+    gate: 'check-client-bundle-secrets.mjs',
+    file: 'src/hooks/useGoogleFonts.ts',
+    what: 'a Google API key is hardcoded into the browser bundle again',
+    find: "const { data, error } = await invokeSecureFunction<{",
+    replace:
+      "      await fetch('https://www.googleapis.com/webfonts/v1/webfonts?key=AIzaSyAPjKmIVPd3M30RFnb1pCqJ1fT-BaKkPNI');\n" +
+      '      const { data, error } = await invokeSecureFunction<{',
+  },
 ];
 
 /**

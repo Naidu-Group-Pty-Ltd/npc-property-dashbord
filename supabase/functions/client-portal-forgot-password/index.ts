@@ -3,6 +3,7 @@ import { createCorsHeaders } from "../_shared/auth.ts"
 import { generateOtp, hashResetToken } from "../_shared/resetTokens.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { beginAuthRateLimit } from "../_shared/authRateLimit.ts";
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -37,15 +38,23 @@ Deno.serve(async (req) => {
     );
 
     // ABUSE-003: consume the source-IP limit before doing any account-keyed
-    // write. This ordering prevents a caller that is already IP-limited from
-    // creating persistent limiter rows with arbitrary email addresses.
-    const clientIp = (req.headers.get('x-forwarded-for')?.split(',')[0]
-      || req.headers.get('cf-connecting-ip') || 'unknown').trim();
-    const { data: ipOk, error: ipLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `cpfp_ip:${clientIp}`, p_max: 5, p_window_seconds: 900,
+    // write, so a caller who is already IP-limited cannot mint persistent
+    // limiter rows keyed on e-mail addresses they invent. `beginAuthRateLimit`
+    // makes that structural rather than a convention: the account bucket is only
+    // reachable through the gate this call returns.
+    //
+    // Two corrections over what stood here. The address came from
+    // `x-forwarded-for[0]`, which the caller sets — one header per request and
+    // the ceiling was gone. And an RPC *error* was treated as "limited", so the
+    // missing-migration outage that took out Street View would equally have
+    // disabled password recovery for every user while still answering "if an
+    // account exists, a reset link has been sent".
+    const gate = await beginAuthRateLimit(supabase, req, {
+      scope: 'cpfp',
+      ip: { max: 5, windowSeconds: 900 },
     });
-    if (ipLimitError || ipOk !== true) {
-      console.warn('[client-portal-forgot-password] rate limited', { ip: clientIp });
+    if (!gate.allowed) {
+      console.warn('[client-portal-forgot-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
       return genericSuccess();
     }
 
@@ -63,11 +72,9 @@ Deno.serve(async (req) => {
     }
 
     // Only validated, enabled accounts receive a persistent account bucket.
-    const { data: acctOk, error: acctLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `cpfp_email:${normalizedEmail}`, p_max: 5, p_window_seconds: 3600,
-    });
-    if (acctLimitError || acctOk !== true) {
-      console.warn('[client-portal-forgot-password] account rate limited', { ip: clientIp });
+    const accountLimit = await gate.consumeIdentifier(normalizedEmail, { max: 5, windowSeconds: 3600 });
+    if (!accountLimit.allowed) {
+      console.warn('[client-portal-forgot-password] account rate limited', { degraded: accountLimit.degraded });
       return genericSuccess();
     }
 

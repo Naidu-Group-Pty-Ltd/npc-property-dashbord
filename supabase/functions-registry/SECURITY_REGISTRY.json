@@ -1542,6 +1542,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "google-fonts-catalog": {
+      "verify_jwt": false,
+      "exposure_class": "authenticated-staff",
+      "owner": "security-implementation-overhaul",
+      "reviewed": true
+    },
     "google-places-autocomplete": {
       "verify_jwt": false,
       "exposure_class": "public",

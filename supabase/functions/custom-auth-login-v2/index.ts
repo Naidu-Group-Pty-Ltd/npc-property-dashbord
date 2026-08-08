@@ -4,10 +4,19 @@ import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
 import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts"
+import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
 
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+
+// Source-keyed ceilings. The per-account lockout below (5 failures → 15 min)
+// only ever sees ONE account, so it cannot see a spray: one attempt against
+// each of a thousand staff usernames never reaches attempt two on any of them.
+// These are the ceilings that do. Deliberately well above a human's retry rate
+// — a person who fumbles a password is not the thing being stopped here.
+const LOGIN_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const LOGIN_IDENTIFIER_BUDGET = { max: 12, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   // Keep this entrypoint deployment coupled to the shared exact-origin CORS
@@ -39,6 +48,22 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: 'Username and password are required' }), 
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // Throttle before Turnstile so an unauthenticated flood cannot drive one
+    // outbound siteverify request per attempt (same ordering as
+    // `builder-portal-login`). The identifier is consumed after the source IP,
+    // so a caller who is already IP-limited cannot mint limiter rows for
+    // usernames they invent.
+    const rateLimit = await enforceAuthRateLimit(supabase, req, {
+      scope: 'ccl',
+      ip: LOGIN_IP_BUDGET,
+      identifier: String(username),
+      identifierBudget: LOGIN_IDENTIFIER_BUDGET,
+    });
+    if (!rateLimit.allowed) {
+      console.warn('[custom-auth-login-v2] rate limited', { ipTrusted: rateLimit.ipTrusted, degraded: rateLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, rateLimit.retryAfterSeconds, 'Too many sign-in attempts. Please try again later.');
     }
 
     // Verify Turnstile CAPTCHA token.

@@ -1,26 +1,30 @@
 /**
  * Client Portal → AML/CTF onboarding API.
- * Uses the portal session token (localStorage 'portal_session_token').
+ *
+ * The session rides the `x-portal-session-token` header, carrying the in-memory
+ * token that `client-portal-verify` repopulates from the HttpOnly cookie on each
+ * load. This used to read the token straight out of `localStorage`, where it
+ * survived restarts and was readable by any script. See src/lib/portalSession.ts.
  */
+import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
+
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
-const PORTAL_SESSION_KEY = 'portal_session_token';
-
-function token(): string | null {
-  try { return localStorage.getItem(PORTAL_SESSION_KEY); } catch { return null; }
-}
 
 async function call<T = any>(op: string, payload: Record<string, any> = {}): Promise<T> {
-  const t = token();
   const res = await fetch(`${SUPABASE_URL}/functions/v1/aml-client-portal`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      ...(t ? { 'x-portal-session-token': t } : {}),
+      ...portalSessionHeaders(),
     },
-    body: JSON.stringify({ op, ...payload }),
+    // NOT `credentials: 'include'`: `aml-client-portal` answers with a wildcard
+    // `Access-Control-Allow-Origin`, which is invalid for a credentialed request
+    // — the browser would block the response. The session rides the
+    // `x-portal-session-token` header instead.
+    body: JSON.stringify({ op, ...payload, ...portalSessionBodyFields() }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {

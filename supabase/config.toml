@@ -601,6 +601,9 @@ request_timeout = 120
 verify_jwt = false
 request_timeout = 300
 
+[functions.google-fonts-catalog]
+verify_jwt = false
+
 [functions.google-places-autocomplete]
 verify_jwt = false
 

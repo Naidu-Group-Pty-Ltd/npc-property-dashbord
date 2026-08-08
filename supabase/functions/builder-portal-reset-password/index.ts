@@ -17,9 +17,13 @@ import { createCorsHeaders, createClearBuilderSessionCookie } from '../_shared/a
 import { hashSessionToken } from '../_shared/sessionHash.ts';
 import { validateBuilderPortalRequest } from '../_shared/builderSessionToken.ts';
 import { auditBuilderIdentity, revokeAllBuilderSessions } from '../_shared/builderSessions.ts';
+import { authRateLimitedResponse, beginAuthRateLimit } from '../_shared/authRateLimit.ts';
 
 const MAX_OTP_ATTEMPTS = 5;
 const GENERIC_CODE_ERROR = 'Invalid or expired code';
+
+const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const RESET_IDENTIFIER_BUDGET = { max: 15, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
@@ -42,6 +46,21 @@ Deno.serve(async (req) => {
     if (!email || !otp) return json({ error: 'Email and code are required' }, 400);
 
     const normalizedEmail = String(email).toLowerCase().trim();
+
+    // Source-keyed ceiling, consumed before the account-keyed one (ABUSE-003).
+    // The per-account OTP cap below only ever sees one account, so it cannot see
+    // a caller walking a dictionary of addresses six digits at a time.
+    const gate = await beginAuthRateLimit(supabase, req, { scope: 'bprp', ip: RESET_IP_BUDGET });
+    if (!gate.allowed) {
+      console.warn('[builder-portal-reset-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds, GENERIC_CODE_ERROR);
+    }
+    const identifierLimit = await gate.consumeIdentifier(normalizedEmail, RESET_IDENTIFIER_BUDGET);
+    if (!identifierLimit.allowed) {
+      console.warn('[builder-portal-reset-password] identifier rate limited', { degraded: identifierLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, identifierLimit.retryAfterSeconds, GENERIC_CODE_ERROR);
+    }
+
     const otpHash = await hashSessionToken(String(otp).trim());
     if (!otpHash) return json({ error: GENERIC_CODE_ERROR }, 400);
 

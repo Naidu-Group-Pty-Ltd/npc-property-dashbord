@@ -7,6 +7,10 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts";
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts";
+
+const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const RESET_IDENTIFIER_BUDGET = { max: 10, windowSeconds: 3600 };
 
 
 // Simple email sending via Resend REST API
@@ -75,6 +79,20 @@ Deno.serve(async (req: Request) => {
     const body: RequestBody = await req.json();
     const { action } = body;
 
+    // Source-keyed ceiling across every action. All three are unauthenticated,
+    // so before this there was nothing bounding how fast a caller could request
+    // OTP e-mails for staff accounts or grind six-digit codes; the controls
+    // described below are all per-account or per-token, and none of them sees a
+    // caller working through a list of usernames. The identifier dimension is
+    // consumed further down, only once an account is known to exist and be
+    // eligible, so an IP-limited caller cannot mint limiter rows for usernames
+    // they invent (ABUSE-003).
+    const gate = await beginAuthRateLimit(supabase, req, { scope: 'apr', ip: RESET_IP_BUDGET });
+    if (!gate.allowed) {
+      console.warn('[admin-password-reset] rate limited', { action, ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds);
+    }
+
     /**
      * All three actions are deliberately UNAUTHENTICATED, and the emailed OTP
      * is the credential.
@@ -136,6 +154,18 @@ Deno.serve(async (req: Request) => {
         return new Response(
           JSON.stringify({ success: false, error: 'No email associated with this account' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Only a confirmed, eligible account gets a persistent account bucket, so
+      // rotating the source address cannot churn reset tokens or repeatedly mail
+      // the same person.
+      const accountLimit = await gate.consumeIdentifier(user.id, RESET_IDENTIFIER_BUDGET);
+      if (!accountLimit.allowed) {
+        console.warn('[admin-password-reset] account rate limited', { degraded: accountLimit.degraded });
+        return new Response(
+          JSON.stringify({ success: true, message: 'If the account exists, an OTP has been sent' }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
