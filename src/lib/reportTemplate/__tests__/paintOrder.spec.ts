@@ -95,6 +95,47 @@ describe('blockPaintOrder / sortBlocksForPaint', () => {
     expect(sortBlocksForPaint([b, a])).toEqual([b, a]);
   });
 
+  /**
+   * The BC Snapshot render buried the brand monogram under the page fill.
+   *
+   * A PDF import reconstructs the page background as a full-page `vector`
+   * overlay — a path, not a CSS background — and `vector` had no case in the
+   * type tiers, so it fell through to the unranked band and painted above
+   * images. Verified in the shipped PDF's content stream: logo image drawn,
+   * then an opaque `0.145 0.122 0.094 rg` full-page fill drawn over it.
+   */
+  it('a full-page vector backdrop paints BENEATH images', () => {
+    // Shape copied from a stored import: page-sized, no zIndex, no stroke,
+    // authored after the content it must sit behind.
+    const backdrop: PaintableOverlay = { type: 'vector', width: 595, height: 842 };
+    const logo = image({ width: 82, height: 66 });
+    expect(overlayPaintOrder(backdrop, 7)).toBeLessThan(overlayPaintOrder(logo, 0));
+    expect(sortOverlaysForPaint([logo, backdrop]).map((o) => o.type)).toEqual(['vector', 'image']);
+  });
+
+  it('ranks a vector backdrop with shape backdrops, not ahead of them', () => {
+    const vectorBackdrop: PaintableOverlay = { type: 'vector', width: 595, height: 842 };
+    const shapeBackdrop = shape({ width: 595, height: 842 });
+    // Same band; authored order decides, so a page can layer two backdrops.
+    expect(overlayPaintOrder(vectorBackdrop, 1)).toBeGreaterThan(overlayPaintOrder(shapeBackdrop, 0));
+    expect(overlayPaintOrder(vectorBackdrop, 0)).toBe(overlayPaintOrder(shapeBackdrop, 0));
+  });
+
+  it('leaves ornament vectors exactly where they were', () => {
+    // Rules, diamonds and panels are below the backdrop threshold and must NOT
+    // move — anything that paints over an image today must keep doing so.
+    const ornament: PaintableOverlay = { type: 'vector', width: 167, height: 623 }; // 103,842 pt²
+    const rule: PaintableOverlay = { type: 'vector', width: 460, height: 1 };
+    expect(overlayPaintOrder(ornament, 3)).toBe(3);
+    expect(overlayPaintOrder(rule, 4)).toBe(4);
+    expect(overlayPaintOrder(ornament, 3)).toBeGreaterThan(overlayPaintOrder(image(), 0));
+  });
+
+  it('a stroked full-page vector is a frame, not a backdrop', () => {
+    const framed: PaintableOverlay = { type: 'vector', width: 595, height: 842, strokeWidth: 1 };
+    expect(overlayPaintOrder(framed, 0)).toBe(0);
+  });
+
   it('renderer parity: the same fixture sorts identically regardless of caller typing', () => {
     // htmlRenderer passes `any`, pdfRenderer/EditorialCanvas pass schema types —
     // both must hit the same code path and produce the same order.
