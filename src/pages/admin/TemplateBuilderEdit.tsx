@@ -112,6 +112,7 @@ import {
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { renderHtmlToPdfUrl, pdfFileNameFor } from '@/lib/reportTemplate/weasyRenderClient';
 import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
+import { downloadUrlAsFile } from '@/lib/downloadFile';
 import {
   buildCascadeActivationReadiness,
   buildCascadeAnchorSuggestions,
@@ -1943,10 +1944,13 @@ export default function TemplateBuilderEdit() {
                       templateId: id,
                       mode: 'preview',
                     });
-                    window.open(url, '_blank', 'noopener');
+                    // Save it rather than `window.open` — the render takes tens
+                    // of seconds, so the popup is blocked by then. downloadFile.ts.
+                    await downloadUrlAsFile(url, pdfFileNameFor(name));
                     const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
-                    if (degraded) toast.warning(degraded, { id: toastId });
-                    else toast.success('WeasyPrint render ready', { id: toastId });
+                    const openAction = { label: 'Open', onClick: () => window.open(url, '_blank', 'noopener') };
+                    if (degraded) toast.warning(degraded, { id: toastId, action: openAction });
+                    else toast.success('WeasyPrint render downloaded', { id: toastId, action: openAction });
                   } catch (e: any) {
                     toast.error(`WeasyPrint failed: ${e?.message ?? e}`, { id: toastId });
                   }
@@ -1958,10 +1962,12 @@ export default function TemplateBuilderEdit() {
                 disabled={!previewUrl}
                 onSelect={() => {
                   if (!previewUrl) return;
-                  const a = document.createElement('a');
-                  a.href = previewUrl;
-                  a.download = `${name || 'template'}.pdf`;
-                  a.click();
+                  // `download` is ignored on a cross-origin href, and the
+                  // signed URL is served from *.supabase.co — so this used to
+                  // drop the filename and, with a detached anchor, usually do
+                  // nothing at all. Fetch the bytes and save a same-origin blob.
+                  void downloadUrlAsFile(previewUrl, `${name || 'template'}.pdf`)
+                    .catch((e: Error) => toast.error(e.message));
                 }}
               >
                 <Download className="h-4 w-4 mr-2" /> Download current PDF
