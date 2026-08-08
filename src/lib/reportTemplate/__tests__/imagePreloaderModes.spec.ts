@@ -66,22 +66,27 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('preloadImages — reference mode', () => {
-  it('resolves a storage ref to a signed URL WITHOUT downloading it', async () => {
+  it('resolves a page raster to a signed URL WITHOUT downloading its bytes', async () => {
     const { preloadImages } = await import('@/lib/reportTemplate/imagePreloader');
     const out = await preloadImages(template(), { mode: 'reference' });
 
     expect(resolveRasterRefUrl).toHaveBeenCalledOnce();
     expect((out.pages[0].background as { imageUrl?: string }).imageUrl).toBe(SIGNED);
-    // The point of the mode: no bytes cross the wire into the payload.
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // The raster's megabytes stay out of the payload; the only fetch below is
+    // the small overlay image, which still inlines.
+    const fetchedUrls = fetchSpy.mock.calls.map((c) => c[0]);
+    expect(fetchedUrls).not.toContain(SIGNED);
   });
 
-  it('leaves an already-remote overlay src untouched', async () => {
+  it('still inlines a remote overlay image — reference mode is rasters-only', async () => {
+    // Regression pin. The first version of reference mode left ALL remote URLs
+    // alone, which broke brand images in production: they were fetched here in
+    // the browser with the user's session, and a bare URL handed to WeasyPrint
+    // has no session — its fetcher 403'd and dropped the image silently.
     const { preloadImages } = await import('@/lib/reportTemplate/imagePreloader');
     const out = await preloadImages(template(), { mode: 'reference' });
     const src = (out.pages[0].blocks[0].overlays[0] as { src: string }).src;
-    expect(src).toBe(REMOTE);
-    expect(src.startsWith('data:')).toBe(false);
+    expect(src.startsWith('data:')).toBe(true);
   });
 
   it('falls back to inlining when signing fails, rather than losing the page', async () => {

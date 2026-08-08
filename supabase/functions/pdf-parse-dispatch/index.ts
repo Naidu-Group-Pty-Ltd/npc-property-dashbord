@@ -41,7 +41,11 @@ const PARSE_TOKEN = Deno.env.get('PDF_PARSE_SERVICE_TOKEN') ?? '';
 const DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
 const SOURCE_BUCKET = 'template-import-assets';
 const ENGINE = 'docling';
-const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest';
+// +subset-fonts-v1+source-measure-v1: the sidecar now embeds subset font
+// programs (exact source glyphs) and ships per-line measured advance widths.
+// Cached artifacts predating that carry neither, so they must not be reused —
+// a cache hit would quietly bring the font substitutes back.
+const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v1';
 const ARTIFACT_CONTRACT_VERSION = 'raster-manifest-v1';
 const DOCLING_PAGE_REBASE_VERSION = 'chunk-page-rebase-v1';
 const CHUNK_MERGE_VALIDATION_VERSION = 'chunk-merge-validation-v1';

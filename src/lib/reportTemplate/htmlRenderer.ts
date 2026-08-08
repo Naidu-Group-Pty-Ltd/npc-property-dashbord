@@ -136,6 +136,13 @@ function themeOverrideCss(pageIndex: number, base: Tokens, merged: Tokens): stri
 function baseCss(): string {
   return `
 *, *::before, *::after { box-sizing: border-box; }
+/* A rendered document must be CLOSED OVER ITS ENVIRONMENT: the same template
+   must paint identically in the editor iframe (whose host is dark-themed), in
+   WeasyPrint, and in any PDF viewer. color-scheme pins the browser's default
+   canvas to light — without it, Chrome gives an iframe inside a dark host a
+   BLACK default canvas, which is exactly how "white" imported pages were
+   rendering black. WeasyPrint ignores the property, so print is unaffected. */
+html { color-scheme: only light; }
 html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { font-family: var(--font-body, 'Helvetica', sans-serif); color: var(--color-text, #111); }
 .tpl-page {
@@ -144,6 +151,14 @@ body { font-family: var(--font-body, 'Helvetica', sans-serif); color: var(--colo
   overflow: hidden;
   page-break-after: always;
   break-after: page;
+  /* A page is PAPER: white unless the template says otherwise, exactly as a
+     PDF viewer treats a page. This is a stylesheet default, so a page that
+     sets its own colour still wins — that lands as an inline style, which
+     always beats this rule. Backgrounds are dropped by more than one template
+     transformation (the CDIR round-trip is a documented one), and a page with
+     no colour used to render TRANSPARENT, showing whatever the host painted
+     behind it. Paper does not inherit its colour from the desk it lies on. */
+  background-color: #ffffff;
 }
 .tpl-page:last-child { page-break-after: auto; break-after: auto; }
 img { max-width: 100%; }
