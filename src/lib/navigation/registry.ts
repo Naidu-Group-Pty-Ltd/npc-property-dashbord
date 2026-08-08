@@ -110,7 +110,7 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Reminders', url: '/reminders', icon: Bell, moduleKey: 'reminders', group: 'Operations' },
   { title: 'Checklists', url: '/checklists', icon: ClipboardList, moduleKey: 'checklists', group: 'Operations' },
   { title: 'Agreements', url: '/agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
-  { title: 'Partner Agreements', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
+  { title: 'Agreement Centre', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations', keywords: ['partner agreements', 'agreement centre', 'referral agreement', 'commission agreement', 'executed', 'issue', 'sign'] },
   { title: 'Partner Referrals', url: '/partner-referrals', icon: ArrowLeftRight, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Loan Writer Undertakings', url: '/loan-writer-undertakings', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Partner Compliance', url: '/partner-compliance', icon: ShieldCheck, moduleKey: 'agreements', group: 'Operations' },

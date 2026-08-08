@@ -7,9 +7,13 @@ export type PartnerAgreementDirection = 'inbound_property_referral' | 'outbound_
 export type PartnerAgreementStatus =
   | 'draft'
   | 'pending_review'
+  | 'approved_for_issue'
+  | 'partner_review'
+  | 'changes_requested'
   | 'sent_for_signature'
   | 'partially_signed'
   | 'active'
+  | 'withdrawn'
   | 'terminated'
   | 'superseded'
   | 'void';
@@ -252,9 +256,13 @@ export const DIRECTION_LABELS: Record<PartnerAgreementDirection, string> = {
 export const STATUS_LABELS: Record<PartnerAgreementStatus, string> = {
   draft: 'Draft',
   pending_review: 'Pending review',
+  approved_for_issue: 'Ready to issue',
+  partner_review: 'Partner review',
+  changes_requested: 'Changes requested',
   sent_for_signature: 'Sent for signature',
   partially_signed: 'Partially signed',
   active: 'Active',
+  withdrawn: 'Withdrawn',
   terminated: 'Terminated',
   superseded: 'Superseded',
   void: 'Void',
