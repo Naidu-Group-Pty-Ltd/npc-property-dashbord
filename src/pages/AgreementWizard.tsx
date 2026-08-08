@@ -20,11 +20,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
-  Palette, Send, Eye,
+  Palette, Search, Send, Eye, UserPlus, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -145,13 +148,23 @@ export default function AgreementWizard() {
   const [dirty, setDirty] = useState(false);
   const [previewPdfId, setPreviewPdfId] = useState<string | null>(null);
   const [exporting, setExporting] = useState<'pdf' | 'docx' | null>(null);
+  const [partnerSearch, setPartnerSearch] = useState('');
+  const [newPartnerOpen, setNewPartnerOpen] = useState(false);
+  const [newPartner, setNewPartner] = useState({ company_name: '', contact_name: '', email: '', abn: '' });
 
   const { data: detail } = useAgreementCentreDetail(agreementId);
   const agreement = detail?.agreement ?? null;
   const { data: issuer } = useIssuerDefaults();
-  const { data: partners = [] } = useAgreementPartnerOptions();
+  const {
+    data: partners = [],
+    isLoading: partnersLoading,
+    error: partnersError,
+    refetch: refetchPartners,
+  } = useAgreementPartnerOptions();
   const { data: duplicates = [] } = useDuplicateCheck(partnerId, direction);
-  const { create, update, transition, recordReview, issueToPartner } = useAgreementCentreMutations();
+  const {
+    create, update, transition, recordReview, issueToPartner, createPartner,
+  } = useAgreementCentreMutations();
 
   const templateKey: AgreementTemplateKey | null = direction ? templateKeyForDirection(direction) : null;
   const fieldDefs = useMemo(
@@ -253,18 +266,48 @@ export default function AgreementWizard() {
     setStep(commercial ? 5 : 4);
   };
 
-  const choosePartner = (nextId: string) => {
+  const choosePartner = (nextId: string, record?: {
+    company_name: string | null; contact_name: string | null; email: string | null; abn: string | null;
+  }) => {
     setPartnerId(nextId);
-    const partner = partners.find((candidate) => candidate.id === nextId);
+    const partner = record ?? partners.find((candidate) => candidate.id === nextId);
     if (partner) {
       setValues((previous) => ({
         ...previous,
-        fp_legal_name: previous.fp_legal_name || partner.company_name || '',
+        fp_legal_name: previous.fp_legal_name || partner.company_name || partner.contact_name || '',
+        fp_trading_name: previous.fp_trading_name || partner.company_name || '',
         fp_abn_acn: previous.fp_abn_acn || partner.abn || '',
         fp_email: previous.fp_email || partner.email || '',
       }));
       setDirty(true);
     }
+  };
+
+  const filteredPartners = useMemo(() => {
+    const query = partnerSearch.trim().toLowerCase();
+    if (!query) return partners;
+    return partners.filter((partner) =>
+      [partner.company_name, partner.contact_name, partner.email, partner.abn]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query)));
+  }, [partners, partnerSearch]);
+
+  const submitNewPartner = () => {
+    createPartner.mutate(
+      {
+        company_name: newPartner.company_name.trim(),
+        contact_name: newPartner.contact_name.trim() || undefined,
+        email: newPartner.email.trim(),
+        abn: newPartner.abn.trim() || undefined,
+      },
+      {
+        onSuccess: (result) => {
+          setNewPartnerOpen(false);
+          setNewPartner({ company_name: '', contact_name: '', email: '', abn: '' });
+          choosePartner(result.partner.id, result.partner);
+        },
+      },
+    );
   };
 
   const applyIssuerDefaults = () => {
@@ -354,26 +397,95 @@ export default function AgreementWizard() {
       case 'partner':
         return (
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>Finance partner</Label>
-              <Select value={partnerId ?? undefined} onValueChange={choosePartner}>
-                <SelectTrigger><SelectValue placeholder="Select a finance partner…" /></SelectTrigger>
-                <SelectContent>
-                  {partners.map((partner) => (
-                    <SelectItem key={partner.id} value={partner.id}>
-                      {partner.company_name || partner.contact_name || partner.email || partner.id}
-                      {partner.portal_connected ? '' : '  ·  no portal login'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedPartner && !selectedPartner.portal_connected ? (
-                <p className="text-xs text-warning">
-                  This partner has no active Finance Portal login — digital issue will be unavailable
-                  until they are invited, but the download options always work.
-                </p>
-              ) : null}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  placeholder="Search partners by company, contact, email or ABN…"
+                  value={partnerSearch}
+                  onChange={(event) => setPartnerSearch(event.target.value)}
+                />
+              </div>
+              <Button variant="outline" onClick={() => setNewPartnerOpen(true)}>
+                <UserPlus className="mr-1.5 h-4 w-4" /> New finance partner
+              </Button>
             </div>
+
+            {partnersLoading ? (
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-border py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading finance partners…
+              </div>
+            ) : partnersError ? (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Could not load finance partners</AlertTitle>
+                <AlertDescription className="space-y-2">
+                  <p>{partnersError instanceof Error ? partnersError.message : 'The partner list failed to load.'}</p>
+                  <Button size="sm" variant="outline" onClick={() => refetchPartners()}>Try again</Button>
+                </AlertDescription>
+              </Alert>
+            ) : filteredPartners.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border py-10 text-center">
+                <Building2 className="h-8 w-8 text-muted-foreground" />
+                <p className="text-sm font-medium text-foreground">
+                  {partners.length === 0 ? 'No finance partners yet' : 'No partners match your search'}
+                </p>
+                <p className="max-w-sm text-xs text-muted-foreground">
+                  Create the partner record here — you can invite them to the Finance Portal later.
+                </p>
+                <Button size="sm" onClick={() => setNewPartnerOpen(true)}>
+                  <UserPlus className="mr-1.5 h-3.5 w-3.5" /> New finance partner
+                </Button>
+              </div>
+            ) : (
+              <div className="grid max-h-80 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                {filteredPartners.map((partner) => {
+                  const selected = partnerId === partner.id;
+                  return (
+                    <button
+                      key={partner.id}
+                      type="button"
+                      onClick={() => choosePartner(partner.id)}
+                      className={cn(
+                        'rounded-xl border p-3.5 text-left transition-colors',
+                        selected ? 'border-primary bg-primary/5' : 'border-border bg-card/50 hover:bg-accent/10',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-medium text-foreground">
+                            {partner.company_name || partner.contact_name || partner.email}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {[partner.contact_name, partner.email].filter(Boolean).join(' · ')}
+                          </div>
+                          {partner.abn ? (
+                            <div className="text-xs text-muted-foreground">ABN {partner.abn}</div>
+                          ) : null}
+                        </div>
+                        {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+                      </div>
+                      <div className={cn(
+                        'mt-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
+                        partner.portal_connected
+                          ? 'bg-success/15 text-success'
+                          : 'bg-muted text-muted-foreground',
+                      )}>
+                        {partner.portal_connected ? 'Portal connected' : 'No portal login'}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedPartner && !selectedPartner.portal_connected ? (
+              <p className="text-xs text-warning">
+                This partner has no active Finance Portal login — digital issue will be unavailable
+                until they are invited, but the download options always work.
+              </p>
+            ) : null}
             {duplicates.length > 0 ? (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
@@ -643,6 +755,54 @@ export default function AgreementWizard() {
       ) : null}
 
       <PdfPreviewDialog agreementId={previewPdfId} onOpenChange={(open) => { if (!open) setPreviewPdfId(null); }} />
+
+      {/* Inline partner creation — no detour through Finance Portal Admin. */}
+      <Dialog open={newPartnerOpen} onOpenChange={setNewPartnerOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New finance partner</DialogTitle>
+            <DialogDescription>
+              Creates the partner record so the agreement can be prepared now. Portal access and
+              full contact management live in Finance Portal Admin.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="agc-np-company">Company name <span className="text-warning">*</span></Label>
+              <Input id="agc-np-company" value={newPartner.company_name}
+                onChange={(event) => setNewPartner((p) => ({ ...p, company_name: event.target.value }))}
+                placeholder="e.g. ABC Finance Pty Ltd" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agc-np-contact">Contact name</Label>
+              <Input id="agc-np-contact" value={newPartner.contact_name}
+                onChange={(event) => setNewPartner((p) => ({ ...p, contact_name: event.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agc-np-email">Email <span className="text-warning">*</span></Label>
+              <Input id="agc-np-email" type="email" value={newPartner.email}
+                onChange={(event) => setNewPartner((p) => ({ ...p, email: event.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agc-np-abn">ABN / ACN</Label>
+              <Input id="agc-np-abn" value={newPartner.abn}
+                onChange={(event) => setNewPartner((p) => ({ ...p, abn: event.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewPartnerOpen(false)} disabled={createPartner.isPending}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!newPartner.company_name.trim() || !newPartner.email.trim() || createPartner.isPending}
+              onClick={submitNewPartner}
+            >
+              {createPartner.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserPlus className="mr-2 h-4 w-4" />}
+              Create & select
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

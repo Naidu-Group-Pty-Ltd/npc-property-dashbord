@@ -296,10 +296,17 @@ Deno.serve(async (req) => {
 
     // ─── PARTNER PICKER (finance partner contacts) ──────────
     if (action === 'list_partners') {
+      // The REAL columns. This select used to name `company_name`,
+      // `contact_name` and `phone` — columns `finance_agent_contacts` has
+      // never had (they are `company`, `name`, and nothing) — so PostgREST
+      // errored and every partner picker built on this action showed an empty
+      // list. The response keeps the old field names as a projection so
+      // existing callers are unaffected.
       const { data, error } = await supabase
         .from('finance_agent_contacts')
-        .select('id, company_name, contact_name, email, phone, abn, gst_registered, default_commission_rate_pct, default_commission_basis')
-        .order('company_name', { ascending: true });
+        .select('id, name, email, company, abn, is_active, gst_registered, default_commission_rate_pct, default_commission_basis')
+        .eq('is_active', true)
+        .order('company', { ascending: true, nullsFirst: false });
       if (error) throw error;
 
       // Which partners can actually receive a digital issue — an active portal
@@ -312,9 +319,58 @@ Deno.serve(async (req) => {
 
       return json({
         partners: (data ?? []).map((partner: any) => ({
-          ...partner,
+          id: partner.id,
+          company_name: partner.company ?? null,
+          contact_name: partner.name ?? null,
+          email: partner.email ?? null,
+          phone: null,
+          abn: partner.abn ?? null,
+          gst_registered: partner.gst_registered ?? null,
+          default_commission_rate_pct: partner.default_commission_rate_pct ?? null,
+          default_commission_basis: partner.default_commission_basis ?? null,
           portal_connected: connected.has(partner.id),
         })),
+      }, corsHeaders);
+    }
+
+    // ─── CREATE PARTNER (inline, from the wizard) ───────────
+    if (action === 'create_partner') {
+      const companyName = String(body.company_name ?? '').trim();
+      const contactName = String(body.contact_name ?? '').trim();
+      const email = String(body.email ?? '').trim();
+      const abn = String(body.abn ?? '').trim();
+      if (!companyName && !contactName) {
+        return json({ error: 'partner_name_required', message: 'A company or contact name is required.' }, corsHeaders, 422);
+      }
+      if (!email) {
+        return json({ error: 'email_required', message: 'An email address is required for the partner record.' }, corsHeaders, 422);
+      }
+
+      const { data, error } = await supabase
+        .from('finance_agent_contacts')
+        .insert({
+          name: contactName || companyName,
+          company: companyName || null,
+          email,
+          abn: abn || null,
+          contact_type: 'external',
+          is_active: true,
+          created_by: actorId === 'service_role' ? null : actorId,
+        })
+        .select('id, name, email, company, abn')
+        .single();
+      if (error) throw error;
+
+      return json({
+        partner: {
+          id: data.id,
+          company_name: data.company ?? null,
+          contact_name: data.name ?? null,
+          email: data.email ?? null,
+          phone: null,
+          abn: data.abn ?? null,
+          portal_connected: false,
+        },
       }, corsHeaders);
     }
 

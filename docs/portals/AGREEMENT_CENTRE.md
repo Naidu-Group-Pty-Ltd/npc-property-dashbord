@@ -159,6 +159,26 @@ into the hash-chained `partner_compliance_audit_events` via
   (the 8-step wizard with live preview), `/partner-agreements/:id` (document
   + action rail + activity/versions/requests/execution tabs). The previous
   register page remains at `/partner-agreements/register`.
+- **Reached from Finance Portal Admin**, where the rest of the
+  finance-partner tooling lives: a highlighted Agreement Centre button in
+  `/admin/finance-portal`'s action bar. The Operations sidebar entry is
+  `paletteOnly` — ⌘K discovery and deep links keep working, but the sidebar
+  does not show a second, segregated entry.
+- **Template downloads** (hub → Templates, or the template library dialog):
+  each locked template as white-labelled PDF or DOCX with the tenant's own
+  details prefilled and every negotiable field printing its bracket text —
+  for users who send through an external platform (DocuSign, PandaDoc, …).
+  Server side this is `agreement-centre-render`'s `template` operation; DOCX
+  is built in the browser from the same content module.
+- **Inline partner creation**: the wizard's partner step is a searchable
+  card list (load failures are surfaced with a retry, never an empty
+  dropdown) with a "New finance partner" dialog that writes
+  `finance_agent_contacts` (`create_partner` action) and selects the record
+  immediately. NOTE the real columns on that table are `name`, `email`,
+  `company` — `list_partners` once selected `company_name`/`contact_name`/
+  `phone`, columns that never existed, which errored the query and emptied
+  every picker built on it. The response keeps the old field names as a
+  projection.
 - Finance Portal: `/finance/agreements` (Requires Your Attention + history),
   `/finance/agreements/:id` (the agreement room — digital document, accept,
   structured change request, sign, downloads). Single-column on mobile.
