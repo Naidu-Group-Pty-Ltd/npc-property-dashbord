@@ -25,6 +25,7 @@ import type {
   ImportBBox,
 } from '@/lib/reportTemplate/ingestion/reconciliation';
 import { resolveSourceFontFamily, lookupEmbeddedFamily } from '../fontResolver';
+import { detrackText, deriveTrackingPt, type WidthMeasurer } from '../detrackText.pure';
 import { deriveWeight } from '../fontFaceBuilder';
 import type {
   DoclingBBox,
@@ -80,7 +81,9 @@ const DEFAULT_FONT_FAMILY = 'Helvetica';
 // bound, and tripping it produces a grey placeholder rather than a picture.
 // This is an allocation guard, not a correctness one — the format allow-list
 // above it is what keeps the boundary narrow.
-const MAX_DOCLING_IMAGE_BYTES = 32 * 1024 * 1024;
+// Exported so the rejection spec derives its "oversized" fixture from the real
+// bound — a hardcoded fixture silently stopped being oversized when this grew.
+export const MAX_DOCLING_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_DOCLING_IMAGE_BASE64_LENGTH = Math.ceil(MAX_DOCLING_IMAGE_BYTES / 3) * 4;
 
 /** Why a picture URI was refused — surfaced so the drop is never silent. */
@@ -259,6 +262,12 @@ interface MapOptions {
   source?: RawImportBlockSource;
   /** Phase 3: source-font-name → embedded `@font-face` family (for full fonts). */
   embeddedFontFamilies?: Record<string, string>;
+  /**
+   * R1 — width measurer for deriving tracking on de-tracked text. Injected so
+   * the mapper stays pure; the importer passes a canvas-backed one in the
+   * browser. Absent, a documented glyph-advance estimate stands in.
+   */
+  measureTextWidth?: WidthMeasurer | null;
 }
 
 function textItemToBlock(
@@ -310,7 +319,22 @@ function textItemToBlock(
   const latex = item.latex ?? item.equation;
   const codeLanguage = item.code_language;
   const sanitized = sanitizeExtractedText(item.text);
-  const displayText = blockType === 'formula' && latex ? latex : sanitized.text;
+  // R1 — recover real words from tracked (letter-spaced) source text. The
+  // extractor turns "NAIDU" set as N A I D U into per-letter tokens with the
+  // real word gaps degraded or lost; stored as-is it reads, edits and searches
+  // as gibberish. Span char-counts from source_measure are the word-boundary
+  // authority (the PDF drew one span per word); the string's own multi-space
+  // gaps are the fallback. Untracked text passes through byte-identical.
+  const singleLineMeasure = item.source_measure?.lineCount === 1
+    ? item.source_measure?.lines?.[0]
+    : undefined;
+  const detracked = detrackText(
+    sanitized.text,
+    singleLineMeasure?.spans
+      ?.map((s) => Number(s.chars ?? 0))
+      .filter((n) => n > 0),
+  );
+  const displayText = blockType === 'formula' && latex ? latex : detracked.text;
   // Nothing recoverable after stripping GLYPH artifacts → no overlay at all
   // (hybrid keeps the raster reference; semantic drops the garbage cleanly).
   if (!displayText || !displayText.trim()) return null;
@@ -347,6 +371,24 @@ function textItemToBlock(
       textAlign: item.text_align ?? 'left',
       ...(typeof item.font?.line_height === 'number' ? { lineHeight: item.font.line_height } : {}),
       ...(typeof item.font?.letter_spacing === 'number' ? { letterSpacing: item.font.letter_spacing } : {}),
+      // R1 — de-tracked text needs its tracking back as a STYLE, or the
+      // collapsed words render far narrower than the box the source measured.
+      // Derived from measured width minus natural width; the fallback family's
+      // metrics stand in for the embedded face, which is not loaded in the
+      // measuring document. Placed last so it wins over the (always-absent)
+      // sidecar letter_spacing when de-tracking actually changed the text.
+      ...(detracked.changed
+        ? (() => {
+            const tracking = deriveTrackingPt(
+              displayText,
+              singleLineMeasure?.widthPt ?? bbox.width,
+              fontSize,
+              fontResolution?.family ?? nearestDesignFont(sourceFont, item.label),
+              opts.measureTextWidth,
+            );
+            return tracking != null ? { letterSpacing: tracking } : {};
+          })()
+        : {}),
     },
     confidence: Math.min(
       typeof item.confidence === 'number' ? item.confidence : opts.defaultConfidence ?? 0.85,

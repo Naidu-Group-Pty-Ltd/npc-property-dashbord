@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DoclingDocument } from '../doclingTypes';
-import { mapDoclingToRawBlocks } from '../mapDoclingToRawBlocks';
+import { MAX_DOCLING_IMAGE_BYTES, mapDoclingToRawBlocks } from '../mapDoclingToRawBlocks';
 import { mapDoclingToPagePlan } from '../mapDoclingToPagePlan';
 import { fontLookupKey } from '../../fontResolver';
 import { applyTemplateImportPlan } from '@/lib/reportTemplate/ingestion/reconciliation/applyPlan';
@@ -377,7 +377,9 @@ describe('docling adapter', () => {
     { kind: 'binding URL', uri: '{{scheme}}://127.0.0.1/internal?secret={{secret}}' },
     {
       kind: 'oversized raster data URI',
-      uri: `data:image/png;base64,${'A'.repeat(Math.ceil((10 * 1024 * 1024) / 3) * 4 + 1)}`,
+      // Derived from the real bound: when the cap moved 10 MB → 32 MB this
+      // fixture stayed at 10 MB and silently stopped being oversized.
+      uri: `data:image/png;base64,${'A'.repeat(Math.ceil(MAX_DOCLING_IMAGE_BYTES / 3) * 4 + 1)}`,
     },
   ])('rejects unsafe Docling picture URI: $kind', ({ uri }) => {
     const doc: DoclingDocument = {

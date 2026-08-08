@@ -181,6 +181,19 @@ function withCascadeWrapper(html: string, node: { anchors?: any[]; id?: string }
 
 /** Render an overlay (text / image / shape / textOnPath / table) as an absolute-positioned HTML element. */
 export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
+  const html = renderOverlayContent(overlay, ctx);
+  if (!html) return '';
+  // R3 + W0 — stamp the overlay id on the rendered root. The editorial canvas
+  // uses it to mirror live drag geometry straight onto the iframe DOM (no
+  // srcDoc rebuild per pointermove), and the V2 DOM-evidence walker queries
+  // exactly this selector ([data-overlay-id]) — until now nothing emitted it.
+  // Non-visual: WeasyPrint ignores data attributes.
+  const id = String((overlay as { id?: unknown }).id ?? '');
+  if (!id) return html;
+  return html.replace(/^<([a-zA-Z][a-zA-Z0-9-]*)/, `<$1 data-overlay-id="${esc(id)}"`);
+}
+
+function renderOverlayContent(overlay: Overlay, ctx: ResolveContext): string {
   if (!shouldRenderOverlay(overlay, ctx)) return '';
   // Effects originate in saved template JSON and are embedded in quoted style
   // attributes below. buildEffectStyle encodes each value as it composes them,

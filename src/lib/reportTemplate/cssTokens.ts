@@ -63,6 +63,19 @@ function safeFontWeight(value: unknown): string {
     : 'normal';
 }
 
+/**
+ * R2 — validate a stored `unicodeRange` before emission. Format-checked rather
+ * than escaped: a value that is not strictly `U+hex[-hex]` segments is dropped,
+ * leaving the face unscoped (the pre-R2 behaviour), never emitted mangled.
+ */
+function safeUnicodeRange(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  const segments = value.split(',').map((s) => s.trim());
+  const ok = segments.length > 0
+    && segments.every((s) => /^[Uu]\+[0-9A-Fa-f]{1,6}(-[0-9A-Fa-f]{1,6})?$/.test(s));
+  return ok ? segments.join(', ') : null;
+}
+
 export function tokensToCssVariables(tokens: Tokens): string {
   const lines: string[] = [':root {'];
   const push = (prefix: string, values: Record<string, unknown>, suffix = '') => {
@@ -106,12 +119,16 @@ export function tokensToFontFaceCss(tokens: Tokens): string {
         : /woff/i.test(src) ? 'woff'
         : /(otf|opentype)/i.test(src) ? 'opentype'
         : /(ttf|truetype)/i.test(src) ? 'truetype' : '';
+      // R2 — a face carrying its cmap coverage is scoped to exactly those
+      // codepoints; browsers and WeasyPrint fall per glyph to the rest of the
+      // stack for anything else, so a subset never renders wrong glyphs.
+      const unicodeRange = safeUnicodeRange(f.unicodeRange);
       declarations.push(`@font-face {
   font-family: '${escapeCssString(f.family)}';
   src: url('${escapeCssString(src)}')${fmt ? ` format('${fmt}')` : ''};
   font-weight: ${safeFontWeight(f.weight)};
   font-style: ${f.style ?? 'normal'};
-  font-display: ${f.display ?? 'swap'};
+  font-display: ${f.display ?? 'swap'};${unicodeRange ? `\n  unicode-range: ${unicodeRange};` : ''}
 }`);
     }
   }

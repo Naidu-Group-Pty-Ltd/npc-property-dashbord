@@ -72,6 +72,11 @@ export const FontFaceSchema = z.object({
   style: z.enum(['normal', 'italic']).optional(),
   display: z.enum(['auto', 'swap', 'block', 'fallback', 'optional']).optional(),
   source: z.enum(['url', 'embedded']).optional(),   // 'embedded' = captured from a reference PDF/image (data: src)
+  // R2 — cmap-coverage scoping for embedded faces: strict `U+hex[-hex]` list
+  // only, so the value can be emitted into a style element verbatim.
+  unicodeRange: z.string()
+    .regex(/^[Uu]\+[0-9A-Fa-f]{1,6}(?:-[0-9A-Fa-f]{1,6})?(?:,\s*[Uu]\+[0-9A-Fa-f]{1,6}(?:-[0-9A-Fa-f]{1,6})?)*$/)
+    .optional(),
 });
 export type FontFace = z.infer<typeof FontFaceSchema>;
 

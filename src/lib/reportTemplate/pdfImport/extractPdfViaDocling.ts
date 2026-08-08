@@ -39,6 +39,7 @@ import type { CriticalContainmentPolicy } from './criticalVisualContainment.pure
 import { buildEmbeddedFontFace, type FontFaceEntry } from './fontFaceBuilder';
 import { fontLookupKey, resolveSourceFontFamily, lookupEmbeddedFamily } from './fontResolver';
 import { recommendFidelityMode } from './recommendFidelityMode';
+import { createCanvasMeasurer } from './fontMetricCompatibility';
 import {
   bridgePageCharts,
   readSceneChartRegions,
@@ -746,6 +747,9 @@ export async function extractPdfViaDocling(
         mimetype: f.mimetype,
         bold: f.bold,
         italic: f.italic,
+        // R2 — scope the face to the cmap's real coverage so a subset can
+        // never claim codepoints it lacks; absent for pre-R2 sidecar payloads.
+        coverageRanges: f.coverage_ranges,
       });
       embeddedFaces.push(built.face);
       embeddedFontFamilies[fontLookupKey(f.basename)] = built.family;
@@ -767,6 +771,9 @@ export async function extractPdfViaDocling(
       engineVersion: job.engine_version ?? 'docling',
       embeddedFontFamilies,
       sourceChartsByPage,
+      // R1 — real canvas metrics for tracked-text spacing derivation; degrades
+      // to the documented estimate when no canvas exists.
+      measureTextWidth: createCanvasMeasurer(),
     });
 
     const template = applyTemplateImportPlan(plan, {
