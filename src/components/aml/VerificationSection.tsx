@@ -159,15 +159,24 @@ export function VerificationSection({
     setBusy("request");
     try {
       const electronic = readiness?.idv?.state === "ready_live";
+      // A hosted provider runs the capture itself, so the client is not asked
+      // to upload anything — they complete it in the portal. Telling them to
+      // "upload a document, no selfie needed" while the portal offers the photo
+      // flow is the contradiction this distinction exists to avoid.
+      const hosted = readiness?.idv?.idv_flow === "hosted_session";
       await amlCasesApi.createClientRequest({
         case_id: caseId,
         kind: "additional_info",
         subject: "Identity verification",
-        message: electronic
-          ? "Please complete identity verification in your client portal: you will be asked to "
-            + "photograph your identity document and take a selfie. It only takes a few minutes."
-          : "Please upload a current identity document (passport or driver licence) in your client "
-            + "portal so we can verify your identity. You do not need to take a selfie.",
+        message: electronic && hosted
+          ? "Please complete identity verification in your client portal. You will be guided "
+            + "through a secure identity check on your own device: photograph your identity "
+            + "document, then your face. It only takes a minute."
+          : electronic
+            ? "Please complete identity verification in your client portal: you will be asked to "
+              + "photograph your identity document and take a selfie. It only takes a few minutes."
+            : "Please upload a current identity document (passport or driver licence) in your client "
+              + "portal so we can verify your identity. You do not need to take a selfie.",
         // Canonical vocabulary (`CLIENT_ACTION_CODES`), not a free-text
         // payload: the portal only projects an action it recognises, and
         // `action_target.target_step` is the whitelisted routing field — no

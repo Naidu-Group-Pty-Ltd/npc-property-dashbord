@@ -15,6 +15,19 @@ import { join } from 'node:path';
 const repo = process.cwd();
 const read = (p: string) => readFileSync(join(repo, p), 'utf8');
 
+/**
+ * Source with comments removed.
+ *
+ * Several assertions here are "this word must not appear in the code" — and
+ * the comments that explain *why* it must not appear necessarily say it. An
+ * assertion that cannot tell those apart would forbid documenting itself.
+ */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(join(repo, dir))) {
     const rel = `${dir}/${name}`;
@@ -180,26 +193,53 @@ describe('portal privacy boundary', () => {
   });
 
   it('the frontend cannot mark anybody verified', () => {
-    // No message listener, no return-URL status, no local status assertion.
+    // It may listen for a "something happened" nudge from the frame — see the
+    // origin test below — but there is no return-URL status and no local
+    // status assertion anywhere.
     expect(step).not.toContain('postMessage');
-    expect(step).not.toContain('addEventListener(\'message\'');
     expect(step).not.toMatch(/status:\s*['"]verified['"]/);
     // Completion only ever triggers a server re-read.
     expect(step).toContain('await load()');
   });
 
-  it('delegates the camera to the embed and offers a new-tab fallback', () => {
+  it('delegates every documented embed permission and does not sandbox', () => {
     const from = step.indexOf('<iframe');
-    const iframe = step.slice(from, step.indexOf('/>', from));
     expect(from).toBeGreaterThan(-1);
-    // Without delegating `camera` the provider's capture step fails with a
-    // permission error the customer cannot act on.
-    expect(iframe).toContain('allow="camera');
-    expect(iframe).toContain('sandbox=');
-    // Embedded camera permission is genuinely unreliable, so the new-tab route
-    // is offered up front rather than behind an undetectable failure.
+    const iframe = step.slice(from, step.indexOf('/>', from));
+    expect(iframe).toContain('allow={HOSTED_IFRAME_ALLOW}');
+    expect(iframe).not.toContain('sandbox=');
+
+    // The permission list itself, including the two whose absence let the
+    // provider decide this device could not capture.
+    const list = step.slice(step.indexOf('const HOSTED_IFRAME_ALLOW'), step.indexOf('].join'));
+    for (const perm of ['camera', 'microphone', 'autoplay', 'encrypted-media',
+      'fullscreen', 'clipboard-write', 'picture-in-picture']) {
+      expect(list).toContain(`'${perm}'`);
+    }
+    // The fallback still exists — just not as the headline.
     expect(step).toContain('target="_blank"');
     expect(step).toContain('rel="noopener noreferrer"');
+  });
+
+  it('capture on this device is the primary path — NPC never forces a handoff', () => {
+    // No QR/second-device selection of our own. Which device is used is the
+    // provider's decision, driven by the workflow's is_desktop_allowed. Only
+    // code counts: the comments explaining that history say both words.
+    const code = codeOnly(step).toLowerCase();
+    expect(code).not.toContain('qr');
+    expect(code).not.toMatch(/cross[_-]?device/);
+    // And the fallback is behind an explicit ask, not rendered by default.
+    expect(step).toContain('showFallback');
+  });
+
+  it('the message listener is origin-checked against the minted URL', () => {
+    const listener = step.slice(step.indexOf('const onMessage'), step.indexOf('window.addEventListener'));
+    expect(listener).toContain('event.origin !== origin');
+    // It calls done() — a status re-read — and nothing else. No status writing.
+    expect(listener).not.toMatch(/verified|passed|failed|declined/i);
+    // The origin is derived from the server-minted session URL, so the portal
+    // still never names a provider.
+    expect(step).toContain('new URL(url).origin');
   });
 });
 
@@ -217,10 +257,25 @@ describe('no secret can reach the browser', () => {
       .filter((f) => f.endsWith('.ts'))
       .filter((f) => /Deno\.env\.get\(['"]DIDIT_API_KEY['"]\)/.test(read(f)));
     expect(readers.sort()).toEqual([
+      // Reads it only to report *presence* to the Command Centre — never the
+      // value. That assertion is the next test.
+      'supabase/functions/aml-verification/index.ts',
       'supabase/functions/_shared/aml/providers/diditClient.ts',
       'supabase/functions/_shared/aml/providers/index.ts',
       'supabase/functions/didit-webhook/index.ts',
-    ]);
+    ].sort());
+  });
+
+  it('the readiness endpoint reports presence, never the credential', () => {
+    const verification = read('supabase/functions/aml-verification/index.ts');
+    const reads = verification.split('\n')
+      .filter((line) => /Deno\.env\.get\(['"]DIDIT_[A-Z_]+['"]\)/.test(line));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const line of reads) {
+      // Every read is immediately reduced to a boolean. A bare read assigned
+      // to something that could be serialised is the failure this catches.
+      expect(line).toMatch(/Boolean\(|!!|\.length\s*>\s*0/);
+    }
   });
 
   it('errors and logs redact the key and the hosted URL', () => {

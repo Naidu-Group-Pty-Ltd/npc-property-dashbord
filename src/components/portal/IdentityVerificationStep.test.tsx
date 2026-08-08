@@ -11,11 +11,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 
 const verificationStatus = vi.fn();
 const startHostedVerification = vi.fn();
+const submitVerification = vi.fn();
 vi.mock('@/lib/aml/amlPortalApi', () => ({
   amlPortalApi: {
     verificationStatus: (...a: unknown[]) => verificationStatus(...a),
     requestVerificationUpload: vi.fn(),
-    submitVerification: vi.fn(),
+    submitVerification: (...a: unknown[]) => submitVerification(...a),
     startHostedVerification: (...a: unknown[]) => startHostedVerification(...a),
   },
 }));
@@ -104,6 +105,7 @@ const renderStep = () => render(
 beforeEach(() => {
   verificationStatus.mockReset();
   startHostedVerification.mockReset();
+  submitVerification.mockReset();
   URL.createObjectURL = vi.fn(() => 'blob:capture');
   URL.revokeObjectURL = vi.fn();
 });
@@ -336,7 +338,8 @@ describe('hosted provider flow', () => {
     expect(frame.getAttribute('src')).toBe('https://verify.didit.me/session/TOKEN');
   });
 
-  it('delegates the camera into the frame', async () => {
+  /** Opens the hosted flow and hands back the frame. */
+  const openHosted = async () => {
     verificationStatus.mockResolvedValue(hostedStatus());
     startHostedVerification.mockResolvedValue({
       started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
@@ -344,35 +347,105 @@ describe('hosted provider flow', () => {
 
     renderStep();
     fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
-    const frame = await waitFor(() => {
+    return await waitFor(() => {
       const el = document.querySelector('iframe');
       if (!el) throw new Error('no iframe');
       return el;
     });
+  };
 
-    // Without this the provider's capture step fails with a permission error
-    // the customer cannot act on.
-    expect(frame.getAttribute('allow')).toContain('camera');
-    const sandbox = frame.getAttribute('sandbox') ?? '';
-    expect(sandbox).toContain('allow-scripts');
-    // Required for the camera: a Permissions-Policy grant cannot be delegated
-    // to the opaque origin an iframe gets without it.
-    expect(sandbox).toContain('allow-same-origin');
+  it('delegates every permission the provider documents for its embed', async () => {
+    const frame = await openHosted();
+    const allow = frame.getAttribute('allow') ?? '';
+
+    // `camera` is the one that decides whether this works at all. The rest are
+    // the provider's documented embed set — and the two that were missing,
+    // `autoplay` and `encrypted-media`, are what the liveness video pipeline
+    // needs: a blocked stream reads to the provider as "this device cannot
+    // capture", which is exactly how a same-device flow turns into a QR code.
+    for (const permission of ['camera', 'microphone', 'autoplay', 'encrypted-media',
+      'fullscreen', 'clipboard-write', 'picture-in-picture',
+      'accelerometer', 'gyroscope', 'magnetometer']) {
+      expect(allow).toContain(permission);
+    }
+    expect(frame.hasAttribute('allowfullscreen')).toBe(true);
   });
 
-  it('offers the new-tab route for browsers that block embedded camera access', async () => {
-    verificationStatus.mockResolvedValue(hostedStatus());
-    startHostedVerification.mockResolvedValue({
-      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
-    });
+  it('does not sandbox the provider frame', async () => {
+    const frame = await openHosted();
 
-    renderStep();
-    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    // A cross-origin frame already granted `allow-same-origin allow-scripts`
+    // is not meaningfully contained by a sandbox — the same-origin policy is
+    // what stops the provider reading this page. What the attribute *can* do
+    // is silently withhold something the capture pipeline needs and turn that
+    // into an unexplained cross-device handoff.
+    expect(frame.hasAttribute('sandbox')).toBe(false);
+  });
+
+  it('does not lead with a camera-failure warning before anything has failed', async () => {
+    await openHosted();
+
+    // The old dialog rendered a permanent notice about the camera not working
+    // above the frame, so every customer met an error message on a screen
+    // where nothing had gone wrong yet.
+    expect(screen.queryByRole('link', { name: /new tab/i })).toBeNull();
+    expect(screen.queryByText(/camera (is )?(not|isn't) work/i)).toBeNull();
+    expect(screen.queryByText(/blocked/i)).toBeNull();
+  });
+
+  it('reveals the new-tab fallback only when the customer asks for it', async () => {
+    await openHosted();
+
+    fireEvent.click(await screen.findByRole('button', { name: /having trouble/i }));
 
     const link = await screen.findByRole('link', { name: /new tab/i });
     expect(link.getAttribute('href')).toBe('https://verify.didit.me/session/TOKEN');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toContain('noopener');
+  });
+
+  it('offers exactly one "I have finished" control', async () => {
+    await openHosted();
+
+    // There were two — one in the dialog body and one in its footer — which
+    // read as two different actions with two different meanings.
+    expect(screen.getAllByRole('button', { name: /i have finished/i })).toHaveLength(1);
+  });
+
+  it('a provider message only re-reads server state — it cannot mark verified', async () => {
+    await openHosted();
+    const callsBefore = verificationStatus.mock.calls.length;
+
+    // The payload is deliberately not inspected. Even one that claims success
+    // can do no more than make NPC ask its own server what happened.
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://verify.didit.me',
+        data: { status: 'Approved', verified: true, decision: 'passed' },
+      }));
+    });
+
+    await waitFor(() =>
+      expect(verificationStatus.mock.calls.length).toBeGreaterThan(callsBefore));
+    expect(screen.queryByText(/verified/i)).toBeNull();
+    expect(submitVerification).not.toHaveBeenCalled();
+  });
+
+  it('ignores messages from any other origin', async () => {
+    await openHosted();
+    const callsBefore = verificationStatus.mock.calls.length;
+
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: 'https://verify.didit.me.attacker.example',
+        data: { status: 'Approved' },
+      }));
+      await Promise.resolve();
+    });
+
+    expect(verificationStatus.mock.calls.length).toBe(callsBefore);
+    // The frame is still open — a stranger cannot close the customer's session.
+    expect(document.querySelector('iframe')).toBeTruthy();
   });
 
   it('never captures a document or selfie itself when hosted is active', async () => {
