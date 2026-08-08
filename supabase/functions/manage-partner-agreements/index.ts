@@ -997,8 +997,25 @@ Deno.serve(async (req) => {
 
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unexpected error';
-    console.error('[manage-partner-agreements] error:', message);
-    return json({ error: message }, corsHeaders, 500);
+    // PostgREST rejects with a plain `{message, code, details, hint}` object, not
+    // an Error — `err instanceof Error` was false for every database failure, so
+    // the real cause was replaced by the useless string "Unexpected error".
+    const asRecord = (err ?? {}) as Record<string, unknown>;
+    const message = err instanceof Error
+      ? err.message
+      : (typeof asRecord.message === 'string' && asRecord.message)
+        || (typeof err === 'string' ? err : JSON.stringify(err));
+    console.error('[manage-partner-agreements] error:', message, {
+      code: asRecord.code ?? null,
+      details: asRecord.details ?? null,
+      hint: asRecord.hint ?? null,
+      stack: err instanceof Error ? err.stack : null,
+    });
+    return json({
+      error: message || 'Unexpected error',
+      code: asRecord.code ?? null,
+      details: asRecord.details ?? null,
+      hint: asRecord.hint ?? null,
+    }, corsHeaders, 500);
   }
 });
