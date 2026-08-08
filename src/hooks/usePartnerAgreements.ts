@@ -96,6 +96,17 @@ export interface PartnerAgreement {
   termination_reason: string | null;
   notes: string | null;
 
+  agreement_owner_id?: string | null;
+  agreement_owner_label?: string | null;
+  issued_at?: string | null;
+  issued_version_id?: string | null;
+  first_viewed_at?: string | null;
+  accepted_at?: string | null;
+  executed_at?: string | null;
+  withdrawn_at?: string | null;
+  executed_pdf_storage_path?: string | null;
+
+
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
