@@ -54,8 +54,9 @@ function readStyle(el: Element): RenderedTextComputedStyleV1 {
     display: cs.display,
     visibility: cs.visibility,
     opacity: Number.parseFloat(cs.opacity) || 0,
-    color: cs.color,
-    backgroundColor: cs.backgroundColor,
+    colour: cs.color,
+    backgroundColour: cs.backgroundColor,
+
     // Reading a computed style into evidence, not setting one. The token rule
     // is about authored styles; recording what the browser actually resolved is
     // the entire point of this module.
