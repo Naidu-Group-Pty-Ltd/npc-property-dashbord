@@ -20,7 +20,7 @@ import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSaf
 // produce a single PDF.
 import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 import { wrapInlineInsightParagraphs } from "./insightSections.ts";
-import { NPC_HOUSE_COVER_ART } from "../_shared/reportDesign/defaultAssets.generated.ts";
+import { NPC_HOUSE_COVER_ART } from "./defaultAssets.generated.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
