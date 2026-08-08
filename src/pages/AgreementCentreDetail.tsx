@@ -19,15 +19,18 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  ArrowLeft, CheckCircle2, ChevronDown, Download, Eye, FileSignature, Loader2,
-  MoreHorizontal, Pencil, RotateCcw, Send, Undo2, FilePlus2,
+  Archive, ArchiveRestore, ArrowLeft, Ban, CheckCircle2, ChevronDown, Download,
+  Eye, FileSignature, Loader2, MoreHorizontal, Pencil, RotateCcw, Send, Trash2,
+  Undo2, FilePlus2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AGREEMENT_STATUS_LABELS,
+  agreementDispositionFromRow,
   agreementTemplate,
   templateKeyForDirection,
   projectFieldValues,
@@ -50,6 +53,9 @@ import VersionHistory from '@/components/agreement-centre/VersionHistory';
 import ChangeRequestsPanel from '@/components/agreement-centre/ChangeRequestsPanel';
 import SignatureDialog from '@/components/agreement-centre/SignatureDialog';
 import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
+import AgreementDispositionDialog, {
+  type DispositionMode,
+} from '@/components/agreement-centre/AgreementDispositionDialog';
 
 export default function AgreementCentreDetail() {
   const { id } = useParams<{ id: string }>();
@@ -59,7 +65,7 @@ export default function AgreementCentreDetail() {
   const { settings: brandSettings } = useBrand();
   const {
     transition, recordReview, issueToPartner, withdraw, counterSign,
-    resolveChangeRequest, newVersion,
+    resolveChangeRequest, newVersion, voidAgreement, archive, restore, deleteAgreement,
   } = useAgreementCentreMutations();
 
   const [reviewDialog, setReviewDialog] = useState<null | 'approve' | 'return'>(null);
@@ -69,6 +75,7 @@ export default function AgreementCentreDetail() {
   const [counterSignOpen, setCounterSignOpen] = useState(false);
   const [pdfPreviewId, setPdfPreviewId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [disposition, setDisposition] = useState<DispositionMode | null>(null);
 
   const agreement = data?.agreement ?? null;
   const templateKey = agreement ? templateKeyForDirection(agreement.direction) : null;
@@ -136,6 +143,16 @@ export default function AgreementCentreDetail() {
 
   /** The one obvious primary action for the current stage. */
   const primaryAction = () => {
+    // Archived work is out of the list, so offering to progress it here would
+    // be offering something the server will refuse. Restoring is the action.
+    if (agreement.archived_at) {
+      return (
+        <Button className="w-full" variant="outline" disabled={dispositionPending}
+          onClick={() => setDisposition('restore')}>
+          <ArchiveRestore className="mr-2 h-4 w-4" /> Restore to working list
+        </Button>
+      );
+    }
     switch (status) {
       case 'draft':
         return (
@@ -210,6 +227,25 @@ export default function AgreementCentreDetail() {
 
   const sections = agreementSectionNav(templateKey);
   const canWithdraw = ['partner_review', 'changes_requested', 'sent_for_signature'].includes(status);
+  const can = agreementDispositionFromRow(agreement);
+  const archivedAt = agreement.archived_at ?? null;
+  const dispositionPending = voidAgreement.isPending || archive.isPending
+    || restore.isPending || deleteAgreement.isPending;
+
+  const runDisposition = (input: { reason?: string }) => {
+    const close = { onSuccess: () => setDisposition(null) };
+    switch (disposition) {
+      case 'void': return voidAgreement.mutate({ id: agreement.id, reason: input.reason ?? '' }, close);
+      case 'archive': return archive.mutate({ id: agreement.id, reason: input.reason }, close);
+      case 'restore': return restore.mutate(agreement.id, close);
+      case 'delete':
+        // The row is about to stop existing, so there is nowhere to return to.
+        return deleteAgreement.mutate({ id: agreement.id }, {
+          onSuccess: () => { setDisposition(null); navigate('/partner-agreements'); },
+        });
+      default: return undefined;
+    }
+  };
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
@@ -274,10 +310,63 @@ export default function AgreementCentreDetail() {
                   <FilePlus2 className="mr-2 h-4 w-4" /> New version (vary terms)
                 </DropdownMenuItem>
               ) : null}
+              {can.canRestore || can.canVoid || can.canArchive || can.canDelete ? (
+                <DropdownMenuSeparator />
+              ) : null}
+              {can.canRestore ? (
+                <DropdownMenuItem onClick={() => setDisposition('restore')}>
+                  <ArchiveRestore className="mr-2 h-4 w-4" /> Restore from archive
+                </DropdownMenuItem>
+              ) : null}
+              {can.canVoid ? (
+                <DropdownMenuItem onClick={() => setDisposition('void')}>
+                  <Ban className="mr-2 h-4 w-4" /> Void agreement
+                </DropdownMenuItem>
+              ) : null}
+              {can.canArchive ? (
+                <DropdownMenuItem onClick={() => setDisposition('archive')}>
+                  <Archive className="mr-2 h-4 w-4" /> Archive
+                </DropdownMenuItem>
+              ) : null}
+              {can.canDelete ? (
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => setDisposition('delete')}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" /> Delete permanently
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </header>
+
+      {/* Why the actions are missing, said before the user goes looking. */}
+      {archivedAt ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Archived</span>{' '}
+            {format(new Date(archivedAt), 'd MMM yyyy')}
+            {agreement.archived_by_label ? ` by ${agreement.archived_by_label}` : ''}
+            {agreement.archive_reason ? ` — ${agreement.archive_reason}` : ''}
+            . Its status is unchanged; restore it to make changes.
+          </p>
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => setDisposition('restore')}>
+            <ArchiveRestore className="mr-1.5 h-4 w-4" /> Restore
+          </Button>
+        </div>
+      ) : null}
+
+      {status === 'void' ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
+          <p className="text-sm text-foreground">
+            <span className="font-medium">This agreement is void</span>
+            {agreement.voided_at ? ` — ${format(new Date(agreement.voided_at), 'd MMM yyyy')}` : ''}
+            . It is of no effect and cannot be executed or reopened.
+            {agreement.void_reason ? ` Reason: ${agreement.void_reason}` : ''}
+          </p>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-[200px_minmax(0,1fr)_340px]">
         {/* Left — section navigation */}
@@ -454,6 +543,14 @@ export default function AgreementCentreDetail() {
           { id: agreement.id, ...signature },
           { onSuccess: () => setCounterSignOpen(false) },
         )}
+      />
+
+      <AgreementDispositionDialog
+        mode={disposition}
+        agreementLabel={agreement.partner_legal_name}
+        pending={dispositionPending}
+        onOpenChange={(open) => { if (!open) setDisposition(null); }}
+        onConfirm={runDisposition}
       />
 
       <PdfPreviewDialog agreementId={pdfPreviewId} onOpenChange={(open) => { if (!open) setPdfPreviewId(null); }} />
