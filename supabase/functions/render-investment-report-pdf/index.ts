@@ -2682,6 +2682,35 @@ type HeroPlacement = {
   rounded: boolean;
 };
 
+/**
+ * The house cover artwork, as a `data:` URI, read from
+ * `public.report_default_assets`.
+ *
+ * Cached per isolate: a report render touches the cover once, but a warm isolate
+ * serves many renders and this row is ~220 KB. A miss returns `null` rather than
+ * throwing — a cover with no photograph still prints, and the gradient/foil
+ * treatment below carries it. Losing the artwork must never lose the report.
+ */
+let houseCoverArtCache: string | null | undefined;
+async function loadHouseCoverArt(): Promise<string | null> {
+  if (houseCoverArtCache !== undefined) return houseCoverArtCache;
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
+    const { data, error } = await supabase
+      .from("report_default_assets")
+      .select("data_uri")
+      .eq("asset_key", "npc_house_cover_art")
+      .maybeSingle();
+    if (error) throw error;
+    const uri = typeof data?.data_uri === "string" ? data.data_uri : null;
+    houseCoverArtCache = uri && uri.startsWith("data:") ? uri : null;
+  } catch (err) {
+    console.error("[render-investment-report-pdf] cover art load failed", err);
+    houseCoverArtCache = null;
+  }
+  return houseCoverArtCache;
+}
+
 async function loadHeroPlacements(reportId: string): Promise<Record<string, HeroPlacement>> {
   const out: Record<string, HeroPlacement> = {};
   try {
