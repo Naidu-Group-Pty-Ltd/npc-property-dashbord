@@ -136,7 +136,7 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
   structure.pure.ts    ✅ REPORT_ARCHETYPES, buildSpine(), validateSpine()
   assets.pure.ts       ✅ inline policy, slot fallback chains, budget
   snapshot.pure.ts     ✅ ReportBrandSnapshot, fingerprint, palette/contact adapters
-  defaultAssets.generated.ts ✅ GENERATED — the house cover art and mark, inlined
+  (the house cover art and mark are NOT here — see "Where the house artwork lives")
   charts.pure.ts       ✅ 16 SVG charts, palette-driven, sized in points
 
 src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
@@ -153,10 +153,37 @@ src/lib/reportDesign/__tests__/reportSnapshot.spec.ts         ← fingerprint co
 src/branding/__tests__/brandAssetSlots.spec.ts                ← the two resolvers agree
 scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for CI)
 scripts/reportDesign/buildDefaultAssets.ts   ← asset inliner (+ `--check` for CI)
+scripts/reportDesign/generated/defaultAssets.generated.ts ← its output (NOT under supabase/functions/)
 scripts/reportDesign/buildSpecimen.ts        ← `npm run reportkit:specimen`
 supabase/migrations/20260813000000_report_brand_snapshots.sql
 weasyprint-service/fonts/                    ← the three brand faces, OFL licences, PROVENANCE.md
 ```
+
+### Where the house artwork lives
+
+The house cover art and mark are ~490 KB of base64 between them. They used to sit
+in `supabase/functions/_shared/reportDesign/defaultAssets.generated.ts`, and that
+was a deploy-blocking mistake rather than a tidy one: **every file under
+`supabase/functions/` is uploaded with every function**, so those bytes counted
+against all ~349 of them. Three unrelated functions —
+`manage-partner-agreements`, `aml-client-portal` and `generate-investment-report`
+— went past Supabase's ~4.5 MB bundle cap and could not be deployed at all,
+which is invisible until you try to ship a fix to one of them.
+
+So the bytes live in `public.report_default_assets`, keyed by `asset_key`
+(`npc_house_cover_art`, `npc_house_mark`), and `render-investment-report-pdf`
+loads the cover at request time via `loadHouseCoverArt()` — cached per isolate,
+returning `null` on failure so a missing photograph degrades to the gradient/foil
+cover instead of failing the render. It is still a `data:` URI by the time
+WeasyPrint sees it, so the no-network policy in `assets.pure.ts` is intact.
+
+The generator remains the source of truth: `npm run reportkit:assets` writes
+`scripts/reportDesign/generated/defaultAssets.generated.ts` and
+`reportkit:assets:check` gates it in CI. Re-seeding the table after a regenerate
+is a manual step — stage a throwaway edge function that imports the generated
+file and upserts the two rows, run it once, then delete it. Do **not** re-add the
+generated file anywhere under `supabase/functions/`.
+
 
 `premiumPdfDesign.ts` (the design panel's option contract) and
 `src/utils/pdfDisclaimerPage.ts` (the jsPDF and pdf-lib closing pages) are now

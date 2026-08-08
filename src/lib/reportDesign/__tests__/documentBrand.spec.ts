@@ -18,7 +18,7 @@ import { buildReportBrandSnapshot } from '@/lib/reportDesign/snapshot.pure';
 import {
   NPC_HOUSE_COVER_ART,
   NPC_HOUSE_MARK,
-} from '../../../../supabase/functions/render-investment-report-pdf/defaultAssets.generated';
+} from '../../../../scripts/reportDesign/generated/defaultAssets.generated';
 import { auditPaletteContrast } from '@/lib/reportDesign/brandResolve.pure';
 
 import { DEFAULT_CONFIDENTIALITY, resolveSnapshotBrand } from '../documentBrand.pure';
