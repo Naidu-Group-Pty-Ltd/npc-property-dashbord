@@ -102,6 +102,9 @@ import table_integrity as tinteg
 import source_typography as stypo
 import font_assets as fassets
 from source_url_security import UnsafeSourceUrl, fetch_public_url
+# Text alignment inference (pure; gated by ci.yml — see the module header for
+# what shipped wrong while it lived in this file).
+from text_alignment import MIN_JUSTIFY_LINES, infer_alignment  # noqa: F401
 
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -132,7 +135,11 @@ LOG = logging.getLogger("pdf-parse-service")
 SERVICE_TOKEN = os.environ.get("PDF_PARSE_SERVICE_TOKEN", "").strip()
 SERVICE_TOKEN_NEXT = os.environ.get("PDF_PARSE_SERVICE_TOKEN_NEXT", "").strip()
 SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v1+coverage-ranges-v1"
+# `align-v2` is a SEMANTIC change to a field that already existed: `text_align`
+# no longer reports justify for a two-line block. A cached artifact carries the
+# old meaning under the same key, so the version has to move or the cache serves
+# it. See _infer_alignment / MIN_JUSTIFY_LINES.
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v1+coverage-ranges-v1+align-v2"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -1033,26 +1040,11 @@ def _bbox_to_tl(bbox: Any, page_height: float) -> Optional[tuple[float, float, f
     return (min(l, r), y0, max(l, r), y1)
 
 
-def _infer_alignment(lines: list[dict], ix0: float, ix1: float) -> str:
-    width = max(1.0, ix1 - ix0)
-    n = len(lines)
-    if not n:
-        return "left"
-    left_gaps = [ln["bbox"][0] - ix0 for ln in lines]
-    right_gaps = [ix1 - ln["bbox"][2] for ln in lines]
-    fills = [(ln["bbox"][2] - ln["bbox"][0]) / width for ln in lines]
-    avg_left = sum(left_gaps) / n
-    avg_right = sum(right_gaps) / n
-    tol = max(2.0, width * 0.02)
-    if n >= 2 and sum(1 for f in fills if f >= 0.95) >= n - 1:
-        return "justify"
-    if avg_left <= tol and avg_right > tol:
-        return "left"
-    if avg_right <= tol and avg_left > tol:
-        return "right"
-    if abs(avg_left - avg_right) <= tol and avg_left > tol:
-        return "center"
-    return "left"
+# Moved to `text_alignment.py` so `ci.yml` can gate it: the rule shipped wrong
+# (every two-line block came back justified) precisely because nothing in this
+# file is dependency-free enough to run in that job. Kept as a thin alias so
+# call sites and existing diagnostics read the same.
+_infer_alignment = infer_alignment
 
 
 def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> None:

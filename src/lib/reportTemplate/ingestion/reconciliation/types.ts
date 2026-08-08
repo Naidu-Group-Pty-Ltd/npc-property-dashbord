@@ -133,6 +133,15 @@ export interface RawImportBlock {
     language?: string;
     /** Phase D: cross-reference target ($ref form). */
     xref?: string;
+    /**
+     * Lines the SOURCE actually drew inside this block's box
+     * (`source_measure.lineCount` — a count from PyMuPDF, not an inference).
+     *
+     * The extractor joins a multi-line paragraph's lines with a SPACE, so the
+     * string alone cannot say whether the source wrapped. This can, and it is
+     * what decides `whiteSpace: 'nowrap'` — see resolveTextWrapping.pure.ts.
+     */
+    sourceLineCount?: number;
     /** Phase 3: original source PostScript font name (pre-resolution). */
     sourceFont?: string;
     /** Phase 3: true when the source font was not catalog-known and was substituted. */

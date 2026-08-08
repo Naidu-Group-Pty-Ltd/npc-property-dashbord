@@ -407,6 +407,13 @@ function textItemToBlock(
       codeLanguage,
       language: item.language,
       xref,
+      // How many lines the SOURCE drew in this box. Docling joins them with a
+      // space, so the string cannot say; this can, and it is what stops a
+      // two-line title being forced onto one line and off the page.
+      ...(Number.isFinite(Number(item.source_measure?.lineCount))
+        && Number(item.source_measure?.lineCount) >= 1
+        ? { sourceLineCount: Math.round(Number(item.source_measure!.lineCount)) }
+        : {}),
       ...(sourceFont ? { sourceFont } : {}),
       ...(!embeddedFamily && fontResolution?.substituted ? { fontSubstituted: true } : {}),
     },

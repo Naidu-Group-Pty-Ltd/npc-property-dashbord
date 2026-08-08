@@ -26,6 +26,7 @@ import { mapDoclingToRawBlocks } from './mapDoclingToRawBlocks';
 import { deriveNativeHeaderPolicy, TABLE_PRESERVATION_VERSION } from '../tableArbitration.pure';
 import { CHART_ARBITRATION_VERSION as CHART_PRESERVATION_VERSION } from '../chartArbitration.pure';
 import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pure';
+import { resolveTextWrapping } from '../resolveTextWrapping.pure';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
 
@@ -110,7 +111,11 @@ function overlayId(block: RawImportBlock, suffix = 'ov'): string {
   return `${block.id}-${suffix}`;
 }
 
-function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null {
+function blockToOverlay(
+  block: RawImportBlock,
+  locked: boolean,
+  opts: Pick<DoclingPlanOptions, 'measureTextWidth'> = {},
+): Overlay | null {
   // Phase B: prefer alt-text / caption for the human-readable layer label.
   const layerName = (block.meta?.altText
     ?? block.meta?.caption
@@ -137,23 +142,33 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
     const isFormula = block.type === 'formula';
     const fontSize = block.style?.fontSize ?? 11;
     const lineHeight = block.style?.lineHeight ?? (isCode ? 1.4 : 1.3);
-    // Single-line source text must never wrap: substituted fonts run slightly
-    // wider than the original, and a wrapped second line collides with the
-    // block below (the dominant overlap artifact in imported previews). A
-    // bbox taller than ~1.6 line-heights indicates a real multi-line
-    // paragraph, which keeps normal wrapping.
-    const isSingleLine = Boolean(
-      (block.text ?? '').trim()
-      && !(block.text ?? '').includes('\n')
-      && block.bbox.height <= fontSize * lineHeight * 1.6,
-    );
+    const fontFamily = isCode ? 'Menlo, Consolas, monospace'
+      : isFormula ? 'Times, "Times New Roman", serif'
+      : (block.style?.fontFamily ?? DEFAULT_IMPORT_FONT_STACK);
+    const letterSpacing = block.style?.letterSpacing ?? 0;
+    // Wrapping is a fidelity decision, not a style default, and both answers
+    // have a production defect behind them: text the source set on one line
+    // must not gain a second (it lands on the block below), and text the
+    // source set on TWO lines must not be forced onto one (it leaves the
+    // page — the BC Snapshot cover title did exactly that). The source's own
+    // line count settles it; see resolveTextWrapping.pure.ts.
+    const wrapping = resolveTextWrapping({
+      text: block.text ?? '',
+      boxWidthPt: block.bbox.width,
+      boxHeightPt: block.bbox.height,
+      fontSizePt: fontSize,
+      lineHeight,
+      letterSpacingPt: letterSpacing,
+      fontFamily,
+      sourceLineCount: block.meta?.sourceLineCount ?? null,
+      sourceAlign: block.style?.textAlign ?? null,
+      measure: opts.measureTextWidth,
+    });
     const overlay: TextOverlay = {
       ...base,
       type: 'text',
       content: block.text ?? '',
-      fontFamily: isCode ? 'Menlo, Consolas, monospace'
-        : isFormula ? 'Times, "Times New Roman", serif'
-        : (block.style?.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
+      fontFamily,
       fontSize,
       // Phase 6E — preserve a numeric weight grade (e.g. 300/600 derived from the
       // source font name) instead of collapsing every weight to bold/normal.
@@ -174,8 +189,8 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       align: (block.style?.textAlign ?? 'left') as TextOverlay['align'],
       // Phase 2: prefer real leading/tracking from the PyMuPDF span pass.
       lineHeight,
-      letterSpacing: block.style?.letterSpacing ?? 0,
-      ...(isSingleLine ? { whiteSpace: 'nowrap' as const } : {}),
+      letterSpacing,
+      ...(wrapping.nowrap ? { whiteSpace: 'nowrap' as const } : {}),
     } as TextOverlay;
     return overlay;
   }
@@ -368,7 +383,7 @@ function pagePlanForPage(
     } else if (opts.mode === 'pixel-perfect') locked = true;
     else if (opts.mode === 'hybrid') locked = block.confidence < lockThreshold;
     else locked = false; // semantic
-    const ov = blockToOverlay(block, locked);
+    const ov = blockToOverlay(block, locked, opts);
     if (ov) overlays.push(ov);
   }
   return {
