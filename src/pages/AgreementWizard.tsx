@@ -51,9 +51,12 @@ import {
   useAgreementPartnerOptions,
   useDuplicateCheck,
   useIssuerDefaults,
+  docxBrandFrom,
   downloadAgreementDocx,
   downloadAgreementPdf,
 } from '@/hooks/useAgreementCentre';
+import { loadDocxLogo } from '@/lib/agreements/docx';
+import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import DigitalAgreementView from '@/components/agreement-centre/DigitalAgreementView';
 import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
@@ -155,6 +158,7 @@ export default function AgreementWizard() {
   const { data: detail } = useAgreementCentreDetail(agreementId);
   const agreement = detail?.agreement ?? null;
   const { data: issuer } = useIssuerDefaults();
+  const { settings: brandSettings } = useBrand();
   const {
     data: partners = [],
     isLoading: partnersLoading,
@@ -347,7 +351,12 @@ export default function AgreementWizard() {
       const saved = await persist();
       if (!saved) return;
       if (kind === 'pdf') await downloadAgreementPdf(saved.id, 'draft');
-      else await downloadAgreementDocx(saved);
+      else {
+        const logo = await loadDocxLogo(brandSettings?.reportLogo ?? brandSettings?.sidebarLogo ?? null);
+        await downloadAgreementDocx(saved, docxBrandFrom(
+          issuer, brandSettings?.brandColor ?? brandSettings?.primaryColor ?? null, logo,
+        ));
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Export failed');
     } finally {

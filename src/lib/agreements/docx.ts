@@ -1,29 +1,53 @@
 /**
- * Agreement Centre — DOCX export, built in the browser.
+ * Agreement Centre — the Word document.
  *
- * The manual path: a user who wants to manage an agreement outside the portal
- * downloads a Word document generated from the SAME locked content module and
- * the SAME field values as every other representation — there is no second
- * copy of the wording to drift. Unfilled fields print the template's original
- * `<<INSERT>>` brackets, so the export works exactly like the supplied
- * document when incomplete, and like the completed agreement when not.
+ * This is the format handed to somebody who is going to take the agreement
+ * somewhere else: a lawyer marking it up, or an e-signature platform the
+ * business already pays for (DocuSign, PandaDoc, Adobe). It is therefore not
+ * a fallback for the PDF — it is the deliverable for the whole manual path,
+ * and it is built to look like a document a firm would put its name on.
  *
- * The export always carries the full template pack (Section E email page
- * included): DOCX is the hand-issuance format, and that page exists for
- * hand issuance.
+ * ## What makes it premium rather than merely correct
+ *
+ *  - A **cover page** carrying the tenant's brand band, mark and identity,
+ *    then a **contents page**, then the agreement — the same three-act
+ *    opening as the PDF, so the two formats are recognisably one document.
+ *  - **Running chrome**: the issuing organisation and the document title in
+ *    the header, `Page N of M` in the footer, both suppressed on the cover.
+ *  - **Real structure**: sectioned tables with hairline rules and shaded
+ *    label cells, clause numbering on a hanging indent, signature panels that
+ *    cannot split across a page break. Nothing is aligned with tab characters
+ *    or spaced with empty paragraphs, so it survives being edited.
+ *  - **One design system**: every colour is a role from `docxTheme.ts`
+ *    resolved out of the tenant's brand colour. There is not one colour
+ *    literal below.
+ *
+ * ## What it must never do
+ *
+ * The legal wording comes from the locked content modules and is rendered
+ * verbatim; unfilled fields print the template's own `<<INSERT>>` bracket
+ * text. This module composes and styles. It does not author, reword, reorder
+ * or omit a single clause — see `contentStrategicReferral.pure.ts`.
  */
 import {
   AlignmentType,
   BorderStyle,
   Document,
+  Footer,
+  Header,
   HeadingLevel,
+  HeightRule,
+  ImageRun,
+  PageNumber,
   Packer,
   Paragraph,
   ShadingType,
   Table,
   TableCell,
   TableRow,
+  TabStopType,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from 'docx';
 
@@ -33,47 +57,158 @@ import {
   EXECUTION_PANEL_LINES,
   type AgreementBlock,
   type AgreementFieldValues,
+  type AgreementSectionDef,
   type AgreementTemplateKey,
+  type ClauseGroupBlock,
+  type ConsentBlock,
+  type CoverBlock,
+  type DualPanelBlock,
+  type EmailTemplateBlock,
   type ExecutionBlock,
   type GridBlock,
   type GridCellDef,
+  type NoteBlock,
+  type WorkflowBlock,
 } from '@/lib/agreements';
+import {
+  DOCX_CONTENT_WIDTH,
+  DOCX_FONTS,
+  DOCX_PAGE,
+  DOCX_TYPE,
+  resolveDocxPalette,
+  type DocxPalette,
+} from './docxTheme';
 
-const PAGE_CONTENT_DXA = 9026;
-const HALF = PAGE_CONTENT_DXA / 2;
-const LABEL = 1800;
-const VALUE = PAGE_CONTENT_DXA / 2 - LABEL;
+type Child = Paragraph | Table;
+
+/** Points → half-points, the unit every `size` in this file is given in. */
+const pt = (points: number) => Math.round(points * 2);
 
 const CHECKBOX_EMPTY = '☐';
 const CHECKBOX_CHECKED = '☑';
 
-type Child = Paragraph | Table;
+const SIGNATURE_RULE = '______________________________';
+const DATE_RULE = '____ / ____ / ______';
+const WITNESS_RULE = '__________________';
 
-function label(text: string): Paragraph {
+/** Column geometry. Four-column grids are label/value twice. */
+const LABEL_W = Math.round(DOCX_CONTENT_WIDTH * 0.19);
+const VALUE_W = Math.round(DOCX_CONTENT_WIDTH / 2) - LABEL_W;
+const HALF_W = Math.round(DOCX_CONTENT_WIDTH / 2);
+
+export interface AgreementDocxBrand {
+  /** The tenant's brand colour in any form `whitelabel_settings` accepts. */
+  brandColour?: string | null;
+  companyName?: string | null;
+  legalName?: string | null;
+  abn?: string | null;
+  address?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  website?: string | null;
+  /** The report mark, already fetched. Failure to fetch simply omits it. */
+  logo?: { data: ArrayBuffer; type: 'png' | 'jpg' | 'gif' | 'bmp'; widthPx: number; heightPx: number } | null;
+}
+
+// ── Borders ─────────────────────────────────────────────────────────────────
+
+const NONE = { style: BorderStyle.NONE, size: 0, color: 'auto' } as const;
+
+function noBorders() {
+  return {
+    top: NONE, bottom: NONE, left: NONE, right: NONE,
+    insideHorizontal: NONE, insideVertical: NONE,
+  };
+}
+
+function hairline(color: string) {
+  const line = { style: BorderStyle.SINGLE, size: 2, color } as const;
+  return {
+    top: line, bottom: line, left: line, right: line,
+    insideHorizontal: line, insideVertical: line,
+  };
+}
+
+function panelBorders(palette: DocxPalette) {
+  return {
+    top: { style: BorderStyle.SINGLE, size: 12, color: palette.accent },
+    bottom: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+    left: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+    right: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+    insideHorizontal: NONE,
+    insideVertical: { style: BorderStyle.NONE, size: 0, color: 'auto' },
+  };
+}
+
+// ── Type helpers ────────────────────────────────────────────────────────────
+
+interface RunOpts {
+  bold?: boolean;
+  italics?: boolean;
+  size?: number;
+  color?: string;
+  font?: string;
+  allCaps?: boolean;
+  characterSpacing?: number;
+}
+
+function run(text: string, palette: DocxPalette, opts: RunOpts = {}): TextRun {
+  return new TextRun({
+    text,
+    bold: opts.bold,
+    italics: opts.italics,
+    size: pt(opts.size ?? DOCX_TYPE.body),
+    color: opts.color ?? palette.ink,
+    font: opts.font ?? DOCX_FONTS.body,
+    allCaps: opts.allCaps,
+    characterSpacing: opts.characterSpacing,
+  });
+}
+
+/** The micro label used on every field, panel title and eyebrow. */
+function microLabel(text: string, palette: DocxPalette, color?: string): Paragraph {
   return new Paragraph({
     spacing: { after: 40 },
-    children: [new TextRun({ text, bold: true, size: 15, allCaps: true, color: '666666' })],
+    children: [run(text, palette, {
+      size: DOCX_TYPE.micro,
+      color: color ?? palette.mutedInk,
+      font: DOCX_FONTS.mono,
+      bold: true,
+      allCaps: true,
+      characterSpacing: 24,
+    })],
   });
 }
 
-function bodyPara(text: string, opts: { bold?: boolean; size?: number; after?: number } = {}): Paragraph {
+function body(text: string, palette: DocxPalette, opts: RunOpts & { after?: number; align?: (typeof AlignmentType)[keyof typeof AlignmentType] } = {}): Paragraph {
   return new Paragraph({
-    spacing: { after: opts.after ?? 120 },
-    children: [new TextRun({ text, bold: opts.bold, size: opts.size ?? 20 })],
+    spacing: { after: opts.after ?? 100, line: 264 },
+    alignment: opts.align,
+    children: [run(text, palette, opts)],
   });
 }
 
-function cellOf(children: Child[], widthDxa: number, shaded = false): TableCell {
+function spacer(after = 120): Paragraph {
+  return new Paragraph({ spacing: { after }, children: [] });
+}
+
+// ── Cells ───────────────────────────────────────────────────────────────────
+
+function cell(children: Child[], width: number, opts: { fill?: string; span?: number; valign?: (typeof VerticalAlign)[keyof typeof VerticalAlign] } = {}): TableCell {
   return new TableCell({
-    width: { size: widthDxa, type: WidthType.DXA },
-    margins: { top: 80, bottom: 80, left: 120, right: 120 },
-    shading: shaded ? { type: ShadingType.CLEAR, fill: 'F5F4F0' } : undefined,
+    width: { size: width, type: WidthType.DXA },
+    columnSpan: opts.span,
+    verticalAlign: opts.valign,
+    margins: { top: 90, bottom: 90, left: 140, right: 140 },
+    shading: opts.fill ? { type: ShadingType.CLEAR, color: 'auto', fill: opts.fill } : undefined,
     children,
   });
 }
 
-function choiceText(cell: GridCellDef, values: AgreementFieldValues): string {
-  const choice = cell.choice!;
+// ── Value rendering ─────────────────────────────────────────────────────────
+
+function choiceText(cellDef: GridCellDef, values: AgreementFieldValues): string {
+  const choice = cellDef.choice!;
   const raw = values[choice.fieldKey];
   const selected = raw === null || raw === undefined ? '' : String(raw);
   const optionValues = choice.options.map((option) => option.value);
@@ -91,255 +226,762 @@ function choiceText(cell: GridCellDef, values: AgreementFieldValues): string {
     }
     return text;
   });
-  return `${choice.lead ? `${choice.lead} ` : ''}${parts.join('   ')}`;
+  return `${choice.lead ? `${choice.lead} ` : ''}${parts.join('     ')}`;
 }
 
-function cellValueText(cell: GridCellDef, key: AgreementTemplateKey, values: AgreementFieldValues): string {
-  if (cell.choice) return choiceText(cell, values);
-  if (cell.template) return substitutePlain(cell.template, key, values);
-  if (cell.fieldKey) return substitutePlain(`{{${cell.fieldKey}}}`, key, values);
-  return cell.text ?? '';
+function cellValueText(cellDef: GridCellDef, key: AgreementTemplateKey, values: AgreementFieldValues): string {
+  if (cellDef.choice) return choiceText(cellDef, values);
+  if (cellDef.template) return substitutePlain(cellDef.template, key, values);
+  if (cellDef.fieldKey) return substitutePlain(`{{${cellDef.fieldKey}}}`, key, values);
+  return cellDef.text ?? '';
 }
 
-function gridTable(block: GridBlock, key: AgreementTemplateKey, values: AgreementFieldValues): Table {
+/**
+ * A value is set in the muted ink when it is still the template's own bracket
+ * text, so a reader can see at a glance what has not been completed — the same
+ * signal the PDF gives with `.agc-unfilled`.
+ */
+function isUnfilled(text: string): boolean {
+  return /^<<.*>>$/.test(text.trim()) || text.trim() === '';
+}
+
+function valueParagraph(text: string, palette: DocxPalette): Paragraph {
+  return new Paragraph({
+    spacing: { after: 0, line: 264 },
+    children: [run(text || '—', palette, {
+      color: isUnfilled(text) ? palette.mutedInk : palette.ink,
+    })],
+  });
+}
+
+// ── Blocks ──────────────────────────────────────────────────────────────────
+
+/** A full-width colour band. A shaded single-cell table is the only reliable one. */
+function band(palette: DocxPalette, heightTwip: number, fill?: string): Table {
+  return new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [DOCX_CONTENT_WIDTH],
+    borders: noBorders(),
+    rows: [new TableRow({
+      height: { value: heightTwip, rule: HeightRule.EXACT },
+      children: [new TableCell({
+        width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+        shading: { type: ShadingType.CLEAR, color: 'auto', fill: fill ?? palette.accent },
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
+        children: [new Paragraph({ spacing: { after: 0 }, children: [] })],
+      })],
+    })],
+  });
+}
+
+function coverBlock(
+  block: CoverBlock,
+  key: AgreementTemplateKey,
+  values: AgreementFieldValues,
+  palette: DocxPalette,
+  brand: AgreementDocxBrand,
+): Child[] {
+  const out: Child[] = [band(palette, 90)];
+
+  if (brand.logo) {
+    // Scale the mark to a 22mm height band, preserving aspect.
+    const targetH = 62;
+    const ratio = brand.logo.heightPx > 0 ? brand.logo.widthPx / brand.logo.heightPx : 3;
+    out.push(new Paragraph({
+      spacing: { before: 420, after: 120 },
+      alignment: AlignmentType.CENTER,
+      children: [new ImageRun({
+        type: brand.logo.type,
+        data: brand.logo.data,
+        transformation: { width: Math.round(targetH * ratio), height: targetH },
+      })],
+    }));
+  } else {
+    out.push(spacer(420));
+  }
+
+  out.push(new Paragraph({
+    spacing: { after: 640 },
+    alignment: AlignmentType.CENTER,
+    children: [run(substitutePlain(block.companyNameToken, key, values), palette, {
+      size: DOCX_TYPE.coverCompany,
+      color: palette.accentInk,
+      font: DOCX_FONTS.mono,
+      bold: true,
+      allCaps: true,
+      characterSpacing: 60,
+    })],
+  }));
+
+  block.titleLines.forEach((line, index) => {
+    out.push(new Paragraph({
+      spacing: { after: index === block.titleLines.length - 1 ? 200 : 0, line: 340 },
+      alignment: AlignmentType.CENTER,
+      keepNext: true,
+      children: [run(line, palette, {
+        size: DOCX_TYPE.coverTitle,
+        font: DOCX_FONTS.display,
+        color: palette.ink,
+      })],
+    }));
+  });
+
+  out.push(new Paragraph({
+    spacing: { after: 320 },
+    alignment: AlignmentType.CENTER,
+    children: [run(block.issuedByLine, palette, {
+      size: DOCX_TYPE.micro,
+      color: palette.accentInk,
+      font: DOCX_FONTS.mono,
+      bold: true,
+      allCaps: true,
+      characterSpacing: 40,
+    })],
+  }));
+
+  // The descriptor, held to a comfortable measure by indenting both sides.
+  out.push(new Paragraph({
+    spacing: { after: 320, line: 300 },
+    alignment: AlignmentType.CENTER,
+    indent: { left: 900, right: 900 },
+    children: [run(block.descriptor, palette, {
+      size: DOCX_TYPE.coverDescriptor,
+      italics: true,
+      color: palette.mutedInk,
+    })],
+  }));
+
+  out.push(new Paragraph({
+    spacing: { after: 640 },
+    alignment: AlignmentType.CENTER,
+    children: [run(block.badges.join('      ·      '), palette, {
+      size: DOCX_TYPE.micro,
+      color: palette.accentInk,
+      font: DOCX_FONTS.mono,
+      bold: true,
+      allCaps: true,
+      characterSpacing: 30,
+    })],
+  }));
+
+  // The version / effective-date line and the template's own review statement,
+  // in a bordered footer block so the cover ends deliberately rather than
+  // trailing off.
+  out.push(new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [DOCX_CONTENT_WIDTH],
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 6, color: palette.accent },
+      bottom: NONE, left: NONE, right: NONE,
+      insideHorizontal: NONE, insideVertical: NONE,
+    },
+    rows: [new TableRow({
+      cantSplit: true,
+      children: [cell([
+        new Paragraph({
+          spacing: { after: 60 },
+          alignment: AlignmentType.CENTER,
+          children: [run(substitutePlain(block.versionLine, key, values), palette, {
+            size: DOCX_TYPE.caption,
+            font: DOCX_FONTS.mono,
+            color: palette.ink,
+          })],
+        }),
+        new Paragraph({
+          spacing: { after: 0 },
+          alignment: AlignmentType.CENTER,
+          children: [run(block.reviewStatement, palette, {
+            size: DOCX_TYPE.micro,
+            color: palette.mutedInk,
+            italics: true,
+          })],
+        }),
+      ], DOCX_CONTENT_WIDTH)],
+    })],
+  }));
+
+  return out;
+}
+
+function contentsPage(
+  sections: readonly AgreementSectionDef[],
+  title: string,
+  palette: DocxPalette,
+): Child[] {
+  const rows = sections
+    .filter((section) => section.header)
+    .map((section) => new TableRow({
+      cantSplit: true,
+      children: [
+        cell([new Paragraph({
+          spacing: { after: 0 },
+          children: [run(section.header!.badge, palette, {
+            size: DOCX_TYPE.caption,
+            font: DOCX_FONTS.mono,
+            bold: true,
+            color: palette.accentInk,
+          })],
+        })], 900),
+        cell([new Paragraph({
+          spacing: { after: 0 },
+          children: [
+            run(section.header!.heading, palette, { size: DOCX_TYPE.body }),
+            ...(section.header!.hint
+              ? [run(`   ${section.header!.hint}`, palette, {
+                size: DOCX_TYPE.caption, color: palette.mutedInk, italics: true,
+              })]
+              : []),
+          ],
+        })], DOCX_CONTENT_WIDTH - 900),
+      ],
+    }));
+
+  return [
+    microLabel('Contents', palette, palette.accentInk),
+    new Paragraph({
+      spacing: { after: 240 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: palette.accent, space: 8 } },
+      children: [run(title, palette, { size: DOCX_TYPE.sectionHeading, font: DOCX_FONTS.display })],
+    }),
+    new Table({
+      width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: [900, DOCX_CONTENT_WIDTH - 900],
+      borders: {
+        top: NONE, bottom: NONE, left: NONE, right: NONE,
+        insideVertical: NONE,
+        insideHorizontal: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+      },
+      rows,
+    }),
+  ];
+}
+
+/** The section header: a badge chip in the brand, the heading, a rule under. */
+function sectionHeader(section: AgreementSectionDef, palette: DocxPalette): Child[] {
+  const header = section.header!;
+  const subline = [header.hint, header.sub].filter(Boolean).join('  ·  ');
+  return [
+    new Table({
+      width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: [760, DOCX_CONTENT_WIDTH - 760],
+      borders: noBorders(),
+      rows: [new TableRow({
+        cantSplit: true,
+        children: [
+          new TableCell({
+            width: { size: 760, type: WidthType.DXA },
+            shading: { type: ShadingType.CLEAR, color: 'auto', fill: palette.accent },
+            verticalAlign: VerticalAlign.CENTER,
+            margins: { top: 80, bottom: 80, left: 0, right: 0 },
+            children: [new Paragraph({
+              spacing: { after: 0 },
+              alignment: AlignmentType.CENTER,
+              children: [run(header.badge, palette, {
+                size: DOCX_TYPE.sectionBadge,
+                font: DOCX_FONTS.display,
+                color: palette.onAccent,
+              })],
+            })],
+          }),
+          new TableCell({
+            width: { size: DOCX_CONTENT_WIDTH - 760, type: WidthType.DXA },
+            verticalAlign: VerticalAlign.CENTER,
+            margins: { top: 80, bottom: 80, left: 200, right: 0 },
+            children: [
+              new Paragraph({
+                spacing: { after: subline ? 40 : 0 },
+                children: [run(header.heading, palette, {
+                  size: DOCX_TYPE.sectionHeading,
+                  font: DOCX_FONTS.display,
+                  color: palette.ink,
+                })],
+              }),
+              ...(subline ? [new Paragraph({
+                spacing: { after: 0 },
+                children: [run(subline, palette, {
+                  size: DOCX_TYPE.caption, color: palette.mutedInk, italics: true,
+                })],
+              })] : []),
+            ],
+          }),
+        ],
+      })],
+    }),
+    new Paragraph({
+      spacing: { after: 200 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: palette.accent, space: 4 } },
+      children: [],
+    }),
+  ];
+}
+
+function noteBlock(block: NoteBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
+  return [new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [DOCX_CONTENT_WIDTH],
+    borders: {
+      top: NONE, bottom: NONE, right: NONE,
+      left: { style: BorderStyle.SINGLE, size: 12, color: palette.accent },
+      insideHorizontal: NONE, insideVertical: NONE,
+    },
+    rows: [new TableRow({
+      cantSplit: true,
+      children: [cell([
+        microLabel(block.label, palette, palette.accentInk),
+        new Paragraph({
+          spacing: { after: 0, line: 264 },
+          children: [run(substitutePlain(block.body, key, values), palette, { size: DOCX_TYPE.caption })],
+        }),
+      ], DOCX_CONTENT_WIDTH, { fill: palette.panel })],
+    })],
+  }), spacer(140)];
+}
+
+function gridBlock(block: GridBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
+  const twoUp = block.rows.every((cells) => cells.length === 2);
   const rows = block.rows.map((cells) => {
     const rowCells: TableCell[] = [];
-    for (const cell of cells) {
-      rowCells.push(cellOf([label(cell.label)], LABEL, true));
-      rowCells.push(cellOf(
-        [bodyPara(cellValueText(cell, key, values), { after: 0 })],
-        cells.length === 1 ? PAGE_CONTENT_DXA - LABEL : VALUE,
+    for (const cellDef of cells) {
+      const single = cells.length === 1;
+      rowCells.push(cell([microLabel(cellDef.label, palette)], LABEL_W, { fill: palette.panel }));
+      rowCells.push(cell(
+        [valueParagraph(cellValueText(cellDef, key, values), palette)],
+        single ? DOCX_CONTENT_WIDTH - LABEL_W : VALUE_W,
+        { span: single && twoUp ? 3 : undefined },
       ));
     }
-    return new TableRow({ children: rowCells });
+    return new TableRow({ cantSplit: true, children: rowCells });
   });
-  const twoUp = block.rows.every((cells) => cells.length === 2);
-  return new Table({
-    width: { size: PAGE_CONTENT_DXA, type: WidthType.DXA },
-    columnWidths: twoUp ? [LABEL, VALUE, LABEL, VALUE] : [LABEL, PAGE_CONTENT_DXA - LABEL],
+
+  return [new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: twoUp ? [LABEL_W, VALUE_W, LABEL_W, VALUE_W] : [LABEL_W, DOCX_CONTENT_WIDTH - LABEL_W],
+    borders: hairline(palette.rule),
     rows,
+  }), spacer(140)];
+}
+
+function dualPanelBlock(block: DualPanelBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
+  const panel = (side: { title: string; bullets: string[] }) => cell([
+    microLabel(side.title, palette, palette.accentInk),
+    ...side.bullets.map((bullet, index) => new Paragraph({
+      spacing: { after: index === side.bullets.length - 1 ? 0 : 90, line: 264 },
+      indent: { left: 240, hanging: 240 },
+      children: [
+        run('•   ', palette, { color: palette.accentInk, bold: true }),
+        run(substitutePlain(bullet, key, values), palette, { size: DOCX_TYPE.caption }),
+      ],
+    })),
+  ], HALF_W);
+
+  return [new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [HALF_W, HALF_W],
+    borders: panelBorders(palette),
+    rows: [new TableRow({ cantSplit: true, children: [panel(block.left), panel(block.right)] })],
+  }), spacer(140)];
+}
+
+function clauseBlock(block: ClauseGroupBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
+  const out: Child[] = [];
+  for (const clause of block.clauses) {
+    out.push(new Paragraph({
+      spacing: { before: 160, after: 100 },
+      keepNext: true,
+      keepLines: true,
+      children: [
+        run(`${clause.number}.  `, palette, {
+          size: DOCX_TYPE.clauseHeading, font: DOCX_FONTS.display, color: palette.accentInk,
+        }),
+        run(clause.heading, palette, {
+          size: DOCX_TYPE.clauseHeading, font: DOCX_FONTS.display, color: palette.ink,
+        }),
+      ],
+    }));
+    clause.subclauses.forEach((sub, index) => {
+      out.push(new Paragraph({
+        spacing: { after: index === clause.subclauses.length - 1 ? 60 : 80, line: 276 },
+        indent: { left: 780, hanging: 780 },
+        keepLines: true,
+        children: [
+          run(sub.number, palette, {
+            size: DOCX_TYPE.caption, font: DOCX_FONTS.mono, color: palette.mutedInk,
+          }),
+          run('\t', palette),
+          run(substitutePlain(sub.text, key, values), palette),
+        ],
+        tabStops: [{ type: TabStopType.LEFT, position: 780 }],
+      }));
+    });
+  }
+  out.push(spacer(120));
+  return out;
+}
+
+function workflowBlock(block: WorkflowBlock, palette: DocxPalette): Child[] {
+  return [new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [640, 2000, DOCX_CONTENT_WIDTH - 2640],
+    borders: {
+      top: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+      bottom: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+      left: NONE, right: NONE,
+      insideHorizontal: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
+      insideVertical: NONE,
+    },
+    rows: block.steps.map((step) => new TableRow({
+      cantSplit: true,
+      children: [
+        cell([new Paragraph({
+          spacing: { after: 0 },
+          alignment: AlignmentType.CENTER,
+          children: [run(step.num, palette, {
+            size: DOCX_TYPE.clauseHeading, font: DOCX_FONTS.display, color: palette.accentInk,
+          })],
+        })], 640, { valign: VerticalAlign.CENTER }),
+        cell([new Paragraph({
+          spacing: { after: 0 },
+          children: [run(step.title, palette, {
+            size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, bold: true, allCaps: true,
+            characterSpacing: 24,
+          })],
+        })], 2000, { valign: VerticalAlign.CENTER }),
+        cell([new Paragraph({
+          spacing: { after: 0, line: 264 },
+          children: [run(step.text, palette, { size: DOCX_TYPE.caption, color: palette.mutedInk })],
+        })], DOCX_CONTENT_WIDTH - 2640, { valign: VerticalAlign.CENTER }),
+      ],
+    })),
+  }), spacer(140)];
+}
+
+function emailBlock(block: EmailTemplateBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
+  const left = cell([
+    microLabel(block.subjectLabel, palette),
+    new Paragraph({
+      spacing: { after: 160 },
+      children: [run(substitutePlain(block.subject, key, values), palette, {
+        size: DOCX_TYPE.clauseHeading, font: DOCX_FONTS.display,
+      })],
+    }),
+    ...block.bodyParagraphs.map((paragraph) => new Paragraph({
+      spacing: { after: 120, line: 264 },
+      children: [run(substitutePlain(paragraph, key, values), palette, { size: DOCX_TYPE.caption })],
+    })),
+    ...block.signoffLines.map((line, index) => new Paragraph({
+      spacing: { after: index === block.signoffLines.length - 1 ? 0 : 30 },
+      children: [run(substitutePlain(line, key, values), palette, { size: DOCX_TYPE.caption })],
+    })),
+  ], Math.round(DOCX_CONTENT_WIDTH * 0.58));
+
+  const right = cell([
+    microLabel(block.checklistTitle, palette, palette.accentInk),
+    ...block.checklist.flatMap((item) => [
+      new Paragraph({
+        spacing: { after: 20 },
+        children: [
+          run(`${item.step}  `, palette, {
+            size: DOCX_TYPE.caption, font: DOCX_FONTS.display, color: palette.accentInk,
+          }),
+          run(item.title, palette, {
+            size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, bold: true, allCaps: true,
+            characterSpacing: 20,
+          }),
+        ],
+      }),
+      new Paragraph({
+        spacing: { after: 100 },
+        indent: { left: 200 },
+        children: [run(item.detail, palette, { size: DOCX_TYPE.micro, color: palette.mutedInk })],
+      }),
+    ]),
+    microLabel(block.attachmentsTitle, palette, palette.accentInk),
+    ...block.attachments.map((item, index) => new Paragraph({
+      spacing: { after: index === block.attachments.length - 1 ? 0 : 40 },
+      indent: { left: 200, hanging: 200 },
+      children: [
+        run('•   ', palette, { color: palette.accentInk }),
+        run(item, palette, { size: DOCX_TYPE.caption }),
+      ],
+    })),
+  ], DOCX_CONTENT_WIDTH - Math.round(DOCX_CONTENT_WIDTH * 0.58), { fill: palette.panel });
+
+  return [new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [Math.round(DOCX_CONTENT_WIDTH * 0.58), DOCX_CONTENT_WIDTH - Math.round(DOCX_CONTENT_WIDTH * 0.58)],
+    borders: panelBorders(palette),
+    rows: [new TableRow({ children: [left, right] })],
+  }), spacer(140)];
+}
+
+function signatureLine(label: string, value: string, palette: DocxPalette, muted = false): Paragraph {
+  return new Paragraph({
+    spacing: { after: 130 },
+    children: [
+      run(`${label} `, palette, {
+        size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, color: palette.mutedInk,
+      }),
+      run(value, palette, {
+        size: DOCX_TYPE.caption,
+        color: muted ? palette.mutedInk : palette.ink,
+      }),
+    ],
   });
 }
 
-function signaturePanel(title: string, entity: string, name: string, roleTitle: string): TableCell {
-  return cellOf([
-    bodyPara(title, { bold: true, size: 18, after: 120 }),
-    bodyPara(`${EXECUTION_PANEL_LINES.legalEntity} ${entity}`),
-    bodyPara(`${EXECUTION_PANEL_LINES.signatoryName} ${name}`),
-    bodyPara(`${EXECUTION_PANEL_LINES.signatoryTitle} ${roleTitle}`),
-    bodyPara(`${EXECUTION_PANEL_LINES.signature} ______________________________`),
-    bodyPara(`${EXECUTION_PANEL_LINES.date} ____ / ____ / ______`),
-    bodyPara(`${EXECUTION_PANEL_LINES.witness} __________________`, { after: 0 }),
-  ], HALF);
-}
-
-function executionTable(block: ExecutionBlock, key: AgreementTemplateKey, values: AgreementFieldValues): Table {
+function executionBlock(block: ExecutionBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
   const entityFor = (role: string): string => {
     const source = role === 'partner' ? values.fp_legal_name
       : role === 'loan_writer' ? values.lw_entity
       : values.ba_legal_name;
-    const text = String(source ?? '').trim();
-    return text || '<<INSERT>>';
+    return String(source ?? '').trim() || '<<INSERT>>';
   };
   const prefill = (role: string, field: 'name' | 'title'): string => {
     const source = role === 'partner' ? values[`partner_signatory_${field}`]
       : role === 'principal' ? values[`principal_signatory_${field}`]
       : null;
-    const text = String(source ?? '').trim();
-    return text || '<<INSERT>>';
+    return String(source ?? '').trim() || '<<INSERT>>';
   };
-  return new Table({
-    width: { size: PAGE_CONTENT_DXA, type: WidthType.DXA },
-    columnWidths: [HALF, HALF],
+
+  return [new Table({
+    width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [HALF_W, HALF_W],
+    borders: panelBorders(palette),
     rows: [new TableRow({
-      children: block.parties.map((party) => signaturePanel(
-        party.title,
-        entityFor(party.role),
-        prefill(party.role, 'name'),
-        prefill(party.role, 'title'),
-      )),
+      // A signature panel split across a page break is the classic fault in a
+      // generated contract; this is the line that prevents it.
+      cantSplit: true,
+      children: block.parties.map((party) => {
+        const entity = entityFor(party.role);
+        const name = prefill(party.role, 'name');
+        const title = prefill(party.role, 'title');
+        return cell([
+          microLabel(party.title, palette, palette.accentInk),
+          spacer(60),
+          signatureLine(EXECUTION_PANEL_LINES.legalEntity, entity, palette, isUnfilled(entity)),
+          signatureLine(EXECUTION_PANEL_LINES.signatoryName, name, palette, isUnfilled(name)),
+          signatureLine(EXECUTION_PANEL_LINES.signatoryTitle, title, palette, isUnfilled(title)),
+          signatureLine(EXECUTION_PANEL_LINES.signature, SIGNATURE_RULE, palette, true),
+          signatureLine(EXECUTION_PANEL_LINES.date, DATE_RULE, palette, true),
+          new Paragraph({
+            spacing: { after: 0 },
+            children: [
+              run(`${EXECUTION_PANEL_LINES.witness} `, palette, {
+                size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, color: palette.mutedInk,
+              }),
+              run(WITNESS_RULE, palette, { size: DOCX_TYPE.caption, color: palette.mutedInk }),
+            ],
+          }),
+        ], HALF_W);
+      }),
     })],
-  });
+  }), spacer(140)];
+}
+
+function consentBlock(block: ConsentBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
+  return [
+    ...noteBlock({ kind: 'note', label: block.label, body: block.body }, key, values, palette),
+    new Table({
+      width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: [LABEL_W, VALUE_W, LABEL_W, VALUE_W],
+      borders: hairline(palette.rule),
+      rows: [new TableRow({
+        cantSplit: true,
+        children: [
+          cell([microLabel(block.signatureLabel, palette)], LABEL_W, { fill: palette.panel }),
+          cell([valueParagraph(SIGNATURE_RULE, palette)], VALUE_W),
+          cell([microLabel(block.dateLabel, palette)], LABEL_W, { fill: palette.panel }),
+          cell([valueParagraph(DATE_RULE, palette)], VALUE_W),
+        ],
+      })],
+    }),
+    spacer(140),
+  ];
 }
 
 function blockChildren(
   block: AgreementBlock,
   key: AgreementTemplateKey,
   values: AgreementFieldValues,
+  palette: DocxPalette,
+  brand: AgreementDocxBrand,
 ): Child[] {
   switch (block.kind) {
-    case 'cover':
-      return [
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { before: 2400, after: 240 },
-          children: [new TextRun({ text: substitutePlain(block.companyNameToken, key, values), bold: true, size: 28 })],
-        }),
-        ...block.titleLines.map((line, index) => new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: index === block.titleLines.length - 1 ? 240 : 0 },
-          children: [new TextRun({ text: line, bold: true, size: 56 })],
-        })),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 240 },
-          children: [new TextRun({ text: block.issuedByLine, size: 18, allCaps: true, color: '666666' })],
-        }),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 360 },
-          children: [new TextRun({ text: block.descriptor, size: 20, italics: true })],
-        }),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 360 },
-          children: [new TextRun({ text: block.badges.join('   ·   '), size: 16, color: '666666' })],
-        }),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          spacing: { after: 120 },
-          children: [new TextRun({ text: substitutePlain(block.versionLine, key, values), size: 18 })],
-        }),
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [new TextRun({ text: block.reviewStatement, size: 16, color: '888888' })],
-          pageBreakBefore: false,
-        }),
-        new Paragraph({ children: [], pageBreakBefore: false, spacing: { after: 0 } }),
-      ];
-    case 'note':
-      return [new Paragraph({
-        spacing: { before: 120, after: 160 },
-        border: { left: { style: BorderStyle.SINGLE, size: 12, color: '999999', space: 8 } },
-        children: [
-          new TextRun({ text: `${block.label} — `, bold: true, size: 18 }),
-          new TextRun({ text: substitutePlain(block.body, key, values), size: 18 }),
-        ],
-      })];
-    case 'emailTemplate':
-      return [
-        label(block.subjectLabel),
-        bodyPara(substitutePlain(block.subject, key, values), { bold: true }),
-        ...block.bodyParagraphs.map((p) => bodyPara(substitutePlain(p, key, values))),
-        ...block.signoffLines.map((line) => bodyPara(substitutePlain(line, key, values), { after: 20 })),
-        bodyPara('', { after: 60 }),
-        bodyPara(block.checklistTitle, { bold: true }),
-        ...block.checklist.map((item) => bodyPara(`${item.step}. ${item.title} — ${item.detail}`, { after: 40 })),
-        bodyPara(block.attachmentsTitle, { bold: true }),
-        ...block.attachments.map((item) => new Paragraph({
-          bullet: { level: 0 },
-          spacing: { after: 20 },
-          children: [new TextRun({ text: item, size: 20 })],
-        })),
-      ];
-    case 'grid':
-      return [gridTable(block, key, values)];
-    case 'dualPanel':
-      return [new Table({
-        width: { size: PAGE_CONTENT_DXA, type: WidthType.DXA },
-        columnWidths: [HALF, HALF],
-        rows: [new TableRow({
-          children: [block.left, block.right].map((side) => cellOf([
-            bodyPara(side.title, { bold: true, size: 18 }),
-            ...side.bullets.map((bullet) => new Paragraph({
-              bullet: { level: 0 },
-              spacing: { after: 60 },
-              children: [new TextRun({ text: substitutePlain(bullet, key, values), size: 18 })],
-            })),
-          ], HALF)),
-        })],
-      })];
-    case 'clauses':
-      return block.clauses.flatMap((clause) => [
-        bodyPara(`${clause.number}. ${clause.heading}`, { bold: true, size: 22, after: 80 }),
-        ...clause.subclauses.map((sub) =>
-          bodyPara(`${sub.number} ${substitutePlain(sub.text, key, values)}`, { after: 80 })),
-      ]);
-    case 'workflow':
-      return [new Table({
-        width: { size: PAGE_CONTENT_DXA, type: WidthType.DXA },
-        columnWidths: [700, 2200, 6126],
-        rows: block.steps.map((step) => new TableRow({
-          children: [
-            cellOf([bodyPara(step.num, { bold: true, after: 0 })], 700, true),
-            cellOf([bodyPara(step.title, { bold: true, after: 0 })], 2200),
-            cellOf([bodyPara(step.text, { after: 0 })], 6126),
-          ],
-        })),
-      })];
-    case 'execution':
-      return [executionTable(block, key, values)];
-    case 'consent':
-      return [
-        new Paragraph({
-          spacing: { before: 120, after: 160 },
-          border: { left: { style: BorderStyle.SINGLE, size: 12, color: '999999', space: 8 } },
-          children: [
-            new TextRun({ text: `${block.label} — `, bold: true, size: 18 }),
-            new TextRun({ text: substitutePlain(block.body, key, values), size: 18 }),
-          ],
-        }),
-        new Table({
-          width: { size: PAGE_CONTENT_DXA, type: WidthType.DXA },
-          columnWidths: [LABEL, VALUE, LABEL, VALUE],
-          rows: [new TableRow({
-            children: [
-              cellOf([label(block.signatureLabel)], LABEL, true),
-              cellOf([bodyPara('______________________________', { after: 0 })], VALUE),
-              cellOf([label(block.dateLabel)], LABEL, true),
-              cellOf([bodyPara('____ / ____ / ______', { after: 0 })], VALUE),
-            ],
-          })],
-        }),
-      ];
-    default:
-      return [];
+    case 'cover': return coverBlock(block, key, values, palette, brand);
+    case 'note': return noteBlock(block, key, values, palette);
+    case 'emailTemplate': return emailBlock(block, key, values, palette);
+    case 'grid': return gridBlock(block, key, values, palette);
+    case 'dualPanel': return dualPanelBlock(block, key, values, palette);
+    case 'clauses': return clauseBlock(block, key, values, palette);
+    case 'workflow': return workflowBlock(block, palette);
+    case 'execution': return executionBlock(block, key, values, palette);
+    case 'consent': return consentBlock(block, key, values, palette);
+    default: return [];
   }
 }
 
-/** Build the agreement as a .docx Blob, ready for `saveAs`-style download. */
+// ── The document ────────────────────────────────────────────────────────────
+
+export interface AgreementDocxOptions {
+  brand?: AgreementDocxBrand;
+  /** Include the Section E partner-email pack. On for template exports. */
+  includeTemplatePack?: boolean;
+}
+
+/**
+ * What the tenant's own identity fills in, when the caller has not.
+ *
+ * A blank template a business downloads should still be *their* document: the
+ * cover wordmark, the correspondence sign-off and the issuing party's details
+ * are facts we already hold. Explicit values always win — this only fills
+ * gaps, so a configured agreement is unaffected.
+ */
+function brandDerivedValues(brand: AgreementDocxBrand): AgreementFieldValues {
+  const text = (value: unknown) => {
+    const raw = String(value ?? '').trim();
+    return raw || undefined;
+  };
+  const display = text(brand.companyName) ?? text(brand.legalName);
+  return {
+    company_name: display,
+    ba_display_name: display,
+    company_phone: text(brand.phone),
+    company_email: text(brand.email),
+    company_website: text(brand.website),
+    ba_legal_name: text(brand.legalName) ?? display,
+    ba_trading_name: text(brand.companyName),
+    ba_abn_acn: text(brand.abn),
+    ba_address: text(brand.address),
+    ba_email: text(brand.email),
+  };
+}
+
+/** Build the agreement as a `.docx` Blob. */
 export async function buildAgreementDocx(
   templateKey: AgreementTemplateKey,
-  values: AgreementFieldValues,
+  fieldValues: AgreementFieldValues,
+  options: AgreementDocxOptions = {},
 ): Promise<Blob> {
   const content = agreementTemplate(templateKey);
-  const children: Child[] = [];
+  const brand = options.brand ?? {};
+  const palette = resolveDocxPalette(brand.brandColour);
+  const includePack = options.includeTemplatePack !== false;
 
-  for (const section of content.sections) {
-    if (section.header) {
-      children.push(new Paragraph({
-        heading: HeadingLevel.HEADING_1,
-        pageBreakBefore: true,
-        spacing: { after: 60 },
-        children: [new TextRun({
-          text: `${section.header.badge}  ·  ${section.header.heading}`,
-          bold: true,
-          size: 26,
-        })],
-      }));
-      const subline = [section.header.hint, section.header.sub].filter(Boolean).join(' · ');
-      if (subline) {
-        children.push(new Paragraph({
-          spacing: { after: 200 },
-          children: [new TextRun({ text: subline, italics: true, size: 18, color: '666666' })],
-        }));
+  // Gap-fill only: an explicitly-supplied value, including a deliberately
+  // empty one, is never overwritten by the tenant's defaults.
+  const derived = brandDerivedValues(brand);
+  const values: AgreementFieldValues = { ...derived };
+  for (const [key, value] of Object.entries(fieldValues)) {
+    if (value !== null && value !== undefined && String(value).trim() !== '') values[key] = value;
+    else if (!(key in derived)) values[key] = value;
+  }
+
+  const sections = content.sections.filter(
+    (section) => section.audience === 'always' || includePack,
+  );
+  const mastheadName = brand.companyName || brand.legalName || '';
+
+  const children: Child[] = [];
+  let started = false;
+
+  for (const section of sections) {
+    if (!section.header) {
+      // The cover, then the contents page — both before the first section.
+      for (const block of section.blocks) {
+        children.push(...blockChildren(block, templateKey, values, palette, brand));
       }
+      children.push(new Paragraph({ pageBreakBefore: true, spacing: { after: 0 }, children: [] }));
+      children.push(...contentsPage(sections, content.title, palette));
+      started = true;
+      continue;
     }
+
+    children.push(new Paragraph({
+      pageBreakBefore: started,
+      spacing: { after: 0 },
+      children: [],
+    }));
+    started = true;
+    children.push(...sectionHeader(section, palette));
     for (const block of section.blocks) {
-      children.push(...blockChildren(block, templateKey, values));
-      children.push(new Paragraph({ spacing: { after: 120 }, children: [] }));
+      children.push(...blockChildren(block, templateKey, values, palette, brand));
     }
   }
 
   const doc = new Document({
-    creator: 'Agreement Centre',
+    creator: mastheadName || 'Agreement Centre',
     title: content.title,
+    description: content.issuedByLine,
     styles: {
       default: {
-        document: { run: { font: 'Calibri', size: 20 } },
+        document: { run: { font: DOCX_FONTS.body, size: pt(DOCX_TYPE.body), color: palette.ink } },
+        // Word's own heading styles feed the navigation pane and any TOC the
+        // recipient later inserts, so the section headings claim Heading 1.
+        heading1: {
+          run: { font: DOCX_FONTS.display, size: pt(DOCX_TYPE.sectionHeading), color: palette.ink, bold: false },
+          paragraph: { spacing: { before: 200, after: 120 } },
+        },
       },
     },
-    sections: [{ children }],
+    sections: [{
+      properties: {
+        page: {
+          size: { width: DOCX_PAGE.widthTwip, height: DOCX_PAGE.heightTwip },
+          margin: {
+            top: DOCX_PAGE.marginTop,
+            bottom: DOCX_PAGE.marginBottom,
+            left: DOCX_PAGE.marginX,
+            right: DOCX_PAGE.marginX,
+            header: DOCX_PAGE.headerTwip,
+            footer: DOCX_PAGE.footerTwip,
+          },
+        },
+        // The cover carries no running chrome.
+        titlePage: true,
+      },
+      headers: {
+        first: new Header({ children: [new Paragraph({ children: [] })] }),
+        default: new Header({
+          children: [new Paragraph({
+            spacing: { after: 0 },
+            border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: palette.rule, space: 6 } },
+            tabStops: [{ type: TabStopType.RIGHT, position: DOCX_CONTENT_WIDTH }],
+            children: [
+              run(mastheadName, palette, {
+                size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, color: palette.mutedInk,
+                allCaps: true, characterSpacing: 24,
+              }),
+              run('\t', palette),
+              run(content.title, palette, {
+                size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, color: palette.mutedInk,
+              }),
+            ],
+          })],
+        }),
+      },
+      footers: {
+        first: new Footer({ children: [new Paragraph({ children: [] })] }),
+        default: new Footer({
+          children: [new Paragraph({
+            spacing: { before: 0 },
+            tabStops: [{ type: TabStopType.RIGHT, position: DOCX_CONTENT_WIDTH }],
+            children: [
+              run(content.documentVersion ? `Version ${content.documentVersion}` : '', palette, {
+                size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, color: palette.mutedInk,
+              }),
+              run('\t', palette),
+              new TextRun({
+                children: ['Page ', PageNumber.CURRENT, ' of ', PageNumber.TOTAL_PAGES],
+                size: pt(DOCX_TYPE.micro),
+                font: DOCX_FONTS.mono,
+                color: palette.mutedInk,
+              }),
+            ],
+          })],
+        }),
+      },
+      children,
+    }],
   });
 
   return Packer.toBlob(doc);
@@ -358,4 +1000,37 @@ export function agreementDocxFileName(
     .slice(0, 60);
   return [slug(title), partnerName ? slug(partnerName) : '', versionText]
     .filter(Boolean).join('-') + '.docx';
+}
+
+/**
+ * Fetch the tenant's report mark for embedding.
+ *
+ * Best-effort by design: a mark that will not load must not stop a download,
+ * so every failure path returns null and the cover falls back to the wordmark.
+ */
+export async function loadDocxLogo(url: string | null | undefined): Promise<AgreementDocxBrand['logo']> {
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') ?? '';
+    const type = contentType.includes('png') ? 'png'
+      : /jpe?g/.test(contentType) ? 'jpg'
+        : contentType.includes('gif') ? 'gif'
+          : contentType.includes('bmp') ? 'bmp'
+            : null;
+    // SVG has no pixel dimensions and `ImageRun` cannot embed it.
+    if (!type) return null;
+    const data = await response.arrayBuffer();
+    const size = await new Promise<{ width: number; height: number } | null>((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+      image.onerror = () => resolve(null);
+      image.src = url;
+    });
+    if (!size || !size.width || !size.height) return null;
+    return { data, type, widthPx: size.width, heightPx: size.height };
+  } catch {
+    return null;
+  }
 }

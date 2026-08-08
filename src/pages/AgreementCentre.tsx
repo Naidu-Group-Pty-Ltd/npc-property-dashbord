@@ -2,45 +2,47 @@
  * Agreement Centre — the Command Centre's partner-agreement workspace.
  *
  * Not a document library: an active management surface. Status counters read
- * the same lifecycle groups the server enforces; the table's primary action
- * column answers "what do I do next" per row; the template library makes the
- * direction of each agreement unmistakable before anything is created.
+ * the same lifecycle groups the server enforces, and the table's primary
+ * action column answers "what do I do next" per row.
+ *
+ * The two header actions are deliberately different journeys. **Create
+ * Agreement** goes straight into the wizard — the tracked lifecycle that ends
+ * in a digitally executed, automatically stored agreement. **Templates**
+ * opens a download desk for the business that signs somewhere else. They
+ * previously shared one picker, which made them look like the same thing.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import {
-  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog';
-import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  ArrowRight, Download, FileSignature, FileStack, Loader2, Plus, RefreshCw, Search, Vault,
+  ArrowRight, FileSignature, FileStack, Loader2, Plus, RefreshCw, Search, Vault,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   AGREEMENT_DASHBOARD_GROUPS,
   AGREEMENT_PRIMARY_ACTIONS,
-  AGREEMENT_TEMPLATE_SUMMARIES,
-  directionForTemplateKey,
   templateKeyForDirection,
   agreementTemplate,
   type AgreementStatus,
+  type AgreementTemplateKey,
 } from '@/lib/agreements';
 import {
+  docxBrandFrom,
   downloadTemplateDocx,
-  downloadTemplatePdf,
   useAgreementCentreList,
   useIssuerDefaults,
 } from '@/hooks/useAgreementCentre';
-import type { AgreementTemplateKey } from '@/lib/agreements';
+import { loadDocxLogo } from '@/lib/agreements/docx';
+import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
+import TemplateLibraryDialog from '@/components/agreement-centre/TemplateLibraryDialog';
 
 type GroupKey = 'all' | 'executed_vault' | (typeof AGREEMENT_DASHBOARD_GROUPS)[number]['key'];
 
@@ -60,22 +62,25 @@ export default function AgreementCentre() {
   const navigate = useNavigate();
   const [group, setGroup] = useState<GroupKey>('all');
   const [search, setSearch] = useState('');
-  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
-  const [downloadingTemplate, setDownloadingTemplate] = useState<string | null>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   const { data: agreements = [], isLoading, isFetching, refetch } = useAgreementCentreList();
   const { data: issuer } = useIssuerDefaults();
+  const { settings: brandSettings } = useBrand();
 
-  const exportTemplate = async (templateKey: AgreementTemplateKey, kind: 'pdf' | 'docx') => {
-    try {
-      setDownloadingTemplate(`${templateKey}:${kind}`);
-      if (kind === 'pdf') await downloadTemplatePdf(templateKey);
-      else await downloadTemplateDocx(templateKey, issuer);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Template download failed');
-    } finally {
-      setDownloadingTemplate(null);
-    }
+  /**
+   * The template download. The mark is fetched here rather than inside the
+   * builder so a slow or missing logo costs the document its cover image and
+   * nothing else — the download itself never fails on it.
+   */
+  const exportTemplate = async (templateKey: AgreementTemplateKey) => {
+    const logo = await loadDocxLogo(brandSettings?.reportLogo ?? brandSettings?.sidebarLogo ?? null);
+    const brand = docxBrandFrom(
+      issuer,
+      brandSettings?.brandColor ?? brandSettings?.primaryColor ?? null,
+      logo,
+    );
+    await downloadTemplateDocx(templateKey, brand);
   };
 
   useEffect(() => {
@@ -126,10 +131,10 @@ export default function AgreementCentre() {
             <Button variant="outline" onClick={() => setGroup('executed_vault')}>
               <Vault className="mr-2 h-4 w-4" /> Executed Agreements
             </Button>
-            <Button variant="outline" onClick={() => setTemplatePickerOpen(true)}>
+            <Button variant="outline" onClick={() => setTemplatesOpen(true)}>
               <FileStack className="mr-2 h-4 w-4" /> Templates
             </Button>
-            <Button onClick={() => setTemplatePickerOpen(true)}>
+            <Button onClick={() => navigate('/partner-agreements/new')}>
               <Plus className="mr-2 h-4 w-4" /> Create Agreement
             </Button>
           </div>
@@ -191,13 +196,19 @@ export default function AgreementCentre() {
                     {group === 'all' ? 'No agreements yet' : 'Nothing in this stage'}
                   </p>
                   <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                    Create an agreement from a template, take it through internal review, then issue
-                    it to the partner portal for review and execution — or download it as PDF / DOCX.
+                    Create an agreement to take it through internal review, issuance to the partner
+                    portal, and execution — or download the Word template to send through your own
+                    platform.
                   </p>
                 </div>
-                <Button onClick={() => setTemplatePickerOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" /> Create Agreement
-                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button onClick={() => navigate('/partner-agreements/new')}>
+                    <Plus className="mr-2 h-4 w-4" /> Create Agreement
+                  </Button>
+                  <Button variant="outline" onClick={() => setTemplatesOpen(true)}>
+                    <FileStack className="mr-2 h-4 w-4" /> Templates
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -269,73 +280,11 @@ export default function AgreementCentre() {
         </Card>
       </div>
 
-      {/* Template library — direction made unmistakable before selection. */}
-      <Dialog open={templatePickerOpen} onOpenChange={setTemplatePickerOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Agreement templates</DialogTitle>
-            <DialogDescription>
-              Two locked templates. The wording is fixed — you configure parties, branding and the
-              commercial schedule. Configure and issue digitally, or download the white-labelled
-              template to send through your own platform (DocuSign, PandaDoc, …).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {AGREEMENT_TEMPLATE_SUMMARIES.map((template) => (
-              <div
-                key={template.key}
-                className="group flex flex-col rounded-xl border border-border bg-card/50 p-4 transition-colors hover:border-primary/50"
-              >
-                <div className="flex items-center justify-center gap-2 rounded-lg bg-muted/40 px-2 py-3 text-center">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {template.from}
-                  </span>
-                  <ArrowRight className="h-4 w-4 shrink-0 text-primary" />
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {template.to}
-                  </span>
-                </div>
-                <h3 className="mt-3 font-serif text-base font-semibold leading-snug text-foreground">
-                  {template.title}
-                </h3>
-                <p className="mt-1.5 flex-1 text-xs leading-relaxed text-muted-foreground">{template.referralFlow}</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
-                  <Button asChild size="sm">
-                    <Link
-                      to={`/partner-agreements/new?direction=${directionForTemplateKey(template.key)}`}
-                      onClick={() => setTemplatePickerOpen(false)}
-                    >
-                      Configure <ArrowRight className="ml-1 h-3 w-3" />
-                    </Link>
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={downloadingTemplate !== null}
-                    onClick={() => exportTemplate(template.key, 'pdf')}
-                  >
-                    {downloadingTemplate === `${template.key}:pdf`
-                      ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                      : <Download className="mr-1 h-3 w-3" />}
-                    PDF
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={downloadingTemplate !== null}
-                    onClick={() => exportTemplate(template.key, 'docx')}
-                  >
-                    {downloadingTemplate === `${template.key}:docx`
-                      ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                      : <Download className="mr-1 h-3 w-3" />}
-                    DOCX
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <TemplateLibraryDialog
+        open={templatesOpen}
+        onOpenChange={setTemplatesOpen}
+        onDownload={exportTemplate}
+      />
     </>
   );
 }

@@ -20,7 +20,11 @@ import {
   type AgreementStatus,
   type AgreementTemplateKey,
 } from '@/lib/agreements';
-import { buildAgreementDocx, agreementDocxFileName } from '@/lib/agreements/docx';
+import {
+  buildAgreementDocx,
+  agreementDocxFileName,
+  type AgreementDocxBrand,
+} from '@/lib/agreements/docx';
 
 const FN = 'manage-partner-agreements';
 const RENDER_FN = 'agreement-centre-render';
@@ -384,31 +388,50 @@ export async function downloadTemplatePdf(templateKey: AgreementTemplateKey) {
   saveBlob(base64ToBlob(data.pdf_base64, 'application/pdf'), data.file_name);
 }
 
+/** The tenant's identity and brand, as the DOCX builder wants it. */
+export function docxBrandFrom(
+  issuer?: IssuerDefaults | null,
+  brandColour?: string | null,
+  logo?: AgreementDocxBrand['logo'],
+): AgreementDocxBrand {
+  return {
+    brandColour: brandColour ?? null,
+    companyName: issuer?.companyName ?? null,
+    legalName: issuer?.legalName ?? null,
+    abn: issuer?.abn ?? null,
+    address: issuer?.address ?? null,
+    email: issuer?.email ?? null,
+    phone: issuer?.phone ?? null,
+    website: issuer?.website ?? null,
+    logo: logo ?? null,
+  };
+}
+
+/**
+ * The blank Word template, white-labelled — the download for a business that
+ * sends through its own platform. The tenant's identity is filled in; every
+ * negotiable field keeps the template's original bracket text so the
+ * recipient knows exactly what is theirs to complete.
+ */
 export async function downloadTemplateDocx(
   templateKey: AgreementTemplateKey,
-  issuer?: IssuerDefaults | null,
+  brand: AgreementDocxBrand,
 ) {
-  const values: AgreementFieldValues = issuer ? {
-    ba_legal_name: issuer.legalName ?? issuer.companyName,
-    ba_trading_name: issuer.companyName,
-    ba_abn_acn: issuer.abn,
-    ba_address: issuer.address,
-    ba_email: issuer.email,
-    ba_display_name: issuer.companyName ?? issuer.legalName,
-    company_name: issuer.companyName ?? issuer.legalName,
-    company_phone: issuer.phone,
-    company_email: issuer.email,
-    company_website: issuer.website,
-  } : {};
-  const blob = await buildAgreementDocx(templateKey, values);
+  const blob = await buildAgreementDocx(templateKey, {}, { brand, includeTemplatePack: true });
   saveBlob(blob, agreementDocxFileName(agreementTemplate(templateKey).title, null, 'template'));
 }
 
 /** Client-built DOCX from the same locked content and values. */
-export async function downloadAgreementDocx(agreement: PartnerAgreement) {
+export async function downloadAgreementDocx(
+  agreement: PartnerAgreement,
+  brand?: AgreementDocxBrand,
+) {
   const templateKey = templateKeyForDirection(agreement.direction);
   const values = agreementValues(agreement);
-  const blob = await buildAgreementDocx(templateKey, values);
+  const blob = await buildAgreementDocx(templateKey, values, {
+    brand: brand ?? {},
+    includeTemplatePack: true,
+  });
   saveBlob(blob, agreementDocxFileName(
     agreementTemplate(templateKey).title,
     agreement.partner_legal_name,
