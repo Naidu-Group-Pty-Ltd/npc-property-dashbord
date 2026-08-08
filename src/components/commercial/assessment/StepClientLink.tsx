@@ -184,16 +184,26 @@ export function StepClientLink({
     return () => clearTimeout(timer);
   }, [search]);
 
+  // A search-first list. Showing the whole client book by default put hundreds
+  // of unordered records between the user and the one they wanted, so nothing
+  // is fetched until at least two characters are typed.
+  const query = debouncedSearch.trim();
+  const hasQuery = query.length >= 2;
+
   useEffect(() => {
+    if (!hasQuery) { setClients([]); setSearching(false); return; }
     let cancelled = false;
     setSearching(true);
-    ciAssessmentApi.searchClients(debouncedSearch).then((result) => {
+    ciAssessmentApi.searchClients(query).then((result) => {
       if (cancelled) return;
-      setClients(result.data ?? []);
+      // Alphabetical, so a short result set reads predictably.
+      setClients([...(result.data ?? [])].sort((a, b) =>
+        clientLabel(a).localeCompare(clientLabel(b), 'en-AU', { sensitivity: 'base' })));
       setSearching(false);
     });
     return () => { cancelled = true; };
-  }, [debouncedSearch]);
+  }, [query, hasQuery]);
+
 
 
   const setDisposition = (itemId: string, disposition: ReconciliationDisposition) => {
@@ -352,17 +362,31 @@ export function StepClientLink({
         </div>
         <div className="max-w-md">
           <p className="mt-1.5 text-xs text-muted-foreground">
-            Only clients you are authorised to access appear here.
+            Start typing a client's name to see matches. Only clients you are authorised to access appear here.
           </p>
         </div>
 
-        {searching ? (
+        {selected && !clients.some((c) => c.id === selected.id) ? (
+          <div className="ci-warning-row ci-warning-info max-w-md">
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <span>
+              Selected: <span className="font-medium text-foreground">{clientLabel(selected)}</span>
+            </span>
+          </div>
+        ) : null}
+
+        {!hasQuery ? (
+          <p className="text-sm text-muted-foreground">
+            Type at least two characters of the client's name to search.
+          </p>
+        ) : searching ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Searching…
           </p>
         ) : !clients.length ? (
-          <p className="text-sm text-muted-foreground">No matching clients.</p>
+          <p className="text-sm text-muted-foreground">No clients match “{query}”.</p>
         ) : (
+
           <ul className="grid gap-2 sm:grid-cols-2" aria-label="Matching clients">
             {clients.map((client) => (
               <li key={client.id}>
