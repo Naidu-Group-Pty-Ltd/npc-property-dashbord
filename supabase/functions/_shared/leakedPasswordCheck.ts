@@ -19,7 +19,10 @@ export interface LeakedPasswordResult {
  * @param password - The password to check
  * @returns Result indicating if password was found in breaches
  */
-export async function checkLeakedPassword(password: string): Promise<LeakedPasswordResult> {
+export async function checkLeakedPassword(
+  password: string,
+  signal?: AbortSignal,
+): Promise<LeakedPasswordResult> {
   try {
     // Calculate SHA-1 hash of the password
     const encoder = new TextEncoder();
@@ -32,13 +35,17 @@ export async function checkLeakedPassword(password: string): Promise<LeakedPassw
     const prefix = hashHex.substring(0, 5);
     const suffix = hashHex.substring(5);
 
-    // Call Have I Been Pwned API with only the prefix (k-anonymity)
+    // Call Have I Been Pwned API with only the prefix (k-anonymity).
+    // The full hash NEVER leaves this function — only its first five hex
+    // characters do, and the response is a list of ~800 suffixes we match
+    // locally, so HIBP cannot learn which password was checked.
     const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`, {
       method: 'GET',
       headers: {
         'User-Agent': 'NPC-Property-Dashboard-Security-Check/1.0',
         'Add-Padding': 'true' // Request padding to prevent timing attacks
-      }
+      },
+      signal,
     });
 
     if (!response.ok) {
@@ -90,19 +97,25 @@ export async function checkLeakedPasswordWithTimeout(
   password: string,
   timeoutMs: number = 3000
 ): Promise<LeakedPasswordResult> {
+  // `Promise.race` against a bare `setTimeout` settles the caller on time but
+  // leaves the fetch running and the timer pending. On Deno Deploy an isolate
+  // with outstanding work is kept alive, so a slow HIBP response held the
+  // request open well past the "timeout" it was supposed to bound — and every
+  // call leaked a socket and a timer. Aborting the request is what actually
+  // stops the work; the timer is always cleared.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const timeoutPromise = new Promise<LeakedPasswordResult>((resolve) => {
-      setTimeout(() => {
-        resolve({ isLeaked: false, error: 'Password check timed out' });
-      }, timeoutMs);
-    });
-
-    const checkPromise = checkLeakedPassword(password);
-
-    return await Promise.race([checkPromise, timeoutPromise]);
+    return await checkLeakedPassword(password, controller.signal);
   } catch (error) {
+    // An abort lands here as well, and is not an error worth alarming about.
+    if (controller.signal.aborted) {
+      return { isLeaked: false, error: 'Password check timed out' };
+    }
     console.error('[Leaked Password Check] Timeout error:', error);
     return { isLeaked: false, error: 'Check failed' };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

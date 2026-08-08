@@ -2,9 +2,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts"
 import { sendPortalNotificationEmail } from "../_shared/portal-notification-email.ts"
+import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+
+// The per-account lockout below cannot see a spray across many accounts; these
+// source-keyed ceilings are what bound that shape. See _shared/authRateLimit.ts.
+const LOGIN_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const LOGIN_IDENTIFIER_BUDGET = { max: 12, windowSeconds: 900 };
 
 function smartCapitalizeStr(name: string): string {
   if (!name) return '';
@@ -41,6 +47,19 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: 'Email and password are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // Throttle before Turnstile so an unauthenticated flood cannot drive one
+    // outbound siteverify request per attempt.
+    const rateLimit = await enforceAuthRateLimit(supabase, req, {
+      scope: 'cpl',
+      ip: LOGIN_IP_BUDGET,
+      identifier: String(email),
+      identifierBudget: LOGIN_IDENTIFIER_BUDGET,
+    });
+    if (!rateLimit.allowed) {
+      console.warn('[client-portal-login] rate limited', { ipTrusted: rateLimit.ipTrusted, degraded: rateLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, rateLimit.retryAfterSeconds, 'Too many sign-in attempts. Please try again later.');
     }
 
     // Verify Turnstile CAPTCHA token.

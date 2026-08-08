@@ -9,7 +9,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 
-import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { createCorsHeaders as __createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -171,7 +171,12 @@ Deno.serve(async (req) => {
       ? `${c.primary_first_name || ''} ${c.primary_surname || ''}`.trim() || portalUser.email
       : portalUser.email;
 
-    return jsonResponse({
+    // Issue the same HttpOnly cookie `client-portal-login` does. Without it the
+    // redeemed session existed only as JSON, so the browser had to persist it
+    // itself — which is why the handoff page was writing it to `localStorage`.
+    // With the cookie set, the impersonated session survives a reload through
+    // the same carrier as a normal sign-in and nothing has to be stored.
+    return jsonResponseWithHeaders({
       success: true,
       session_token: newSessionToken,
       expires_at: expiresAt.toISOString(),
@@ -189,6 +194,9 @@ Deno.serve(async (req) => {
         staff_user_id: handoff.staff_user_id ?? null,
         actor_type: isStaffHandoff ? 'staff' : 'finance_partner',
       },
+    }, {
+      ...corsHeaders,
+      'Set-Cookie': createClientPortalSessionCookie(newSessionToken, expiresAt),
     });
   } catch (err: any) {
     console.error('[finance-portal-handoff-redeem] Error:', err);

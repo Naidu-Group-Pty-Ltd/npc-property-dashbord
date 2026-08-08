@@ -1,10 +1,16 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.ts"
+import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
 
 const SESSION_HOURS = 12; // Finance portal sessions are shorter than client portal
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+
+// The per-account lockout below cannot see a spray across many accounts; these
+// source-keyed ceilings are what bound that shape. See _shared/authRateLimit.ts.
+const LOGIN_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const LOGIN_IDENTIFIER_BUDGET = { max: 12, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -26,6 +32,19 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: 'Email and password are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // Throttle before Turnstile so an unauthenticated flood cannot drive one
+    // outbound siteverify request per attempt.
+    const rateLimit = await enforceAuthRateLimit(supabase, req, {
+      scope: 'fpl',
+      ip: LOGIN_IP_BUDGET,
+      identifier: String(email),
+      identifierBudget: LOGIN_IDENTIFIER_BUDGET,
+    });
+    if (!rateLimit.allowed) {
+      console.warn('[finance-portal-login] rate limited', { ipTrusted: rateLimit.ipTrusted, degraded: rateLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, rateLimit.retryAfterSeconds, 'Too many sign-in attempts. Please try again later.');
     }
 
     // Turnstile verification.
@@ -153,7 +172,10 @@ Deno.serve(async (req) => {
       .eq('id', portalUser.id)
 
     // Activity log
-    const ipAddress = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+    // Record the address only when the platform vouched for it. Reading
+    // `x-forwarded-for[0]` meant a caller could write any address they liked
+    // into the partner's audit trail.
+    const ipAddress = rateLimit.ipTrusted ? rateLimit.ip : null;
     const userAgent = req.headers.get('user-agent') || null;
     await supabase.from('finance_portal_activity_log').insert({
       finance_user_id: portalUser.id,

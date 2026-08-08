@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -68,9 +69,14 @@ Deno.serve(async (req) => {
       )
     }
 
-    if (password.length < 8) {
+    // Full strength policy including the HIBP k-anonymity breach lookup. This
+    // is the password the client will hold for the life of the account, so it
+    // is the one place a breached credential is most worth refusing. Fail-open
+    // if HIBP is unreachable — an outage must not block onboarding.
+    const strength = await validatePasswordStrength(password)
+    if (!strength.isValid) {
       return new Response(
-        JSON.stringify({ error: 'Password must be at least 8 characters' }),
+        JSON.stringify({ error: strength.error }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }

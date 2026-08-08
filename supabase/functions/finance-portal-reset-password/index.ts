@@ -2,6 +2,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { verifyResetToken, MAX_RESET_ATTEMPTS } from "../_shared/resetTokens.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts"
+
+// The per-account OTP attempt cap only ever sees one account; this bounds a
+// caller walking a dictionary of addresses six digits at a time.
+const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const RESET_IDENTIFIER_BUDGET = { max: 15, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -26,6 +33,19 @@ Deno.serve(async (req) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+
+    // Source-keyed ceiling, consumed before the account-keyed one (ABUSE-003).
+    // Both `verify_otp` and `reset_password` pass through here — both spend a guess.
+    const gate = await beginAuthRateLimit(supabase, req, { scope: 'fprp', ip: RESET_IP_BUDGET });
+    if (!gate.allowed) {
+      console.warn('[finance-portal-reset-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds);
+    }
+    const identifierLimit = await gate.consumeIdentifier(normalizedEmail, RESET_IDENTIFIER_BUDGET);
+    if (!identifierLimit.allowed) {
+      console.warn('[finance-portal-reset-password] identifier rate limited', { degraded: identifierLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, identifierLimit.retryAfterSeconds);
+    }
 
     // Verify the OTP with attempt limiting (ABUSE-003). Failed attempts
     // increment a counter; at the limit the token is invalidated. Comparison
@@ -82,9 +102,14 @@ Deno.serve(async (req) => {
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }
-      if (new_password.length < 8) {
+      // Full strength policy including the HIBP breach check, replacing a bare
+      // length test that would happily accept a password already published in a
+      // breach corpus. Fail-open on HIBP being unreachable — an outage must not
+      // stop account recovery.
+      const strength = await validatePasswordStrength(new_password)
+      if (!strength.isValid) {
         return new Response(
-          JSON.stringify({ error: 'Password must be at least 8 characters', success: false }),
+          JSON.stringify({ error: strength.error, success: false }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }

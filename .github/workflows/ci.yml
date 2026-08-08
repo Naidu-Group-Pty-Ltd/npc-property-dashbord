@@ -254,6 +254,11 @@ jobs:
           node scripts/security/check-market-qa-internal-auth.mjs
           node scripts/security/check-market-digest-authz.mjs
           node scripts/security/check-internal-call-signing.mjs
+          node scripts/security/check-auth-rate-limit-coverage.mjs
+          node scripts/security/check-password-leak-coverage.mjs
+          node scripts/security/check-portal-session-client-storage.mjs
+          node scripts/security/check-admin-authorization-server-side.mjs
+          node scripts/security/check-client-bundle-secrets.mjs
           node scripts/security/check-google-places-circuit-fail-closed.mjs
           node scripts/security/check-dependency-gate-level.mjs
           node scripts/security/test-registry-launch-gates.mjs

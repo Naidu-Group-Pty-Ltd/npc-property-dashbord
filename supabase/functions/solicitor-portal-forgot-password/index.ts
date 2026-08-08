@@ -3,6 +3,7 @@ import { createCorsHeaders } from "../_shared/auth.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts";
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -47,13 +48,20 @@ Deno.serve(async (req) => {
     const normalizedEmail = email.toLowerCase().trim();
 
     // Rate limit BEFORE any lookup so enumeration cannot outrun the throttle.
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const limits = await Promise.all([`solicitor_forgot:email:${normalizedEmail}`, `solicitor_forgot:ip:${ip}`].map(p_key => supabase.rpc('check_and_bump_rate_limit', { p_key, p_max: MAX_REQUESTS_PER_WINDOW, p_window_seconds: WINDOW_SECONDS })));
-    if (limits.some(result => result.data === false)) {
-      return new Response(
-        JSON.stringify({ error: 'Too many reset requests. Please try again later.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    //
+    // ABUSE-003: this used to consume an EMAIL-keyed bucket concurrently with the
+    // IP one (`Promise.all`) and before the account was known to exist, so a
+    // caller already over their IP ceiling could still mint a persistent limiter
+    // row for every address they typed. The source-IP gate now runs first and
+    // alone; the account bucket below is only reachable once the account is
+    // confirmed. The address no longer comes from `x-forwarded-for`.
+    const gate = await beginAuthRateLimit(supabase, req, {
+      scope: 'spfp',
+      ip: { max: MAX_REQUESTS_PER_WINDOW, windowSeconds: WINDOW_SECONDS },
+    });
+    if (!gate.allowed) {
+      console.warn('[solicitor-portal-forgot-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds, 'Too many reset requests. Please try again later.');
     }
 
     const { data: user } = await supabase
@@ -81,13 +89,12 @@ Deno.serve(async (req) => {
 
     // A validated account gets its own bucket so changing the source IP cannot
     // churn reset tokens or trigger repeated email delivery.
-    const { data: accountAllowed, error: accountLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `solicitor_forgot_account:${user.id}`,
-      p_max: MAX_REQUESTS_PER_WINDOW,
-      p_window_seconds: WINDOW_SECONDS,
+    const accountLimit = await gate.consumeIdentifier(user.id, {
+      max: MAX_REQUESTS_PER_WINDOW,
+      windowSeconds: WINDOW_SECONDS,
     });
-    if (accountLimitError || accountAllowed !== true) {
-      console.warn('[solicitor-portal-forgot-password] account rate limited', { userId: user.id });
+    if (!accountLimit.allowed) {
+      console.warn('[solicitor-portal-forgot-password] account rate limited', { userId: user.id, degraded: accountLimit.degraded });
       return genericOk();
     }
 
@@ -159,7 +166,10 @@ Deno.serve(async (req) => {
       actor_type: 'solicitor_user',
       action: 'password_reset_requested',
       entity_type: 'session',
-      ip_address: ip === 'unknown' ? null : ip,
+      // Record the address only when the platform vouched for it. This used to
+      // log `x-forwarded-for[0]`, which meant an attacker could write whatever
+      // address they liked into the firm's audit trail.
+      ip_address: gate.ipTrusted ? gate.ip : null,
     });
 
     return genericOk();
