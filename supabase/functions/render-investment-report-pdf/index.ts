@@ -20,7 +20,19 @@ import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSaf
 // produce a single PDF.
 import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 import { wrapInlineInsightParagraphs } from "./insightSections.ts";
-import { NPC_HOUSE_COVER_ART } from "./defaultAssets.generated.ts";
+// The house cover artwork used to be inlined here as ~490 KB of base64
+// (`_shared/reportDesign/defaultAssets.generated.ts`). Every file under
+// `supabase/functions/` counts toward *every* function's deploy upload, so those
+// bytes pushed `manage-partner-agreements`, `aml-client-portal` and
+// `generate-investment-report` past Supabase's ~4.5 MB cap — they could not be
+// deployed at all. The bytes now live in `public.report_default_assets` and are
+// loaded here at request time (see `loadHouseCoverArt`). Still no external
+// network and still a `data:` URI by the time WeasyPrint sees it, so the
+// "a report must render without the network" policy in `assets.pure.ts` holds.
+// Source of truth for regeneration is unchanged:
+// `scripts/reportDesign/buildDefaultAssets.ts` →
+// `scripts/reportDesign/generated/defaultAssets.generated.ts`, re-seeded via the
+// one-off `seed-report-assets` function.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
