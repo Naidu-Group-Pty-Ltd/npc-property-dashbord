@@ -351,34 +351,48 @@ export function IdentityVerificationStep({
  * lock) and turn that into an unexplained handoff to a second device.
  */
 /**
- * Unprefixed event names that mean "this flow has ended".
+ * Namespaced terminal events, matched by shape rather than by vendor name.
  *
- * Terminal only. Anything else — `verification_started`, a step notification,
- * an unrecognised name — is ignored so the frame stays mounted. Failure and
- * error belong here too: they are terminal, and they still lead nowhere but a
- * server re-read.
+ * Taken from the provider's own published SDK, which posts this vocabulary
+ * across the frame boundary. The full set it can send is:
+ *
+ *   ready · started · step_started · step_changed · step_completed ·
+ *   media_started · media_captured · document_selected ·
+ *   verification_submitted · status_updated · code_sent · code_verified ·
+ *   completed · cancelled · error · close_request
+ *
+ * Only the last four end the journey. Everything before them happens while
+ * the customer is still working, and acting on one takes them out of a flow
+ * that was going fine — `step_completed` fires between document and selfie,
+ * `verification_submitted` fires while the result is still being computed.
+ *
+ * Matching the shape rather than the literal keeps the vendor's name out of
+ * the portal bundle, for the same reason the expected origin is derived from
+ * the server-minted URL instead of being written down here.
+ *
+ * The colon is load-bearing: `<vendor>:step_completed` ends in "completed",
+ * and a substring test would close the dialog on a customer mid-capture.
+ * Requiring the separator immediately before the terminal word does not.
+ */
+const HOSTED_TERMINAL_NAMESPACED =
+  /^[a-z][a-z0-9-]*:(completed|cancelled|canceled|error|failed|close_request)$/;
+
+/**
+ * Unprefixed spellings, kept as a safety net.
+ *
+ * The provider's integration writing has used `verification_completed` for
+ * the same moment its SDK calls `<vendor>:completed`, and the wire format of
+ * an embedded session is not itself published. Recognising too little only
+ * costs the customer a button press; recognising a lifecycle event ejects
+ * them from a working flow — so this list stays strictly terminal.
  */
 const HOSTED_TERMINAL_EVENTS = new Set([
   'verification_completed',
   'verification_complete',
   'verification_failed',
+  'verification_cancelled',
   'verification_error',
 ]);
-
-/**
- * Namespaced terminal events, matched by shape rather than by vendor name.
- *
- * Providers namespace their events (`<vendor>:completed`). Matching the shape
- * keeps the vendor's name out of the portal bundle, which is the same reason
- * the expected origin is derived from the server-minted URL rather than
- * written down here.
- *
- * The colon is load-bearing. A step notification is `<vendor>:step_completed`,
- * and a substring test for "completed" would catch it — closing the dialog in
- * the middle of the customer's document capture. Requiring the separator
- * immediately before the terminal word does not.
- */
-const HOSTED_TERMINAL_NAMESPACED = /^[a-z][a-z0-9-]*:(completed|failed|error)$/;
 
 /**
  * Whether a message means the hosted journey has ended.
@@ -393,11 +407,19 @@ const HOSTED_TERMINAL_NAMESPACED = /^[a-z][a-z0-9-]*:(completed|failed|error)$/;
  * matched exactly.
  */
 function isHostedTerminalMessage(data: unknown): boolean {
+  let payload: unknown = data;
+  // The provider's SDK JSON-parses string payloads before reading the type,
+  // so an embedded session may send either shape.
+  if (typeof payload === 'string') {
+    const raw = payload;
+    try { payload = JSON.parse(raw); } catch { /* a bare event name */ }
+    if (typeof payload === 'string') {
+      return HOSTED_TERMINAL_EVENTS.has(raw) || HOSTED_TERMINAL_NAMESPACED.test(raw);
+    }
+  }
   let name = '';
-  if (typeof data === 'string') {
-    name = data;
-  } else if (data && typeof data === 'object') {
-    const d = data as Record<string, unknown>;
+  if (payload && typeof payload === 'object') {
+    const d = payload as Record<string, unknown>;
     for (const key of ['type', 'event', 'name']) {
       if (typeof d[key] === 'string') { name = d[key] as string; break; }
     }

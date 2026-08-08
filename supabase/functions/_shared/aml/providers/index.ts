@@ -781,9 +781,10 @@ export function diditWorkflowId(resolved?: ResolvedProvider | null): string | nu
  *
  * A hosted session is minted against the workflow as it stood at creation and
  * then lives for seven days, so a customer who started before a change is
- * pinned to the configuration it replaced. Didit cannot tell us this itself:
- * editing a published workflow mutates the version in place, leaving the
- * session and the live workflow both reporting `workflow_version: 1`.
+ * pinned to the configuration it replaced. The provider's own version number
+ * cannot detect it: measured on this account, changing a SETTING left the
+ * published workflow at version 1, while editing the GRAPH created version 2 —
+ * so equal versions do not mean equal configuration.
  *
  * So the marker is NPC's, set on the provider config by whoever changes the
  * workflow (`config.workflow_revised_at`, an ISO-8601 instant). Absent or

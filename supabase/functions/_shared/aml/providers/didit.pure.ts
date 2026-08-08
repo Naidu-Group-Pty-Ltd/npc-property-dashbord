@@ -203,10 +203,11 @@ export function vendorDataMatches(
  * change stays on the old configuration until it expires — a reconfiguration
  * that never reaches the people it was made for.
  *
- * The provider cannot tell us this: editing a published workflow mutates the
- * version in place, so a session created before the edit and the live workflow
- * after it both report `workflow_version: 1`. The marker is therefore NPC's,
- * recorded on the provider config when the workflow is changed.
+ * The provider's version number cannot tell us this. Measured on this
+ * account: changing a SETTING left the published workflow at version 1, while
+ * editing the GRAPH created version 2 — so a session and the live workflow can
+ * report the same version across a change that matters. The marker is
+ * therefore NPC's, recorded on the provider config when the workflow changes.
  *
  * Unknown answers are "not stale" on purpose. No marker, an unparseable
  * marker or an unparseable creation time all mean the guard does nothing —

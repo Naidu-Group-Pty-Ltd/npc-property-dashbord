@@ -1036,9 +1036,12 @@ Deno.serve(async (req) => {
          * cross-device QR screen in front of customers after the workflow had
          * already been corrected to allow desktop capture.
          *
-         * Didit does not help detect it: editing a published workflow mutates
-         * the version in place, so the session and the live workflow both
-         * still report `workflow_version: 1`. The marker is therefore ours —
+         * The provider's version number cannot detect it. Measured on this
+         * account: changing a SETTING (`is_desktop_allowed`) left the published
+         * workflow at version 1, while editing the GRAPH created version 2. So
+         * a session and the live workflow can report the same version across a
+         * change that matters, and a different version across one that does
+         * not. The marker is therefore ours —
          * `config.workflow_revised_at`, set by whoever changes the workflow.
          * Any session created before it is stale by definition.
          *
