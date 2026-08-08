@@ -36900,6 +36900,20 @@ export type Database = {
           total_sections: number
         }[]
       }
+      claim_workflow_trigger_events: {
+        Args: {
+          p_claimed_by?: string
+          p_limit?: number
+          p_stale_after?: string
+        }
+        Returns: {
+          attempts: number
+          id: string
+          occurred_at: string
+          payload: Json
+          trigger_type: string
+        }[]
+      }
       cleanup_expired_census_cache: { Args: never; Returns: undefined }
       cleanup_expired_climate_cache: { Args: never; Returns: undefined }
       cleanup_expired_crime_cache: { Args: never; Returns: undefined }
@@ -37795,6 +37809,15 @@ export type Database = {
       }
       release_migration_job_lock: {
         Args: { p_job_id: string }
+        Returns: undefined
+      }
+      release_workflow_trigger_event: {
+        Args: {
+          p_id: string
+          p_last_error?: string
+          p_refund_attempt?: boolean
+          p_status: string
+        }
         Returns: undefined
       }
       reopen_legal_matter: {
