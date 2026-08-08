@@ -161,6 +161,7 @@ function blockToOverlay(
       letterSpacingPt: letterSpacing,
       fontFamily,
       sourceLineCount: block.meta?.sourceLineCount ?? null,
+      sourceBaselineCount: block.meta?.sourceBaselineCount ?? null,
       sourceAlign: block.style?.textAlign ?? null,
       measure: opts.measureTextWidth,
     });

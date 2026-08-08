@@ -142,6 +142,14 @@ export interface RawImportBlock {
      * what decides `whiteSpace: 'nowrap'` — see resolveTextWrapping.pure.ts.
      */
     sourceLineCount?: number;
+    /**
+     * Distinct baselines among those lines (`source-measure-v2`).
+     *
+     * `sourceLineCount` counts line RECORDS, and two runs set side by side on
+     * one baseline are two records. This counts rows, which is what "did the
+     * source wrap here" actually asks.
+     */
+    sourceBaselineCount?: number;
     /** Phase 3: original source PostScript font name (pre-resolution). */
     sourceFont?: string;
     /** Phase 3: true when the source font was not catalog-known and was substituted. */

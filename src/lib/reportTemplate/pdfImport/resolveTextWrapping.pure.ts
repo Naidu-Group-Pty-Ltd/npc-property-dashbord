@@ -50,13 +50,15 @@
  * the same 9pt-tall strip and count as two. Wrapping there would stack text the
  * source never stacked.
  *
- * The box separates the cases, because a box's height is INK EXTENT. One
- * visual line spans at most about one em, ascender to descender. Two stacked
- * lines span a line advance plus a cap height — a shade over 1.4em even set
- * solid. On this cover the title measures 1.65em and the side-by-side footer
- * 1.33em, on either side of the threshold with room to spare. So the line count
- * says "more than one line was drawn" and the box height says "and they were
- * stacked"; wrapping needs both.
+ * From `source-measure-v2` the count of DISTINCT BASELINES settles it exactly,
+ * and that is used when present. Before it, the box separates the cases,
+ * because a box's height is INK EXTENT: one visual line spans at most about one
+ * em, ascender to descender, while two stacked lines span a line advance plus a
+ * cap height — a shade over 1.4em even set solid. On this cover the title
+ * measures 1.65em and the side-by-side footer 1.33em, on either side of the
+ * threshold with room to spare. So on a v1 artifact the line count says "more
+ * than one line was drawn" and the box height says "and they were stacked";
+ * wrapping needs both.
  *
  * WHEN THERE IS NO MEASUREMENT
  * ----------------------------
@@ -130,6 +132,11 @@ export interface TextWrappingInput {
   fontFamily?: string;
   /** Lines the SOURCE drew in this box (`source_measure.lineCount`). */
   sourceLineCount?: number | null;
+  /**
+   * Distinct baselines among those lines (`source-measure-v2`). Exact where
+   * `sourceLineCount` is only suggestive — see the header. Absent on v1.
+   */
+  sourceBaselineCount?: number | null;
   /** Alignment the sidecar inferred; `justify` implies two or more lines. */
   sourceAlign?: string | null;
   /** Advance-width measurer, when one exists (browser: canvas). */
@@ -183,6 +190,20 @@ export function resolveTextWrapping(input: TextWrappingInput): TextWrappingDecis
 
   // An author-visible break. Nothing may override it.
   if (/[\r\n]/.test(text)) return { nowrap: false, reason: 'explicit_newline' };
+
+  // Distinct baselines, when the artifact carries them, answer the stacked
+  // question outright — no box arithmetic, no threshold. One baseline is one
+  // visual line however many line records share it.
+  const baselines = Number(input.sourceBaselineCount);
+  if (Number.isFinite(baselines) && baselines >= 1) {
+    if (baselines >= 2) return { nowrap: false, reason: 'source_drew_multiple_lines' };
+    return {
+      nowrap: true,
+      reason: Number(input.sourceLineCount) >= 2
+        ? 'source_lines_share_one_baseline'
+        : 'source_drew_one_line',
+    };
+  }
 
   const fontSize = Number(input.fontSizePt);
   const lineHeight = Number(input.lineHeight);

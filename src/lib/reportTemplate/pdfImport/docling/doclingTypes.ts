@@ -74,6 +74,10 @@ export interface DoclingTextItem {
       widthPt?: number;
       charCount?: number;
       sizePt?: number;
+      /** source-measure-v2. Where the line sits; absent on v1 artifacts. */
+      x0Pt?: number;
+      x1Pt?: number;
+      baselineYPt?: number;
       spans?: Array<{ width?: number; chars?: number; size?: number; font?: string }>;
     }>;
   };

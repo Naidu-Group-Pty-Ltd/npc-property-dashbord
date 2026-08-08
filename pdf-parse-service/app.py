@@ -139,7 +139,7 @@ SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
 # no longer reports justify for a two-line block. A cached artifact carries the
 # old meaning under the same key, so the version has to move or the cache serves
 # it. See _infer_alignment / MIN_JUSTIFY_LINES.
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v1+coverage-ranges-v1+align-v2"
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v2+coverage-ranges-v1+align-v2"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -170,7 +170,11 @@ MAX_SPANS_PER_LINE = int(os.environ.get("DOCLING_MAX_SPANS_PER_LINE", "24"))
 MAX_MEASURED_LINES = int(os.environ.get("DOCLING_MAX_MEASURED_LINES", "64"))
 # Bumped when the shape of `item.source_measure` changes, so a consumer can tell
 # a missing measurement from one it does not understand.
-SOURCE_MEASURE_VERSION = "source-measure-v1"
+#
+# v2 adds per-line `x0Pt` / `x1Pt` / `baselineYPt`. Additive — a v1 consumer
+# ignores them — but a v2 consumer needs to know it is looking at v1 and must
+# fall back rather than treat absent geometry as geometry at the origin.
+SOURCE_MEASURE_VERSION = "source-measure-v2"
 MIN_VECTOR_SIZE_PT = float(os.environ.get("DOCLING_MIN_VECTOR_SIZE_PT", "1.0"))
 # Phase 3: font metadata extraction (names + embeddable programs).
 MAX_FONTS = int(os.environ.get("DOCLING_MAX_FONTS", "48"))
@@ -1122,10 +1126,29 @@ def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> No
                     "widthPt": round(float(m.get("measured_width") or 0.0), 3),
                     "charCount": int(m.get("char_count") or 0),
                     "sizePt": round(float(m.get("size") or 0.0), 2),
-                    # Per-span extents. For tracked (letter-spaced) text the PDF
-                    # draws one span per WORD, so span char-counts are the only
-                    # surviving record of word boundaries — the extracted string
-                    # loses them. Already bounded by MAX_SPANS_PER_LINE.
+                    # WHERE the line sits, not just how wide it is. Two facts the
+                    # client cannot recover from the joined string and could only
+                    # guess at from the item's box:
+                    #
+                    #  - Distinct baselines say how many lines were STACKED. A
+                    #    "line" here is a line RECORD, and two runs sharing a
+                    #    baseline are two of them — this cover's footer sets
+                    #    `PRIVATE AND CONFIDENTIAL` and `REF 90E5DF34` at
+                    #    opposite ends of one 9pt strip. Counting records reads
+                    #    that as a wrapped paragraph; counting baselines does not.
+                    #  - The horizontal gap between two such runs is what makes
+                    #    them separable at all. Merged into one left-aligned
+                    #    overlay, the right-hand field walks to the middle of
+                    #    the page.
+                    "x0Pt": round(float((m.get("bbox") or [0, 0, 0, 0])[0]), 3),
+                    "x1Pt": round(float((m.get("bbox") or [0, 0, 0, 0])[2]), 3),
+                    "baselineYPt": round(float(m.get("origin_y") or 0.0), 3),
+                    # Per-span extents. Span char-counts recover word boundaries
+                    # for tracked text WHEN the PDF drew one span per word —
+                    # which is a real pattern but not a rule: this cover draws
+                    # each tracked line as a single span, so nothing here helps
+                    # it and `charCount` above is what partitions the join.
+                    # Already bounded by MAX_SPANS_PER_LINE.
                     "spans": m.get("spans") or [],
                 }
                 for m in matched[:MAX_MEASURED_LINES]

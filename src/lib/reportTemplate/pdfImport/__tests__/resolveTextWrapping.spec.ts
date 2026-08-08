@@ -107,6 +107,40 @@ describe('resolveTextWrapping — the source line count decides', () => {
     }
   });
 
+  it('prefers the exact baseline count over every heuristic', () => {
+    // source-measure-v2. The title's two records sit on two baselines: wrap.
+    const wrapped = resolveTextWrapping(input(COVER.title, {
+      sourceLineCount: 2, sourceBaselineCount: 2,
+    }));
+    expect(wrapped.nowrap).toBe(false);
+    expect(wrapped.reason).toBe('source_drew_multiple_lines');
+
+    // The footer's two records share one baseline: do not wrap. Note this needs
+    // no box arithmetic at all — the same call with a box tall enough to stack
+    // two lines still says no.
+    const shared = resolveTextWrapping(input(
+      { ...COVER.footerStrip, boxHeightPt: 40 },
+      { sourceLineCount: 2, sourceBaselineCount: 1 },
+    ));
+    expect(shared.nowrap).toBe(true);
+    expect(shared.reason).toBe('source_lines_share_one_baseline');
+  });
+
+  it('a single baseline from a single record reads as one line', () => {
+    const decision = resolveTextWrapping(input(COVER.date, {
+      sourceLineCount: 1, sourceBaselineCount: 1, measure: sourceMeasurer,
+    }));
+    expect(decision.nowrap).toBe(true);
+    expect(decision.reason).toBe('source_drew_one_line');
+  });
+
+  it('falls back to the box heuristic when the artifact predates v2', () => {
+    const decision = resolveTextWrapping(input(COVER.title, {
+      sourceLineCount: 2, sourceBaselineCount: null,
+    }));
+    expect(decision.reason).toBe('source_drew_multiple_lines');
+  });
+
   it('does not stack two runs that shared a baseline', () => {
     // The real hazard in `lineCount`: a PyMuPDF "line" is a line RECORD, not a
     // stacked line, and the footer's two ends of one 9pt strip count as two.

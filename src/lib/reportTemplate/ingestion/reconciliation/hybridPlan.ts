@@ -46,6 +46,7 @@ function rawTextBlockToOverlay(block: RawImportBlock, unlockConfidence: number):
     letterSpacingPt: block.style?.letterSpacing ?? 0,
     fontFamily: block.style?.fontFamily ?? 'Inter',
     sourceLineCount: block.meta?.sourceLineCount ?? null,
+    sourceBaselineCount: block.meta?.sourceBaselineCount ?? null,
     sourceAlign: block.style?.textAlign ?? null,
   });
   return {

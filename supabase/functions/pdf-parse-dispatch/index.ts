@@ -50,7 +50,7 @@ const ENGINE = 'docling';
 // is no longer reported as justified. An older artifact answers the same key
 // with the old semantics, which is exactly the case a fingerprint exists to
 // catch. Mirrors the sidecar's ENGINE_VERSION; the two must move together.
-const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v1+align-v2';
+const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v2+align-v2';
 const ARTIFACT_CONTRACT_VERSION = 'raster-manifest-v1';
 const DOCLING_PAGE_REBASE_VERSION = 'chunk-page-rebase-v1';
 const CHUNK_MERGE_VALIDATION_VERSION = 'chunk-merge-validation-v1';

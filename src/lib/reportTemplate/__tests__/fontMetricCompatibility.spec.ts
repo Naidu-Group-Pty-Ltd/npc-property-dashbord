@@ -10,7 +10,7 @@
  * The measurer is injected here, so selection is testable without a browser and
  * cannot quietly degrade into guessing.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   ADVANCE_TOLERANCE,
   chooseMetricCompatibleFont,
@@ -124,6 +124,41 @@ describe('createCanvasMeasurer', () => {
     const measure = createCanvasMeasurer();
     const result = measure(TEXT, 'Helvetica', 12);
     expect(result === null || result > 0).toBe(true);
+  });
+
+  /**
+   * `ctx.font` is a SHORTHAND. Assigning it without a weight resets the weight
+   * to `normal`, so a semibold heading was measured as regular — narrower than
+   * it renders. Any letter-spacing derived from measured-minus-natural then
+   * came out too large by exactly what the weight was worth, and on the BC
+   * Snapshot cover that was enough to wrap the two-line brand lockup onto three.
+   */
+  it('puts the requested weight into the canvas font shorthand', () => {
+    const fonts: string[] = [];
+    const ctx = {
+      set font(value: string) { fonts.push(value); },
+      get font() { return fonts[fonts.length - 1] ?? ''; },
+      measureText: () => ({ width: 100 }),
+    };
+    const original = document.createElement.bind(document);
+    const spy = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = original(tag) as HTMLCanvasElement;
+      if (tag === 'canvas') (el as unknown as { getContext: () => unknown }).getContext = () => ctx;
+      return el;
+    });
+    try {
+      const measure = createCanvasMeasurer();
+      measure(TEXT, 'Inter, Arial, sans-serif', 12, 600);
+      measure(TEXT, 'Inter, Arial, sans-serif', 12);
+      measure(TEXT, 'Inter, Arial, sans-serif', 12, '');
+    } finally {
+      spy.mockRestore();
+    }
+    // 12pt is 16px. The weight leads the shorthand when given, and is omitted
+    // entirely when not — never emitted as a stray token.
+    expect(fonts[0]).toBe('600 16px Inter, Arial, sans-serif');
+    expect(fonts[1]).toBe('16px Inter, Arial, sans-serif');
+    expect(fonts[2]).toBe('16px Inter, Arial, sans-serif');
   });
 });
 
