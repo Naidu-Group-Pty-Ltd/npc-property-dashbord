@@ -192,13 +192,6 @@ export function IdentityVerificationStep({
                 + 'from there, or come back shortly to try the photo check again.'}
           </CardDescription>
         </CardHeader>
-        {/*
-          The documentary route is not "nothing to do" — it is the route, and it
-          needs the client to upload a document on the Documents step. This card
-          used to say an adviser would arrange it and offered only Back/Continue,
-          so a client whose provider was unavailable was told to wait for
-          something that was waiting on them.
-        */}
         <CardContent className="flex flex-wrap items-center justify-between gap-2">
           <Button variant="outline" onClick={onBack}>
             <ArrowLeft className="mr-1 h-4 w-4" /> Back
@@ -255,10 +248,6 @@ export function IdentityVerificationStep({
                   size="sm"
                   disabled={starting === (party.party_id ?? 'self')}
                   variant={party.attempts_used > 0 ? 'outline' : 'default'}
-                  // Availability is re-read here rather than trusted from
-                  // page mount. A provider can go away while the client is
-                  // reading the page, and opening a camera whose capture the
-                  // server will refuse collects a face for nothing (APP 3).
                   onClick={() => void startCapture(party)}
                 >
                   {party.attempts_used > 0 ? (
@@ -311,9 +300,6 @@ export function IdentityVerificationStep({
           party={activeParty}
           onClose={() => setActiveParty(null)}
           onDone={async () => { setActiveParty(null); await load(); }}
-          // A readiness refusal closes the dialog and re-reads status, so the
-          // client lands on the step's unavailable or manual-route state
-          // instead of being left pressing Submit against a dead provider.
           onUnavailable={async () => { setActiveParty(null); await load(); }}
         />
       )}
@@ -331,25 +317,6 @@ export function IdentityVerificationStep({
 
 /* ─────────────────────────── hosted verification ────────────────────────── */
 
-/**
- * The permissions the hosted flow is delegated.
- *
- * `camera` is the one that decides whether this works at all — without it the
- * provider's capture step dies on a permission error the customer cannot act
- * on. The rest are the documented embed set: `autoplay` and `encrypted-media`
- * for the liveness video pipeline (a blocked stream reads to the provider as
- * "this device cannot capture"), `clipboard-write` and `picture-in-picture`
- * because the integration snippet grants them, and the motion sensors for the
- * document-tilt and liveness steps.
- *
- * There is deliberately NO `sandbox` attribute. The documented embed does not
- * use one, and the one we had bought nothing: a cross-origin frame already
- * granted `allow-same-origin allow-scripts` is not meaningfully contained by
- * it — the same-origin policy, not the sandbox, is what stops the provider
- * reading this page. What it could do is silently withhold something the
- * capture pipeline needs (downloads, presentation, storage access, pointer
- * lock) and turn that into an unexplained handoff to a second device.
- */
 const HOSTED_IFRAME_ALLOW = [
   'camera',
   'microphone',
@@ -363,27 +330,6 @@ const HOSTED_IFRAME_ALLOW = [
   'magnetometer',
 ].join('; ');
 
-/**
- * The provider's own verification flow, embedded in the portal.
- *
- * ## It never reports an outcome
- *
- * There is no path from this component to an identity decision. The `message`
- * listener below is origin-checked and does exactly one thing — re-read server
- * state — because the identity result reaches NPC on a signed
- * server-to-server webhook and nowhere else. Nothing the frame, the customer
- * or a return URL says can mark anybody verified; the strongest claim this
- * screen can make is "we are checking".
- *
- * ## Capturing on this device is the normal path
- *
- * Handing the customer off to a second device is the provider's fallback for
- * one that genuinely cannot capture, and it should stay that way. It became
- * the default because the workflow carried `is_desktop_allowed = false`, which
- * tells the provider to refuse desktop capture outright — fixed in the
- * workflow, not here. This component's job is to not re-create the problem:
- * full permissions, no sandbox, and enough room that the capture UI is usable.
- */
 function HostedVerificationDialog({
   party, url, onClose,
 }: {
@@ -392,25 +338,14 @@ function HostedVerificationDialog({
   onClose: () => void | Promise<void>;
 }) {
   const [closing, setClosing] = useState(false);
-  /** Revealed on request. Not shown up front — nothing has failed yet. */
   const [showFallback, setShowFallback] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const done = useCallback(async () => {
     setClosing(true);
     await onClose();
   }, [onClose]);
 
-  /**
-   * A message from the frame means "something happened in there" and nothing
-   * more. The origin is checked, the payload is deliberately NOT inspected,
-   * and the only action is to re-read the server's own view. A frame cannot
-   * talk NPC into an identity outcome because no code path exists from here to
-   * one.
-   *
-   * The origin is derived from the session URL the server minted rather than
-   * written down here, so the portal still never names a provider — and a
-   * different one, or a different environment of the same one, keeps working.
-   */
   const origin = useMemo(() => {
     try { return new URL(url).origin; } catch { return null; }
   }, [url]);
@@ -419,6 +354,8 @@ function HostedVerificationDialog({
     if (!origin) return;
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== origin) return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (event.data?.type !== 'verification_complete') return;
       void done();
     };
     window.addEventListener('message', onMessage);
@@ -432,12 +369,6 @@ function HostedVerificationDialog({
       aria-modal="true"
       aria-label={`Verify ${party.label}`}
     >
-      {/*
-        Full-bleed on a phone, where the capture UI needs every pixel it can
-        get, and a generous panel on a desktop. The old fixed `h-[60vh]` inside
-        a `max-w-2xl` card squeezed a camera viewfinder into a small inner
-        scroll box with the controls below the fold.
-      */}
       <Card className="flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-none sm:h-[min(90vh,900px)] sm:rounded-lg">
         <CardHeader className="shrink-0 py-3">
           <CardTitle className="text-base">Verify your identity</CardTitle>
@@ -445,6 +376,7 @@ function HostedVerificationDialog({
 
         <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-0 sm:px-4 sm:pb-4">
           <iframe
+            ref={iframeRef}
             src={url}
             title="Identity verification"
             className="min-h-0 w-full flex-1 border-0 sm:rounded-md sm:border"
@@ -458,11 +390,6 @@ function HostedVerificationDialog({
             </Button>
 
             <div className="flex items-center gap-3">
-              {/*
-                Offered quietly, and only when asked for. Leading with "camera
-                not working?" told every customer something had gone wrong
-                before anything had.
-              */}
               {showFallback ? (
                 <a
                   href={url}
@@ -512,15 +439,7 @@ function CaptureDialog({
   const [documentShot, setDocumentShot] = useState<Capture>(null);
   const [selfieShot, setSelfieShot] = useState<Capture>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Guards a second submit from a double tap, before React re-renders. */
   const submitting = useRef(false);
-
-  /**
-   * Object URLs hold image data until revoked, so every one we mint is tracked
-   * and released on unmount. Revoking on each capture change — the previous
-   * shape here — released the document preview's URL the moment the selfie was
-   * taken, which is only invisible because that preview is off screen by then.
-   */
   const urls = useRef<string[]>([]);
   const setCapture = useCallback((
     set: (c: Capture) => void, previous: Capture,
@@ -540,9 +459,6 @@ function CaptureDialog({
   const submit = async () => {
     if (submitting.current) return;
     if (!documentShot || !selfieShot) {
-      // Never return silently: the customer pressed Submit and is owed a
-      // reason. Reaching this means a capture was lost, so send them back to
-      // the step that has to be redone rather than leaving Submit inert.
       setError(!documentShot
         ? 'The photo of your document was not kept. Please take it again.'
         : 'The photo of your face was not kept. Please take it again.');
@@ -553,20 +469,6 @@ function CaptureDialog({
     setStage('submitting');
     setError(null);
     try {
-      /**
-       * Both signed-upload grants BEFORE either byte is written.
-       *
-       * The old order asked for the document URL and uploaded it, then asked
-       * for the selfie URL — and the selfie request is the gate: it is where
-       * the server checks provider readiness and remaining attempts. With no
-       * live provider that gate answers 409, so every attempt uploaded a
-       * customer's identity document to `aml-documents` and then abandoned the
-       * submission. Production accumulated nine orphaned documents and not one
-       * selfie, verification row or outbox event.
-       *
-       * Asking for the gated grant first means a refusal costs nothing: no
-       * object is written, no attempt is spent, and nothing needs cleaning up.
-       */
       const selfieMeta = await amlPortalApi.requestVerificationUpload(caseId, 'selfie');
       const documentMeta = await amlPortalApi.requestVerificationUpload(caseId, 'document');
 
@@ -590,10 +492,6 @@ function CaptureDialog({
       toast.success(res.message);
       await onDone();
     } catch (e: any) {
-      // A readiness refusal is not a capture problem, and leaving the client
-      // in the camera to press Submit again against a provider that cannot
-      // serve them is a dead end. Hand it back to the step, which renders the
-      // correct unavailable or manual-route state.
       if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {
         await onUnavailable();
         return;
@@ -672,20 +570,6 @@ function CaptureDialog({
   );
 }
 
-/**
- * Camera capture with an explicit file-upload fallback.
- *
- * getUserMedia fails for real and ordinary reasons — denied permission, no
- * camera, an insecure context, a locked-down work laptop. Falling back to a
- * file input keeps those customers moving instead of dead-ending them.
- */
-/**
- * Whether the element has an actual frame to draw.
- *
- * All three conditions are needed: `loadedmetadata` sets `readyState` to
- * HAVE_METADATA and populates the dimensions, and a stream can report a width
- * a tick before it reports a height.
- */
 function isVideoRenderable(video: HTMLVideoElement): boolean {
   return video.readyState >= HTMLMediaElement.HAVE_METADATA
     && video.videoWidth > 0
@@ -706,13 +590,6 @@ function CameraCapture({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [working, setWorking] = useState(false);
-  /**
-   * Bumped to reopen the camera. Retake used to call `onCapture(null)` alone,
-   * which re-rendered the preview branch — but the acquisition effect keys on
-   * `facing`, which had not changed, so it never re-ran and the stream stopped
-   * by the previous shot was never replaced. The customer got a permanently
-   * black preview and a dead "Take photo" button, with no way out but reload.
-   */
   const [restartKey, setRestartKey] = useState(0);
 
   const stop = useCallback(() => {
@@ -728,9 +605,6 @@ function CameraCapture({
   }, [stop]);
 
   useEffect(() => {
-    // Nothing to acquire while a capture is on screen; the preview branch has
-    // no <video> to attach a stream to, and holding the camera open would
-    // leave the device indicator lit for no reason.
     if (existing) return;
 
     let cancelled = false;
@@ -750,9 +624,6 @@ function CameraCapture({
         if (!video) { stream.getTracks().forEach((t) => t.stop()); return; }
         video.srcObject = stream;
         await video.play().catch(() => {});
-        // `play()` resolving does not mean there are pixels: the dimensions
-        // are still 0 until metadata arrives. Shooting then produced a blank
-        // frame that uploaded happily and came back "no face found".
         if (!cancelled && isVideoRenderable(video)) setReady(true);
       } catch {
         setCameraError('We could not open your camera. You can upload a photo instead.');
@@ -770,8 +641,6 @@ function CameraCapture({
       setReady(false);
       onCapture({ blob, url: URL.createObjectURL(blob) });
     } catch (e: any) {
-      // Say what happened. A silent return here left the customer pressing a
-      // button that appeared to do nothing.
       setCameraError(e?.message ?? 'We could not use that photo. Please try again.');
     } finally {
       setWorking(false);
@@ -810,15 +679,12 @@ function CameraCapture({
     <div className="space-y-3">
       {!cameraError && (
         <>
-          {/* muted + playsInline are required for autoplay on iOS Safari. */}
           <video
             ref={videoRef}
             className="w-full rounded-md border bg-muted"
             playsInline
             muted
             aria-label="Camera preview"
-            // Metadata can land after the effect has already checked, so the
-            // ready gate is driven from the element as well.
             onLoadedMetadata={(e) => { if (isVideoRenderable(e.currentTarget)) setReady(true); }}
             onCanPlay={(e) => { if (isVideoRenderable(e.currentTarget)) setReady(true); }}
           />
@@ -847,16 +713,12 @@ function CameraCapture({
         </span>
         <input
           type="file"
-          // JPEG and PNG only. `image/*` let an iPhone offer HEIC, which the
-          // verification service cannot decode; toUploadableJpeg rejects it
-          // anyway, but not offering it is a better experience than refusing it.
           accept="image/jpeg,image/png"
           capture={facing === 'user' ? 'user' : 'environment'}
           className="mt-1 block w-full text-xs"
           disabled={working}
           onChange={(e) => {
             const file = e.target.files?.[0];
-            // Reset the input so choosing the same file twice still fires.
             e.currentTarget.value = '';
             if (file) void capture(() => toUploadableJpeg(file));
           }}
