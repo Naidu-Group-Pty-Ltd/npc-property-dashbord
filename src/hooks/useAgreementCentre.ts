@@ -25,6 +25,11 @@ import {
   agreementDocxFileName,
   type AgreementDocxBrand,
 } from '@/lib/agreements/docx';
+import {
+  agreementErrorMessage,
+  detectSkew,
+  type AgreementSkew,
+} from '@/lib/agreements/apiErrors.pure';
 
 const FN = 'manage-partner-agreements';
 const RENDER_FN = 'agreement-centre-render';
@@ -116,11 +121,23 @@ export interface ValidationItem {
 async function call<T>(payload: Record<string, unknown>): Promise<T> {
   const { data, error } = await invokeSecureFunction<T>(FN, payload);
   if (error) throw new Error(error.message);
-  const errBody = data as { error?: string; message?: string; missing?: ValidationItem[] } | null;
+  const errBody = data as {
+    error?: string; message?: string; code?: string | null; missing?: ValidationItem[];
+  } | null;
   if (errBody?.error) {
-    const err = new Error(errBody.message || errBody.error) as Error & { missing?: ValidationItem[]; code?: string };
+    // Never surface the server's raw slug. `agreementErrorMessage` keeps a real
+    // sentence when the server wrote one, and replaces `unknown_action` and a
+    // missing-column error with what those actually mean — the app and the
+    // server are on different builds. See `apiErrors.pure.ts`.
+    const err = new Error(agreementErrorMessage({
+      code: errBody.error,
+      // Our own failures carry `message`; a PostgREST failure arrives with its
+      // code in `code` and its prose in `error`.
+      message: errBody.message || errBody.error,
+    })) as Error & { missing?: ValidationItem[]; code?: string; skew?: AgreementSkew };
     err.code = errBody.error;
     err.missing = errBody.missing;
+    err.skew = detectSkew({ code: errBody.code ?? errBody.error, message: errBody.message || errBody.error });
     throw err;
   }
   return data as T;
@@ -132,6 +149,25 @@ async function callRender<T>(payload: Record<string, unknown>): Promise<T> {
   const errBody = data as { error?: string; message?: string } | null;
   if (errBody?.error) throw new Error(errBody.message || errBody.error);
   return data as T;
+}
+
+/**
+ * One error presenter for every Agreement Centre mutation.
+ *
+ * A deployment-skew message is a paragraph and names the fix, so it gets a
+ * heading and time to be read. An ordinary refusal is one line and behaves
+ * like every other toast in the app.
+ */
+function showAgreementError(error: Error) {
+  const skew = (error as Error & { skew?: AgreementSkew }).skew;
+  if (skew) {
+    toast.error(
+      skew === 'function_behind' ? 'Server code is out of date' : 'Database is out of date',
+      { description: error.message, duration: 15_000 },
+    );
+    return;
+  }
+  toast.error(error.message);
 }
 
 // ── Queries ──────────────────────────────────────────────────────────────────
@@ -232,14 +268,14 @@ export function useAgreementCentreMutations() {
     mutationFn: (payload: Record<string, unknown>) =>
       call<{ agreement: PartnerAgreement }>({ action: 'create', ...payload }),
     onSuccess: (res) => { invalidate(res.agreement.id); },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const update = useMutation({
     mutationFn: ({ id, ...payload }: Record<string, unknown> & { id: string }) =>
       call<{ agreement: PartnerAgreement }>({ action: 'update', id, ...payload }),
     onSuccess: (res) => { invalidate(res.agreement.id); },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const transition = useMutation({
@@ -249,7 +285,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success('Agreement updated');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const recordReview = useMutation({
@@ -261,7 +297,7 @@ export function useAgreementCentreMutations() {
         ? 'Approved for issue'
         : 'Returned to draft');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const issueToPartner = useMutation({
@@ -271,7 +307,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success(`Version ${res.version.version_label} issued to the partner portal`);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const withdraw = useMutation({
@@ -281,7 +317,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success('Agreement withdrawn');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const counterSign = useMutation({
@@ -291,7 +327,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success('Fully executed — the master copy is stored in Agreements');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const resolveChangeRequest = useMutation({
@@ -301,14 +337,14 @@ export function useAgreementCentreMutations() {
       invalidate(params.id);
       toast.success('Change request updated');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const setOwner = useMutation({
     mutationFn: (params: { id: string; owner_id: string | null; owner_label: string | null }) =>
       call<{ agreement: PartnerAgreement }>({ action: 'set_owner', ...params }),
     onSuccess: (res) => { invalidate(res.agreement.id); },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const newVersion = useMutation({
@@ -317,7 +353,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success(`Version ${res.agreement.version} drafted`);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   // ── Disposition ────────────────────────────────────────────────────────
@@ -332,7 +368,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success('Agreement voided');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const archive = useMutation({
@@ -342,7 +378,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success('Archived — find it under Archived, or restore it any time');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const restore = useMutation({
@@ -351,7 +387,7 @@ export function useAgreementCentreMutations() {
       invalidate(res.agreement.id);
       toast.success('Restored to the working list');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const deleteAgreement = useMutation({
@@ -361,7 +397,7 @@ export function useAgreementCentreMutations() {
       invalidate();
       toast.success('Agreement deleted');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   const createPartner = useMutation({
@@ -371,7 +407,7 @@ export function useAgreementCentreMutations() {
       queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'partners'] });
       toast.success('Finance partner created');
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: showAgreementError,
   });
 
   return {
