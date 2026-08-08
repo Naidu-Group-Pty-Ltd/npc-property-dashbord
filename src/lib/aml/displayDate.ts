@@ -34,3 +34,35 @@ export function displayDateTime(
   const parsed = parse(value);
   return parsed ? parsed.toLocaleString() : fallback;
 }
+
+const RELATIVE_UNITS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+  ["year", 365 * 24 * 60 * 60 * 1000],
+  ["month", 30 * 24 * 60 * 60 * 1000],
+  ["week", 7 * 24 * 60 * 60 * 1000],
+  ["day", 24 * 60 * 60 * 1000],
+  ["hour", 60 * 60 * 1000],
+  ["minute", 60 * 1000],
+];
+
+/**
+ * "8 minutes ago" for a case header, where the useful question is how stale
+ * the record is rather than which calendar day it was touched. Falls back to
+ * the same em dash as the others, and to "just now" inside a minute — never
+ * a spurious "0 minutes ago".
+ */
+export function displayRelative(
+  value: string | number | Date | null | undefined,
+  fallback = "—",
+  now: Date = new Date(),
+): string {
+  const parsed = parse(value);
+  if (!parsed) return fallback;
+  const deltaMs = parsed.getTime() - now.getTime();
+  const abs = Math.abs(deltaMs);
+  if (abs < 60 * 1000) return "just now";
+  const format = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  for (const [unit, ms] of RELATIVE_UNITS) {
+    if (abs >= ms) return format.format(Math.round(deltaMs / ms), unit);
+  }
+  return "just now";
+}

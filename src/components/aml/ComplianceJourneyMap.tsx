@@ -69,7 +69,11 @@ function portalTiles(
         && g.reliance_agreements?.partner_org_type === t));
 
   const partnerTile = (key: string, label: string, icon: typeof User): PortalTile => {
-    if (assessed(key)) return { key, label, icon, status: "Independently compliant", tone: "done" };
+    // A satisfied `IndependentAssessment` means that partner recorded itself
+    // satisfied with the records we shared. It is not, and must not be shown
+    // as, a claim that the partner or the case is compliant in its own right
+    // — the tile used to say exactly that.
+    if (assessed(key)) return { key, label, icon, status: "Partner assessment satisfied", tone: "done" };
     if (byType(key).length > 0) return { key, label, icon, status: "Passport shared", tone: "progress" };
     return { key, label, icon, status: "Not yet connected", tone: "idle" };
   };

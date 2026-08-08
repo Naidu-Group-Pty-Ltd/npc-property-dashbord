@@ -231,6 +231,8 @@ const legacyPanel = readFileSync("src/components/aml/LegacyVerificationHistoryPa
 const partyPanel = readFileSync("src/components/aml/PartyVerificationPanel.tsx", "utf8");
 const screeningPanel = readFileSync("src/components/aml/PartyScreeningPanel.tsx", "utf8");
 const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
+const workspaceLabels = readFileSync("src/components/aml/workspace/workspaceLabels.ts", "utf8");
+const workspaceViewModel = readFileSync("src/lib/aml/workspaceViewModel.ts", "utf8");
 const portalPage2 = readFileSync("src/pages/portal/PortalAml.tsx", "utf8");
 
 describe("submission review", () => {
@@ -260,9 +262,16 @@ describe("submission review", () => {
     expect(reviewPure).toMatch(/'personal_details', 'entity_details', 'related_parties', 'funding'/);
   });
   it("the UI is its own workspace section and shows the gate read-only", () => {
+    // Submission review is still a first-class section with its own key, its
+    // own label and its own place in the information architecture. The
+    // workspace redesign moved where the label and the area mapping are
+    // declared — the guarantee is unchanged, so the assertions follow it.
     expect(workspace).toContain('"submission-review"');
-    expect(workspace).toContain('label: "Submission Review"');
-    expect(workspace).toContain('section: "submission-review" as SectionKey');
+    expect(workspaceLabels).toContain('"submission-review": "Submission review"');
+    expect(workspaceViewModel).toContain('"submission-review",');
+    expect(workspaceViewModel).toMatch(
+      /transaction: \[[^\]]*"submission-review"[^\]]*\]/,
+    );
     expect(reviewPanel).toContain("Service gate (read-only)");
     expect(reviewPanel).toContain("does not approve the service gate");
   });
