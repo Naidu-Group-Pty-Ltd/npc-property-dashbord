@@ -96,10 +96,12 @@ async function resolveRasterRefDataUrl(ref: PdfImportRasterRef): Promise<string 
  * `inline` (the default) base64s every asset into the template, which the
  * synchronous jsPDF renderer genuinely requires — it cannot await a fetch.
  *
- * `reference` resolves storage-backed rasters to signed URLs and leaves remote
- * URLs alone, so the HTML carries links rather than megabytes. WeasyPrint
- * fetches them itself through its `safe_url_fetcher`, which is already wired
- * and already validates that a host is publicly routable.
+ * `reference` resolves storage-backed page rasters to signed URLs so the HTML
+ * carries links rather than megabytes for the one asset class that is actually
+ * megabytes. WeasyPrint fetches those itself through its `safe_url_fetcher`.
+ * All other remote assets (brand images, logos, overlay images) still inline in
+ * both modes — they are small, and they may need the browser's auth context to
+ * fetch at all.
  *
  * The distinction matters because inlining is bounded: the render service
  * rejects a payload over MAX_HTML_BYTES (25 MB), base64 costs a further 33%,
@@ -130,11 +132,20 @@ export async function preloadImages(
   const tasks: Array<Promise<void>> = [];
   const next: ReportTemplate = JSON.parse(JSON.stringify(template));
 
-  // In reference mode an already-remote URL needs no work at all — leaving it
-  // in place IS the optimisation. Only storage refs, which are private paths
-  // rather than URLs, still have to be resolved.
-  const resolveRemote = async (url: string): Promise<string | null> =>
-    (mode === 'reference' ? null : fetchAsDataUrl(url));
+  // Reference mode applies ONLY to page rasters, which are resolved to signed
+  // URLs below. Every other remote asset still inlines, in both modes.
+  //
+  // The first version of reference mode left ALL remote URLs alone, and it
+  // broke brand images in production: those assets were being fetched HERE, in
+  // the browser, with the user's session — and a bare URL handed to WeasyPrint
+  // carries none of that, so its fetcher got a 403 and, with `strict: false`,
+  // dropped the image without an error. The render simply lost its logos.
+  //
+  // The payload arithmetic only ever needed the rasters out of the payload — a
+  // page raster is megabytes, a brand mark is kilobytes. Inlining everything
+  // small keeps the 25 MB ceiling comfortable AND keeps the browser (the only
+  // party holding auth) doing the fetching for assets that need it.
+  const resolveRemote = async (url: string): Promise<string | null> => fetchAsDataUrl(url);
 
   const IMAGE_PROP_KEYS = ['imageUrl', 'src', 'chartUrl', 'backgroundUrl'];
 

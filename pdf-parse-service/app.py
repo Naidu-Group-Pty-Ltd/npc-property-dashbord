@@ -132,7 +132,7 @@ LOG = logging.getLogger("pdf-parse-service")
 SERVICE_TOKEN = os.environ.get("PDF_PARSE_SERVICE_TOKEN", "").strip()
 SERVICE_TOKEN_NEXT = os.environ.get("PDF_PARSE_SERVICE_TOKEN_NEXT", "").strip()
 SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style"
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v1"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -1150,33 +1150,47 @@ def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
 def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
     """Document fonts: names (for web-font matching) + embeddable programs.
 
-    Only attaches `base64` for fonts that are safe to reuse as @font-face — i.e.
-    NOT subsetted and carrying a usable unicode cmap. Subset/CID fonts (the common
-    case) are surfaced name-only so the frontend can match them to a web font.
+    Attaches `base64` for every font program that can render as an @font-face —
+    INCLUDING subset fonts, which are the common case. A subset embedded in the
+    PDF contains exactly the glyphs the source text drew with it, which is
+    exactly what re-rendering that text needs. The frontend already places the
+    name-resolved web font AFTER the embedded family in the stack, and both
+    browsers and WeasyPrint fall back PER GLYPH within a stack — so a partial
+    subset plus fallback strictly dominates fallback alone. The previous gate
+    (non-subset only) excluded nearly every real-world font, which is why
+    imported text rendered in substitutes rather than in itself.
+
+    PDFs re-embed the same family as a DIFFERENT subset per page, so per family
+    the candidate that renders most of the document wins: a full font beats any
+    subset, else the larger glyph set. First-seen kept whichever page happened
+    to come first, which could not cover later pages' glyphs.
     """
-    out: list[dict] = []
     if not (_FITZ_AVAILABLE and ENABLE_FITZ_LAYERS):
-        return out
+        return []
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as exc:  # pragma: no cover
         LOG.warning("fitz open (fonts) failed: %s", exc)
-        return out
+        return []
+
+    def _rank(e: dict) -> tuple:
+        return (
+            1 if e.get("_buf") is not None else 0,
+            0 if e.get("subset") else 1,
+            int(e.get("glyphCount") or 0),
+        )
+
+    by_name: dict[str, dict] = {}
+    order: list[str] = []
     try:
         seen_xref: set[int] = set()
-        seen_name: set[str] = set()
-        embedded_font_bytes = 0
         for pno in range(doc.page_count):
-            if len(out) >= MAX_FONTS:
-                break
             try:
                 fonts = doc.load_page(pno).get_fonts(full=True)
             except Exception as exc:  # pragma: no cover
                 LOG.warning("fitz get_fonts page %d failed: %s", pno + 1, exc)
                 continue
             for ent in fonts:
-                if len(out) >= MAX_FONTS:
-                    break
                 xref = ent[0]
                 if xref in seen_xref:
                     continue
@@ -1184,19 +1198,16 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                 ext = str(ent[1] or "").lower()
                 basename = str(ent[3] or "")
                 stripped = re.sub(r"^[A-Z]{6}\+", "", basename)
-                # Dedup by family name — PDFs re-embed the same font (subset per
-                # page) under many xrefs; one entry per name keeps doc.fonts small.
-                if stripped.lower() in seen_name:
+                key = stripped.lower()
+                if key not in by_name and len(by_name) >= MAX_FONTS:
                     continue
-                seen_name.add(stripped.lower())
-                low = stripped.lower()
                 entry: dict[str, Any] = {
                     "basename": stripped,
                     "psName": basename,
                     "ext": ext,
                     "subset": bool(re.match(r"^[A-Z]{6}\+", basename)),
-                    "bold": "bold" in low,
-                    "italic": ("italic" in low) or ("oblique" in low),
+                    "bold": "bold" in key,
+                    "italic": ("italic" in key) or ("oblique" in key),
                 }
                 if ext in ("ttf", "otf"):
                     try:
@@ -1207,25 +1218,38 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                             font = fitz.Font(fontbuffer=buf)
                             entry["glyphCount"] = int(getattr(font, "glyph_count", 0) or 0)
                             hits = sum(1 for c in "AaEeRrTtOoNnIiSs" if font.has_glyph(ord(c)))
+                            # Telemetry only. As a GATE this heuristic wrongly
+                            # rejected any subset missing the probe letters — an
+                            # uppercase-only heading subset misses every
+                            # lowercase probe yet renders its own text exactly.
                             entry["hasUnicodeCmap"] = hits >= 6
-                            # Embed only full (non-subset) fonts with a real cmap,
-                            # within the size cap, so reconstructed text renders.
-                            can_embed = (
-                                (not entry["subset"])
-                                and entry["hasUnicodeCmap"]
-                                and len(buf) <= MAX_FONT_BYTES
-                                and embedded_font_bytes + len(buf) <= MAX_EMBEDDED_FONT_BYTES
-                            )
-                            if can_embed:
-                                entry["base64"] = base64.b64encode(buf).decode("ascii")
-                                embedded_font_bytes += len(buf)
+                            # A functional cmap maps at least one probe; per-glyph
+                            # stack fallback covers whatever the subset lacks.
+                            if hits >= 1 and len(buf) <= MAX_FONT_BYTES:
+                                entry["_buf"] = buf  # one per family; budgeted on emit
                     except Exception as exc:  # pragma: no cover
                         LOG.warning("fitz extract_font xref=%s failed: %s", xref, exc)
-                out.append(entry)
+                prev = by_name.get(key)
+                if prev is None:
+                    by_name[key] = entry
+                    order.append(key)
+                elif _rank(entry) > _rank(prev):
+                    by_name[key] = entry
     finally:
         doc.close()
-    return out
 
+    # Emit in first-seen order; the whole-document byte budget applies to the
+    # winning candidates only, not to every xref encountered along the way.
+    out: list[dict] = []
+    embedded_font_bytes = 0
+    for key in order:
+        entry = by_name[key]
+        buf = entry.pop("_buf", None)
+        if buf is not None and embedded_font_bytes + len(buf) <= MAX_EMBEDDED_FONT_BYTES:
+            entry["base64"] = base64.b64encode(buf).decode("ascii")
+            embedded_font_bytes += len(buf)
+        out.append(entry)
+    return out
 
 # ── J1: explicit runtime selection (legacy | vnext) ─────────────────────────
 # `_do_parse` is the ONE conversion boundary shared by every parse path. Under

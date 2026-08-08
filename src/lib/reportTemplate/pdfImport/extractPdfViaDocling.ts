@@ -729,10 +729,12 @@ export async function extractPdfViaDocling(
         ? 'Mapping Docling → template (Pixel-Perfect selected for OCR-heavy PDF)…'
         : 'Mapping Docling → template…',
     });
-    // Phase 3: build @font-face entries for fully-embeddable source fonts (non-
-    // subset, real cmap) and a name→family map so matching overlays use the
-    // embedded face. Subset/CID fonts (the common case) carry no `base64` and are
-    // resolved to web fonts by name in the mapper instead.
+    // Build @font-face entries for every embeddable source font program —
+    // INCLUDING subsets, which are the common case. A subset carries exactly the
+    // glyphs the source text drew with it, and the mapper places the
+    // name-resolved web font after the embedded family in the stack, so
+    // per-glyph fallback covers anything the subset lacks (edited text, mostly).
+    // Text therefore renders in the source's own outlines, not a substitute.
     const embeddedFaces: FontFaceEntry[] = [];
     const embeddedFontFamilies: Record<string, string> = {};
     for (const f of doclingDoc.fonts ?? []) {
