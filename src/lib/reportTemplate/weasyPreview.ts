@@ -11,7 +11,7 @@
  * Calls are cached in-memory by SHA-1 of the compiled HTML so re-rendering an
  * unchanged template returns the previous signed URL instantly.
  */
-import { supabase } from '@/integrations/supabase/client';
+import { resolveAuthBearer, describeAuthError, isAuthFailureResponse } from '@/lib/secureInvoke';
 import { preloadImages } from './imagePreloader';
 import { renderTemplateToHtml } from './htmlRenderer';
 import type { ReportTemplate } from './templateSchema';
@@ -87,8 +87,15 @@ export async function renderTemplateViaWeasyPrint(
     return { url: hit.url, fileName: hit.fileName, bytes: hit.bytes, cached: true };
   }
 
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess?.session?.access_token;
+  // WP-11B/C cookie-only sessions: the staff session travels in the HttpOnly
+  // `__Host-session_token` cookie, so the request MUST go out with
+  // `credentials: 'include'` — and the Bearer comes from `resolveAuthBearer`
+  // (mirrored access token → native supabase-js session → cookie re-mint),
+  // NOT from `supabase.auth.getSession()` alone, which is null for every
+  // custom-auth user. This call site predated that migration; after the
+  // functions fleet redeployed with cookie-only auth, every render call 401'd
+  // "Authentication required" and ALL WeasyPrint previews/exports failed.
+  const { token } = await resolveAuthBearer({ refreshIfMissing: true });
   const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
   const anonKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
   if (!projectId || !anonKey) {
@@ -96,13 +103,14 @@ export async function renderTemplateViaWeasyPrint(
   }
 
   const url = `https://${projectId}.supabase.co/functions/v1/render-template-pdf`;
-  const res = await fetch(url, {
+  const sendRequest = (credentials: RequestCredentials) => fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: anonKey,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Authorization: `Bearer ${token}`,
     },
+    credentials,
     body: JSON.stringify({
       html,
       fileName,
@@ -113,8 +121,24 @@ export async function renderTemplateViaWeasyPrint(
     signal: opts.signal,
   });
 
+  let res: Response;
+  try {
+    res = await sendRequest('include');
+  } catch (err) {
+    // A function still running a wildcard-CORS build rejects a credentialed
+    // request at the PREFLIGHT — nothing was dispatched — so one uncredentialed
+    // retry is side-effect free (same pattern as invokeSecureFunction).
+    if ((err as Error)?.name === 'AbortError') throw err;
+    res = await sendRequest('omit');
+  }
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
+    const message = String(json?.error?.message || json?.error || '');
+    if (isAuthFailureResponse(res.status, message)) {
+      throw new Error(describeAuthError(message || 'authentication required')
+        ?? 'Your sign-in session has expired. Sign out, sign back in, and try again.');
+    }
     throw new Error(json?.error || `WeasyPrint render failed (HTTP ${res.status})`);
   }
   const result: WeasyPreviewResult = {

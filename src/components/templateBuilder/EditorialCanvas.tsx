@@ -198,6 +198,12 @@ function EditorialCanvasImpl({
         // underlays (dim source raster) so overlays can be aligned to the
         // original; every preview/print/export path renders without them.
         showReferenceUnderlay: true,
+        // On a RASTER-ONLY page final output is the source raster and native
+        // layers are suppressed — but the canvas exists to EDIT those layers,
+        // and its raster URL is resolved only at export time. Without this
+        // opt-in every raster-only page rendered as nothing at all (the
+        // post-merge "no text on any page but the cover" outage).
+        showReconstructedLayers: true,
       });
       // Inject CSS so the page lays out without the editor's drop-shadow chrome.
       return r.html.replace(
