@@ -33,7 +33,7 @@ import {
 import {
   NPC_HOUSE_COVER_ART,
   NPC_HOUSE_MARK,
-} from '../../supabase/functions/render-investment-report-pdf/defaultAssets.generated';
+} from './generated/defaultAssets.generated';
 import {
   buildSpine,
   contentsEntriesFor,
