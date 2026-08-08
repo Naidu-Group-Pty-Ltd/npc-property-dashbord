@@ -24842,6 +24842,10 @@ export type Database = {
           activated_at: string | null
           agreement_owner_id: string | null
           agreement_owner_label: string | null
+          archive_reason: string | null
+          archived_at: string | null
+          archived_by: string | null
+          archived_by_label: string | null
           clawback_repayment_days: number | null
           clawback_treatment: string | null
           cleared_funds_required: boolean
@@ -24934,6 +24938,8 @@ export type Database = {
           updated_by: string | null
           upfront_share_pct: number | null
           version: number
+          void_reason: string | null
+          voided_at: string | null
           withdrawn_at: string | null
         }
         Insert: {
@@ -24943,6 +24949,10 @@ export type Database = {
           activated_at?: string | null
           agreement_owner_id?: string | null
           agreement_owner_label?: string | null
+          archive_reason?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archived_by_label?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
           cleared_funds_required?: boolean
@@ -25035,6 +25045,8 @@ export type Database = {
           updated_by?: string | null
           upfront_share_pct?: number | null
           version?: number
+          void_reason?: string | null
+          voided_at?: string | null
           withdrawn_at?: string | null
         }
         Update: {
@@ -25044,6 +25056,10 @@ export type Database = {
           activated_at?: string | null
           agreement_owner_id?: string | null
           agreement_owner_label?: string | null
+          archive_reason?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archived_by_label?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
           cleared_funds_required?: boolean
@@ -25136,6 +25152,8 @@ export type Database = {
           updated_by?: string | null
           upfront_share_pct?: number | null
           version?: number
+          void_reason?: string | null
+          voided_at?: string | null
           withdrawn_at?: string | null
         }
         Relationships: [
