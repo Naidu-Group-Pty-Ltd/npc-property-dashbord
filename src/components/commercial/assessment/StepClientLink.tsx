@@ -184,16 +184,26 @@ export function StepClientLink({
     return () => clearTimeout(timer);
   }, [search]);
 
+  // A search-first list. Showing the whole client book by default put hundreds
+  // of unordered records between the user and the one they wanted, so nothing
+  // is fetched until at least two characters are typed.
+  const query = debouncedSearch.trim();
+  const hasQuery = query.length >= 2;
+
   useEffect(() => {
+    if (!hasQuery) { setClients([]); setSearching(false); return; }
     let cancelled = false;
     setSearching(true);
-    ciAssessmentApi.searchClients(debouncedSearch).then((result) => {
+    ciAssessmentApi.searchClients(query).then((result) => {
       if (cancelled) return;
-      setClients(result.data ?? []);
+      // Alphabetical, so a short result set reads predictably.
+      setClients([...(result.data ?? [])].sort((a, b) =>
+        clientLabel(a).localeCompare(clientLabel(b), 'en-AU', { sensitivity: 'base' })));
       setSearching(false);
     });
     return () => { cancelled = true; };
-  }, [debouncedSearch]);
+  }, [query, hasQuery]);
+
 
 
   const setDisposition = (itemId: string, disposition: ReconciliationDisposition) => {
