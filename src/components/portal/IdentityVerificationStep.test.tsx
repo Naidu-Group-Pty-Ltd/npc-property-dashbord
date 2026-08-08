@@ -422,14 +422,26 @@ describe('hosted provider flow', () => {
     //
     // `*:step_completed` is the trap: a substring test for "completed" catches
     // it, and it fires while the customer is still photographing a document.
+    // Every non-terminal name the provider's published SDK can post, plus the
+    // shapes a stray sender might use.
     for (const data of [
       { type: 'verification_started', sessionId: 'session-1' },
       { type: 'didit:ready' },
       { type: 'didit:started' },
+      { type: 'didit:step_started', step: 'document' },
+      { type: 'didit:step_changed', step: 'liveness' },
       { type: 'didit:step_completed', step: 'document' },
+      { type: 'didit:media_started', mediaType: 'camera' },
+      { type: 'didit:media_captured', step: 'document' },
+      { type: 'didit:document_selected', documentType: 'PASSPORT' },
+      // Fires while the result is still being computed — closing here would
+      // drop the customer out during processing.
+      { type: 'didit:verification_submitted', step: 'liveness' },
+      { type: 'didit:status_updated', status: 'In Progress' },
       { type: 'resize', height: 900 },
       { type: '' },
       'didit:step_completed',
+      JSON.stringify({ type: 'didit:step_completed' }),
       null,
       42,
     ]) {
@@ -453,13 +465,19 @@ describe('hosted provider flow', () => {
     // button press; recognising a lifecycle event ejects them from a working
     // flow — so the set is wide but strictly terminal.
     for (const data of [
+      // The four terminal names the provider's own SDK switches on.
+      { type: 'didit:completed' },
+      { type: 'didit:cancelled' },
+      { type: 'didit:error' },
+      { type: 'didit:close_request' },
+      // Alternative carriers and spellings.
+      { event: 'didit:completed' },
+      { name: 'didit:error' },
       { type: 'verification_completed' },
       { type: 'verification_complete' },
       { type: 'verification_failed' },
-      { type: 'didit:completed' },
-      { event: 'didit:failed' },
-      { name: 'didit:error' },
       'verification_completed',
+      JSON.stringify({ type: 'didit:completed' }),
     ]) {
       cleanup();
       verificationStatus.mockClear();
