@@ -50,11 +50,13 @@ describe('agreement Word template', () => {
       );
       const doc = parts['word/document.xml'];
 
-      // A first-page header/footer pair AND a default pair, with titlePg set,
-      // is what keeps the running chrome off the cover.
-      expect(doc).toContain('<w:titlePg/>');
-      expect(doc).toContain('w:type="first"');
-      expect(doc).toContain('w:type="default"');
+      // Two sections: the full-bleed cover, then the body. The cover's
+      // section properties reference no header or footer — that is what keeps
+      // the running chrome off it — and the body carries exactly one of each.
+      expect((doc.match(/<w:sectPr/g) ?? []).length).toBe(2);
+      expect(doc.slice(0, doc.indexOf('</w:sectPr>'))).not.toContain('w:headerReference');
+      expect((doc.match(/w:headerReference/g) ?? []).length).toBe(1);
+      expect((doc.match(/w:footerReference/g) ?? []).length).toBe(1);
 
       const footers = Object.entries(parts).filter(([name]) => name.includes('footer'));
       const withFields = footers.filter(([, xml]) => xml.includes('PAGE') && xml.includes('NUMPAGES'));
@@ -63,6 +65,22 @@ describe('agreement Word template', () => {
       const headers = Object.entries(parts).filter(([name]) => name.includes('header'));
       const withMasthead = headers.filter(([, part]) => part.includes(xml(content.title)));
       expect(withMasthead).toHaveLength(1);
+    });
+
+    it(`${key}: opens with a live table of contents Word can refresh`, async () => {
+      const parts = await readDocxParts(
+        await buildAgreementDocx(key, {}, { brand: BRAND, includeTemplatePack: true }),
+      );
+      const doc = parts['word/document.xml'];
+
+      // A real TOC field over real Heading 1 paragraphs — one per section —
+      // with updateFields set so Word fills the page numbers in on open,
+      // rather than a hand-typed list that goes stale the moment the reader
+      // edits the document.
+      expect(doc).toContain('TOC \\h \\o &quot;1-1&quot;');
+      const sectioned = content.sections.filter((section) => section.header).length;
+      expect((doc.match(/w:pStyle w:val="Heading1"/g) ?? []).length).toBe(sectioned);
+      expect(parts['word/settings.xml']).toContain('<w:updateFields/>');
     });
 
     it(`${key}: renders the locked wording verbatim with no stray tokens`, async () => {
@@ -102,8 +120,9 @@ describe('agreement Word template', () => {
       );
       const doc = parts['word/document.xml'];
       const sectioned = content.sections.filter((section) => section.header).length;
-      // One break before the contents page, then one per section.
-      expect((doc.match(/<w:pageBreakBefore\/>/g) ?? []).length).toBe(sectioned + 1);
+      // One break per section opener; the contents page needs none because it
+      // opens the body section itself.
+      expect((doc.match(/<w:pageBreakBefore\/>/g) ?? []).length).toBe(sectioned);
     });
 
     it(`${key}: the tenant's brand and identity reach the document`, async () => {
@@ -161,5 +180,22 @@ describe('docx palette', () => {
   it('flips text on the accent band when the brand is light', () => {
     expect(resolveDocxPalette('#FFE680').onAccent).toBe('1A1A1A');
     expect(resolveDocxPalette('#101820').onAccent).toBe('FFFFFF');
+  });
+
+  it('deepens the cover canvas until white display type carries on it', () => {
+    // A pale brand is pulled down hard, a dark one barely moves.
+    const pale = resolveDocxPalette('#F5D17A');
+    const dark = resolveDocxPalette('#101820');
+    const luminance = (hex: string) => {
+      const channel = (i: number) => {
+        const s = parseInt(hex.slice(i, i + 2), 16) / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+    };
+    // 0.183 is the luminance at which white text reaches WCAG AA (4.5:1).
+    expect(luminance(pale.accentDeep)).toBeLessThan(0.183);
+    expect(luminance(dark.accentDeep)).toBeLessThan(0.183);
+    expect(dark.accentDeep).not.toBe(pale.accentDeep);
   });
 });
