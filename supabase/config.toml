@@ -1196,3 +1196,17 @@ verify_jwt = false
 # secret, constant-time compared) because pg_cron carries no user JWT.
 [functions.report-api-usage]
 verify_jwt = false
+
+# Agreement Centre — partner-side agreement room. Portal session token
+# (x-finance-session-token) is the credential; same posture as the other
+# finance-portal-* functions.
+[functions.finance-portal-agreements]
+verify_jwt = false
+request_timeout = 120
+
+# Agreement Centre — staff-side document preview/download. Staff cookie session
+# + agreements module, like partner-agreement-records; long timeout because it
+# calls the PDF service.
+[functions.agreement-centre-render]
+verify_jwt = true
+request_timeout = 300

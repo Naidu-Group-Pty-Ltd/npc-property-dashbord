@@ -1,0 +1,648 @@
+/**
+ * Agreement configuration — the guided creation flow.
+ *
+ * Eight steps (type → partner → organisation → branding → variables →
+ * commercial terms → preview → outcome) over one register row: the draft is
+ * created when the partner is chosen and saved as the user moves between
+ * steps, so nothing lives only in browser state. The live preview on the
+ * right is the SAME digital view the partner will review — the locked content
+ * with the current values bound in.
+ *
+ * The legal wording is never editable here. Every input below is a field the
+ * supplied templates themselves left open.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
+  Palette, Send, Eye,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import {
+  agreementFieldDefs,
+  agreementTemplate,
+  templateKeyForDirection,
+  rowPatchFromValues,
+  projectFieldValues,
+  validateForIssue,
+  AGREEMENT_TEMPLATE_SUMMARIES,
+  directionForTemplateKey,
+  type AgreementFieldDef,
+  type AgreementFieldValues,
+  type AgreementTemplateKey,
+  type PartnerAgreementDirection,
+} from '@/lib/agreements';
+import {
+  useAgreementCentreDetail,
+  useAgreementCentreMutations,
+  useAgreementPartnerOptions,
+  useDuplicateCheck,
+  useIssuerDefaults,
+  downloadAgreementDocx,
+  downloadAgreementPdf,
+} from '@/hooks/useAgreementCentre';
+import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
+import DigitalAgreementView from '@/components/agreement-centre/DigitalAgreementView';
+import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
+import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
+
+const STEPS = [
+  { key: 'type', title: 'Agreement Type' },
+  { key: 'partner', title: 'Finance Partner' },
+  { key: 'organisation', title: 'Organisation Details' },
+  { key: 'branding', title: 'White-Label Branding' },
+  { key: 'variables', title: 'Agreement Variables' },
+  { key: 'commercial', title: 'Commercial Terms' },
+  { key: 'preview', title: 'Preview' },
+  { key: 'outcome', title: 'Review & Issue' },
+] as const;
+
+function FieldInput({
+  def,
+  value,
+  onChange,
+}: {
+  def: AgreementFieldDef;
+  value: unknown;
+  onChange: (next: unknown) => void;
+}) {
+  const raw = value === null || value === undefined ? '' : String(value);
+  const id = `agc-field-${def.key}`;
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className="text-xs">
+        {def.label}
+        {def.requiredForIssue ? <span className="ml-1 text-warning">*</span> : null}
+      </Label>
+      {def.type === 'choice' ? (
+        <Select value={raw || undefined} onValueChange={(next) => onChange(next)}>
+          <SelectTrigger id={id}>
+            <SelectValue placeholder={def.placeholder || 'Select…'} />
+          </SelectTrigger>
+          <SelectContent>
+            {(def.options ?? []).map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : def.type === 'longtext' ? (
+        <Textarea id={id} value={raw} rows={2} placeholder={def.placeholder}
+          onChange={(event) => onChange(event.target.value)} />
+      ) : (
+        <Input
+          id={id}
+          type={def.type === 'date' ? 'date' : def.type === 'number' ? 'number' : 'text'}
+          value={raw}
+          placeholder={def.placeholder}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
+function FieldGroup({
+  defs,
+  values,
+  onChange,
+}: {
+  defs: AgreementFieldDef[];
+  values: AgreementFieldValues;
+  onChange: (key: string, value: unknown) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {defs.map((def) => (
+        <FieldInput key={def.key} def={def} value={values[def.key]}
+          onChange={(next) => onChange(def.key, next)} />
+      ))}
+    </div>
+  );
+}
+
+export default function AgreementWizard() {
+  const navigate = useNavigate();
+  const { id: routeId } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+
+  const [agreementId, setAgreementId] = useState<string | null>(routeId ?? null);
+  const [step, setStep] = useState(routeId ? 2 : 0);
+  const [direction, setDirection] = useState<PartnerAgreementDirection | null>(
+    (searchParams.get('direction') as PartnerAgreementDirection) || null,
+  );
+  const [partnerId, setPartnerId] = useState<string | null>(null);
+  const [values, setValues] = useState<AgreementFieldValues>({});
+  const [dirty, setDirty] = useState(false);
+  const [previewPdfId, setPreviewPdfId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<'pdf' | 'docx' | null>(null);
+
+  const { data: detail } = useAgreementCentreDetail(agreementId);
+  const agreement = detail?.agreement ?? null;
+  const { data: issuer } = useIssuerDefaults();
+  const { data: partners = [] } = useAgreementPartnerOptions();
+  const { data: duplicates = [] } = useDuplicateCheck(partnerId, direction);
+  const { create, update, transition, recordReview, issueToPartner } = useAgreementCentreMutations();
+
+  const templateKey: AgreementTemplateKey | null = direction ? templateKeyForDirection(direction) : null;
+  const fieldDefs = useMemo(
+    () => (templateKey ? [...agreementFieldDefs(templateKey)] : []),
+    [templateKey],
+  );
+
+  useEffect(() => {
+    document.title = 'Configure Agreement | Command Centre';
+  }, []);
+
+  // Load an existing draft into the form (edit mode / after create).
+  useEffect(() => {
+    if (!agreement) return;
+    setDirection(agreement.direction);
+    setPartnerId(agreement.finance_agent_contact_id);
+    const key = templateKeyForDirection(agreement.direction);
+    setValues(projectFieldValues(key, agreement as never, {}, { raw: true }));
+    setDirty(false);
+  }, [agreement?.id, agreement?.updated_at]);
+
+  const setValue = (key: string, value: unknown) => {
+    setValues((previous) => ({ ...previous, [key]: value }));
+    setDirty(true);
+  };
+
+  /** The preview projection: current edits applied over the row. */
+  const previewValues = useMemo(() => {
+    if (!templateKey) return {};
+    const patch = rowPatchFromValues(templateKey, values);
+    const base = agreement ?? {};
+    const pseudoRow = {
+      ...base,
+      ...patch.columns,
+      schedule_extras: { ...((agreement?.schedule_extras as Record<string, unknown>) ?? {}), ...patch.extras },
+      document_version: agreement?.document_version ?? '2.0',
+    };
+    return projectFieldValues(templateKey, pseudoRow as never, {
+      companyName: issuer?.companyName ?? null,
+      phone: issuer?.phone ?? null,
+      email: issuer?.email ?? null,
+      website: issuer?.website ?? null,
+    });
+  }, [templateKey, values, agreement, issuer]);
+
+  const validation = useMemo(
+    () => (templateKey ? validateForIssue(templateKey, previewValues) : { ok: false, missing: [] }),
+    [templateKey, previewValues],
+  );
+
+  const selectedPartner = partners.find((partner) => partner.id === partnerId) ?? null;
+
+  /** Persist the current form onto the row. Creates the draft on first save. */
+  const persist = async (): Promise<PartnerAgreement | null> => {
+    if (!templateKey || !direction) return null;
+    const patch = rowPatchFromValues(templateKey, values);
+    const payload = {
+      ...patch.columns,
+      schedule_extras: { ...((agreement?.schedule_extras as Record<string, unknown>) ?? {}), ...patch.extras },
+      finance_agent_contact_id: partnerId,
+    };
+    if (!agreementId) {
+      const created = await create.mutateAsync({ direction, ...payload });
+      setAgreementId(created.agreement.id);
+      window.history.replaceState(null, '', `/partner-agreements/${created.agreement.id}/edit`);
+      setDirty(false);
+      return created.agreement;
+    }
+    if (dirty) {
+      const updated = await update.mutateAsync({ id: agreementId, ...payload });
+      setDirty(false);
+      return updated.agreement;
+    }
+    return agreement;
+  };
+
+  const stepReady = (): boolean => {
+    switch (STEPS[step].key) {
+      case 'type': return !!direction;
+      case 'partner': return !!partnerId && !!String(values.fp_legal_name ?? '').trim();
+      default: return true;
+    }
+  };
+
+  const goNext = async () => {
+    try {
+      if (STEPS[step].key === 'partner' || (step > 1 && dirty)) await persist();
+      setStep((current) => Math.min(current + 1, STEPS.length - 1));
+    } catch {
+      /* toast already shown by the mutation */
+    }
+  };
+
+  const goBack = () => setStep((current) => Math.max(current - 1, 0));
+
+  const jumpToField = (sectionId: string) => {
+    // Validation items point at document sections; map them onto the steps.
+    const commercial = sectionId.includes('commercial') || sectionId.includes('commission');
+    setStep(commercial ? 5 : 4);
+  };
+
+  const choosePartner = (nextId: string) => {
+    setPartnerId(nextId);
+    const partner = partners.find((candidate) => candidate.id === nextId);
+    if (partner) {
+      setValues((previous) => ({
+        ...previous,
+        fp_legal_name: previous.fp_legal_name || partner.company_name || '',
+        fp_abn_acn: previous.fp_abn_acn || partner.abn || '',
+        fp_email: previous.fp_email || partner.email || '',
+      }));
+      setDirty(true);
+    }
+  };
+
+  const applyIssuerDefaults = () => {
+    if (!issuer) return;
+    setValues((previous) => ({
+      ...previous,
+      ba_legal_name: previous.ba_legal_name || issuer.legalName || issuer.companyName || '',
+      ba_trading_name: previous.ba_trading_name || issuer.companyName || '',
+      ba_abn_acn: previous.ba_abn_acn || issuer.abn || '',
+      ba_address: previous.ba_address || issuer.address || '',
+      ba_email: previous.ba_email || issuer.email || '',
+    }));
+    setDirty(true);
+  };
+
+  const submitForReview = async (approveNow: boolean) => {
+    try {
+      const saved = await persist();
+      const id = saved?.id ?? agreementId;
+      if (!id) return;
+      if (saved?.status === 'draft' || saved?.status === 'changes_requested' || !saved) {
+        await transition.mutateAsync({ id, status: 'pending_review' });
+      }
+      if (approveNow) {
+        await recordReview.mutateAsync({ id, decision: 'approved' });
+        await issueToPartner.mutateAsync(id);
+      }
+      navigate(`/partner-agreements/${id}`);
+    } catch {
+      /* mutation toasts handle messaging; validation errors keep the user here */
+    }
+  };
+
+  const exportDocument = async (kind: 'pdf' | 'docx') => {
+    try {
+      setExporting(kind);
+      const saved = await persist();
+      if (!saved) return;
+      if (kind === 'pdf') await downloadAgreementPdf(saved.id, 'draft');
+      else await downloadAgreementDocx(saved);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const group = (name: AgreementFieldDef['group']) => fieldDefs.filter((def) => def.group === name);
+
+  const stepBody = () => {
+    switch (STEPS[step].key) {
+      case 'type':
+        return (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {AGREEMENT_TEMPLATE_SUMMARIES.map((template) => {
+              const templateDirection = directionForTemplateKey(template.key);
+              const selected = direction === templateDirection;
+              return (
+                <button
+                  key={template.key}
+                  type="button"
+                  disabled={!!agreementId}
+                  onClick={() => setDirection(templateDirection)}
+                  className={cn(
+                    'rounded-xl border p-4 text-left transition-colors',
+                    selected ? 'border-primary bg-primary/5' : 'border-border bg-card/50 hover:bg-accent/10',
+                    agreementId && !selected && 'opacity-50',
+                  )}
+                >
+                  <div className="flex items-center justify-center gap-2 rounded-lg bg-muted/40 px-2 py-2.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{template.from}</span>
+                    <ArrowRight className="h-4 w-4 text-primary" />
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{template.to}</span>
+                  </div>
+                  <h3 className="mt-3 font-serif text-base font-semibold text-foreground">{template.title}</h3>
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{template.referralFlow}</p>
+                  {selected ? (
+                    <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary">
+                      <Check className="h-3.5 w-3.5" /> Selected
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        );
+      case 'partner':
+        return (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Finance partner</Label>
+              <Select value={partnerId ?? undefined} onValueChange={choosePartner}>
+                <SelectTrigger><SelectValue placeholder="Select a finance partner…" /></SelectTrigger>
+                <SelectContent>
+                  {partners.map((partner) => (
+                    <SelectItem key={partner.id} value={partner.id}>
+                      {partner.company_name || partner.contact_name || partner.email || partner.id}
+                      {partner.portal_connected ? '' : '  ·  no portal login'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedPartner && !selectedPartner.portal_connected ? (
+                <p className="text-xs text-warning">
+                  This partner has no active Finance Portal login — digital issue will be unavailable
+                  until they are invited, but the download options always work.
+                </p>
+              ) : null}
+            </div>
+            {duplicates.length > 0 ? (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Active agreement found</AlertTitle>
+                <AlertDescription>
+                  {duplicates.length === 1
+                    ? 'An agreement of this type already exists with this partner.'
+                    : `${duplicates.length} agreements of this type already exist with this partner.`}{' '}
+                  <button type="button" className="font-medium text-primary underline-offset-2 hover:underline"
+                    onClick={() => navigate(`/partner-agreements/${duplicates[0].id}`)}>
+                    View existing agreement
+                  </button>{' '}
+                  — or continue with a new one.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <FieldGroup defs={group('counterparty')} values={values} onChange={setValue} />
+          </div>
+        );
+      case 'organisation':
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Your organisation as it will appear in the executed agreement.
+              </p>
+              <Button variant="outline" size="sm" onClick={applyIssuerDefaults} disabled={!issuer}>
+                Auto-fill from settings
+              </Button>
+            </div>
+            <FieldGroup defs={group('issuer')} values={values} onChange={setValue} />
+          </div>
+        );
+      case 'branding':
+        return (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-border bg-card/50 p-4">
+              <div className="flex items-center gap-2">
+                <Palette className="h-4 w-4 text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">White-label branding</h3>
+              </div>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                The generated agreement carries your organisation's mark, colours and company details
+                from White Label settings — the same brand snapshot every report uses, frozen onto
+                each issued version so a rebrand never changes an issued document. Nothing to
+                configure here if your branding is already set up.
+              </p>
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                <div className="rounded-lg bg-muted/30 px-3 py-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Issuing organisation</div>
+                  <div className="text-foreground">{issuer?.companyName ?? issuer?.legalName ?? 'From White Label settings'}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 px-3 py-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Company details on documents</div>
+                  <div className="text-foreground">{[issuer?.abn && `ABN ${issuer.abn}`, issuer?.email, issuer?.phone].filter(Boolean).join(' · ') || 'From Report settings'}</div>
+                </div>
+              </div>
+              <Button variant="link" className="mt-1 h-auto p-0 text-xs" onClick={() => navigate('/white-label')}>
+                Review White Label settings →
+              </Button>
+            </div>
+          </div>
+        );
+      case 'variables':
+        return (
+          <div className="space-y-5">
+            <FieldGroup defs={group('agreement')} values={values} onChange={setValue} />
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <FieldGroup defs={group('clauses')} values={values} onChange={setValue} />
+            </div>
+            <div>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Execution prefill (optional)</h3>
+              <FieldGroup defs={group('execution')} values={values} onChange={setValue} />
+            </div>
+            {group('supporting').length ? (
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Supporting forms (optional)</h3>
+                <FieldGroup defs={group('supporting')} values={values} onChange={setValue} />
+              </div>
+            ) : null}
+          </div>
+        );
+      case 'commercial':
+        return (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              The negotiable schedule. The template sets no figures — every value here is the
+              parties' to agree.
+            </p>
+            <FieldGroup defs={group('commercial')} values={values} onChange={setValue} />
+          </div>
+        );
+      case 'preview':
+        return (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={async () => {
+                const saved = await persist().catch(() => null);
+                if (saved) setPreviewPdfId(saved.id);
+              }}>
+                <Eye className="mr-1.5 h-3.5 w-3.5" /> Typeset PDF preview
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                The live document below updates as you edit; the PDF is the exact printed form.
+              </span>
+            </div>
+            {!validation.ok && templateKey ? (
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>{validation.missing.length} item{validation.missing.length === 1 ? '' : 's'} require attention before issue</AlertTitle>
+                <AlertDescription>
+                  <ul className="mt-1 space-y-0.5">
+                    {validation.missing.map((item) => (
+                      <li key={item.key}>
+                        <button type="button" className="text-primary underline-offset-2 hover:underline"
+                          onClick={() => jumpToField(item.sectionId)}>
+                          {item.label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {templateKey ? (
+              <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-border bg-background/40 p-4">
+                <DigitalAgreementView templateKey={templateKey} values={previewValues} versionLabel="Draft" />
+              </div>
+            ) : null}
+          </div>
+        );
+      case 'outcome':
+        return (
+          <div className="space-y-4">
+            {agreement ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                Current status: <AgreementStatusBadge status={agreement.status as never} />
+              </div>
+            ) : null}
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-primary/40 bg-primary/5 p-4">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Send className="h-4 w-4 text-primary" /> Issue digitally
+                </h3>
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Send into the Finance Partner Portal for secure review, acceptance and electronic
+                  execution. The executed copy returns to the Command Centre automatically.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => submitForReview(false)}
+                    disabled={transition.isPending || recordReview.isPending || issueToPartner.isPending}>
+                    Submit for internal review
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    disabled={!validation.ok || !selectedPartner?.portal_connected
+                      || transition.isPending || recordReview.isPending || issueToPartner.isPending}
+                    onClick={() => submitForReview(true)}>
+                    {issueToPartner.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                    Approve & send now
+                  </Button>
+                </div>
+                {!selectedPartner?.portal_connected ? (
+                  <p className="mt-2 text-[11px] text-warning">Digital issue needs a partner portal login.</p>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-border bg-card/50 p-4">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <FileText className="h-4 w-4 text-primary" /> Export
+                </h3>
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  Download the white-labelled agreement (with the partner email page) to manage
+                  outside the portal. Both paths stay available — export now, issue digitally later.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" disabled={exporting !== null} onClick={() => exportDocument('pdf')}>
+                    {exporting === 'pdf' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                    Download PDF
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={exporting !== null} onClick={() => exportDocument('docx')}>
+                    {exporting === 'docx' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                    Download DOCX
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6 xl:flex-row">
+      {/* Left — steps */}
+      <aside className="shrink-0 xl:w-56">
+        <Button variant="ghost" size="sm" className="mb-3 -ml-2"
+          onClick={() => navigate(agreementId ? `/partner-agreements/${agreementId}` : '/partner-agreements')}>
+          <ArrowLeft className="mr-1.5 h-4 w-4" /> Agreements
+        </Button>
+        <ol className="flex gap-1 overflow-x-auto xl:flex-col xl:gap-0.5">
+          {STEPS.map((entry, index) => {
+            const done = index < step;
+            const current = index === step;
+            return (
+              <li key={entry.key}>
+                <button
+                  type="button"
+                  disabled={index > step && !agreementId}
+                  onClick={() => { if (index <= step || agreementId) setStep(index); }}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm transition-colors',
+                    current ? 'bg-primary/10 font-medium text-primary'
+                      : done ? 'text-foreground hover:bg-accent/10'
+                        : 'text-muted-foreground hover:bg-accent/10 disabled:opacity-50',
+                  )}
+                >
+                  <span className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold',
+                    current ? 'border-primary text-primary' : done ? 'border-success bg-success/15 text-success' : 'border-border',
+                  )}>
+                    {done ? <Check className="h-3 w-3" /> : index + 1}
+                  </span>
+                  {entry.title}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+      </aside>
+
+      {/* Centre — the step */}
+      <Card className="min-w-0 flex-1">
+        <CardContent className="p-4 sm:p-6">
+          <h2 className="mb-1 text-lg font-semibold text-foreground">
+            Step {step + 1} — {STEPS[step].title}
+          </h2>
+          {templateKey ? (
+            <p className="mb-4 text-xs text-muted-foreground">{agreementTemplate(templateKey).title}</p>
+          ) : (
+            <p className="mb-4 text-xs text-muted-foreground">Choose which agreement to prepare.</p>
+          )}
+          {stepBody()}
+          <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
+            <Button variant="outline" onClick={goBack} disabled={step === 0}>
+              <ArrowLeft className="mr-1.5 h-4 w-4" /> Back
+            </Button>
+            {step < STEPS.length - 1 ? (
+              <Button onClick={goNext} disabled={!stepReady() || create.isPending || update.isPending}>
+                {(create.isPending || update.isPending) ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+                Continue <ArrowRight className="ml-1.5 h-4 w-4" />
+              </Button>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Right — live preview on wide screens */}
+      {templateKey && step >= 2 && step < 6 ? (
+        <aside className="hidden w-[420px] shrink-0 2xl:block">
+          <div className="sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border border-border bg-background/40 p-4">
+            <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Live preview</div>
+            <DigitalAgreementView templateKey={templateKey} values={previewValues} versionLabel="Draft" className="scale-[0.96] origin-top" />
+          </div>
+        </aside>
+      ) : null}
+
+      <PdfPreviewDialog agreementId={previewPdfId} onOpenChange={(open) => { if (!open) setPreviewPdfId(null); }} />
+    </div>
+  );
+}
