@@ -126,12 +126,14 @@ export interface HostedCheckRow {
   processing_status: string | null;
   status: string | null;
   attempt_consumed: boolean | null;
+  /** Capture sequence — the attempt encoded in this session's `vendor_data`. */
+  capture_sequence: number | null;
 }
 
 /** The exact column list callers must select to satisfy `HostedCheckRow`. */
 export const HOSTED_CHECK_COLUMNS =
   'id, case_id, party_id, party_label, provider, provider_reference, '
-  + 'outcome_detail, processing_status, status, attempt_consumed';
+  + 'outcome_detail, processing_status, status, attempt_consumed, capture_sequence';
 
 export interface ApplyDecisionArgs {
   db: any;
@@ -164,6 +166,7 @@ export async function applyDiditDecision(args: ApplyDecisionArgs): Promise<Apply
     expectedCaseId: check.case_id,
     expectedPartyId: check.party_id ?? null,
     expectedSessionId: String(check.provider_reference ?? ''),
+    expectedAttempt: check.capture_sequence ?? null,
   });
 
   const mapped = mapDiditDecision(decision);

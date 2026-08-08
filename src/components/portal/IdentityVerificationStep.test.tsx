@@ -416,11 +416,79 @@ describe('hosted provider flow', () => {
     const frame = await openHosted();
     const callsBefore = verificationStatus.mock.calls.length;
 
+    // Every one of these arrives mid-journey. Closing on any of them takes the
+    // customer out of a working capture — which is how the dialog came to look
+    // like a white panel that vanished after a few seconds.
+    //
+    // `*:step_completed` is the trap: a substring test for "completed" catches
+    // it, and it fires while the customer is still photographing a document.
+    for (const data of [
+      { type: 'verification_started', sessionId: 'session-1' },
+      { type: 'didit:ready' },
+      { type: 'didit:started' },
+      { type: 'didit:step_completed', step: 'document' },
+      { type: 'resize', height: 900 },
+      { type: '' },
+      'didit:step_completed',
+      null,
+      42,
+    ]) {
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent('message', {
+          origin: 'https://verify.didit.me',
+          source: frame.contentWindow,
+          data,
+        }));
+        await Promise.resolve();
+      });
+      expect(verificationStatus.mock.calls.length, JSON.stringify(data)).toBe(callsBefore);
+      expect(document.querySelector('iframe'), JSON.stringify(data)).toBeTruthy();
+    }
+  });
+
+  it('recognises the terminal event under any of the spellings the provider uses', async () => {
+    // The provider documents this vocabulary for its SDK callback but does not
+    // publish the wire format an embedded session posts, and the two have not
+    // historically agreed. Recognising too little only costs the customer a
+    // button press; recognising a lifecycle event ejects them from a working
+    // flow — so the set is wide but strictly terminal.
+    for (const data of [
+      { type: 'verification_completed' },
+      { type: 'verification_complete' },
+      { type: 'verification_failed' },
+      { type: 'didit:completed' },
+      { event: 'didit:failed' },
+      { name: 'didit:error' },
+      'verification_completed',
+    ]) {
+      cleanup();
+      verificationStatus.mockClear();
+      const frame = await openHosted();
+      const callsBefore = verificationStatus.mock.calls.length;
+
+      await act(async () => {
+        window.dispatchEvent(new MessageEvent('message', {
+          origin: 'https://verify.didit.me', source: frame.contentWindow, data,
+        }));
+      });
+
+      await waitFor(() =>
+        expect(verificationStatus.mock.calls.length, JSON.stringify(data))
+          .toBeGreaterThan(callsBefore));
+    }
+  });
+
+  it('ignores a completion message from something other than this frame', async () => {
+    await openHosted();
+    const callsBefore = verificationStatus.mock.calls.length;
+
+    // Right origin, real event name, wrong window: a popup or a nested frame
+    // on the provider's origin cannot speak for the customer's session.
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', {
         origin: 'https://verify.didit.me',
-        source: frame.contentWindow,
-        data: { type: 'verification_started', sessionId: 'session-1' },
+        source: window,
+        data: { type: 'verification_completed' },
       }));
       await Promise.resolve();
     });

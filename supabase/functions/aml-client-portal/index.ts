@@ -33,6 +33,7 @@ import {
   getHostedIdvProvider,
   idvFlowFor,
   diditWorkflowId,
+  workflowRevisedAt,
   resolveTenantProvider,
   cachedSelfHostedIdvHealth,
   currentEnvironment,
@@ -40,7 +41,9 @@ import {
   type IdvFlow,
 } from "../_shared/aml/providers/index.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
-import { buildVendorData } from "../_shared/aml/providers/didit.pure.ts";
+import {
+  buildVendorData, isStaleHostedSession,
+} from "../_shared/aml/providers/didit.pure.ts";
 import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
 import {
   applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
@@ -438,7 +441,10 @@ async function activeHostedCheck(
 ): Promise<any | null> {
   let q = admin.schema('aml').from('verification_checks')
     .select('id, case_id, party_id, party_label, provider, provider_reference, '
-      + 'outcome_detail, processing_status, status, attempt_consumed')
+      + 'outcome_detail, processing_status, status, attempt_consumed, '
+      // `capture_sequence` is the attempt encoded in vendor_data, and
+      // `created_at` is what the stale-workflow guard compares.
+      + 'capture_sequence, created_at')
     .eq('case_id', caseId)
     .eq('check_type', 'electronic_idv')
     .eq('provider', 'didit')
@@ -1018,6 +1024,47 @@ Deno.serve(async (req) => {
          * never stored it.
          */
         let existing = await activeHostedCheck(admin, c.id, partyId);
+
+        /**
+         * ...unless it was minted under a configuration the operator has since
+         * replaced.
+         *
+         * `POST /v3/session/` upserts on `workflow_id + vendor_data`, and a
+         * session lives for seven days, so a customer who pressed Start before
+         * a workflow change was pinned to the old one until it expired — a
+         * reconfiguration simply never reached them. That is what put a
+         * cross-device QR screen in front of customers after the workflow had
+         * already been corrected to allow desktop capture.
+         *
+         * Didit does not help detect it: editing a published workflow mutates
+         * the version in place, so the session and the live workflow both
+         * still report `workflow_version: 1`. The marker is therefore ours —
+         * `config.workflow_revised_at`, set by whoever changes the workflow.
+         * Any session created before it is stale by definition.
+         *
+         * Releasing is a technical supersede: `status` and `attempt_consumed`
+         * are untouched, so this costs the customer nothing and is not a
+         * verification failure.
+         */
+        if (existing) {
+          if (isStaleHostedSession(existing.created_at, workflowRevisedAt(resolved))) {
+            await releaseHostedCheck(admin, String(existing.id), 'workflow_revised');
+            await appendDiditCaseEvent(admin, c.id,
+              `Identity verification session superseded for ${partyLabel}: the verification `
+              + `workflow was reconfigured after it was created`,
+              {
+                verification_check_id: existing.id,
+                provider: 'didit',
+                provider_reference: existing.provider_reference,
+                reason: 'workflow_revised',
+                category: 'technical',
+                attempt_consumed: false,
+                scope: 'identity_verification_only',
+              });
+            existing = null;
+          }
+        }
+
         if (existing) {
           try {
             const decision = await provider.fetchDecision(String(existing.provider_reference));
@@ -1118,8 +1165,17 @@ Deno.serve(async (req) => {
 
         try {
           const session = await provider.createSession({
-            // Opaque and stable. Never a name, email, document number or DOB.
-            vendorData: buildVendorData(c.id, partyId),
+            /*
+             * Opaque, and scoped to THIS attempt. Never a name, email,
+             * document number or DOB.
+             *
+             * The attempt is what makes this a create rather than a lookup:
+             * `POST /v3/session/` upserts on `workflow_id + vendor_data`, so
+             * without it a second request returns the first session — which is
+             * how a customer stayed pinned to a session minted before the
+             * workflow was reconfigured.
+             */
+            vendorData: buildVendorData(c.id, partyId, captureSequence),
             // Internal identifiers only — echoed back on every webhook.
             metadata: {
               verification_check_id: created.id,
@@ -1141,6 +1197,13 @@ Deno.serve(async (req) => {
                 session_id: session.sessionId,
                 workflow_id: session.workflowId,
                 workflow_version: session.workflowVersion,
+                // Which NPC attempt this session belongs to, and the workflow
+                // revision it was minted under. Together they are what lets a
+                // later request tell a current session from a superseded one
+                // — Didit's own `workflow_version` does not move when a
+                // published workflow is edited.
+                attempt: captureSequence,
+                workflow_revised_at: resolved?.config?.['workflow_revised_at'] ?? null,
                 status: session.status,
                 expires_at: session.expiresAt,
               },

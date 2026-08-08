@@ -776,6 +776,27 @@ export function diditWorkflowId(resolved?: ResolvedProvider | null): string | nu
   return Deno.env.get("DIDIT_WORKFLOW_ID") || null;
 }
 
+/**
+ * When the Didit workflow was last reconfigured, as epoch milliseconds.
+ *
+ * A hosted session is minted against the workflow as it stood at creation and
+ * then lives for seven days, so a customer who started before a change is
+ * pinned to the configuration it replaced. Didit cannot tell us this itself:
+ * editing a published workflow mutates the version in place, leaving the
+ * session and the live workflow both reporting `workflow_version: 1`.
+ *
+ * So the marker is NPC's, set on the provider config by whoever changes the
+ * workflow (`config.workflow_revised_at`, an ISO-8601 instant). Absent or
+ * unparseable means "never revised" — the guard then does nothing, which is
+ * the behaviour that existed before it and cannot strand anybody.
+ */
+export function workflowRevisedAt(resolved?: ResolvedProvider | null): number | null {
+  const raw = resolved?.config?.["workflow_revised_at"];
+  if (typeof raw !== "string" || !raw) return null;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? at : null;
+}
+
 function makeDiditIdvProvider(opts: FactoryOptions): HostedIdvProvider {
   const apiKey = Deno.env.get("DIDIT_API_KEY") || "";
   const workflowId = diditWorkflowId(opts.resolved) ?? "";

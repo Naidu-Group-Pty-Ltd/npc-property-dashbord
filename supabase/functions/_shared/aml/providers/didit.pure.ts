@@ -113,26 +113,61 @@ export function isInFlightDiditStatus(status: string): boolean {
  * `vendor_data`, so it is durable, cross-session, and visible in their console
  * — putting a name, an email, a document number or a date of birth here would
  * export customer PII into a field whose whole purpose is to be shared and
- * retained. `npc:<case-id>:<party-id|primary>` correlates exactly as well and
- * discloses nothing.
+ * retained. `npc:<case-id>:<party-id|primary>:<attempt>` correlates exactly as
+ * well and discloses nothing.
+ *
+ * ## Why the attempt is part of it
+ *
+ * `POST /v3/session/` is not a create — it is an upsert keyed on
+ * `workflow_id + vendor_data`. Measured against the live API: two creates with
+ * the same pair returned byte-identical `session_id` and token, keeping
+ * `session_number` at 3 and merely overwriting `metadata`; changing one
+ * character of `vendor_data` returned a genuinely new session.
+ *
+ * That is what stranded a customer on a session minted eight minutes before
+ * the workflow was reconfigured. With a case-and-party-only key there was no
+ * way to ask for a session under the new configuration — every request, for
+ * seven days, returned the same pre-change one.
+ *
+ * `attempt` is the server-side capture sequence already stored on the check
+ * row (`capture_sequence`). It is monotonic per case and party, carries no
+ * PII, and is not a *charged* attempt: attempts are counted from settled
+ * outcomes, so a technical re-mint costs the customer nothing.
  */
-export function buildVendorData(caseId: string, partyId: string | null): string {
-  return `npc:${caseId}:${partyId ?? 'primary'}`;
+export function buildVendorData(
+  caseId: string, partyId: string | null, attempt?: number | null,
+): string {
+  const base = `npc:${caseId}:${partyId ?? 'primary'}`;
+  return Number.isFinite(attempt) && (attempt as number) > 0
+    ? `${base}:${attempt}`
+    : base;
 }
 
 export interface ParsedVendorData {
   caseId: string;
   partyId: string | null;
+  /** Null for the legacy two-part form, which predates attempt scoping. */
+  attempt: number | null;
 }
 
-/** Returns null when the value is not ours or not the shape we mint. */
+/**
+ * Returns null when the value is not ours or not a shape we mint.
+ *
+ * Both shapes are accepted. Sessions created before attempt scoping carry the
+ * three-part form and can still be running — refusing to parse them would
+ * break correlation on a live session and strand its decision.
+ */
 export function parseVendorData(value: unknown): ParsedVendorData | null {
   if (typeof value !== 'string') return null;
   const parts = value.split(':');
-  if (parts.length !== 3) return null;
-  const [prefix, caseId, party] = parts;
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const [prefix, caseId, party, attempt] = parts;
   if (prefix !== 'npc' || !caseId || !party) return null;
-  return { caseId, partyId: party === 'primary' ? null : party };
+  if (parts.length === 4) {
+    if (!/^[1-9][0-9]*$/.test(attempt)) return null;
+    return { caseId, partyId: party === 'primary' ? null : party, attempt: Number(attempt) };
+  }
+  return { caseId, partyId: party === 'primary' ? null : party, attempt: null };
 }
 
 /**
@@ -144,10 +179,49 @@ export function parseVendorData(value: unknown): ParsedVendorData | null {
  */
 export function vendorDataMatches(
   value: unknown, caseId: string, partyId: string | null,
+  expectedAttempt?: number | null,
 ): boolean {
   const parsed = parseVendorData(value);
   if (!parsed) return false;
-  return parsed.caseId === caseId && (parsed.partyId ?? null) === (partyId ?? null);
+  if (parsed.caseId !== caseId) return false;
+  if ((parsed.partyId ?? null) !== (partyId ?? null)) return false;
+  // The attempt is compared only when both sides carry one. A legacy session
+  // has none, and the expected value is absent wherever the caller has not
+  // read the row's capture sequence — in both cases the session id, checked
+  // separately, is what pins the decision to this exact row.
+  if (parsed.attempt != null && expectedAttempt != null
+      && parsed.attempt !== expectedAttempt) return false;
+  return true;
+}
+
+/**
+ * Whether an in-flight session was minted under configuration that has since
+ * been replaced.
+ *
+ * A hosted session is created against the workflow as it stood at that instant
+ * and then lives for seven days, so a customer who pressed Start before a
+ * change stays on the old configuration until it expires — a reconfiguration
+ * that never reaches the people it was made for.
+ *
+ * The provider cannot tell us this: editing a published workflow mutates the
+ * version in place, so a session created before the edit and the live workflow
+ * after it both report `workflow_version: 1`. The marker is therefore NPC's,
+ * recorded on the provider config when the workflow is changed.
+ *
+ * Unknown answers are "not stale" on purpose. No marker, an unparseable
+ * marker or an unparseable creation time all mean the guard does nothing —
+ * which is the behaviour that existed before it, and cannot strand anybody
+ * mid-verification.
+ */
+export function isStaleHostedSession(
+  mintedAt: string | null | undefined,
+  workflowRevisedAt: number | null,
+): boolean {
+  if (workflowRevisedAt == null || !Number.isFinite(workflowRevisedAt)) return false;
+  if (typeof mintedAt !== 'string' || !mintedAt) return false;
+  const created = Date.parse(mintedAt);
+  if (!Number.isFinite(created)) return false;
+  return created < workflowRevisedAt;
 }
 
 /* ────────────────────────── feature validation ────────────────────────── */
@@ -289,6 +363,12 @@ export interface MapDecisionOptions {
   expectedPartyId: string | null;
   /** The session NPC created and stored against the canonical row. */
   expectedSessionId: string;
+  /**
+   * The row's capture sequence, when known. Checked against the attempt in
+   * `vendor_data` so a decision cannot be applied to a different attempt of
+   * the same party. Absent for legacy sessions minted before attempt scoping.
+   */
+  expectedAttempt?: number | null;
 }
 
 export class DiditCorrelationError extends Error {
@@ -318,7 +398,8 @@ export function assertDecisionCorrelates(
     throw new DiditCorrelationError('workflow_mismatch',
       'decision belongs to a workflow other than the configured NPC workflow');
   }
-  if (!vendorDataMatches(decision.vendor_data, opts.expectedCaseId, opts.expectedPartyId)) {
+  if (!vendorDataMatches(decision.vendor_data, opts.expectedCaseId, opts.expectedPartyId,
+    opts.expectedAttempt)) {
     throw new DiditCorrelationError('vendor_data_mismatch',
       'decision vendor_data does not correlate to this case and party');
   }

@@ -245,19 +245,62 @@ describe('correlation', () => {
   it('builds an opaque vendor_data carrying no personal data', () => {
     const v = buildVendorData(CASE_ID, PARTY_ID);
     expect(v).toBe(`npc:${CASE_ID}:${PARTY_ID}`);
-    expect(parseVendorData(v)).toEqual({ caseId: CASE_ID, partyId: PARTY_ID });
+    expect(parseVendorData(v)).toEqual({ caseId: CASE_ID, partyId: PARTY_ID, attempt: null });
     expect(parseVendorData(buildVendorData(CASE_ID, null))).toEqual({
-      caseId: CASE_ID, partyId: null,
+      caseId: CASE_ID, partyId: null, attempt: null,
     });
   });
 
-  it('never contains a name, email, document number or date of birth', () => {
-    const v = buildVendorData(CASE_ID, PARTY_ID);
-    for (const pii of ['@', 'Smith', '1980', 'passport', ' ']) {
-      expect(v).not.toContain(pii);
+  it('scopes vendor_data to the attempt when one is given', () => {
+    // `POST /v3/session/` upserts on workflow_id + vendor_data, so this is
+    // the difference between asking for a new session and being handed the
+    // previous one.
+    const v = buildVendorData(CASE_ID, PARTY_ID, 2);
+    expect(v).toBe(`npc:${CASE_ID}:${PARTY_ID}:2`);
+    expect(parseVendorData(v)).toEqual({ caseId: CASE_ID, partyId: PARTY_ID, attempt: 2 });
+    expect(buildVendorData(CASE_ID, null, 3)).toBe(`npc:${CASE_ID}:primary:3`);
+    // A different attempt is a different key, which is the whole point.
+    expect(buildVendorData(CASE_ID, PARTY_ID, 1))
+      .not.toBe(buildVendorData(CASE_ID, PARTY_ID, 2));
+  });
+
+  it('still parses the legacy unscoped form, which live sessions carry', () => {
+    // Sessions minted before attempt scoping are valid for seven days and
+    // must keep correlating, or their decisions are stranded.
+    expect(parseVendorData(`npc:${CASE_ID}:primary`)).toEqual({
+      caseId: CASE_ID, partyId: null, attempt: null,
+    });
+    expect(vendorDataMatches(`npc:${CASE_ID}:primary`, CASE_ID, null)).toBe(true);
+    // And an expected attempt does not break it — there is nothing to compare.
+    expect(vendorDataMatches(`npc:${CASE_ID}:primary`, CASE_ID, null, 1)).toBe(true);
+  });
+
+  it('refuses an attempt that is not a positive integer', () => {
+    for (const bad of [`npc:${CASE_ID}:primary:0`, `npc:${CASE_ID}:primary:-1`,
+      `npc:${CASE_ID}:primary:x`, `npc:${CASE_ID}:primary:1.5`, `npc:${CASE_ID}:primary:`]) {
+      expect(parseVendorData(bad), bad).toBeNull();
     }
-    // Only the two identifiers and the scheme prefix.
-    expect(v.split(':')).toHaveLength(3);
+    // And a fifth segment is not a shape we mint.
+    expect(parseVendorData(`npc:${CASE_ID}:primary:1:extra`)).toBeNull();
+  });
+
+  it('will not apply one attempt\'s decision to another attempt', () => {
+    expect(vendorDataMatches(buildVendorData(CASE_ID, null, 2), CASE_ID, null, 2)).toBe(true);
+    expect(vendorDataMatches(buildVendorData(CASE_ID, null, 2), CASE_ID, null, 1)).toBe(false);
+  });
+
+  it('never contains a name, email, document number or date of birth', () => {
+    for (const v of [buildVendorData(CASE_ID, PARTY_ID), buildVendorData(CASE_ID, PARTY_ID, 4)]) {
+      for (const pii of ['@', 'Smith', '1980', 'passport', ' ']) {
+        expect(v).not.toContain(pii);
+      }
+    }
+    // The scheme prefix, the two identifiers, and — when scoped — a counter
+    // that is a small integer and nothing else.
+    expect(buildVendorData(CASE_ID, PARTY_ID).split(':')).toHaveLength(3);
+    const scoped = buildVendorData(CASE_ID, PARTY_ID, 4).split(':');
+    expect(scoped).toHaveLength(4);
+    expect(scoped[3]).toMatch(/^[0-9]+$/);
   });
 
   it('rejects vendor_data for another case or party', () => {
@@ -484,6 +527,9 @@ describe('against a real Didit decision payload', () => {
     const parsed = parseVendorData(REAL_NOT_STARTED_DECISION.vendor_data);
     expect(parsed).toEqual({
       caseId: '00000000-0000-4000-8000-000000000001', partyId: null,
+      // Captured before attempt scoping — exactly the shape that must keep
+      // parsing so a live session's decision is not stranded.
+      attempt: null,
     });
   });
 
