@@ -11,7 +11,7 @@
  * The legal wording is never editable here. Every input below is a field the
  * supplied templates themselves left open.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/select';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
-  Palette, Search, Send, Eye, UserPlus, Building2,
+  Palette, Save, Search, Send, Eye, UserPlus, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -56,6 +56,7 @@ import {
   downloadAgreementPdf,
 } from '@/hooks/useAgreementCentre';
 import { loadDocxLogo } from '@/lib/agreements/docx';
+import { shouldLoadDraft } from '@/lib/agreements/wizardDraft.pure';
 import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import DigitalAgreementView from '@/components/agreement-centre/DigitalAgreementView';
@@ -180,15 +181,28 @@ export default function AgreementWizard() {
     document.title = 'Configure Agreement | Command Centre';
   }, []);
 
-  // Load an existing draft into the form (edit mode / after create).
+  /**
+   * Load the stored draft into the form.
+   *
+   * Guarded against overwriting work in progress. Every save invalidates the
+   * detail query, so a refetch lands a moment after the step advances — and
+   * without the `dirty` check below it reset the form from the server while
+   * the user was already typing on the next step, silently discarding those
+   * keystrokes. The stamp makes the load idempotent; the `dirty` check makes
+   * the user's unsaved input win until it has somewhere safe to go.
+   */
+  const loadedStamp = useRef<string | null>(null);
   useEffect(() => {
     if (!agreement) return;
+    const stamp = `${agreement.id}:${agreement.updated_at}`;
+    if (!shouldLoadDraft(stamp, { loaded: loadedStamp.current, dirty })) return;
+    loadedStamp.current = stamp;
     setDirection(agreement.direction);
     setPartnerId(agreement.finance_agent_contact_id);
     const key = templateKeyForDirection(agreement.direction);
     setValues(projectFieldValues(key, agreement as never, {}, { raw: true }));
     setDirty(false);
-  }, [agreement?.id, agreement?.updated_at]);
+  }, [agreement, dirty]);
 
   const setValue = (key: string, value: unknown) => {
     setValues((previous) => ({ ...previous, [key]: value }));
@@ -244,6 +258,45 @@ export default function AgreementWizard() {
     }
     return agreement;
   };
+
+  /** Whether there is anything a save could actually write. */
+  const canSave = Boolean(direction) && (Boolean(agreementId) || Boolean(String(values.fp_legal_name ?? '').trim()));
+  const saving = create.isPending || update.isPending;
+
+  /**
+   * Explicit save. The wizard also saves on every step change, but a form
+   * that produces a legal document should never require the user to infer
+   * that — and somebody who fills in half the commercial schedule and then
+   * gets pulled into a meeting needs a button, not a convention.
+   */
+  const saveDraft = async (options: { silent?: boolean } = {}) => {
+    if (!canSave) return null;
+    try {
+      const saved = await persist();
+      if (!options.silent) toast.success('Draft saved');
+      return saved;
+    } catch {
+      return null; // the mutation's own toast already said why
+    }
+  };
+
+  /** Leaving the wizard must not cost the user their unsaved work. */
+  const leaveWizard = async () => {
+    if (dirty && canSave) await saveDraft({ silent: true });
+    navigate(agreementId ? `/partner-agreements/${agreementId}` : '/partner-agreements');
+  };
+
+  // The tab-close case, which no in-app handler can catch.
+  const warnOnUnload = useCallback((event: BeforeUnloadEvent) => {
+    if (!dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
+  }, [dirty]);
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', warnOnUnload);
+    return () => window.removeEventListener('beforeunload', warnOnUnload);
+  }, [warnOnUnload]);
 
   const stepReady = (): boolean => {
     switch (STEPS[step].key) {
@@ -692,8 +745,7 @@ export default function AgreementWizard() {
     <div className="flex min-h-0 flex-1 flex-col gap-4 p-4 sm:p-6 xl:flex-row">
       {/* Left — steps */}
       <aside className="shrink-0 xl:w-56">
-        <Button variant="ghost" size="sm" className="mb-3 -ml-2"
-          onClick={() => navigate(agreementId ? `/partner-agreements/${agreementId}` : '/partner-agreements')}>
+        <Button variant="ghost" size="sm" className="mb-3 -ml-2" onClick={leaveWizard}>
           <ArrowLeft className="mr-1.5 h-4 w-4" /> Agreements
         </Button>
         <ol className="flex gap-1 overflow-x-auto xl:flex-col xl:gap-0.5">
@@ -739,10 +791,24 @@ export default function AgreementWizard() {
             <p className="mb-4 text-xs text-muted-foreground">Choose which agreement to prepare.</p>
           )}
           {stepBody()}
-          <div className="mt-6 flex items-center justify-between border-t border-border pt-4">
-            <Button variant="outline" onClick={goBack} disabled={step === 0}>
-              <ArrowLeft className="mr-1.5 h-4 w-4" /> Back
-            </Button>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={goBack} disabled={step === 0}>
+                <ArrowLeft className="mr-1.5 h-4 w-4" /> Back
+              </Button>
+              {canSave ? (
+                <Button variant="outline" onClick={() => saveDraft()} disabled={saving || !dirty}>
+                  {saving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+                  Save draft
+                </Button>
+              ) : null}
+              <span
+                className={cn('text-xs', dirty ? 'text-warning' : 'text-muted-foreground')}
+                aria-live="polite"
+              >
+                {saving ? 'Saving…' : dirty ? 'Unsaved changes' : agreementId ? 'All changes saved' : ''}
+              </span>
+            </div>
             {step < STEPS.length - 1 ? (
               <Button onClick={goNext} disabled={!stepReady() || create.isPending || update.isPending}>
                 {(create.isPending || update.isPending) ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
