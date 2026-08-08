@@ -56,6 +56,7 @@ function readStyle(el: Element): RenderedTextComputedStyleV1 {
     opacity: Number.parseFloat(cs.opacity) || 0,
     colour: cs.color,
     backgroundColour: cs.backgroundColor,
+
     // Reading a computed style into evidence, not setting one. The token rule
     // is about authored styles; recording what the browser actually resolved is
     // the entire point of this module.
@@ -63,7 +64,6 @@ function readStyle(el: Element): RenderedTextComputedStyleV1 {
     fontFamily: cs.fontFamily,
     fontSizePx: num(cs.fontSize),
     fontWeight: cs.fontWeight,
-    fontStyle: cs.fontStyle,
     lineHeightPx: num(cs.lineHeight),
     letterSpacingPx: num(cs.letterSpacing),
     whiteSpace: cs.whiteSpace,
@@ -71,8 +71,7 @@ function readStyle(el: Element): RenderedTextComputedStyleV1 {
     overflowY: cs.overflowY,
     transform: cs.transform,
     zIndex: Number.isFinite(Number(cs.zIndex)) ? Number(cs.zIndex) : null,
-  };
-
+  } as RenderedTextComputedStyleV1;
 }
 
 /**

@@ -375,50 +375,50 @@ export default function RemindersHub() {
 
       {/* Main Tabs: Client vs Team */}
       <Tabs value={reminderTab} onValueChange={(v) => setReminderTab(v as ReminderTab)} className="min-w-0 space-y-4">
-        <TabsList aria-label="Reminder category" className="relative grid h-auto w-full grid-cols-2 gap-1.5 overflow-hidden rounded-2xl border border-brand-300/15 bg-[linear-gradient(135deg,rgba(0,0,0,0.72),rgba(15,23,42,0.78))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur sm:inline-grid sm:w-auto sm:min-w-[430px]">
-          <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/50 to-transparent" />
-          <TabsTrigger
-            value="client"
-            className="group relative h-11 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-brand-300/20 hover:bg-brand-400/10 hover:text-brand-100 motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_1px_0_rgba(255,255,255,0.45)] sm:h-12 sm:px-5 sm:text-sm"
-          >
-            <span className="flex min-w-0 items-center justify-center gap-2">
-              <Bell className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=active]:scale-105" />
-              <span className="truncate">Client Reminders</span>
-            </span>
-          </TabsTrigger>
-          <TabsTrigger
-            value="team"
-            className="group relative h-11 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-brand-300/20 hover:bg-brand-400/10 hover:text-brand-100 motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_1px_0_rgba(255,255,255,0.45)] sm:h-12 sm:px-5 sm:text-sm"
-          >
-            <span className="flex min-w-0 items-center justify-center gap-2">
-              <Users className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=active]:scale-105" />
-              <span className="truncate">Team Reminders</span>
-            </span>
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList aria-label="Reminder category" className="relative grid h-auto w-full grid-cols-2 gap-1.5 overflow-hidden rounded-2xl border border-brand-300/15 bg-[linear-gradient(135deg,rgba(0,0,0,0.72),rgba(15,23,42,0.78))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_18px_45px_rgba(0,0,0,0.32)] backdrop-blur sm:inline-grid sm:w-auto sm:min-w-[430px]">
+            <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/50 to-transparent" />
+            <TabsTrigger
+              value="client"
+              className="group relative h-11 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-brand-300/20 hover:bg-brand-400/10 hover:text-brand-100 motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_1px_0_rgba(255,255,255,0.45)] sm:h-12 sm:px-5 sm:text-sm"
+            >
+              <span className="flex min-w-0 items-center justify-center gap-2">
+                <Bell className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=active]:scale-105" />
+                <span className="truncate">Client Reminders</span>
+              </span>
+            </TabsTrigger>
+            <TabsTrigger
+              value="team"
+              className="group relative h-11 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-brand-300/20 hover:bg-brand-400/10 hover:text-brand-100 motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_1px_0_rgba(255,255,255,0.45)] sm:h-12 sm:px-5 sm:text-sm"
+            >
+              <span className="flex min-w-0 items-center justify-center gap-2">
+                <Users className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=active]:scale-105" />
+                <span className="truncate">Team Reminders</span>
+              </span>
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Create action lives beside the tabs so the gold is an accent, not a slab. */}
+          {canEditReminders && reminderTab === 'client' && !showCreateForm && (
+            <Button
+              aria-label="Create a new reminder"
+              onClick={() => setShowCreateForm(true)}
+              variant="outline"
+              className="group h-11 w-full shrink-0 gap-2 rounded-xl border-brand-300/40 bg-brand-400/10 px-4 text-sm font-semibold text-brand-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-200 hover:border-brand-200/60 hover:bg-brand-400/18 hover:text-brand-50 hover:shadow-[0_0_24px_rgba(245,158,11,0.18)] focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black sm:h-12 sm:w-auto"
+            >
+              <Plus className="h-4 w-4 transition-transform duration-200 group-hover:rotate-90" />
+              <span>New Reminder</span>
+            </Button>
+          )}
+        </div>
 
         <TabsContent value="client" className="min-w-0 space-y-4">
-          {/* Create Reminder Button / Form */}
-          {canEditReminders && (
-            showCreateForm ? (
-              <div className="mb-4">
-                <CreateReminderForm onClose={() => setShowCreateForm(false)} />
-              </div>
-            ) : (
-              <Button
-                aria-label="Create a new reminder"
-                onClick={() => setShowCreateForm(true)}
-                variant="outline"
-                className="group relative mb-1 h-12 w-full overflow-hidden rounded-2xl border-brand-200/45 bg-[linear-gradient(135deg,#fde68a,#f59e0b_52%,#b45309)] text-sm font-bold text-black shadow-[0_18px_48px_rgba(245,158,11,0.22),0_14px_34px_rgba(0,0,0,0.30),inset_0_1px_0_rgba(255,255,255,0.45)] transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-100/80 hover:text-black hover:shadow-[0_0_44px_rgba(245,158,11,0.34),0_20px_46px_rgba(0,0,0,0.36)] focus-visible:ring-2 focus-visible:ring-brand-200/90 focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:cursor-not-allowed disabled:opacity-60 sm:h-14"
-              >
-                <span className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-brand-100/70 to-transparent opacity-80" />
-                <span className="flex h-7 w-7 items-center justify-center rounded-full border border-black/10 bg-background dark:bg-black/10 shadow-inner transition-all duration-200 group-hover:scale-105 group-hover:bg-white/20">
-                  <Plus className="h-4 w-4 text-black" />
-                </span>
-                <span>Create Reminder</span>
-              </Button>
-            )
+          {canEditReminders && showCreateForm && (
+            <div className="mb-4">
+              <CreateReminderForm onClose={() => setShowCreateForm(false)} />
+            </div>
           )}
+
 
           {/* Time Tabs + Filters Row */}
           <div className={cn(premiumPanel, "flex min-w-0 flex-col gap-3 rounded-2xl p-3 sm:flex-row sm:items-center sm:p-4")}>
