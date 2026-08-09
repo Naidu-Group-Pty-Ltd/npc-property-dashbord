@@ -12,13 +12,16 @@
  * Semantic tokens only — this surface renders inside both the Command Centre
  * (light) and the Finance Portal (dark palettes).
  */
-import { Fragment, type ReactNode } from 'react';
+import { createContext, Fragment, useContext, useMemo, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import InlineFieldEditor from './InlineFieldEditor';
 import {
   agreementTemplate,
   placeholderForToken,
+  isAgreementFieldVisible,
   EXECUTION_PANEL_LINES,
   type AgreementBlock,
+  type AgreementFieldDef,
   type AgreementFieldValues,
   type AgreementSectionDef,
   type AgreementTemplateKey,
@@ -35,6 +38,20 @@ export interface DigitalSignature {
   signature_method?: string | null;
 }
 
+/**
+ * Direct editing, when the caller owns the field values.
+ *
+ * Only the issuer's own draft surface passes this — the partner review room and
+ * every issued version render read-only, because an issued agreement's wording
+ * and figures are frozen. `rawValues` is the unformatted store the wizard's step
+ * forms write; the document keeps printing the projected values.
+ */
+export interface DigitalEditContext {
+  defs: readonly AgreementFieldDef[];
+  rawValues: AgreementFieldValues;
+  onChange: (key: string, value: unknown) => void;
+}
+
 interface Props {
   templateKey: AgreementTemplateKey;
   values: AgreementFieldValues;
@@ -45,10 +62,60 @@ interface Props {
   logoUrl?: string | null;
   /** Version label shown on the cover ("1.0", "Draft"). */
   versionLabel?: string;
+  /** When set, every configurable value on the page is editable in place. */
+  edit?: DigitalEditContext | null;
   className?: string;
 }
 
 const TOKEN_SPLIT = /(\{\{[a-z0-9_]+\}\})/g;
+
+interface EditLookup {
+  defs: Map<string, AgreementFieldDef>;
+  rawValues: AgreementFieldValues;
+  onChange: (key: string, value: unknown) => void;
+}
+
+const EditContext = createContext<EditLookup | null>(null);
+
+/** The editable definition for a token, or null when the surface is read-only. */
+function useEditableDef(token: string | null | undefined) {
+  const edit = useContext(EditContext);
+  if (!edit || !token) return null;
+  const def = edit.defs.get(token);
+  if (!def) return null;
+  return { def, edit };
+}
+
+/**
+ * One value on the page: read-only text, or the same text as an in-place editor.
+ * Every printed value routes through here so editability is a single decision.
+ */
+function EditableValue({
+  token,
+  filled,
+  className,
+  children,
+}: {
+  token?: string | null;
+  filled: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const editable = useEditableDef(token);
+  if (!editable) {
+    return <span className={className}>{children}</span>;
+  }
+  return (
+    <InlineFieldEditor
+      def={editable.def}
+      rawValue={editable.edit.rawValues[editable.def.key]}
+      filled={filled}
+      onChange={editable.edit.onChange}
+    >
+      {children}
+    </InlineFieldEditor>
+  );
+}
 
 function BoundText({
   text,
@@ -68,10 +135,15 @@ function BoundText({
         const token = match[1];
         const value = values[token];
         const filled = value !== null && value !== undefined && String(value).trim() !== '';
-        return filled ? (
-          <span key={index} className="font-medium text-foreground">{String(value)}</span>
-        ) : (
-          <span key={index} className="text-muted-foreground/70">{placeholderForToken(templateKey, token)}</span>
+        return (
+          <EditableValue
+            key={index}
+            token={token}
+            filled={filled}
+            className={filled ? 'font-medium text-foreground' : 'text-muted-foreground/70'}
+          >
+            {filled ? String(value) : placeholderForToken(templateKey, token)}
+          </EditableValue>
         );
       })}
     </>
@@ -111,6 +183,8 @@ function ChoiceValue({
   values: AgreementFieldValues;
 }) {
   const choice = cell.choice!;
+  const edit = useContext(EditContext);
+  const choiceDef = edit?.defs.get(choice.fieldKey) ?? null;
   const raw = values[choice.fieldKey];
   const selected = raw === null || raw === undefined ? '' : String(raw);
   const optionValues = choice.options.map((option) => option.value);
@@ -126,14 +200,40 @@ function ChoiceValue({
           const otherText = isOther
             ? String((choice.otherFieldKey ? values[choice.otherFieldKey] : customValue) ?? '').trim()
             : '';
-          return (
-            <span
-              key={option.value}
-              className={cn('inline-flex items-baseline gap-1.5 text-sm', checked ? 'text-foreground' : 'text-muted-foreground')}
-            >
+          const body = (
+            <>
               <span aria-hidden className="text-base leading-none">{checked ? '☑' : '☐'}</span>
               <span className={checked ? 'font-medium' : undefined}>{option.label}</span>
-              {otherText ? <span className="font-medium text-foreground">{otherText}</span> : null}
+            </>
+          );
+          const tone = cn('inline-flex items-baseline gap-1.5 text-sm', checked ? 'text-foreground' : 'text-muted-foreground');
+          return (
+            <span key={option.value} className="inline-flex items-baseline gap-1.5">
+              {/* Editable surfaces tick the box in place; read-only ones print it. */}
+              {choiceDef && edit ? (
+                <button
+                  type="button"
+                  title={`Select — ${option.label}`}
+                  onClick={() => edit.onChange(choiceDef.key, option.value)}
+                  className={cn(tone, 'rounded px-1 transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')}
+                >
+                  {body}
+                </button>
+              ) : (
+                <span className={tone}>{body}</span>
+              )}
+              {/* The free text behind "Other" is its own field, so it edits on its own. */}
+              {isOther && choice.otherFieldKey ? (
+                <EditableValue
+                  token={choice.otherFieldKey}
+                  filled={Boolean(otherText)}
+                  className={otherText ? 'font-medium text-foreground' : 'text-muted-foreground/70'}
+                >
+                  {otherText || (checked ? placeholderForToken(templateKey, choice.otherFieldKey) : '')}
+                </EditableValue>
+              ) : otherText ? (
+                <span className="font-medium text-foreground">{otherText}</span>
+              ) : null}
             </span>
           );
         })}
@@ -193,25 +293,35 @@ function SignaturePanel({
   const titleValue = signature?.signatory_title
     ?? (role === 'partner' ? values.partner_signatory_title : role === 'principal' ? values.principal_signatory_title : null);
 
-  const line = (labelText: string, value: unknown, rule: string) => {
+  const line = (labelText: string, value: unknown, rule: string, token?: string | null) => {
     const text = String(value ?? '').trim();
+    // A countersigned line is history — never editable, whatever the surface.
+    const editToken = signature ? null : token;
     return (
       <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
         <span className="text-xs text-muted-foreground">{labelText}</span>
-        {text
-          ? <span className="font-medium text-foreground">{text}</span>
-          : <span className="tracking-wider text-muted-foreground/50">{rule}</span>}
+        <EditableValue
+          token={editToken}
+          filled={Boolean(text)}
+          className={text ? 'font-medium text-foreground' : 'tracking-wider text-muted-foreground/50'}
+        >
+          {text || rule}
+        </EditableValue>
       </div>
     );
   };
+
+  const entityToken = role === 'partner' ? 'fp_legal_name' : role === 'loan_writer' ? 'lw_entity' : 'ba_legal_name';
+  const nameToken = role === 'partner' ? 'partner_signatory_name' : role === 'principal' ? 'principal_signatory_name' : null;
+  const titleToken = role === 'partner' ? 'partner_signatory_title' : role === 'principal' ? 'principal_signatory_title' : null;
 
   return (
     <div className="rounded-lg border border-border bg-card/50 p-4">
       <PanelLabel>{title}</PanelLabel>
       <div className="mt-3 space-y-2.5">
-        {line(EXECUTION_PANEL_LINES.legalEntity, entityValue, RULE)}
-        {line(EXECUTION_PANEL_LINES.signatoryName, nameValue, RULE)}
-        {line(EXECUTION_PANEL_LINES.signatoryTitle, titleValue, RULE)}
+        {line(EXECUTION_PANEL_LINES.legalEntity, entityValue, RULE, entityToken)}
+        {line(EXECUTION_PANEL_LINES.signatoryName, nameValue, RULE, nameToken)}
+        {line(EXECUTION_PANEL_LINES.signatoryTitle, titleValue, RULE, titleToken)}
         <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
           <span className="text-xs text-muted-foreground">{EXECUTION_PANEL_LINES.signature}</span>
           {signature ? (
@@ -228,6 +338,7 @@ function SignaturePanel({
           DATE_RULE,
         )}
         {line(EXECUTION_PANEL_LINES.witness, null, WITNESS_RULE)}
+
         {signature ? (
           <div className="pt-1 text-[11px] font-medium uppercase tracking-wider text-success">
             Executed electronically
@@ -479,6 +590,7 @@ export default function DigitalAgreementView({
   includeTemplatePack = false,
   logoUrl,
   versionLabel,
+  edit = null,
   className,
 }: Props) {
   const content = agreementTemplate(templateKey);
@@ -486,7 +598,24 @@ export default function DigitalAgreementView({
     (section) => section.audience === 'always' || includeTemplatePack,
   );
 
-  return (
+  /**
+   * Which tokens are editable here. Derived values are computed and have no
+   * store to write to; a conditional field that is not currently in play must
+   * not be reachable from the page either, or the document would collect text
+   * that `rowPatchFromValues` then discards.
+   */
+  const lookup = useMemo<EditLookup | null>(() => {
+    if (!edit) return null;
+    const defs = new Map<string, AgreementFieldDef>();
+    for (const def of edit.defs) {
+      if (def.db === 'derived') continue;
+      if (!isAgreementFieldVisible(def, edit.rawValues)) continue;
+      defs.set(def.key, def);
+    }
+    return { defs, rawValues: edit.rawValues, onChange: edit.onChange };
+  }, [edit]);
+
+  const body = (
     <div className={cn('space-y-8', className)}>
       {sections.map((section) => (
         <section key={section.id} id={`agc-${section.id}`} className="scroll-mt-24 space-y-4">
@@ -506,4 +635,6 @@ export default function DigitalAgreementView({
       ))}
     </div>
   );
+
+  return lookup ? <EditContext.Provider value={lookup}>{body}</EditContext.Provider> : body;
 }
