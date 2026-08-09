@@ -28,6 +28,12 @@ import {
   CONTENT_OVERRIDES_VALUE_KEY,
   coerceContentOverrides,
 } from './contentOverrides.pure.ts';
+import {
+  ADDITIONAL_CLAUSES_EXTRA_KEY,
+  ADDITIONAL_CLAUSES_VALUE_KEY,
+  coerceAdditionalClauses,
+} from './additionalClauses.pure.ts';
+
 
 export type AgreementFieldType =
   | 'text'
