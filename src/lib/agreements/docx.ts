@@ -57,7 +57,7 @@ import {
 } from 'docx';
 
 import {
-  agreementTemplate,
+  agreementContentForValues,
   substitutePlain,
   EXECUTION_PANEL_LINES,
   type AgreementBlock,
