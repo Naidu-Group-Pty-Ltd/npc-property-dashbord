@@ -60,6 +60,8 @@ import {
   diffFieldValues,
   templateContentHash,
   agreementTemplate,
+  contentOverridesFromValues,
+  listAgreementAmendments,
   AGREEMENT_CENTRE_DOCUMENT_REVISION,
 } from '../_shared/agreements/index.pure.ts';
 import {
@@ -789,7 +791,18 @@ Deno.serve(async (req) => {
 
       await logEvent(supabase, id, issueSequence === 1 ? 'issued' : 'reissued', actorId, actorLabel,
         `Version ${label} issued to ${existing.partner_legal_name}`,
-        { version_id: version.id, version_label: label, changed_fields: changedFields });
+        {
+          version_id: version.id,
+          version_label: label,
+          changed_fields: changedFields,
+          // A negotiated wording change is a compliance fact, not a styling
+          // choice — the audit trail records how many clauses this version
+          // amends and which ones, alongside the field diff.
+          amendments: listAgreementAmendments(
+            agreementTemplate(templateKey),
+            contentOverridesFromValues(values),
+          ).map((amendment) => ({ path: amendment.path, label: amendment.label })),
+        });
 
       const template = agreementTemplate(templateKey);
       await notifyPartner(supabase, existing.finance_agent_contact_id, {

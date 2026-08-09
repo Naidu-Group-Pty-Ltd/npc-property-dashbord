@@ -23,6 +23,11 @@
  */
 
 import type { AgreementFieldValues, AgreementTemplateKey } from './types.pure.ts';
+import {
+  CONTENT_OVERRIDES_EXTRA_KEY,
+  CONTENT_OVERRIDES_VALUE_KEY,
+  coerceContentOverrides,
+} from './contentOverrides.pure.ts';
 
 export type AgreementFieldType =
   | 'text'
@@ -380,6 +385,14 @@ export function projectFieldValues(
   values.company_email = issuer.email ?? null;
   values.company_website = issuer.website ?? null;
 
+  /**
+   * The agreement's negotiated wording amendments travel WITH its values, not
+   * beside them: a version row freezes `field_values`, so freezing the values
+   * freezes the amended clauses too. Re-downloading version 1.0 after a later
+   * negotiation cannot repaint the document somebody signed.
+   */
+  values[CONTENT_OVERRIDES_VALUE_KEY] = coerceContentOverrides(extras[CONTENT_OVERRIDES_EXTRA_KEY]);
+
   return values;
 }
 
@@ -449,6 +462,14 @@ export function rowPatchFromValues(
   if (key === 'finance_referral_commission' && 'qualifying_event_override' in values) {
     const override = String(values.qualifying_event_override ?? '').trim();
     columns.qualifying_event = override || 'Settled loan and first drawdown';
+  }
+
+  // Clause amendments are stored (and re-read) as one map. Written only when
+  // the caller actually carried it, so a partial values object — the wizard's
+  // per-step forms — cannot wipe an existing amendment set.
+  if (CONTENT_OVERRIDES_VALUE_KEY in values) {
+    const overrides = coerceContentOverrides(values[CONTENT_OVERRIDES_VALUE_KEY]);
+    extras[CONTENT_OVERRIDES_EXTRA_KEY] = Object.keys(overrides).length ? overrides : null;
   }
 
   return { columns, extras };

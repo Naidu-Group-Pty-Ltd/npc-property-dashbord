@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/select';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
-  Palette, Save, Search, Send, Eye, UserPlus, Building2, Pencil,
+  Palette, Save, Search, Send, Eye, UserPlus, Building2, Pencil, PenLine, RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -41,6 +41,9 @@ import {
   validateForIssue,
   AGREEMENT_TEMPLATE_SUMMARIES,
   directionForTemplateKey,
+  contentOverridesFromValues,
+  listAgreementAmendments,
+  CONTENT_OVERRIDES_VALUE_KEY,
   type AgreementFieldDef,
   type AgreementFieldValues,
   type AgreementTemplateKey,
@@ -272,6 +275,28 @@ export default function AgreementWizard() {
     setValues((previous) => ({ ...previous, [key]: value }));
     setDirty(true);
   };
+
+  /**
+   * A negotiated wording amendment. Stored beside the values (never in the
+   * template), so the same save that persists the figures persists the amended
+   * clause, and issuing freezes both onto the version row. `null` restores.
+   */
+  const setContentOverride = (path: string, text: string | null) => {
+    setValues((previous) => {
+      const next = { ...contentOverridesFromValues(previous) };
+      if (text === null) delete next[path]; else next[path] = text;
+      return { ...previous, [CONTENT_OVERRIDES_VALUE_KEY]: next };
+    });
+    setDirty(true);
+  };
+
+  /** Every departure from the supplied wording, for the review list below. */
+  const amendments = useMemo(
+    () => (templateKey
+      ? listAgreementAmendments(agreementTemplate(templateKey), contentOverridesFromValues(values))
+      : []),
+    [templateKey, values],
+  );
 
   /** The preview projection: current edits applied over the row. */
   const previewValues = useMemo(() => {
@@ -730,10 +755,52 @@ export default function AgreementWizard() {
               </Button>
               <span className="text-xs text-muted-foreground">
                 {inlineEditing
-                  ? 'Click any value on the page to change it — every edit flows into the final PDF.'
-                  : 'Read-only view. Turn on editing to change values directly on the page.'}
+                  ? 'Click any value to change it, or the pencil beside any clause, heading or panel to amend its wording. Every edit flows into the final PDF.'
+                  : 'Read-only view. Turn on editing to change values and amend clause wording directly on the page.'}
               </span>
             </div>
+            {amendments.length ? (
+              <div className="rounded-xl border border-warning/40 bg-warning/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <PenLine className="h-4 w-4 text-warning" />
+                    {amendments.length} clause{amendments.length === 1 ? '' : 's'} depart from the supplied wording
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      setValues((previous) => ({ ...previous, [CONTENT_OVERRIDES_VALUE_KEY]: {} }));
+                      setDirty(true);
+                      toast.success('The supplied wording has been restored throughout.');
+                    }}
+                  >
+                    <RotateCcw className="mr-1 h-3 w-3" /> Restore all
+                  </Button>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These amendments are recorded on the audit trail and frozen into the version you issue.
+                  Have legal review them before the agreement is sent.
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {amendments.map((amendment) => (
+                    <li key={amendment.path} className="text-xs">
+                      <button
+                        type="button"
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() => jumpToField(amendment.sectionId)}
+                      >
+                        {amendment.label}
+                      </button>
+                      <span className="ml-2 text-muted-foreground line-through">
+                        {amendment.original.slice(0, 90)}{amendment.original.length > 90 ? '…' : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {!validation.ok && templateKey ? (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
@@ -763,7 +830,14 @@ export default function AgreementWizard() {
                   templateKey={templateKey}
                   values={previewValues}
                   versionLabel="Draft"
-                  edit={inlineEditing ? { defs: fieldDefs, rawValues: values, onChange: setValue } : null}
+                  edit={inlineEditing
+                    ? {
+                      defs: fieldDefs,
+                      rawValues: values,
+                      onChange: setValue,
+                      onContentChange: setContentOverride,
+                    }
+                    : null}
                 />
               </div>
             ) : null}

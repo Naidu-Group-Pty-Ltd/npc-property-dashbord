@@ -137,7 +137,7 @@ export default function FinancePortalAgreementDetail() {
   }
 
   const issuerName = agreement.principal_trading_name || agreement.principal_legal_name || 'the issuing organisation';
-  const sections = agreementSectionNav(agreement.template_key);
+  const sections = agreementSectionNav(agreement.template_key, false, values);
   const changedFields = data?.current_version?.changed_fields ?? [];
 
   const actionBar = () => {
