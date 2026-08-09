@@ -74,6 +74,40 @@ const STEPS = [
   { key: 'outcome', title: 'Review & Issue' },
 ] as const;
 
+/**
+ * Presentation only. A field's label carries its clause reference in brackets
+ * ("Termination notice (clause 11.2)") and its unit in the key ("…_days"), and
+ * neither read as a unit at a glance — the user sees `<<NUMBER>>` and no
+ * indication that 30 means thirty days. Split the two apart here so the label
+ * names the term, a chip names the clause, and the input itself says its unit.
+ */
+function describeField(def: AgreementFieldDef): {
+  name: string;
+  clause: string | null;
+  unit: string | null;
+  hint: string | null;
+} {
+  const match = /^(.*?)\s*\((clause\s*[\d.]+)\)\s*$/i.exec(def.label);
+  const name = (match ? match[1] : def.label).trim();
+  const clause = match ? match[2].replace(/^clause\s*/i, 'Clause ') : null;
+
+  const key = def.key.toLowerCase();
+  const unit = def.type === 'number'
+    ? key.endsWith('_days') || /(^|_)days(_|$)/.test(key) ? 'days'
+      : key.endsWith('_hours') ? 'hours'
+      : key.endsWith('_months') ? 'months'
+      : key.endsWith('_years') ? 'years'
+      : key.includes('percent') || key.includes('_pct') ? '%'
+      : null
+    : null;
+
+  const hint = unit && unit !== '%'
+    ? `Enter a whole number of ${unit}${clause ? ` as referenced in ${clause.toLowerCase()}` : ''}.`
+    : null;
+
+  return { name, clause, unit, hint };
+}
+
 function FieldInput({
   def,
   value,
@@ -85,12 +119,22 @@ function FieldInput({
 }) {
   const raw = value === null || value === undefined ? '' : String(value);
   const id = `agc-field-${def.key}`;
+  const { name, clause, unit, hint } = describeField(def);
+  const numberPlaceholder = unit === '%' ? 'e.g. 2.5' : unit ? `e.g. 30 ${unit}` : def.placeholder;
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs">
-        {def.label}
-        {def.requiredForIssue ? <span className="ml-1 text-warning">*</span> : null}
-      </Label>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Label htmlFor={id} className="text-xs">
+          {name}
+          {unit ? <span className="ml-1 font-normal text-muted-foreground">(in {unit})</span> : null}
+          {def.requiredForIssue ? <span className="ml-1 text-warning">*</span> : null}
+        </Label>
+        {clause ? (
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            {clause}
+          </span>
+        ) : null}
+      </div>
       {def.type === 'choice' ? (
         <Select value={raw || undefined} onValueChange={(next) => onChange(next)}>
           <SelectTrigger id={id}>
@@ -106,14 +150,31 @@ function FieldInput({
         <Textarea id={id} value={raw} rows={2} placeholder={def.placeholder}
           onChange={(event) => onChange(event.target.value)} />
       ) : (
-        <Input
-          id={id}
-          type={def.type === 'date' ? 'date' : def.type === 'number' ? 'number' : 'text'}
-          value={raw}
-          placeholder={def.placeholder}
-          onChange={(event) => onChange(event.target.value)}
-        />
+        <div className="relative">
+          <Input
+            id={id}
+            type={def.type === 'date' ? 'date' : def.type === 'number' ? 'number' : 'text'}
+            inputMode={def.type === 'number' ? 'numeric' : undefined}
+            min={def.type === 'number' ? 0 : undefined}
+            value={raw}
+            placeholder={def.type === 'number' ? numberPlaceholder : def.placeholder}
+            aria-describedby={hint ? `${id}-hint` : undefined}
+            className={unit ? 'pr-14' : undefined}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          {unit ? (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground"
+            >
+              {unit}
+            </span>
+          ) : null}
+        </div>
       )}
+      {hint ? (
+        <p id={`${id}-hint`} className="text-[11px] leading-snug text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }
@@ -616,7 +677,11 @@ export default function AgreementWizard() {
           <div className="space-y-5">
             <FieldGroup defs={group('agreement')} values={values} onChange={setValue} />
             <div>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <p className="mb-2 mt-1 text-xs text-muted-foreground">
+                Each figure below fills the numbered clause shown on its chip. Every period is
+                expressed in whole days unless the field says otherwise.
+              </p>
               <FieldGroup defs={group('clauses')} values={values} onChange={setValue} />
             </div>
             <div>
