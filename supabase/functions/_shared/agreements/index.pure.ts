@@ -7,11 +7,16 @@
 import { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 import { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
 import { agreementContentHash } from './types.pure.ts';
+import {
+  applyAgreementContentOverrides,
+  contentOverridesFromValues,
+} from './contentOverrides.pure.ts';
 import type { AgreementTemplateContent, AgreementTemplateKey } from './types.pure.ts';
 
 export * from './types.pure.ts';
 export * from './fields.pure.ts';
 export * from './lifecycle.pure.ts';
+export * from './contentOverrides.pure.ts';
 export { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
 export { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 
@@ -25,6 +30,23 @@ export const AGREEMENT_CENTRE_DOCUMENT_REVISION = 1;
 
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
+}
+
+/**
+ * The wording of ONE agreement: the locked template with that agreement's
+ * negotiated clause amendments applied. Every renderer — the digital view, the
+ * PDF, the DOCX, the partner's review room — must go through here rather than
+ * `agreementTemplate`, or the issuer and the counterparty would be reading
+ * different documents.
+ */
+export function agreementContentForValues(
+  key: AgreementTemplateKey,
+  values: Record<string, unknown> | null | undefined,
+): AgreementTemplateContent {
+  return applyAgreementContentOverrides(
+    agreementTemplate(key),
+    contentOverridesFromValues(values),
+  );
 }
 
 const CONTENT_HASHES: Record<AgreementTemplateKey, string> = {

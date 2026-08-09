@@ -29,7 +29,7 @@ import {
 import type { AgreementExecutionContext, AgreementSignatureRecord } from './documentHtml.pure.ts';
 import { projectFieldValues } from './fields.pure.ts';
 import type { AgreementFieldValues } from './types.pure.ts';
-import { agreementTemplate, templateKeyForDirection } from './index.pure.ts';
+import { agreementContentForValues, templateKeyForDirection } from './index.pure.ts';
 
 export const AGREEMENTS_BUCKET = 'partner-agreements';
 export const SIGNED_URL_TTL_SECONDS = 300;
@@ -138,7 +138,6 @@ export async function buildAgreementHtml(
   input: AgreementRenderInput,
 ): Promise<AgreementRenderResult> {
   const templateKey = templateKeyForDirection(String(input.row.direction) as any);
-  const content = agreementTemplate(templateKey);
 
   let snapshot = input.snapshot ?? null;
   if (!snapshot) {
@@ -156,6 +155,11 @@ export async function buildAgreementHtml(
     email: snapshot.company.email,
     website: snapshot.company.website,
   });
+
+  // The wording this agreement actually carries: the locked template plus its
+  // own negotiated clause amendments, which travel inside `values` so a frozen
+  // version row renders the wording that version was issued with.
+  const content = agreementContentForValues(templateKey, values);
 
   const showPlatformAttribution = await loadAttributionSetting(supabase);
 
