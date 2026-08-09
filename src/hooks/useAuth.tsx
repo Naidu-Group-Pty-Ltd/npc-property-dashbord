@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { logActivity } from '@/hooks/useActivityLogger';
-import { resetAuthFailures } from '@/lib/secureInvoke';
+import { resetAuthFailures, AUTH_EXHAUSTED_EVENT } from '@/lib/secureInvoke';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
