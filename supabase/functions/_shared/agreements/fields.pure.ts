@@ -398,6 +398,9 @@ export function projectFieldValues(
    * negotiation cannot repaint the document somebody signed.
    */
   values[CONTENT_OVERRIDES_VALUE_KEY] = coerceContentOverrides(extras[CONTENT_OVERRIDES_EXTRA_KEY]);
+  // Special conditions travel the same way, for the same reason.
+  values[ADDITIONAL_CLAUSES_VALUE_KEY] = coerceAdditionalClauses(extras[ADDITIONAL_CLAUSES_EXTRA_KEY]);
+
 
   return values;
 }
