@@ -183,6 +183,8 @@ function ChoiceValue({
   values: AgreementFieldValues;
 }) {
   const choice = cell.choice!;
+  const edit = useContext(EditContext);
+  const choiceDef = edit?.defs.get(choice.fieldKey) ?? null;
   const raw = values[choice.fieldKey];
   const selected = raw === null || raw === undefined ? '' : String(raw);
   const optionValues = choice.options.map((option) => option.value);
@@ -198,14 +200,40 @@ function ChoiceValue({
           const otherText = isOther
             ? String((choice.otherFieldKey ? values[choice.otherFieldKey] : customValue) ?? '').trim()
             : '';
-          return (
-            <span
-              key={option.value}
-              className={cn('inline-flex items-baseline gap-1.5 text-sm', checked ? 'text-foreground' : 'text-muted-foreground')}
-            >
+          const body = (
+            <>
               <span aria-hidden className="text-base leading-none">{checked ? '☑' : '☐'}</span>
               <span className={checked ? 'font-medium' : undefined}>{option.label}</span>
-              {otherText ? <span className="font-medium text-foreground">{otherText}</span> : null}
+            </>
+          );
+          const tone = cn('inline-flex items-baseline gap-1.5 text-sm', checked ? 'text-foreground' : 'text-muted-foreground');
+          return (
+            <span key={option.value} className="inline-flex items-baseline gap-1.5">
+              {/* Editable surfaces tick the box in place; read-only ones print it. */}
+              {choiceDef && edit ? (
+                <button
+                  type="button"
+                  title={`Select — ${option.label}`}
+                  onClick={() => edit.onChange(choiceDef.key, option.value)}
+                  className={cn(tone, 'rounded px-1 transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring')}
+                >
+                  {body}
+                </button>
+              ) : (
+                <span className={tone}>{body}</span>
+              )}
+              {/* The free text behind "Other" is its own field, so it edits on its own. */}
+              {isOther && choice.otherFieldKey ? (
+                <EditableValue
+                  token={choice.otherFieldKey}
+                  filled={Boolean(otherText)}
+                  className={otherText ? 'font-medium text-foreground' : 'text-muted-foreground/70'}
+                >
+                  {otherText || (checked ? placeholderForToken(templateKey, choice.otherFieldKey) : '')}
+                </EditableValue>
+              ) : otherText ? (
+                <span className="font-medium text-foreground">{otherText}</span>
+              ) : null}
             </span>
           );
         })}
