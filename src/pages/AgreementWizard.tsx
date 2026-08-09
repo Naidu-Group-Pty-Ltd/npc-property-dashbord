@@ -717,8 +717,19 @@ export default function AgreementWizard() {
               }}>
                 <Eye className="mr-1.5 h-3.5 w-3.5" /> Typeset PDF preview
               </Button>
+              <Button
+                variant={inlineEditing ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setInlineEditing((previous) => !previous)}
+                aria-pressed={inlineEditing}
+              >
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                {inlineEditing ? 'Editing in document' : 'Edit in document'}
+              </Button>
               <span className="text-xs text-muted-foreground">
-                The live document below updates as you edit; the PDF is the exact printed form.
+                {inlineEditing
+                  ? 'Click any value on the page to change it — every edit flows into the final PDF.'
+                  : 'Read-only view. Turn on editing to change values directly on the page.'}
               </span>
             </div>
             {!validation.ok && templateKey ? (
@@ -740,12 +751,23 @@ export default function AgreementWizard() {
               </Alert>
             ) : null}
             {templateKey ? (
-              <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-border bg-background/40 p-4">
-                <DigitalAgreementView templateKey={templateKey} values={previewValues} versionLabel="Draft" />
+              <div
+                className={cn(
+                  'max-h-[72vh] overflow-y-auto rounded-xl border bg-background/40 p-4 transition-colors',
+                  inlineEditing ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border',
+                )}
+              >
+                <DigitalAgreementView
+                  templateKey={templateKey}
+                  values={previewValues}
+                  versionLabel="Draft"
+                  edit={inlineEditing ? { defs: fieldDefs, rawValues: values, onChange: setValue } : null}
+                />
               </div>
             ) : null}
           </div>
         );
+
       case 'outcome':
         return (
           <div className="space-y-4">
