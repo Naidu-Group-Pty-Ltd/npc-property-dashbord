@@ -11,14 +11,20 @@ import {
   applyAgreementContentOverrides,
   contentOverridesFromValues,
 } from './contentOverrides.pure.ts';
+import {
+  additionalClausesFromValues,
+  withAdditionalClauses,
+} from './additionalClauses.pure.ts';
 import type { AgreementTemplateContent, AgreementTemplateKey } from './types.pure.ts';
 
 export * from './types.pure.ts';
 export * from './fields.pure.ts';
 export * from './lifecycle.pure.ts';
 export * from './contentOverrides.pure.ts';
+export * from './additionalClauses.pure.ts';
 export { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
 export { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
+
 
 /**
  * The revision of the agreement document RENDERING — bump when the visual
@@ -33,8 +39,9 @@ export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateC
 }
 
 /**
- * The wording of ONE agreement: the locked template with that agreement's
- * negotiated clause amendments applied. Every renderer — the digital view, the
+ * The wording of ONE agreement: the locked template, with that agreement's
+ * negotiated clause amendments applied and its additional clauses (special
+ * conditions) injected before EXECUTION. Every renderer — the digital view, the
  * PDF, the DOCX, the partner's review room — must go through here rather than
  * `agreementTemplate`, or the issuer and the counterparty would be reading
  * different documents.
@@ -43,11 +50,15 @@ export function agreementContentForValues(
   key: AgreementTemplateKey,
   values: Record<string, unknown> | null | undefined,
 ): AgreementTemplateContent {
-  return applyAgreementContentOverrides(
-    agreementTemplate(key),
-    contentOverridesFromValues(values),
+  return withAdditionalClauses(
+    applyAgreementContentOverrides(
+      agreementTemplate(key),
+      contentOverridesFromValues(values),
+    ),
+    additionalClausesFromValues(values),
   );
 }
+
 
 const CONTENT_HASHES: Record<AgreementTemplateKey, string> = {
   strategic_property_referral: agreementContentHash(STRATEGIC_REFERRAL_CONTENT),

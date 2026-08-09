@@ -44,7 +44,12 @@ import {
   contentOverridesFromValues,
   listAgreementAmendments,
   CONTENT_OVERRIDES_VALUE_KEY,
+  additionalClausesFromValues,
+  ADDITIONAL_CLAUSES_VALUE_KEY,
+  ADDITIONAL_CLAUSES_SECTION_ID,
+  type AgreementAdditionalClause,
   type AgreementFieldDef,
+
   type AgreementFieldValues,
   type AgreementTemplateKey,
   type PartnerAgreementDirection,
@@ -64,6 +69,8 @@ import { shouldLoadDraft } from '@/lib/agreements/wizardDraft.pure';
 import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import DigitalAgreementView from '@/components/agreement-centre/DigitalAgreementView';
+import AdditionalClausesPanel from '@/components/agreement-centre/AdditionalClausesPanel';
+
 import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 
@@ -297,6 +304,17 @@ export default function AgreementWizard() {
       : []),
     [templateKey, values],
   );
+
+  /**
+   * Special conditions — wording the template never carried. Same store, same
+   * freeze: they travel with the field values onto the version row.
+   */
+  const additionalClauses = useMemo(() => additionalClausesFromValues(values), [values]);
+  const setAdditionalClauses = (next: AgreementAdditionalClause[]) => {
+    setValues((previous) => ({ ...previous, [ADDITIONAL_CLAUSES_VALUE_KEY]: next }));
+    setDirty(true);
+  };
+
 
   /** The preview projection: current edits applied over the row. */
   const previewValues = useMemo(() => {
@@ -801,6 +819,12 @@ export default function AgreementWizard() {
                 </ul>
               </div>
             ) : null}
+            <AdditionalClausesPanel
+              clauses={additionalClauses}
+              onChange={setAdditionalClauses}
+              onJump={() => jumpToField(ADDITIONAL_CLAUSES_SECTION_ID)}
+            />
+
             {!validation.ok && templateKey ? (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />

@@ -28,6 +28,12 @@ import {
   CONTENT_OVERRIDES_VALUE_KEY,
   coerceContentOverrides,
 } from './contentOverrides.pure.ts';
+import {
+  ADDITIONAL_CLAUSES_EXTRA_KEY,
+  ADDITIONAL_CLAUSES_VALUE_KEY,
+  coerceAdditionalClauses,
+} from './additionalClauses.pure.ts';
+
 
 export type AgreementFieldType =
   | 'text'
@@ -392,6 +398,9 @@ export function projectFieldValues(
    * negotiation cannot repaint the document somebody signed.
    */
   values[CONTENT_OVERRIDES_VALUE_KEY] = coerceContentOverrides(extras[CONTENT_OVERRIDES_EXTRA_KEY]);
+  // Special conditions travel the same way, for the same reason.
+  values[ADDITIONAL_CLAUSES_VALUE_KEY] = coerceAdditionalClauses(extras[ADDITIONAL_CLAUSES_EXTRA_KEY]);
+
 
   return values;
 }
@@ -471,6 +480,13 @@ export function rowPatchFromValues(
     const overrides = coerceContentOverrides(values[CONTENT_OVERRIDES_VALUE_KEY]);
     extras[CONTENT_OVERRIDES_EXTRA_KEY] = Object.keys(overrides).length ? overrides : null;
   }
+
+  // Additional clauses, likewise written only when the caller carried them.
+  if (ADDITIONAL_CLAUSES_VALUE_KEY in values) {
+    const clauses = coerceAdditionalClauses(values[ADDITIONAL_CLAUSES_VALUE_KEY]);
+    extras[ADDITIONAL_CLAUSES_EXTRA_KEY] = clauses.length ? clauses : null;
+  }
+
 
   return { columns, extras };
 }
