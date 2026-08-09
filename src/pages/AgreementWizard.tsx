@@ -817,6 +817,12 @@ export default function AgreementWizard() {
                 </ul>
               </div>
             ) : null}
+            <AdditionalClausesPanel
+              clauses={additionalClauses}
+              onChange={setAdditionalClauses}
+              onJump={() => jumpToField(ADDITIONAL_CLAUSES_SECTION_ID)}
+            />
+
             {!validation.ok && templateKey ? (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
