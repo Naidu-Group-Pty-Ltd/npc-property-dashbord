@@ -293,25 +293,35 @@ function SignaturePanel({
   const titleValue = signature?.signatory_title
     ?? (role === 'partner' ? values.partner_signatory_title : role === 'principal' ? values.principal_signatory_title : null);
 
-  const line = (labelText: string, value: unknown, rule: string) => {
+  const line = (labelText: string, value: unknown, rule: string, token?: string | null) => {
     const text = String(value ?? '').trim();
+    // A countersigned line is history — never editable, whatever the surface.
+    const editToken = signature ? null : token;
     return (
       <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
         <span className="text-xs text-muted-foreground">{labelText}</span>
-        {text
-          ? <span className="font-medium text-foreground">{text}</span>
-          : <span className="tracking-wider text-muted-foreground/50">{rule}</span>}
+        <EditableValue
+          token={editToken}
+          filled={Boolean(text)}
+          className={text ? 'font-medium text-foreground' : 'tracking-wider text-muted-foreground/50'}
+        >
+          {text || rule}
+        </EditableValue>
       </div>
     );
   };
+
+  const entityToken = role === 'partner' ? 'fp_legal_name' : role === 'loan_writer' ? 'lw_entity' : 'ba_legal_name';
+  const nameToken = role === 'partner' ? 'partner_signatory_name' : role === 'principal' ? 'principal_signatory_name' : null;
+  const titleToken = role === 'partner' ? 'partner_signatory_title' : role === 'principal' ? 'principal_signatory_title' : null;
 
   return (
     <div className="rounded-lg border border-border bg-card/50 p-4">
       <PanelLabel>{title}</PanelLabel>
       <div className="mt-3 space-y-2.5">
-        {line(EXECUTION_PANEL_LINES.legalEntity, entityValue, RULE)}
-        {line(EXECUTION_PANEL_LINES.signatoryName, nameValue, RULE)}
-        {line(EXECUTION_PANEL_LINES.signatoryTitle, titleValue, RULE)}
+        {line(EXECUTION_PANEL_LINES.legalEntity, entityValue, RULE, entityToken)}
+        {line(EXECUTION_PANEL_LINES.signatoryName, nameValue, RULE, nameToken)}
+        {line(EXECUTION_PANEL_LINES.signatoryTitle, titleValue, RULE, titleToken)}
         <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
           <span className="text-xs text-muted-foreground">{EXECUTION_PANEL_LINES.signature}</span>
           {signature ? (
@@ -328,6 +338,7 @@ function SignaturePanel({
           DATE_RULE,
         )}
         {line(EXECUTION_PANEL_LINES.witness, null, WITNESS_RULE)}
+
         {signature ? (
           <div className="pt-1 text-[11px] font-medium uppercase tracking-wider text-success">
             Executed electronically
