@@ -199,14 +199,32 @@ Deno.serve(async (req) => {
     const portalUser = (session as { portalUser: { id: string; email: string | null } }).portalUser;
 
     // The session helper's projection does not carry the org link; read it once.
-    const { data: userRow } = await supabase
+    //
+    // `finance_portal_users` has NO `name` column — the partner's display name
+    // lives on `finance_agent_contacts`. Selecting a column that does not exist
+    // makes PostgREST fail the whole row read, which previously surfaced as
+    // "Portal user is not linked to a partner record" for every partner and hid
+    // every issued agreement. Read the link here and the label from the contact.
+    const { data: userRow, error: userRowError } = await supabase
       .from('finance_portal_users')
-      .select('finance_contact_id, name')
+      .select('finance_contact_id, email')
       .eq('id', portalUser.id)
       .maybeSingle();
+    if (userRowError) {
+      console.error('[finance-portal-agreements] portal user read failed:', userRowError.message);
+      return json({ error: 'Could not resolve your partner organisation' }, 500);
+    }
     const financeContactId = userRow?.finance_contact_id as string | undefined;
     if (!financeContactId) return json({ error: 'Portal user is not linked to a partner record' }, 403);
-    const actorLabel = (userRow?.name as string | null) || portalUser.email || 'Finance partner';
+    const { data: contactRow } = await supabase
+      .from('finance_agent_contacts')
+      .select('name')
+      .eq('id', financeContactId)
+      .maybeSingle();
+    const actorLabel = (contactRow?.name as string | null)
+      || (userRow?.email as string | null)
+      || portalUser.email
+      || 'Finance partner';
 
     const operation = typeof body.operation === 'string' ? body.operation : null;
 
