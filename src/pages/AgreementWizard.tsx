@@ -298,6 +298,17 @@ export default function AgreementWizard() {
     [templateKey, values],
   );
 
+  /**
+   * Special conditions — wording the template never carried. Same store, same
+   * freeze: they travel with the field values onto the version row.
+   */
+  const additionalClauses = useMemo(() => additionalClausesFromValues(values), [values]);
+  const setAdditionalClauses = (next: AgreementAdditionalClause[]) => {
+    setValues((previous) => ({ ...previous, [ADDITIONAL_CLAUSES_VALUE_KEY]: next }));
+    setDirty(true);
+  };
+
+
   /** The preview projection: current edits applied over the row. */
   const previewValues = useMemo(() => {
     if (!templateKey) return {};
