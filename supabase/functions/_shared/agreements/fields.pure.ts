@@ -481,6 +481,13 @@ export function rowPatchFromValues(
     extras[CONTENT_OVERRIDES_EXTRA_KEY] = Object.keys(overrides).length ? overrides : null;
   }
 
+  // Additional clauses, likewise written only when the caller carried them.
+  if (ADDITIONAL_CLAUSES_VALUE_KEY in values) {
+    const clauses = coerceAdditionalClauses(values[ADDITIONAL_CLAUSES_VALUE_KEY]);
+    extras[ADDITIONAL_CLAUSES_EXTRA_KEY] = clauses.length ? clauses : null;
+  }
+
+
   return { columns, extras };
 }
 
