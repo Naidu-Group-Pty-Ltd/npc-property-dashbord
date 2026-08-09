@@ -168,7 +168,7 @@ export default function LoanWriterUndertakingDialog({ open, onOpenChange, undert
                     <SelectItem value={UNASSIGNED}>None</SelectItem>
                     {financeUsers.map((u) => (
                       <SelectItem key={u.id} value={u.id}>
-                        {u.finance_agent_contacts?.contact_name || u.email}
+                        {u.finance_agent_contacts?.name || u.email}
                       </SelectItem>
                     ))}
                   </SelectContent>
