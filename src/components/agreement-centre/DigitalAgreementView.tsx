@@ -579,6 +579,7 @@ export default function DigitalAgreementView({
   includeTemplatePack = false,
   logoUrl,
   versionLabel,
+  edit = null,
   className,
 }: Props) {
   const content = agreementTemplate(templateKey);
@@ -586,7 +587,24 @@ export default function DigitalAgreementView({
     (section) => section.audience === 'always' || includeTemplatePack,
   );
 
-  return (
+  /**
+   * Which tokens are editable here. Derived values are computed and have no
+   * store to write to; a conditional field that is not currently in play must
+   * not be reachable from the page either, or the document would collect text
+   * that `rowPatchFromValues` then discards.
+   */
+  const lookup = useMemo<EditLookup | null>(() => {
+    if (!edit) return null;
+    const defs = new Map<string, AgreementFieldDef>();
+    for (const def of edit.defs) {
+      if (def.db === 'derived') continue;
+      if (!isAgreementFieldVisible(def, edit.rawValues)) continue;
+      defs.set(def.key, def);
+    }
+    return { defs, rawValues: edit.rawValues, onChange: edit.onChange };
+  }, [edit]);
+
+  const body = (
     <div className={cn('space-y-8', className)}>
       {sections.map((section) => (
         <section key={section.id} id={`agc-${section.id}`} className="scroll-mt-24 space-y-4">
@@ -606,4 +624,6 @@ export default function DigitalAgreementView({
       ))}
     </div>
   );
+
+  return lookup ? <EditContext.Provider value={lookup}>{body}</EditContext.Provider> : body;
 }
