@@ -370,8 +370,9 @@ export const FINANCE_REFERRAL_CONTENT: AgreementTemplateContent = {
                   options: [
                     { value: 'gross', label: 'Gross received' },
                     { value: 'net_of_aggregator', label: 'Net of aggregator / licensee deductions' },
-                    { value: 'other', label: 'Other' },
+                    { value: 'other', label: 'Other:' },
                   ],
+                  otherFieldKey: 'commission_basis_other',
                 },
               },
               {

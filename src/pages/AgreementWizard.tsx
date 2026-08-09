@@ -33,6 +33,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   agreementFieldDefs,
+  isAgreementFieldVisible,
   agreementTemplate,
   templateKeyForDirection,
   rowPatchFromValues,
@@ -190,7 +191,7 @@ function FieldGroup({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {defs.map((def) => (
+      {defs.filter((def) => isAgreementFieldVisible(def, values)).map((def) => (
         <FieldInput key={def.key} def={def} value={values[def.key]}
           onChange={(next) => onChange(def.key, next)} />
       ))}
