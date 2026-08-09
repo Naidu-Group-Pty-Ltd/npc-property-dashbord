@@ -18,6 +18,7 @@ import {
   agreementTemplate,
   rowPatchFromValues,
   templateContentHash,
+  substitutePlain,
   templateKeyForDirection,
   validateForIssue,
   projectFieldValues,
@@ -215,4 +216,75 @@ describe('the cover states the deal, not the product', () => {
       expect(serialised).not.toContain('A structured, editable agreement template');
     });
   }
+});
+
+/**
+ * The amended shape of Agreement 01, and the consent declaration in Agreement 02.
+ *
+ * The document owner supplied a reviewed copy of the Strategic Property
+ * Referral Agreement with the operational REFERRAL WORKFLOW section removed and
+ * everything after it renumbered, and confirmed the removal was deliberate.
+ * These assertions are the record of that shape: they fail if the section is
+ * reintroduced, if the numbering drifts back, or if a clause's wording moves —
+ * because the supplied copy differed from this module's output in the numbers
+ * and nothing else.
+ */
+describe('Agreement 01 carries the amended numbering', () => {
+  const content = agreementTemplate('strategic_property_referral');
+  const badges = content.sections.map((section) => section.header?.badge).filter(Boolean);
+
+  it('no longer carries the referral workflow section', () => {
+    expect(JSON.stringify(content)).not.toContain('REFERRAL WORKFLOW');
+    expect(content.sections.some((section) => section.id === 'referral_workflow')).toBe(false);
+    // The workflow block kind is gone from this template with it.
+    expect(content.sections.flatMap((s) => s.blocks).some((b) => b.kind === 'workflow')).toBe(false);
+  });
+
+  it('numbers its sections exactly as the supplied copy does', () => {
+    expect(badges).toEqual(['E', '1', '2', '2A', '3', '4-6', '7-9', '10-12', '13', 'A']);
+  });
+
+  it('numbers its clauses 1-12 with execution at 13', () => {
+    const numbers = content.sections
+      .flatMap((section) => section.blocks)
+      .filter((block): block is Extract<AgreementBlock, { kind: 'clauses' }> => block.kind === 'clauses')
+      .flatMap((block) => block.clauses.map((clause) => clause.number));
+    expect(numbers).toEqual(['1', '2', '4', '5', '6', '7', '8', '9', '10', '11', '12']);
+  });
+
+  it('keeps every subclause under its renumbered parent', () => {
+    for (const block of content.sections.flatMap((section) => section.blocks)) {
+      if (block.kind !== 'clauses') continue;
+      for (const clause of block.clauses) {
+        for (const sub of clause.subclauses) {
+          expect(sub.number.split('.')[0]).toBe(clause.number);
+        }
+      }
+    }
+  });
+});
+
+describe('the client consent declaration names no tenant', () => {
+  it('uses its own placeholder rather than the brand-filled display name', () => {
+    // `ba_display_name` is gap-filled from the tenant's brand for the cover and
+    // the correspondence, which is right there and wrong in a declaration a
+    // third party administers and a client signs.
+    const consent = JSON.stringify(agreementTemplate('finance_referral_commission'));
+    expect(consent).toContain('I consent to {{consent_referring_agency}} providing my name');
+    expect(consent).not.toContain('I consent to {{ba_display_name}}');
+  });
+
+  it('prints the supplied bracket text when unbound', () => {
+    expect(substitutePlain('{{consent_referring_agency}}', 'finance_referral_commission', {}))
+      .toBe('<< BUYERS AGENT PARTNER NAME>>');
+  });
+
+  it('still names the agency on a real agreement', () => {
+    const values = projectFieldValues('finance_referral_commission', {
+      principal_legal_name: 'Harbourline Property Co Pty Ltd',
+      schedule_extras: {},
+    } as never);
+    expect(substitutePlain('{{consent_referring_agency}}', 'finance_referral_commission', values))
+      .toBe('Harbourline Property Co Pty Ltd');
+  });
 });
