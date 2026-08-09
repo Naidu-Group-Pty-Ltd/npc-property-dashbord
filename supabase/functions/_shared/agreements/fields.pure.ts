@@ -56,11 +56,36 @@ export interface AgreementFieldDef {
   requiredForIssue?: boolean;
   db: AgreementFieldStorage;
   /**
+   * Conditional field: only collected (and only validated / stored) when the
+   * named field currently holds one of these values. This is how an "Other"
+   * choice grows its own free-text box — the box is meaningless, and its stored
+   * text misleading, when a preset option is selected.
+   */
+  visibleWhen?: { field: string; equals: string[] };
+  /**
    * Wizard grouping: party fields prefill from the tenant / the selected
    * partner record; commercial fields are the negotiable schedule.
    */
   group: 'agreement' | 'issuer' | 'counterparty' | 'commercial' | 'clauses' | 'execution' | 'supporting';
 }
+
+/**
+ * Is this field currently in play?
+ *
+ * Used by the wizard (what to render), by `rowPatchFromValues` (a hidden
+ * conditional field is stored as null, so switching away from "Other" cannot
+ * leave stale free text cascading into the executed document) and by
+ * `validateForIssue` (never demand a field nobody can see).
+ */
+export function isAgreementFieldVisible(
+  def: AgreementFieldDef,
+  values: AgreementFieldValues,
+): boolean {
+  if (!def.visibleWhen) return true;
+  const current = String(values[def.visibleWhen.field] ?? '');
+  return def.visibleWhen.equals.includes(current);
+}
+
 
 // ── Shared field fragments ───────────────────────────────────────────────────
 
