@@ -12,13 +12,16 @@
  * Semantic tokens only — this surface renders inside both the Command Centre
  * (light) and the Finance Portal (dark palettes).
  */
-import { Fragment, type ReactNode } from 'react';
+import { createContext, Fragment, useContext, useMemo, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import InlineFieldEditor from './InlineFieldEditor';
 import {
   agreementTemplate,
   placeholderForToken,
+  isAgreementFieldVisible,
   EXECUTION_PANEL_LINES,
   type AgreementBlock,
+  type AgreementFieldDef,
   type AgreementFieldValues,
   type AgreementSectionDef,
   type AgreementTemplateKey,
@@ -35,6 +38,20 @@ export interface DigitalSignature {
   signature_method?: string | null;
 }
 
+/**
+ * Direct editing, when the caller owns the field values.
+ *
+ * Only the issuer's own draft surface passes this — the partner review room and
+ * every issued version render read-only, because an issued agreement's wording
+ * and figures are frozen. `rawValues` is the unformatted store the wizard's step
+ * forms write; the document keeps printing the projected values.
+ */
+export interface DigitalEditContext {
+  defs: readonly AgreementFieldDef[];
+  rawValues: AgreementFieldValues;
+  onChange: (key: string, value: unknown) => void;
+}
+
 interface Props {
   templateKey: AgreementTemplateKey;
   values: AgreementFieldValues;
@@ -45,10 +62,60 @@ interface Props {
   logoUrl?: string | null;
   /** Version label shown on the cover ("1.0", "Draft"). */
   versionLabel?: string;
+  /** When set, every configurable value on the page is editable in place. */
+  edit?: DigitalEditContext | null;
   className?: string;
 }
 
 const TOKEN_SPLIT = /(\{\{[a-z0-9_]+\}\})/g;
+
+interface EditLookup {
+  defs: Map<string, AgreementFieldDef>;
+  rawValues: AgreementFieldValues;
+  onChange: (key: string, value: unknown) => void;
+}
+
+const EditContext = createContext<EditLookup | null>(null);
+
+/** The editable definition for a token, or null when the surface is read-only. */
+function useEditableDef(token: string | null | undefined) {
+  const edit = useContext(EditContext);
+  if (!edit || !token) return null;
+  const def = edit.defs.get(token);
+  if (!def) return null;
+  return { def, edit };
+}
+
+/**
+ * One value on the page: read-only text, or the same text as an in-place editor.
+ * Every printed value routes through here so editability is a single decision.
+ */
+function EditableValue({
+  token,
+  filled,
+  className,
+  children,
+}: {
+  token?: string | null;
+  filled: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const editable = useEditableDef(token);
+  if (!editable) {
+    return <span className={className}>{children}</span>;
+  }
+  return (
+    <InlineFieldEditor
+      def={editable.def}
+      rawValue={editable.edit.rawValues[editable.def.key]}
+      filled={filled}
+      onChange={editable.edit.onChange}
+    >
+      {children}
+    </InlineFieldEditor>
+  );
+}
 
 function BoundText({
   text,
@@ -68,10 +135,15 @@ function BoundText({
         const token = match[1];
         const value = values[token];
         const filled = value !== null && value !== undefined && String(value).trim() !== '';
-        return filled ? (
-          <span key={index} className="font-medium text-foreground">{String(value)}</span>
-        ) : (
-          <span key={index} className="text-muted-foreground/70">{placeholderForToken(templateKey, token)}</span>
+        return (
+          <EditableValue
+            key={index}
+            token={token}
+            filled={filled}
+            className={filled ? 'font-medium text-foreground' : 'text-muted-foreground/70'}
+          >
+            {filled ? String(value) : placeholderForToken(templateKey, token)}
+          </EditableValue>
         );
       })}
     </>
