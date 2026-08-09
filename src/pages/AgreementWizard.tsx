@@ -69,6 +69,8 @@ import { shouldLoadDraft } from '@/lib/agreements/wizardDraft.pure';
 import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import DigitalAgreementView from '@/components/agreement-centre/DigitalAgreementView';
+import AdditionalClausesPanel from '@/components/agreement-centre/AdditionalClausesPanel';
+
 import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 
