@@ -190,6 +190,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkSession();
   }, []);
 
+  // A revoked/expired session makes every poller 401 (balance, internal
+  // messaging, market updates…). When the circuit breaker trips, clear local
+  // auth state so ProtectedRoute sends the user to /auth instead of leaving a
+  // blank screen behind a dead session.
+  useEffect(() => {
+    const onExhausted = () => clearAuthState();
+    window.addEventListener(AUTH_EXHAUSTED_EVENT, onExhausted);
+    return () => window.removeEventListener(AUTH_EXHAUSTED_EVENT, onExhausted);
+  }, []);
+
+
   // Heartbeat the registered device every 5 min while signed in.
   const heartbeatRef = useRef<number | null>(null);
   useEffect(() => {
