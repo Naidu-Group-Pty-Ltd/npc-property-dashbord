@@ -44,7 +44,12 @@ import {
   contentOverridesFromValues,
   listAgreementAmendments,
   CONTENT_OVERRIDES_VALUE_KEY,
+  additionalClausesFromValues,
+  ADDITIONAL_CLAUSES_VALUE_KEY,
+  ADDITIONAL_CLAUSES_SECTION_ID,
+  type AgreementAdditionalClause,
   type AgreementFieldDef,
+
   type AgreementFieldValues,
   type AgreementTemplateKey,
   type PartnerAgreementDirection,
