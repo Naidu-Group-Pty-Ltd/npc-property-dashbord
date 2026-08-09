@@ -39,9 +39,15 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
           companyNameToken: '{{company_name}}',
           titleLines: ['STRATEGIC PROPERTY REFERRAL', 'AGREEMENT'],
           issuedByLine: 'ISSUED BY THE BUYER\'S AGENCY TO THE FINANCE PARTNER',
-          descriptor:
-            'A structured, editable agreement template for establishing a professional referral relationship while preserving clear service boundaries, client choice and transparent commercial terms.',
-          badges: ['EDITABLE', 'ACTIVATION-READY', 'BRAND-READY'],
+          // Issuer first: this agreement is issued BY the buyer's agency.
+          particulars: [
+            { label: 'BETWEEN', value: '{{ba_legal_name}}' },
+            { label: 'ABN / ACN', value: '{{ba_abn_acn}}' },
+            { label: 'AND', value: '{{fp_legal_name}}' },
+            { label: 'ABN / ACN', value: '{{fp_abn_acn}}' },
+            { label: 'DATED', value: '{{effective_date}}' },
+            { label: 'GOVERNING LAW', value: '{{governing_state}}' },
+          ],
           versionLine: 'VERSION {{document_version}}  |  EFFECTIVE DATE: {{effective_date}}',
           reviewStatement:
             'Template only - obtain legal, licensing, privacy and aggregator approval before use.',
