@@ -65,6 +65,13 @@ export type AgreementFieldValues = Record<string, unknown>;
 // Text in any block may carry `{{field_key}}` tokens. A renderer substitutes
 // the bound value, or the field's original placeholder text when unbound.
 
+/** One line of the cover's particulars panel — `BETWEEN`, `DATED`, …. */
+export interface CoverParticular {
+  label: string;
+  /** Text with `{{field_key}}` tokens; unbound fields print their brackets. */
+  value: string;
+}
+
 export interface CoverBlock {
   kind: 'cover';
   /** `[ INSERT COMPANY LOGO ]` in the source — replaced by the tenant's mark. */
@@ -73,8 +80,19 @@ export interface CoverBlock {
   companyNameToken: string;
   titleLines: string[];
   issuedByLine: string;
-  descriptor: string;
-  badges: string[];
+  /**
+   * Who is bound, and on what terms — the block a legal instrument's cover
+   * exists to carry.
+   *
+   * This replaced a template descriptor and a row of `EDITABLE` /
+   * `BRAND-READY` chips. Those described the *product* to somebody choosing a
+   * template; on the cover of an executed agreement they are marketing, and a
+   * counterparty's lawyer reading "BRAND-READY" above the parties' names
+   * learns nothing and thinks less of the document. The particulars are the
+   * opposite: every line is a fact about this agreement, bound from the
+   * register, and printing its own `<<INSERT>>` bracket while unfilled.
+   */
+  particulars: CoverParticular[];
   /** e.g. `VERSION {{version_label}}  |  EFFECTIVE DATE: {{effective_date}}` */
   versionLine: string;
   /** The template/legal-review statement. Kept verbatim on every output. */

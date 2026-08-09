@@ -60,8 +60,24 @@ export interface DocxPalette {
   accent: string;
   /** Brand colour darkened for text on paper — keeps small type legible. */
   accentInk: string;
-  /** A pale wash of the brand colour, for header bands and label cells. */
+  /**
+   * A wash for label cells and panels. Barely tinted toward the brand rather
+   * than a lilac/pastel slab: at a strong tint a saturated brand turns every
+   * table in the document into a coloured block, and a page of coloured blocks
+   * reads as a brochure.
+   */
   accentWash: string;
+  /**
+   * Label ink. Field labels, panel titles, table headers — the small uppercase
+   * type that carries the document's structure.
+   *
+   * This exists because those labels used to be set in the brand colour, and
+   * there are hundreds of them. A saturated brand repeated hundreds of times
+   * stops being an accent and becomes the document's voice; the agreement read
+   * as branded rather than legal. Structure is now graphite, and the brand is
+   * spent in a few deliberate places instead.
+   */
+  labelInk: string;
   /**
    * The cover canvas — the brand deepened until white display type carries
    * on it. A vivid brand at full strength vibrates behind 30pt serif; pulled
@@ -152,6 +168,17 @@ function shade(hex: string, amount: number): string {
   return fromChannels(rgb.map((c) => c * (1 - amount)));
 }
 
+/** Mix two colours. `amount` 0 → all `a`, 1 → all `b`. */
+function mix(a: string, b: string, amount: number): string {
+  const [ar, ag, ab] = channels(a);
+  const [br, bg, bb] = channels(b);
+  return fromChannels([
+    ar + (br - ar) * amount,
+    ag + (bg - ag) * amount,
+    ab + (bb - ab) * amount,
+  ]);
+}
+
 /** WCAG relative luminance, for the two decisions below that depend on it. */
 function luminance(hex: string): number {
   const [r, g, b] = channels(hex).map((c) => {
@@ -172,6 +199,7 @@ function luminance(hex: string): number {
 export function resolveDocxPalette(brandColour: unknown): DocxPalette {
   const accent = toDocxHex(brandColour);
   const brandLuminance = luminance(accent);
+  const panel = 'F6F5F2';
   // The canvas must end up dark enough for white type whatever the brand is:
   // a light brand is pulled down hard, a mid brand moderately, a dark brand
   // barely at all.
@@ -183,13 +211,19 @@ export function resolveDocxPalette(brandColour: unknown): DocxPalette {
   return {
     accent,
     accentInk: brandLuminance > 0.35 ? shade(accent, 0.45) : accent,
-    accentWash: tint(accent, 0.92),
+    // Mostly the neutral paper panel, pulled a quarter of the way toward the
+    // brand. A pure brand tint — even a 96% one — is still a *hue*, and every
+    // label cell and note block in the document wears it; a saturated brand
+    // turned a page of tables into a page of lilac. This keeps a whisper of
+    // the tenant's colour without the document reading as coloured.
+    accentWash: mix(panel, tint(accent, 0.90), 0.25),
     accentDeep,
     onDeepMuted: tint(accentDeep, 0.62),
     ink: '1A1A1A',
+    labelInk: '4A4A48',
     mutedInk: '6B6B6B',
     rule: 'D9D6D0',
-    panel: 'F6F5F2',
+    panel,
     onAccent: brandLuminance > 0.6 ? '1A1A1A' : 'FFFFFF',
   };
 }

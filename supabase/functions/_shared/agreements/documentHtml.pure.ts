@@ -151,8 +151,19 @@ function renderCoverPage(
   const mark = brand.lockup?.markDataUri
     ? `<img class="agc-cover-mark" src="${brand.lockup.markDataUri}" alt="" />`
     : `<div class="agc-cover-mark-fallback">${companyName}</div>`;
-  const badges = block.badges
-    .map((badge) => `<span class="agc-cover-badge">${escapeHtml(badge)}</span>`)
+  // Who is bound, and on what terms — the block a front sheet exists to carry.
+  // It replaced a template descriptor and a row of EDITABLE / BRAND-READY
+  // chips: those describe the product to somebody choosing a template, and on
+  // an executed agreement they are marketing.
+  const particulars = block.particulars
+    .map((entry) => {
+      const value = substituteTokens(entry.value, key, values);
+      const unfilled = /^&lt;&lt;.*&gt;&gt;$/.test(value.trim()) || value.trim() === '';
+      return `<div class="agc-cover-particular">
+          <dt>${escapeHtml(entry.label)}</dt>
+          <dd${unfilled ? ' class="agc-unfilled"' : ''}>${value || '&mdash;'}</dd>
+        </div>`;
+    })
     .join('');
 
   return `
@@ -164,8 +175,7 @@ function renderCoverPage(
       <div class="agc-cover-middle">
         <h1 class="agc-cover-title">${block.titleLines.map((line) => escapeHtml(line)).join('<br/>')}</h1>
         <div class="agc-cover-issued">${escapeHtml(block.issuedByLine)}</div>
-        <p class="agc-cover-descriptor">${escapeHtml(block.descriptor)}</p>
-        <div class="agc-cover-badges">${badges}</div>
+        <dl class="agc-cover-particulars">${particulars}</dl>
       </div>
       <div class="agc-cover-foot">
         <div class="agc-cover-version">${substituteTokens(block.versionLine, key, values)}</div>
@@ -596,22 +606,31 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
     color: ${palette.accentOnPaper};
     margin-bottom: ${pt(d.blockGapPt)};
   }
-  .agc-cover-descriptor {
-    font-size: ${pt(type.body + 1)};
-    color: ${palette.mutedInk};
-    max-width: 140mm;
+  .agc-cover-particulars {
+    margin-top: ${pt(d.blockGapPt * 1.5)};
+    max-width: 150mm;
+    border-top: 0.5pt solid ${palette.rule};
   }
-  .agc-cover-badges { margin-top: ${pt(d.blockGapPt)}; }
-  .agc-cover-badge {
-    display: inline-block;
+  .agc-cover-particular {
+    display: flex;
+    gap: 8mm;
+    padding: 2.5mm 0;
+    border-bottom: 0.5pt solid ${palette.rule};
+  }
+  .agc-cover-particular dt {
+    flex: 0 0 32mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
-    color: ${palette.accentOnPaper};
-    border: 0.75pt solid ${palette.rule};
-    border-radius: 2pt;
-    padding: 2pt 6pt;
-    margin-right: 4pt;
+    text-transform: uppercase;
+    color: ${palette.mutedInk};
+    align-self: center;
+  }
+  .agc-cover-particular dd {
+    margin: 0;
+    font-family: ${PRINT_STACK.display};
+    font-size: ${pt(type.body + 1)};
+    color: ${palette.ink};
   }
   .agc-cover-foot { margin-top: 34mm; }
   .agc-cover-version {

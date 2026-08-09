@@ -161,3 +161,58 @@ describe('field values ↔ register row mapping', () => {
     expect(values.cleared_funds_condition).toBe('no');
   });
 });
+
+/**
+ * What the front sheet of an agreement may and may not say.
+ *
+ * The cover used to carry a template descriptor and a row of chips —
+ * `EDITABLE`, `ACTIVATION-READY`, `BRAND-READY`. That is copy for somebody
+ * choosing a template out of a library. On the face of an agreement a
+ * counterparty's lawyer is reading, it is marketing, and it was the first
+ * thing on the page. It is now the particulars: every line a fact about this
+ * agreement, bound from the register.
+ */
+describe('the cover states the deal, not the product', () => {
+  const MARKETING = ['EDITABLE', 'ACTIVATION-READY', 'BRAND-READY'];
+
+  for (const key of TEMPLATE_KEYS) {
+    const cover = agreementTemplate(key).sections[0].blocks[0];
+
+    it(`${key}: carries a particulars panel`, () => {
+      expect(cover.kind).toBe('cover');
+      if (cover.kind !== 'cover') return;
+      const labels = cover.particulars.map((entry) => entry.label);
+      // Both parties, both identifiers, the date and the governing law — the
+      // six facts a front sheet exists to state.
+      expect(labels).toEqual(['BETWEEN', 'ABN / ACN', 'AND', 'ABN / ACN', 'DATED', 'GOVERNING LAW']);
+    });
+
+    it(`${key}: names the issuing party first`, () => {
+      if (cover.kind !== 'cover') return;
+      // "Issued by the buyer's agency" must not then say BETWEEN <the other
+      // party> — the parties are listed in the order the document issues.
+      const issuerIsBuyersAgency = key === 'strategic_property_referral';
+      expect(cover.particulars[0].value)
+        .toBe(issuerIsBuyersAgency ? '{{ba_legal_name}}' : '{{fp_legal_name}}');
+      expect(cover.particulars[2].value)
+        .toBe(issuerIsBuyersAgency ? '{{fp_legal_name}}' : '{{ba_legal_name}}');
+    });
+
+    it(`${key}: every particular binds to a registered field`, () => {
+      if (cover.kind !== 'cover') return;
+      const known = new Set(agreementFieldDefs(key).map((field) => field.key));
+      for (const entry of cover.particulars) {
+        for (const [, token] of entry.value.matchAll(/\{\{([a-z0-9_]+)\}\}/g)) {
+          expect(known.has(token) || DERIVED_TOKEN_PLACEHOLDERS[token] !== undefined).toBe(true);
+        }
+      }
+    });
+
+    it(`${key}: carries no template marketing anywhere in the document`, () => {
+      const serialised = JSON.stringify(agreementTemplate(key));
+      for (const phrase of MARKETING) expect(serialised).not.toContain(phrase);
+      // The descriptor's opening words, in case the sentence moves rather than goes.
+      expect(serialised).not.toContain('A structured, editable agreement template');
+    });
+  }
+});

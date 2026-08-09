@@ -104,9 +104,12 @@ const HALF_W = Math.round(DOCX_CONTENT_WIDTH / 2);
 /** The cover's three bands, in twips. Their sum stays under the page height
  * so the section-break paragraph Word requires never spills to a second page. */
 const COVER = {
-  canvas: 6800,
-  foot: 2760,
-  middleAtLeast: 6600,
+  // The canvas gave up 1,200 twips to the particulars below it. Forty per cent
+  // of an A4 page in one saturated field was a title slide; a third of it,
+  // with the rest carrying facts, is a front sheet.
+  canvas: 5600,
+  foot: 2600,
+  middleAtLeast: 7800,
   inset: 1250,
 } as const;
 
@@ -139,7 +142,7 @@ function noBorders() {
 function framedGrid(palette: DocxPalette) {
   const line = { style: BorderStyle.SINGLE, size: 2, color: palette.rule } as const;
   return {
-    top: { style: BorderStyle.SINGLE, size: 18, color: palette.accent },
+    top: { style: BorderStyle.SINGLE, size: 8, color: palette.rule },
     bottom: line, left: line, right: line,
     insideHorizontal: line, insideVertical: line,
   };
@@ -147,7 +150,7 @@ function framedGrid(palette: DocxPalette) {
 
 function panelBorders(palette: DocxPalette) {
   return {
-    top: { style: BorderStyle.SINGLE, size: 18, color: palette.accent },
+    top: { style: BorderStyle.SINGLE, size: 8, color: palette.rule },
     bottom: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
     left: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
     right: { style: BorderStyle.SINGLE, size: 2, color: palette.rule },
@@ -343,34 +346,80 @@ function centred(children: TextRun[], spacing: { before?: number; after?: number
   return new Paragraph({ alignment: AlignmentType.CENTER, spacing, children });
 }
 
-/** Outlined chips for the cover badges, as a centred mini-table. */
-function badgeChips(badges: string[], palette: DocxPalette, onDeep: boolean): Table {
-  const chipW = 2300;
-  const line = {
-    style: BorderStyle.SINGLE, size: 4,
-    color: onDeep ? palette.onDeepMuted : palette.rule,
-  } as const;
+/** A left-aligned cover line. Covers are set flush left, not centred. */
+function coverLine(
+  children: TextRun[],
+  spacing: { before?: number; after?: number; line?: number } = {},
+): Paragraph {
+  return new Paragraph({ alignment: AlignmentType.LEFT, spacing, children });
+}
+
+/**
+ * The particulars panel — who is bound, and on what terms.
+ *
+ * Set as a label/value table with hairline separators, the way the front sheet
+ * of an executed agreement reads. The value column is the display serif: these
+ * are proper nouns and dates, not form data, and setting them in the body face
+ * makes the panel look like a form the reader has to fill in rather than a
+ * statement of who the parties are.
+ *
+ * An unfilled value keeps its `<<INSERT>>` bracket in the muted ink — the same
+ * signal every other unbound field in the document gives.
+ */
+function particularsPanel(
+  block: CoverBlock,
+  key: AgreementTemplateKey,
+  values: AgreementFieldValues,
+  palette: DocxPalette,
+): Table {
+  const width = DOCX_PAGE.widthTwip - COVER.inset * 2;
+  const labelW = Math.round(width * 0.21);
+  const hair = { style: BorderStyle.SINGLE, size: 4, color: palette.rule } as const;
+
   return new Table({
-    alignment: AlignmentType.CENTER,
-    width: { size: chipW * badges.length, type: WidthType.DXA },
-    columnWidths: badges.map(() => chipW),
-    borders: { top: line, bottom: line, left: line, right: line, insideHorizontal: line, insideVertical: line },
-    rows: [new TableRow({
-      cantSplit: true,
-      children: badges.map((badge) => new TableCell({
-        width: { size: chipW, type: WidthType.DXA },
-        verticalAlign: VerticalAlign.CENTER,
-        margins: { top: 70, bottom: 70, left: 100, right: 100 },
-        children: [centred([run(badge, palette, {
-          size: DOCX_TYPE.micro,
-          font: DOCX_FONTS.mono,
-          bold: true,
-          allCaps: true,
-          characterSpacing: 28,
-          color: onDeep ? palette.onDeepMuted : palette.accentInk,
-        })], { after: 0 })],
-      })),
-    })],
+    width: { size: width, type: WidthType.DXA },
+    columnWidths: [labelW, width - labelW],
+    borders: {
+      top: NONE, bottom: NONE, left: NONE, right: NONE,
+      insideHorizontal: hair, insideVertical: NONE,
+    },
+    rows: block.particulars.map((entry) => {
+      const text = substitutePlain(entry.value, key, values);
+      return new TableRow({
+        cantSplit: true,
+        children: [
+          new TableCell({
+            width: { size: labelW, type: WidthType.DXA },
+            verticalAlign: VerticalAlign.CENTER,
+            margins: { top: 130, bottom: 130, left: 0, right: 160 },
+            children: [new Paragraph({
+              spacing: { after: 0 },
+              children: [run(entry.label, palette, {
+                size: DOCX_TYPE.micro,
+                font: DOCX_FONTS.mono,
+                bold: true,
+                allCaps: true,
+                characterSpacing: 30,
+                color: palette.labelInk,
+              })],
+            })],
+          }),
+          new TableCell({
+            width: { size: width - labelW, type: WidthType.DXA },
+            verticalAlign: VerticalAlign.CENTER,
+            margins: { top: 130, bottom: 130, left: 0, right: 0 },
+            children: [new Paragraph({
+              spacing: { after: 0, line: 264 },
+              children: [run(text || '—', palette, {
+                size: DOCX_TYPE.coverDescriptor,
+                font: DOCX_FONTS.display,
+                color: isUnfilled(text) ? palette.mutedInk : palette.ink,
+              })],
+            })],
+          }),
+        ],
+      });
+    }),
   });
 }
 
@@ -383,24 +432,37 @@ function coverSectionChildren(
 ): Child[] {
   const companyDisplay = substitutePlain(block.companyNameToken, key, values);
 
-  // Band 1 — the brand canvas. Deep field, white display type.
+  // Band 1 — the brand canvas. Deep field, white display type, set flush left.
+  //
+  // Left, not centred: a centred title over a centred subtitle over a centred
+  // rule is the composition of a certificate, and it is what made the previous
+  // cover read as ceremonial rather than contractual. Flush left also fixes
+  // the ragged three-line title, which broke to an orphaned "REFERRAL".
   const canvas = coverBand([
-    centred([run(companyDisplay, palette, {
+    coverLine([run(companyDisplay, palette, {
       size: DOCX_TYPE.coverCompany,
       font: DOCX_FONTS.mono,
       bold: true,
       allCaps: true,
       characterSpacing: 66,
       color: palette.onDeepMuted,
-    })], { after: 560 }),
-    ...block.titleLines.map((line, index) => centred([
+    })], { after: 640 }),
+    ...block.titleLines.map((line, index) => coverLine([
       run(line, palette, {
         size: DOCX_TYPE.coverTitle,
         font: DOCX_FONTS.display,
         color: 'FFFFFF',
       }),
-    ], { after: index === block.titleLines.length - 1 ? 480 : 60 })),
-    centred([run(block.issuedByLine, palette, {
+    ], { after: index === block.titleLines.length - 1 ? 420 : 40 })),
+    // A short hairline holds the issuer line to the title instead of letting
+    // it drift in the field.
+    new Paragraph({
+      spacing: { after: 200 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: palette.onDeepMuted, space: 1 } },
+      indent: { right: Math.round((DOCX_PAGE.widthTwip - COVER.inset * 2) * 0.62) },
+      children: [],
+    }),
+    coverLine([run(block.issuedByLine, palette, {
       size: DOCX_TYPE.micro,
       font: DOCX_FONTS.mono,
       bold: true,
@@ -410,14 +472,15 @@ function coverSectionChildren(
     })], { after: 0 }),
   ], palette, { fill: palette.accentDeep, heightTwip: COVER.canvas });
 
-  // Band 2 — paper. The mark, the descriptor, the badges.
+  // Band 2 — paper. The mark, then the particulars: who is bound, and on what
+  // terms. This is the half of the cover that carries information.
   const middleChildren: Child[] = [];
   if (brand.logo) {
-    const targetH = 72;
+    const targetH = 64;
     const ratio = brand.logo.heightPx > 0 ? brand.logo.widthPx / brand.logo.heightPx : 3;
     middleChildren.push(new Paragraph({
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 320 },
+      alignment: AlignmentType.LEFT,
+      spacing: { after: 420 },
       children: [new ImageRun({
         type: brand.logo.type,
         data: brand.logo.data,
@@ -426,25 +489,31 @@ function coverSectionChildren(
     }));
   }
   middleChildren.push(
-    centred([run(block.descriptor, palette, {
-      size: DOCX_TYPE.coverDescriptor,
-      italics: true,
-      font: DOCX_FONTS.display,
-      color: palette.mutedInk,
-    })], { after: 480, line: 320 }),
-    badgeChips(block.badges, palette, false),
+    coverLine([run('PARTICULARS', palette, {
+      size: DOCX_TYPE.micro,
+      font: DOCX_FONTS.mono,
+      bold: true,
+      allCaps: true,
+      characterSpacing: 40,
+      color: palette.labelInk,
+    })], { after: 60 }),
+    new Paragraph({
+      spacing: { after: 200 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: palette.accent, space: 2 } },
+      indent: { right: Math.round((DOCX_PAGE.widthTwip - COVER.inset * 2) * 0.82) },
+      children: [],
+    }),
+    particularsPanel(block, key, values, palette),
   );
   const middle = coverBand(middleChildren, palette, {
     heightTwip: COVER.middleAtLeast, rule: HeightRule.ATLEAST,
   });
 
-  // Band 3 — the particulars. The template's own version line and review
-  // statement, set as a quiet panel along the foot.
+  // Band 3 — the foot. Version line and the review statement, flush left so
+  // the whole page shares one edge.
   const foot = coverBand([
     new Paragraph({
-      alignment: AlignmentType.CENTER,
       spacing: { after: 140 },
-      border: { top: { style: BorderStyle.SINGLE, size: 12, color: palette.accent, space: 12 } },
       children: [run(substitutePlain(block.versionLine, key, values), palette, {
         size: DOCX_TYPE.caption,
         font: DOCX_FONTS.mono,
@@ -452,7 +521,7 @@ function coverSectionChildren(
         color: palette.ink,
       })],
     }),
-    centred([run(block.reviewStatement, palette, {
+    coverLine([run(block.reviewStatement, palette, {
       size: DOCX_TYPE.micro,
       italics: true,
       color: palette.mutedInk,
@@ -503,7 +572,7 @@ function sectionOpener(section: AgreementSectionDef, palette: DocxPalette, break
     new Paragraph({
       keepNext: true,
       spacing: { after: 260 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: palette.accent, space: 2 } },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: palette.accent, space: 2 } },
       children: [],
     }),
   ];
@@ -512,7 +581,7 @@ function sectionOpener(section: AgreementSectionDef, palette: DocxPalette, break
 /** The contents page: a real Word TOC — dot leaders, live page numbers. */
 function contentsChildren(title: string, palette: DocxPalette): Child[] {
   return [
-    microLabel('Contents', palette, palette.accentInk),
+    microLabel('Contents', palette, palette.labelInk),
     new Paragraph({
       spacing: { after: 80 },
       children: [run(title, palette, {
@@ -521,7 +590,7 @@ function contentsChildren(title: string, palette: DocxPalette): Child[] {
     }),
     new Paragraph({
       spacing: { after: 260 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 18, color: palette.accent, space: 2 } },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: palette.accent, space: 2 } },
       children: [],
     }),
     new TableOfContents('Contents', {
@@ -537,13 +606,13 @@ function noteBlock(block: NoteBlock, key: AgreementTemplateKey, values: Agreemen
     columnWidths: [DOCX_CONTENT_WIDTH],
     borders: {
       top: NONE, bottom: NONE, right: NONE,
-      left: { style: BorderStyle.SINGLE, size: 20, color: palette.accent },
+      left: { style: BorderStyle.SINGLE, size: 10, color: palette.accent },
       insideHorizontal: NONE, insideVertical: NONE,
     },
     rows: [new TableRow({
       cantSplit: true,
       children: [cell([
-        microLabel(block.label, palette, palette.accentInk),
+        microLabel(block.label, palette, palette.labelInk),
         new Paragraph({
           spacing: { after: 0, line: 276 },
           children: [run(substitutePlain(block.body, key, values), palette, { size: DOCX_TYPE.caption })],
@@ -560,7 +629,7 @@ function gridBlock(block: GridBlock, key: AgreementTemplateKey, values: Agreemen
     for (const cellDef of cells) {
       const single = cells.length === 1;
       rowCells.push(cell(
-        [microLabel(cellDef.label, palette, palette.accentInk)],
+        [microLabel(cellDef.label, palette, palette.labelInk)],
         LABEL_W,
         { fill: palette.accentWash, valign: VerticalAlign.CENTER },
       ));
@@ -586,13 +655,13 @@ function gridBlock(block: GridBlock, key: AgreementTemplateKey, values: Agreemen
 
 function dualPanelBlock(block: DualPanelBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
   const panel = (side: { title: string; bullets: string[] }) => cell([
-    microLabel(side.title, palette, palette.accentInk),
+    microLabel(side.title, palette, palette.labelInk),
     spacer(40),
     ...side.bullets.map((bullet, index) => new Paragraph({
       spacing: { after: index === side.bullets.length - 1 ? 0 : 100, line: 276 },
       indent: { left: 260, hanging: 260 },
       children: [
-        run('•   ', palette, { color: palette.accentInk, bold: true }),
+        run('•   ', palette, { color: palette.labelInk, bold: true }),
         run(substitutePlain(bullet, key, values), palette, { size: DOCX_TYPE.caption }),
       ],
     })),
@@ -648,7 +717,7 @@ function workflowBlock(block: WorkflowBlock, palette: DocxPalette): Child[] {
     width: { size: DOCX_CONTENT_WIDTH, type: WidthType.DXA },
     columnWidths: [700, 2000, DOCX_CONTENT_WIDTH - 2700],
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 18, color: palette.accent },
+      top: { style: BorderStyle.SINGLE, size: 8, color: palette.rule },
       bottom: line, left: NONE, right: NONE,
       insideHorizontal: line, insideVertical: NONE,
     },
@@ -664,7 +733,7 @@ function workflowBlock(block: WorkflowBlock, palette: DocxPalette): Child[] {
           spacing: { after: 0 },
           children: [run(step.title, palette, {
             size: DOCX_TYPE.micro, font: DOCX_FONTS.mono, bold: true, allCaps: true,
-            characterSpacing: 26, color: palette.accentInk,
+            characterSpacing: 26, color: palette.labelInk,
           })],
         })], 2000, { valign: VerticalAlign.CENTER }),
         cell([new Paragraph({
@@ -679,7 +748,7 @@ function workflowBlock(block: WorkflowBlock, palette: DocxPalette): Child[] {
 function emailBlock(block: EmailTemplateBlock, key: AgreementTemplateKey, values: AgreementFieldValues, palette: DocxPalette): Child[] {
   const leftW = Math.round(DOCX_CONTENT_WIDTH * 0.58);
   const left = cell([
-    microLabel(block.subjectLabel, palette, palette.accentInk),
+    microLabel(block.subjectLabel, palette, palette.labelInk),
     new Paragraph({
       spacing: { after: 180 },
       children: [run(substitutePlain(block.subject, key, values), palette, {
@@ -697,7 +766,7 @@ function emailBlock(block: EmailTemplateBlock, key: AgreementTemplateKey, values
   ], leftW, { margins: { top: 160, bottom: 160, left: 190, right: 190 } });
 
   const right = cell([
-    microLabel(block.checklistTitle, palette, palette.accentInk),
+    microLabel(block.checklistTitle, palette, palette.labelInk),
     spacer(40),
     ...block.checklist.flatMap((item) => [
       new Paragraph({
@@ -718,12 +787,12 @@ function emailBlock(block: EmailTemplateBlock, key: AgreementTemplateKey, values
         children: [run(item.detail, palette, { size: DOCX_TYPE.micro, color: palette.mutedInk })],
       }),
     ]),
-    microLabel(block.attachmentsTitle, palette, palette.accentInk),
+    microLabel(block.attachmentsTitle, palette, palette.labelInk),
     ...block.attachments.map((item, index) => new Paragraph({
       spacing: { after: index === block.attachments.length - 1 ? 0 : 50 },
       indent: { left: 230, hanging: 230 },
       children: [
-        run('•   ', palette, { color: palette.accentInk }),
+        run('•   ', palette, { color: palette.labelInk }),
         run(item, palette, { size: DOCX_TYPE.caption }),
       ],
     })),
@@ -779,7 +848,7 @@ function executionBlock(block: ExecutionBlock, key: AgreementTemplateKey, values
         const name = prefill(party.role, 'name');
         const title = prefill(party.role, 'title');
         return cell([
-          microLabel(party.title, palette, palette.accentInk),
+          microLabel(party.title, palette, palette.labelInk),
           spacer(80),
           signatureLine(EXECUTION_PANEL_LINES.legalEntity, entity, palette, isUnfilled(entity)),
           signatureLine(EXECUTION_PANEL_LINES.signatoryName, name, palette, isUnfilled(name)),
@@ -811,9 +880,9 @@ function consentBlock(block: ConsentBlock, key: AgreementTemplateKey, values: Ag
       rows: [new TableRow({
         cantSplit: true,
         children: [
-          cell([microLabel(block.signatureLabel, palette, palette.accentInk)], LABEL_W, { fill: palette.accentWash, valign: VerticalAlign.CENTER }),
+          cell([microLabel(block.signatureLabel, palette, palette.labelInk)], LABEL_W, { fill: palette.accentWash, valign: VerticalAlign.CENTER }),
           cell([valueParagraph(SIGNATURE_RULE, palette)], VALUE_W),
-          cell([microLabel(block.dateLabel, palette, palette.accentInk)], LABEL_W, { fill: palette.accentWash, valign: VerticalAlign.CENTER }),
+          cell([microLabel(block.dateLabel, palette, palette.labelInk)], LABEL_W, { fill: palette.accentWash, valign: VerticalAlign.CENTER }),
           cell([valueParagraph(DATE_RULE, palette)], VALUE_W),
         ],
       })],

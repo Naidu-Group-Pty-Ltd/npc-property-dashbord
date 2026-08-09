@@ -271,16 +271,22 @@ function Block({
           <div className="mt-3 text-[11px] font-semibold uppercase tracking-widest text-primary">
             {block.issuedByLine}
           </div>
-          <p className="mx-auto mt-4 max-w-xl text-sm leading-relaxed text-muted-foreground">
-            {block.descriptor}
-          </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            {block.badges.map((badge) => (
-              <span key={badge} className="rounded border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {badge}
-              </span>
+          {/* Who is bound, and on what terms. This replaced a template
+              descriptor and a row of EDITABLE / BRAND-READY chips — those
+              describe the product to somebody choosing a template, and have no
+              place on the face of an agreement a counterparty is reading. */}
+          <dl className="mx-auto mt-6 max-w-lg border-t border-border/60 text-left">
+            {block.particulars.map((entry) => (
+              <div key={`${entry.label}-${entry.value}`} className="flex gap-4 border-b border-border/60 py-2">
+                <dt className="w-32 shrink-0 self-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {entry.label}
+                </dt>
+                <dd className="font-serif text-sm text-foreground">
+                  <BoundText text={entry.value} templateKey={templateKey} values={values} />
+                </dd>
+              </div>
             ))}
-          </div>
+          </dl>
           <div className="mt-6 text-xs text-foreground/80">
             <BoundText text={block.versionLine} templateKey={templateKey} values={values} />
           </div>
