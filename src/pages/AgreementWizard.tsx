@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/select';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
-  Palette, Save, Search, Send, Eye, UserPlus, Building2,
+  Palette, Save, Search, Send, Eye, UserPlus, Building2, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -213,6 +213,8 @@ export default function AgreementWizard() {
   const [values, setValues] = useState<AgreementFieldValues>({});
   const [dirty, setDirty] = useState(false);
   const [previewPdfId, setPreviewPdfId] = useState<string | null>(null);
+  /** Preview step: edit values where they are printed (default on — that is the point). */
+  const [inlineEditing, setInlineEditing] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'docx' | null>(null);
   const [partnerSearch, setPartnerSearch] = useState('');
   const [newPartnerOpen, setNewPartnerOpen] = useState(false);
