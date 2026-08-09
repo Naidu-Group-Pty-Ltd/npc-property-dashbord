@@ -312,6 +312,7 @@ export function projectFieldValues(
   const fpDisplay = displayName(row.partner_trading_name, row.partner_legal_name);
 
   values.ba_display_name = baDisplay;
+  values.consent_referring_agency = baDisplay;
   values.fp_display_name = fpDisplay;
   // The white-label cover: the issuing organisation. Agreement 01 is issued by
   // the buyer's agency; Agreement 02 by the finance partner.
@@ -437,6 +438,12 @@ export function validateForIssue(
 /** Placeholders for derived tokens that have no registry entry. */
 export const DERIVED_TOKEN_PLACEHOLDERS: Record<string, string> = {
   ba_display_name: '<<BUYER\'S AGENCY NAME>>',
+  // The client consent declaration names the agency that actually made the
+  // referral, which in a blank template is nobody. Its own token, because
+  // `ba_display_name` is gap-filled from the tenant's brand for the cover and
+  // the correspondence — correct there, wrong in a declaration a third party
+  // administers and a client signs. Bracket text supplied by the document owner.
+  consent_referring_agency: '<< BUYERS AGENT PARTNER NAME>>',
   fp_display_name: '<<FINANCE PARTNER NAME>>',
   company_name: '<<COMPANY NAME>>',
   recipient_first_name: '<<FIRST NAME>>',
