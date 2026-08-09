@@ -677,7 +677,11 @@ export default function AgreementWizard() {
           <div className="space-y-5">
             <FieldGroup defs={group('agreement')} values={values} onChange={setValue} />
             <div>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <p className="mb-2 mt-1 text-xs text-muted-foreground">
+                Each figure below fills the numbered clause shown on its chip. Every period is
+                expressed in whole days unless the field says otherwise.
+              </p>
               <FieldGroup defs={group('clauses')} values={values} onChange={setValue} />
             </div>
             <div>
