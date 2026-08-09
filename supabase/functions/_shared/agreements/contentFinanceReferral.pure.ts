@@ -43,7 +43,7 @@ export const FINANCE_REFERRAL_CONTENT: AgreementTemplateContent = {
             { label: 'DATED', value: '{{effective_date}}' },
             { label: 'GOVERNING LAW', value: '{{governing_state}}' },
           ],
-          versionLine: 'VERSION {{document_version}}  |  EFFECTIVE DATE: {{effective_date}}',
+          versionLine: 'EFFECTIVE DATE: {{effective_date}}',
           reviewStatement:
             'Template only - obtain legal, licensing, privacy and aggregator approval before use.',
         },
@@ -747,7 +747,7 @@ export const FINANCE_REFERRAL_CONTENT: AgreementTemplateContent = {
           kind: 'consent',
           label: 'Client consent',
           body:
-            'I consent to {{ba_display_name}} providing my name, contact details and general credit purpose to {{fp_display_name}} so that the finance partner may contact me about potential credit services. I understand that the buyer\'s agency may receive a referral payment or commission share if my loan settles, as disclosed to me. I remain free to choose another finance provider and no approval or lending outcome is guaranteed.',
+            'I consent to {{consent_referring_agency}} providing my name, contact details and general credit purpose to {{fp_display_name}} so that the finance partner may contact me about potential credit services. I understand that the buyer\'s agency may receive a referral payment or commission share if my loan settles, as disclosed to me. I remain free to choose another finance provider and no approval or lending outcome is guaranteed.',
           signatureLabel: 'CLIENT SIGNATURE',
           dateLabel: 'DATE',
         },
