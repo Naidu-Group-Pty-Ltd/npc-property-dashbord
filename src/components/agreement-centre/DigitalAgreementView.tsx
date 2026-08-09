@@ -102,10 +102,13 @@ interface EditLookup {
 
 const EditContext = createContext<EditLookup | null>(null);
 
+/** A node the reader may amend: supplied wording plus what is printed now. */
+type AmendableSlot = AgreementContentSlot & { current: string };
+
 /** Wording amendment, when the surface allows it. */
 interface ContentEditLookup {
-  /** The SUPPLIED wording, by path — what "restore" restores to. */
-  slots: Map<string, AgreementContentSlot>;
+  /** Keyed by path. `text` is the SUPPLIED wording — what "restore" restores. */
+  slots: Map<string, AmendableSlot>;
   onContentChange: (path: string, text: string | null) => void;
 }
 
@@ -800,7 +803,7 @@ export default function DigitalAgreementView({
   const contentLookup = useMemo<ContentEditLookup | null>(() => {
     const onContentChange = edit?.onContentChange;
     if (!onContentChange) return null;
-    const slots = new Map<string, AgreementContentSlot & { current: string }>();
+    const slots = new Map<string, AmendableSlot>();
     const supplied = listAgreementContentSlots(agreementTemplate(templateKey));
     const printed = new Map(listAgreementContentSlots(content).map((slot) => [slot.path, slot.text]));
     for (const slot of supplied) {
