@@ -83,6 +83,18 @@ cannot be forgotten. Never add it to a call site that already calls
 than not billing. That constraint is why everything behind `_shared/llmRouter.ts`
 is still uninstrumented; the doc explains what it would take to fix.
 
+## Stamp duty
+Every duty figure in the product comes from `supabase/functions/_shared/stampDuty/`
+and nowhere else; `src/utils/stampDutyCalculator.ts` is a one-line re-export.
+Read [`docs/reports/STAMP_DUTY.md`](./docs/reports/STAMP_DUTY.md) before changing
+a rate — it records the four divergent implementations this replaced (and what
+each got wrong), the third-party iframe it retired, and the handful of published
+quirks that look like bugs and must not be "fixed": VIC steps **up** at $960k,
+the ACT steps **down** at $1.455m, and NT is quadratic below $525k. A rate change
+is a data edit in `schedules.pure.ts` plus a regenerated seed — never a hand-written
+one. The weekly sweep flags stale schedules and **never writes a rate**; the doc
+explains why that asymmetry is deliberate.
+
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
 else here.** The design system renders **0.14%** of the documents this product

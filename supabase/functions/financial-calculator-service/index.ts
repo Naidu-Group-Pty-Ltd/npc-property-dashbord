@@ -3,6 +3,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { calculateStampDuty } from '../_shared/stampDuty/index.pure.ts';
+import { coerceState, resolveSchedule } from '../_shared/stampDuty/scheduleStore.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -223,6 +225,10 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
       stampDutyConcession: stampDutyResult.concession,
       stampDutyBeforeConcession: stampDutyResult.originalAmount,
       fhbEligible: stampDutyResult.fhbEligible,
+      // Surfaced so a report can state which financial year's schedule it was
+      // assessed against rather than presenting the figure as timeless.
+      stampDutyScheduleYear: stampDutyResult.scheduleYear,
+      stampDutyScheduleSource: stampDutyResult.scheduleSource,
       lmi: rateInfo.lmiEstimate,
       lmiRequired: rateInfo.lmiRequired,
       legalFees: 1500,
@@ -325,485 +331,70 @@ interface StampDutyResult {
   concession: number;
   fhbEligible: boolean;
   concessionType: string;
+  /** Financial year of the schedule used, so a report can cite its basis. */
+  scheduleYear: string;
+  /** Whether the figures came from the cache or the schedule shipped in code. */
+  scheduleSource: 'cache' | 'built-in';
 }
 
+/**
+ * Stamp duty for the projection.
+ *
+ * This used to be ~480 lines: eight bracket functions, eight first-home-buyer
+ * concession functions, and a cache reader — a third independent copy of the
+ * rates alongside `src/utils/` and the `_shared/` "mirror". All three disagreed
+ * with each other and none matched the revenue offices. It now delegates to the
+ * one engine, with the cache consulted through `resolveSchedule` so an
+ * administrator can publish a correction without a deploy.
+ */
 async function calculateStampDutyWithConcessions(
-  propertyValue: number, 
-  state: string, 
+  propertyValue: number,
+  state: string,
   supabase: any,
   isFirstHomeBuyer: boolean,
-  isNewBuild: boolean
+  isNewBuild: boolean,
 ): Promise<StampDutyResult> {
-  // First calculate standard stamp duty
-  const standardStampDuty = await calculateStampDutyDynamic(propertyValue, state, supabase);
-  
-  if (!isFirstHomeBuyer) {
-    return {
-      stampDuty: standardStampDuty,
-      originalAmount: standardStampDuty,
-      concession: 0,
-      fhbEligible: false,
-      concessionType: 'none'
-    };
+  const jurisdiction = coerceState(state);
+  const { schedule, source, rejectedReason } = await resolveSchedule(jurisdiction, supabase);
+  if (rejectedReason) {
+    console.warn(`[financial-calculator-service] ${jurisdiction} using built-in schedule: ${rejectedReason}`);
   }
 
-  // Apply FHB concessions based on state
-  const fhbResult = calculateFHBConcession(propertyValue, state, standardStampDuty, isNewBuild);
-  
-  return fhbResult;
-}
+  const category = isNewBuild ? 'new' : 'established';
 
-function calculateFHBConcession(
-  propertyValue: number, 
-  state: string, 
-  standardStampDuty: number,
-  isNewBuild: boolean
-): StampDutyResult {
-  const stateUpper = state.toUpperCase();
-  
-  switch (stateUpper) {
-    case 'NSW':
-      return calculateNSWFHBConcession(propertyValue, standardStampDuty, isNewBuild);
-    case 'VIC':
-      return calculateVICFHBConcession(propertyValue, standardStampDuty, isNewBuild);
-    case 'QLD':
-      return calculateQLDFHBConcession(propertyValue, standardStampDuty, isNewBuild);
-    case 'WA':
-      return calculateWAFHBConcession(propertyValue, standardStampDuty, isNewBuild);
-    case 'SA':
-      return calculateSAFHBConcession(propertyValue, standardStampDuty, isNewBuild);
-    case 'TAS':
-      return calculateTASFHBConcession(propertyValue, standardStampDuty);
-    case 'NT':
-      return calculateNTFHBConcession(propertyValue, standardStampDuty, isNewBuild);
-    case 'ACT':
-      return calculateACTFHBConcession(propertyValue, standardStampDuty);
-    default:
-      return {
-        stampDuty: standardStampDuty,
-        originalAmount: standardStampDuty,
-        concession: 0,
-        fhbEligible: false,
-        concessionType: 'none'
-      };
-  }
-}
+  // Duty before relief, so the response can still report what the concession
+  // was worth. The engine is asked twice rather than reverse-engineering the
+  // gross figure from the net one.
+  const gross = calculateStampDuty({
+    propertyValue,
+    state: jurisdiction,
+    intent: 'owner_occupier',
+    category,
+    schedule,
+  });
 
-// NSW First Home Buyer Concession (as of 2024)
-function calculateNSWFHBConcession(propertyValue: number, standardDuty: number, isNewBuild: boolean): StampDutyResult {
-  // NSW FHB exemption: Full exemption up to $800,000 for new and existing homes
-  // Concession (sliding scale) from $800,001 to $1,000,000
-  
-  const exemptionThreshold = 800000;
-  const concessionCap = 1000000;
-  
-  if (propertyValue <= exemptionThreshold) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: 'Full exemption (NSW FHB)'
-    };
-  }
-  
-  if (propertyValue <= concessionCap) {
-    // Sliding scale concession
-    const concessionRate = (concessionCap - propertyValue) / (concessionCap - exemptionThreshold);
-    const concession = standardDuty * concessionRate;
-    return {
-      stampDuty: Math.round(standardDuty - concession),
-      originalAmount: standardDuty,
-      concession: Math.round(concession),
-      fhbEligible: true,
-      concessionType: 'Partial concession (NSW FHB)'
-    };
-  }
-  
+  const assessed = calculateStampDuty({
+    propertyValue,
+    state: jurisdiction,
+    intent: 'owner_occupier',
+    category,
+    isFirstHomeBuyer,
+    schedule,
+  });
+
+  const concession = Math.max(0, gross.totalDuty - assessed.totalDuty);
+
   return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
+    stampDuty: assessed.totalDuty,
+    originalAmount: gross.totalDuty,
+    concession,
+    fhbEligible: isFirstHomeBuyer && concession > 0,
+    concessionType: isFirstHomeBuyer
+      ? (concession > 0 ? assessed.notes.join('; ') : `No first home concession applies in ${jurisdiction} at this value`)
+      : 'none',
+    scheduleYear: assessed.scheduleYear,
+    scheduleSource: source,
   };
-}
-
-// VIC First Home Buyer Concession (as of 2024)
-function calculateVICFHBConcession(propertyValue: number, standardDuty: number, isNewBuild: boolean): StampDutyResult {
-  // VIC FHB exemption: Full exemption up to $600,000
-  // Concession (sliding scale) from $600,001 to $750,000
-  
-  const exemptionThreshold = 600000;
-  const concessionCap = 750000;
-  
-  if (propertyValue <= exemptionThreshold) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: 'Full exemption (VIC FHB)'
-    };
-  }
-  
-  if (propertyValue <= concessionCap) {
-    const concessionRate = (concessionCap - propertyValue) / (concessionCap - exemptionThreshold);
-    const concession = standardDuty * concessionRate;
-    return {
-      stampDuty: Math.round(standardDuty - concession),
-      originalAmount: standardDuty,
-      concession: Math.round(concession),
-      fhbEligible: true,
-      concessionType: 'Partial concession (VIC FHB)'
-    };
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
-  };
-}
-
-// QLD First Home Buyer Concession (as of 2024)
-function calculateQLDFHBConcession(propertyValue: number, standardDuty: number, isNewBuild: boolean): StampDutyResult {
-  // QLD FHB concession: Full exemption up to $700,000 for new homes
-  // For existing homes: Full exemption up to $500,000, concession up to $550,000
-  
-  if (isNewBuild) {
-    if (propertyValue <= 700000) {
-      return {
-        stampDuty: 0,
-        originalAmount: standardDuty,
-        concession: standardDuty,
-        fhbEligible: true,
-        concessionType: 'Full exemption (QLD FHB - New Build)'
-      };
-    }
-  } else {
-    const exemptionThreshold = 500000;
-    const concessionCap = 550000;
-    
-    if (propertyValue <= exemptionThreshold) {
-      return {
-        stampDuty: 0,
-        originalAmount: standardDuty,
-        concession: standardDuty,
-        fhbEligible: true,
-        concessionType: 'Full exemption (QLD FHB)'
-      };
-    }
-    
-    if (propertyValue <= concessionCap) {
-      const concessionRate = (concessionCap - propertyValue) / (concessionCap - exemptionThreshold);
-      const concession = standardDuty * concessionRate;
-      return {
-        stampDuty: Math.round(standardDuty - concession),
-        originalAmount: standardDuty,
-        concession: Math.round(concession),
-        fhbEligible: true,
-        concessionType: 'Partial concession (QLD FHB)'
-      };
-    }
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
-  };
-}
-
-// WA First Home Buyer Concession (as of 2024)
-function calculateWAFHBConcession(propertyValue: number, standardDuty: number, isNewBuild: boolean): StampDutyResult {
-  // WA FHB exemption thresholds differ for new vs established
-  // New homes: Full exemption up to $530,000
-  // Established homes: Full exemption up to $430,000
-  // Concession sliding scale above these thresholds
-  
-  const exemptionThreshold = isNewBuild ? 530000 : 430000;
-  const concessionCap = isNewBuild ? 600000 : 530000;
-  
-  if (propertyValue <= exemptionThreshold) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: `Full exemption (WA FHB - ${isNewBuild ? 'New' : 'Established'})`
-    };
-  }
-  
-  if (propertyValue <= concessionCap) {
-    const concessionRate = (concessionCap - propertyValue) / (concessionCap - exemptionThreshold);
-    const concession = standardDuty * concessionRate;
-    return {
-      stampDuty: Math.round(standardDuty - concession),
-      originalAmount: standardDuty,
-      concession: Math.round(concession),
-      fhbEligible: true,
-      concessionType: `Partial concession (WA FHB - ${isNewBuild ? 'New' : 'Established'})`
-    };
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
-  };
-}
-
-// SA First Home Buyer Concession (as of 2024)
-function calculateSAFHBConcession(propertyValue: number, standardDuty: number, isNewBuild: boolean): StampDutyResult {
-  // SA: No stamp duty on new homes up to $650,000
-  // Established homes: No specific FHB exemption, but eligible for First Home Owner Grant
-  
-  if (isNewBuild && propertyValue <= 650000) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: 'Full exemption (SA FHB - New Build)'
-    };
-  }
-  
-  // SA has a general stamp duty relief for homes up to $442,000
-  if (propertyValue <= 442000) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: 'Full exemption (SA - General Relief)'
-    };
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: isNewBuild ? 'Above $650k - no FHB concession' : 'No FHB concession for established homes'
-  };
-}
-
-// TAS First Home Buyer Concession (as of 2024)
-function calculateTASFHBConcession(propertyValue: number, standardDuty: number): StampDutyResult {
-  // TAS: 50% stamp duty reduction for FHB up to $600,000
-  
-  if (propertyValue <= 600000) {
-    const concession = standardDuty * 0.5;
-    return {
-      stampDuty: Math.round(standardDuty - concession),
-      originalAmount: standardDuty,
-      concession: Math.round(concession),
-      fhbEligible: true,
-      concessionType: '50% reduction (TAS FHB)'
-    };
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
-  };
-}
-
-// NT First Home Buyer Concession (as of 2024)
-function calculateNTFHBConcession(propertyValue: number, standardDuty: number, isNewBuild: boolean): StampDutyResult {
-  // NT: Full stamp duty exemption for new homes up to $750,000
-  // Established homes have different thresholds
-  
-  const exemptionThreshold = isNewBuild ? 750000 : 650000;
-  
-  if (propertyValue <= exemptionThreshold) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: `Full exemption (NT FHB - ${isNewBuild ? 'New' : 'Established'})`
-    };
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
-  };
-}
-
-// ACT First Home Buyer Concession (as of 2024)
-function calculateACTFHBConcession(propertyValue: number, standardDuty: number): StampDutyResult {
-  // ACT: Full exemption for eligible FHBs (income tested)
-  // Threshold varies, using $1,000,000 as general threshold
-  
-  const exemptionThreshold = 1000000;
-  
-  if (propertyValue <= exemptionThreshold) {
-    return {
-      stampDuty: 0,
-      originalAmount: standardDuty,
-      concession: standardDuty,
-      fhbEligible: true,
-      concessionType: 'Full exemption (ACT FHB - income tested)'
-    };
-  }
-  
-  return {
-    stampDuty: standardDuty,
-    originalAmount: standardDuty,
-    concession: 0,
-    fhbEligible: false,
-    concessionType: 'Above threshold - no FHB concession'
-  };
-}
-
-async function calculateStampDutyDynamic(propertyValue: number, state: string, supabase: any): Promise<number> {
-  try {
-    // Try to fetch live rates from cache
-    const { data, error } = await supabase
-      .from('stamp_duty_rates_cache')
-      .select('brackets, data_quality')
-      .eq('state', state.toUpperCase())
-      .single()
-
-    if (!error && data) {
-      const brackets = data.brackets as Array<{ threshold: number; base: number; rate: number }>
-      console.log(`Using ${data.data_quality} stamp duty rates for ${state}`)
-      
-      // Calculate using progressive brackets
-      for (let i = brackets.length - 1; i >= 0; i--) {
-        if (propertyValue >= brackets[i].threshold) {
-          const amountAboveThreshold = propertyValue - brackets[i].threshold
-          return brackets[i].base + (amountAboveThreshold * brackets[i].rate)
-        }
-      }
-    }
-
-    console.warn(`Could not fetch stamp duty rates for ${state}, using fallback calculation`)
-  } catch (error) {
-    console.error(`Error fetching stamp duty rates for ${state}:`, error)
-  }
-
-  // Fallback to hardcoded calculation
-  return calculateStampDutyFallback(propertyValue, state)
-}
-
-function calculateStampDutyFallback(propertyValue: number, state: string): number {
-  const stateUpper = state.toUpperCase();
-  
-  switch (stateUpper) {
-    case 'NSW':
-      return calculateNSWStampDuty(propertyValue);
-    case 'VIC':
-      return calculateVICStampDuty(propertyValue);
-    case 'QLD':
-      return calculateQLDStampDuty(propertyValue);
-    case 'WA':
-      return calculateWAStampDuty(propertyValue);
-    case 'SA':
-      return calculateSAStampDuty(propertyValue);
-    case 'TAS':
-      return calculateTASStampDuty(propertyValue);
-    case 'NT':
-      return calculateNTStampDuty(propertyValue);
-    case 'ACT':
-      return calculateACTStampDuty(propertyValue);
-    default:
-      console.warn(`Unknown state: ${state}, defaulting to NSW calculation`);
-      return calculateNSWStampDuty(propertyValue);
-  }
-}
-
-// NSW Stamp Duty - Progressive brackets
-function calculateNSWStampDuty(value: number): number {
-  if (value <= 16000) return value * 0.0125;
-  if (value <= 35000) return 200 + ((value - 16000) * 0.015);
-  if (value <= 93000) return 485 + ((value - 35000) * 0.0175);
-  if (value <= 351000) return 1500 + ((value - 93000) * 0.035);
-  if (value <= 1168000) return 10530 + ((value - 351000) * 0.045);
-  return 47295 + ((value - 1168000) * 0.055);
-}
-
-// VIC Stamp Duty - Progressive brackets
-function calculateVICStampDuty(value: number): number {
-  if (value <= 25000) return value * 0.014;
-  if (value <= 130000) return 350 + ((value - 25000) * 0.024);
-  if (value <= 960000) return 2870 + ((value - 130000) * 0.05);
-  if (value <= 2000000) return 44370 + ((value - 960000) * 0.06);
-  return 106770 + ((value - 2000000) * 0.065);
-}
-
-// QLD Stamp Duty - Progressive brackets
-function calculateQLDStampDuty(value: number): number {
-  if (value <= 5000) return 0;
-  if (value <= 75000) return ((value - 5000) * 0.015);
-  if (value <= 540000) return 1050 + ((value - 75000) * 0.035);
-  if (value <= 1000000) return 17325 + ((value - 540000) * 0.045);
-  return 38025 + ((value - 1000000) * 0.0575);
-}
-
-// WA Stamp Duty - Progressive brackets
-function calculateWAStampDuty(value: number): number {
-  if (value <= 120000) return value * 0.019;
-  if (value <= 150000) return 2280 + ((value - 120000) * 0.029);
-  if (value <= 360000) return 3150 + ((value - 150000) * 0.038);
-  if (value <= 725000) return 11130 + ((value - 360000) * 0.047);
-  return 28285 + ((value - 725000) * 0.051);
-}
-
-// SA Stamp Duty - Progressive brackets
-function calculateSAStampDuty(value: number): number {
-  if (value <= 12000) return value * 0.01;
-  if (value <= 30000) return 120 + ((value - 12000) * 0.02);
-  if (value <= 50000) return 480 + ((value - 30000) * 0.03);
-  if (value <= 100000) return 1080 + ((value - 50000) * 0.035);
-  if (value <= 200000) return 2830 + ((value - 100000) * 0.04);
-  if (value <= 300000) return 6830 + ((value - 200000) * 0.0425);
-  if (value <= 500000) return 11080 + ((value - 300000) * 0.045);
-  return 20080 + ((value - 500000) * 0.0575);
-}
-
-// TAS Stamp Duty - Progressive brackets
-function calculateTASStampDuty(value: number): number {
-  if (value <= 3000) return value * 0.0175;
-  if (value <= 25000) return 52.50 + ((value - 3000) * 0.0225);
-  if (value <= 75000) return 547.50 + ((value - 25000) * 0.0325);
-  if (value <= 200000) return 2172.50 + ((value - 75000) * 0.0375);
-  if (value <= 375000) return 6859.38 + ((value - 200000) * 0.04);
-  if (value <= 725000) return 13859.38 + ((value - 375000) * 0.0425);
-  return 28734.38 + ((value - 725000) * 0.045);
-}
-
-// NT Stamp Duty - Progressive brackets
-function calculateNTStampDuty(value: number): number {
-  if (value <= 525000) return value * 0.0465;
-  if (value <= 3000000) return 24412.50 + ((value - 525000) * 0.0565);
-  return 164400 + ((value - 3000000) * 0.0595);
-}
-
-// ACT Stamp Duty - Progressive brackets
-function calculateACTStampDuty(value: number): number {
-  if (value <= 200000) return ((value / 100) * 0.7);
-  if (value <= 300000) return 1400 + (((value - 200000) / 100) * 2.2);
-  if (value <= 500000) return 3600 + (((value - 300000) / 100) * 3.4);
-  if (value <= 750000) return 10400 + (((value - 500000) / 100) * 4.32);
-  if (value <= 1000000) return 21200 + (((value - 750000) / 100) * 5.9);
-  if (value <= 1455000) return 35950 + (((value - 1000000) / 100) * 6.4);
-  return 65070 + (((value - 1455000) / 100) * 4.54);
 }
 
 function calculateAnnualCosts(propertyValue: number, weeklyRent: number, state: string, propertyType: string) {
