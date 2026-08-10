@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,6 +16,13 @@ import { MortgageRepaymentCalculator } from '../MortgageRepaymentCalculator';
 import { useToast } from '@/hooks/use-toast';
 import { LoanType, RepaymentFrequency } from '@/utils/mortgageCalculations';
 import { BuildType } from '@/types/overrideFields';
+import { StampDutyCalculatorPanel } from '../StampDutyCalculatorPanel';
+import {
+  AUSTRALIAN_STATES,
+  type AustralianState,
+  type PropertyCategory,
+  type PurchaseIntent,
+} from '@/utils/stampDutyCalculator';
 
 export type StampDutyPropertyType = 'primary_residence' | 'investment';
 export type StampDutyPurchaseType = 'established_home' | 'new_home' | 'vacant_land';
@@ -110,11 +117,8 @@ export function FinancialsTab({
   const [showMortgageCalculator, setShowMortgageCalculator] = useState(false);
   const [localStampDutyPropertyType, setLocalStampDutyPropertyType] = useState<StampDutyPropertyType>('investment');
   const [localStampDutyPurchaseType, setLocalStampDutyPurchaseType] = useState<StampDutyPurchaseType>('established_home');
-  const [manualStampDutyInput, setManualStampDutyInput] = useState<string>('');
-  const [capturedStampDuty, setCapturedStampDuty] = useState<string>('');
-  const [isCapturing, setIsCapturing] = useState(false);
-  const stampDutyContainerRef = useRef<HTMLDivElement>(null);
-  const stampDutyIframeRef = useRef<HTMLIFrameElement>(null);
+  const [isForeignBuyer, setIsForeignBuyer] = useState(false);
+  const [stampDutyStateOverride, setStampDutyStateOverride] = useState<AustralianState | null>(null);
   const isNewBuild = buildType === 'new_build';
   const { toast } = useToast();
 
@@ -123,38 +127,38 @@ export function FinancialsTab({
   const stampDutyPurchaseType = propStampDutyPurchaseType ?? localStampDutyPurchaseType;
   const setStampDutyPurchaseType = propSetStampDutyPurchaseType ?? setLocalStampDutyPurchaseType;
 
-  // Listen for messages from the stamp duty calculator iframe
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'STAMP_DUTY_VALUE') {
-        setIsCapturing(false);
-        if (event.data.success && event.data.value) {
-          const value = Math.round(event.data.value).toString();
-          setManualStampDutyInput(value);
-          setCapturedStampDuty(value);
-          toast({
-            title: "Value Captured",
-            description: `$${formatNumberWithCommas(value)} has been captured from the calculator.`,
-          });
-        } else {
-          toast({
-            title: "Could not capture value",
-            description: "Please calculate stamp duty first, then try again or enter manually.",
-            variant: "destructive",
-          });
-        }
-      } else if (event.data?.type === 'STAMP_DUTY_VALUE_AVAILABLE') {
-        // Auto-update when calculator shows a new result
-        if (event.data.value) {
-          const value = Math.round(event.data.value).toString();
-          setManualStampDutyInput(value);
-        }
-      }
-    };
+  // The tab's own vocabulary predates the calculator and is still what the
+  // parent report state speaks, so translate at the boundary rather than
+  // renaming props across every caller.
+  const stampDutyIntent: PurchaseIntent =
+    stampDutyPropertyType === 'primary_residence' ? 'owner_occupier' : 'investor';
+  const stampDutyCategory: PropertyCategory =
+    stampDutyPurchaseType === 'new_home' ? 'new'
+      : stampDutyPurchaseType === 'vacant_land' ? 'vacant_land'
+        : 'established';
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [toast]);
+  const handleIntentChange = useCallback((intent: PurchaseIntent) => {
+    setStampDutyPropertyType(intent === 'owner_occupier' ? 'primary_residence' : 'investment');
+  }, [setStampDutyPropertyType]);
+
+  const handleCategoryChange = useCallback((category: PropertyCategory) => {
+    setStampDutyPurchaseType(
+      category === 'new' ? 'new_home' : category === 'vacant_land' ? 'vacant_land' : 'established_home',
+    );
+  }, [setStampDutyPurchaseType]);
+
+  /**
+   * The jurisdiction detected from the property address, unless the user has
+   * picked a different one. `detectedState` is a free-form string and can be
+   * 'All' or empty, so it is narrowed here rather than trusted.
+   */
+  const stampDutyState: AustralianState = useMemo(() => {
+    if (stampDutyStateOverride) return stampDutyStateOverride;
+    const candidate = (detectedState || '').toUpperCase();
+    return (AUSTRALIAN_STATES as readonly string[]).includes(candidate)
+      ? (candidate as AustralianState)
+      : 'NSW';
+  }, [stampDutyStateOverride, detectedState]);
 
   const handleCurrencyChange = useCallback((setter: (value: string) => void) => {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -175,49 +179,18 @@ export function FinancialsTab({
   const rate = parseFloat(interestRate) || 6.5;
   const monthlyInterest = Math.round((loanAmount * (rate / 100)) / 12);
 
-  // Handle input change for stamp duty (editable field for review/adjustment)
-  const handleManualStampDutyInputChange = useCallback((value: string) => {
-    const rawValue = removeCommas(value);
-    setManualStampDutyInput(rawValue);
-    // Also update captured value when manually edited
-    if (rawValue && !isNaN(parseFloat(rawValue)) && parseFloat(rawValue) > 0) {
-      setCapturedStampDuty(rawValue);
-    }
-  }, []);
-
-  // Step 1: Capture the calculated value from iframe
-  const handleCaptureValue = useCallback(() => {
-    if (stampDutyIframeRef.current?.contentWindow) {
-      setIsCapturing(true);
-      stampDutyIframeRef.current.contentWindow.postMessage({ type: 'CAPTURE_STAMP_DUTY' }, '*');
-      
-      // Timeout fallback if no response
-      setTimeout(() => {
-        setIsCapturing(false);
-      }, 3000);
-    } else {
-      toast({
-        title: "Calculator not ready",
-        description: "Please wait for the calculator to load.",
-        variant: "destructive",
-      });
-    }
-  }, [toast]);
-
-  // Step 2: Use the captured value in the analysis
-  const handleUseValue = useCallback(() => {
-    const valueToUse = capturedStampDuty || manualStampDutyInput;
-    if (valueToUse && parseFloat(valueToUse) > 0) {
-      setStampDuty(valueToUse);
-      toast({
-        title: "Stamp Duty Applied",
-        description: `$${formatNumberWithCommas(valueToUse)} has been applied to your analysis.`,
-      });
-      setShowStampDutyModal(false);
-      setManualStampDutyInput('');
-      setCapturedStampDuty('');
-    }
-  }, [capturedStampDuty, manualStampDutyInput, setStampDuty, toast]);
+  // The calculator assesses duty in-process, so applying its figure is a single
+  // step. It used to be two — the value had to be scraped out of a third-party
+  // iframe before it could be used, and the scrape could silently fail.
+  const handleUseValue = useCallback((totalDuty: number) => {
+    const value = Math.round(totalDuty).toString();
+    setStampDuty(value);
+    toast({
+      title: 'Stamp duty applied',
+      description: `$${formatNumberWithCommas(value)} has been applied to your analysis.`,
+    });
+    setShowStampDutyModal(false);
+  }, [setStampDuty, toast]);
 
   const totalAcquisitionCosts = 
     (parseFloat(stampDuty) || 0) +
@@ -481,10 +454,7 @@ export function FinancialsTab({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  setShowStampDutyModal(true);
-                  setManualStampDutyInput(stampDuty || '');
-                }}
+                onClick={() => setShowStampDutyModal(true)}
                 disabled={disabled}
               >
                 <Calculator className="h-4 w-4 mr-1" />
@@ -511,7 +481,7 @@ export function FinancialsTab({
             )}
           </div>
 
-          {/* Stamp Duty Calculator Modal - Using iframe for isolation */}
+          {/* Stamp duty is assessed in-process; see StampDutyCalculatorPanel. */}
           <Dialog open={showStampDutyModal} onOpenChange={setShowStampDutyModal}>
             <DialogContent className="flex max-h-[calc(100dvh-4rem)] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100dvh-4rem)] sm:overflow-hidden sm:p-0">
               <DialogHeader className="shrink-0 border-b bg-background/95 px-6 pb-4 pt-6 pr-14">
@@ -525,166 +495,27 @@ export function FinancialsTab({
               </DialogHeader>
               
               <div
-                className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-4 pb-10 [scrollbar-color:rgba(180,180,190,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45 [&::-webkit-scrollbar-track]:bg-transparent"
+                className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-4 pb-10 [scrollbar-color:rgba(180,180,190,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45 [&::-webkit-scrollbar-track]:bg-transparent"
                 role="region"
                 aria-label="Scrollable stamp duty calculator content"
                 tabIndex={0}
               >
-                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg border">
-                  <div className="flex items-center gap-3">
-                    <Home className="h-5 w-5 text-primary" />
-                    <div>
-                      <Label htmlFor="firstHomeBuyerCalcModal" className="text-sm font-semibold cursor-pointer">
-                        First Home Buyer
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        Enable for stamp duty concessions
-                      </p>
-                    </div>
-                  </div>
-                  <Switch
-                    id="firstHomeBuyerCalcModal"
-                    checked={isFirstHomeBuyer}
-                    onCheckedChange={setIsFirstHomeBuyer}
-                    disabled={disabled}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium flex items-center gap-2">
-                    <Building className="h-4 w-4 text-muted-foreground" />
-                    Property Type
-                  </Label>
-                  <Select
-                    value={stampDutyPropertyType}
-                    onValueChange={(value) => setStampDutyPropertyType(value as StampDutyPropertyType)}
-                    disabled={disabled}
-                  >
-                    <SelectTrigger className="w-full bg-background">
-                      <SelectValue placeholder="Select property type" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background">
-                      <SelectItem value="primary_residence">Primary Residence</SelectItem>
-                      <SelectItem value="investment">Investment</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-muted-foreground" />
-                    Are you purchasing
-                  </Label>
-                  <Select
-                    value={stampDutyPurchaseType}
-                    onValueChange={(value) => setStampDutyPurchaseType(value as StampDutyPurchaseType)}
-                    disabled={disabled}
-                  >
-                    <SelectTrigger className="w-full bg-background">
-                      <SelectValue placeholder="Select purchase type" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-background">
-                      <SelectItem value="established_home">An established home</SelectItem>
-                      <SelectItem value="new_home">A new home</SelectItem>
-                      <SelectItem value="vacant_land">Vacant Land</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium flex items-center gap-2">
-                    <DollarSign className="h-4 w-4 text-muted-foreground" />
-                    Property Value
-                  </Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                    <Input
-                      type="text"
-                      value={formatForDisplay(purchasePrice)}
-                      disabled
-                      className="pl-7 bg-muted/50"
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Property value is pulled from the Purchase Price field
-                  </p>
-                </div>
-
-                <Separator />
-
-                {/* External Calculator Embed - Using iframe for complete isolation */}
-                <div className="relative w-full min-h-0 overflow-visible rounded-lg border bg-white shadow-inner">
-                  <iframe
-                    ref={stampDutyIframeRef}
-                    src={`/stamp-duty-embed.html?state=${detectedState}`}
-                    className="block w-full min-h-[860px] border-0"
-                    title="Stamp Duty Calculator"
-                    sandbox="allow-scripts allow-same-origin allow-forms"
-                  />
-                </div>
-
-                {/* Two-step stamp duty capture */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium">Stamp Duty Value:</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCaptureValue}
-                      disabled={disabled || isCapturing}
-                    >
-                      <Download className="h-4 w-4 mr-1" />
-                      {isCapturing ? 'Capturing...' : 'Capture Calculated Value'}
-                    </Button>
-                  </div>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      value={formatForDisplay(manualStampDutyInput)}
-                      onChange={(e) => handleManualStampDutyInputChange(e.target.value)}
-                      placeholder="Value will appear here after capture"
-                      className="pl-7"
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Use the calculator above, then click "Capture Calculated Value". You can also manually adjust if needed.
-                  </p>
-                </div>
-
-                {/* Show captured value and Use button */}
-                {(capturedStampDuty || manualStampDutyInput) && parseFloat(capturedStampDuty || manualStampDutyInput) > 0 && (
-                  <div className="flex items-center justify-between p-3 bg-success/10 rounded-lg border border-success/30">
-                    <div className="flex items-center gap-3">
-                      <Check className="h-5 w-5 text-success" />
-                      <div>
-                        <p className="text-sm font-semibold text-success">
-                          Stamp Duty: ${formatNumberWithCommas(capturedStampDuty || manualStampDutyInput)}
-                        </p>
-                        <p className="text-xs text-success">
-                          Ready to apply to your analysis
-                        </p>
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="default"
-                      size="sm"
-                      onClick={handleUseValue}
-                      disabled={disabled}
-                      className="bg-success hover:bg-success"
-                    >
-                      <Check className="h-4 w-4 mr-1" />
-                      Use Value
-                    </Button>
-                  </div>
-                )}
-
-                <p className="text-xs text-muted-foreground mt-2">
-                  * Calculate stamp duty using the widget above, click "Capture Calculated Value" to extract it, then click "Use Value" to apply.
-                </p>
+                <StampDutyCalculatorPanel
+                  propertyValue={price}
+                  state={stampDutyState}
+                  onStateChange={setStampDutyStateOverride}
+                  intent={stampDutyIntent}
+                  onIntentChange={handleIntentChange}
+                  category={stampDutyCategory}
+                  onCategoryChange={handleCategoryChange}
+                  isFirstHomeBuyer={isFirstHomeBuyer}
+                  onFirstHomeBuyerChange={setIsFirstHomeBuyer}
+                  isForeignBuyer={isForeignBuyer}
+                  onForeignBuyerChange={setIsForeignBuyer}
+                  onUseValue={handleUseValue}
+                  useValueLabel="Apply to analysis"
+                  disabled={disabled}
+                />
               </div>
             </DialogContent>
           </Dialog>
