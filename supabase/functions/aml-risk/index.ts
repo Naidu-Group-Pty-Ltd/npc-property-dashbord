@@ -25,6 +25,8 @@ import {
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import { MANDATORY_TRIGGER_WRITABLE, RISK_FACTOR_WRITABLE } from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -436,8 +438,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_factor") {
       if (!isMlro) return jr({ error: "MLRO required" }, 403);
       const patch = body.factor ?? {};
+      // WP-20: only declared columns — an unfiltered spread wrote whatever the
+      // caller named onto the risk model MLRO decisions are scored against.
       const { data, error } = await admin.schema("aml").from("risk_factors")
-        .upsert({ ...patch, created_by: patch.id ? undefined : userId }, { onConflict: "key" })
+        .upsert({ ...pickAllowed(patch, RISK_FACTOR_WRITABLE), created_by: patch.id ? undefined : userId }, { onConflict: "key" })
         .select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       return jr({ factor: data });
@@ -445,8 +449,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_trigger") {
       if (!isMlro) return jr({ error: "MLRO required" }, 403);
       const patch = body.trigger ?? {};
+      // WP-20: as above, for the mandatory-trigger table.
       const { data, error } = await admin.schema("aml").from("mandatory_triggers")
-        .upsert({ ...patch, created_by: patch.id ? undefined : userId }, { onConflict: "key" })
+        .upsert({ ...pickAllowed(patch, MANDATORY_TRIGGER_WRITABLE), created_by: patch.id ? undefined : userId }, { onConflict: "key" })
         .select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       return jr({ trigger: data });

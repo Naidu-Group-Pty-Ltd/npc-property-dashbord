@@ -304,6 +304,13 @@ jobs:
       - name: No caught error reaches a client 5xx (WP-18)
         run: node scripts/security/check-error-disclosure.mjs
 
+      # WP-20: a request body must not choose which columns get written. Several
+      # AML operations wrote a request sub-object straight to a table, which
+      # reached `resolved_by`/`resolved_at` — the record of who closed an alert.
+      # Ratcheted: the existing backlog is frozen, new sites fail.
+      - name: No new mass assignment (WP-20)
+        run: node scripts/security/check-mass-assignment.mjs
+
       # The gates above assert their properties by matching source literals, so
       # a legitimate refactor can make one stop matching and a careless repair
       # can loosen it until it passes. This removes each control from a

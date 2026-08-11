@@ -233,6 +233,18 @@ const CASES = [
     replace: 'Deno.serve(async (req: Request) => __corsWrappedHandler(req));',
   },
 
+  // ── WP-20: field allowlists at the write ─────────────────────────────────
+  // The alias hop matters: the first version of this gate stopped at
+  // `const alertRow = a` without following `a` back to `body.alert`, so this
+  // exact mutation walked straight through it.
+  {
+    gate: 'check-mass-assignment.mjs',
+    file: 'supabase/functions/aml-monitoring/index.ts',
+    what: 'an AML alert write goes back to taking the raw request sub-object',
+    find: 'const alertRow = pickAllowed(a, ALERT_WRITABLE);',
+    replace: 'const alertRow = a;',
+  },
+
   // ── WP-18: opaque 5xx ────────────────────────────────────────────────────
   {
     gate: 'check-error-disclosure.mjs',

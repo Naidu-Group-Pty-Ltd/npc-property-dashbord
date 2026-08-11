@@ -1,0 +1,32 @@
+{
+  "$comment": "WP-20: per-file count of writes fed by an unallowlisted request body. Frozen so new mass-assignment cannot land while the existing backlog is worked down. Regenerate with `node scripts/security/check-mass-assignment.mjs --update`. Numbers may only go down.",
+  "generated_total": 51,
+  "files": {
+    "supabase/functions/_shared/amlWritableColumns.ts": 1,
+    "supabase/functions/aml-cases/index.ts": 4,
+    "supabase/functions/aml-entities/index.ts": 2,
+    "supabase/functions/aml-finance/index.ts": 2,
+    "supabase/functions/aml-monitoring/index.ts": 4,
+    "supabase/functions/aml-records/index.ts": 3,
+    "supabase/functions/aml-risk/index.ts": 1,
+    "supabase/functions/aml-tenant/index.ts": 2,
+    "supabase/functions/aml-transactions/index.ts": 1,
+    "supabase/functions/builder-portal-admin/index.ts": 2,
+    "supabase/functions/email-copilot-extras/index.ts": 2,
+    "supabase/functions/finance-portal-commissions/index.ts": 1,
+    "supabase/functions/finance-portal-nudges/index.ts": 2,
+    "supabase/functions/manage-client-data/index.ts": 1,
+    "supabase/functions/manage-commercial-data/index.ts": 3,
+    "supabase/functions/manage-commission-ledger/index.ts": 1,
+    "supabase/functions/manage-compliance-records/index.ts": 2,
+    "supabase/functions/manage-industrial-data/index.ts": 3,
+    "supabase/functions/manage-lender-submissions/index.ts": 2,
+    "supabase/functions/manage-loan-writer-undertakings/index.ts": 1,
+    "supabase/functions/manage-partner-agreements/index.ts": 2,
+    "supabase/functions/manage-partner-referrals/index.ts": 1,
+    "supabase/functions/manage-portal-client-data/index.ts": 2,
+    "supabase/functions/market-qa-quality-snapshot/index.ts": 1,
+    "supabase/functions/quantitative-report-pipeline/index.ts": 1,
+    "supabase/functions/solicitor-portal-admin/index.ts": 4
+  }
+}
