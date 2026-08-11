@@ -623,9 +623,7 @@ export default function MarketUpdates() {
         </section>
 
 
-        {/* Where the feed comes from: all canonical sources, split by what the
-            pipeline does with each. Collapsed to three tiles until asked to expand. */}
-        <MarketSourceCoveragePanel shadowMetrics={sourceHealth.shadowMetrics} />
+
 
         {/* Period tabs + Digest */}
         <section>
