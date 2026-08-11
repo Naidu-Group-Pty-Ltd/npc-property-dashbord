@@ -164,6 +164,14 @@ describe('the existing non-KYC AML architecture is untouched', () => {
     expect(offenders.sort()).toEqual([
       'supabase/functions/_shared/aml/identityDocuments.pure.ts',
       'supabase/functions/_shared/aml/providers/index.ts',
+      /*
+       * The Standalone sequence, which imports the provider's own client and
+       * response readers. It is the identity path and nothing else: it calls
+       * three endpoints — ID document, passive liveness, face match 1:1 — and
+       * settles one `aml.verification_checks` row. The screening scope test
+       * above and the AML-endpoint test below are what hold it to that.
+       */
+      'supabase/functions/_shared/aml/standaloneVerification.ts',
     ]);
   });
 });
@@ -288,6 +296,9 @@ describe('no secret can reach the browser', () => {
       // value. That assertion is the next test.
       'supabase/functions/aml-verification/index.ts',
       'supabase/functions/_shared/aml/providers/diditClient.ts',
+      // The Standalone client. Reads the key into a request header and
+      // nowhere else; `redact()` keeps it out of every error it raises.
+      'supabase/functions/_shared/aml/providers/diditStandaloneClient.ts',
       'supabase/functions/_shared/aml/providers/index.ts',
       'supabase/functions/didit-webhook/index.ts',
     ].sort());

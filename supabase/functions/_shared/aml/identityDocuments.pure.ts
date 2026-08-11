@@ -75,6 +75,81 @@ export function isDocumentChoice(value: unknown): value is IdentityDocumentChoic
   return parseDocumentChoice(value) !== null;
 }
 
+/* ───────────────────────── capture plan ─────────────────────────────────── */
+
+/** The three photographs an NPC-owned capture can ask for. */
+export type IdentityCaptureKind = 'document_front' | 'document_back' | 'selfie';
+
+export const IDENTITY_CAPTURE_KINDS: readonly IdentityCaptureKind[] = [
+  'document_front', 'document_back', 'selfie',
+] as const;
+
+export interface IdentityCapturePlan {
+  document_front: true;
+  document_back: boolean;
+  selfie: true;
+}
+
+/**
+ * Which photographs the chosen document needs.
+ *
+ * Shared by the camera, the upload-grant issuer and the submission validator so
+ * that "did they give us everything?" is answered once. Asking a passport
+ * holder to photograph a back that does not exist is a dead end; accepting a
+ * driver licence with only its front is worse, because the back is where the
+ * card number and the address live and the provider is then judging half a
+ * document.
+ *
+ * ## Where these answers come from
+ *
+ * Not from the provider, and not invented here: they are the requirements NPC
+ * already publishes to the customer in `IDENTITY_DOCUMENT_PRESENTATION.bring`
+ * (`src/lib/aml/identityDocuments.ts`). Two of the four say "you will photograph
+ * both sides" — the driver licence and the photo identity card — and the other
+ * two say "open at the photo page". That copy is the approved statement of what
+ * NPC asks for, so it is what this mirrors rather than a second opinion that
+ * could disagree with what the customer was told to expect.
+ *
+ * `residence_permit` therefore takes a front only. It is the one entry whose
+ * source is a sentence rather than a policy document, and the ImmiCard is a
+ * card — so if the accepted-document policy is ever written down formally, this
+ * is the line to check first. It is deliberately NOT guessed upward: requiring
+ * a back nobody told the customer about would strand anyone holding a document
+ * that has nothing on it.
+ *
+ * A back is never *forbidden* by the provider — `back_image` is optional on the
+ * ID Verification API — so this decides what NPC ASKS FOR and what it REQUIRES,
+ * which is the same thing here by design: an optional capture is a capture some
+ * customers skip and others do not, and evidence that varies per customer is
+ * harder to adjudicate than evidence that does not.
+ */
+export function identityDocumentCapturePlan(
+  choice: IdentityDocumentChoice,
+): IdentityCapturePlan {
+  return {
+    document_front: true,
+    document_back: choice === 'driver_licence' || choice === 'identity_card',
+    selfie: true,
+  };
+}
+
+/** The capture kinds required for a choice, in the order they are taken. */
+export function requiredCaptureKinds(
+  choice: IdentityDocumentChoice,
+): IdentityCaptureKind[] {
+  const plan = identityDocumentCapturePlan(choice);
+  return IDENTITY_CAPTURE_KINDS.filter((kind) => plan[kind] === true);
+}
+
+/** Validate a browser-supplied capture kind against the closed list. */
+export function parseCaptureKind(value: unknown): IdentityCaptureKind | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().toLowerCase();
+  return (IDENTITY_CAPTURE_KINDS as readonly string[]).includes(trimmed)
+    ? trimmed as IdentityCaptureKind
+    : null;
+}
+
 /**
  * The path the hosted flow returns the customer to.
  *

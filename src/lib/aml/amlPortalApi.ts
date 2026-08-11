@@ -7,7 +7,9 @@
  * survived restarts and was readable by any script. See src/lib/portalSession.ts.
  */
 import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
-import type { IdentityDocumentChoice } from '@/lib/aml/identityDocuments';
+import type {
+  IdentityCapturePlan, IdentityCaptureKind, IdentityDocumentChoice,
+} from '@/lib/aml/identityDocuments';
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
@@ -252,6 +254,55 @@ export const amlPortalApi = {
     submitted: boolean; attempt_number: number; attempts_remaining: number;
     status: string; message: string;
   }>('submit_verification', { case_id, ...params }),
+
+  /**
+   * Prepare an identity attempt before the camera opens.
+   *
+   * One call, and it is the gate: the server checks the session, the case, the
+   * party, both consents, provider readiness, the attempt ceiling and
+   * one-in-flight BEFORE it hands back anywhere to write. If it refuses, no
+   * photograph has been taken and nothing exists to clean up — which is the
+   * whole reason this replaced the two separate upload-grant calls, where the
+   * gate sat on the second one and the first had already written a customer's
+   * identity document to storage.
+   *
+   * Preparing costs nothing. It creates a draft, not an attempt: the customer
+   * can prepare, look at the camera, change their mind and come back with all
+   * three attempts intact, as many times as they like.
+   *
+   * What comes back carries no provider name, no endpoint, no threshold and no
+   * key. The browser learns which photographs to take and where to put them,
+   * and those places were named by the server — it never chooses a storage
+   * path, which is what makes "name somebody else's object" not a thing that
+   * can be attempted.
+   */
+  prepareVerificationAttempt: (case_id: string, params: {
+    party_id?: string | null; party_label?: string;
+    document_type: IdentityDocumentChoice;
+  }) => call<{
+    attempt_id: string;
+    required: IdentityCapturePlan;
+    uploads: Partial<Record<IdentityCaptureKind, { upload_url: string; token: string }>>;
+    attempts_remaining: number;
+    max_attempts: number;
+  }>('prepare_verification_attempt', { case_id, ...params }),
+
+  /**
+   * Submit a prepared attempt once every required photograph is uploaded.
+   *
+   * Sends an attempt id and nothing else — no storage path, no provider, no
+   * status, no score, no threshold. Every one of those is server-owned, and
+   * there is no field here through which a browser could assert one.
+   *
+   * Returns as soon as the submission is durable. The three provider checks run
+   * behind it, so the customer may close the tab: the result is read back from
+   * `verificationStatus`, which is the server's answer and never this one.
+   */
+  submitVerificationAttempt: (case_id: string, attempt_id: string) => call<{
+    submitted: boolean; attempt_id: string; attempt_number: number;
+    attempts_remaining: number; status: string; message: string;
+    code?: string; retake?: IdentityCaptureKind[];
+  }>('submit_verification_attempt', { case_id, attempt_id }),
 
   /** Current consent catalogue + what this case has already accepted. */
   getConsents: (case_id: string) =>

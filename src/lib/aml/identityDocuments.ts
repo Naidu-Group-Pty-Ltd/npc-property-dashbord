@@ -22,6 +22,16 @@
 export {
   IDENTITY_DOCUMENT_CHOICES,
   parseDocumentChoice,
+  // The capture plan crosses too, and for the same reason as the list itself:
+  // the camera must ask for exactly the photographs the server will require.
+  // Two answers to "does this document have a back?" is a customer who
+  // photographs one side and is refused at submission, or who is asked for a
+  // side their passport does not have.
+  IDENTITY_CAPTURE_KINDS,
+  identityDocumentCapturePlan,
+  requiredCaptureKinds,
+  type IdentityCaptureKind,
+  type IdentityCapturePlan,
   type IdentityDocumentChoice,
 } from '../../../supabase/functions/_shared/aml/identityDocuments.pure';
 import type { IdentityDocumentChoice } from '../../../supabase/functions/_shared/aml/identityDocuments.pure';
