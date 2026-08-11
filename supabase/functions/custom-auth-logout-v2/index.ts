@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { extractSessionToken, createCorsHeaders, createClearSessionCookie } from "../_shared/auth.ts"
 import { hashSessionToken, isSessionHashConfigured } from "../_shared/sessionHash.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -23,7 +24,7 @@ Deno.serve(async (req) => {
     // Try to get session token from body for backwards compatibility
     let sessionToken: string | null = null;
     try {
-      const body = await req.json();
+      const body = await readBoundedJson(req);
       sessionToken = extractSessionToken(req.headers, body);
     } catch {
       // If body parsing fails, try to extract from headers/cookies only

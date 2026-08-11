@@ -23,6 +23,15 @@ on:
         description: "Internal-service function to probe (NT-09)"
         required: false
         default: agent-task-runner
+      run_quota_test:
+        description: >-
+          NT-29: exhaust the Google Places IP quota to prove the 429.
+          COSTS MONEY — the quota is consumed before the vendor call, so
+          reaching the limit means ~30 billable Places requests, and this
+          deployment may be spending the prime's credential. Off by default.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,6 +63,11 @@ jobs:
           NON_SUPERADMIN_JWT: ${{ secrets.NON_SUPERADMIN_JWT }}
           CRON_TARGET: ${{ inputs.cron_target }}
           INTERNAL_TARGET: ${{ inputs.internal_target }}
+          # Optional, and each unlocks one row that cannot run without it.
+          # Absent, the row records itself as `skipped` with the reason — which
+          # lands in the evidence rather than the row silently not existing.
+          OUTLOOK_WEBHOOK_CLIENT_STATE: ${{ secrets.OUTLOOK_WEBHOOK_CLIENT_STATE }}
+          RUN_QUOTA_TEST: ${{ inputs.run_quota_test }}
         run: node scripts/security/wp15-negative-tests.mjs
 
       # Uploaded even when the step above fails — a failing run is the evidence

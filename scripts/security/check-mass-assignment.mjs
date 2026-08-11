@@ -25,18 +25,24 @@
  *
  * ## Why this ratchets
  *
- * 90 write sites derive from a request body. Most are already laundered through
+ * 90 write sites derive from a request body. Most were already laundered through
  * `pickAllowed`, `pickKnownColumns`, `buildMatterPayload` and friends; the
- * remainder need a per-table decision about which columns are legitimately
- * writable, which is product knowledge and not one change. So the current set is
- * frozen in `supabase/functions-registry/mass-assignment-baseline.json` and the
- * gate fails on anything NEW — the same ratchet `edge-typecheck-baseline.json`
- * uses. Existing debt is visible and capped; it cannot grow.
+ * remainder needed a per-table decision about which columns are legitimately
+ * writable, which is product knowledge and not one change. So the set was frozen
+ * in `supabase/functions-registry/mass-assignment-baseline.json` and the gate
+ * failed on anything NEW — the same ratchet `edge-typecheck-baseline.json` uses.
  *
- * Lower the count whenever you allowlist one — `--update` rewrites the baseline,
- * and the committed file is the record of the backlog shrinking.
+ * **The backlog is now zero** (WP-25), so the ratchet has become a zero-tolerance
+ * gate without needing to be rewritten as one: the baseline holds `0`, and any
+ * new unallowlisted write is a regression against it. The mechanism stays a
+ * ratchet because a future refactor may legitimately need to land debt before
+ * paying it, and a gate that cannot express "not yet" gets disabled instead.
+ *
+ * `--list` prints the sites; `--update` re-freezes. The committed baseline is
+ * the record of the backlog shrinking — 15 → 0.
  *
  *   node scripts/security/check-mass-assignment.mjs           # check
+ *   node scripts/security/check-mass-assignment.mjs --list    # where
  *   node scripts/security/check-mass-assignment.mjs --update  # re-freeze
  */
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -47,6 +53,12 @@ const root = resolve(process.cwd());
 const FUNC_DIR = join(root, 'supabase', 'functions');
 const BASELINE = join(root, 'supabase', 'functions-registry', 'mass-assignment-baseline.json');
 const update = process.argv.includes('--update');
+// `--list` prints every site with its line number. The count alone tells you a
+// file still has work in it but not where, and the detection is subtle enough
+// (nearest-definition-above, alias-following, spread-resolution) that guessing
+// from a grep finds the wrong line as often as the right one.
+const list = process.argv.includes('--list');
+const sites = [];
 
 /**
  * Helpers that return an allowlisted object. A write fed by one is fine.
@@ -57,6 +69,22 @@ const update = process.argv.includes('--update');
  * genuinely an allowlist and the gate must not claim otherwise.
  */
 const LAUNDERERS = /\bpick\w*\(|pickAllowed|pickKnownColumns|pickEditable|sanitize[A-Z]|normalise[A-Z]\w*Payload|build[A-Z]\w*Payload|mapPayload|WRITABLE|_COLUMNS\b|_COLS\b|_FIELDS\b/;
+
+/**
+ * Does this expression carry the CALLER's object?
+ *
+ * `.data` needs a root. It is here to catch `body.data` and the `{ ok, data }`
+ * that `_shared/validate.ts` and zod's `safeParse` return — all genuinely the
+ * request. As a bare `\.data\b` it also matched `inserted.data`, which is a row
+ * this process just wrote and read back, and reported a hand-built four-column
+ * literal in `quantitative-report-pipeline` as mass assignment.
+ *
+ * That direction of error is the expensive one. A gate that names correct code
+ * gets read as noise, and then the site it is right about gets read as noise
+ * too.
+ */
+const REQUEST_DERIVED =
+  /\bbody\b|req\.json\(\)|\bpayload\b|\b(?:body|payload|parsed|validated|input|req|request|args)\s*\.\s*data\b/;
 
 /**
  * An object literal whose keys are written out is an allowlist by construction —
@@ -89,7 +117,7 @@ function isExplicitLiteral(rhs) {
   // disqualifying reported five hand-built rows that merely happened to spread a
   // local default deep inside a 500-character literal.
   if (/\.\.\.\s*(?:body|payload|data|req\.json)\b/.test(rhs)) return false;
-  return !/\bbody\b|req\.json\(\)|\bpayload\b|\.data\b/.test(outside);
+  return !REQUEST_DERIVED.test(outside);
 }
 
 function walk(dir, out = []) {
@@ -182,7 +210,7 @@ for (const file of walk(FUNC_DIR)) {
     // Only request-derived values are in scope. A locally-built object
     // (`const patch = { status: 'processing' }`) is the author's, not the
     // caller's.
-    const bodyDerived = /\bbody\b|req\.json\(\)|\bpayload\b|\.data\b/.test(rhs)
+    const bodyDerived = REQUEST_DERIVED.test(rhs)
       || ['body', 'payload'].includes(varName);
     if (!bodyDerived) continue;
 
@@ -206,8 +234,17 @@ for (const file of walk(FUNC_DIR)) {
     // is a write of the raw variable when a *different* variable was laundered,
     // which is the bug this is looking for.
     count++;
+    if (list) {
+      sites.push(`${rel}:${src.slice(0, writeAt).split('\n').length}  ${varName}  ${m[0].trim()}`);
+    }
   }
   if (count) found.set(rel, count);
+}
+
+if (list) {
+  for (const s of sites) console.log(s);
+  console.log(`\n${sites.length} site(s).`);
+  process.exit(0);
 }
 
 const total = [...found.values()].reduce((a, b) => a + b, 0);

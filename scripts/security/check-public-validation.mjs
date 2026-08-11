@@ -44,8 +44,21 @@ const root = resolve(process.cwd());
 const FUNC_DIR = join(root, 'supabase', 'functions');
 const REGISTRY = join(root, 'supabase', 'functions-registry', 'SECURITY_REGISTRY.json');
 
-/** Classes reachable without any credential. */
-const UNAUTHENTICATED = new Set(['public']);
+/**
+ * Classes reachable without any credential.
+ *
+ * `public-auth` joined in WP-27. Those 31 are the pre-session endpoints — login,
+ * forgot-password, reset-password, accept-invite, verify, across four portals
+ * and the staff console — and they are reachable exactly as anonymously as the
+ * `public` nine. The measured state when the class was added: **all 27 that read
+ * a body read it with a bare `await req.json()`**, three times as many as the
+ * class this gate was written for.
+ *
+ * They are not lower-risk for being auth endpoints. They are the endpoints an
+ * attacker reaches first, by design, and the only thing in front of them is the
+ * rate limiter — which is itself keyed off values taken from the body.
+ */
+const UNAUTHENTICATED = new Set(['public', 'public-auth']);
 
 /**
  * Reviewed exceptions. `public` functions that read a body but cannot use the
