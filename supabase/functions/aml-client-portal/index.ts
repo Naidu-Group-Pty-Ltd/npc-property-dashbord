@@ -46,6 +46,7 @@ import {
 } from "../_shared/aml/providers/didit.pure.ts";
 import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
   applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
 } from "../_shared/aml/diditOutcome.ts";
@@ -627,7 +628,7 @@ function consentRequiredResponse(state: ConsentState) {
   }, 403);
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -1697,4 +1698,12 @@ Deno.serve(async (req) => {
     console.error('aml-client-portal error', err);
     return jsonResponse({ ...internalError(err, 'aml-client-portal') }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

@@ -221,6 +221,18 @@ const CASES = [
     replace: '',
   },
 
+  // ── WP-19: the exposure-class CORS rule ──────────────────────────────────
+  // Distinct from the case above: that one proves the transport-tracing rule
+  // still bites, this one proves the registry-class rule does — the rule that
+  // catches a function no `invokeSecureFunction('name')` literal points at.
+  {
+    gate: 'check-cors-contract.mjs',
+    file: 'supabase/functions/template-share/index.ts',
+    what: 'a browser-session function is unwrapped and left answering a wildcard',
+    find: 'Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));',
+    replace: 'Deno.serve(async (req: Request) => __corsWrappedHandler(req));',
+  },
+
   // ── WP-18: opaque 5xx ────────────────────────────────────────────────────
   {
     gate: 'check-error-disclosure.mjs',

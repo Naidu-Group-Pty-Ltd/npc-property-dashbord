@@ -6,6 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
   enforceIpQuota,
   enforceKeyQuota,
@@ -41,7 +42,7 @@ async function isSuperadmin(sb: ReturnType<typeof createClient>, userId: string)
   return Array.isArray(data) && data.some((r: { role?: string }) => r.role === 'superadmin');
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -160,4 +161,12 @@ Deno.serve(async (req) => {
   } catch (err) {
     return json({ error: redactError(err) }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

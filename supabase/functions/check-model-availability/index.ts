@@ -5,6 +5,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -262,7 +263,7 @@ async function persistCatalog(allModels: ProbedModel[], errorByKey: Record<strin
   }
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   try {
     let force = false;
@@ -353,7 +354,15 @@ Deno.serve(async (req) => {
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+
 
 function buildProviderSummary(cached: any[], settings: any[]): ProviderResult[] {
   const grouped = new Map<string, any[]>();

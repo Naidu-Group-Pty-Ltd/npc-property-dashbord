@@ -13,6 +13,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { notifyFinancePortalAssignees } from "../_shared/finance-portal-notify.ts";
 import { LEGAL_MATTER_CLIENT_PROJECTION_SELECT } from "../_shared/legalMatters.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 const CASE_PROJECTIONS_V1 = Deno.env.get('CASE_PROJECTIONS_V1') !== 'false';
 
 const corsHeaders = {
@@ -45,7 +46,7 @@ function isOfferedSlot(
     && (start.getTime() - windowStart.getTime()) % durationMs === 0;
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -283,4 +284,12 @@ Deno.serve(async (req) => {
     console.error('[client-portal-batch6]', e);
     return json({ ...internalError(e, 'client-portal-batch6') }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+
