@@ -166,15 +166,27 @@ function renderCoverPage(
     })
     .join('');
 
+  // Three bands, matching the Word cover exactly: a full-bleed brand canvas,
+  // the paper carrying the mark and the particulars, and a quiet foot.
+  //
+  // The bands exist because `page-cover` is a ZERO-MARGIN page — the design
+  // system reserves it for a full-bleed treatment ("Full-bleed obsidian. No
+  // chrome."). This cover was written as ordinary flowed content and inherited
+  // that page, so every line sat hard against the paper's edge with the title
+  // set at report-cover scale, four lines deep and running out of the page.
+  // Each band now owns its own inset.
   return `
     <section class="agc-cover page-cover">
-      <div class="agc-cover-top">
-        ${mark}
+      <div class="agc-cover-canvas">
         <div class="agc-cover-company">${companyName}</div>
-      </div>
-      <div class="agc-cover-middle">
         <h1 class="agc-cover-title">${block.titleLines.map((line) => escapeHtml(line)).join('<br/>')}</h1>
+        <div class="agc-cover-hair"></div>
         <div class="agc-cover-issued">${escapeHtml(block.issuedByLine)}</div>
+      </div>
+      <div class="agc-cover-paper">
+        ${mark}
+        <div class="agc-cover-particulars-label">Particulars</div>
+        <div class="agc-cover-particulars-rule"></div>
         <dl class="agc-cover-particulars">${particulars}</dl>
       </div>
       <div class="agc-cover-foot">
@@ -568,57 +580,90 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
   .page-contents .toc-note { display: none; }
   .page-contents h1 { font-size: ${pt(type.subhead)}; line-height: 1.2; max-width: 150mm; }
 
-  /* Cover — the issuing organisation's page. Claims the named cover page via
-     the generated .page-cover rule; no page geometry of its own. */
+  /* Cover — three full-bleed bands on the zero-margin cover page.
+     Matches the Word cover band for band, so the two deliverables are one
+     document in two formats rather than two designs. */
   .agc-cover {
     page-break-after: always;
     color: ${palette.bodyInk};
+    /* A4 exactly: the bands sum to the page so none can spill to a second. */
+    height: 297mm;
   }
-  .agc-cover-top { padding-top: 10mm; }
-  .agc-cover-mark { max-height: 22mm; max-width: 70mm; }
-  .agc-cover-mark-fallback {
-    font-family: ${PRINT_STACK.display};
-    font-size: ${pt(type.h2)};
-    color: ${palette.accentOnPaper};
+  .agc-cover-canvas {
+    box-sizing: border-box;
+    height: 100mm;
+    padding: 24mm 22mm 0;
+    background: ${palette.field};
   }
   .agc-cover-company {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
     text-transform: uppercase;
-    color: ${palette.mutedInk};
-    margin-top: ${pt(d.paragraphGapPt)};
+    color: ${palette.accentOnField};
+    margin: 0 0 9mm;
   }
-  .agc-cover-middle { margin-top: 42mm; }
   .agc-cover-title {
     font-family: ${PRINT_STACK.display};
-    font-size: ${pt(type.coverTitle)};
-    line-height: 1.05;
-    color: ${palette.bodyInk};
-    margin: 0 0 ${pt(d.blockGapPt)};
-    max-width: 165mm;
+    /* Explicitly sized rather than the coverTitle scale: the report cover's
+       display scale set this four lines deep and past the page edge. */
+    font-size: 27pt;
+    line-height: 1.14;
+    font-weight: 400;
+    color: ${palette.onFieldInk};
+    margin: 0;
+    /* The band's full measure. The content module declares its own line breaks
+       in titleLines; a narrower measure re-wrapped the first of them and put
+       the title three ragged lines deep. */
+    max-width: 166mm;
+  }
+  .agc-cover-hair {
+    width: 34mm;
+    border-top: 0.75pt solid ${palette.accentOnField};
+    margin: 7mm 0 4mm;
   }
   .agc-cover-issued {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
     text-transform: uppercase;
-    color: ${palette.accentOnPaper};
-    margin-bottom: ${pt(d.blockGapPt)};
+    color: ${palette.onFieldInk};
+    opacity: 0.72;
   }
-  .agc-cover-particulars {
-    margin-top: ${pt(d.blockGapPt * 1.5)};
-    max-width: 150mm;
-    border-top: 0.5pt solid ${palette.rule};
+  .agc-cover-paper {
+    box-sizing: border-box;
+    height: 151mm;
+    padding: 16mm 22mm 0;
+    background: ${palette.paper};
   }
+  .agc-cover-mark { max-height: 18mm; max-width: 60mm; margin-bottom: 12mm; }
+  .agc-cover-mark-fallback {
+    font-family: ${PRINT_STACK.display};
+    font-size: ${pt(type.h2)};
+    color: ${palette.bodyInk};
+    margin-bottom: 12mm;
+  }
+  .agc-cover-particulars-label {
+    font-family: ${PRINT_STACK.mono};
+    font-size: ${pt(type.micro)};
+    letter-spacing: ${PRINT_TRACKING.eyebrow};
+    text-transform: uppercase;
+    color: ${palette.mutedInk};
+  }
+  .agc-cover-particulars-rule {
+    width: 22mm;
+    border-top: 1pt solid ${palette.accentOnPaper};
+    margin: 2mm 0 5mm;
+  }
+  .agc-cover-particulars { max-width: 150mm; margin: 0; }
   .agc-cover-particular {
     display: flex;
     gap: 8mm;
-    padding: 2.5mm 0;
+    padding: 2.6mm 0;
     border-bottom: 0.5pt solid ${palette.rule};
   }
   .agc-cover-particular dt {
-    flex: 0 0 32mm;
+    flex: 0 0 30mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
@@ -630,9 +675,14 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
     margin: 0;
     font-family: ${PRINT_STACK.display};
     font-size: ${pt(type.body + 1)};
-    color: ${palette.ink};
+    color: ${palette.bodyInk};
   }
-  .agc-cover-foot { margin-top: 34mm; }
+  .agc-cover-foot {
+    box-sizing: border-box;
+    height: 46mm;
+    padding: 10mm 22mm 0;
+    background: ${palette.paperAlt};
+  }
   .agc-cover-version {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.caption)};
