@@ -43,6 +43,11 @@ import {
   type IdvFlow,
 } from "../_shared/aml/providers/index.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+// The journey is the one canonical statement of where a client is, and four
+// portal surfaces render it. It lives in a pure module so it is testable
+// without a database — see the header there for the documents defect that
+// hiding it in this file concealed.
+import { buildJourney } from "../_shared/aml/portalJourney.pure.ts";
 import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
@@ -262,80 +267,6 @@ const CLIENT_ACTION_CODES = [
   'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
   'review_consent', 'provide_clarification', 'review_and_submit',
 ];
-
-/**
- * Stage 22 — server-derived journey. The portal renders exactly what this
- * returns; no completion claim is computed client-side. "Verified" appears
- * only when every applicable party holds an authoritative electronic result
- * or an accepted staff sighting — never from case status alone. Completion
- * wording stays restrained: reuse claims belong to the passport/consent
- * machinery, not this journey.
- */
-function buildJourney(args: {
-  consentSatisfied: boolean;
-  activeSections: string[];
-  sectionMap: Map<string, any>;
-  requirements: any[];
-  parties: Array<{ status: string; can_attempt: boolean }>;
-  submissions: any[];
-  openRequestCount: number;
-  portalStatus: string;
-}) {
-  const sectionsDone = args.activeSections.every((sec) =>
-    ['submitted', 'accepted', 'complete'].includes(args.sectionMap.get(sec)?.status ?? ''));
-  const requiredReqs = args.requirements.filter((r: any) => r.required);
-  const docsDone = requiredReqs.length > 0 &&
-    requiredReqs.every((r: any) => ['uploaded', 'accepted'].includes(r.status));
-  const partiesResolved = args.parties.length > 0 &&
-    args.parties.every((pt) => pt.status === 'verified');
-  const verificationInFlight = args.parties.some((pt) => pt.status === 'in_review');
-  const submitted = (args.submissions ?? []).length > 0;
-  const complete = args.portalStatus === 'complete';
-
-  const step = (
-    key: string, status: 'complete' | 'in_progress' | 'action_required' | 'not_started' | 'blocked',
-    label: string, description: string, target: string, completedAt: string | null = null,
-  ) => ({
-    step: key, status, action_required: status === 'action_required',
-    safe_label: label, safe_description: description, target_step: target,
-    completed_at: completedAt,
-  });
-
-  return [
-    step('consent', args.consentSatisfied ? 'complete' : 'action_required',
-      'Consents', args.consentSatisfied
-        ? 'You have accepted the current consents.'
-        : 'Please review and accept the consents to continue.', 'consent'),
-    step('questionnaire', sectionsDone ? 'complete' : args.consentSatisfied ? 'action_required' : 'blocked',
-      'Your information', sectionsDone
-        ? 'All required sections are submitted.'
-        : 'Some sections still need to be completed.', 'questionnaire'),
-    step('documents', docsDone ? 'complete' : requiredReqs.length === 0 ? 'not_started' : 'action_required',
-      'Documents', docsDone
-        ? 'All requested documents are uploaded.'
-        : 'Some requested documents are outstanding.', 'documents'),
-    step('verification',
-      partiesResolved ? 'complete' : verificationInFlight ? 'in_progress' : 'action_required',
-      'Identity verification',
-      partiesResolved
-        ? 'You are verified.'
-        : verificationInFlight
-          ? 'We are checking your identity documents.'
-          : 'Identity verification is still to be completed.', 'verify'),
-    step('submission', submitted ? 'complete' : 'not_started',
-      'Review and submit', submitted
-        ? 'Your information has been submitted for review.'
-        : 'Submit your onboarding once everything above is complete.', 'review'),
-    step('review',
-      complete ? 'complete' : args.openRequestCount > 0 ? 'action_required' : submitted ? 'in_progress' : 'not_started',
-      complete ? 'Complete' : 'Adviser review',
-      complete
-        ? 'Your onboarding is complete.'
-        : args.openRequestCount > 0
-          ? 'Your adviser has asked for something — see your requests.'
-          : 'Your adviser is reviewing your information.', 'review'),
-  ];
-}
 
 /**
  * Attempts already CONSUMED by this party on the electronic path.
@@ -732,11 +663,24 @@ Deno.serve(async (req) => {
               + 'You’ll be notified when it’s ready — there is nothing for you to do now.',
           });
         }
-        const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
+        const [
+          { data: sections }, { data: requirements }, { data: documentFacts },
+          { data: openRequests }, { data: submissions },
+        ] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
             .select('section,status,updated_at,payload').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements')
             .select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
+          // The two columns the journey needs and nothing else. A requirement
+          // is a REQUEST for a document; this is the record of what arrived,
+          // and without it a case with no formal requirements could never
+          // complete its documents step however much the client uploaded.
+          //
+          // No filename, no storage path, no checksum, no uploader: none of
+          // that reaches the wire, and this projection is not shipped to the
+          // client at all — it is consumed here to derive one status.
+          admin.schema('aml').from('documents')
+            .select('requirement_id,status').eq('case_id', c.id).neq('status', 'deleted'),
           admin.schema('aml').from('client_requests')
             .select('*').eq('case_id', c.id).in('status', ['open','responded'])
             .order('created_at', { ascending: false }),
@@ -802,9 +746,14 @@ Deno.serve(async (req) => {
             activeSections: active,
             sectionMap,
             requirements: reqs,
+            documents: documentFacts ?? [],
             parties: await verificationParties(admin, c.id),
             submissions: submissions ?? [],
-            openRequestCount: (openRequests ?? []).length,
+            // Only requests still waiting on the CLIENT. `responded` is waiting
+            // on the adviser: counting it kept the journey saying "your adviser
+            // has asked for something" after the client had answered.
+            openRequestCount: (openRequests ?? [])
+              .filter((r: any) => r.status === 'open').length,
             portalStatus,
           }),
         });
@@ -1802,6 +1751,26 @@ Deno.serve(async (req) => {
         return jsonResponse({ request: data });
       }
 
+      /**
+       * Submission eligibility — the rule, written down.
+       *
+       * Three gates and exactly three: the current consent catalogue accepted,
+       * every APPLICABLE questionnaire section submitted and valid, and every
+       * REQUIRED document requirement met. Identity verification is
+       * deliberately NOT a gate, and never has been.
+       *
+       * That asymmetry is intentional rather than an oversight. Everything
+       * above is work only the client can do; an identity outcome is produced
+       * by a provider and a reviewer on our side, on their own clock, and
+       * holding the client's pack hostage to it would leave them staring at a
+       * disabled button waiting on us. The pack is what they owe us. The
+       * verification is what we owe them.
+       *
+       * The journey states this rule the same way (`readyToSubmit` in
+       * portalJourney.pure.ts), and the review screen says so in words rather
+       * than implying an all-clear it cannot give. Changing it means changing
+       * all three, plus the tests that pin them.
+       */
       case 'submit_for_review': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
