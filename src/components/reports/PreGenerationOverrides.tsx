@@ -790,6 +790,7 @@ export function PreGenerationOverrides({
                 setIsFirstHomeBuyer={setIsFirstHomeBuyer}
                 detectedState={detectedState}
                 propertyAddress={propertyAddress}
+                landPrice={landPrice}
                 disabled={disabled}
                 loanAmount={loanAmount}
                 setLoanAmount={setLoanAmount}

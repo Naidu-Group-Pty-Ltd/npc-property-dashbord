@@ -18,6 +18,11 @@ import { LoanType, RepaymentFrequency } from '@/utils/mortgageCalculations';
 import { BuildType } from '@/types/overrideFields';
 import { StampDutyCalculatorPanel } from '../StampDutyCalculatorPanel';
 import {
+  defaultDutiableValue,
+  defaultPropertyCategory,
+  dutiableValueBases,
+} from '../dutiableValueBasis';
+import {
   AUSTRALIAN_STATES,
   type AustralianState,
   type PropertyCategory,
@@ -52,6 +57,12 @@ interface FinancialsTabProps {
   setIsFirstHomeBuyer: (value: boolean) => void;
   detectedState: string;
   propertyAddress: string;
+  /**
+   * Land component of a house-and-land package, when the report has one. Duty
+   * on a new build is assessed on the land transfer, so this — not the package
+   * price — is what the stamp duty calculator defaults to.
+   */
+  landPrice?: string;
   disabled?: boolean;
   stampDutyPropertyType?: StampDutyPropertyType;
   setStampDutyPropertyType?: (value: StampDutyPropertyType) => void;
@@ -96,6 +107,7 @@ export function FinancialsTab({
   setIsFirstHomeBuyer,
   detectedState,
   propertyAddress,
+  landPrice,
   disabled = false,
   stampDutyPropertyType: propStampDutyPropertyType,
   setStampDutyPropertyType: propSetStampDutyPropertyType,
@@ -116,9 +128,24 @@ export function FinancialsTab({
   const [showStampDutyModal, setShowStampDutyModal] = useState(false);
   const [showMortgageCalculator, setShowMortgageCalculator] = useState(false);
   const [localStampDutyPropertyType, setLocalStampDutyPropertyType] = useState<StampDutyPropertyType>('investment');
-  const [localStampDutyPurchaseType, setLocalStampDutyPurchaseType] = useState<StampDutyPurchaseType>('established_home');
+  /**
+   * Defaulted to match whatever the dutiable value defaults to, so the calculator
+   * does not open in a state that contradicts itself. Land-basis assessments are
+   * vacant land transfers, and vacant land carries different first-home
+   * thresholds from a home — opening on "established home" with a land price in
+   * the box would quietly test the wrong ones.
+   */
+  const [localStampDutyPurchaseType, setLocalStampDutyPurchaseType] = useState<StampDutyPurchaseType>(() => {
+    const category = defaultPropertyCategory({
+      buildType,
+      purchasePrice: parseFloat(purchasePrice) || 0,
+      landPrice: parseFloat(landPrice ?? '') || 0,
+    });
+    return category === 'vacant_land' ? 'vacant_land' : category === 'new' ? 'new_home' : 'established_home';
+  });
   const [isForeignBuyer, setIsForeignBuyer] = useState(false);
   const [stampDutyStateOverride, setStampDutyStateOverride] = useState<AustralianState | null>(null);
+  const [dutiableValueOverride, setDutiableValueOverride] = useState<number | null>(null);
   const isNewBuild = buildType === 'new_build';
   const { toast } = useToast();
 
@@ -174,6 +201,22 @@ export function FinancialsTab({
   }, []);
 
   const price = parseFloat(purchasePrice) || 0;
+  const land = parseFloat(landPrice ?? '') || 0;
+
+  /**
+   * What duty is assessed on. A new build defaults to the land price because
+   * duty on a house-and-land package falls on the land contract — see
+   * `dutiableValueBasis.ts`. `dutiableValueOverride` holds an explicit edit and
+   * wins from then on, so a re-render or a purchase-price change does not throw
+   * away what was typed.
+   */
+  const dutiableInputs = useMemo(
+    () => ({ buildType, purchasePrice: price, landPrice: land }),
+    [buildType, price, land],
+  );
+  const dutiableValue = dutiableValueOverride ?? defaultDutiableValue(dutiableInputs);
+  const stampDutyBases = useMemo(() => dutiableValueBases(dutiableInputs), [dutiableInputs]);
+
   const lvr = parseFloat(loanToValueRatio) || 80;
   const loanAmount = Math.round(price * (lvr / 100));
   const rate = parseFloat(interestRate) || 6.5;
@@ -501,7 +544,10 @@ export function FinancialsTab({
                 tabIndex={0}
               >
                 <StampDutyCalculatorPanel
-                  propertyValue={price}
+                  dutiableValue={dutiableValue}
+                  onDutiableValueChange={setDutiableValueOverride}
+                  purchasePrice={price}
+                  bases={stampDutyBases}
                   state={stampDutyState}
                   onStateChange={setStampDutyStateOverride}
                   intent={stampDutyIntent}
