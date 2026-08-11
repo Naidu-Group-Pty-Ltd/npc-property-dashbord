@@ -748,6 +748,10 @@ Deno.serve(async (req) => {
         issue_sequence: issueSequence,
         template_key: templateKey,
         template_content_hash: templateContentHash(templateKey),
+        // Which build issued this version — a fact about the issue, not about
+        // the stored PDF. The artefact's own revision lives in its storage path
+        // and is the only thing a refresh consults; see
+        // `_shared/agreements/documentRevision.pure.ts`.
         document_revision: AGREEMENT_CENTRE_DOCUMENT_REVISION,
         field_values: values,
         brand_snapshot: snapshot,
