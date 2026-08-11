@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, CheckCircle2, Clock, AlertTriangle, Upload, FileText, ArrowRight, ArrowLeft, Send } from 'lucide-react';
+import { Loader2, ShieldCheck, CheckCircle2, Clock, AlertTriangle, Lock, Upload, FileText, ArrowRight, ArrowLeft, Send } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,12 @@ import { IdentityVerificationStep } from '@/components/portal/IdentityVerificati
 import { DocumentsStep } from '@/components/portal/DocumentsStep';
 import { ClientJourneyStrip } from '@/components/portal/ClientJourneyStrip';
 import { resolveRequestStep, type IdvAvailability } from '@/lib/aml/portalRequestRoute';
+// One canonical journey drives the stepper, the progress figure, the resume
+// target and the review summary. Presentation only — the truth is the server's.
+import {
+  buildPortalStepStates, initialStepIndex, portalProgress,
+  type PortalStepState, type PortalStepTone,
+} from '@/lib/aml/portalStepPresentation';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -121,29 +127,36 @@ export default function PortalAml() {
   // or funding sources. The current index is clamped against the live array.
   const steps = useMemo(() => buildSteps(data?.sections), [data?.sections]);
 
-  // Resume: on first load, jump to the last section the user was on, or the first incomplete step.
+  /**
+   * Every visible step, resolved against the ONE canonical journey.
+   *
+   * Questionnaire children keep their own section status; consent, documents,
+   * identity and submission come from `overview.journey`. Nothing below this
+   * line decides for itself whether something is finished.
+   */
+  const stepStates = useMemo(() => buildPortalStepStates({
+    steps,
+    journey: data?.journey,
+    sections: data?.sections ?? [],
+    consentSatisfied: consented,
+  }), [steps, data?.journey, data?.sections, consented]);
+
+  // Resume: the stored step wins while it is still meaningful; a stale one —
+  // already complete, out of range, or written before the client consented —
+  // loses to the canonical journey.
   useEffect(() => {
-    if (!caseObj || resumedRef.current || loading) return;
+    if (!caseObj || resumedRef.current || loading || stepStates.length === 0) return;
     resumedRef.current = true;
-    if (!consented) { setStepIdx(0); return; }
-    let target = 1;
+    let stored: number | null = null;
     try {
       const saved = localStorage.getItem(resumeKey(caseObj.id));
       if (saved != null) {
         const n = Number(saved);
-        if (Number.isFinite(n) && n >= 0 && n < steps.length) target = n;
-      } else {
-        const sections = data?.sections ?? [];
-        const firstIncompleteIdx = steps.findIndex(s => {
-          if (!s.section) return false;
-          const st = sections.find(x => x.section === s.section)?.status;
-          return !['submitted', 'accepted', 'complete'].includes(st ?? '');
-        });
-        if (firstIncompleteIdx > 0) target = firstIncompleteIdx;
+        if (Number.isFinite(n)) stored = n;
       }
     } catch { /* ignore */ }
-    setStepIdx(target);
-  }, [caseObj, consented, data?.sections, loading, steps]);
+    setStepIdx(initialStepIndex({ states: stepStates, storedIndex: stored, consentSatisfied: consented }));
+  }, [caseObj, consented, loading, stepStates]);
 
   // Persist current step for resume
   useEffect(() => {
@@ -161,15 +174,15 @@ export default function PortalAml() {
 
   const step = steps[Math.min(stepIdx, steps.length - 1)];
 
-  const progressPct = useMemo(() => {
-    if (!data?.sections) return 0;
-    const doneSections = data.sections.filter(s => ['submitted', 'accepted', 'complete'].includes(s.status)).length;
-    const totalSections = data.sections.length || 1;
-    const reqPct = data.requirement_progress?.total
-      ? data.requirement_progress.completed / data.requirement_progress.total
-      : 0;
-    return Math.round(((doneSections / totalSections) * 0.6 + reqPct * 0.4) * 100);
-  }, [data]);
+  /**
+   * Progress over the steps the client can see, and nothing else.
+   *
+   * The formula this replaced was 60% of questionnaire sections plus 40% of
+   * required documents. It could not see consent, identity verification or
+   * submission at all, and every case with no formal document requirements —
+   * the common one — was capped at 60% no matter how much the client uploaded.
+   */
+  const progress = useMemo(() => portalProgress(stepStates), [stepStates]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 p-4 md:p-6">
@@ -228,9 +241,17 @@ export default function PortalAml() {
               </div>
               <div className="flex-[2] min-w-[240px]">
                 <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                  <span>Overall progress</span><span>{progressPct}%</span>
+                  <span>Overall progress</span>
+                  {/* The count is the honest figure and leads; the percentage
+                      is there for the bar. "75%" alone never told anybody
+                      which step they were missing. */}
+                  <span>{progress.completed} of {progress.total} steps complete</span>
                 </div>
-                <Progress value={progressPct} className="h-2" />
+                <Progress
+                  value={progress.percent}
+                  className="h-2"
+                  aria-label={`${progress.completed} of ${progress.total} steps complete`}
+                />
               </div>
             </CardContent>
           </Card>
@@ -251,10 +272,9 @@ export default function PortalAml() {
           <ClientJourneyStrip overview={data!} />
 
           <Stepper
-            steps={steps}
+            states={stepStates}
             currentIdx={Math.min(stepIdx, steps.length - 1)}
             onSelect={safeSetStep}
-            sections={data?.sections ?? []}
             consented={consented}
           />
 
@@ -292,11 +312,19 @@ export default function PortalAml() {
                 onBack={() => setStepIdx(i => i - 1)}
                 onNext={() => setStepIdx(i => i + 1)}
                 onNeedsConsent={() => setStepIdx(0)}
+                // The step refreshes its own verification state; the journey
+                // that draws the stepper and the progress figure lives up
+                // here. Without this the client could finish a check and watch
+                // "Verify identity" stay grey until they reloaded the page.
+                // It re-reads the SERVER — the child reports that something
+                // moved, never what it moved to.
+                onStatusChange={load}
               />
             )}
             {step.key === 'review' && consented && (
               <ReviewStep
                 overview={data}
+                stepStates={stepStates}
                 caseId={caseObj.id}
                 onBack={() => setStepIdx(i => i - 1)}
                 onSubmitted={load}
@@ -339,53 +367,106 @@ export default function PortalAml() {
 
 /* ─────────────────────────  Stepper  ──────────────────────── */
 
+/**
+ * The status marker's colour, one per journey tone.
+ *
+ * Colour is never the only signal — the step's accessible name states it in
+ * words, and complete, attention and blocked each carry a distinct glyph.
+ */
+const TONE_MARKER: Record<PortalStepTone, string> = {
+  success:   'bg-success text-success-foreground',
+  progress:  'bg-info text-info-foreground',
+  attention: 'bg-warning text-warning-foreground',
+  muted:     'bg-muted text-muted-foreground',
+  blocked:   'bg-muted/60 text-muted-foreground',
+};
+
+function StepMarker({ state, index }: { state: PortalStepState; index: number }) {
+  const { icon } = state.presentation;
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
+        TONE_MARKER[state.presentation.tone],
+      )}
+    >
+      {icon === 'check' ? <CheckCircle2 className="h-3 w-3" />
+        : icon === 'clock' ? <Clock className="h-3 w-3" />
+        : icon === 'alert' ? <AlertTriangle className="h-3 w-3" />
+        : icon === 'lock' ? <Lock className="h-3 w-3" />
+        : index + 1}
+    </span>
+  );
+}
+
+/**
+ * The visible stepper.
+ *
+ * Two things it now keeps apart that it used to conflate. **Where you are** is
+ * the brand outline on the pill; **how far you have got** is the marker inside
+ * it. A step can be both — Documents selected AND complete is a brand pill
+ * around a green tick, and that is the correct rendering rather than a
+ * contradiction.
+ *
+ * It also no longer wraps. `flex-wrap` left "Review & submit" orphaned on a
+ * second line at every desktop width; one scrollable row keeps the journey
+ * readable as a journey, on a phone as well as at 1440.
+ */
 function Stepper({
-  steps, currentIdx, onSelect, sections, consented,
+  states, currentIdx, onSelect, consented,
 }: {
-  steps: PortalStep[]; currentIdx: number; onSelect: (i: number) => void;
-  sections: { section: AmlSection; status: string }[];
+  states: PortalStepState[]; currentIdx: number; onSelect: (i: number) => void;
   consented: boolean;
 }) {
-  const statusFor = (s?: AmlSection) => sections.find(x => x.section === s)?.status;
-  return (
-    <ol className="flex flex-wrap gap-2">
-      {steps.map((s, i) => {
-        const st = statusFor(s.section);
-        const done = st === 'submitted' || st === 'accepted' || st === 'complete';
-        const active = i === currentIdx;
-        const locked = !consented && i !== 0;
-        return (
-          <li key={s.key}>
-            <button
-              type="button"
-              onClick={() => onSelect(i)}
-              disabled={locked}
-              aria-disabled={locked}
-              title={locked ? 'Confirm consents to unlock' : undefined}
-              className={cn(
-                'flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition',
-                active ? 'border-brand-500 bg-brand-500/10 text-foreground' : 'border-border/60 text-muted-foreground hover:text-foreground',
-                locked && 'opacity-50 cursor-not-allowed hover:text-muted-foreground',
-              )}
-            >
-              <span className={cn(
-                'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold',
-                done
-                  ? 'bg-success text-success-foreground'
-                  : active
-                    ? 'bg-brand text-brand-foreground'
-                    : 'bg-muted text-muted-foreground',
-              )}>
-                {done ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
-              </span>
-              {s.label}
-            </button>
-          </li>
-        );
-      })}
-    </ol>
-  );
+  const activeRef = useRef<HTMLLIElement | null>(null);
 
+  // A row that scrolls has to bring the client's own step to them. Without
+  // this, step 7 of 8 on a phone is off-screen to the right and the stepper
+  // shows them where they are not.
+  useEffect(() => {
+    const el = activeRef.current;
+    if (typeof el?.scrollIntoView !== 'function') return;
+    el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }, [currentIdx]);
+
+  return (
+    <div className="-mx-1 overflow-x-auto px-1 pb-1">
+      <ol className="flex w-max min-w-full items-center gap-2">
+        {states.map((state, i) => {
+          const active = i === currentIdx;
+          const locked = !consented && i !== 0;
+          return (
+            <li key={state.key} className="shrink-0" ref={active ? activeRef : undefined}>
+              <button
+                type="button"
+                onClick={() => onSelect(i)}
+                disabled={locked}
+                aria-disabled={locked}
+                aria-current={active ? 'step' : undefined}
+                // "Documents, complete" / "Verify identity, in progress,
+                // current step". The state is never colour alone, and the
+                // visible label leads the name so it still satisfies
+                // label-in-name.
+                aria-label={`${state.label}, ${state.presentation.accessibleStatus}${active ? ', current step' : ''}`}
+                title={locked ? 'Confirm consents to unlock' : undefined}
+                className={cn(
+                  'flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition',
+                  active
+                    ? 'border-brand-500 bg-brand-500/10 text-foreground'
+                    : 'border-border/60 text-muted-foreground hover:text-foreground',
+                  locked && 'opacity-50 cursor-not-allowed hover:text-muted-foreground',
+                )}
+              >
+                <StepMarker state={state} index={i} />
+                {state.label}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 }
 
 /* ─────────────────────────  Consent  ──────────────────────── */
@@ -1017,15 +1098,35 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
 
 /* ─────────────────────────  Review  ──────────────────────── */
 
+/**
+ * The review summary reads the WHOLE journey, not the questionnaire.
+ *
+ * It used to list sections and required documents, which meant a client who
+ * had consented, uploaded and verified saw none of those three acknowledged
+ * anywhere on the screen that was supposed to confirm they were finished.
+ *
+ * Identity verification is shown but does not gate the button, because
+ * `submit_for_review` does not gate on it either (the reason is recorded at
+ * that op). Saying "everything is ready" while a check is still running would
+ * be wrong, so the copy says which of the two it is.
+ */
 function ReviewStep({
-  overview, caseId, onBack, onSubmitted,
-}: { overview: AmlPortalOverview | null; caseId: string; onBack: () => void; onSubmitted: () => void }) {
+  overview, stepStates, caseId, onBack, onSubmitted,
+}: {
+  overview: AmlPortalOverview | null; stepStates: PortalStepState[];
+  caseId: string; onBack: () => void; onSubmitted: () => void;
+}) {
   const [submitting, setSubmitting] = useState(false);
   const sections = overview?.sections ?? [];
   const reqs = overview?.requirements ?? [];
   const missingSections = sections.filter(s => !['submitted', 'accepted', 'complete'].includes(s.status));
   const missingReqs = reqs.filter(r => r.required && !['uploaded', 'accepted'].includes(r.status));
   const canSubmit = missingSections.length === 0 && missingReqs.length === 0;
+
+  // Everything up to (and excluding) this screen — what the client owes us.
+  const priorSteps = stepStates.filter(s => s.key !== 'review');
+  const outstanding = priorSteps.filter(s => s.status === 'action_required');
+  const inFlight = priorSteps.filter(s => s.status === 'in_progress');
 
   const submit = async () => {
     setSubmitting(true);
@@ -1047,24 +1148,54 @@ function ReviewStep({
         <CardDescription>Confirm everything is complete, then submit your onboarding pack for review.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid md:grid-cols-2 gap-3">
-          {sections.map(s => (
-            <div key={s.section} className="flex items-center justify-between border rounded-md px-3 py-2">
-              <span className="text-sm capitalize">{s.section.replace(/_/g, ' ')}</span>
-              <Badge variant="outline" className="capitalize">{s.status.replace(/_/g, ' ')}</Badge>
-            </div>
+        <ul className="grid md:grid-cols-2 gap-3" aria-label="Your onboarding summary">
+          {priorSteps.map(s => (
+            <li key={s.key} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+              <span className="flex min-w-0 items-center gap-2">
+                <StepMarker state={s} index={0} />
+                <span className="truncate text-sm">{s.label}</span>
+              </span>
+              {/* Journey wording, never a backend enum. */}
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {s.presentation.accessibleStatus}
+              </span>
+            </li>
           ))}
-        </div>
+        </ul>
 
-        {(missingSections.length > 0 || missingReqs.length > 0) && (
+        {outstanding.length > 0 ? (
           <Alert variant="default">
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Not quite ready</AlertTitle>
+            <AlertTitle>
+              {outstanding.length === 1
+                ? 'One step still needs your attention'
+                : `${outstanding.length} steps still need your attention`}
+            </AlertTitle>
             <AlertDescription>
-              {missingSections.length > 0 && <div>{missingSections.length} section(s) not yet submitted.</div>}
-              {missingReqs.length > 0 && <div>{missingReqs.length} required document(s) missing.</div>}
+              {outstanding.map(s => s.label).join(', ')}.
             </AlertDescription>
           </Alert>
+        ) : (
+          <Alert variant="default">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>Everything we need from you has been received.</AlertTitle>
+            {inFlight.length > 0 && (
+              <AlertDescription>
+                {/* Never "all clear" while a check is still running — and never
+                    a reason to hold their pack, because submission does not
+                    wait on it. */}
+                {inFlight.map(s => s.label).join(', ')} is still being checked.
+                You can submit your information now.
+              </AlertDescription>
+            )}
+          </Alert>
+        )}
+
+        {(missingSections.length > 0 || missingReqs.length > 0) && (
+          <p className="text-xs text-muted-foreground">
+            {missingSections.length > 0 && <span>{missingSections.length} section(s) not yet submitted. </span>}
+            {missingReqs.length > 0 && <span>{missingReqs.length} required document(s) missing.</span>}
+          </p>
         )}
 
         <div className="flex justify-between">
