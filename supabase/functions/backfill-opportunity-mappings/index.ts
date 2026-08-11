@@ -32,6 +32,7 @@ import {
 import { recordIdMapping } from '../_shared/migration-jobs.ts';
 import { createGhlFetchContext } from '../_shared/ghl-worker-fetch.ts';
 import { tokenKeyFor } from '../_shared/ghl-rate-limiter.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -244,7 +245,7 @@ Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error('[backfill-opp-mappings] error:', err);
-    return new Response(JSON.stringify({ success: false, error: err.message || 'Internal error' }), {
+    return new Response(JSON.stringify({ ...internalError(err, 'backfill-opportunity-mappings'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

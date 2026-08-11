@@ -47,8 +47,8 @@ export function InviteFinanceContactDialog({
 
   const handleSend = async () => {
     if (!contact) return;
-    if (mode === 'temp_password' && customPwd && customPwd.length < 8) {
-      toast.error('Custom password must be at least 8 characters');
+    if (mode === 'temp_password' && customPwd && customPwd.length < 12) {
+      toast.error('Custom password must be at least 12 characters');
       return;
     }
     setSubmitting(true);

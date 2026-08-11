@@ -13,6 +13,8 @@ import { verifyAuth } from '../_shared/auth.ts';
 import { resolveSolicitorSession } from '../_shared/solicitorPortalAuth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
@@ -79,7 +81,7 @@ async function resolveFinancePortalUser(
   return { userId: portalUser.id };
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -150,6 +152,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ success: true, id: data?.id, subscriber_type });
   } catch (err) {
     console.error('[push-subscribe] error', err);
-    return jsonResponse({ error: (err as Error).message }, 500);
+    return jsonResponse({ ...internalError(err, 'push-subscribe') }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is reached by invokeSecureFunction,
+// which sends `credentials: 'include'` — and the Fetch spec makes the browser
+// reject a credentialed response carrying `Access-Control-Allow-Origin: *`,
+// opaquely, as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

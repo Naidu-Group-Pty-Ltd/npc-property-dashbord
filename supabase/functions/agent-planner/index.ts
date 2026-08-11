@@ -10,6 +10,7 @@ import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!;
@@ -392,7 +393,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     return json({ error: 'unknown_action' }, 400);
   } catch (err) {
-    return json({ error: String((err as Error).message) }, 500);
+    return json({ ...internalError(err, 'agent-planner') }, 500);
   }
 });
 

@@ -4,6 +4,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { canAccessAllClients, canAccessClient } from '../_shared/clientAccess.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface RequestBody {
   clientId?: string;
   clientIds?: string[];
@@ -475,7 +476,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('get-client-data error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ ...internalError(error, 'get-client-data'), error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

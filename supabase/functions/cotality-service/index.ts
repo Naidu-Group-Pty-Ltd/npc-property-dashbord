@@ -22,6 +22,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 type Source =
   | "cotality" | "abs" | "rba" | "bocsar" | "csa" | "qps"
   | "google" | "domain" | "modelled" | "manual" | "ptv" | "tfnsw" | "translink" | "walkscore";
@@ -162,7 +163,7 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error("[cotality-service] error", err);
     return new Response(
-      JSON.stringify({ error: String(err?.message ?? err) }),
+      JSON.stringify(internalError(err, 'cotality-service')),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

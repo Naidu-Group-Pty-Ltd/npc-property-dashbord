@@ -27,9 +27,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { getCatalogNode } from '@/lib/workflow/catalog';
+import { getIntegrationName } from '@/lib/workflow/integrationNames';
 import type { WorkflowNode } from '@/lib/workflow/types';
 import { NODE_HEIGHT, NODE_WIDTH } from './canvasGeometry';
-import { accentClass } from './nodeAccents';
+import { CATEGORY_LABELS, accentClass } from './nodeAccents';
 import { NodeGlyph } from './nodeVisuals';
 
 export interface WorkflowNodeCardProps {
@@ -98,20 +99,19 @@ const RUN_STATUS_CHIPS: Record<
   },
 };
 
-function RunStatusChip({ status }: { status: string }) {
+function RunStatusMark({ status }: { status: string }) {
   const chip = RUN_STATUS_CHIPS[status];
   if (!chip) return null;
   const Icon = chip.icon;
   return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
-        chip.className,
-      )}
-    >
-      <Icon className={cn('h-3 w-3', chip.iconClassName)} aria-hidden="true" />
-      {chip.label}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn('wf-node-mark', chip.className)} aria-label={`Last run: ${chip.label}`}>
+          <Icon className={cn('h-3 w-3', chip.iconClassName)} aria-hidden="true" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Last run: {chip.label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -180,6 +180,7 @@ function WorkflowNodeCardImpl({
   const title = node.label?.trim() || definition.name;
   const isTrigger = definition.kind === 'trigger';
   const needsCredential = Boolean(definition.integrationId) && !configured;
+  const subtitle = definition.integrationId ? getIntegrationName(definition.integrationId) : CATEGORY_LABELS[definition.category];
 
   return (
     <div
@@ -205,66 +206,75 @@ function WorkflowNodeCardImpl({
       onPointerEnter={() => onHoverChange?.(true)}
       onPointerLeave={() => onHoverChange?.(false)}
     >
-      <div className="wf-node-body wf-node-enter flex items-start gap-3 p-3">
+      {/* Two lines and an icon, and nothing else.
+          The card used to carry the step's full summary, which made every node
+          76px tall and turned a ten-step workflow into a wall of prose you had
+          to read to see the shape of. The summary is one click away in the
+          inspector; what the canvas has to answer at a glance is "which step,
+          from which app" — so that is all it says. */}
+      <div className="wf-node-body wf-node-enter flex items-center gap-2.5 px-3 py-2.5">
         <span className="wf-node-icon shrink-0">
-          <NodeGlyph node={definition} />
+          <NodeGlyph node={definition} size={19} />
         </span>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <p className="truncate text-sm font-semibold leading-tight text-foreground">{title}</p>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={`Actions for ${title}`}
-                  className="-mr-1 -mt-1 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
-                  onPointerDown={(event) => event.stopPropagation()}
-                >
-                  <MoreVertical className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem onSelect={() => onDuplicate(node.id)}>Duplicate</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onToggleDisabled(node.id)}>
-                  {node.disabled ? 'Enable step' : 'Skip this step'}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => onDelete(node.id)} className="text-destructive">
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-
-          <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{definition.summary}</p>
-
-          {(needsCredential || node.disabled || runStatus) && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {runStatus && <RunStatusChip status={runStatus} />}
-              {needsCredential && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex items-center gap-1 rounded-full border border-warning/50 bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-foreground">
-                      <KeyRound className="h-3 w-3 text-warning" aria-hidden="true" />
-                      No credentials
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-[15rem]">
-                    Add this integration’s key on the Integrations page before the workflow can run.
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {node.disabled && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                  <PowerOff className="h-3 w-3" aria-hidden="true" />
-                  Skipped
-                </span>
-              )}
-            </div>
-          )}
+          <p className="truncate text-[13px] font-semibold leading-tight text-foreground">{title}</p>
+          <p className="truncate text-[11px] leading-tight text-muted-foreground">{subtitle}</p>
         </div>
       </div>
+
+      {/* Corner marks. Absolutely positioned so a step that fails, or lacks a
+          credential, is the same size as one that does not — a card that grows
+          when something goes wrong reflows the whole canvas at the moment you
+          least want it moving. */}
+      <div className="wf-node-marks">
+        {runStatus && <RunStatusMark status={runStatus} />}
+        {needsCredential && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="wf-node-mark wf-node-mark-warning" aria-label="Needs credentials">
+                <KeyRound className="h-3 w-3" aria-hidden="true" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-[15rem]">
+              Add this integration’s key on the Integrations page before the workflow can run.
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {node.disabled && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="wf-node-mark" aria-label="Skipped">
+                <PowerOff className="h-3 w-3" aria-hidden="true" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">This step is skipped when the workflow runs.</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Actions for ${title}`}
+            className="wf-node-menu opacity-0 transition-opacity focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <MoreVertical className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onSelect={() => onDuplicate(node.id)}>Duplicate</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onToggleDisabled(node.id)}>
+            {node.disabled ? 'Enable step' : 'Skip this step'}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => onDelete(node.id)} className="text-destructive">
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
       {/* Incoming port — triggers start a run, so they accept nothing. */}
       {!isTrigger && (
@@ -278,7 +288,7 @@ function WorkflowNodeCardImpl({
       {/* Outgoing ports. Branch nodes expose one per path, labelled. */}
       {definition.branches?.length ? (
         // Labels hang outside the right edge; inside, they collide with the
-        // step's own summary text.
+        // step's own text.
         <div className="absolute right-0 top-0 flex h-full translate-x-1/2 flex-col justify-center gap-3">
           {definition.branches.map((branch) => (
             <span key={branch.id} className="flex items-center gap-1.5">

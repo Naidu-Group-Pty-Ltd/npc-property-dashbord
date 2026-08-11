@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callLLMRaw } from '../_shared/llmRouter.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -597,7 +598,7 @@ Provide a concise market correlation analysis (5-6 sentences) covering:
 
   } catch (error) {
     console.error('Phase 4 error:', error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Internal error' }), {
+    return new Response(JSON.stringify(internalError(error, 'analyze-meta-ads-phase4')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

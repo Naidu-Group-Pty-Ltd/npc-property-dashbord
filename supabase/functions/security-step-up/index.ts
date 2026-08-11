@@ -27,6 +27,7 @@ import { generateStepUpToken, hashStepUpToken, requireStepUp, resolveActiveStaff
 import { createEncryptedTotpSecret, verifyEncryptedTotp } from '../_shared/totp.ts';
 import { generateRecoveryCodes, hashRecoveryCode, hashRecoveryCodes, isRecoveryCode, isRecoveryCodeHashConfigured } from '../_shared/recoveryCodes.ts';
 import { consumeRateLimit, getTrustedClientIp } from '../_shared/requestSecurity.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   loadWebAuthnConfig,
   buildRegistrationOptions,
@@ -545,7 +546,7 @@ Deno.serve(async (req) => {
     if (setCookieHeader) responseHeaders['Set-Cookie'] = setCookieHeader;
     return new Response(JSON.stringify({ success: true, token, expires_at: expiresAt, capability }), { status: 200, headers: responseHeaders });
   } catch (e: any) {
-    return new Response(JSON.stringify({ success: false, error: e?.message ?? 'error' }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'security-step-up'), success: false }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

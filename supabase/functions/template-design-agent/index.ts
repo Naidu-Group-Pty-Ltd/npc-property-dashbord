@@ -1066,7 +1066,7 @@ A PDF is attached. ${pageInstruction} FIRST emit a 'clear_page' for ${activePage
     try {
       parsed = JSON.parse(toolCall.function.arguments);
     } catch (e) {
-      return json({ error: 'AI returned malformed tool arguments', detail: String(e) }, 500);
+      return json({ ...internalError(e, 'template-design-agent'), error: 'AI returned malformed tool arguments' }, 500);
     }
 
     // Log only structural metadata: replies and operation payloads can contain
@@ -1144,6 +1144,6 @@ A PDF is attached. ${pageInstruction} FIRST emit a 'clear_page' for ${activePage
     });
   } catch (e) {
     console.error('template-design-agent error', e);
-    return json({ error: String((e as Error).message ?? e) }, 500);
+    return json({ ...internalError(e, 'template-design-agent') }, 500);
   }
 });

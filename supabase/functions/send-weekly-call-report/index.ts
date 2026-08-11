@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from '../_shared/brand-config.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 
@@ -350,7 +351,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error("Error in send-weekly-call-report:", error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify(internalError(error, 'send-weekly-call-report')),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   }

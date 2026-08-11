@@ -46,6 +46,7 @@ function extractPrimaryName(payload: Record<string, any>) {
 }
 
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Per-request CORS: the frontend calls this function with `credentials: 'include'`,
 // so we must echo the request Origin (never `*`) and set `Allow-Credentials: true`.
 // The previous wildcard ACAO caused browsers to block every response, resulting in
@@ -1086,6 +1087,6 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: `Unknown operation: ${operation}` }, 400);
   } catch (e: any) {
     console.error('[finance-portal-client-data] error', e);
-    return jsonResponse({ error: 'Internal server error', details: e?.message }, 500);
+    return jsonResponse({ ...internalError(e, 'finance-portal-client-data'), error: 'Internal server error' }, 500);
   }
 });

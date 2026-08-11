@@ -7,25 +7,60 @@
 import { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 import { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
 import { agreementContentHash } from './types.pure.ts';
+import {
+  applyAgreementContentOverrides,
+  contentOverridesFromValues,
+} from './contentOverrides.pure.ts';
+import {
+  additionalClausesFromValues,
+  withAdditionalClauses,
+} from './additionalClauses.pure.ts';
 import type { AgreementTemplateContent, AgreementTemplateKey } from './types.pure.ts';
 
 export * from './types.pure.ts';
 export * from './fields.pure.ts';
 export * from './lifecycle.pure.ts';
+export * from './contentOverrides.pure.ts';
+export * from './additionalClauses.pure.ts';
 export { STRATEGIC_REFERRAL_CONTENT } from './contentStrategicReferral.pure.ts';
 export { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 
+
 /**
- * The revision of the agreement document RENDERING — bump when the visual
- * composition changes and an already-stored unsigned preview should be
- * re-rendered. The legal content is hashed separately (`templateContentHash`)
- * and does not change with this number.
+ * The revision of the agreement document RENDERING, and the rules that decide
+ * when an already-stored artefact should be re-rendered. Its own import-free
+ * module so the browser can read the number without pulling the report
+ * stylesheet in behind it; re-exported here because this is the one import
+ * surface. The legal content is hashed separately (`templateContentHash`) and
+ * does not change with that number.
  */
-export const AGREEMENT_CENTRE_DOCUMENT_REVISION = 1;
+export * from './documentRevision.pure.ts';
 
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
 }
+
+/**
+ * The wording of ONE agreement: the locked template, with that agreement's
+ * negotiated clause amendments applied and its additional clauses (special
+ * conditions) injected before EXECUTION. Every renderer — the digital view, the
+ * PDF, the DOCX, the partner's review room — must go through here rather than
+ * `agreementTemplate`, or the issuer and the counterparty would be reading
+ * different documents.
+ */
+export function agreementContentForValues(
+  key: AgreementTemplateKey,
+  values: Record<string, unknown> | null | undefined,
+): AgreementTemplateContent {
+  return withAdditionalClauses(
+    applyAgreementContentOverrides(
+      agreementTemplate(key),
+      contentOverridesFromValues(values),
+    ),
+    additionalClausesFromValues(values),
+  );
+}
+
 
 const CONTENT_HASHES: Record<AgreementTemplateKey, string> = {
   strategic_property_referral: agreementContentHash(STRATEGIC_REFERRAL_CONTENT),

@@ -59,10 +59,11 @@ shims onto it. Those modules must parse under Deno: no `@/` aliases, explicit
 
 Two things the doc records that keep biting. **Nothing is captured unless a live
 workflow listens for it**, so an empty `workflow_trigger_events` on a deployment
-with no live workflows is correct rather than broken. And **live execution
-performs 8 of 252 catalog steps** — everything else simulates and says so;
-extending it is per-vendor work, and a new vendor call that skips
-`_shared/meteredFetch.ts` is billed to nobody.
+with no live workflows is correct rather than broken. And **what can run live is
+derived from the catalog, never listed**: an operation is runnable because it
+declares a `request` descriptor (`httpRequest.pure.ts`), so adding a vendor is a
+declaration beside the operation rather than a change to the executor — and a
+new vendor call that skips `_shared/meteredFetch.ts` is billed to nobody.
 
 ## API usage metering (this deployment may be spending someone else's money)
 A workspace provisioned by Aurixa Mission Control boots with the **prime's own
@@ -90,6 +91,18 @@ adjacently to their own call pass `meterUsage: false`. The credential a
 `(route, modelId)` pair spends is resolved by `_shared/llmUsageBinding.pure.ts`,
 which mirrors the router's dispatch and returns **null** rather than guessing; a
 CI test reads the router's source and fails when the two drift.
+
+## Stamp duty
+Every duty figure in the product comes from `supabase/functions/_shared/stampDuty/`
+and nowhere else; `src/utils/stampDutyCalculator.ts` is a one-line re-export.
+Read [`docs/reports/STAMP_DUTY.md`](./docs/reports/STAMP_DUTY.md) before changing
+a rate — it records the four divergent implementations this replaced (and what
+each got wrong), the third-party iframe it retired, and the handful of published
+quirks that look like bugs and must not be "fixed": VIC steps **up** at $960k,
+the ACT steps **down** at $1.455m, and NT is quadratic below $525k. A rate change
+is a data edit in `schedules.pure.ts` plus a regenerated seed — never a hand-written
+one. The weekly sweep flags stale schedules and **never writes a rate**; the doc
+explains why that asymmetry is deliberate.
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
@@ -168,6 +181,27 @@ them, and is the only render route that can call a model. **Market Intelligence*
 is the one whose page budget is fitted block by block against real renders rather
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
+
+## Agreement Centre documents
+Partner agreements are rendered by the same WeasyPrint container as the reports,
+but they are **stored**, and that is the thing to understand before changing
+anything that renders, stores or serves one. Read
+[`docs/agreements/DOCUMENT_REVISIONS.md`](./docs/agreements/DOCUMENT_REVISIONS.md).
+
+An issued version freezes what the agreement *says* — `field_values` and
+`brand_snapshot` on the version row — and the stored PDF is a **cache** of
+those inputs, not the record. Until August 2026 the code froze the bytes as
+well, so a fixed cover reached every future issue and nothing already issued:
+the draft export came out right the same day the fix deployed and the Issued PDF
+kept coming out wrong for ever. The revision now lives in the object's path
+(`issued-r2.pdf`; r1 unsuffixed), `resolveVersionArtefact` is the only place that
+decides, and **a signature freezes an artefact permanently** — re-typesetting
+under a signatory is the one thing this must never do. Bump
+`AGREEMENT_CENTRE_DOCUMENT_REVISION` when the composition changes; nothing needs
+backfilling.
+
+Deployment is the other half of it, and it has bitten twice:
+[`DEPLOYMENT.md`](./docs/agreements/DEPLOYMENT.md).
 
 ## The PDF-import sidecar (Docling)
 Template Builder's PDF import runs through one Cloud Run container,

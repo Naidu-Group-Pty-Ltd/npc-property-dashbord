@@ -7,6 +7,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getCatalogNode } from '../../catalog';
 import type { PerformInput } from '../engine';
+import { CATALOG } from '@/lib/workflow/catalog';
+import { LIVE_CAPABLE } from '../performers';
 import { createServerPerformer } from '../transport';
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -26,8 +28,16 @@ const inputFor = (type: string, config: Record<string, unknown> = {}): PerformIn
 describe('server performer', () => {
   beforeEach(() => invoke.mockReset());
 
+  /**
+   * Named by derivation rather than by hand. This test used to say
+   * `resend.send_email`, which stopped being an example of an unrunnable step
+   * the day Resend gained a request descriptor — the test then failed for the
+   * good reason that coverage had grown, which is not a signal worth having.
+   */
   it('refuses a step with no executor without calling the server', async () => {
-    const outcome = await createServerPerformer()(inputFor('resend.send_email'));
+    const unrunnable = CATALOG.find((n) => n.kind === 'action' && !LIVE_CAPABLE.has(n.id));
+    if (!unrunnable) throw new Error('every action is runnable — retire this test');
+    const outcome = await createServerPerformer()(inputFor(unrunnable.id));
 
     expect(outcome.status).toBe('failed');
     expect(outcome.error).toMatch(/no executor/i);

@@ -132,14 +132,24 @@ describe('node card', () => {
 
   const node = (type: string) => ({ id: 'step_1', type, position: { x: 0, y: 0 }, config: {} });
 
+  /**
+   * The mark is a corner icon rather than a text chip, so the assertion is on
+   * its accessible name — which is also the only thing a screen reader gets,
+   * and therefore the part worth protecting.
+   */
   it('marks a step whose integration has no credentials', () => {
     wrap(<WorkflowNodeCard {...baseProps} node={node('resend.send_email')} configured={false} />);
-    expect(screen.getByText('No credentials')).toBeInTheDocument();
+    expect(screen.getByLabelText('Needs credentials')).toBeInTheDocument();
   });
 
   it('does not mark a step whose credentials are in place', () => {
     wrap(<WorkflowNodeCard {...baseProps} node={node('resend.send_email')} configured />);
-    expect(screen.queryByText('No credentials')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Needs credentials')).not.toBeInTheDocument();
+  });
+
+  it('names the app the step belongs to, so the canvas reads without opening it', () => {
+    wrap(<WorkflowNodeCard {...baseProps} node={node('resend.send_email')} configured />);
+    expect(screen.getByText('Resend')).toBeInTheDocument();
   });
 
   it('gives a trigger no incoming port', () => {

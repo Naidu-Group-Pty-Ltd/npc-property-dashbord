@@ -17,6 +17,26 @@
  * An edit here changes `agreementContentHash` for every subsequently issued
  * version, which is deliberate: the hash frozen on each issued version row is
  * how an audit proves which wording a partner reviewed and executed.
+ *
+ * ## Authorised amendment — 9 Aug 2026
+ *
+ * The rule above says "no renumbering", and this file has been renumbered. It
+ * was not this codebase's decision: the document owner supplied a reviewed copy
+ * with the operational **REFERRAL WORKFLOW** section (the seven handover stages
+ * and the information-boundary note) removed, and confirmed the removal was
+ * deliberate before it was applied here.
+ *
+ * What changed, and nothing else:
+ *   - the `referral_workflow` section was deleted in full;
+ *   - section badges 4, 5-7, 8-10, 11-13 and 14 became 3, 4-6, 7-9, 10-12, 13;
+ *   - clauses 5-13 became 4-12, with their subclauses.
+ *
+ * **Not one word of any clause changed.** The supplied copy was diffed line by
+ * line against this module's output and the only differences were the removed
+ * section and the numbers above; `agreementWhiteLabel.spec.ts` and
+ * `agreements.spec.ts` hold that shape. The rule still stands for everyone
+ * else: renumbering happens when the document owner says so, in writing, and
+ * never to tidy something up.
  */
 
 import type { AgreementTemplateContent } from './types.pure.ts';
@@ -39,10 +59,16 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
           companyNameToken: '{{company_name}}',
           titleLines: ['STRATEGIC PROPERTY REFERRAL', 'AGREEMENT'],
           issuedByLine: 'ISSUED BY THE BUYER\'S AGENCY TO THE FINANCE PARTNER',
-          descriptor:
-            'A structured, editable agreement template for establishing a professional referral relationship while preserving clear service boundaries, client choice and transparent commercial terms.',
-          badges: ['EDITABLE', 'ACTIVATION-READY', 'BRAND-READY'],
-          versionLine: 'VERSION {{document_version}}  |  EFFECTIVE DATE: {{effective_date}}',
+          // Issuer first: this agreement is issued BY the buyer's agency.
+          particulars: [
+            { label: 'BETWEEN', value: '{{ba_legal_name}}' },
+            { label: 'ABN / ACN', value: '{{ba_abn_acn}}' },
+            { label: 'AND', value: '{{fp_legal_name}}' },
+            { label: 'ABN / ACN', value: '{{fp_abn_acn}}' },
+            { label: 'DATED', value: '{{effective_date}}' },
+            { label: 'GOVERNING LAW', value: '{{governing_state}}' },
+          ],
+          versionLine: 'EFFECTIVE DATE: {{effective_date}}',
           reviewStatement:
             'Template only - obtain legal, licensing, privacy and aggregator approval before use.',
         },
@@ -262,40 +288,9 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
     },
 
     {
-      id: 'referral_workflow',
-      header: {
-        badge: '3',
-        heading: 'REFERRAL WORKFLOW',
-        hint: 'Finance partner to buyer\'s agency',
-        sub: 'Seven controlled handover stages',
-      },
-      audience: 'always',
-      blocks: [
-        {
-          kind: 'workflow',
-          steps: [
-            { num: '1', title: 'IDENTIFY', text: 'Finance partner identifies a client who may require property services.' },
-            { num: '2', title: 'CONSENT', text: 'Client provides consent to the introduction and any permitted information sharing.' },
-            { num: '3', title: 'SUBMIT', text: 'Referral is lodged through the agreed portal or secure channel.' },
-            { num: '4', title: 'ACCEPT', text: 'Buyer\'s agency confirms receipt and whether it will contact the client.' },
-            { num: '5', title: 'ENGAGE', text: 'Buyer\'s agency explains its services and enters a separate client agreement if accepted.' },
-            { num: '6', title: 'UPDATE', text: 'Only agreed high-level milestones are shared, subject to consent.' },
-            { num: '7', title: 'COMPLETE', text: 'Commercial eligibility is assessed after the agreed qualifying event.' },
-          ],
-        },
-        {
-          kind: 'note',
-          label: 'Information boundary',
-          body:
-            'Referral information should ordinarily be limited to the client\'s name, contact details and a general description of the requested property service. Sensitive finance information should only be disclosed where necessary, lawful and specifically authorised by the client.',
-        },
-      ],
-    },
-
-    {
       id: 'commercial_schedule',
       header: {
-        badge: '4',
+        badge: '3',
         heading: 'COMMERCIAL SCHEDULE',
         hint: 'Finance partner referral to buyer\'s agency',
         sub: 'Complete every applicable field before execution',
@@ -319,8 +314,9 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
                   options: [
                     { value: 'fixed_fee', label: 'Fixed fee' },
                     { value: 'percentage_of_fee', label: 'Percentage of buyer\'s agency fee' },
-                    { value: 'other', label: 'Other' },
+                    { value: 'other', label: 'Other:' },
                   ],
+                  otherFieldKey: 'remuneration_model_other',
                 },
               },
               { label: 'AGREED AMOUNT / PERCENTAGE', fieldKey: 'agreed_fee_value' },
@@ -345,8 +341,9 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
                     { value: 'Engagement signed', label: 'Engagement signed' },
                     { value: 'Unconditional contract', label: 'Unconditional contract' },
                     { value: 'Settlement', label: 'Settlement' },
-                    { value: 'other', label: 'Other' },
+                    { value: 'other', label: 'Other:' },
                   ],
+                  otherFieldKey: 'qualifying_event_other',
                 },
               },
             ],
@@ -390,7 +387,7 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
     {
       id: 'consent_privacy',
       header: {
-        badge: '5-7',
+        badge: '4-6',
         heading: 'CLIENT CONSENT, PRIVACY & COMMUNICATIONS',
         hint: 'Client choice and controlled information exchange',
       },
@@ -400,55 +397,55 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
           kind: 'clauses',
           clauses: [
             {
-              number: '5',
+              number: '4',
               heading: 'Client Consent and Disclosure',
               subclauses: [
                 {
-                  number: '5.1',
+                  number: '4.1',
                   text: 'The Finance Partner must obtain the client\'s consent before disclosing personal information to the Buyer\'s Agency.',
                 },
                 {
-                  number: '5.2',
+                  number: '4.2',
                   text: 'Each party must clearly disclose any referral payment or other material benefit where disclosure is required by law, professional standards, licence conditions, aggregator policy or the party\'s internal compliance framework.',
                 },
                 {
-                  number: '5.3',
+                  number: '4.3',
                   text: 'The client remains free to decline the referral, choose another provider or cease dealing with either party.',
                 },
               ],
             },
             {
-              number: '6',
+              number: '5',
               heading: 'Privacy and Data Security',
               subclauses: [
                 {
-                  number: '6.1',
+                  number: '5.1',
                   text: 'Each party must handle personal information in accordance with applicable privacy laws, its privacy policy and reasonable security controls.',
                 },
                 {
-                  number: '6.2',
+                  number: '5.2',
                   text: 'Personal information may only be used for the referral, service delivery, payment administration, compliance and lawful record-keeping purposes.',
                 },
                 {
-                  number: '6.3',
+                  number: '5.3',
                   text: 'A party must promptly notify the other of any suspected privacy incident materially affecting referred clients and cooperate with lawful response obligations.',
                 },
               ],
             },
             {
-              number: '7',
+              number: '6',
               heading: 'Client Communications',
               subclauses: [
                 {
-                  number: '7.1',
+                  number: '6.1',
                   text: 'Neither party may communicate on behalf of the other without written authority.',
                 },
                 {
-                  number: '7.2',
+                  number: '6.2',
                   text: 'Status updates must be factual, proportionate and limited to the milestones approved by the client and the parties.',
                 },
                 {
-                  number: '7.3',
+                  number: '6.3',
                   text: 'Neither party may guarantee finance approval, property performance, valuation, settlement timing or any financial outcome.',
                 },
               ],
@@ -461,7 +458,7 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
     {
       id: 'protections',
       header: {
-        badge: '8-10',
+        badge: '7-9',
         heading: 'RELATIONSHIP PROTECTIONS & RISK ALLOCATION',
         hint: 'Independent responsibility and fair dealing',
       },
@@ -471,55 +468,55 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
           kind: 'clauses',
           clauses: [
             {
-              number: '8',
+              number: '7',
               heading: 'Client Relationships and Non-Circumvention',
               subclauses: [
                 {
-                  number: '8.1',
+                  number: '7.1',
                   text: 'The Finance Partner retains responsibility for its lending relationship and the Buyer\'s Agency retains responsibility for its property-services relationship.',
                 },
                 {
-                  number: '8.2',
+                  number: '7.2',
                   text: 'Neither party may intentionally bypass the agreed referral process to avoid an accrued payment or knowingly solicit the other party\'s client for directly competing services outside its normal professional scope.',
                 },
                 {
-                  number: '8.3',
+                  number: '7.3',
                   text: 'Nothing prevents a client from independently choosing, changing or engaging service providers.',
                 },
               ],
             },
             {
-              number: '9',
+              number: '8',
               heading: 'Confidentiality, Insurance and Records',
               subclauses: [
                 {
-                  number: '9.1',
+                  number: '8.1',
                   text: 'Each party must keep confidential non-public client, commercial and operational information and disclose it only as authorised or required by law.',
                 },
                 {
-                  number: '9.2',
+                  number: '8.2',
                   text: 'Each party must maintain insurance reasonably appropriate to its services and legal obligations.',
                 },
                 {
-                  number: '9.3',
+                  number: '8.3',
                   text: 'Each party must retain referral, consent, disclosure, invoice and payment records for the period required by applicable law and its compliance framework.',
                 },
               ],
             },
             {
-              number: '10',
+              number: '9',
               heading: 'Liability and Indemnity',
               subclauses: [
                 {
-                  number: '10.1',
+                  number: '9.1',
                   text: 'Each party remains responsible for its own acts, omissions, advice, representations, staff, contractors and regulatory obligations.',
                 },
                 {
-                  number: '10.2',
+                  number: '9.2',
                   text: 'To the extent permitted by law, each party indemnifies the other against third-party loss arising directly from its material breach, negligence, unlawful conduct or unauthorised representation.',
                 },
                 {
-                  number: '10.3',
+                  number: '9.3',
                   text: 'Neither party is liable for the independent decision of a client, lender, vendor, valuer, insurer or other third party, except to the extent caused by that party\'s own breach or negligence.',
                 },
               ],
@@ -532,7 +529,7 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
     {
       id: 'term_general',
       header: {
-        badge: '11-13',
+        badge: '10-12',
         heading: 'TERM, TERMINATION & GENERAL PROVISIONS',
         hint: 'Lifecycle, disputes and governing law',
       },
@@ -542,63 +539,63 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
           kind: 'clauses',
           clauses: [
             {
-              number: '11',
+              number: '10',
               heading: 'Term and Termination',
               subclauses: [
                 {
-                  number: '11.1',
+                  number: '10.1',
                   text: 'This Agreement starts when signed by both parties and continues until terminated.',
                 },
                 {
-                  number: '11.2',
+                  number: '10.2',
                   text: 'Either party may terminate without cause by giving {{termination_notice_days}} days\' written notice.',
                 },
                 {
-                  number: '11.3',
+                  number: '10.3',
                   text: 'A party may terminate immediately for an unremedied material breach after {{breach_remedy_days}} business days\' written notice, fraud, gross misconduct, insolvency, loss of required licence or material regulatory risk.',
                 },
                 {
-                  number: '11.4',
+                  number: '10.4',
                   text: 'Termination does not affect rights and obligations accrued before termination, including any payment entitlement preserved in the Commercial Schedule.',
                 },
               ],
             },
             {
-              number: '12',
+              number: '11',
               heading: 'Dispute Resolution',
               subclauses: [
                 {
-                  number: '12.1',
+                  number: '11.1',
                   text: 'A party must first give written details of a dispute and allow senior representatives to attempt resolution in good faith.',
                 },
                 {
-                  number: '12.2',
+                  number: '11.2',
                   text: 'If unresolved within {{dispute_resolution_days}} business days, the parties may refer the dispute to mediation before commencing court proceedings, except for urgent relief.',
                 },
               ],
             },
             {
-              number: '13',
+              number: '12',
               heading: 'Notices and General',
               subclauses: [
                 {
-                  number: '13.1',
+                  number: '12.1',
                   text: 'Notices must be in writing and sent to the addresses or emails stated in the Agreement Details, as updated by notice.',
                 },
                 {
-                  number: '13.2',
+                  number: '12.2',
                   text: 'This Agreement, including completed schedules, is the entire agreement on its subject matter and may only be varied in writing signed by both parties.',
                 },
                 {
-                  number: '13.3',
+                  number: '12.3',
                   text: 'Neither party may assign this Agreement without the other party\'s written consent, not to be unreasonably withheld, except as part of a genuine business restructure that does not reduce the other party\'s rights.',
                 },
                 {
-                  number: '13.4',
+                  number: '12.4',
                   text: 'If a provision is invalid, it is severed to the minimum extent required. The remaining provisions continue.',
                 },
                 {
-                  number: '13.5',
+                  number: '12.5',
                   text: 'This Agreement is governed by the laws of {{governing_state}} and the parties submit to the courts of that jurisdiction.',
                 },
               ],
@@ -611,7 +608,7 @@ export const STRATEGIC_REFERRAL_CONTENT: AgreementTemplateContent = {
     {
       id: 'execution',
       header: {
-        badge: '14',
+        badge: '13',
         heading: 'EXECUTION',
         hint: 'Electronic or wet signature',
         sub: 'Complete only after all schedules are final',

@@ -14,6 +14,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 function jsonResponse(data: unknown, status = 200, corsHeaders: Record<string, string> = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -153,6 +154,6 @@ Deno.serve(async (req) => {
     }, 200, corsHeaders);
   } catch (err: any) {
     console.error('[message-governance] error', err);
-    return jsonResponse({ success: false, error: err.message || 'Internal error' }, 500, corsHeaders);
+    return jsonResponse({ ...internalError(err, 'message-governance'), success: false }, 500, corsHeaders);
   }
 });

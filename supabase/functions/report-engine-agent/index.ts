@@ -14,6 +14,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { loadSplitRegistry, defaultSplitRegistryBundle } from '../_shared/reportSplitRegistry.ts';
 import { loadPacketConfig, applyPacketConfig, DEFAULT_PACKET_KEYS } from '../_shared/packetConfigLoader.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SYSTEM_PROMPT = `
 You are the Report Engine Operator: a strictly-scoped AI agent whose ONLY job is to
@@ -1553,7 +1554,7 @@ Deno.serve(async (req) => {
 
     return json({ assistant: assistantText, tool_invocations: invocations }, corsHeaders);
   } catch (e: any) {
-    return json({ error: e?.message || String(e) }, createCorsHeaders(origin), 500);
+    return json({ ...internalError(e, 'report-engine-agent') }, createCorsHeaders(origin), 500);
   }
 });
 

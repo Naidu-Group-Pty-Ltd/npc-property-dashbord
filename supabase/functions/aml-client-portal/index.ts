@@ -19,6 +19,8 @@
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
  *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
  *   - list_documents               { case_id }
+ *   - get_document_url             { case_id, document_id }
+ *                                                      → 120s signed read URL (never stored)
  *   - list_client_requests         { case_id }
  *   - respond_client_request       { request_id, response_payload }
  *   - submit_for_review            { case_id }         → creates submission_versions row
@@ -41,13 +43,23 @@ import {
   type IdvFlow,
 } from "../_shared/aml/providers/index.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+// The journey is the one canonical statement of where a client is, and four
+// portal surfaces render it. It lives in a pure module so it is testable
+// without a database — see the header there for the documents defect that
+// hiding it in this file concealed.
+import { buildJourney } from "../_shared/aml/portalJourney.pure.ts";
 import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
 import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
   applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
 } from "../_shared/aml/diditOutcome.ts";
+import {
+  parseDocumentChoice, identityReturnUrl, type IdentityDocumentChoice,
+} from "../_shared/aml/identityDocuments.pure.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -259,80 +271,6 @@ const CLIENT_ACTION_CODES = [
 ];
 
 /**
- * Stage 22 — server-derived journey. The portal renders exactly what this
- * returns; no completion claim is computed client-side. "Verified" appears
- * only when every applicable party holds an authoritative electronic result
- * or an accepted staff sighting — never from case status alone. Completion
- * wording stays restrained: reuse claims belong to the passport/consent
- * machinery, not this journey.
- */
-function buildJourney(args: {
-  consentSatisfied: boolean;
-  activeSections: string[];
-  sectionMap: Map<string, any>;
-  requirements: any[];
-  parties: Array<{ status: string; can_attempt: boolean }>;
-  submissions: any[];
-  openRequestCount: number;
-  portalStatus: string;
-}) {
-  const sectionsDone = args.activeSections.every((sec) =>
-    ['submitted', 'accepted', 'complete'].includes(args.sectionMap.get(sec)?.status ?? ''));
-  const requiredReqs = args.requirements.filter((r: any) => r.required);
-  const docsDone = requiredReqs.length > 0 &&
-    requiredReqs.every((r: any) => ['uploaded', 'accepted'].includes(r.status));
-  const partiesResolved = args.parties.length > 0 &&
-    args.parties.every((pt) => pt.status === 'verified');
-  const verificationInFlight = args.parties.some((pt) => pt.status === 'in_review');
-  const submitted = (args.submissions ?? []).length > 0;
-  const complete = args.portalStatus === 'complete';
-
-  const step = (
-    key: string, status: 'complete' | 'in_progress' | 'action_required' | 'not_started' | 'blocked',
-    label: string, description: string, target: string, completedAt: string | null = null,
-  ) => ({
-    step: key, status, action_required: status === 'action_required',
-    safe_label: label, safe_description: description, target_step: target,
-    completed_at: completedAt,
-  });
-
-  return [
-    step('consent', args.consentSatisfied ? 'complete' : 'action_required',
-      'Consents', args.consentSatisfied
-        ? 'You have accepted the current consents.'
-        : 'Please review and accept the consents to continue.', 'consent'),
-    step('questionnaire', sectionsDone ? 'complete' : args.consentSatisfied ? 'action_required' : 'blocked',
-      'Your information', sectionsDone
-        ? 'All required sections are submitted.'
-        : 'Some sections still need to be completed.', 'questionnaire'),
-    step('documents', docsDone ? 'complete' : requiredReqs.length === 0 ? 'not_started' : 'action_required',
-      'Documents', docsDone
-        ? 'All requested documents are uploaded.'
-        : 'Some requested documents are outstanding.', 'documents'),
-    step('verification',
-      partiesResolved ? 'complete' : verificationInFlight ? 'in_progress' : 'action_required',
-      'Identity verification',
-      partiesResolved
-        ? 'You are verified.'
-        : verificationInFlight
-          ? 'We are checking your identity documents.'
-          : 'Identity verification is still to be completed.', 'verify'),
-    step('submission', submitted ? 'complete' : 'not_started',
-      'Review and submit', submitted
-        ? 'Your information has been submitted for review.'
-        : 'Submit your onboarding once everything above is complete.', 'review'),
-    step('review',
-      complete ? 'complete' : args.openRequestCount > 0 ? 'action_required' : submitted ? 'in_progress' : 'not_started',
-      complete ? 'Complete' : 'Adviser review',
-      complete
-        ? 'Your onboarding is complete.'
-        : args.openRequestCount > 0
-          ? 'Your adviser has asked for something — see your requests.'
-          : 'Your adviser is reviewing your information.', 'review'),
-  ];
-}
-
-/**
  * Attempts already CONSUMED by this party on the electronic path.
  *
  * The truth is aml.verification_attempts_used(): only rows whose provider
@@ -478,6 +416,32 @@ async function releaseHostedCheck(
     .eq('id', checkId)
     .eq('attempt_consumed', false)
     .in('processing_status', ['submitted', 'queued', 'processing']);
+}
+
+/**
+ * The origin the customer is returned to when the hosted flow finishes.
+ *
+ * Compiled in, with `PUBLIC_APP_URL` as the deployment override — the same
+ * pair `consentLinkFor` uses. Deliberately NOT the request's `Origin` header:
+ * this string is handed to the provider as a redirect target, so accepting one
+ * from the caller would let any origin that can reach this function have NPC
+ * mint a redirect to it and hand it to a customer mid-verification.
+ */
+const RETURN_ORIGIN_FALLBACK = 'https://command-centre.npcservices.com.au';
+
+function hostedReturnUrl(): string {
+  return identityReturnUrl(Deno.env.get('PUBLIC_APP_URL'), RETURN_ORIGIN_FALLBACK);
+}
+
+/**
+ * The document choice a hosted session was minted under, if it recorded one.
+ *
+ * Sessions created before document selection existed have none, and are
+ * reusable for any choice — they were minted with no document restriction at
+ * all, so the provider still offers the customer every supported document.
+ */
+function sessionDocumentChoice(check: any): IdentityDocumentChoice | null {
+  return parseDocumentChoice(check?.outcome_detail?.didit_session?.document_choice);
 }
 
 type IdvAvailability = 'available' | 'temporarily_unavailable' | 'manual_verification_required';
@@ -626,7 +590,7 @@ function consentRequiredResponse(state: ConsentState) {
   }, 403);
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -701,11 +665,24 @@ Deno.serve(async (req) => {
               + 'You’ll be notified when it’s ready — there is nothing for you to do now.',
           });
         }
-        const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
+        const [
+          { data: sections }, { data: requirements }, { data: documentFacts },
+          { data: openRequests }, { data: submissions },
+        ] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
             .select('section,status,updated_at,payload').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements')
             .select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
+          // The two columns the journey needs and nothing else. A requirement
+          // is a REQUEST for a document; this is the record of what arrived,
+          // and without it a case with no formal requirements could never
+          // complete its documents step however much the client uploaded.
+          //
+          // No filename, no storage path, no checksum, no uploader: none of
+          // that reaches the wire, and this projection is not shipped to the
+          // client at all — it is consumed here to derive one status.
+          admin.schema('aml').from('documents')
+            .select('requirement_id,status').eq('case_id', c.id).neq('status', 'deleted'),
           admin.schema('aml').from('client_requests')
             .select('*').eq('case_id', c.id).in('status', ['open','responded'])
             .order('created_at', { ascending: false }),
@@ -771,9 +748,14 @@ Deno.serve(async (req) => {
             activeSections: active,
             sectionMap,
             requirements: reqs,
+            documents: documentFacts ?? [],
             parties: await verificationParties(admin, c.id),
             submissions: submissions ?? [],
-            openRequestCount: (openRequests ?? []).length,
+            // Only requests still waiting on the CLIENT. `responded` is waiting
+            // on the adviser: counting it kept the journey saying "your adviser
+            // has asked for something" after the client had answered.
+            openRequestCount: (openRequests ?? [])
+              .filter((r: any) => r.status === 'open').length,
             portalStatus,
           }),
         });
@@ -926,6 +908,28 @@ Deno.serve(async (req) => {
         // Client-safe availability only — never provider names, environment
         // classification, secret presence or internal health detail.
         const { availability, flow } = await clientSafeIdvState(admin);
+
+        /**
+         * Whether this party already has a secure check open.
+         *
+         * One boolean, and it is what lets the portal survive a refresh: the
+         * window handle, the session URL and every scrap of local state are
+         * gone after one, so without asking the server the client is shown
+         * "Start" while their verification window is still sitting open behind
+         * the browser. They then start again — which the backend correctly
+         * de-duplicates, but only after telling them nothing about why.
+         *
+         * Deliberately a boolean and not the session. It carries no URL, no
+         * session id, no provider and no token, so the strongest thing it can
+         * do is change which sentence the client reads.
+         */
+        if (flow === 'hosted_session') {
+          for (const party of parties) {
+            party.verification_in_progress = Boolean(
+              await activeHostedCheck(admin, c.id, party.party_id));
+          }
+        }
+
         return jsonResponse({
           enabled: true,
           availability,
@@ -966,6 +970,29 @@ Deno.serve(async (req) => {
 
         const partyId = body.party_id ? String(body.party_id) : null;
         const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
+
+        /**
+         * The document the customer says they will present.
+         *
+         * The ONLY thing the browser is permitted to declare about the
+         * session, and it is matched against a closed list rather than
+         * forwarded. What it cannot say — and what this handler reads from
+         * server state alone — is the provider, the workflow, the environment,
+         * the country, the callback, or anything about the outcome.
+         *
+         * Absent is allowed and means "not declared": an older portal build,
+         * or a caller resuming a session. Present-but-unrecognised is refused,
+         * because a typo that silently became an unrestricted session would
+         * put the country and document pickers back in front of the customer
+         * with nothing to show that it had happened.
+         */
+        const documentChoice = parseDocumentChoice(body.document_type);
+        if (body.document_type !== undefined && body.document_type !== null && !documentChoice) {
+          return jsonResponse({
+            error: 'That is not a document we can verify. Please choose one of the options shown.',
+            code: 'unsupported_document_type',
+          }, 400);
+        }
 
         // The biometric consent must exist BEFORE a face is captured, and the
         // hosted flow captures one. Consent after collection is not consent
@@ -1077,7 +1104,43 @@ Deno.serve(async (req) => {
             });
             if (result.kind === 'in_flight') {
               const url = typeof decision['session_url'] === 'string' ? decision['session_url'] : '';
-              if (url) {
+              /**
+               * A session minted for a different document cannot serve this
+               * request — its `expected_document_types` restricts the provider
+               * to the document the customer chose last time, so handing it
+               * back to somebody who has since picked their passport dead-ends
+               * them on a picker that will not offer it.
+               *
+               * Only replaced while the customer has not begun. `Not Started`
+               * is the provider's word for a session whose link has never been
+               * opened, so nothing is lost and no work is discarded; once they
+               * are `In Progress` or `Awaiting User` the session in their hands
+               * is the one that matters and they are returned to it, whatever
+               * they picked on this screen.
+               *
+               * The replacement is a technical supersede — `status` and
+               * `attempt_consumed` untouched — for the same reason a workflow
+               * revision is: changing your mind about which card to hold up is
+               * not a failed identity check.
+               */
+              const startedAlready = String(decision['status'] ?? '') !== 'Not Started';
+              if (documentChoice && !startedAlready
+                && sessionDocumentChoice(existing) !== documentChoice) {
+                await releaseHostedCheck(admin, String(existing.id), 'document_choice_changed');
+                await appendDiditCaseEvent(admin, c.id,
+                  `Identity verification session superseded for ${partyLabel}: a different `
+                  + `identity document was chosen before the check was started`,
+                  {
+                    verification_check_id: existing.id,
+                    provider: 'didit',
+                    provider_reference: existing.provider_reference,
+                    reason: 'document_choice_changed',
+                    category: 'technical',
+                    attempt_consumed: false,
+                    scope: 'identity_verification_only',
+                  });
+                existing = null;
+              } else if (url) {
                 return jsonResponse({
                   started: true, resumed: true, verification_url: url,
                   message: 'Your verification is already open. Continue where you left off.',
@@ -1184,6 +1247,20 @@ Deno.serve(async (req) => {
               verification_check_id: created.id,
               capture_sequence: captureSequence,
             },
+            /**
+             * Where the customer lands when the hosted flow finishes.
+             *
+             * Server-built from a compiled-in origin, never from the request.
+             * The page it names is a receipt and nothing more — it reads no
+             * status out of the redirect and settles nothing; the identity
+             * outcome still arrives only on the signed webhook. Its job is to
+             * stop the journey ending on a page NPC does not own.
+             */
+            callbackUrl: hostedReturnUrl(),
+            // Narrows the provider's own document picker to the one the
+            // customer said they would present, and pins the country to
+            // Australia. Translated to provider vocabulary inside the adapter.
+            documentChoice,
           });
 
           await admin.schema('aml').from('verification_checks').update({
@@ -1207,6 +1284,12 @@ Deno.serve(async (req) => {
                 // published workflow is edited.
                 attempt: captureSequence,
                 workflow_revised_at: resolved?.config?.['workflow_revised_at'] ?? null,
+                // What the customer said they would present. NPC's own
+                // vocabulary, not the provider's code — it is read back by the
+                // reuse check above, and it is the audit record of what the
+                // session was restricted to. Not a verification finding: the
+                // document actually presented is whatever the decision says.
+                document_choice: documentChoice,
                 status: session.status,
                 expires_at: session.expiresAt,
               },
@@ -1577,6 +1660,58 @@ Deno.serve(async (req) => {
         return jsonResponse({ documents: data ?? [] });
       }
 
+      /**
+       * A short-lived link to one of this case's own documents.
+       *
+       * Two ownership checks, and both are needed. `resolveCase` proves the
+       * case belongs to the portal session; `.eq('case_id', c.id)` proves the
+       * document belongs to that case. Without the second, a document id — a
+       * value the client legitimately holds for its OWN files, and could guess
+       * for others — would be enough to open any document in the system.
+       *
+       * The bucket is written here and the path is read from the row. Neither
+       * comes from the request: a caller-supplied path is a directory
+       * traversal waiting to happen, and a caller-supplied bucket turns this
+       * into a general-purpose read of the project's storage.
+       *
+       * `download` sets `Content-Disposition: attachment`, matching the staff
+       * path. `request_upload_url` does not constrain the stored content type,
+       * so an HTML file could be served inline from the storage origin — which
+       * is the same host as this API. An attachment disposition costs the
+       * customer nothing and removes that entirely.
+       *
+       * 120 seconds: long enough for the browser to follow it, short enough
+       * that a URL captured from history or a proxy log is already dead.
+       */
+      case 'get_document_url': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+        if (!body.document_id) return jsonResponse({ error: 'document_id required' }, 400);
+
+        const { data: doc } = await admin.schema('aml').from('documents')
+          .select('id, filename, storage_path, status')
+          .eq('id', String(body.document_id))
+          .eq('case_id', c.id)
+          .neq('status', 'deleted')
+          .maybeSingle();
+        // One answer for "not yours", "not there" and "deleted". Telling them
+        // apart would confirm that a document id exists on another case.
+        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+
+        const { data: signed, error: signErr } = await admin.storage
+          .from('aml-documents')
+          .createSignedUrl(doc.storage_path, 120, { download: doc.filename });
+        if (signErr || !signed?.signedUrl) {
+          // Never echo the storage error: it carries the path and the bucket.
+          console.error('[aml-client-portal] document url signing failed');
+          return jsonResponse({
+            error: 'We could not open that document just now. Please try again shortly.',
+            code: 'document_unavailable',
+          }, 502);
+        }
+        return jsonResponse({ url: signed.signedUrl, filename: doc.filename });
+      }
+
       case 'list_client_requests': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ requests: [] });
@@ -1618,6 +1753,26 @@ Deno.serve(async (req) => {
         return jsonResponse({ request: data });
       }
 
+      /**
+       * Submission eligibility — the rule, written down.
+       *
+       * Three gates and exactly three: the current consent catalogue accepted,
+       * every APPLICABLE questionnaire section submitted and valid, and every
+       * REQUIRED document requirement met. Identity verification is
+       * deliberately NOT a gate, and never has been.
+       *
+       * That asymmetry is intentional rather than an oversight. Everything
+       * above is work only the client can do; an identity outcome is produced
+       * by a provider and a reviewer on our side, on their own clock, and
+       * holding the client's pack hostage to it would leave them staring at a
+       * disabled button waiting on us. The pack is what they owe us. The
+       * verification is what we owe them.
+       *
+       * The journey states this rule the same way (`readyToSubmit` in
+       * portalJourney.pure.ts), and the review screen says so in words rather
+       * than implying an all-clear it cannot give. Changing it means changing
+       * all three, plus the tests that pin them.
+       */
       case 'submit_for_review': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
@@ -1694,6 +1849,14 @@ Deno.serve(async (req) => {
     }
   } catch (err: any) {
     console.error('aml-client-portal error', err);
-    return jsonResponse({ error: err?.message ?? String(err) }, 500);
+    return jsonResponse({ ...internalError(err, 'aml-client-portal') }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

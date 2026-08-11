@@ -28,6 +28,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const STATEMENT_BUCKET = 'finance-portal-statements';
 
@@ -1272,7 +1273,7 @@ Deno.serve(async (req) => {
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e: any) {
     console.error('[finance-portal-commissions] error', e);
-    return new Response(JSON.stringify({ error: e.message || 'Internal error' }),
+    return new Response(JSON.stringify(internalError(e, 'finance-portal-commissions')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

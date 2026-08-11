@@ -29,6 +29,7 @@ import {
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { requireModulePermission, requireSuperadmin } from '../_shared/authz.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   TemplateSchemaVersionError,
   validateAndMigrateTemplateSchemaVersion,
@@ -452,7 +453,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[manage-template-library] Error:', error);
     return json(
-      { error: 'Internal server error', details: (error as Error).message },
+      { ...internalError(error, 'manage-template-library'), error: 'Internal server error' },
       500,
       corsHeaders,
     );

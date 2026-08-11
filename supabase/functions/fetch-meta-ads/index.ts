@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const META_API_VERSION = 'v21.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
 
@@ -160,7 +161,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[fetch-meta-ads] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'fetch-meta-ads'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

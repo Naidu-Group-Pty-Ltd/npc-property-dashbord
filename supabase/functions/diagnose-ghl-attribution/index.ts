@@ -1,7 +1,9 @@
+import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -64,8 +66,16 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[diagnose] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'diagnose-ghl-attribution')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

@@ -19,6 +19,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   resolveSolicitorSession,
   solicitorGovernanceError,
@@ -650,6 +651,6 @@ Deno.serve(async (req) => {
     return json({ error: `Unsupported operation: ${operation}` }, 400);
   } catch (error) {
     console.error('[solicitor-portal-compliance] error:', error);
-    return json({ error: (error as Error)?.message || 'Unexpected error' }, 500);
+    return json({ ...internalError(error, 'solicitor-portal-compliance') }, 500);
   }
 });

@@ -33,6 +33,7 @@ import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 import { resolvePdfDescriptionTier } from '../_shared/pdfDescriptionTier.pure.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -1442,6 +1443,6 @@ Deno.serve(async (req) => {
     return json({ error: `unknown operation: ${operation}` }, 400);
   } catch (e) {
     console.error('[pdf-parse-dispatch] unhandled', e);
-    return json({ error: String((e as Error)?.message ?? e) }, 500);
+    return json({ ...internalError(e, 'pdf-parse-dispatch') }, 500);
   }
 });

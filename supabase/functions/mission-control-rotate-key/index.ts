@@ -10,6 +10,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const MC_BASE = (Deno.env.get("MISSION_CONTROL_URL") ?? "").replace(/\/+$/, "");
 const MC_KEY = Deno.env.get("MISSION_CONTROL_CLONE_API_KEY") ?? "";
 const SUPABASE_ACCESS_TOKEN = Deno.env.get("SUPABASE_ACCESS_TOKEN") ?? "";
@@ -140,7 +141,7 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     console.error("[mission-control-rotate-key]", e);
-    return new Response(JSON.stringify({ error: "internal_error", message: String(e) }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'mission-control-rotate-key'), error: "internal_error" }), {
       status: 500, headers: { ...corsHeaders, "content-type": "application/json" },
     });
   }

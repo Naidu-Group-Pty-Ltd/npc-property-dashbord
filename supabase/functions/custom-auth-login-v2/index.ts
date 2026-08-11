@@ -5,6 +5,8 @@ import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
 import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts"
 import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { StaffLoginRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -41,7 +43,12 @@ Deno.serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { username, password, turnstile_token } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, StaffLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { username, password, turnstile_token } = __body.data
 
     if (!username || !password) {
       return new Response(

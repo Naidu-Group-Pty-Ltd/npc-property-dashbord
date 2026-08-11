@@ -140,7 +140,7 @@ jobs:
           '
           node "$HELPER_DIR/callback.mjs" "$REPORT_DIR/started.json"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.scan_ref || github.ref }}
           # Deep history only when we need to diff against a base ref.
@@ -631,7 +631,7 @@ jobs:
 
       - name: Upload scanner reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codex-security-reports-${{ inputs.job_id }}
           # `runner` is legal here (step level), but single-sourcing off

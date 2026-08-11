@@ -12,9 +12,14 @@
  *   download { id, kind: 'draft' | 'issued' | 'executed' }
  *       'draft'    → rendered fresh from the live row, returned as base64
  *                    (with the template pack — this is the manual-path export).
- *       'issued'   → signed URL to the frozen as-issued PDF (generated from
- *                    the frozen version row on first ask).
- *       'executed' → signed URL to the executed master, same rule; the
+ *       'issued'   → signed URL to the as-issued PDF, rendered from the frozen
+ *                    version row on first ask and RE-rendered from those same
+ *                    frozen inputs when this build's document revision has
+ *                    moved past the stored artefact's — unless the version has
+ *                    been signed, which freezes it for good. The response says
+ *                    which of those happened.
+ *       'executed' → signed URL to the executed master, generated on first ask
+ *                    and never refreshed afterwards: it is the instrument. The
  *                    download of a legal record is written to the security
  *                    audit log, exactly like partner-agreement-records.
  *
@@ -29,6 +34,7 @@ import {
   agreementDownloadFileName,
 } from '../_shared/agreements/documentHtml.pure.ts';
 import {
+  AGREEMENT_CENTRE_DOCUMENT_REVISION,
   agreementTemplate,
   templateKeyForDirection,
   versionLabel,
@@ -39,7 +45,7 @@ import {
   executionContextFromSignatures,
   loadIssuerDefaults,
   renderAgreementPdf,
-  renderAndStoreVersionPdf,
+  resolveVersionArtefact,
 } from '../_shared/agreements/render.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -174,20 +180,20 @@ Deno.serve(async (req) => {
         return json({ error: 'not_executed', message: 'The agreement has not been fully executed yet.' }, 409);
       }
 
-      let path: string | null = kind === 'executed'
-        ? version.executed_pdf_storage_path
-        : version.pdf_storage_path;
-      if (!path) {
-        const execution = kind === 'executed'
-          ? executionContextFromSignatures(
-            (await supabase.from('partner_agreement_signatures').select('*').eq('version_id', version.id)).data ?? [])
-          : null;
-        const stored = await renderAndStoreVersionPdf(supabase, supabaseUrl, agreement, version, kind, execution);
-        path = stored.path;
+      // The signatures are read either way: the executed render needs their
+      // content, and the issued one needs to know whether any exist before it
+      // is allowed to re-typeset.
+      const signatureRows = (await supabase.from('partner_agreement_signatures')
+        .select('*').eq('version_id', version.id)).data ?? [];
+      const artefact = await resolveVersionArtefact(supabase, supabaseUrl, agreement, version, kind, {
+        signatureCount: signatureRows.length,
+        execution: kind === 'executed' ? executionContextFromSignatures(signatureRows) : null,
+      });
+      if (artefact.rendered) {
         await supabase.from('partner_agreement_versions')
           .update(kind === 'executed'
-            ? { executed_pdf_storage_path: path, executed_pdf_bytes: stored.bytes }
-            : { pdf_storage_path: path })
+            ? { executed_pdf_storage_path: artefact.path, executed_pdf_bytes: artefact.bytes }
+            : { pdf_storage_path: artefact.path })
           .eq('id', version.id);
       }
 
@@ -196,7 +202,7 @@ Deno.serve(async (req) => {
       );
       const { data: signed, error: signError } = await supabase.storage
         .from(AGREEMENTS_BUCKET)
-        .createSignedUrl(path!, SIGNED_URL_TTL_SECONDS, { download: fileName });
+        .createSignedUrl(artefact.path, SIGNED_URL_TTL_SECONDS, { download: fileName });
       if (signError || !signed?.signedUrl) {
         throw new Error(`signing failed: ${signError?.message ?? 'no url returned'}`);
       }
@@ -222,6 +228,12 @@ Deno.serve(async (req) => {
         url: signed.signedUrl,
         file_name: fileName,
         expires_in: SIGNED_URL_TTL_SECONDS,
+        // The revision this function is actually running, so the app can say
+        // "the render service has not been deployed yet" instead of letting a
+        // superseded document leave in a partner's direction unremarked.
+        document_revision: AGREEMENT_CENTRE_DOCUMENT_REVISION,
+        artefact_state: artefact.state,
+        refreshed: artefact.rendered && artefact.state === 'stale',
       });
     }
 

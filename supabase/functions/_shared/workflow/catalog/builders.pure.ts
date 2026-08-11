@@ -13,6 +13,7 @@ import type {
   NodeCategoryId,
   NodeField,
   NodeOutput,
+  NodeRequest,
 } from '../types.pure.ts';
 
 type FieldOpts = Partial<Omit<NodeField, 'key' | 'label' | 'type'>>;
@@ -93,6 +94,8 @@ interface OperationSpec {
   keywords?: string[];
   branches?: CatalogNode['branches'];
   icon?: string;
+  /** Declaring this is what makes the operation runnable rather than simulated. */
+  request?: NodeRequest;
 }
 
 /**
@@ -114,6 +117,7 @@ export function provider(spec: ProviderSpec, operations: OperationSpec[]): Catal
     keywords: o.keywords,
     branches: o.branches,
     icon: o.icon,
+    request: o.request,
   }));
 }
 
@@ -136,6 +140,7 @@ export function native(
     outputs: o.outputs ?? [],
     keywords: o.keywords,
     branches: o.branches,
+    request: o.request,
   }));
 }
 

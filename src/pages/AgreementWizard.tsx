@@ -27,12 +27,13 @@ import {
 } from '@/components/ui/select';
 import {
   AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
-  Palette, Save, Search, Send, Eye, UserPlus, Building2,
+  Palette, Save, Search, Send, Eye, UserPlus, Building2, Pencil, PenLine, RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import {
   agreementFieldDefs,
+  isAgreementFieldVisible,
   agreementTemplate,
   templateKeyForDirection,
   rowPatchFromValues,
@@ -40,7 +41,15 @@ import {
   validateForIssue,
   AGREEMENT_TEMPLATE_SUMMARIES,
   directionForTemplateKey,
+  contentOverridesFromValues,
+  listAgreementAmendments,
+  CONTENT_OVERRIDES_VALUE_KEY,
+  additionalClausesFromValues,
+  ADDITIONAL_CLAUSES_VALUE_KEY,
+  ADDITIONAL_CLAUSES_SECTION_ID,
+  type AgreementAdditionalClause,
   type AgreementFieldDef,
+
   type AgreementFieldValues,
   type AgreementTemplateKey,
   type PartnerAgreementDirection,
@@ -60,6 +69,8 @@ import { shouldLoadDraft } from '@/lib/agreements/wizardDraft.pure';
 import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import DigitalAgreementView from '@/components/agreement-centre/DigitalAgreementView';
+import AdditionalClausesPanel from '@/components/agreement-centre/AdditionalClausesPanel';
+
 import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 
@@ -74,6 +85,40 @@ const STEPS = [
   { key: 'outcome', title: 'Review & Issue' },
 ] as const;
 
+/**
+ * Presentation only. A field's label carries its clause reference in brackets
+ * ("Termination notice (clause 11.2)") and its unit in the key ("…_days"), and
+ * neither read as a unit at a glance — the user sees `<<NUMBER>>` and no
+ * indication that 30 means thirty days. Split the two apart here so the label
+ * names the term, a chip names the clause, and the input itself says its unit.
+ */
+function describeField(def: AgreementFieldDef): {
+  name: string;
+  clause: string | null;
+  unit: string | null;
+  hint: string | null;
+} {
+  const match = /^(.*?)\s*\((clause\s*[\d.]+)\)\s*$/i.exec(def.label);
+  const name = (match ? match[1] : def.label).trim();
+  const clause = match ? match[2].replace(/^clause\s*/i, 'Clause ') : null;
+
+  const key = def.key.toLowerCase();
+  const unit = def.type === 'number'
+    ? key.endsWith('_days') || /(^|_)days(_|$)/.test(key) ? 'days'
+      : key.endsWith('_hours') ? 'hours'
+      : key.endsWith('_months') ? 'months'
+      : key.endsWith('_years') ? 'years'
+      : key.includes('percent') || key.includes('_pct') ? '%'
+      : null
+    : null;
+
+  const hint = unit && unit !== '%'
+    ? `Enter a whole number of ${unit}${clause ? ` as referenced in ${clause.toLowerCase()}` : ''}.`
+    : null;
+
+  return { name, clause, unit, hint };
+}
+
 function FieldInput({
   def,
   value,
@@ -85,12 +130,22 @@ function FieldInput({
 }) {
   const raw = value === null || value === undefined ? '' : String(value);
   const id = `agc-field-${def.key}`;
+  const { name, clause, unit, hint } = describeField(def);
+  const numberPlaceholder = unit === '%' ? 'e.g. 2.5' : unit ? `e.g. 30 ${unit}` : def.placeholder;
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs">
-        {def.label}
-        {def.requiredForIssue ? <span className="ml-1 text-warning">*</span> : null}
-      </Label>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Label htmlFor={id} className="text-xs">
+          {name}
+          {unit ? <span className="ml-1 font-normal text-muted-foreground">(in {unit})</span> : null}
+          {def.requiredForIssue ? <span className="ml-1 text-warning">*</span> : null}
+        </Label>
+        {clause ? (
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+            {clause}
+          </span>
+        ) : null}
+      </div>
       {def.type === 'choice' ? (
         <Select value={raw || undefined} onValueChange={(next) => onChange(next)}>
           <SelectTrigger id={id}>
@@ -106,14 +161,31 @@ function FieldInput({
         <Textarea id={id} value={raw} rows={2} placeholder={def.placeholder}
           onChange={(event) => onChange(event.target.value)} />
       ) : (
-        <Input
-          id={id}
-          type={def.type === 'date' ? 'date' : def.type === 'number' ? 'number' : 'text'}
-          value={raw}
-          placeholder={def.placeholder}
-          onChange={(event) => onChange(event.target.value)}
-        />
+        <div className="relative">
+          <Input
+            id={id}
+            type={def.type === 'date' ? 'date' : def.type === 'number' ? 'number' : 'text'}
+            inputMode={def.type === 'number' ? 'numeric' : undefined}
+            min={def.type === 'number' ? 0 : undefined}
+            value={raw}
+            placeholder={def.type === 'number' ? numberPlaceholder : def.placeholder}
+            aria-describedby={hint ? `${id}-hint` : undefined}
+            className={unit ? 'pr-14' : undefined}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          {unit ? (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 text-xs font-medium text-muted-foreground"
+            >
+              {unit}
+            </span>
+          ) : null}
+        </div>
       )}
+      {hint ? (
+        <p id={`${id}-hint`} className="text-[11px] leading-snug text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }
@@ -129,7 +201,7 @@ function FieldGroup({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      {defs.map((def) => (
+      {defs.filter((def) => isAgreementFieldVisible(def, values)).map((def) => (
         <FieldInput key={def.key} def={def} value={values[def.key]}
           onChange={(next) => onChange(def.key, next)} />
       ))}
@@ -151,6 +223,8 @@ export default function AgreementWizard() {
   const [values, setValues] = useState<AgreementFieldValues>({});
   const [dirty, setDirty] = useState(false);
   const [previewPdfId, setPreviewPdfId] = useState<string | null>(null);
+  /** Preview step: edit values where they are printed (default on — that is the point). */
+  const [inlineEditing, setInlineEditing] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'docx' | null>(null);
   const [partnerSearch, setPartnerSearch] = useState('');
   const [newPartnerOpen, setNewPartnerOpen] = useState(false);
@@ -208,6 +282,39 @@ export default function AgreementWizard() {
     setValues((previous) => ({ ...previous, [key]: value }));
     setDirty(true);
   };
+
+  /**
+   * A negotiated wording amendment. Stored beside the values (never in the
+   * template), so the same save that persists the figures persists the amended
+   * clause, and issuing freezes both onto the version row. `null` restores.
+   */
+  const setContentOverride = (path: string, text: string | null) => {
+    setValues((previous) => {
+      const next = { ...contentOverridesFromValues(previous) };
+      if (text === null) delete next[path]; else next[path] = text;
+      return { ...previous, [CONTENT_OVERRIDES_VALUE_KEY]: next };
+    });
+    setDirty(true);
+  };
+
+  /** Every departure from the supplied wording, for the review list below. */
+  const amendments = useMemo(
+    () => (templateKey
+      ? listAgreementAmendments(agreementTemplate(templateKey), contentOverridesFromValues(values))
+      : []),
+    [templateKey, values],
+  );
+
+  /**
+   * Special conditions — wording the template never carried. Same store, same
+   * freeze: they travel with the field values onto the version row.
+   */
+  const additionalClauses = useMemo(() => additionalClausesFromValues(values), [values]);
+  const setAdditionalClauses = (next: AgreementAdditionalClause[]) => {
+    setValues((previous) => ({ ...previous, [ADDITIONAL_CLAUSES_VALUE_KEY]: next }));
+    setDirty(true);
+  };
+
 
   /** The preview projection: current edits applied over the row. */
   const previewValues = useMemo(() => {
@@ -616,7 +723,11 @@ export default function AgreementWizard() {
           <div className="space-y-5">
             <FieldGroup defs={group('agreement')} values={values} onChange={setValue} />
             <div>
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Clause variables</h3>
+              <p className="mb-2 mt-1 text-xs text-muted-foreground">
+                Each figure below fills the numbered clause shown on its chip. Every period is
+                expressed in whole days unless the field says otherwise.
+              </p>
               <FieldGroup defs={group('clauses')} values={values} onChange={setValue} />
             </div>
             <div>
@@ -651,10 +762,69 @@ export default function AgreementWizard() {
               }}>
                 <Eye className="mr-1.5 h-3.5 w-3.5" /> Typeset PDF preview
               </Button>
+              <Button
+                variant={inlineEditing ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setInlineEditing((previous) => !previous)}
+                aria-pressed={inlineEditing}
+              >
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                {inlineEditing ? 'Editing in document' : 'Edit in document'}
+              </Button>
               <span className="text-xs text-muted-foreground">
-                The live document below updates as you edit; the PDF is the exact printed form.
+                {inlineEditing
+                  ? 'Click any value to change it, or the pencil beside any clause, heading or panel to amend its wording. Every edit flows into the final PDF.'
+                  : 'Read-only view. Turn on editing to change values and amend clause wording directly on the page.'}
               </span>
             </div>
+            {amendments.length ? (
+              <div className="rounded-xl border border-warning/40 bg-warning/5 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <PenLine className="h-4 w-4 text-warning" />
+                    {amendments.length} clause{amendments.length === 1 ? '' : 's'} depart from the supplied wording
+                  </h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      setValues((previous) => ({ ...previous, [CONTENT_OVERRIDES_VALUE_KEY]: {} }));
+                      setDirty(true);
+                      toast.success('The supplied wording has been restored throughout.');
+                    }}
+                  >
+                    <RotateCcw className="mr-1 h-3 w-3" /> Restore all
+                  </Button>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These amendments are recorded on the audit trail and frozen into the version you issue.
+                  Have legal review them before the agreement is sent.
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {amendments.map((amendment) => (
+                    <li key={amendment.path} className="text-xs">
+                      <button
+                        type="button"
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                        onClick={() => jumpToField(amendment.sectionId)}
+                      >
+                        {amendment.label}
+                      </button>
+                      <span className="ml-2 text-muted-foreground line-through">
+                        {amendment.original.slice(0, 90)}{amendment.original.length > 90 ? '…' : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <AdditionalClausesPanel
+              clauses={additionalClauses}
+              onChange={setAdditionalClauses}
+              onJump={() => jumpToField(ADDITIONAL_CLAUSES_SECTION_ID)}
+            />
+
             {!validation.ok && templateKey ? (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
@@ -674,12 +844,30 @@ export default function AgreementWizard() {
               </Alert>
             ) : null}
             {templateKey ? (
-              <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-border bg-background/40 p-4">
-                <DigitalAgreementView templateKey={templateKey} values={previewValues} versionLabel="Draft" />
+              <div
+                className={cn(
+                  'max-h-[72vh] overflow-y-auto rounded-xl border bg-background/40 p-4 transition-colors',
+                  inlineEditing ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border',
+                )}
+              >
+                <DigitalAgreementView
+                  templateKey={templateKey}
+                  values={previewValues}
+                  versionLabel="Draft"
+                  edit={inlineEditing
+                    ? {
+                      defs: fieldDefs,
+                      rawValues: values,
+                      onChange: setValue,
+                      onContentChange: setContentOverride,
+                    }
+                    : null}
+                />
               </div>
             ) : null}
           </div>
         );
+
       case 'outcome':
         return (
           <div className="space-y-4">

@@ -21,6 +21,7 @@ import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const BUCKET = 'finance-portal-messages';
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const SIGNED_URL_TTL = 60 * 10;
@@ -826,6 +827,6 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: `Unknown operation: ${operation}` }, 400, corsHeaders);
   } catch (e: any) {
     console.error('[finance-portal-messages] error', e);
-    return jsonResponse({ error: 'Internal server error', details: e?.message }, 500, corsHeaders);
+    return jsonResponse({ ...internalError(e, 'finance-portal-messages'), error: 'Internal server error' }, 500, corsHeaders);
   }
 });

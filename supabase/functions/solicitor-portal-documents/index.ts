@@ -29,6 +29,7 @@ import {
   type PermissionMatrix,
 } from "../_shared/solicitorPortalAuth.ts";
 import { cleanEnum, cleanText } from "../_shared/legalMatters.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   LEGAL_DOCUMENT_BUCKET,
   LEGAL_DOCUMENT_STATUSES,
@@ -559,7 +560,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[solicitor-portal-documents] error:', error);
     return new Response(
-      JSON.stringify({ error: (error as Error)?.message || 'Unexpected error' }),
+      JSON.stringify(internalError(error, 'solicitor-portal-documents')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

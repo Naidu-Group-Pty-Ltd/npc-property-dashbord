@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyInternal, logSecurityEvent } from "../_shared/auth_v2.ts";
 import { callInternalFunction } from "../_shared/internalCall.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 /**
  * Agent Scheduled Task Runner
@@ -257,7 +258,7 @@ Deno.serve(async (req) => {
   } catch (err: any) {
     console.error('[agent-task-runner] Fatal error:', err.message);
     return new Response(
-      JSON.stringify({ error: err.message }),
+      JSON.stringify(internalError(err, 'agent-task-runner')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

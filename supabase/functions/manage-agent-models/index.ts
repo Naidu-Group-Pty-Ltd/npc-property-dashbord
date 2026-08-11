@@ -14,6 +14,7 @@ import {
   verifyAuth,
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 function admin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
@@ -117,7 +118,7 @@ Deno.serve(async (req) => {
 
     return json({ success: false, error: `Unknown action: ${action}` }, 400, corsHeaders);
   } catch (e: any) {
-    return json({ success: false, error: e?.message ?? 'Unknown error' }, 500, corsHeaders);
+    return json({ ...internalError(e, 'manage-agent-models'), success: false }, 500, corsHeaders);
   }
 });
 

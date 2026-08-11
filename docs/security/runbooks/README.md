@@ -8,6 +8,7 @@ pressure, not read once and forgotten.
 |---------|----------|
 | [incident-response.md](./incident-response.md) | You suspect or have confirmed a breach, data leak, account takeover, or abuse. |
 | [key-rotation.md](./key-rotation.md) | A secret is (or may be) exposed, on a scheduled rotation, or an operator with access has left. |
+| [live-negative-tests.md](./live-negative-tests.md) | You need evidence that a control is present in **production** and not only in git — before a launch sign-off, after a deploy, or when the tracker still says `live_negative_test: false`. |
 
 ## System facts you need before touching either runbook
 

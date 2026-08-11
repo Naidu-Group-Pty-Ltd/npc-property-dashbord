@@ -14,6 +14,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getGhlCredentials, validateGhlCredentials, buildGhlHeaders, type GhlAccount } from '../_shared/ghl-account.ts';
 import { buildQueue } from '../_shared/ghl-asset-harvester.ts';
 import { callInternalFunction } from '../_shared/internalCall.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -91,7 +92,7 @@ Deno.serve(async (req) => {
     });
   } catch (e: any) {
     console.error('[ghl-marketing-dump-enqueue] error:', e);
-    return new Response(JSON.stringify({ success: false, error: e.message || 'Internal error' }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'ghl-marketing-dump-enqueue'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

@@ -38,6 +38,7 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token',
@@ -1908,7 +1909,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
   } catch (err: any) {
     console.error('aml-cases error', err);
-    return jsonResponse({ error: err?.message ?? String(err) }, 500);
+    return jsonResponse({ ...internalError(err, 'aml-cases') }, 500);
   }
 });
 

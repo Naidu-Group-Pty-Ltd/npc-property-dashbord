@@ -10,6 +10,7 @@ import { buildDocumentDedupeKey, createSyncEvent, resolveSyncConflict } from "..
 import { recordAuditEvent, extractRequestFingerprint } from "../_shared/finance-portal-audit.ts";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -437,6 +438,6 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: `Unknown operation: ${operation}` }, 400);
   } catch (e: any) {
     console.error('[finance-portal-documents] error', e);
-    return jsonResponse({ error: 'Internal server error', details: e?.message }, 500);
+    return jsonResponse({ ...internalError(e, 'finance-portal-documents'), error: 'Internal server error' }, 500);
   }
 });

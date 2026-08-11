@@ -4,6 +4,8 @@ import { generateOtp, hashResetToken } from "../_shared/resetTokens.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { beginAuthRateLimit } from "../_shared/authRateLimit.ts";
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ForgotPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -19,7 +21,12 @@ Deno.serve(async (req) => {
     const resendApiKey = Deno.env.get('RESEND_API_KEY')
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { email } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ForgotPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { email } = __body.data
 
     if (!email) {
       return new Response(

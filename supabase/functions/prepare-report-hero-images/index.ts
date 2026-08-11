@@ -13,6 +13,7 @@ import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -388,7 +389,7 @@ Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error("[prepare-report-hero-images]", err);
-    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+    return new Response(JSON.stringify(internalError(err, 'prepare-report-hero-images')), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

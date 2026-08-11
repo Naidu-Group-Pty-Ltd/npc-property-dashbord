@@ -7,6 +7,7 @@
  * survived restarts and was readable by any script. See src/lib/portalSession.ts.
  */
 import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
+import type { IdentityDocumentChoice } from '@/lib/aml/identityDocuments';
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
@@ -48,6 +49,38 @@ export type AmlSection =
   // Phase 5 — conditional sections; the server decides which apply per case.
   | 'entity_details' | 'related_parties';
 
+/**
+ * Where the client is, as the SERVER says — the one canonical journey.
+ *
+ * `aml-client-portal` has derived this since Stage 22 and the browser had
+ * never had a type for it, so every consumer read `overview.sections` instead
+ * and inferred the rest. That is why the stepper could only ever turn
+ * questionnaire steps green: consent, documents, identity and submission carry
+ * no `section`, so nothing client-side could see them complete.
+ *
+ * Nothing here is internal AML state. Each entry is a machine key, a
+ * presentation-neutral status, and two strings written to be read by the
+ * customer — no score, no threshold, no provider, no reviewer.
+ */
+export type AmlPortalJourneyStatus =
+  | 'complete'
+  | 'in_progress'
+  | 'action_required'
+  | 'not_started'
+  | 'blocked';
+
+export interface AmlPortalJourneyStep {
+  /** `consent | questionnaire | documents | verification | submission | review` */
+  step: string;
+  status: AmlPortalJourneyStatus;
+  action_required: boolean;
+  safe_label: string;
+  safe_description: string;
+  /** The portal step that answers this one. */
+  target_step: string;
+  completed_at?: string | null;
+}
+
 export interface AmlPortalOverview {
   case: {
     id: string; reference: string; subject: string;
@@ -68,6 +101,12 @@ export interface AmlPortalOverview {
   recent_submissions?: any[];
   /** Server-owned consent gate — the stepper mirrors this, never a local flag. */
   consent?: AmlConsentState;
+  /**
+   * The canonical journey. Optional only because an older deployed function
+   * may not send it; every read site degrades to "not started" rather than
+   * inventing a completion the server did not state.
+   */
+  journey?: AmlPortalJourneyStep[];
 }
 
 /** Acceptance state for the current AUSTRAC-referenced consent catalogue. */
@@ -92,6 +131,19 @@ export interface AmlVerificationParty {
    * rather than left waiting on a review that is not happening.
    */
   retake_required?: boolean;
+  /**
+   * A secure identity check is already open for this party, server-side.
+   *
+   * Survives a page refresh, which nothing in the browser does: the window
+   * handle and the session URL are gone the moment the page reloads, so
+   * without this the client is offered "Start" while their verification
+   * window is still open behind the browser.
+   *
+   * A boolean and nothing else — no session, no URL, no provider — so it can
+   * change which sentence is shown and nothing more. It is NOT a status:
+   * an open check is neither a pass nor a failure.
+   */
+  verification_in_progress?: boolean;
 }
 
 export interface AmlVerificationStatus {
@@ -133,6 +185,32 @@ export interface AmlConsentDocument {
   accepted_at: string | null;
 }
 
+/**
+ * An uploaded document, as the portal is allowed to see it.
+ *
+ * This mirrors the `list_documents` projection exactly, and the omissions are
+ * the point: there is no `storage_path`, no bucket, no checksum, no uploader
+ * id and no reviewer. The client cannot construct a storage URL because it is
+ * never given the pieces — opening a document goes back through the server,
+ * which re-checks that the case is theirs.
+ *
+ * `rejection_reason` is the one staff-authored string that crosses: it is
+ * written specifically to tell the customer what to send instead, and a
+ * rejection with no reason is worse than useless to them.
+ */
+export interface AmlPortalDocument {
+  id: string;
+  /** Null for an upload the client made outside any requirement. */
+  requirement_id: string | null;
+  filename: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  /** `uploaded | accepted | rejected | superseded`. `deleted` never arrives. */
+  status: string;
+  uploaded_at: string;
+  rejection_reason: string | null;
+}
+
 export const amlPortalApi = {
   overview: (case_id?: string) => call<AmlPortalOverview>('overview', { case_id }),
   getQuestionnaire: (case_id: string, section: AmlSection) =>
@@ -153,9 +231,16 @@ export const amlPortalApi = {
    * provider name, and no configuration — and completing the flow in that
    * window does NOT mark anybody verified. The identity outcome arrives on a
    * signed server-to-server webhook; this call only opens the door.
+   *
+   * `document_type` is the one thing the browser declares, and it declares an
+   * INTENT: it narrows the document picker the client is shown and nothing
+   * else. The server matches it against a closed list and refuses anything
+   * else — it cannot name a provider, a workflow, an environment or a country,
+   * and no value of it can reach an identity outcome.
    */
   startHostedVerification: (case_id: string, params: {
     party_id?: string | null; party_label?: string;
+    document_type?: IdentityDocumentChoice;
   }) => call<{
     started: boolean; resumed?: boolean;
     verification_url?: string; message: string; code?: string;
@@ -183,7 +268,28 @@ export const amlPortalApi = {
     storage_path: string; filename: string; mime_type: string; size_bytes: number;
     requirement_id?: string | null; checksum?: string;
   }) => call<{ document: any }>('confirm_upload', { case_id, ...params }),
-  listDocuments: (case_id: string) => call<{ documents: any[] }>('list_documents', { case_id }),
+  /**
+   * Every document this case holds, newest first, minus deleted ones.
+   *
+   * The canonical list and the only one — the portal does not keep a second
+   * copy of what has been uploaded, so what the customer sees is what the
+   * server has.
+   */
+  listDocuments: (case_id: string) =>
+    call<{ documents: AmlPortalDocument[] }>('list_documents', { case_id }),
+  /**
+   * A short-lived link to one of this case's own documents.
+   *
+   * Both ids are sent and both are checked: the case must belong to this
+   * portal session and the document must belong to that case. A document id
+   * alone reaches nothing — that is what stops one client opening another's
+   * file by guessing an id.
+   *
+   * The URL it returns is a credential with a deadline. It is handed straight
+   * to the browser and never stored, logged, or put in analytics.
+   */
+  documentUrl: (case_id: string, document_id: string) =>
+    call<{ url: string; filename: string }>('get_document_url', { case_id, document_id }),
   listRequests: (case_id: string) => call<{ requests: any[] }>('list_client_requests', { case_id }),
   respondRequest: (request_id: string, response_payload: Record<string, any>) =>
     call<{ request: any }>('respond_client_request', { request_id, response_payload }),

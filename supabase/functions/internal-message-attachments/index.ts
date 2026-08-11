@@ -4,6 +4,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const BUCKET = 'internal-message-attachments';
 // JSON/base64 adds about 33% overhead and Edge requests have a platform body
@@ -291,6 +292,6 @@ Deno.serve(async (req) => {
     return response({ success: false, error: 'unknown_operation' }, 400, cors);
   } catch (error) {
     console.error('[internal-message-attachments]', error);
-    return response({ success: false, error: error instanceof Error ? error.message : 'internal_error' }, 500, cors);
+    return response({ ...internalError(error, 'internal-message-attachments'), success: false }, 500, cors);
   }
 });

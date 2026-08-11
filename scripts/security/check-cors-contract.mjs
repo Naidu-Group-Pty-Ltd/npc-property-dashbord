@@ -191,8 +191,12 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
   // per request by withRequestOrigin — those answer an exact origin.
   // `createTokenAuthCorsHeaders(origin)` counts too, but ONLY when it is passed
   // an origin: the no-argument form still answers `*` to everyone.
+  // Each form must be CALLED, not merely imported. `withRequestOrigin` used to
+  // be matched as a bare identifier, so unwrapping the handler and leaving the
+  // now-unused import behind still satisfied this — the negative test for this
+  // rule caught it.
   const usesSharedOrigin = /createCorsHeaders\s*\(/.test(src)
-    || /withRequestOrigin/.test(src)
+    || /withRequestOrigin\s*\(/.test(src)
     || /createTokenAuthCorsHeaders\s*\(\s*[^)\s]/.test(src);
 
   // (a) A credentialed request whose response carries a wildcard origin is
@@ -240,6 +244,64 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
       errors.push(`${path}: reached by ${[...vias].join(', ')}, which ${vias.size > 1 ? 'attach' : 'attaches'} ${missing.map((h) => `\`${h}\``).join(', ')}, but its Access-Control-Allow-Headers omits ${missing.length > 1 ? 'them' : 'it'}. The preflight fails and every call surfaces as "Failed to fetch".`);
     }
   }
+}
+
+// ── WP-19: a browser-reachable function may not hardcode a wildcard ────────
+//
+// The rule above only fires when the gate can *prove* a credentialed transport
+// reaches the function, by tracing `invokeSecureFunction('name')` call sites
+// through `src/`. That misses every function reached indirectly — a name held in
+// a variable, a portal wrapper, a call added later — and 39 functions were
+// answering `Access-Control-Allow-Origin: *` without ever calling a shared-origin
+// helper.
+//
+// So the same question is asked from the other side, using the exposure class the
+// registry already records. A class that means "a browser talks to this while
+// logged in" may not answer a wildcard: the Fetch spec makes the browser reject a
+// credentialed response that carries one, opaquely, as "Failed to fetch".
+//
+// The classes NOT listed here are the ones no browser session reaches — `public`
+// (deliberately open data, no credentials), `cron-worker`, `internal-service` and
+// the webhook classes (server-to-server; CORS is not evaluated at all). A
+// wildcard there is inert, and rewriting ~29 of them would be churn with a
+// regression surface and no security gain.
+const BROWSER_SESSION_CLASSES = new Set([
+  'human-authenticated',
+  'portal-authenticated',
+  'public-auth',
+  'authenticated-staff',
+  'authenticated-or-service',
+  'module-gated',
+  'superadmin-only',
+]);
+
+let registry;
+try {
+  registry = JSON.parse(readFileSync(`${FUNC_DIR}-registry/SECURITY_REGISTRY.json`, 'utf8'));
+} catch {
+  errors.push('supabase/functions-registry/SECURITY_REGISTRY.json could not be read — the exposure-class CORS rule cannot run.');
+  registry = {};
+}
+const registryEntries = registry.functions ?? registry;
+
+for (const name of readdirSync(FUNC_DIR)) {
+  if (name.startsWith('_')) continue;
+  const path = `${FUNC_DIR}/${name}/index.ts`;
+  let src;
+  try { src = readFileSync(path, 'utf8'); } catch { continue; }
+
+  const exposure = registryEntries?.[name]?.exposure_class;
+  if (!BROWSER_SESSION_CLASSES.has(exposure)) continue;
+  if (!/["']Access-Control-Allow-Origin["']\s*:\s*["']\*["']/.test(src)) continue;
+  // A dead wildcard literal is fine as long as the answer is built by a helper.
+  if (/createCorsHeaders\s*\(|withRequestOrigin\s*\(|createTokenAuthCorsHeaders\s*\(\s*[^)\s]/.test(src)) continue;
+
+  errors.push(
+    `${path}: exposure class \`${exposure}\` means a logged-in browser calls this, but it answers a `
+    + `hardcoded \`Access-Control-Allow-Origin: *\` and never builds its headers with a shared-origin `
+    + `helper. Browsers reject a credentialed response carrying a wildcard, so every call fails as an `
+    + `opaque "Failed to fetch". Wrap the handler with \`withRequestOrigin\` (_shared/corsOrigin.ts) or `
+    + `build the headers with \`createCorsHeaders(req.headers.get('origin'))\`.`);
 }
 
 // ── Hand-rolled CORS objects must be supersets of what the client needs ─────

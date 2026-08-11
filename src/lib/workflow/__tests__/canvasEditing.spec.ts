@@ -266,3 +266,43 @@ describe('auto layout through the store', () => {
     expect(store().graph.nodes.find((n) => n.id === a)?.position).toEqual({ x: 7, y: 913 });
   });
 });
+
+/**
+ * The "+" on a connection is exactly this pair of calls: place the step where
+ * the button was, then let the store rewire the connection around it. The
+ * canvas wires the gesture; this is the contract underneath it, and the thing
+ * that must not break is that the downstream step keeps its input — inserting a
+ * step that orphans everything after it is worse than not inserting one.
+ */
+describe('inserting a step into a connection', () => {
+  it('rewires the connection through the new step', () => {
+    const a = store().addNode('core.manual', { x: 0, y: 0 });
+    const c = store().addNode('core.set', { x: 600, y: 0 });
+    store().beginConnection(a, { x: 0, y: 0 });
+    store().completeConnection(c);
+    const original = store().graph.edges[0].id;
+
+    const b = store().addNode('core.template', { x: 300, y: 0 });
+    store().spliceNodeIntoEdge(b, original);
+
+    const edges = store().graph.edges;
+    expect(edges).toHaveLength(2);
+    expect(edges.some((e) => e.source === a && e.target === b)).toBe(true);
+    expect(edges.some((e) => e.source === b && e.target === c)).toBe(true);
+    // The connection it replaced is gone, not left alongside the new pair.
+    expect(edges.some((e) => e.id === original && e.target === c)).toBe(false);
+  });
+
+  it('preserves the branch the connection left from', () => {
+    const branch = store().addNode('core.branch', { x: 0, y: 0 });
+    const c = store().addNode('core.set', { x: 600, y: 0 });
+    store().beginConnection(branch, { x: 0, y: 0 }, 'matches');
+    store().completeConnection(c);
+
+    const b = store().addNode('core.template', { x: 300, y: 0 });
+    store().spliceNodeIntoEdge(b, store().graph.edges[0].id);
+
+    const incoming = store().graph.edges.find((e) => e.target === b);
+    expect(incoming?.sourceBranch).toBe('matches');
+  });
+});

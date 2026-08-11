@@ -15,6 +15,13 @@
  *    execution fails because WeasyPrint is down — the same rule as portal
  *    acceptances. The artefact is generated on the first download instead,
  *    from the frozen version row, so it is the same document either way.
+ *  - **The stored bytes are a cache of those frozen inputs, not the record.**
+ *    What the agreement says is frozen on the version row; how it is typeset is
+ *    this build's business. So an artefact is written at the current document
+ *    revision and re-rendered from the same frozen inputs when the revision
+ *    moves on — unless somebody has signed against that version, which ends the
+ *    matter. `resolveVersionArtefact` is the one place that decides, and
+ *    `documentRevision.pure.ts` records why.
  */
 
 import { assertSafeRenderResources } from '../renderResourcePolicy.pure.ts';
@@ -29,7 +36,13 @@ import {
 import type { AgreementExecutionContext, AgreementSignatureRecord } from './documentHtml.pure.ts';
 import { projectFieldValues } from './fields.pure.ts';
 import type { AgreementFieldValues } from './types.pure.ts';
-import { agreementTemplate, templateKeyForDirection } from './index.pure.ts';
+import { agreementContentForValues, templateKeyForDirection } from './index.pure.ts';
+import {
+  AGREEMENT_CENTRE_DOCUMENT_REVISION,
+  agreementArtefactNeedsRender,
+  agreementArtefactState,
+} from './documentRevision.pure.ts';
+import type { AgreementArtefactState } from './documentRevision.pure.ts';
 
 export const AGREEMENTS_BUCKET = 'partner-agreements';
 export const SIGNED_URL_TTL_SECONDS = 300;
@@ -138,7 +151,6 @@ export async function buildAgreementHtml(
   input: AgreementRenderInput,
 ): Promise<AgreementRenderResult> {
   const templateKey = templateKeyForDirection(String(input.row.direction) as any);
-  const content = agreementTemplate(templateKey);
 
   let snapshot = input.snapshot ?? null;
   if (!snapshot) {
@@ -156,6 +168,11 @@ export async function buildAgreementHtml(
     email: snapshot.company.email,
     website: snapshot.company.website,
   });
+
+  // The wording this agreement actually carries: the locked template plus its
+  // own negotiated clause amendments, which travel inside `values` so a frozen
+  // version row renders the wording that version was issued with.
+  const content = agreementContentForValues(templateKey, values);
 
   const showPlatformAttribution = await loadAttributionSetting(supabase);
 
@@ -200,6 +217,9 @@ export async function renderAgreementPdf(
 /**
  * Render and store a version artefact (`issued` or `executed`), returning the
  * storage path. Never overwrites; a concurrent winner's object is reused.
+ *
+ * The object is written at THIS build's document revision, so a later build
+ * that has moved on can tell that these bytes are its predecessor's.
  */
 export async function renderAndStoreVersionPdf(
   supabase: any,
@@ -219,7 +239,9 @@ export async function renderAndStoreVersionPdf(
     snapshot: (versionRow.brand_snapshot as ReportBrandSnapshot) ?? null,
   });
 
-  const path = agreementCentreStoragePath(agreementRow.id, String(versionRow.version_label), kind);
+  const path = agreementCentreStoragePath(
+    agreementRow.id, String(versionRow.version_label), kind, AGREEMENT_CENTRE_DOCUMENT_REVISION,
+  );
   const { error } = await supabase.storage.from(AGREEMENTS_BUCKET).upload(path, rendered.pdf, {
     contentType: 'application/pdf',
     upsert: false,
@@ -229,4 +251,63 @@ export async function renderAndStoreVersionPdf(
     throw new Error(`storage upload failed: ${error.message}`);
   }
   return { path, bytes: rendered.pdf.length };
+}
+
+export interface ResolvedVersionArtefact {
+  path: string;
+  state: AgreementArtefactState;
+  /** True when this call rendered and stored new bytes. */
+  rendered: boolean;
+  /** Set when new bytes were written, for `executed_pdf_bytes`. */
+  bytes: number | null;
+}
+
+/**
+ * The one place that turns a version row into a servable artefact path.
+ *
+ * Both download routes — staff (`agreement-centre-render`) and partner
+ * (`finance-portal-agreements`) — went through the same fifteen lines of
+ * "if there is no path, render one", which meant the *only* condition either
+ * of them ever re-rendered on was total absence. An artefact written by a
+ * superseded build looked exactly like a good one, so the fix to a document
+ * could never reach a document already issued.
+ *
+ * Here that decision is made once, and it has four answers rather than two:
+ * absent and stale render; current serves; frozen serves and says why. The
+ * caller repoints the row only when bytes were actually written.
+ *
+ * `signatureCount` is what separates stale from frozen, so it is a required
+ * argument rather than something this function guesses — a caller that has not
+ * looked cannot be allowed to answer "nobody has signed".
+ */
+export async function resolveVersionArtefact(
+  supabase: any,
+  supabaseUrl: string,
+  agreementRow: Row,
+  versionRow: Row,
+  kind: 'issued' | 'executed',
+  options: {
+    signatureCount: number;
+    execution?: AgreementExecutionContext | null;
+  },
+): Promise<ResolvedVersionArtefact> {
+  const storedPath = (kind === 'executed'
+    ? versionRow.executed_pdf_storage_path
+    : versionRow.pdf_storage_path) as string | null;
+
+  const state = agreementArtefactState({
+    path: storedPath,
+    kind,
+    signatureCount: options.signatureCount,
+    versionStatus: (versionRow.status as string) ?? null,
+  });
+
+  if (!agreementArtefactNeedsRender(state)) {
+    return { path: storedPath!, state, rendered: false, bytes: null };
+  }
+
+  const stored = await renderAndStoreVersionPdf(
+    supabase, supabaseUrl, agreementRow, versionRow, kind, options.execution ?? null,
+  );
+  return { path: stored.path, state, rendered: true, bytes: stored.bytes };
 }
