@@ -17,6 +17,7 @@ import { callClaudeReconstruct } from '../_shared/claudeReconstruct.ts';
 import { validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
 import { expandIconOverlay, ICON_NAMES } from '../_shared/iconPack.ts';
 import { validateVisionImageDataUrl } from '../_shared/visionImage.ts';
+import { CRITIQUE_TOOL_SCHEMA, VISUAL_CRITIQUE_VERSION } from '../_shared/visualCritique.pure.ts';
 
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
@@ -609,8 +610,123 @@ Deno.serve(async (req) => {
       const pageId = typeof body.pageId === 'string' ? body.pageId : '';
       if (!pageId) return json({ error: 'layout_reconciliation_repair requires a pageId' }, 400);
       const maxOps = Math.min(Math.max(Number(body.maxOperations) || 20, 1), 40);
-      const { patches, rejected } = sanitizeVisualDiffRepairPatches(body.candidatePatches ?? [], pageId, maxOps);
+      // This mode is a SANITISER, not a generator: it validates patches the
+      // caller already holds. It has never called a model, and the only client
+      // that reaches it (`aiClient.repairPage`) sends `plan`/`diffReport` and no
+      // `candidatePatches` — so every request ever made of it returned zero
+      // patches AND zero rejections, which the review UI reported as "AI repair
+      // produced no changes", indistinguishable from "the page was fine".
+      //
+      // Say so instead. A caller with nothing to sanitise is a caller that meant
+      // to ask for something else — the judge lives in `visual_critique`.
+      if (body.candidatePatches === undefined) {
+        return json({
+          patches: [],
+          rejected: [{ index: -1, reason: 'no candidatePatches supplied — this mode validates patches, it does not generate them (see mode: visual_critique)' }],
+          pageId,
+          allowlistVersion: VISUAL_DIFF_REPAIR_ALLOWLIST_VERSION,
+        });
+      }
+      const { patches, rejected } = sanitizeVisualDiffRepairPatches(body.candidatePatches, pageId, maxOps);
       return json({ patches, rejected, pageId, allowlistVersion: VISUAL_DIFF_REPAIR_ALLOWLIST_VERSION });
+    }
+
+    // ─── Stage 3 — look at the rendered page and say what is wrong with it ───
+    //
+    // The quality gate already renders every page and diffs it against the
+    // source raster, and reports a NUMBER: the same document scored 0.507 on the
+    // visual gate and 1.0 on CDIR fidelity, and 74% of pages come back "needing
+    // review" with no statement of what is wrong with any of them.
+    //
+    // This mode returns FINDINGS, and only findings. It never proposes geometry
+    // and never touches a template: a model is good at noticing and bad at
+    // measuring, which is the same reason the PDF path is grounded rather than
+    // eyeballed. Everything the model claims that geometry can settle is settled
+    // by geometry, client-side, in `visualCritique.pure.ts`.
+    if (body.mode === 'visual_critique') {
+      const pageId = typeof body.pageId === 'string' ? body.pageId : '';
+      if (!pageId) return json({ error: 'visual_critique requires a pageId' }, 400);
+      if (!USE_CLAUDE) return json({ error: 'Visual critique requires Claude (set ANTHROPIC_API_KEY).' }, 400);
+
+      const sourceImage = validateVisionImageDataUrl(body.sourceImageDataUrl, MAX_VISION_IMAGE_BYTES);
+      const renderedImage = validateVisionImageDataUrl(body.renderedImageDataUrl, MAX_VISION_IMAGE_BYTES);
+      if (!sourceImage?.ok || !renderedImage?.ok) {
+        // Refuse rather than critique one image. Asked to judge a reconstruction
+        // with nothing to compare it against, a model reports what it dislikes
+        // about a page rather than how it differs from the source — which is a
+        // redesign brief wearing a defect report's clothes.
+        return json({
+          error: 'Visual critique needs BOTH the source page and the rendered page as base64 image data URLs (≤10 MB each).',
+        }, 400);
+      }
+
+      const inventory = Array.isArray(body.elements) ? body.elements.slice(0, 200) : [];
+      const pageWidth = Number(body.pageWidth) || 595;
+      const pageHeight = Number(body.pageHeight) || 842;
+      const inventoryText = inventory.length
+        ? inventory.map((e: any) =>
+            `[${String(e?.id ?? '')}] ${String(e?.type ?? '?')} x=${e?.x} y=${e?.y} w=${e?.width} h=${e?.height}`
+            + `${e?.content ? ` :: ${JSON.stringify(String(e.content)).slice(0, 120)}` : ''}`,
+          ).join('\n')
+        : '(no element inventory supplied)';
+
+      const critiqueSystem = `You are reviewing a PDF page that was automatically rebuilt as an editable template.
+
+The FIRST image is the SOURCE page. The SECOND image is the RECONSTRUCTION.
+
+Report only differences you can actually SEE between them, as findings. Rules:
+- Judge the reconstruction against the source. Never against your own taste — a difference you would prefer is not a finding.
+- Name the element from the ELEMENT INVENTORY whenever one applies. Never invent an id.
+- Do NOT propose fixes, coordinates, sizes or colours. A separate measurement step decides those, and a number you estimate from a picture is worse than the one already measured.
+- Do NOT report a difference you are unsure of. An unreported minor difference costs far less than a confident wrong one.
+- If the two pages match, return an empty findings array. That is a valid and common answer.
+
+The page is ${pageWidth}×${pageHeight}pt, top-left origin.
+
+ELEMENT INVENTORY (ids you may reference):
+${inventoryText}`;
+
+      const critique = await callClaudeReconstruct({
+        apiKey: ANTHROPIC_API_KEY!,
+        messages: [
+          { role: 'system', content: critiqueSystem },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'SOURCE page:' },
+              { type: 'image_url', image_url: { url: sourceImage.dataUrl } },
+              { type: 'text', text: 'RECONSTRUCTION of the same page:' },
+              { type: 'image_url', image_url: { url: renderedImage.dataUrl } },
+              { type: 'text', text: 'Report the differences as findings.' },
+            ],
+          },
+        ],
+        tools: [{
+          type: 'function',
+          function: {
+            name: CRITIQUE_TOOL_SCHEMA.name,
+            description: CRITIQUE_TOOL_SCHEMA.description,
+            parameters: CRITIQUE_TOOL_SCHEMA.input_schema,
+          },
+        }],
+        // Forced: a critique that has to be parsed out of a paragraph silently
+        // becomes zero findings the first time the wording changes.
+        tool_choice: { type: 'function', function: { name: CRITIQUE_TOOL_SCHEMA.name } },
+        max_tokens: 4096,
+        timeoutMs: 120_000,
+      });
+      if (!critique.ok) {
+        return json({ error: `Visual critique failed: ${critique.errorText ?? critique.status}` }, 502);
+      }
+      const call = critique.data?.choices?.[0]?.message?.tool_calls?.[0];
+      let raw: unknown = null;
+      try { raw = JSON.parse(call?.function?.arguments ?? '{}'); } catch { raw = null; }
+      return json({
+        findings: (raw as { findings?: unknown } | null)?.findings ?? [],
+        pageId,
+        modelUsed: critique.data?.model ?? null,
+        critiqueVersion: VISUAL_CRITIQUE_VERSION,
+      });
     }
 
     // Decide whether to run the Design Brief pipeline.

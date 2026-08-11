@@ -203,6 +203,17 @@ the agent treats them as authoritative), and **absent grounding is not empty
 grounding** (an empty element list tells the model a scanned page has no text,
 which it then reproduces).
 
+The import review can now ask a model **what differs** between the source page
+and the rendered one, per page, on an operator click. Read
+[`VISUAL_CRITIQUE.md`](./docs/pdf-import/VISUAL_CRITIQUE.md) before touching
+`_shared/visualCritique.pure.ts` or the `visual_critique` mode. It is a judge and
+never a fixer: the model notices, and every claim geometry can settle is settled
+by geometry before a reviewer sees it — a finding naming an element the page does
+not contain is **dropped**, and one measurement contradicts is shown as
+contradicted rather than as a defect. The doc also records the endpoint it
+replaces: `layout_reconciliation_repair` reads a field its only client never
+sent, so it answered "no changes" to every request ever made of it.
+
 An imported overlay also carries what the source said it **is** —
 `overlay.semantics`, from Docling's own label. Read
 [`SEMANTIC_STRUCTURE.md`](./docs/pdf-import/SEMANTIC_STRUCTURE.md) before

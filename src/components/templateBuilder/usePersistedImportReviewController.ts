@@ -19,6 +19,7 @@ import {
   type VisualRepairOrchestrationSummary,
   type PageReviewAction,
   type PageReviewCollection,
+  pageNumberFromDoclingId,
 } from '@/lib/reportTemplate/ingestion/visualQuality';
 import {
   loadImportReviewDraft,
@@ -33,7 +34,29 @@ import { applyFidelityModeToTemplate, type ForcedFidelityMode } from '@/lib/repo
 import type { FidelityMode } from '@/lib/reportTemplate/pdfImport/types';
 import type { ImportAsset, RawImportManifest } from '@/lib/reportTemplate/ingestion/reconciliation';
 import { TemplateDesignAgentReconciliationClient, runVisualDiffRepairRequest } from '@/lib/reportTemplate/ingestion/reconciliation';
+import { runVisualCritique, type VisualCritiqueResult } from '@/lib/reportTemplate/ingestion/reconciliation/runVisualCritique';
+import { createCanvasMeasurer } from '@/lib/reportTemplate/pdfImport/fontMetricCompatibility';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+
+/**
+ * Fetch a signed raster and hand it over as a base64 data URL.
+ *
+ * The critique endpoint takes images inline rather than by URL: a signed URL
+ * expires in 300s (`pdf-parse-dispatch`), and an edge function that fetches one
+ * on the model's behalf is a fetch primitive pointed at an attacker-influenceable
+ * string. Inlining keeps the boundary where the rest of the vision paths keep it.
+ */
+async function fetchAsDataUrl(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Could not read the page raster (${response.status}).`);
+  const blob = await response.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not decode the page raster.'));
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsDataURL(blob);
+  });
+}
 
 type ImportReviewDebugSnapshot = Record<string, string | number | boolean | null>;
 type FinalMode = 'semantic' | 'hybrid' | 'pixel-perfect';
@@ -51,6 +74,12 @@ interface PersistedImportReviewControllerOptions {
    * runtime-validated (visual-diff-repair-patch-v1) before it can touch a page.
    */
   enableAiRepair?: boolean;
+  /**
+   * Stage 3 — enables the per-page visual critique. Separate from
+   * `enableAiRepair` on purpose: a critique reports what differs and can change
+   * nothing, so it does not carry the risk that gate exists to hold back.
+   */
+  enableAiCritique?: boolean;
 }
 
 function toFinalMode(mode?: PersistedImportReviewControllerOptions['finalMode'] | FidelityMode): FinalMode {
@@ -111,6 +140,9 @@ export function usePersistedImportReviewController(options: PersistedImportRevie
   const [repairApplied, setRepairApplied] = useState(false);
   const [repairDraftReady, setRepairDraftReady] = useState(false);
   const [reviewDebug, setReviewDebug] = useState<ImportReviewDebugSnapshot | null>(null);
+  // Stage 3 — per-page visual critique results, keyed by page id. Findings only:
+  // nothing on this path can write to the template.
+  const [pageCritiques, setPageCritiques] = useState<Record<string, VisualCritiqueResult>>({});
 
   const visualQaAvailable = hasVisualArtifacts(persistedReview);
   const repairAvailable = hasVisualArtifacts(persistedReview);
@@ -415,6 +447,66 @@ export function usePersistedImportReviewController(options: PersistedImportRevie
       await runRepair();
       return;
     }
+    if (action === 'ai_critique') {
+      // Stage 3 — show the model the source page and the rendered page and ask
+      // what differs. It returns findings; `runVisualCritique` drops any that
+      // name an element the page does not contain and checks the rest against
+      // the measured geometry. No patch, no template write, no confirmation
+      // step — there is nothing here that can change the document.
+      if (!options.enableAiCritique) {
+        toast.info('Visual critique is operator-only and disabled for this review.');
+        return;
+      }
+      const critiqueTemplate = persistedReview?.draft?.template;
+      const page = critiqueTemplate?.pages?.find((p) => p.id === pageId) ?? null;
+      if (!page) { toast.error('No page is loaded to critique.'); return; }
+      const pageNumber = pageNumberFromDoclingId(pageId)
+        ?? (critiqueTemplate!.pages.findIndex((p) => p.id === pageId) + 1);
+      const signed = persistedVisualQuality?.signedUrls ?? {};
+      const sourceUrl = signed[`${pageNumber}:source`];
+      const renderedUrl = signed[`${pageNumber}:generated`];
+      if (!sourceUrl || !renderedUrl) {
+        toast.error('This page has no source/rendered pair captured — run Visual QA first.');
+        return;
+      }
+      setPageActionBusyId(pageId);
+      try {
+        const [sourceImageDataUrl, renderedImageDataUrl] = await Promise.all([
+          fetchAsDataUrl(sourceUrl), fetchAsDataUrl(renderedUrl),
+        ]);
+        const client = new TemplateDesignAgentReconciliationClient(invokeSecureFunction as any);
+        const result = await runVisualCritique({
+          context: {
+            pageId, page: page as never,
+            sourceImageDataUrl, renderedImageDataUrl,
+            measure: createCanvasMeasurer(),
+          },
+          fetchFindings: (request) => client.critiquePage(request),
+        });
+        setPageCritiques((prev) => ({ ...prev, [pageId]: result }));
+        if (result.error) { toast.error(`Visual critique failed: ${result.error}`); return; }
+        const { confirmed, unverifiable, refuted } = result.summary;
+        if (!result.findings.length) {
+          toast.success('Visual critique found no differences on this page.');
+        } else {
+          toast.success(
+            `Visual critique: ${confirmed} confirmed by measurement, ${unverifiable} unchecked, ${refuted} contradicted.`,
+          );
+        }
+        setReviewDebug((prev) => ({
+          ...(prev ?? {}),
+          stage: 'ai_critique_ran',
+          critiquePageId: pageId,
+          critiqueSummary: result.summary,
+          critiqueRejected: result.rejected.length,
+        }));
+      } catch (err) {
+        toast.error(`Could not run the visual critique: ${(err as Error).message}`);
+      } finally {
+        setPageActionBusyId(null);
+      }
+      return;
+    }
     if (action === 'ai_repair') {
       // C9 — operator-only, page-scoped AI visual repair. Runs only on this
       // explicit click; the model output is runtime-validated + page-scoped by
@@ -513,7 +605,7 @@ export function usePersistedImportReviewController(options: PersistedImportRevie
     } finally {
       setPageActionBusyId(null);
     }
-  }, [finalMode, navigate, options.enableAiRepair, pageReviewCollection.pages, persistedRepairAudit?.artifactPaths?.summary, persistedReview?.draft?.template, persistedVisualQuality?.report, repairSummary, reviewRecord?.created_template_id, runRepair]);
+  }, [finalMode, navigate, options.enableAiCritique, options.enableAiRepair, pageReviewCollection.pages, persistedRepairAudit?.artifactPaths?.summary, persistedReview?.draft?.template, persistedVisualQuality?.report, persistedVisualQuality?.signedUrls, repairSummary, reviewRecord?.created_template_id, runRepair]);
 
   const dialogProps = useMemo(() => ({
     open: reviewOpen,
@@ -545,7 +637,9 @@ export function usePersistedImportReviewController(options: PersistedImportRevie
     onPageAction: reviewRecord?.created_template_id ? onPageAction : undefined,
     pageActionBusyId,
     aiRepairEnabled: Boolean(options.enableAiRepair),
-  }), [applyRepair, applyRepairAvailable, applyRepairBusy, forceMode, forceModeBusy, onPageAction, options.enableAiRepair, pageActionBusyId, persistedRepairAudit?.artifactPaths?.summary, persistedReview?.draft?.template, persistedVisualQuality?.artifactPaths, persistedVisualQuality?.report, persistedVisualQuality?.signedUrls, recordDecision, recordedDecision, repairAvailable, repairBusy, repairSummary, resetReviewState, reviewDebug, reviewDraft, reviewImportId, reviewOpen, reviewRecord?.created_template_id, runRepair, runVisualQa, visualQaAvailable, visualQaBusy, visualQaSummary]);
+    aiCritiqueEnabled: Boolean(options.enableAiCritique),
+    pageCritiques,
+  }), [applyRepair, applyRepairAvailable, applyRepairBusy, forceMode, forceModeBusy, onPageAction, options.enableAiCritique, options.enableAiRepair, pageActionBusyId, pageCritiques, persistedRepairAudit?.artifactPaths?.summary, persistedReview?.draft?.template, persistedVisualQuality?.artifactPaths, persistedVisualQuality?.report, persistedVisualQuality?.signedUrls, recordDecision, recordedDecision, repairAvailable, repairBusy, repairSummary, resetReviewState, reviewDebug, reviewDraft, reviewImportId, reviewOpen, reviewRecord?.created_template_id, runRepair, runVisualQa, visualQaAvailable, visualQaBusy, visualQaSummary]);
 
   return {
     reviewOpen,
