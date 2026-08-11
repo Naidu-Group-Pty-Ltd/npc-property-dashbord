@@ -502,7 +502,40 @@ function parseAllowedOrigins(): string[] {
   if (fromEnv.length > 0) {
     return fromEnv;
   }
-  console.warn('[auth.cors] ALLOWED_ORIGINS env var is unset; using legacy fallback origins. Set ALLOWED_ORIGINS to override.');
+
+  // WP-19: unset falls through to LEGACY_FALLBACK_ORIGINS. Two things are wrong
+  // with that and only one of them can be fixed from here.
+  //
+  // The problem is config hygiene, not exposure. The fallback is two exact,
+  // legitimate production hostnames — an allowlist, not a wildcard — so nothing
+  // is over-trusted today. What is wrong is that a missing variable is invisible
+  // (the app works, so nobody sets it) and that trust stays pinned to hostnames
+  // in source after the app moves off them.
+  //
+  // This deliberately does NOT fail closed. Whether `ALLOWED_ORIGINS` is set on
+  // the deployed project cannot be determined from this repository, and it
+  // cannot be determined from outside either: probing a deployed function with a
+  // disallowed origin returns `allowedOrigins[0]`, which is
+  // `command-centre.npcservices.com.au` whether the variable is set to it or the
+  // fallback supplied it. The two states are indistinguishable, and guessing
+  // wrong takes every browser client offline at once — an outage traded for a
+  // hygiene improvement is a bad trade.
+  //
+  // So it stays available and gets loud instead. `CORS_STRICT_ALLOWED_ORIGINS=true`
+  // opts into failing closed once the operator has confirmed the variable is
+  // set; NT-41 in the live negative-test matrix is what confirms it, because
+  // that harness runs against the deployed system, which is the only place the
+  // answer exists.
+  if ((Deno.env.get('CORS_STRICT_ALLOWED_ORIGINS') || '').trim().toLowerCase() === 'true') {
+    console.error('[auth.cors] ALLOWED_ORIGINS is unset and CORS_STRICT_ALLOWED_ORIGINS=true — no production origin is trusted for credentialed responses. Set ALLOWED_ORIGINS.');
+    return [];
+  }
+  console.error(
+    '[auth.cors] ALLOWED_ORIGINS is UNSET. Falling back to hardcoded legacy origins '
+    + `(${LEGACY_FALLBACK_ORIGINS.join(', ')}). This is configuration debt: those hostnames stay `
+    + 'trusted for credentialed responses even after this app moves off them. Set ALLOWED_ORIGINS, '
+    + 'then set CORS_STRICT_ALLOWED_ORIGINS=true to make this state fail closed.',
+  );
   return LEGACY_FALLBACK_ORIGINS;
 }
 
@@ -526,11 +559,25 @@ function lovablePreviewSuffixAllowed(origin: string): boolean {
  * to read a response carrying the staff session cookie.
  */
 function credentialedOriginAllowlist(): string[] {
+  // WP-19: the two exact preview origins used to sit here unconditionally,
+  // which contradicted the posture stated two functions up — "Production leaves
+  // this unset, so suffix origins are NOT trusted for credentialed responses."
+  // The suffix rule was gated and the exact list was not, so two Lovable
+  // preview URLs could read a response carrying the staff session cookie in
+  // production. Both now answer to the same flag.
+  const preview = (Deno.env.get('CORS_ALLOW_LOVABLE_PREVIEW') || '').trim().toLowerCase() === 'true'
+    ? PROJECT_PREVIEW_ORIGINS
+    : [];
   return [
     ...parseAllowedOrigins(),
-    ...PROJECT_PREVIEW_ORIGINS,
+    ...preview,
     'http://localhost:5173',
     'http://localhost:8080',
+    // Belt and braces: guarantees the list is never empty, so the
+    // `allowedOrigins[0]` used as the deliberate mismatch below is always a
+    // defined string and never `Access-Control-Allow-Origin: undefined`.
+    // `.invalid` is reserved by RFC 2606 and resolves nowhere.
+    'https://origin.invalid',
   ];
 }
 

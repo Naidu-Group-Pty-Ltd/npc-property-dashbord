@@ -15,6 +15,7 @@ import { getDocuSignAccessToken, getDocuSignRestBaseUrl } from '../_shared/docus
 import { buildFreeformEnvelope, pdfBytesToBase64, type FreeformRecipient, type FreeformTab } from '../_shared/docusign-freeform.ts';
 import { isSuperadmin } from '../_shared/wp08Guards.ts';
 import { requireStepUp } from '../_shared/stepUp.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   GENERATED_DOC_BUCKET_ALLOWLIST, resolveDocumentBucket,
   isValidDocTransition, type DocStatus,
@@ -383,7 +384,7 @@ Deno.serve(async (req) => {
     return j({ success: false, error: 'Unknown action' }, 400);
   } catch (e) {
     console.error('[manage-generated-documents]', e);
-    return new Response(JSON.stringify({ success: false, error: (e as Error).message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'manage-generated-documents'), success: false }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });

@@ -12,6 +12,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { sanitizeFigmaFrame, type SanitizedFigmaNode } from '../_shared/figma.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MAX_BYTES = 30 * 1024 * 1024; // 30 MB
 const MAX_REDIRECTS = 5;
@@ -204,6 +205,6 @@ Deno.serve(async (req) => {
       finalUrl: finalUrl.toString(),
     }, 200, cors);
   } catch (e) {
-    return json({ error: (e as Error)?.message || 'Unexpected error' }, 500, cors);
+    return json({ ...internalError(e, 'import-from-url') }, 500, cors);
   }
 });

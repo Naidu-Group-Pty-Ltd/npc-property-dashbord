@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
 const MICROSOFT_TENANT_ID = Deno.env.get('MICROSOFT_TENANT_ID');
@@ -688,7 +689,7 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[outlook-calendar] Error:', err);
-    return new Response(JSON.stringify({ error: (err as Error).message || 'Internal error' }), {
+    return new Response(JSON.stringify(internalError(err, 'outlook-calendar')), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

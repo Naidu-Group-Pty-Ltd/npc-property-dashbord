@@ -17,6 +17,7 @@ import { callClaudeReconstruct } from '../_shared/claudeReconstruct.ts';
 import { validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
 import { expandIconOverlay, ICON_NAMES } from '../_shared/iconPack.ts';
 import { validateVisionImageDataUrl } from '../_shared/visionImage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
@@ -898,7 +899,7 @@ A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as nat
     try {
       parsed = JSON.parse(toolCall.function.arguments);
     } catch (e) {
-      return json({ error: 'AI returned malformed tool arguments', detail: String(e) }, 500);
+      return json({ ...internalError(e, 'template-design-agent'), error: 'AI returned malformed tool arguments' }, 500);
     }
 
     // Log only structural metadata: replies and operation payloads can contain
@@ -976,6 +977,6 @@ A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as nat
     });
   } catch (e) {
     console.error('template-design-agent error', e);
-    return json({ error: String((e as Error).message ?? e) }, 500);
+    return json({ ...internalError(e, 'template-design-agent') }, 500);
   }
 });

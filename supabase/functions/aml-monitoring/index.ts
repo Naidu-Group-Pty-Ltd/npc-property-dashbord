@@ -19,6 +19,9 @@ import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import { ALERT_WRITABLE, MONITORING_RULE_WRITABLE } from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-token, x-session-token, x-command-centre-session-token",
@@ -109,7 +112,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       requireWrite();
       const rule = body.rule ?? {};
       if (!rule.name || !rule.trigger_kind) return jr({ error: "name and trigger_kind required" }, 400);
-      const row = { ...rule, created_by: rule.id ? rule.created_by : userId };
+      // WP-20: only declared columns. `rule` is the caller's object, so an
+      // unfiltered spread wrote whatever it named.
+      const row = { ...pickAllowed(rule, MONITORING_RULE_WRITABLE), created_by: rule.id ? rule.created_by : userId };
       const q = rule.id
         ? aml.from("monitoring_rules").update(row).eq("id", rule.id).select("*").single()
         : aml.from("monitoring_rules").insert(row).select("*").single();
@@ -166,9 +171,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       requireWrite();
       const a = body.alert ?? {};
       if (!a.title) return jr({ error: "title required" }, 400);
+      // WP-20: `a` is the caller's object and was written unfiltered, which
+      // reached `resolved_by`/`resolved_at` — the record of who closed the alert
+      // and when. Those belong to `resolve_alert`, which stamps them from the
+      // verified session, so they are absent from ALERT_WRITABLE.
+      const alertRow = pickAllowed(a, ALERT_WRITABLE);
       const q = a.id
-        ? aml.from("alerts").update(a).eq("id", a.id).select("*").single()
-        : aml.from("alerts").insert(a).select("*").single();
+        ? aml.from("alerts").update(alertRow).eq("id", a.id).select("*").single()
+        : aml.from("alerts").insert(alertRow).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       if (data?.case_id) await appendCaseEvent(admin, data.case_id, "system", `Alert ${a.id ? "updated" : "opened"}: ${data.title}`, { alert_id: data.id, severity: data.severity }, userId, userLabel);
@@ -753,7 +763,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   } catch (e) {
     if (e instanceof Response) return e;
     console.error("aml-monitoring error", e);
-    return jr({ error: (e as Error).message ?? "internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-monitoring') }, 500);
   }
 });
 

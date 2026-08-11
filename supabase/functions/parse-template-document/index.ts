@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   assessTextQuality,
   chunkDocumentText,
@@ -611,8 +612,8 @@ Deno.serve(async (req) => {
     console.error('❌ Template parsing error:', error);
     return new Response(
       JSON.stringify({
+        ...internalError(error, 'parse-template-document'),
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
       }),
       {
         status: 500,

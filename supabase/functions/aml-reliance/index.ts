@@ -75,6 +75,7 @@ import {
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2764,7 +2765,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
   } catch (e: any) {
     console.error("[aml-reliance] error", e);
-    return jr({ error: e?.message ?? "internal_error" }, 500);
+    return jr({ ...internalError(e, 'aml-reliance') }, 500);
   }
 });
 

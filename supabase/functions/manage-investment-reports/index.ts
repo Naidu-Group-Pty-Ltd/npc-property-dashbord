@@ -4,6 +4,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { releaseInvestmentReportRunTokens } from '../_shared/reportMetering.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic CORS headers for credential-based requests
 function createCorsHeaders(origin: string | null): Record<string, string> {
   // Support Lovable preview + published domains for credentialed requests
@@ -368,7 +369,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('Error in manage-investment-reports:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ ...internalError(error, 'manage-investment-reports'), error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -6,6 +6,7 @@ import { getBrandConfig } from '../_shared/brand-config.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { resolvePrompt } from '../_shared/engine-prompts.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1008,9 +1009,7 @@ Tone: Authoritative, data-backed, actionable. Use bold for key figures. Position
 
   } catch (error) {
     console.error('[market-intel-report] Fatal error:', error);
-    return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : 'Internal error'
-    }), {
+    return new Response(JSON.stringify(internalError(error, 'generate-market-intelligence-report')), {
       status: 500, headers: { ...createCorsHeaders(), 'Content-Type': 'application/json' },
     });
   }

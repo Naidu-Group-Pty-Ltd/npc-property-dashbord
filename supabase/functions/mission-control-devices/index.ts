@@ -5,6 +5,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   registerDevice,
   heartbeatDevice,
@@ -111,8 +112,8 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error("[mission-control-devices]", e);
     return json({
+      ...internalError(e, 'mission-control-devices'),
       error: "internal_error",
-      message: e instanceof Error ? e.message : String(e),
     }, 500);
   }
 });

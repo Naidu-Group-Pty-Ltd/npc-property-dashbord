@@ -9,6 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   UNDERTAKING_TABLE,
   expireLapsedUndertakings,
@@ -276,6 +277,6 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (err) {
     console.error('[loan-writer-undertakings] error:', err);
-    return json({ error: 'internal_error', message: (err as Error).message }, corsHeaders, 500);
+    return json({ ...internalError(err, 'manage-loan-writer-undertakings'), error: 'internal_error' }, corsHeaders, 500);
   }
 });

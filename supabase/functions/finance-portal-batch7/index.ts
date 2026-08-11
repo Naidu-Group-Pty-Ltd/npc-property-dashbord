@@ -23,6 +23,7 @@ import {
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -396,6 +397,6 @@ Deno.serve(async (req) => {
 
     return json({ error: `Unknown operation: ${operation}` }, 400);
   } catch (e: any) {
-    return json({ error: e?.message || 'internal error' }, 500);
+    return json({ ...internalError(e, 'finance-portal-batch7') }, 500);
   }
 });

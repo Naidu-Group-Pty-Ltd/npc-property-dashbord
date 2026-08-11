@@ -24,7 +24,13 @@
  * the first download renders from the FROZEN version row, so the partner gets
  * the document as issued, not as the tenant's brand looks today.
  */
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+// `npm:` rather than `https://esm.sh/…` deliberately: the client built here is
+// handed to `resolveFinancePartner` in _shared/finance-portal-session.ts, which
+// imports `npm:@supabase/supabase-js@2.55.0`. The two specifiers resolve the
+// same package at the same version but produce distinct type identities, so the
+// hand-off failed to type-check (TS2345, `supabaseUrl` is protected). Same
+// library either way — Deno Deploy resolves `npm:` from the registry natively.
+import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
@@ -51,9 +57,6 @@ const EVENTS_TABLE = 'partner_agreement_events';
 const VERSIONS_TABLE = 'partner_agreement_versions';
 const CHANGE_REQUESTS_TABLE = 'partner_agreement_change_requests';
 const SIGNATURES_TABLE = 'partner_agreement_signatures';
-
-const EXTRA_HEADERS =
-  'authorization, x-client-info, apikey, content-type, x-correlation-id, x-finance-session-token, x-session-token';
 
 /** Row fields a partner may see. Everything else stays inside the tenant. */
 const PARTNER_ROW_FIELDS = [
@@ -176,10 +179,11 @@ async function notifyAgreementsTeam(
 }
 
 Deno.serve(async (req) => {
-  const corsHeaders = {
-    ...createCorsHeaders(req.headers.get('origin')),
-    'Access-Control-Allow-Headers': EXTRA_HEADERS,
-  };
+  // The canonical lists in _shared/auth.ts are the only source of truth. This
+  // used to restate Allow-Headers after the spread, which (a) wins over the
+  // spread and (b) had already gone stale — it was missing `x-step-up-token`
+  // and `x-portal-request`, so those preflights failed.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },

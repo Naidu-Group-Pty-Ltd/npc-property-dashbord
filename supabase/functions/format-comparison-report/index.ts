@@ -4,6 +4,7 @@ import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_share
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -350,9 +351,9 @@ Return ONLY the formatted markdown report. Do not include any commentary or expl
   } catch (error) {
     console.error('Error in format-comparison-report:', error);
     return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        details: 'Failed to format comparison report'
+      JSON.stringify({
+        ...internalError(error, 'format-comparison-report'),
+        details: 'Failed to format comparison report',
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

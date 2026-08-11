@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from '../_shared/brand-config.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 
@@ -158,7 +159,7 @@ const handler = async (req: Request): Promise<Response> => {
   } catch (error: any) {
     console.error("Error sending call alert email:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'send-call-alert-email'), success: false }),
       {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },

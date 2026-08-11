@@ -10,6 +10,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 
 import { createCorsHeaders as __createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -200,6 +201,6 @@ Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error('[finance-portal-handoff-redeem] Error:', err);
-    return jsonResponse({ error: err?.message || 'Internal error' }, 500);
+    return jsonResponse({ ...internalError(err, 'finance-portal-handoff-redeem') }, 500);
   }
 });

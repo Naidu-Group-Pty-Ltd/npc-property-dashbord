@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { verifySignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 /**
  * Callers permitted to invoke `dispatch` without a staff session.
  *
@@ -325,7 +326,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[dispatch-marketing-reports] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'dispatch-marketing-reports'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

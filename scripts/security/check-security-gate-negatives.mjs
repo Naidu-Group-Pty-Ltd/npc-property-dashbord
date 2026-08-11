@@ -166,6 +166,124 @@ const CASES = [
       "      await fetch('https://www.googleapis.com/webfonts/v1/webfonts?key=AIzaSyAPjKmIVPd3M30RFnb1pCqJ1fT-BaKkPNI');\n" +
       '      const { data, error } = await invokeSecureFunction<{',
   },
+
+  // ── WP-16: the twelve gates that had never run ───────────────────────────
+  // Two of these four found live defects the first time they executed, so they
+  // are exactly the gates most worth proving can still fail.
+  {
+    gate: 'check-cors-contract.mjs',
+    file: 'supabase/functions/push-unsubscribe/index.ts',
+    what: 'a credentialed endpoint goes back to answering a wildcard origin',
+    find: 'Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));',
+    replace: 'Deno.serve(async (req: Request) => __corsWrappedHandler(req));',
+  },
+  {
+    gate: 'check-client-portfolio-authz.mjs',
+    file: 'supabase/functions/calculate-borrowing-capacity/index.ts',
+    what: 'borrowing-capacity stops binding the request to a client the actor may see',
+    find: 'if (!await canAccessClient(supabase, actor, clientId)) {',
+    replace: 'if (false) {',
+  },
+  {
+    gate: 'check-solicitor-intelligence-authz.mjs',
+    file: 'supabase/functions/solicitor-portal-intelligence/index.ts',
+    what: 'portfolio matter reads stop resolving the per-client permission matrix',
+    find: "        if (permissions && can(permissions, 'matters', 'view')) visibleClientIds.push(clientId);",
+    replace: '        visibleClientIds.push(clientId);',
+  },
+  {
+    gate: 'security-check.mjs',
+    gatePath: 'scripts/builder-portal/security-check.mjs',
+    file: 'supabase/functions/builder-portal-login/index.ts',
+    what: 'builder login looks an account up before the throttle again',
+    find: '    const rateLimit = await enforceAuthRateLimit(supabase, req, {',
+    replace:
+      "    const { data: __earlyLookup } = await supabase.from('builder_portal_users').select('id');\n"
+      + '    const rateLimit = await enforceAuthRateLimit(supabase, req, {',
+  },
+
+  // ── WP-17: the database's own gate ───────────────────────────────────────
+  {
+    gate: 'check-migration-security.mjs',
+    file: 'supabase/migrations/20260909000000_wp17_secdef_drift_remediation.sql',
+    what: 'a SECURITY DEFINER function lands with no search_path and no EXECUTE revoke',
+    find: 'ALTER VIEW public.partner_agreement_retention_register SET (security_invoker = true);',
+    replace:
+      'CREATE OR REPLACE FUNCTION public.wp17_negative_probe(_x uuid)\n'
+      + "RETURNS boolean LANGUAGE sql SECURITY DEFINER AS $probe$ SELECT true $probe$;\n"
+      + 'ALTER VIEW public.partner_agreement_retention_register SET (security_invoker = true);',
+  },
+  {
+    gate: 'check-gates-wired.mjs',
+    file: '.github/workflows/ci.yml',
+    what: 'a security gate is dropped from CI and left orphaned',
+    find: '          node scripts/security/check-cors-contract.mjs\n',
+    replace: '',
+  },
+
+  // ── WP-19: the exposure-class CORS rule ──────────────────────────────────
+  // Distinct from the case above: that one proves the transport-tracing rule
+  // still bites, this one proves the registry-class rule does — the rule that
+  // catches a function no `invokeSecureFunction('name')` literal points at.
+  {
+    gate: 'check-cors-contract.mjs',
+    file: 'supabase/functions/template-share/index.ts',
+    what: 'a browser-session function is unwrapped and left answering a wildcard',
+    find: 'Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));',
+    replace: 'Deno.serve(async (req: Request) => __corsWrappedHandler(req));',
+  },
+
+  {
+    gate: 'check-public-validation.mjs',
+    file: 'supabase/functions/abs-employment-service/index.ts',
+    what: 'an unauthenticated endpoint goes back to an unbounded req.json()',
+    find: 'const __parsed = await parseJsonBody(req, LocalityRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);\n    if (!__parsed.ok) return __parsed.response;\n    const { suburb, state, postcode } = __parsed.data;',
+    replace: 'const { suburb, state, postcode } = await req.json();',
+  },
+
+  // ── WP-24: the four items that were closed and ungated ───────────────────
+  {
+    gate: 'check-baseline-invariants.mjs',
+    file: 'supabase/functions/aml-finance/index.ts',
+    what: 'a generic SQL-execution RPC appears (item 6)',
+    find: '      const upsertResp = payload.id',
+    replace: "      await aml.rpc('exec_sql', { q: body.q });\n      const upsertResp = payload.id",
+  },
+  {
+    gate: 'check-baseline-invariants.mjs',
+    file: 'src/components/admin/ResetPasswordDialog.tsx',
+    what: 'user HTML is injected with no sanitiser (item 8)',
+    find: 'export',
+    replace: 'const Bad = () => <div dangerouslySetInnerHTML={{ __html: (window as any).x }} />;\nexport',
+  },
+  {
+    gate: 'check-baseline-invariants.mjs',
+    file: 'supabase/functions/aml-finance/index.ts',
+    what: 'a submitted secret is compared against a stored column (item 9)',
+    find: '      const comparisonRow =',
+    replace: '      if (body.pw === user.password_hash) { /* bypasses the hash verifier */ }\n      const comparisonRow =',
+  },
+
+  // ── WP-20: field allowlists at the write ─────────────────────────────────
+  // The alias hop matters: the first version of this gate stopped at
+  // `const alertRow = a` without following `a` back to `body.alert`, so this
+  // exact mutation walked straight through it.
+  {
+    gate: 'check-mass-assignment.mjs',
+    file: 'supabase/functions/aml-monitoring/index.ts',
+    what: 'an AML alert write goes back to taking the raw request sub-object',
+    find: 'const alertRow = pickAllowed(a, ALERT_WRITABLE);',
+    replace: 'const alertRow = a;',
+  },
+
+  // ── WP-18: opaque 5xx ────────────────────────────────────────────────────
+  {
+    gate: 'check-error-disclosure.mjs',
+    file: 'supabase/functions/send-email-reply/index.ts',
+    what: 'a 500 goes back to handing the caller the caught exception',
+    find: "JSON.stringify(internalError(error, 'send-email-reply'))",
+    replace: "JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' })",
+  },
 ];
 
 /**
@@ -217,7 +335,13 @@ for (const test of CASES) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-negative-'));
   try {
     mirror(dir, new Map([[test.file, mutated]]));
-    const run = spawnSync(process.execPath, [join(root, 'scripts', 'security', test.gate)], {
+    // `gatePath` for the checks that live outside scripts/security/ — the two
+    // per-portal ones. The gate itself is run from the real tree (only its cwd
+    // is the mirror), so it must resolve its targets from process.cwd().
+    const gateFile = test.gatePath
+      ? join(root, ...test.gatePath.split('/'))
+      : join(root, 'scripts', 'security', test.gate);
+    const run = spawnSync(process.execPath, [gateFile], {
       cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
     });
     checked++;

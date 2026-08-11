@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -125,9 +126,9 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Error in sync-client-to-ghl:', error);
-    return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : String(error),
-      success: false 
+    return new Response(JSON.stringify({
+      ...internalError(error, 'sync-client-to-ghl'),
+      success: false,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

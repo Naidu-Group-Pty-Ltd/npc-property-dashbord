@@ -16,6 +16,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyInternal } from '../_shared/auth_v2.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   getGhlCredentials,
   validateGhlCredentials,
@@ -1180,6 +1181,6 @@ Deno.serve(async (req) => {
     if (jobId && supabase) {
       await finishJob(supabase, jobId, 'failed', err.message || 'Worker crashed').catch(() => {});
     }
-    return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500 });
+    return new Response(JSON.stringify({ ...internalError(err, 'ghl-migrate-contacts-worker'), success: false }), { status: 500 });
   }
 });

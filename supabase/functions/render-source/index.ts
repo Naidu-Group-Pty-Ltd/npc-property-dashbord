@@ -6,6 +6,7 @@
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { internalError } from '../_shared/errorResponse.ts';
 
 // Generous enough for C4 (zip) builds; static/HTML/JSX/URL renders return far sooner.
 const RENDER_TIMEOUT_MS = 120000;
@@ -117,7 +118,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       const aborted = (e as { name?: string })?.name === 'AbortError';
       console.warn('[render-source] upstream fetch failed', { kind: renderKind, aborted, message: String(e) });
-      return json({ error: aborted ? 'Render timed out.' : `render-source unreachable: ${String(e)}` }, 502, cors);
+      return json({ ...internalError(e, 'render-source') }, 502, cors);
     } finally {
       clearTimeout(timer);
     }
@@ -150,6 +151,6 @@ Deno.serve(async (req) => {
     }
     return json(payload, upstream.status, cors);
   } catch (e) {
-    return json({ error: (e as Error)?.message ?? String(e) }, 500, cors);
+    return json({ ...internalError(e, 'render-source') }, 500, cors);
   }
 });

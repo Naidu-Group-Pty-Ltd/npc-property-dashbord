@@ -1,0 +1,14 @@
+{
+  "$comment": "WP-20: per-file count of writes fed by an unallowlisted request body. Frozen so new mass-assignment cannot land while the existing backlog is worked down. Regenerate with `node scripts/security/check-mass-assignment.mjs --update`. Numbers may only go down.",
+  "generated_total": 15,
+  "files": {
+    "supabase/functions/aml-monitoring/index.ts": 4,
+    "supabase/functions/aml-transactions/index.ts": 1,
+    "supabase/functions/manage-client-data/index.ts": 2,
+    "supabase/functions/manage-loan-writer-undertakings/index.ts": 1,
+    "supabase/functions/manage-partner-agreements/index.ts": 2,
+    "supabase/functions/manage-partner-referrals/index.ts": 2,
+    "supabase/functions/manage-portal-client-data/index.ts": 2,
+    "supabase/functions/quantitative-report-pipeline/index.ts": 1
+  }
+}

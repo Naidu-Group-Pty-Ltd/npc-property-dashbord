@@ -77,6 +77,7 @@ async function hasCaseAccess(
 }
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -972,7 +973,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
   } catch (e: any) {
     console.error("[aml-verification] error", e);
-    return jr({ error: e?.message ?? "internal_error" }, 500);
+    return jr({ ...internalError(e, 'aml-verification') }, 500);
   }
 });
 
