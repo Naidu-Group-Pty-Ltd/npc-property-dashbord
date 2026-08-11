@@ -35,10 +35,16 @@ import {
 } from '../_shared/agreements/documentHtml.pure.ts';
 import {
   AGREEMENT_CENTRE_DOCUMENT_REVISION,
+  agreementDelivery,
   agreementTemplate,
+  partnerNotificationsAddressable,
+  partnerPortalAccess,
+  recipientBlocker,
+  resolveRecipients,
   templateKeyForDirection,
   versionLabel,
 } from '../_shared/agreements/index.pure.ts';
+import { sendAgreementEmail } from '../_shared/agreements/sendAgreementEmail.ts';
 import {
   AGREEMENTS_BUCKET,
   SIGNED_URL_TTL_SECONDS,
@@ -49,6 +55,14 @@ import {
 } from '../_shared/agreements/render.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+
+/**
+ * Where a partner opens their copy. Pinned to the production domain for the
+ * same reason `finance-portal-invite` pins its own: `APP_URL` has leaked
+ * preview hostnames into partner-facing mail before, and a link a partner
+ * cannot reach is worse than no link.
+ */
+const PARTNER_PORTAL_BASE = 'https://command-centre.npcservices.com.au';
 
 function toBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -149,6 +163,151 @@ Deno.serve(async (req) => {
         pdf_base64: toBase64(rendered.pdf),
         gaps: rendered.gaps,
         file_name: agreementDownloadFileName(title, agreement.partner_legal_name, String(agreement.version ?? 1), 'draft'),
+      });
+    }
+
+    // ─── SEND / RESEND ──────────────────────────────────────
+    // The Command Centre had no way to send an issued agreement anywhere. The
+    // issue itself wrote one in-app notification and nothing else, so a partner
+    // who had not logged in received no signal at all, and once issued there
+    // was no second chance — no resend, no covering note, no way to copy the
+    // broker's admin or a compliance mailbox.
+    //
+    // It lives here rather than in `manage-partner-agreements` for the same
+    // reason every other document operation does: it renders a PDF, which is
+    // seconds, and lifecycle actions stay fast.
+    if (operation === 'send') {
+      const versionId = agreement.issued_version_id as string | null;
+      if (!versionId) {
+        return json({
+          error: 'no_issued_version',
+          message: 'Issue the agreement before sending it.',
+        }, 409);
+      }
+      const { data: version } = await supabase.from('partner_agreement_versions')
+        .select('*').eq('id', versionId).maybeSingle();
+      if (!version) return json({ error: 'no_issued_version' }, 404);
+
+      const recipients = resolveRecipients(
+        agreement.partner_contact_email as string | null,
+        typeof body.additional_recipients === 'string' ? body.additional_recipients : '',
+      );
+      const blocker = recipientBlocker(recipients);
+      if (blocker) return json({ error: 'recipients_invalid', message: blocker }, 422);
+
+      // The attachment is the stored artefact, refreshed if this build's
+      // document revision has moved past it — never a re-render of the live
+      // row. What the partner receives and what the Issued PDF download hands
+      // over have to be one document.
+      const signatureRows = (await supabase.from('partner_agreement_signatures')
+        .select('*').eq('version_id', version.id)).data ?? [];
+      let pdf: { fileName: string; base64: string } | null = null;
+      try {
+        const artefact = await resolveVersionArtefact(
+          supabase, supabaseUrl, agreement, version, 'issued',
+          { signatureCount: signatureRows.length },
+        );
+        if (artefact.rendered) {
+          await supabase.from('partner_agreement_versions')
+            .update({ pdf_storage_path: artefact.path }).eq('id', version.id);
+        }
+        const { data: blob } = await supabase.storage
+          .from(AGREEMENTS_BUCKET).download(artefact.path);
+        if (blob) {
+          pdf = {
+            fileName: agreementDownloadFileName(
+              title, agreement.partner_legal_name, version.version_label, 'issued',
+            ),
+            base64: toBase64(new Uint8Array(await blob.arrayBuffer())),
+          };
+        }
+      } catch (e) {
+        // A renderer outage must not stop the partner being told. The email
+        // still carries the portal link, which is the actionable half.
+        console.warn('[agreement-centre-render] send without attachment:', e instanceof Error ? e.message : e);
+      }
+
+      const access = partnerPortalAccess({
+        row: (await supabase.from('finance_portal_users')
+          .select('id, is_active, revoked_at, password_hash, invite_accepted_at')
+          .eq('finance_contact_id', agreement.finance_agent_contact_id).maybeSingle()).data ?? null,
+      });
+
+      const issuer = await loadIssuerDefaults(supabase);
+      const email = await sendAgreementEmail({
+        to: recipients.all,
+        title,
+        partnerName: agreement.partner_legal_name as string | null,
+        issuerName: issuer.companyName ?? issuer.legalName ?? '',
+        versionLabel: String(version.version_label),
+        portalUrl: `${PARTNER_PORTAL_BASE}/finance/agreements/${id}`,
+        note: typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 2000) : null,
+        pdf,
+        isResend: body.is_resend === true,
+        awaitingActivation: agreementDelivery(agreement.issued_at, access) === 'awaiting_activation',
+      });
+
+      // Re-raise the in-app notification unless the caller asked not to. It is
+      // separately useful: a partner already in the portal sees it without
+      // going to their inbox.
+      let notified = false;
+      if (body.notify_portal !== false && partnerNotificationsAddressable(access)) {
+        const { data: portalUser } = await supabase.from('finance_portal_users')
+          .select('id').eq('finance_contact_id', agreement.finance_agent_contact_id).maybeSingle();
+        if (portalUser?.id) {
+          const { error: notifyError } = await supabase.from('finance_portal_notifications').insert({
+            portal_user_id: portalUser.id,
+            client_id: null,
+            notification_type: 'agreement_resent',
+            title: 'Agreement sent to you',
+            body: `${title} (version ${version.version_label}) is ready for your review.`,
+            link_path: `/finance/agreements/${id}`,
+            metadata: { agreement_id: id, origin_portal: 'command_center' },
+          });
+          notified = !notifyError;
+        }
+      }
+
+      // Who was sent what, and when. A copy of an agreement leaving the tenant
+      // is a compliance fact, so it is on the agreement's own timeline rather
+      // than only in a log — the recipients are recorded, the note is not.
+      await supabase.from('partner_agreement_events').insert({
+        agreement_id: id,
+        event_type: 'agreement_sent',
+        actor_id: auth.userId === 'service_role' ? null : auth.userId,
+        actor_label: 'Command Centre',
+        summary: email.sent
+          ? `Sent to ${recipients.all.join(', ')}`
+          : `Send to ${recipients.all.join(', ')} failed`,
+        payload: {
+          recipients: recipients.all,
+          additional_count: recipients.additional.length,
+          attached: pdf !== null,
+          email_sent: email.sent,
+          email_error: email.error,
+          notified_portal: notified,
+          version_label: version.version_label,
+        },
+      }).then(({ error }: { error: unknown }) => {
+        if (error) console.error('[agreement-centre-render] send event insert failed:', error);
+      });
+
+      if (!email.sent) {
+        return json({
+          error: 'email_failed',
+          message: `The agreement could not be emailed: ${email.error ?? 'unknown error'}.`
+            + (notified ? ' The portal notification was raised.' : ''),
+          notified_portal: notified,
+        }, 502);
+      }
+
+      return json({
+        sent_to: recipients.all,
+        attached: pdf !== null,
+        notified_portal: notified,
+        duplicates: recipients.duplicates,
+        overflow: recipients.overflow,
+        message_id: email.messageId,
       });
     }
 

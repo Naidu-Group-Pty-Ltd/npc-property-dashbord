@@ -45,7 +45,9 @@ import {
   downloadAgreementPdf,
   useIssuerDefaults,
   usePartnerPortalAccess,
+  useSendAgreement,
 } from '@/hooks/useAgreementCentre';
+import SendAgreementDialog from '@/components/agreement-centre/SendAgreementDialog';
 import { loadDocxLogo } from '@/lib/agreements/docx';
 import { useBrand } from '@/branding/BrandProvider';
 import DigitalAgreementView, { agreementSectionNav } from '@/components/agreement-centre/DigitalAgreementView';
@@ -76,6 +78,7 @@ export default function AgreementCentreDetail() {
   const [withdrawReason, setWithdrawReason] = useState('');
   const [counterSignOpen, setCounterSignOpen] = useState(false);
   const [pdfPreviewId, setPdfPreviewId] = useState<string | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [disposition, setDisposition] = useState<DispositionMode | null>(null);
 
@@ -122,6 +125,11 @@ export default function AgreementCentreDetail() {
   const deliveryNote = data?.delivery ? agreementDeliveryNote(data.delivery) : '';
   const { invite: invitePartner, reinstate: reinstatePartner } = usePartnerPortalAccess();
   const partnerAccessBusy = invitePartner.isPending || reinstatePartner.isPending;
+  const sendAgreement = useSendAgreement();
+  // Once there is an issued version there is something to send. The action has
+  // to outlive the moment of issue: the address was wrong, the broker's admin
+  // needs a copy, the first email went to spam.
+  const canSend = currentVersion !== null && status !== 'void';
 
   /**
    * What the issued copy actually is, which depends on whether anybody has
@@ -316,6 +324,11 @@ export default function AgreementCentreDetail() {
           <Button variant="outline" size="sm" onClick={() => setPdfPreviewId(agreement.id)}>
             <Eye className="mr-1.5 h-4 w-4" /> Preview
           </Button>
+          {canSend ? (
+            <Button variant="outline" size="sm" onClick={() => setSendOpen(true)}>
+              <Send className="mr-1.5 h-4 w-4" /> Send
+            </Button>
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" disabled={downloading !== null}>
@@ -646,6 +659,27 @@ export default function AgreementCentreDetail() {
       />
 
       <PdfPreviewDialog agreementId={pdfPreviewId} onOpenChange={(open) => { if (!open) setPdfPreviewId(null); }} />
+
+      <SendAgreementDialog
+        open={sendOpen}
+        onOpenChange={setSendOpen}
+        partnerName={agreement.partner_legal_name}
+        partnerEmail={(agreement as { partner_contact_email?: string | null }).partner_contact_email ?? null}
+        versionLabel={currentVersion?.version_label ?? null}
+        awaitingActivation={delivery === 'awaiting_activation'}
+        sending={sendAgreement.isPending}
+        onSend={({ additionalRecipients, note, notifyPortal }) => {
+          sendAgreement.mutate({
+            id: agreement.id,
+            additionalRecipients,
+            note,
+            notifyPortal,
+            // Anything after the issue itself is a resend, and the partner
+            // should be told which one they are reading.
+            isResend: true,
+          }, { onSuccess: () => setSendOpen(false) });
+        }}
+      />
     </div>
   );
 }

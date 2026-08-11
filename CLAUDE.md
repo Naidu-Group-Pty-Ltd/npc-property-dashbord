@@ -224,6 +224,18 @@ deliberate revocation blocks a digital issue. And a notification raised before
 the portal user exists has nowhere to live, so activation sweeps for whatever
 was issued in the meantime rather than the issue trying to queue it.
 
+Getting the document *to* the partner is its own concern:
+[`SENDING.md`](./docs/agreements/SENDING.md). Two rules there. Issuing emails
+the partner as well as notifying the portal — it used to write one in-app
+notification and stop, which is no signal at all to somebody who has never
+logged in. And **the portal's notification feed does not depend on a
+migration**: `finance-portal-notifications` filtered every read on three routing
+columns from a migration that was merged and never applied, so PostgREST
+answered `42703` for the whole statement and the feed returned 500 for three
+weeks — 238 notifications, 236 unread, 0 readable. The boundary is now stated in
+`financeNotificationRouting.pure.ts` and enforced on the columns where they
+exist and on the notification type where they do not.
+
 Deployment is the other half of it, and it has bitten twice:
 [`DEPLOYMENT.md`](./docs/agreements/DEPLOYMENT.md).
 
