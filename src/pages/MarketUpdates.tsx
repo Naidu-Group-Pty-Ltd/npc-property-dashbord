@@ -555,9 +555,6 @@ export default function MarketUpdates() {
                   </span>
                   {sourceHealth.automation?.cronStale ? 'Automation stale' : 'Live'} · ingested {relTime(sourceHealth.lastSuccessAt)}
                 </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.5)] px-2.5 py-1"><Radio className="h-3 w-3" aria-hidden />{sourceHealth.enabledSources}/{sourceHealth.totalSources} sources live</span>
-                {Boolean(sourceHealth.shadowSources) && <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.5)] px-2.5 py-1" title="Fetched and classified, but held out of the feed while they are validated."><Eye className="h-3 w-3" aria-hidden />{sourceHealth.shadowSources} in shadow</span>}
-                {sourceHealth.failedSources > 0 && <span className="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-1 text-destructive"><AlertTriangle className="h-3 w-3" aria-hidden />{sourceHealth.failedSources} failing</span>}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
