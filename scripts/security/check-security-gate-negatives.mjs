@@ -109,7 +109,10 @@ const CASES = [
   },
   {
     gate: 'check-auth-rate-limit-coverage.mjs',
-    file: 'supabase/functions/custom-auth-login-v2/index.ts',
+    // Moved by WP-28: both `custom-auth-login` and `-v2` are now shims onto
+    // this handler, so this is where the ceiling is consumed for both. The
+    // harness caught the stale anchor itself, which is the whole point of it.
+    file: 'supabase/functions/_shared/customAuth/login.ts',
     what: 'the staff login stops consuming a source-keyed rate limit',
     find: 'const rateLimit = await enforceAuthRateLimit(supabase, req, {',
     replace: 'const rateLimit = await noopRateLimit(supabase, req, {',
@@ -239,6 +242,19 @@ const CASES = [
     what: 'an unauthenticated endpoint goes back to an unbounded req.json()',
     find: 'const __parsed = await parseJsonBody(req, LocalityRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);\n    if (!__parsed.ok) return __parsed.response;\n    const { suburb, state, postcode } = __parsed.data;',
     replace: 'const { suburb, state, postcode } = await req.json();',
+  },
+
+  // WP-28. The v1 entrypoint must be held to the same rule as v2. Without this
+  // control the shim pattern is a way to remove a function from a gate's
+  // coverage without removing it from production: `check-public-validation`
+  // skipped both custom-auth logins for exactly that reason and reported a
+  // passing count that no longer included them.
+  {
+    gate: 'check-public-validation.mjs',
+    file: 'supabase/functions/_shared/customAuth/login.ts',
+    what: 'the shared staff-login handler goes back to an unbounded req.json()',
+    find: 'const __body = await parseJsonBody(req, StaffLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES);\n    if (!__body.ok) return __body.response;\n    const { username, password, turnstile_token } = __body.data;',
+    replace: 'const { username, password, turnstile_token } = await req.json();',
   },
 
   // The same gate, the class WP-27 added to it. A separate control because

@@ -109,9 +109,31 @@ function advisoryIds(v) {
  * of those are. The judgement stays attached to the advisory that was actually
  * read, and a NEW advisory against `pptxgenjs` itself would arrive as an
  * advisory object and block, as it should.
+ *
+ * ## The `seen` set is per-PATH, not per-traversal
+ *
+ * `seen` guards against a cycle, and a cycle is a repeat along ONE path. Sharing
+ * a single set across the sibling branches of `.every` also rejects a **diamond**
+ * — a package legitimately reached twice by two different routes — because the
+ * second visit looks like a repeat.
+ *
+ * That is not hypothetical. It blocked `main`:
+ *
+ *     radix-ui ─┬─ @radix-ui/react-form ── @radix-ui/react-label ── image-size
+ *               └─ @radix-ui/react-label ─────────────────────────── image-size
+ *
+ * `image-size`'s two advisories are on the allowlist with reasons and a review
+ * date, and both radix packages were reported `accepted-via-allowlist`. But
+ * evaluating `react-form` first put `react-label` in the shared set, so the
+ * second branch returned false, `.every` failed, and `radix-ui [high]` was
+ * reported as an unaccepted advisory that nobody could act on — there is no
+ * advisory id to allowlist, and naming the bare package is what the allowlist's
+ * own policy forbids.
+ *
+ * A fresh copy per branch keeps the guard doing what it is for.
  */
 function isAcceptedPkg(pkg, seen = new Set()) {
-  if (seen.has(pkg)) return false;  // cycle guard
+  if (seen.has(pkg)) return false;  // cycle guard — see the note above
   seen.add(pkg);
   const v = vulns[pkg];
   if (!v) return false;
@@ -121,7 +143,7 @@ function isAcceptedPkg(pkg, seen = new Set()) {
   const parents = (v.via || []).filter((via) => typeof via === 'string');
   const ownAdvisories = (v.via || []).filter((via) => typeof via === 'object');
   if (ownAdvisories.length > 0 || parents.length === 0) return false;
-  return parents.every((parent) => isAcceptedPkg(parent, seen));
+  return parents.every((parent) => isAcceptedPkg(parent, new Set(seen)));
 }
 
 for (const [pkg, v] of Object.entries(vulns)) {

@@ -71,18 +71,23 @@ are a different risk from an endpoint anyone on the internet can post to.
 
 ## Three things this table cannot show
 
-**Three deployed auth endpoints are not in this repository.**
-`custom-auth-login`, `custom-auth-logout` and `custom-auth-verify` appear in
-`SECURITY_REGISTRY.json` and `supabase/config.toml` with no source under
-`supabase/functions/`. Read live on 11 August 2026, all three are **ACTIVE**,
-and `custom-auth-verify` was updated that morning.
+**Three deployed auth endpoints had no source in this repository — now they
+do.** `custom-auth-login`, `custom-auth-logout` and `custom-auth-verify`
+appeared in `SECURITY_REGISTRY.json` and `supabase/config.toml` with nothing
+under `supabase/functions/`, and all three are **ACTIVE** on the live project.
 
-Every gate in the table above reads source. These three have none here, so no
-row above describes them — including item 7, item 17 and item 19, which is
-awkward given that `custom-auth-login` is a staff console login. Their `-v2`
-successors were hardened through WP-11/WP-12; there is no evidence here that the
-v1 endpoints were. Detail and the action in
-[`WP27_PUBLIC_AUTH_VALIDATION.md`](./WP27_PUBLIC_AUTH_VALIDATION.md).
+Every gate in the table above reads source, so no row described them. That
+mattered most for **item 5**: the deploy workflow finds functions by listing
+directories, so the v1 trio was frozen at its 31 July bundle while
+`custom-auth-login-v2` took twenty-four more deploys — including the one that
+added source-keyed rate limiting. Credential spraying against the Command Centre
+was one URL away from unlimited.
+
+Closed by **WP-28**: both entrypoints are now one-line shims onto a shared
+handler, so v1 has the same rate limiting, body bound and shared bundle as v2,
+and cannot drift again. Authored, not yet deployed — the fix reaches production
+on the next `deploy-supabase-functions` run, which can now see them.
+[`WP28_CUSTOM_AUTH_V1.md`](./WP28_CUSTOM_AUTH_V1.md).
 
 ## Two things this table cannot show
 
