@@ -12,11 +12,14 @@ import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import {
+  agreementRenderServiceState,
   projectFieldValues,
   rowPatchFromValues,
   templateKeyForDirection,
   agreementTemplate,
+  type AgreementArtefactState,
   type AgreementFieldValues,
+  type AgreementRenderServiceState,
   type AgreementStatus,
   type AgreementTemplateKey,
 } from '@/lib/agreements';
@@ -445,15 +448,40 @@ export async function fetchAgreementPreviewUrl(id: string): Promise<{ url: strin
   return { url: URL.createObjectURL(blob), gaps: data.gaps ?? [] };
 }
 
-export async function downloadAgreementPdf(id: string, kind: 'draft' | 'issued' | 'executed') {
-  const data = await callRender<{ pdf_base64?: string; url?: string; file_name: string }>({
-    operation: 'download', id, kind,
-  });
+export interface AgreementDownloadOutcome {
+  /** How the stored artefact stood before this download. Absent for drafts. */
+  artefactState: AgreementArtefactState | null;
+  /** True when this download re-rendered a superseded artefact. */
+  refreshed: boolean;
+  /** Whether the render service is running the document this build expects. */
+  service: AgreementRenderServiceState;
+}
+
+export async function downloadAgreementPdf(
+  id: string,
+  kind: 'draft' | 'issued' | 'executed',
+): Promise<AgreementDownloadOutcome> {
+  const data = await callRender<{
+    pdf_base64?: string;
+    url?: string;
+    file_name: string;
+    document_revision?: number;
+    artefact_state?: AgreementArtefactState;
+    refreshed?: boolean;
+  }>({ operation: 'download', id, kind });
   if (data.pdf_base64) {
     saveBlob(base64ToBlob(data.pdf_base64, 'application/pdf'), data.file_name);
   } else if (data.url) {
     window.open(data.url, '_blank', 'noopener');
   }
+  return {
+    artefactState: data.artefact_state ?? null,
+    refreshed: data.refreshed === true,
+    // A route that reports nothing is a route deployed before revisions
+    // existed, which is precisely the case worth naming — the helper folds
+    // that into `behind` rather than into an unknown.
+    service: agreementRenderServiceState(data.document_revision ?? null),
+  };
 }
 
 /**
