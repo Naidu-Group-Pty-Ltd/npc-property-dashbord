@@ -203,6 +203,14 @@ Three ordering constraints matter. The rest parallelises.
 > `extractor-lane-policy-v3`; a split deploy means the cache fingerprint serves
 > v2-semantics artifacts to v3 requests.
 >
+> Half of ② is now enforced rather than remembered. `pdf-parse-engine-lockstep.mjs`
+> fails the pull request when `ENGINE_VERSION`/`LANE_ENFORCEMENT_VERSION` and the
+> dispatcher's `ENGINE_VERSION_FAMILY`/`LANE_POLICY_VERSION` disagree, and
+> `deploy-pdf-parse-service.yml` re-checks the same thing against the **staged**
+> revision's `/healthz` before it can be promoted. What stays human is the
+> *ordering* of the two deploys — the workflow stages with no traffic and will
+> not cut over on its own.
+>
 > **③ P3 (region) after P1 and P2 are stable.** Moving region mid-change destroys
 > attribution.
 
@@ -219,7 +227,7 @@ P5-1  (independent — anytime)
 | **P0-2** | Confirm F1: billable instance time vs request count | Cloud Run metrics |
 | **P0-3** | Replace §3 estimates with real figures | Billing export |
 | **P1-1** | `gcloud run services update pdf-parse-service --region us-central1 --no-cpu-throttling --memory 8Gi` | gcloud |
-| **P2-7** | Rebuild + deploy the image (includes `ocr_languages.py`) | Cloud Build |
+| **P2-7** | Rebuild + stage the image (includes `ocr_languages.py`), then promote | `deploy-pdf-parse-service.yml` |
 | **P2-8** | Deploy `pdf-parse-dispatch` **in the same window** | CI |
 | **P3-2** | Stand up `asia-southeast1`, verify `/healthz` + one real import | gcloud |
 | **P3-3** | Repoint Supabase secret `PDF_PARSE_SERVICE_URL`, keep old service until confirmed | Supabase |
