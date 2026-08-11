@@ -147,6 +147,32 @@ export interface AmlConsentDocument {
   accepted_at: string | null;
 }
 
+/**
+ * An uploaded document, as the portal is allowed to see it.
+ *
+ * This mirrors the `list_documents` projection exactly, and the omissions are
+ * the point: there is no `storage_path`, no bucket, no checksum, no uploader
+ * id and no reviewer. The client cannot construct a storage URL because it is
+ * never given the pieces — opening a document goes back through the server,
+ * which re-checks that the case is theirs.
+ *
+ * `rejection_reason` is the one staff-authored string that crosses: it is
+ * written specifically to tell the customer what to send instead, and a
+ * rejection with no reason is worse than useless to them.
+ */
+export interface AmlPortalDocument {
+  id: string;
+  /** Null for an upload the client made outside any requirement. */
+  requirement_id: string | null;
+  filename: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  /** `uploaded | accepted | rejected | superseded`. `deleted` never arrives. */
+  status: string;
+  uploaded_at: string;
+  rejection_reason: string | null;
+}
+
 export const amlPortalApi = {
   overview: (case_id?: string) => call<AmlPortalOverview>('overview', { case_id }),
   getQuestionnaire: (case_id: string, section: AmlSection) =>
@@ -204,7 +230,28 @@ export const amlPortalApi = {
     storage_path: string; filename: string; mime_type: string; size_bytes: number;
     requirement_id?: string | null; checksum?: string;
   }) => call<{ document: any }>('confirm_upload', { case_id, ...params }),
-  listDocuments: (case_id: string) => call<{ documents: any[] }>('list_documents', { case_id }),
+  /**
+   * Every document this case holds, newest first, minus deleted ones.
+   *
+   * The canonical list and the only one — the portal does not keep a second
+   * copy of what has been uploaded, so what the customer sees is what the
+   * server has.
+   */
+  listDocuments: (case_id: string) =>
+    call<{ documents: AmlPortalDocument[] }>('list_documents', { case_id }),
+  /**
+   * A short-lived link to one of this case's own documents.
+   *
+   * Both ids are sent and both are checked: the case must belong to this
+   * portal session and the document must belong to that case. A document id
+   * alone reaches nothing — that is what stops one client opening another's
+   * file by guessing an id.
+   *
+   * The URL it returns is a credential with a deadline. It is handed straight
+   * to the browser and never stored, logged, or put in analytics.
+   */
+  documentUrl: (case_id: string, document_id: string) =>
+    call<{ url: string; filename: string }>('get_document_url', { case_id, document_id }),
   listRequests: (case_id: string) => call<{ requests: any[] }>('list_client_requests', { case_id }),
   respondRequest: (request_id: string, response_payload: Record<string, any>) =>
     call<{ request: any }>('respond_client_request', { request_id, response_payload }),

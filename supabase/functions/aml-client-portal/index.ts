@@ -19,6 +19,8 @@
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
  *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
  *   - list_documents               { case_id }
+ *   - get_document_url             { case_id, document_id }
+ *                                                      → 120s signed read URL (never stored)
  *   - list_client_requests         { case_id }
  *   - respond_client_request       { request_id, response_payload }
  *   - submit_for_review            { case_id }         → creates submission_versions row
@@ -1705,6 +1707,58 @@ Deno.serve(async (req) => {
           .eq('case_id', c.id).neq('status', 'deleted')
           .order('uploaded_at', { ascending: false });
         return jsonResponse({ documents: data ?? [] });
+      }
+
+      /**
+       * A short-lived link to one of this case's own documents.
+       *
+       * Two ownership checks, and both are needed. `resolveCase` proves the
+       * case belongs to the portal session; `.eq('case_id', c.id)` proves the
+       * document belongs to that case. Without the second, a document id — a
+       * value the client legitimately holds for its OWN files, and could guess
+       * for others — would be enough to open any document in the system.
+       *
+       * The bucket is written here and the path is read from the row. Neither
+       * comes from the request: a caller-supplied path is a directory
+       * traversal waiting to happen, and a caller-supplied bucket turns this
+       * into a general-purpose read of the project's storage.
+       *
+       * `download` sets `Content-Disposition: attachment`, matching the staff
+       * path. `request_upload_url` does not constrain the stored content type,
+       * so an HTML file could be served inline from the storage origin — which
+       * is the same host as this API. An attachment disposition costs the
+       * customer nothing and removes that entirely.
+       *
+       * 120 seconds: long enough for the browser to follow it, short enough
+       * that a URL captured from history or a proxy log is already dead.
+       */
+      case 'get_document_url': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+        if (!body.document_id) return jsonResponse({ error: 'document_id required' }, 400);
+
+        const { data: doc } = await admin.schema('aml').from('documents')
+          .select('id, filename, storage_path, status')
+          .eq('id', String(body.document_id))
+          .eq('case_id', c.id)
+          .neq('status', 'deleted')
+          .maybeSingle();
+        // One answer for "not yours", "not there" and "deleted". Telling them
+        // apart would confirm that a document id exists on another case.
+        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+
+        const { data: signed, error: signErr } = await admin.storage
+          .from('aml-documents')
+          .createSignedUrl(doc.storage_path, 120, { download: doc.filename });
+        if (signErr || !signed?.signedUrl) {
+          // Never echo the storage error: it carries the path and the bucket.
+          console.error('[aml-client-portal] document url signing failed');
+          return jsonResponse({
+            error: 'We could not open that document just now. Please try again shortly.',
+            code: 'document_unavailable',
+          }, 502);
+        }
+        return jsonResponse({ url: signed.signedUrl, filename: doc.filename });
       }
 
       case 'list_client_requests': {
