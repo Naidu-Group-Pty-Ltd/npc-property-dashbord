@@ -116,29 +116,50 @@ export function IdentityVerificationStep({
   const [checking, setChecking] = useState<AmlVerificationParty | null>(null);
 
   /**
-   * The last party-state we told the page about.
+   * The party-state this step has already accounted for.
    *
-   * `null` until the first successful read. That first read only notifies when
-   * it has something to say — a case where nothing has been started yet is the
-   * state the page already assumes, and telling it so would cost an overview
-   * fetch every time the client so much as opened this step.
+   * ## The loop this ref caused
+   *
+   * It used to notify the page on the first read whenever that read was not
+   * "quiet" — anything other than every party `not_started`. A client sitting
+   * on a check that was already `in_review` therefore announced a change that
+   * had not happened, the page reloaded, the reload blanked the portal, this
+   * component unmounted, the ref died with it, and the remount made the very
+   * same server state look new again. Forever. The page blinked and the
+   * customer could not use it.
+   *
+   * So the first successful read for a case is a BASELINE and never a change.
+   * The page has already loaded the overview from the same server; there is
+   * nothing to tell it. `onStatusChange` announces a change AFTER the baseline
+   * and nothing else.
    */
   const reportedRef = useRef<string | null>(null);
+  /**
+   * Which case that baseline belongs to.
+   *
+   * A genuinely different case needs a fresh baseline — its first read is not
+   * a change either. Keyed on the case rather than on mount so an ordinary
+   * parent refresh, which re-renders this component without remounting it,
+   * cannot make an unchanged identity state look new.
+   */
+  const baselineCaseRef = useRef<string | null>(null);
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
 
-  /** Adopt a fresh server read, and tell the page if the state moved. */
+  /** Adopt a fresh server read, and tell the page only if the state moved. */
   const applyStatus = useCallback((next: AmlVerificationStatus) => {
     setState(next);
     const signature = statusSignature(next);
-    const first = reportedRef.current === null;
-    const quiet = next.parties.every(
-      (p) => p.status === 'not_started' && !p.verification_in_progress);
-    if (reportedRef.current !== signature) {
+    if (baselineCaseRef.current !== caseId) {
+      // First read for this case: record where we are starting from, silently.
+      baselineCaseRef.current = caseId;
       reportedRef.current = signature;
-      if (!(first && quiet)) onStatusChangeRef.current?.();
+      return;
     }
-  }, []);
+    if (reportedRef.current === signature) return;
+    reportedRef.current = signature;
+    onStatusChangeRef.current?.();
+  }, [caseId]);
 
   const load = useCallback(async () => {
     try {
