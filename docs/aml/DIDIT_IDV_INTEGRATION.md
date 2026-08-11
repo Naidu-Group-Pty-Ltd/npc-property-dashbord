@@ -8,6 +8,16 @@ Passive Liveness — and its result lands in the existing canonical record,
 Read this before touching `_shared/aml/providers/didit*`, `didit-webhook/`, or
 the hosted branch of `aml-client-portal`.
 
+**The provider is a short errand inside an NPC journey, not a page NPC hosts.**
+It used to run in an iframe in the Client Portal, which put another product's
+chrome, language and errors inside NPC's own page — and handed it the first two
+screens (country, then document) whose answers NPC already knew. NPC now asks
+which document, says what to have ready, opens the capture in a **separate
+top-level window**, and takes the customer back to an NPC page when it closes.
+The provider architecture underneath is unchanged: the same Workflow session,
+the same signed webhook, the same server-to-server decision. See "The capture
+runs in its own window" and "Which screens the customer sees".
+
 ---
 
 ## What this is NOT
@@ -258,9 +268,9 @@ a camera — they get a full-screen QR code and "continue on another device" as
 the *primary* experience, with same-device capture nowhere. That is what
 production shipped with, and it is not diagnosable from this repo: the portal
 code is identical either way, the session is created normally, the API returns
-200, and the only difference is what the provider's own page decides to render
-inside the frame. The second "I have finished"-style button customers reported
-was the handoff screen's own control, not a duplicate of ours.
+200, and the only difference is what the provider's own page decides to render.
+The second "I have finished"-style button customers reported was the handoff
+screen's own control, not a duplicate of ours.
 
 Read it back after any workflow change:
 
@@ -271,44 +281,104 @@ didit_workflow_get → { "is_desktop_allowed": true, "status": "published" }
 Both the live and sandbox `NPC Identity Verification` workflows are set to
 `true`. Do not create a replacement workflow without setting it.
 
-### What the embed must not withhold
+### The capture runs in its own window, not in an NPC iframe
 
-The flag is the cause, but the frame can re-create the symptom. The provider
-decides a device "cannot capture" from what actually works inside the iframe,
-so a withheld capability becomes a device handoff rather than an error anyone
-can see:
+The provider's flow used to be embedded in an iframe inside the portal. It is
+now opened as a **separate top-level window**, the way a payment authorisation
+is: NPC owns the whole journey either side of it, and the provider owns only
+the minute in which a document is photographed and a face is matched.
 
-- **Delegate the provider's full documented `allow` set**, not just `camera`.
-  `autoplay` and `encrypted-media` were missing, and the liveness pipeline is a
-  video stream — a blocked one reads as "no camera".
-- **No `sandbox` attribute.** On a cross-origin frame already granted
-  `allow-same-origin allow-scripts` it contains nothing the same-origin policy
-  is not already containing, and it silently withholds capabilities (downloads,
-  presentation, storage access, pointer lock) that the capture uses.
-- **Give it room.** A viewfinder inside a fixed-height box with its controls
-  below the fold is a usability failure that reads to the customer as a broken
-  camera.
+That removed the class of failure this section used to be about. The provider
+decides a device "cannot capture" from what actually works inside the frame, so
+a withheld iframe capability became a silent device handoff — which is why the
+old embed had to delegate the full documented `allow` set and refuse to
+sandbox. A top-level window asks for the camera in its own right, under its own
+origin, in a permission prompt that names whose page is asking. There is no
+`allow` list to get wrong and no frame to sandbox.
+
+What replaces those rules:
+
+- **The window is opened synchronously inside the customer's click**, before
+  the session request — `window.open('', target, features)`, then
+  `startHostedVerification`, then `win.location.replace(url)`. A window opened
+  after an `await` is an unsolicited popup and is blocked on default settings
+  in Safari and Firefox. Getting this order wrong does not degrade the flow, it
+  ends it.
+- **A blocked window still creates the session.** Its URL is held in memory —
+  never storage — so recovery is one press rather than another round trip the
+  browser would block in turn.
+- **A closed window is never a failure.** It says nothing about what happened
+  inside it; the customer may have finished. The portal stops claiming the
+  check is in progress, re-reads the server, and offers Continue.
+- **The window is named**, so a double-click, a second tab or a re-open reuses
+  the one window instead of stacking them.
 
 ### Which screens the customer sees
 
-The provider's documented journey is: **Start screen → country & document
-selection → ID capture → liveness + face match → outcome.**
+NPC now asks which document **before** any session exists, on its own screen,
+and passes the answer down as a session-level restriction:
 
-The Start screen is **mandatory** — there is no supported way to remove it, and
-white label only rebrands it. Selection is **auto-skipped when the workflow
-allows a single document type**; NPC keeps four (passport, driver licence, ID
-card, residence permit) so it still appears, with country preselected because
-only Australia is enabled. Capture-review and OCR-data-review screens are
-already off (`is_image_capture_review_screen_enabled`,
+```jsonc
+"expected_details": {
+  "id_country": "AUS",                    // ISO 3166-1 alpha-3, always
+  "expected_document_types": ["DL"]       // P | DL | ID | RP
+}
+```
+
+Those are the documented values for `expected_details` on `POST /v3/session/`
+(the field is case-insensitive; the full enum also includes `HIC`, `TC` and
+`SSC`, and NPC has no value that reaches them — a Medicare, health or
+concession card is not an identity document here). The mapping lives in
+`providers/didit.pure.ts` and nowhere else, so the browser never carries the
+provider's vocabulary; it sends `passport` / `driver_licence` / `identity_card`
+/ `residence_permit` and the server translates.
+
+`id_country` is emitted on **every** session, declared document or not. The
+customer is never asked which country they are in, because there is only one
+answer and asking it was one of the two screens that made the old flow feel
+like somebody else's product.
+
+The provider's Start screen remains **mandatory** — there is no supported way
+to remove it, and white label only rebrands it. It is now the first thing the
+customer sees in the provider's window rather than an unexplained page inside
+NPC's, which is a different proposition entirely. Capture-review and
+OCR-data-review screens stay off
+(`is_image_capture_review_screen_enabled`,
 `is_ocr_id_verification_data_review_enabled`).
 
-The official web SDK (`@didit-protocol/sdk-web`) does **not** remove any of
-them: it is an iframe wrapper around the same session URL. NPC's own embed
-grants a superset of its `allow` list and pins the exact origin of the minted
-URL, where the SDK accepts any `*.didit.me` host. There is nothing to gain by
-adopting it — but its source is the authoritative list of the `postMessage`
-events an embedded session sends, and only `completed`, `cancelled`, `error`
-and `close_request` are terminal.
+The official web SDK (`@didit-protocol/sdk-web`) is an iframe wrapper around
+the same session URL and is therefore the thing this design deliberately does
+not use.
+
+### The return page is a receipt, not a result
+
+Sessions are created with a `callback` pointing at
+`/client/aml/identity-return` on NPC's own origin, and `callback_method: both`
+so a customer who handed the check to a phone also finishes on an NPC page
+rather than the provider's end screen.
+
+The origin comes from `PUBLIC_APP_URL` or a compiled-in constant and **never**
+from the request — a callback taken from a caller would be an open redirect
+minted by NPC's own server and handed to a customer mid-verification.
+
+Didit appends `verificationSessionId` and `status` to that URL. **Nothing reads
+them.** The page does not parse the query string at all; it says "Verification
+received", tells its opener a bare `{ type: 'npc:identity-return' }` at this
+origin, and offers to close itself. A redirect is authored by whatever the
+browser was last pointed at, so trusting one would mean anybody who can type a
+URL could mark themselves verified. The identity decision still arrives only on
+the signed webhook, and is still re-fetched server-to-server before it settles
+anything.
+
+### Changing document mid-flight
+
+A session minted for a passport restricts the provider to a passport, so a
+customer who comes back and picks their licence would otherwise meet a picker
+that will not offer it. If the reconciled session is still `Not Started`, it is
+released and replaced; once they are `In Progress` or `Awaiting User` the
+session in their hands wins whatever they picked on this screen. The release is
+a technical supersede — `status` and `attempt_consumed` untouched — because
+changing your mind about which card to hold up is not a failed identity check.
 
 ### The flag is necessary, not sufficient
 
@@ -320,10 +390,12 @@ back for the same `vendor_data`. After changing the workflow, set
 pressed Start.
 
 One more to rule out if same-device capture still fails: a
-`Permissions-Policy: camera=()` response header on the *portal's own document*
-blocks the camera regardless of the iframe's `allow`. Check the document
-request's response headers in DevTools — a header seen on a Cloudflare
-challenge page (`HTTP 403`, `cf-mitigated: challenge`) is not the app's.
+`Permissions-Policy: camera=()` response header. This used to be checkable on
+the portal's own document, because the portal was what framed the capture; it
+is now a header on the **provider's** document and outside NPC's control. What
+is worth ruling out on our side is that the customer is looking at the
+provider's own permission prompt at all — the window is top-level, so the
+browser's address bar names the origin that is asking.
 
 ## Configuration
 
@@ -366,7 +438,9 @@ The webhook destination is configured in the Didit console (or via MCP) as
 | `src/lib/aml/diditWebhookSecurity.test.ts` | signature, replay window, constant-time compare, receiver ordering, routing safety, session gates |
 | `src/lib/aml/diditIdempotency.test.ts` | the ugly cases — duplicate/concurrent/crashed/out-of-order deliveries — run functionally against the real settling logic |
 | `src/lib/aml/diditAmlScope.test.ts` | Didit AML never enabled, no case/screening writes, portal privacy boundary, no credential under `src/` |
-| `src/components/portal/IdentityVerificationStep.test.tsx` | the hosted flow rendered for real — server-minted session, the full documented permission set delegated, no sandbox, no failure warning before a failure, the fallback behind an explicit ask, and neither "I have finished" nor a provider message asserting anything |
+| `src/components/portal/IdentityVerificationStep.test.tsx` | the secure check rendered for real — the document question before any session exists, the window opened synchronously before the session call, a blocked window recovered in one press without an attempt, a closed window that is not a failure, and neither a return message nor any other browser event asserting an outcome |
+| `src/lib/aml/identityDocumentSession.test.ts` | the closed list of documents, the provider mapping and its Australia-only country, the server-controlled callback origin, the bytes actually posted to `/v3/session/`, and that no standalone verification endpoint exists anywhere |
+| `src/pages/portal/PortalIdentityReturn.test.tsx` | the return page renders identically whatever the provider put in the query string, claims receipt and never a verdict, and sends its opener a payload with no status field |
 | `src/lib/aml/idvAdapterReadiness.test.ts` | wiring comes from the registry, not a hardcoded key — hosted and capture providers both report correctly, `wired` stays distinct from `configured`, and readiness never carries a credential |
 | `src/lib/aml/diditSessionLifecycle.test.ts` | a session minted under superseded configuration is not returned, a new attempt gets a genuinely new session while the same attempt stays idempotent, correlation still resolves case/party/attempt, and superseding costs no attempt and writes no outcome |
 
