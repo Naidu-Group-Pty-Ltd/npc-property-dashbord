@@ -1,0 +1,86 @@
+name: One-shot — set Didit standalone IDV thresholds
+
+# TEMPORARY. This file exists to perform exactly one operation and is deleted
+# immediately afterwards. Do not extend it, and do not copy it into a general
+# "set a production secret" workflow — a workflow that can write arbitrary
+# production secrets from a branch is a standing capability nobody reviews.
+#
+# Why it exists at all: `standaloneIdvReadiness()` in
+# `supabase/functions/_shared/aml/providers/index.ts` gates the whole in-portal
+# capture journey on two Edge Function secrets being present and parseable:
+#
+#   ready = api_key_present && liveness === "ok" && faceMatch === "ok"
+#
+# With either threshold unset the portal answers `manual_verification_required`
+# and the customer sees "The photo check is temporarily unavailable" instead of
+# the NPC camera. The values below are an approved compliance decision: 30/30
+# preserves the effective threshold posture NPC was already operating under —
+# the hosted workflow `NPC Identity Verification` (75ad112b) configures no
+# threshold on either its LIVENESS or FACE_MATCH node, so every hosted
+# verification to date ran on Didit's documented defaults of 30. Didit publishes
+# no recommended production value for either endpoint, so this migration
+# deliberately carries the existing posture across rather than inventing a
+# stricter one under cover of a deployment.
+#
+# The thresholds are read with `Deno.env.get()` on every invocation, so no
+# function redeploy is needed once this has run.
+
+# Manual only. No push, schedule or pull_request trigger — this must never fire
+# as a side effect of somebody else's commit.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-shot-set-idv-thresholds
+  cancel-in-progress: false
+
+jobs:
+  set-thresholds:
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout: this operation touches no application code, and not having
+      # the tree present is the cheapest proof of that.
+      - uses: supabase/setup-cli@v3
+        with:
+          version: latest
+
+      - name: Set the two threshold secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Presence only. The value is never echoed, and `set -x` is never on.
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo '::error::SUPABASE_ACCESS_TOKEN is not configured for this repository.'
+            exit 1
+          fi
+
+          # Named secrets only. `supabase secrets set` leaves every secret it is
+          # not given alone, so DIDIT_API_KEY and the rest are untouched.
+          supabase secrets set \
+            DIDIT_LIVENESS_THRESHOLD=30 \
+            DIDIT_FACE_MATCH_THRESHOLD=30 \
+            --project-ref dduzbchuswwbefdunfct
+
+      - name: Confirm both names are present
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `supabase secrets list` prints NAME and a sha256 digest rather than
+          # values, but this narrows it to the two names anyway so the log
+          # carries no digest for any other secret in the project.
+          supabase secrets list --project-ref dduzbchuswwbefdunfct \
+            | awk '{ print $1 }' \
+            | grep -xE 'DIDIT_LIVENESS_THRESHOLD|DIDIT_FACE_MATCH_THRESHOLD' \
+            | sort > /tmp/present.txt
+
+          cat /tmp/present.txt
+          if [ "$(wc -l < /tmp/present.txt)" -ne 2 ]; then
+            echo '::error::expected both threshold secrets to be present'
+            exit 1
+          fi
+          echo 'Both threshold secrets are set. Values not printed.'
