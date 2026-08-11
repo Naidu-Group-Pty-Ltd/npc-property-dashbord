@@ -212,7 +212,7 @@ export function normalizePdfPageContextSummary(raw: unknown, pageContexts: PdfPa
     expected_page_count: pageContexts.length,
     observed_page_count: pageContexts.length,
     first_page_no: pageContexts[0]?.page_no ?? null,
-    last_page_no: pageContexts.at(-1)?.page_no ?? null,
+    last_page_no: pageContexts[pageContexts.length - 1]?.page_no ?? null,
     parent_global_context_count: pageContexts.filter((ctx) => ctx.flags.has_parent_global_artifacts).length,
     missing_page_numbers: [],
     duplicate_page_numbers: [],

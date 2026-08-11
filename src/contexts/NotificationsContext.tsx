@@ -133,7 +133,7 @@ const NOTIFICATIONS_FN = 'notifications-feed-v2';
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const navigate = useNavigate();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   // Data now moves over `notifications-feed` (staff session cookie). This client
   // is kept ONLY for the realtime subscription, which is a best-effort "something
   // changed" hint — if its JWT is absent the socket simply never delivers, and
@@ -189,6 +189,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   // Load notifications from Supabase on mount and when user changes
   useEffect(() => {
+    // Signed out there is no feed to read: `notifications-feed-v2` answers 401
+    // and the failure surfaced as a runtime error on /auth. The staff session
+    // cookie is unreadable from JS, so a resolved `user` from
+    // custom-auth-verify-v2 is the browser's evidence that one exists.
+    if (!user) {
+      setNotifications([]);
+      return;
+    }
     fetchNotifications();
     
     // Realtime removed with the HS256 token (ES256 remediation). `postgres_changes`
@@ -213,7 +221,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
     };
-  }, [fetchNotifications]);
+  }, [fetchNotifications, user?.id]);
 
 
   /**

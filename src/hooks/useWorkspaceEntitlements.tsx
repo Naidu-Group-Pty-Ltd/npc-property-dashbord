@@ -20,6 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { fetchTokenBalance } from "@/lib/missionControl";
+import { useAuth } from "@/hooks/useAuth";
 import {
   loadLastKnownGood,
   logEntitlementEvent,
@@ -60,6 +61,7 @@ interface WorkspaceEntitlementsValue {
 const WorkspaceEntitlementsContext = createContext<WorkspaceEntitlementsValue | null>(null);
 
 export function WorkspaceEntitlementsProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [snapshot, setSnapshot] = useState<WorkspaceEntitlementSnapshot | null>(() =>
     loadLastKnownGood(WORKSPACE_ID),
   );
@@ -116,12 +118,16 @@ export function WorkspaceEntitlementsProvider({ children }: { children: ReactNod
     return run;
   }, []);
 
-  // Initial load + interval refresh.
+  // Initial load + interval refresh — only once a staff session is resolved.
+  // Signed out (e.g. sitting on /auth) `mission-control-balance` answers 401,
+  // which surfaced as a runtime error on a page that has no entitlements to
+  // fetch in the first place.
   useEffect(() => {
+    if (!user) return;
     void refresh();
     const interval = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [refresh]);
+  }, [refresh, user?.id]);
 
   // Refresh when the user returns to the tab (e.g. back from the storefront
   // checkout, or after an administrator changed the subscription), throttled.

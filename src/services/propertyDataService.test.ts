@@ -182,7 +182,7 @@ describe('propertyDataService request economy', () => {
 
       await propertyDataService.fetchAllListings();
       await vi.waitFor(() => expect(seen.length).toBeGreaterThan(0));
-      expect(seen.at(-1)).toEqual(['99', '1']);
+      expect(seen[seen.length - 1]).toEqual(['99', '1']);
       unsubscribe();
     });
 
