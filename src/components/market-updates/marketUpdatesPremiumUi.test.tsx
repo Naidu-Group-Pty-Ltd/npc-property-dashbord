@@ -31,7 +31,6 @@ vi.mock('@/services/marketUpdatesService', () => ({
 }));
 vi.mock('@/hooks/useModulePermissions', () => ({ useModulePermissions: () => ({ canEdit: false, canView: true }) }));
 vi.mock('@/components/market-updates/MarketQAVoiceButton', () => ({ MarketQAVoiceButton: () => null }));
-vi.mock('@/components/market-updates/MarketSourceCoveragePanel', () => ({ MarketSourceCoveragePanel: () => null }));
 vi.mock('@/components/market-updates/MarketSourcesAdminDialog', () => ({ MarketSourcesAdminDialog: () => null }));
 vi.mock('@/components/agentModels', () => ({ LiveModelBadge: () => null }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { functions: { invoke: vi.fn() }, auth: { getSession: vi.fn(async () => ({ data: { session: null } })) } } }));
@@ -83,6 +82,13 @@ describe('Market News Feed premium visual contract', () => {
     renderPage();
     await waitFor(() => expect(screen.getByRole('button', { name: /Breaking now/i })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /High impact/i })).toBeInTheDocument();
+  });
+
+  it('does not render the source coverage section', async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Digest period:', { exact: false })).toBeInTheDocument());
+    expect(screen.queryByText('Source coverage')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Expanded source coverage')).not.toBeInTheDocument();
   });
 
   it('gives the top story the lead treatment only when it is consequential', async () => {
