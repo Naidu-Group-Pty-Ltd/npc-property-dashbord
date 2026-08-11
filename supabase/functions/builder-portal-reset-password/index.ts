@@ -18,6 +18,8 @@ import { hashSessionToken } from '../_shared/sessionHash.ts';
 import { validateBuilderPortalRequest } from '../_shared/builderSessionToken.ts';
 import { auditBuilderIdentity, revokeAllBuilderSessions } from '../_shared/builderSessions.ts';
 import { authRateLimitedResponse, beginAuthRateLimit } from '../_shared/authRateLimit.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ResetPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const MAX_OTP_ATTEMPTS = 5;
 const GENERIC_CODE_ERROR = 'Invalid or expired code';
@@ -42,7 +44,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { action, email, otp, new_password } = await req.json();
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ResetPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES);
+    if (!__body.ok) return __body.response;
+    const { action, email, otp, new_password } = __body.data;
     if (!email || !otp) return json({ error: 'Email and code are required' }, 400);
 
     const normalizedEmail = String(email).toLowerCase().trim();

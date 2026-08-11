@@ -241,6 +241,18 @@ const CASES = [
     replace: 'const { suburb, state, postcode } = await req.json();',
   },
 
+  // The same gate, the class WP-27 added to it. A separate control because
+  // widening `UNAUTHENTICATED` is the kind of change that looks done and does
+  // nothing: the control above passes whether or not `public-auth` is in that
+  // set, so on its own it could never have told anyone the extension worked.
+  {
+    gate: 'check-public-validation.mjs',
+    file: 'supabase/functions/client-portal-login/index.ts',
+    what: 'a portal login goes back to an unbounded, unchecked req.json()',
+    find: 'const __body = await parseJsonBody(req, PortalLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES)\n    if (!__body.ok) return __body.response\n    const { email, password, turnstile_token } = __body.data',
+    replace: 'const { email, password, turnstile_token } = await req.json()',
+  },
+
   // ── WP-24: the four items that were closed and ungated ───────────────────
   {
     gate: 'check-baseline-invariants.mjs',

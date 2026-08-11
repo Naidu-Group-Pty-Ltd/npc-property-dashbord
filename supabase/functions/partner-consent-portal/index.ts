@@ -15,6 +15,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { hashConsentToken, isConsentRequestLive } from '../_shared/partnerConsent.ts';
+import { readBoundedJson } from '../_shared/validate.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -64,7 +65,7 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    const body = await req.json().catch(() => ({}));
+    const body = await readBoundedJson(req).catch(() => ({}));
     const action = String(body?.action ?? '');
     const token = String(body?.token ?? '').trim();
 

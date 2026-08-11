@@ -8,6 +8,7 @@ import { getBrandConfig } from "../_shared/brand-config.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts";
 import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts";
+import { readBoundedJson } from '../_shared/validate.ts';
 
 const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
 const RESET_IDENTIFIER_BUDGET = { max: 10, windowSeconds: 3600 };
@@ -76,7 +77,7 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const body: RequestBody = await req.json();
+    const body: RequestBody = await readBoundedJson(req);
     const { action } = body;
 
     // Source-keyed ceiling across every action. All three are unauthenticated,

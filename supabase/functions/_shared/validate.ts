@@ -53,6 +53,18 @@ import { enforceJsonBodyLimit, securityJsonError } from './requestSecurity.ts';
  */
 export const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 
+/**
+ * The ceiling for a body that carries a handful of short strings — a session
+ * token, an action name, a set of credentials. 16 KiB is three orders of
+ * magnitude more than any real one.
+ *
+ * Kept here rather than imported from `authBodySchemas.ts` so this module has
+ * no dependency on any particular domain; that file re-exports its own
+ * `AUTH_MAX_BODY_BYTES` at the same value for call sites that read better
+ * naming the class of endpoint they are on.
+ */
+export const SMALL_BODY_BYTES = 16 * 1024;
+
 /** Minimal structural type so this module does not import zod itself. */
 export interface SchemaLike<T> {
   safeParse(input: unknown): { success: true; data: T } | { success: false; error: unknown };
@@ -88,8 +100,24 @@ export async function parseJsonBody<T>(
 ): Promise<ParsedBody<T>> {
   const limited = await enforceJsonBodyLimit<unknown>(req, maxBytes ?? DEFAULT_MAX_BODY_BYTES);
   if (!limited.ok) {
-    // `enforceJsonBodyLimit` has already built the 400/413 with an opaque code.
-    return { ok: false, response: limited.error };
+    // `enforceJsonBodyLimit` has already built the 400/413 with an opaque code
+    // — but through `securityJsonError`, which emits no CORS headers. On the
+    // data services that was invisible. On a login form it is not: a browser
+    // shown a 413 it may not read reports "Failed to fetch", and the user is
+    // told nothing at all rather than that their request was too large.
+    //
+    // Re-clothed rather than fixed in `securityJsonError`, which is shared with
+    // callers that deliberately answer without CORS headers.
+    const original = limited.error;
+    const text = await original.clone().text()
+      .catch(() => JSON.stringify({ error: 'Invalid request', code: 'invalid_request' }));
+    return {
+      ok: false,
+      response: new Response(text, {
+        status: original.status,
+        headers: { ...headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      }),
+    };
   }
 
   const result = schema.safeParse(limited.value ?? {});
@@ -135,3 +163,40 @@ export function parseValue<T>(
 
 /** Re-exported so a call site needs one import for the deliberate-denial path. */
 export { securityJsonError };
+
+/**
+ * `req.json()` with a size ceiling, and the same failure shape.
+ *
+ * For handlers that already coerce every field they read (`String(body?.op)`,
+ * `typeof body?.action === 'string'`) and wrap the read in their own
+ * `try/catch` or `.catch(() => ({}))`. Those do not need a schema — they need
+ * the size bound, which is the half no amount of downstream `String()` can
+ * supply.
+ *
+ * **Throws** rather than returning a result object, deliberately. Every call
+ * site this replaces is inside a `try` that treats a parse failure as "no
+ * body", and several then fall back to reading the session token from a header
+ * or cookie. Returning `{ok:false}` would have made all of them fall through to
+ * the success path with an empty body, quietly turning a rejected oversized
+ * request into an accepted empty one — which is worse than what it replaced.
+ *
+ * An over-limit body throws too, so it lands in the same handler as malformed
+ * JSON: request refused, nothing read.
+ *
+ * The generic defaults to `any` to match `req.json()` exactly, which is the one
+ * place in this module that is the right call. `Record<string, unknown>` is the
+ * better type and it is the wrong one here: it made the substitution a *typing*
+ * change as well as a safety one, and produced 168 errors across five handlers
+ * that had been reading `body.op` and `body.portal_type` off an `any` for
+ * years. Tightening those is worth doing; bundling it into a change about size
+ * limits would mean neither could be reviewed on its own. Pass an explicit
+ * parameter to get a real type.
+ */
+export async function readBoundedJson<T = any>(
+  req: Request,
+  maxBytes: number = SMALL_BODY_BYTES,
+): Promise<T> {
+  const limited = await enforceJsonBodyLimit<T>(req, maxBytes);
+  if (!limited.ok) throw new Error('request body rejected: too large or not JSON');
+  return limited.value;
+}

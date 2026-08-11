@@ -25,7 +25,7 @@ not a weaker form of evidence — it is the right form.
 | 4 | Front-end permissions | `_shared/authz.ts` deny-by-default; the browser never decides | `check-admin-authorization-server-side.mjs`, `check-client-portfolio-authz.mjs`, `check-solicitor-intelligence-authz.mjs` | NT-11, NT-38 |
 | 5 | No rate limiting | `_shared/authRateLimit.ts` (IP before identifier, unforgeable address header), `publicAbuseControls.ts` | `check-auth-rate-limit-coverage.mjs`, both portal checks | **NT-29** *(opt-in: bills ~30 Places calls)* |
 | 6 | SQL string concatenation | No `exec_sql` RPC exists; 401 `.rpc()` calls are named and typed; `EXECUTE format(` is migration-time DDL | `check-baseline-invariants.mjs` — **WP-24** | — |
-| 7 | No input validation | `_shared/validate.ts` (zod + size bound in one call); adopted on all 5 unauthenticated data services — **WP-20/24** | `check-public-validation.mjs` — **WP-24** | — |
+| 7 | No input validation | `_shared/validate.ts` (zod + size bound in one call); adopted on all 5 unauthenticated data services **and all 27 pre-session auth endpoints** — **WP-20/24/27** | `check-public-validation.mjs` over `public` **and `public-auth`** — 37 functions — **WP-24/27** | — |
 | 8 | User content as raw HTML | `dangerouslySetInnerHTML` in 2 files: one DOMPurify'd with a post-pass, one shadcn's typed CSS vars | `check-baseline-invariants.mjs` — **WP-24** | — |
 | 9 | Plain-text passwords | `_shared/password.ts`; no plaintext column anywhere | `check-baseline-invariants.mjs` — **WP-24** | — |
 | 10 | Auth in local storage | HttpOnly `__Host-session_token` only; `persistSession: false`; `AUTH_VERSION` scrubs legacy mirrors | `check-portal-session-client-storage.mjs`, `check-totp-enrollment-client-storage.mjs` | **NT-30** |
@@ -58,11 +58,31 @@ a bare `await req.json()` and a TypeScript *assertion*, which checks nothing at
 runtime and — on endpoints that need no credentials — imposed no size bound at
 all. `check-public-validation.mjs` holds it.
 
-Adoption across the 31 `public-auth` and 70 `portal-authenticated` functions is
-still per-function work. Those sit behind a session, a CSRF guard and a size
-bound, so they are a different risk from an endpoint anyone on the internet can
-post to; the gate requires validation of anything new in the `public` class and
-the existing set is enumerated rather than assumed.
+WP-27 extended that to the 31 `public-auth` functions — the pre-session
+endpoints, login and reset and invite across four portals. The measurement there
+was not "some of them": **all 27 that read a body read it with a bare
+`await req.json()`**, three times the number in the class the gate was written
+for, in a class reachable exactly as anonymously. The gate now covers 37
+functions rather than 9.
+
+The 70 `portal-authenticated` functions remain per-function work. Those sit
+behind a session, a CSRF guard and in most cases a size bound already, so they
+are a different risk from an endpoint anyone on the internet can post to.
+
+## Three things this table cannot show
+
+**Three deployed auth endpoints are not in this repository.**
+`custom-auth-login`, `custom-auth-logout` and `custom-auth-verify` appear in
+`SECURITY_REGISTRY.json` and `supabase/config.toml` with no source under
+`supabase/functions/`. Read live on 11 August 2026, all three are **ACTIVE**,
+and `custom-auth-verify` was updated that morning.
+
+Every gate in the table above reads source. These three have none here, so no
+row above describes them — including item 7, item 17 and item 19, which is
+awkward given that `custom-auth-login` is a staff console login. Their `-v2`
+successors were hardened through WP-11/WP-12; there is no evidence here that the
+v1 endpoints were. Detail and the action in
+[`WP27_PUBLIC_AUTH_VALIDATION.md`](./WP27_PUBLIC_AUTH_VALIDATION.md).
 
 ## Two things this table cannot show
 
