@@ -112,6 +112,25 @@ export default function AgreementCentreDetail() {
 
   const openRequests = (data?.change_requests ?? []).filter((request) => request.status === 'open');
 
+  /**
+   * What the issued copy actually is, which depends on whether anybody has
+   * signed against the version. Unsigned, the stored PDF is a cache of the
+   * frozen wording and gets re-typeset by whichever build serves it; signed, it
+   * is the document a person committed to and is never touched again.
+   */
+  const issuedCopyNote = useMemo(() => {
+    if (!currentVersion) return '';
+    const issued = currentVersion.issued_at
+      ? format(new Date(currentVersion.issued_at), 'd MMM yyyy')
+      : null;
+    if (versionSignatures.length > 0) {
+      return `Signed — served exactly as signed${issued ? `, issued ${issued}` : ''}`;
+    }
+    return issued
+      ? `Issued ${issued} — the frozen wording, in the current layout`
+      : 'The frozen wording, in the current layout';
+  }, [currentVersion, versionSignatures]);
+
   const download = async (kind: 'draft' | 'issued' | 'executed' | 'docx') => {
     if (!agreement) return;
     try {
@@ -121,8 +140,26 @@ export default function AgreementCentreDetail() {
         await downloadAgreementDocx(agreement, docxBrandFrom(
           issuer, brandSettings?.brandColor ?? brandSettings?.primaryColor ?? null, logo,
         ));
+        return;
       }
-      else await downloadAgreementPdf(agreement.id, kind);
+      const outcome = await downloadAgreementPdf(agreement.id, kind);
+      // Which document did they just get? A stored artefact can be older than
+      // this build in two different ways, and they call for opposite answers:
+      // one the app has already fixed, one it cannot.
+      if (outcome.service === 'behind') {
+        toast.warning(
+          'Downloaded in the previous document format — the agreement render service has not '
+          + 'been deployed yet. Re-download once it has.',
+        );
+      } else if (outcome.refreshed) {
+        toast.success('Re-rendered in the current document format. The wording is unchanged.');
+      } else if (outcome.artefactState === 'frozen') {
+        toast.info(
+          kind === 'executed'
+            ? 'The executed agreement is downloading, exactly as executed.'
+            : 'This version has been signed, so it is served exactly as signed rather than re-rendered.',
+        );
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Download failed');
     } finally {
@@ -275,16 +312,34 @@ export default function AgreementCentreDetail() {
                 Download <ChevronDown className="ml-1 h-3 w-3" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => download('draft')}>Draft PDF (template pack)</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => download('docx')}>DOCX (template pack)</DropdownMenuItem>
+            {/* Each item says what the document IS, because they are genuinely
+                different documents and the difference used to be invisible: a
+                stale issued artefact looked identical to a current one in this
+                menu, so a superseded cover left for a partner unremarked. */}
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuItem className="flex-col items-start gap-0.5" onClick={() => download('draft')}>
+                <span>Draft PDF (template pack)</span>
+                <span className="text-xs text-muted-foreground">
+                  Rendered now from the working record, with the partner email page
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="flex-col items-start gap-0.5" onClick={() => download('docx')}>
+                <span>DOCX (template pack)</span>
+                <span className="text-xs text-muted-foreground">The same pack as an editable Word file</span>
+              </DropdownMenuItem>
               {currentVersion ? (
-                <DropdownMenuItem onClick={() => download('issued')}>
-                  Issued PDF — v{currentVersion.version_label}
+                <DropdownMenuItem className="flex-col items-start gap-0.5" onClick={() => download('issued')}>
+                  <span>Issued PDF — v{currentVersion.version_label}</span>
+                  <span className="text-xs text-muted-foreground">{issuedCopyNote}</span>
                 </DropdownMenuItem>
               ) : null}
               {status === 'active' ? (
-                <DropdownMenuItem onClick={() => download('executed')}>Executed PDF</DropdownMenuItem>
+                <DropdownMenuItem className="flex-col items-start gap-0.5" onClick={() => download('executed')}>
+                  <span>Executed PDF</span>
+                  <span className="text-xs text-muted-foreground">
+                    The signed instrument, exactly as executed
+                  </span>
+                </DropdownMenuItem>
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>

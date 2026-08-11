@@ -21,7 +21,13 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { pickAllowed } from '../_shared/wp09Guards.ts';
-import { ALERT_WRITABLE, MONITORING_RULE_WRITABLE } from '../_shared/amlWritableColumns.ts';
+import {
+  ALERT_WRITABLE,
+  CUSTOMER_REVIEW_WRITABLE,
+  MONITORING_RULE_WRITABLE,
+  SOURCE_OF_FUNDS_WRITABLE,
+  SOURCE_OF_WEALTH_WRITABLE,
+} from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-token, x-session-token, x-command-centre-session-token",
@@ -285,10 +291,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const table = op === "upsert_sof" ? "source_of_funds" : "source_of_wealth";
       const item = body.item ?? {};
       if (!item.case_id) return jr({ error: "case_id required" }, 400);
-      if (item.verified && !item.id) { item.verified_by = userId; item.verified_at = new Date().toISOString(); }
+      // The two tables differ by a column each, so pick the matching set rather
+      // than a union — see the note in `_shared/amlWritableColumns.ts`.
+      const row: Record<string, unknown> = pickAllowed(
+        item,
+        op === "upsert_sof" ? SOURCE_OF_FUNDS_WRITABLE : SOURCE_OF_WEALTH_WRITABLE,
+      );
+      // Stamp the verifier from the session, on BOTH paths. This used to run
+      // only when there was no `item.id`, i.e. only on insert — so marking an
+      // existing item verified went through the update path with whatever
+      // `verified_by` the caller sent. The allowlist above already drops that
+      // field; stamping here is what puts the right name in it.
+      if (row.verified) {
+        row.verified_by = userId;
+        row.verified_at = new Date().toISOString();
+      }
       const q = item.id
-        ? aml.from(table).update(item).eq("id", item.id).select("*").single()
-        : aml.from(table).insert(item).select("*").single();
+        ? aml.from(table).update(row).eq("id", item.id).select("*").single()
+        : aml.from(table).insert(row).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ item: data });
@@ -313,9 +333,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_review") {
       requireWrite();
       const r = body.review ?? {};
+      // The closure record (`outcome*`) and the extension ledger belong to
+      // `complete_review` and `extend_review`; this op may not reach either.
+      const reviewRow = pickAllowed(r, CUSTOMER_REVIEW_WRITABLE);
       const q = r.id
-        ? aml.from("existing_customer_reviews").update(r).eq("id", r.id).select("*").single()
-        : aml.from("existing_customer_reviews").insert(r).select("*").single();
+        ? aml.from("existing_customer_reviews").update(reviewRow).eq("id", r.id).select("*").single()
+        : aml.from("existing_customer_reviews").insert(reviewRow).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ review: data });

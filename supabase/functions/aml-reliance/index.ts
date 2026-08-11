@@ -76,6 +76,7 @@ import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-p
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { readBoundedJson } from '../_shared/validate.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -427,7 +428,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   try {
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const body = await req.json().catch(() => ({}));
+    const body = await readBoundedJson(req).catch(() => ({}));
     const op = String(body?.op ?? "");
     if (!op) return jr({ error: "op required" }, 400);
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;

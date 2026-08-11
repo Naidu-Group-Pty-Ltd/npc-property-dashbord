@@ -18,6 +18,8 @@ import { validateBuilderPortalRequest } from '../_shared/builderSessionToken.ts'
 import { auditBuilderIdentity } from '../_shared/builderSessions.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { authRateLimitedResponse, beginAuthRateLimit } from '../_shared/authRateLimit.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ForgotPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -47,7 +49,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { email } = await req.json();
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ForgotPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES);
+    if (!__body.ok) return __body.response;
+    const { email } = __body.data;
     if (!email || typeof email !== 'string') {
       return new Response(JSON.stringify({ error: 'Email is required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -27,12 +27,14 @@ export { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
 
 
 /**
- * The revision of the agreement document RENDERING — bump when the visual
- * composition changes and an already-stored unsigned preview should be
- * re-rendered. The legal content is hashed separately (`templateContentHash`)
- * and does not change with this number.
+ * The revision of the agreement document RENDERING, and the rules that decide
+ * when an already-stored artefact should be re-rendered. Its own import-free
+ * module so the browser can read the number without pulling the report
+ * stylesheet in behind it; re-exported here because this is the one import
+ * surface. The legal content is hashed separately (`templateContentHash`) and
+ * does not change with that number.
  */
-export const AGREEMENT_CENTRE_DOCUMENT_REVISION = 1;
+export * from './documentRevision.pure.ts';
 
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
