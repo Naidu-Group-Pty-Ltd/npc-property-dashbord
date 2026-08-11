@@ -80,8 +80,16 @@ New vendor calls should use `_shared/meteredFetch.ts` rather than `fetch` — it
 resolves the credential from the URL and logs the call itself, so metering
 cannot be forgotten. Never add it to a call site that already calls
 `logApiUsage` for the same request: that bills the tenant twice, which is worse
-than not billing. That constraint is why everything behind `_shared/llmRouter.ts`
-is still uninstrumented; the doc explains what it would take to fix.
+than not billing.
+
+**Model calls are metered by `_shared/llmRouter.ts` itself**, which is why
+`meterUsage` exists and why it **defaults to true** — 19 of the 25 edge
+functions that call the router were spending a forwarded key for free, and an
+omitted flag must never mean unbilled. Only the six functions that log
+adjacently to their own call pass `meterUsage: false`. The credential a
+`(route, modelId)` pair spends is resolved by `_shared/llmUsageBinding.pure.ts`,
+which mirrors the router's dispatch and returns **null** rather than guessing; a
+CI test reads the router's source and fails when the two drift.
 
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
@@ -183,6 +191,17 @@ Sidecar options live in `app.py`'s `GLOBAL_CAPABILITIES`, the lane matrix in
 mistyped language code is not inert, it fails the whole conversion (`zh` is not
 an EasyOCR code and cost 9 production jobs). Those three modules are pure and
 gated by `ci.yml`; nothing else in `pdf-parse-service/` runs in CI.
+
+That sidecar is only **one** of the two PDF engines. A checkbox in the import
+dialog routes the file to Claude instead, via `template-design-agent`. Read
+[`CLAUDE_RECONSTRUCTION_GROUNDING.md`](./docs/pdf-import/CLAUDE_RECONSTRUCTION_GROUNDING.md)
+before touching that path: it was the only reference kind the importer did not
+ground, and it now measures the attached PDF with PDF.js first. Two rules there
+keep biting — grounding is read from the **attached bytes and never from the
+open template** (measurements from the wrong document are worse than none, since
+the agent treats them as authoritative), and **absent grounding is not empty
+grounding** (an empty element list tells the model a scanned page has no text,
+which it then reproduces).
 
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the

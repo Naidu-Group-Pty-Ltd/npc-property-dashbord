@@ -586,6 +586,18 @@ Deno.serve(async (req) => {
       body.groundedReference && typeof body.groundedReference === 'object' && Array.isArray(body.groundedReference.elements)
         ? body.groundedReference
         : null;
+    // Stage 1 — per-source-page measurements from a PDF's own content stream.
+    // A document has more than one page; `groundedReference` names only the
+    // first, and grounding page 1 while the model guesses pages 2..n is the same
+    // gap one page down.
+    const groundedPages: { pageNumber: number; reference: any; dropped?: number }[] =
+      Array.isArray(body.groundedPages)
+        ? body.groundedPages.filter((p: any) =>
+            p && typeof p === 'object' && Array.isArray(p.reference?.elements) && p.reference.elements.length)
+        : [];
+    // What the caps excluded. A bound nobody is told about reads as full coverage.
+    const groundingCoverage: { totalPages?: number; pagesOmitted?: number; elementsDropped?: number } =
+      body.groundingCoverage && typeof body.groundingCoverage === 'object' ? body.groundingCoverage : {};
 
     // C9 — page-scoped AI visual repair. This mode may ONLY return patches from
     // the visual-diff-repair-patch-v1 allowlist, scoped to a single page; it must
@@ -657,6 +669,49 @@ Focus especially on exact palette roles (background, surface, text, accent, mute
       }
     }
 
+    // ─── Measured ground truth, shared by every faithful-reconstruction mode ──
+    //
+    // Both reconstruction modes are transcription tasks, and both are strictly
+    // better when the model is handed measurements instead of asked to derive
+    // them. This block was originally built inside `screenshot_to_block` only,
+    // which left the PDF path — the path holding the BEST evidence in the system,
+    // real glyph geometry rather than OCR — as the one asked to eyeball it.
+    //
+    // Server-side slice is a backstop against an oversized payload. The client
+    // selects the elements that survive a cap (see
+    // `pdfImport/groundedReferenceFromImport.pure.ts`); position-based truncation
+    // here would drop the footer and say nothing about it.
+    const MAX_GROUNDED_ELEMENTS = 160;
+    const describeElementStyle = (e: any): string => {
+      const parts: string[] = [];
+      if (e.color) parts.push(`color=${e.color}`);
+      if (e.fontFamily) parts.push(`font=${JSON.stringify(String(e.fontFamily))}`);
+      if (e.fontWeight != null) parts.push(`weight=${e.fontWeight}`);
+      if (e.italic) parts.push('italic');
+      return parts.length ? ` ${parts.join(' ')}` : '';
+    };
+    const elementRows = (ref: any): string =>
+      (ref.elements ?? []).slice(0, MAX_GROUNDED_ELEMENTS).map((e: any) =>
+        `[${e.id}] x=${e.x} y=${e.y} w=${e.width} h=${e.height} size≈${e.fontSize}pt${describeElementStyle(e)} :: ${JSON.stringify(String(e.text ?? '')).slice(0, 240)}`,
+      ).join('\n');
+    const groundingBlock = groundedPages.length
+      // Multi-page: one section per SOURCE page, each with its own page size, so
+      // the model never has to infer which measurements belong where.
+      ? `\n\nMEASURED TEXT ELEMENTS — read from this exact PDF's content stream. These are AUTHORITATIVE for text, position and size; each source page is listed separately with its own dimensions (points, top-left origin).${
+          groundedPages.map((p) =>
+            `\n\n— SOURCE PAGE ${p.pageNumber} (${p.reference.pageWidth ?? '?'}×${p.reference.pageHeight ?? '?'}pt)${
+              p.dropped ? ` [${p.dropped} smaller element(s) not listed — read them off the document]` : ''
+            }:\n${elementRows(p.reference)}`,
+          ).join('')
+        }${
+          groundingCoverage.pagesOmitted
+            ? `\n\n[Pages ${groundedPages.length + 1}–${groundingCoverage.totalPages} were not measured — reconstruct them by reading the document.]`
+            : ''
+        }`
+      : groundedReference && groundedReference.elements!.length
+        ? `\n\nMEASURED TEXT ELEMENTS — measured ground truth on a ${groundedReference.pageWidth ?? '?'}×${groundedReference.pageHeight ?? '?'}pt page (top-left origin). These are AUTHORITATIVE for text, position, and any style fields present:\n${elementRows(groundedReference)}`
+        : '';
+
     // Mode-specific system addendum
     let modeAddendum = '';
     if (mode === 'art_director') {
@@ -666,21 +721,6 @@ Improve in place: refine typographic hierarchy, fix alignment to a 12pt grid, ti
     } else if (mode === 'screenshot_to_block') {
       // R5 — FAITHFUL reconstruction. This is a transcription/placement task, NOT
       // a redesign: text content + positions come from measurement, never invention.
-      const describeElementStyle = (e: any): string => {
-        const parts: string[] = [];
-        if (e.color) parts.push(`color=${e.color}`);
-        if (e.fontFamily) parts.push(`font=${JSON.stringify(String(e.fontFamily))}`);
-        if (e.fontWeight != null) parts.push(`weight=${e.fontWeight}`);
-        if (e.italic) parts.push('italic');
-        return parts.length ? ` ${parts.join(' ')}` : '';
-      };
-      const groundingBlock = groundedReference && groundedReference.elements!.length
-        ? `\n\nMEASURED TEXT ELEMENTS — measured ground truth on a ${groundedReference.pageWidth ?? '?'}×${groundedReference.pageHeight ?? '?'}pt page (top-left origin). These are AUTHORITATIVE for text, position, and any style fields present:\n${
-            groundedReference.elements!.slice(0, 160).map((e: any) =>
-              `[${e.id}] x=${e.x} y=${e.y} w=${e.width} h=${e.height} size≈${e.fontSize}pt${describeElementStyle(e)} :: ${JSON.stringify(String(e.text ?? '')).slice(0, 240)}`,
-            ).join('\n')
-          }`
-        : '';
       modeAddendum = `\n\n[SCREENSHOT-TO-BLOCK MODE — FAITHFUL RECONSTRUCTION]
 Recreate the attached reference on the active page (id=${activePageId}) as native editable blocks/overlays. This is a FAITHFUL reconstruction, NOT a redesign.
 - FIRST emit a 'clear_page' op for page ${activePageId} (the reference replaces existing blocks).
@@ -772,8 +812,20 @@ ACTIVE SELECTION:
       return json({ error: 'PDF document reconstruction requires Claude (set ANTHROPIC_API_KEY).' }, 400);
     }
     if (usePdfDocument && activePageId) {
+      // When the deterministic importer has already parsed this document, its
+      // overlays are exact glyph geometry — better evidence than the model can
+      // recover by reading the rendered page, and the reason this branch now
+      // carries the same grounding block the screenshot path always had.
+      const readInstruction = groundingBlock
+        ? 'The MEASURED TEXT ELEMENTS below were read from this exact PDF\'s content stream and are AUTHORITATIVE for text, position and size: transcribe each element\'s text verbatim and place ONE text overlay at its given x/y/width/height. Never substitute your own reading of the page where a measurement exists — use the document itself for what the measurements do not cover (fills, rules, shapes, image regions, icons, typeface and weight). If the document plainly contains text that has no measurement, add it; do not drop it.'
+        : 'Read the PDF directly: transcribe text EXACTLY at its real positions (page is PDF points, top-left origin).';
+      // Measurements are per SOURCE page, so the multi-page contract has to be
+      // stated: without it a many-page document collapses onto the active one.
+      const pageInstruction = groundedPages.length > 1
+        ? `The source has ${groundingCoverage.totalPages ?? groundedPages.length} pages. Reconstruct SOURCE PAGE 1 on the active page (id=${activePageId}), then emit one 'add_page' per further source page and reconstruct it there, in order. Every overlay's coordinates are relative to its own page.`
+        : `Reconstruct it on the active page (id=${activePageId}) as native editable blocks.`;
       modeAddendum += `\n\n[PDF DOCUMENT MODE — FAITHFUL RECONSTRUCTION]
-A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as native editable blocks. FIRST emit a 'clear_page' for ${activePageId}. Read the PDF directly: transcribe text EXACTLY at its real positions (page is PDF points, top-left origin) and reproduce non-text design (background/section fills, accent shapes/rules, image regions). Preserve observed colours for page backgrounds, text, fills, strokes, borders, and accents; use rgba(...) or #RRGGBBAA for translucency. Reproduce source pictograms as icon-pack vector overlays ({ type:'vector', icon:'<name>', color }) rather than dropping them. Match each text run's typeface: read the PDF's font names/styles and set fontFamily to the same family (or the closest of: Inter, Lato, Open Sans, Roboto, Montserrat, Helvetica, Playfair Display, Lora, Merriweather, EB Garamond, Georgia, Times New Roman, Roboto Slab, JetBrains Mono, Courier New), with the numeric fontWeight and italic style it uses. Do NOT redesign, summarise, translate, or use placeholders.`;
+A PDF is attached. ${pageInstruction} FIRST emit a 'clear_page' for ${activePageId}. ${readInstruction} Reproduce non-text design (background/section fills, accent shapes/rules, image regions). Preserve observed colours for page backgrounds, text, fills, strokes, borders, and accents; use rgba(...) or #RRGGBBAA for translucency. Reproduce source pictograms as icon-pack vector overlays ({ type:'vector', icon:'<name>', color }) rather than dropping them. Match each text run's typeface: read the PDF's font names/styles and set fontFamily to the same family (or the closest of: Inter, Lato, Open Sans, Roboto, Montserrat, Helvetica, Playfair Display, Lora, Merriweather, EB Garamond, Georgia, Times New Roman, Roboto Slab, JetBrains Mono, Courier New), with the numeric fontWeight and italic style it uses. Do NOT redesign, summarise, translate, or use placeholders.${groundingBlock}`;
     }
 
     // Brief pipeline runs synthesis on text-only context (image already digested
