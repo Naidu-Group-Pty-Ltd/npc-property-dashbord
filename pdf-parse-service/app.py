@@ -105,6 +105,13 @@ from source_url_security import UnsafeSourceUrl, fetch_public_url
 # Text alignment inference (pure; gated by ci.yml — see the module header for
 # what shipped wrong while it lived in this file).
 from text_alignment import MIN_JUSTIFY_LINES, infer_alignment  # noqa: F401
+# Font cmap repair (pure; gated by ci.yml). The file surgery below uses
+# fontTools; everything that decides WHAT to write lives in that module.
+from font_cmap_repair import (  # noqa: F401
+    coverage_ranges,
+    parse_tounicode_cmap,
+    plan_cmap_repair,
+)
 
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -139,7 +146,7 @@ SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
 # no longer reports justify for a two-line block. A cached artifact carries the
 # old meaning under the same key, so the version has to move or the cache serves
 # it. See _infer_alignment / MIN_JUSTIFY_LINES.
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v2+coverage-ranges-v1+align-v2"
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v2+coverage-ranges-v1+align-v2+cmap-repair-v1"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -1171,44 +1178,120 @@ def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
     return vectors
 
 
+def _font_codepoints(font) -> set[int] | None:
+    """Codepoints the program's cmap actually maps, or None if unreadable."""
+    try:
+        cps = {int(c) for c in font.valid_codepoints() if 0 < int(c) <= 0x10FFFF}
+    except Exception:
+        return None
+    return cps or None
+
+
 def _cmap_coverage_ranges(font) -> list[str] | None:
     """CSS `unicode-range` segments for the codepoints this font ACTUALLY maps.
 
-    Returns None when the cmap cannot be read (no `valid_codepoints`, an
-    exception, or an empty set). The caller treats None as "coverage unknown"
-    and refuses to embed a SUBSET on it: a face declared without a range claims
-    every codepoint, and a subset that claims codepoints it lacks is precisely
-    the gibberish-glyph / vanished-space failure this exists to prevent.
+    Returns None when the cmap cannot be read. The caller treats None as
+    "coverage unknown" and refuses to embed a SUBSET on it: a face declared
+    without a range claims every codepoint, and a subset that claims codepoints
+    it lacks is precisely the gibberish-glyph / vanished-space failure this
+    exists to prevent.
+    """
+    cps = _font_codepoints(font)
+    return None if cps is None else coverage_ranges(cps, MAX_COVERAGE_RANGES)
 
-    Adjacent codepoints coalesce into `U+0041-005A`-style segments. Beyond
-    MAX_COVERAGE_RANGES segments, the largest segments win and the tail is
-    dropped — an un-listed codepoint merely falls to the stack fallback.
+
+def _font_tounicode(doc, xref: int) -> dict[int, str]:
+    """The producer's own CID → text statement for this font, or {}."""
+    try:
+        obj = doc.xref_object(xref) or ""
+        match = re.search(r"/ToUnicode\s+(\d+)\s+0\s+R", obj)
+        if not match:
+            return {}
+        raw = doc.xref_stream(int(match.group(1)))
+        if not raw:
+            return {}
+        return parse_tounicode_cmap(raw.decode("latin-1", errors="ignore"))
+    except Exception:
+        return {}
+
+
+def _cid_to_gid_is_identity(doc, xref: int) -> bool:
+    """Is this font's CID numbering the same as its glyph numbering?
+
+    Only then does the ToUnicode CMap invert into a Unicode→glyph mapping. A
+    font whose descendant declares a CIDToGIDMap STREAM renumbers the glyphs,
+    and reading a CID as a glyph index there would draw an unrelated glyph.
+    Absent, the PDF default is Identity — but say so only for a descendant we
+    actually found, so an unreadable object is never assumed benign.
     """
     try:
-        cps = sorted({
-            int(c) for c in font.valid_codepoints()
-            if 0 < int(c) <= 0x10FFFF
-        })
+        obj = doc.xref_object(xref) or ""
+        match = re.search(r"/DescendantFonts\s*\[\s*(\d+)\s+0\s+R", obj)
+        if not match:
+            return False
+        descendant = doc.xref_object(int(match.group(1))) or ""
+        if "/CIDFontType2" not in descendant:
+            # Identity CIDToGIDMap is a TrueType-outline concept; CFF-based
+            # descendants map through the charset instead.
+            return False
+        c2g = re.search(r"/CIDToGIDMap\s*(/\w+|\d+\s+0\s+R)", descendant)
+        return c2g is None or c2g.group(1) == "/Identity"
     except Exception:
-        return None
-    if not cps:
-        return None
-    segments: list[tuple[int, int]] = []
-    start = prev = cps[0]
-    for c in cps[1:]:
-        if c == prev + 1:
-            prev = c
-            continue
-        segments.append((start, prev))
-        start = prev = c
-    segments.append((start, prev))
-    if len(segments) > MAX_COVERAGE_RANGES:
-        largest = sorted(segments, key=lambda s: s[1] - s[0], reverse=True)
-        segments = sorted(largest[:MAX_COVERAGE_RANGES])
-    return [
-        f"U+{a:04X}" if a == b else f"U+{a:04X}-{b:04X}"
-        for a, b in segments
-    ]
+        return False
+
+
+def _repair_font_cmap(buf: bytes, tounicode: dict[int, str], identity: bool) -> tuple[bytes, set[int], int]:
+    """Add the ToUnicode mapping's missing Unicode→glyph entries to the cmap.
+
+    Returns `(bytes, codepoints, added)`. On any failure the ORIGINAL bytes come
+    back with an empty codepoint set and zero additions — a font we could not
+    safely improve must still embed exactly as well as it did before.
+
+    Only Unicode cmap subtables are touched, and only by adding: see
+    `plan_cmap_repair` for every rule that keeps this from making a page worse.
+    """
+    try:
+        from fontTools.ttLib import TTFont  # noqa: PLC0415 — optional at import time
+
+        tt = TTFont(io.BytesIO(buf), fontNumber=0, lazy=False)
+        cmap_table = tt.get("cmap")
+        glyph_order = tt.getGlyphOrder()
+        if cmap_table is None or not glyph_order:
+            return buf, set(), 0
+        unicode_subtables = [t for t in cmap_table.tables if t.isUnicode()]
+        if not unicode_subtables:
+            return buf, set(), 0
+
+        existing: set[int] = set()
+        for table in unicode_subtables:
+            existing |= set(table.cmap.keys())
+
+        # A subsetter strips outlines from glyphs it does not need. Pointing a
+        # codepoint at one of those draws nothing at all.
+        blank: set[int] = set()
+        glyf = tt.get("glyf")
+        if glyf is not None:
+            for gid, name in enumerate(glyph_order):
+                try:
+                    if glyf[name].numberOfContours == 0:
+                        blank.add(gid)
+                except Exception:
+                    blank.add(gid)
+
+        planned = plan_cmap_repair(tounicode, existing, len(glyph_order), blank, identity)
+        if not planned:
+            return buf, existing, 0
+
+        for table in unicode_subtables:
+            for codepoint, gid in planned.items():
+                if codepoint not in table.cmap:
+                    table.cmap[codepoint] = glyph_order[gid]
+        out = io.BytesIO()
+        tt.save(out)
+        return out.getvalue(), existing | set(planned), len(planned)
+    except Exception as exc:  # pragma: no cover — never fail a parse over a font
+        LOG.warning("cmap repair skipped: %s", exc)
+        return buf, set(), 0
 
 
 def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
@@ -1303,6 +1386,42 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                                 # which is exactly the gibberish-glyph failure.
                                 # A full font without coverage still embeds
                                 # (real cmap; the pre-subset behaviour).
+                                #
+                                # B5 — before measuring coverage, make the
+                                # glyphs the source actually drew REACHABLE.
+                                # A PDF subset selects glyphs by CID, so its
+                                # cmap need not be complete and Chrome's is not:
+                                # this document's SegoeUI-Semibold has 2467
+                                # glyphs, a 47-codepoint cmap, and a '7' at CID
+                                # 2464 that nothing could address. A web font is
+                                # looked up BY Unicode, so that '7' fell to the
+                                # stack fallback and the footer read `07 / 07`
+                                # in two typefaces. The producer's own ToUnicode
+                                # CMap says which glyph is which; with an
+                                # Identity CIDToGIDMap it inverts into exactly
+                                # the entries the cmap lacks.
+                                repaired, _cps, added = _repair_font_cmap(
+                                    buf,
+                                    _font_tounicode(doc, xref),
+                                    _cid_to_gid_is_identity(doc, xref),
+                                )
+                                # Adopt the repair only if the result is still a
+                                # font fitz can read and still within budget.
+                                # Coverage is then measured on WHAT IS EMBEDDED,
+                                # never on the repair's own bookkeeping: the
+                                # range gate is the last thing standing between
+                                # a partial subset and a page of tofu, and it
+                                # has to be describing the actual bytes.
+                                if added and len(repaired) <= MAX_FONT_BYTES:
+                                    try:
+                                        font = fitz.Font(fontbuffer=repaired)
+                                        buf = repaired
+                                        entry["bytes"] = len(buf)
+                                        entry["cmapRepairedCodepoints"] = added
+                                    except Exception as exc:
+                                        LOG.warning(
+                                            "repaired font unreadable, keeping original: %s", exc,
+                                        )
                                 ranges = _cmap_coverage_ranges(font)
                                 if ranges is not None:
                                     entry["coverage_ranges"] = ranges

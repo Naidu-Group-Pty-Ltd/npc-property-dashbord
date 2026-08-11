@@ -211,6 +211,16 @@ export interface DoclingEmbeddedFont {
   base64?: string;          // present only when embeddable
   /** R2: CSS unicode-range segments the font's cmap actually maps, e.g. ["U+0041-005A"]. */
   coverage_ranges?: string[];
+  /**
+   * B5: Unicode→glyph entries the sidecar ADDED to this program's cmap before
+   * embedding it, from the PDF's own ToUnicode CMap.
+   *
+   * A PDF subset selects glyphs by CID, so its cmap need not be complete — and
+   * a web font is looked up by Unicode, so whatever the cmap omits is
+   * unreachable. Diagnostic only; the widened `coverage_ranges` above is what
+   * the renderer acts on.
+   */
+  cmapRepairedCodepoints?: number;
 }
 
 export interface DoclingPageSize {
