@@ -36,6 +36,8 @@
     "pdf-import:release-gate": "node scripts/regression/pdf-import-release-gate.mjs",
     "pdf-import:release-gate:static": "node scripts/regression/pdf-import-release-gate.mjs --mode=static",
     "pdf-import:release-gate:no-build": "node scripts/regression/pdf-import-release-gate.mjs --no-build",
+    "pdf-import:engine-lockstep": "node scripts/regression/pdf-parse-engine-lockstep.mjs --static",
+    "pdf-import:engine-lockstep:selftest": "node scripts/regression/pdf-parse-engine-lockstep.mjs --selftest",
     "pdf-import:v3:gate:static": "node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=static",
     "pdf-import:v3:gate:fast": "node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=fast",
     "pdf-import:v3:gate:full": "node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=full",

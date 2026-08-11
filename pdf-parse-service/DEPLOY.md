@@ -5,6 +5,26 @@ Cloud Run with all **Phase A–D** enrichments active (formula + code, sharp
 picture crops at 2× scale, table accuracy, OCR fallback, DocTags + Markdown
 exports, outline + cross-references + per-page language, streaming progress).
 
+> **There is now a workflow, and it is the preferred path.**
+> `.github/workflows/deploy-pdf-parse-service.yml` builds on Cloud Build, stages
+> a Cloud Run revision with **no traffic**, verifies it on its own tagged URL,
+> and stops. Sending traffic is a separate `workflow_dispatch` with
+> `promote: cutover`.
+>
+> Use this document for the **first** deploy of a service — it is what creates
+> the service and sets its environment. The workflow deliberately sets no
+> environment variables at all (`gcloud run deploy --set-env-vars` *replaces*
+> the whole environment, so a partial restatement would wipe
+> `PDF_PARSE_SERVICE_TOKEN` and the Supabase credentials); it only ever replaces
+> the image, and its verify step fails if either is missing.
+>
+> Also use this document for **rollback**, and when federated deploy is not
+> configured on the repository — the workflow says so and changes nothing.
+>
+> The current lane policy is **`extractor-lane-policy-v3`**, not the v2 named in
+> the note below; `npm run pdf-import:engine-lockstep` prints both sides and
+> fails if they have drifted apart.
+
 > **Lane Policy V2 (`extractor-lane-policy-v2`)** — extraction-lane behaviour and
 > the converter cache key are governed by [`LANE-POLICY.md`](./LANE-POLICY.md).
 > No new environment variables are introduced and Cloud Run CPU/memory sizing is
