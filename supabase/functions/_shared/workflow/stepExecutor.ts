@@ -18,24 +18,46 @@
  * environment, so it is deliberately not part of the browser bundle.
  */
 
+import { getCatalogNode } from './catalog/index.pure.ts';
+import { SERVER_CAPABLE_STEP_TYPES } from './liveCapability.pure.ts';
+import { buildRequest, mapOutputs, requestFailure } from './httpRequest.pure.ts';
+import type { CatalogNode } from './types.pure.ts';
+import { meteredFetch } from '../meteredFetch.ts';
+
 /**
- * Step types that can genuinely be performed. Everything here is either a
- * generic protocol the workflow author pointed at a target themselves, or
- * internal to this platform — nothing that needs a vendor SDK we do not have.
- *
- * `LIVE_CAPABLE` in `runtime/performers.ts` is the browser's copy of this set,
- * used to refuse locally rather than make a call that would be refused anyway.
- * `liveCapability.spec.ts` asserts the two agree.
+ * Everything the server will perform. Derived from the catalog — see
+ * `liveCapability.pure.ts` for why this is not a list.
  */
-export const LIVE_CAPABLE_STEP_TYPES: ReadonlySet<string> = new Set([
-  'core.http',
-  'core.graphql',
-  'core.notify_team',
-  'mcp.list_tools',
-  'mcp.call_tool',
-  'mcp.read_resource',
-  'mcp.get_prompt',
-]);
+export const LIVE_CAPABLE_STEP_TYPES = SERVER_CAPABLE_STEP_TYPES;
+
+/** Credential keys the descriptors reference, so a caller can fetch just those. */
+export function secretsRequiredBy(node: CatalogNode): string[] {
+  const request = node.request;
+  if (!request) return [];
+  const keys = new Set<string>(request.requires ?? []);
+  // Anything the templates reach for, whether or not it was declared required.
+  const scan = (value: unknown): void => {
+    if (typeof value === 'string') {
+      for (const match of value.matchAll(/\{\{\s*secret\.([A-Z0-9_]+)/g)) keys.add(match[1]);
+      return;
+    }
+    if (Array.isArray(value)) return value.forEach(scan);
+    if (value && typeof value === 'object') Object.values(value).forEach(scan);
+  };
+  scan(request.url);
+  scan(request.headers);
+  scan(request.query);
+  scan(request.body);
+  if (request.auth && request.auth.type !== 'none') {
+    if (request.auth.type === 'basic') {
+      keys.add(request.auth.userSecret);
+      keys.add(request.auth.passSecret);
+    } else {
+      keys.add(request.auth.secret);
+    }
+  }
+  return [...keys];
+}
 
 /** Hosts that are never callable, whatever the workflow says. */
 const BLOCKED_HOSTS = [
@@ -71,6 +93,12 @@ export interface StepClient {
       select(columns: string): {
         single(): Promise<{ data: { id?: string } | null; error: { message: string } | null }>;
       };
+    };
+    select(columns: string): {
+      in(column: string, values: string[]): Promise<{
+        data: { key_name?: string; key_value?: string | null }[] | null;
+        error: { message: string } | null;
+      }>;
     };
   };
 }
@@ -168,6 +196,94 @@ async function request(init: {
 }
 
 /**
+ * Reads the credentials a descriptor needs out of `integration_configs`.
+ *
+ * Only the keys that step actually references are fetched. A step that sends an
+ * SMS has no business pulling every API key in the workspace into memory, and a
+ * narrower read is a smaller blast radius if an output ever gets logged.
+ */
+async function loadSecrets(supabase: StepClient, keys: string[]): Promise<Record<string, string>> {
+  if (!keys.length) return {};
+  const { data } = await supabase.from('integration_configs').select('key_name, key_value').in('key_name', keys);
+  const secrets: Record<string, string> = {};
+  for (const row of data ?? []) {
+    if (row.key_name && typeof row.key_value === 'string' && row.key_value.trim() !== '') {
+      secrets[row.key_name] = row.key_value;
+    }
+  }
+  return secrets;
+}
+
+/** Keeps credential values out of anything that gets stored or logged. */
+function redact(value: unknown, secrets: string[]): unknown {
+  if (!secrets.length) return value;
+  const scrub = (text: string) =>
+    secrets.reduce((acc, secret) => (secret ? acc.split(secret).join('[redacted]') : acc), text);
+
+  if (typeof value === 'string') return scrub(value);
+  if (Array.isArray(value)) return value.map((v) => redact(v, secrets));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, redact(v, secrets)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Performs any operation the catalog gave a request descriptor.
+ *
+ * This is the whole of "expanding endpoint coverage": every integration wired
+ * this way runs through here, so there is one place where a credential is
+ * resolved, one place where a vendor's own error shape is read, and one place
+ * where the response is mapped onto the outputs the canvas promised downstream
+ * steps.
+ */
+async function executeDescribedStep(
+  definition: CatalogNode,
+  config: Record<string, unknown>,
+  ctx: StepExecutionContext,
+): Promise<StepOutcome> {
+  const descriptor = definition.request!;
+  const secrets = await loadSecrets(ctx.supabase, secretsRequiredBy(definition));
+
+  const built = buildRequest({ request: descriptor, config, secrets });
+  if (built.ok === false) return { status: 'failed', error: built.failure.error };
+
+  assertCallableUrl(built.request.url);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MAX_TIMEOUT_MS);
+  let response: Response;
+  try {
+    // `meteredFetch` resolves the credential from the host and logs the call,
+    // so a vendor added here is billed without anybody remembering to say so.
+    response = await meteredFetch(built.request.url, {
+      method: built.request.method,
+      headers: built.request.headers,
+      body: built.request.body,
+      signal: controller.signal,
+      redirect: 'follow',
+    }, { feature: `workflow/${definition.id}` });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : 'The request could not be sent.';
+    return {
+      status: 'failed',
+      error: controller.signal.aborted ? `${definition.name} timed out after 30 seconds.` : message,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const shape = { status: response.status, body: await readBoundedBody(response) };
+  const failure = requestFailure(descriptor, shape);
+  const output = redact(mapOutputs(definition, shape), built.request.secretValues) as Record<string, unknown>;
+
+  if (failure) return { status: 'failed', output, error: `${definition.name}: ${failure}` };
+  return { status: 'succeeded', output };
+}
+
+/**
  * Performs one step.
  *
  * Throws only for programmer error; an endpoint that refuses, times out or
@@ -179,6 +295,12 @@ export async function executeStep(
   config: Record<string, unknown>,
   ctx: StepExecutionContext,
 ): Promise<StepOutcome> {
+  // A declared operation is performed by the generic executor. Checked before
+  // the hand-written cases so a descriptor can supersede one later without
+  // leaving the old branch silently in charge.
+  const definition = getCatalogNode(nodeType);
+  if (definition?.request) return executeDescribedStep(definition, config, ctx);
+
   switch (nodeType) {
     case 'core.http': {
       const method = String(config.method ?? 'GET').toUpperCase();

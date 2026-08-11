@@ -181,10 +181,38 @@ export const PROPERTY_NODES: CatalogNode[] = [
     { op: 'street_view', name: 'Capture a street view', summary: 'Returns a street-level photo of an address.', fields: [ADDRESS_FIELD, f.number('heading', 'Camera direction', { help: '0 is north, 90 is east. Leave blank to face the property.' })], outputs: outs('imageUrl:string:Image URL', 'available:boolean:Imagery available'), keywords: ['photo', 'facade', 'street', 'report'] },
   ]),
 
+  // Airtable's base id is a credential rather than a per-step setting: a
+  // workspace has one base, and asking for it on every step is how a typo ends
+  // up writing to a base nobody is watching. `{{secret.AIRTABLE_BASE_ID}}` in
+  // the URL reads the value the Integrations page already collects.
   ...provider({ integrationId: 'airtable', category: 'property_data', docs: 'https://airtable.com/developers/web/api/introduction' }, [
-    { op: 'list_records', name: 'Find records', summary: 'Returns records from a table, optionally filtered.', fields: [f.text('table', 'Table', { required: true }), f.text('filterByFormula', 'Filter', { placeholder: "{Status} = 'Active'" }), f.number('maxRecords', 'How many', { defaultValue: 100 })], outputs: outs('records:array:Records', 'count:number') },
-    { op: 'create_record', name: 'Create a record', summary: 'Adds a row to a table.', fields: [f.text('table', 'Table', { required: true }), f.keyValue('fields', 'Fields', { required: true })], outputs: outs('recordId:string:Record ID', 'createdAt:string:Created at') },
-    { op: 'update_record', name: 'Update a record', summary: 'Changes fields on an existing row.', fields: [f.text('table', 'Table', { required: true }), f.expr('recordId', 'Record', { required: true }), f.keyValue('fields', 'Fields', { required: true })], outputs: outs('recordId:string:Record ID') },
+    { op: 'list_records', name: 'Find records', summary: 'Returns records from a table, optionally filtered.', fields: [f.text('table', 'Table', { required: true }), f.text('filterByFormula', 'Filter', { placeholder: "{Status} = 'Active'" }), f.number('maxRecords', 'How many', { defaultValue: 100 })], outputs: outs('records:array:Records', 'count:number'),
+      request: {
+        method: 'GET',
+        url: 'https://api.airtable.com/v0/{{secret.AIRTABLE_BASE_ID}}/{{table}}',
+        auth: { type: 'bearer', secret: 'AIRTABLE_API_KEY' },
+        query: { filterByFormula: '{{filterByFormula}}', maxRecords: '{{maxRecords}}' },
+        outputs: { records: 'records', count: 'records.length' },
+        requires: ['AIRTABLE_API_KEY', 'AIRTABLE_BASE_ID'],
+      } },
+    { op: 'create_record', name: 'Create a record', summary: 'Adds a row to a table.', fields: [f.text('table', 'Table', { required: true }), f.keyValue('fields', 'Fields', { required: true })], outputs: outs('recordId:string:Record ID', 'createdAt:string:Created at'),
+      request: {
+        method: 'POST',
+        url: 'https://api.airtable.com/v0/{{secret.AIRTABLE_BASE_ID}}/{{table}}',
+        auth: { type: 'bearer', secret: 'AIRTABLE_API_KEY' },
+        body: { fields: '{{fields|object}}', typecast: 'true' },
+        outputs: { recordId: 'id', createdAt: 'createdTime' },
+        requires: ['AIRTABLE_API_KEY', 'AIRTABLE_BASE_ID'],
+      } },
+    { op: 'update_record', name: 'Update a record', summary: 'Changes fields on an existing row.', fields: [f.text('table', 'Table', { required: true }), f.expr('recordId', 'Record', { required: true }), f.keyValue('fields', 'Fields', { required: true })], outputs: outs('recordId:string:Record ID'),
+      request: {
+        method: 'PATCH',
+        url: 'https://api.airtable.com/v0/{{secret.AIRTABLE_BASE_ID}}/{{table}}/{{recordId}}',
+        auth: { type: 'bearer', secret: 'AIRTABLE_API_KEY' },
+        body: { fields: '{{fields|object}}', typecast: 'true' },
+        outputs: { recordId: 'id' },
+        requires: ['AIRTABLE_API_KEY', 'AIRTABLE_BASE_ID'],
+      } },
     { op: 'record_created', kind: 'trigger', name: 'New record', summary: 'Runs when a row is added to a table.', fields: [f.text('table', 'Table', { required: true })], outputs: outs('recordId:string:Record ID', 'fields:object:Fields', 'createdAt:string:Created at') },
   ]),
 ];

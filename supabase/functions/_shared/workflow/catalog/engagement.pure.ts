@@ -9,6 +9,21 @@
 import { DELIVERY_OUTPUTS, f, opt, outs, provider, recordOutputs } from './builders.pure.ts';
 import type { CatalogNode } from '../types.pure.ts';
 
+/**
+ * Twilio's sending number.
+ *
+ * Optional on the step because a workspace almost always sends from one number,
+ * and typing it into every SMS step is how a typo reaches a client. Blank falls
+ * back to `TWILIO_FROM_NUMBER` from the Integrations page — see TWILIO_SENDER.
+ */
+const TWILIO_FROM = f.text('from', 'From', {
+  placeholder: '+61…',
+  help: 'Leave blank to use the number saved on the Integrations page.',
+});
+
+/** Step override first, integration-wide default second. */
+const TWILIO_SENDER = { $first: ['{{from}}', '{{secret.TWILIO_FROM_NUMBER}}'] };
+
 const EMAIL_FIELDS = [
   f.expr('to', 'To', { required: true, placeholder: '{{trigger.email}}' }),
   f.expr('subject', 'Subject', { required: true }),
@@ -93,7 +108,23 @@ export const ENGAGEMENT_NODES: CatalogNode[] = [
 
   // ── Email, SMS and voice ─────────────────────────────────────────────────
   ...provider({ integrationId: 'resend', category: 'communications', docs: 'https://resend.com/docs/api-reference' }, [
-    { op: 'send_email', name: 'Send an email', summary: 'Sends an email from your verified domain.', fields: EMAIL_FIELDS, outputs: DELIVERY_OUTPUTS, keywords: ['email', 'send', 'transactional'] },
+    { op: 'send_email', name: 'Send an email', summary: 'Sends an email from your verified domain.', fields: [...EMAIL_FIELDS, f.text('from', 'From', { placeholder: 'NPC Services <hello@example.com>', help: 'Must be an address on a domain verified with Resend.' })], outputs: DELIVERY_OUTPUTS, keywords: ['email', 'send', 'transactional'],
+      request: {
+        method: 'POST',
+        url: 'https://api.resend.com/emails',
+        auth: { type: 'bearer', secret: 'RESEND_API_KEY' },
+        body: {
+          from: { $first: ['{{from}}', '{{secret.RESEND_FROM_EMAIL}}'] },
+          // Resend takes an array; a single address is the overwhelming case.
+          to: ['{{to}}'],
+          subject: '{{subject}}',
+          html: '{{html}}',
+          reply_to: '{{replyTo}}',
+        },
+        outputs: { messageId: 'id', status: '$status' },
+        errorPath: 'message',
+        requires: ['RESEND_API_KEY'],
+      } },
     { op: 'email_bounced', kind: 'trigger', name: 'Email bounced', summary: 'Runs when a message hard-bounces or is marked spam.', fields: [], outputs: outs('email:string', 'reason:string', 'type:string', 'bouncedAt:string:Bounced at'), keywords: ['bounce', 'deliverability', 'complaint'] },
   ]),
 
@@ -120,9 +151,43 @@ export const ENGAGEMENT_NODES: CatalogNode[] = [
   ]),
 
   ...provider({ integrationId: 'twilio', category: 'communications', docs: 'https://www.twilio.com/docs/api' }, [
-    { op: 'send_sms', name: 'Send an SMS', summary: 'Texts a number from your Twilio number.', fields: [f.expr('to', 'To', { required: true, placeholder: '{{trigger.phone}}' }), f.textarea('body', 'Message', { required: true, help: 'Over 160 characters is billed as multiple segments.' })], outputs: DELIVERY_OUTPUTS },
-    { op: 'send_whatsapp', name: 'Send a WhatsApp message', summary: 'Sends a WhatsApp message through Twilio.', fields: [f.expr('to', 'To', { required: true }), f.textarea('body', 'Message', { required: true })], outputs: DELIVERY_OUTPUTS },
-    { op: 'make_call', name: 'Place a call', summary: 'Calls a number and plays a message or connects an agent.', fields: [f.expr('to', 'To', { required: true }), f.textarea('say', 'Say', { help: 'Read aloud when the call connects.' })], outputs: outs('callSid:string:Call ID', 'status:string') },
+    { op: 'send_sms', name: 'Send an SMS', summary: 'Texts a number from your Twilio number.', fields: [f.expr('to', 'To', { required: true, placeholder: '{{trigger.phone}}' }), f.textarea('body', 'Message', { required: true, help: 'Over 160 characters is billed as multiple segments.' }), TWILIO_FROM], outputs: DELIVERY_OUTPUTS,
+      request: {
+        method: 'POST',
+        url: 'https://api.twilio.com/2010-04-01/Accounts/{{secret.TWILIO_ACCOUNT_SID}}/Messages.json',
+        auth: { type: 'basic', userSecret: 'TWILIO_ACCOUNT_SID', passSecret: 'TWILIO_AUTH_TOKEN' },
+        encoding: 'form',
+        body: { To: '{{to}}', From: TWILIO_SENDER, Body: '{{body}}' },
+        outputs: { messageId: 'sid', status: 'status', sentAt: 'date_created' },
+        errorPath: 'message',
+        requires: ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
+      } },
+    { op: 'send_whatsapp', name: 'Send a WhatsApp message', summary: 'Sends a WhatsApp message through Twilio.', fields: [f.expr('to', 'To', { required: true }), f.textarea('body', 'Message', { required: true }), TWILIO_FROM], outputs: DELIVERY_OUTPUTS,
+      request: {
+        method: 'POST',
+        url: 'https://api.twilio.com/2010-04-01/Accounts/{{secret.TWILIO_ACCOUNT_SID}}/Messages.json',
+        auth: { type: 'basic', userSecret: 'TWILIO_ACCOUNT_SID', passSecret: 'TWILIO_AUTH_TOKEN' },
+        encoding: 'form',
+        // WhatsApp is the same endpoint with a scheme on both numbers; the
+        // executor cannot know that, so the descriptor says it.
+        body: { To: 'whatsapp:{{to}}', From: { $first: ['whatsapp:{{from}}', 'whatsapp:{{secret.TWILIO_FROM_NUMBER}}'] }, Body: '{{body}}' },
+        outputs: { messageId: 'sid', status: 'status', sentAt: 'date_created' },
+        errorPath: 'message',
+        requires: ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
+      } },
+    { op: 'make_call', name: 'Place a call', summary: 'Calls a number and plays a message or connects an agent.', fields: [f.expr('to', 'To', { required: true }), f.textarea('say', 'Say', { help: 'Read aloud when the call connects.' }), TWILIO_FROM], outputs: outs('callSid:string:Call ID', 'status:string'),
+      request: {
+        method: 'POST',
+        url: 'https://api.twilio.com/2010-04-01/Accounts/{{secret.TWILIO_ACCOUNT_SID}}/Calls.json',
+        auth: { type: 'basic', userSecret: 'TWILIO_ACCOUNT_SID', passSecret: 'TWILIO_AUTH_TOKEN' },
+        encoding: 'form',
+        // Twilio wants TwiML, not prose. Wrapping it here keeps the field a
+        // plain "what should it say" rather than teaching everyone an XML dialect.
+        body: { To: '{{to}}', From: TWILIO_SENDER, Twiml: '<Response><Say>{{say}}</Say></Response>' },
+        outputs: { callSid: 'sid', status: 'status' },
+        errorPath: 'message',
+        requires: ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
+      } },
     { op: 'sms_received', kind: 'trigger', name: 'SMS received', summary: 'Runs when someone texts your Twilio number.', fields: [], outputs: outs('from:string', 'body:string', 'messageSid:string:Message ID', 'receivedAt:string:Received at') },
   ]),
 

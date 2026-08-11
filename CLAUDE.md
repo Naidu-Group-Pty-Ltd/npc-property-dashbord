@@ -59,10 +59,11 @@ shims onto it. Those modules must parse under Deno: no `@/` aliases, explicit
 
 Two things the doc records that keep biting. **Nothing is captured unless a live
 workflow listens for it**, so an empty `workflow_trigger_events` on a deployment
-with no live workflows is correct rather than broken. And **live execution
-performs 8 of 252 catalog steps** — everything else simulates and says so;
-extending it is per-vendor work, and a new vendor call that skips
-`_shared/meteredFetch.ts` is billed to nobody.
+with no live workflows is correct rather than broken. And **what can run live is
+derived from the catalog, never listed**: an operation is runnable because it
+declares a `request` descriptor (`httpRequest.pure.ts`), so adding a vendor is a
+declaration beside the operation rather than a change to the executor — and a
+new vendor call that skips `_shared/meteredFetch.ts` is billed to nobody.
 
 ## API usage metering (this deployment may be spending someone else's money)
 A workspace provisioned by Aurixa Mission Control boots with the **prime's own
