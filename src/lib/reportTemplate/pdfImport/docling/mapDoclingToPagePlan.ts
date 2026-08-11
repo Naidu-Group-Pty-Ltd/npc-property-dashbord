@@ -27,6 +27,8 @@ import { deriveNativeHeaderPolicy, TABLE_PRESERVATION_VERSION } from '../tableAr
 import { CHART_ARBITRATION_VERSION as CHART_PRESERVATION_VERSION } from '../chartArbitration.pure';
 import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pure';
 import { resolveTextWrapping } from '../resolveTextWrapping.pure';
+import { alignBoxToSourceBaseline, type FontVerticalMetrics } from '../firstBaseline.pure';
+import { fontLookupKey } from '../fontResolver';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
 
@@ -49,6 +51,12 @@ export interface DoclingPlanOptions {
   sourceChartsByPage?: Record<number, BridgedChart[]>;
   /** R1 — width measurer for tracked-text spacing derivation (browser: canvas). */
   measureTextWidth?: import('../detrackText.pure').WidthMeasurer | null;
+  /**
+   * D1 — per-source-font vertical metrics, keyed the same way as
+   * `embeddedFontFamilies`. Needed to place a block by its BASELINE rather than
+   * by its ink top; without them the block stays where the source's box put it.
+   */
+  fontMetrics?: Record<string, FontVerticalMetrics>;
 }
 
 // Phase 4: lowered 0.7 → 0.6 now that reconstruction (vectors/typography/fonts) is
@@ -103,6 +111,15 @@ function promotePicturesToCharts(
   });
 }
 
+/** Metrics for a source font, keyed exactly as `embeddedFontFamilies` is. */
+function lookupFontMetrics(
+  sourceFont: string | undefined,
+  metrics: Record<string, FontVerticalMetrics> | undefined,
+): FontVerticalMetrics | null {
+  if (!sourceFont || !metrics) return null;
+  return metrics[fontLookupKey(sourceFont)] ?? null;
+}
+
 function pageId(pageNo: number): string {
   return `docling-page-${pageNo}`;
 }
@@ -114,7 +131,7 @@ function overlayId(block: RawImportBlock, suffix = 'ov'): string {
 function blockToOverlay(
   block: RawImportBlock,
   locked: boolean,
-  opts: Pick<DoclingPlanOptions, 'measureTextWidth'> = {},
+  opts: Pick<DoclingPlanOptions, 'measureTextWidth' | 'fontMetrics'> = {},
 ): Overlay | null {
   // Phase B: prefer alt-text / caption for the human-readable layer label.
   const layerName = (block.meta?.altText
@@ -165,8 +182,25 @@ function blockToOverlay(
       sourceAlign: block.style?.textAlign ?? null,
       measure: opts.measureTextWidth,
     });
+    // D1 — place the block by its BASELINE, not by its ink top.
+    //
+    // The box's top is where the source's ink starts; CSS puts the first
+    // baseline a full ascent plus half the leading below the box top, and
+    // ascent sits well above the cap line. Every imported line therefore
+    // rendered ~0.36em low — 2.5pt at 6.75pt type and 12.3pt at 34.5pt, which
+    // looked like an outlier and is the same constant. Solving the renderer's
+    // own formula for the box position removes it exactly; see
+    // firstBaseline.pure.ts for the measurement behind the formula.
+    const aligned = alignBoxToSourceBaseline(
+      base.y,
+      block.meta?.sourceFirstBaselineY,
+      lookupFontMetrics(block.meta?.sourceFont, opts.fontMetrics),
+      fontSize,
+      lineHeight,
+    );
     const overlay: TextOverlay = {
       ...base,
+      ...(aligned ? { y: aligned.y } : {}),
       type: 'text',
       content: block.text ?? '',
       fontFamily,

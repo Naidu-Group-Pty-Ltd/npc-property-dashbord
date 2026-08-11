@@ -221,6 +221,16 @@ export interface DoclingEmbeddedFont {
    * the renderer acts on.
    */
   cmapRepairedCodepoints?: number;
+  /**
+   * D1: the program's own hhea metrics, in em (descender as a magnitude).
+   *
+   * CSS puts a line's first baseline at
+   * `(lineHeight - (ascender + descender)) / 2 + ascender` below the box top,
+   * so these are what let the importer place a block by its BASELINE instead of
+   * by its ink top. Absent on pre-D1 sidecar payloads.
+   */
+  ascender?: number;
+  descender?: number;
 }
 
 export interface DoclingPageSize {

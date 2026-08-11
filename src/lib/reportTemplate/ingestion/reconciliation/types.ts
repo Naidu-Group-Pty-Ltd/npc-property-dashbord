@@ -150,6 +150,14 @@ export interface RawImportBlock {
      * source wrap here" actually asks.
      */
     sourceBaselineCount?: number;
+    /**
+     * Baseline of the FIRST source line, in page points (`source-measure-v2`).
+     *
+     * The box's top is the top of the INK; CSS puts the first baseline a full
+     * ascent plus half-leading below the box top, which is lower. This is the
+     * one number that lets the two be reconciled without guessing a cap height.
+     */
+    sourceFirstBaselineY?: number;
     /** Phase 3: original source PostScript font name (pre-resolution). */
     sourceFont?: string;
     /** Phase 3: true when the source font was not catalog-known and was substituted. */

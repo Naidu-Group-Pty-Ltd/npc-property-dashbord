@@ -146,7 +146,7 @@ SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
 # no longer reports justify for a two-line block. A cached artifact carries the
 # old meaning under the same key, so the version has to move or the cache serves
 # it. See _infer_alignment / MIN_JUSTIFY_LINES.
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v2+coverage-ranges-v1+align-v2+cmap-repair-v1"
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v2+coverage-ranges-v1+align-v2+cmap-repair-v1+font-metrics-v1"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -1364,6 +1364,21 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                             entry["mimetype"] = "font/ttf" if e2 == "ttf" else "font/otf"
                             font = fitz.Font(fontbuffer=buf)
                             entry["glyphCount"] = int(getattr(font, "glyph_count", 0) or 0)
+                            # D1 — the font's own hhea ascent/descent, in em.
+                            #
+                            # CSS puts a line's first baseline at
+                            # `(lineHeight - (ascent + descent))/2 + ascent`
+                            # below the box, so without these the client cannot
+                            # know where its text will actually sit and places
+                            # every block by its ink top instead — which lands
+                            # ~0.36em low, on every line of every page.
+                            _asc = float(getattr(font, "ascender", 0.0) or 0.0)
+                            _desc = float(getattr(font, "descender", 0.0) or 0.0)
+                            if _asc > 0:
+                                entry["ascender"] = round(_asc, 6)
+                                # hhea descent is negative; ship the magnitude,
+                                # which is what the CSS formula adds.
+                                entry["descender"] = round(abs(_desc), 6)
                             hits = sum(1 for c in "AaEeRrTtOoNnIiSs" if font.has_glyph(ord(c)))
                             # Telemetry only. As a GATE this heuristic wrongly
                             # rejected any subset missing the probe letters — an

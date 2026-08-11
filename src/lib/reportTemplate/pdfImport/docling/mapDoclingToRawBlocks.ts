@@ -474,6 +474,11 @@ function textItemToBlock(
         const rows = countDistinctBaselines(sourceLines);
         return rows ? { sourceBaselineCount: rows } : {};
       })(),
+      // D1 — where the source's FIRST line actually sits. The sidecar sorts
+      // the matched lines by baseline, so [0] is the topmost.
+      ...(Number.isFinite(Number(sourceLines?.[0]?.baselineYPt))
+        ? { sourceFirstBaselineY: Number(sourceLines![0]!.baselineYPt) }
+        : {}),
       ...(sourceFont ? { sourceFont } : {}),
       ...(!embeddedFamily && fontResolution?.substituted ? { fontSubstituted: true } : {}),
     },

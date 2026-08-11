@@ -57,7 +57,10 @@ const ENGINE = 'docling';
 // +cmap-repair-v1: the embedded font BYTES changed. A subset's cmap need not
 // address every glyph it carries, and a cached program still cannot — serving
 // one would put the fallback typeface back mid-word.
-const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v2+align-v2+cmap-repair-v1';
+//
+// +font-metrics-v1: per-font hhea ascent/descent, without which the importer
+// cannot place a block by its baseline and every line lands ~0.36em low.
+const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v2+align-v2+cmap-repair-v1+font-metrics-v1';
 const ARTIFACT_CONTRACT_VERSION = 'raster-manifest-v1';
 const DOCLING_PAGE_REBASE_VERSION = 'chunk-page-rebase-v1';
 const CHUNK_MERGE_VALIDATION_VERSION = 'chunk-merge-validation-v1';
