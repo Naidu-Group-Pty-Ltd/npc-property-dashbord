@@ -546,8 +546,10 @@ describe('the NPC capture journey', () => {
       fireEvent.click(await screen.findByRole('button', { name: /send securely/i }));
     });
 
-    // Twice on the page: the card title and the live region. Both are meant.
-    expect(await screen.findAllByText(/checking your identity/i)).not.toHaveLength(0);
+    // Once, in the live region. The card title stays neutral: a browser run
+    // showed the state printed twice one line apart, which reads as a
+    // rendering fault rather than as emphasis.
+    expect(await screen.findByText(/checking your identity/i)).toBeTruthy();
     expect(await screen.findByText(/keep this page open, or come back later/i)).toBeTruthy();
     expect(await screen.findByRole('button', { name: /back to identity/i })).toBeTruthy();
   });
@@ -566,9 +568,43 @@ describe('the NPC capture journey', () => {
     fireEvent.click(screen.getByRole('button', { name: /check progress/i }));
     await act(async () => { await Promise.resolve(); });
 
-    expect(await screen.findAllByText(/checking your identity/i)).not.toHaveLength(0);
+    expect(await screen.findByText(/checking your identity/i)).toBeTruthy();
     expect(screen.queryByText(/which identity document will you use/i)).toBeNull();
   });
+
+  it('leaves the waiting state when the server says the check has settled', async () => {
+    /*
+     * The defect a browser found and jsdom did not.
+     *
+     * The sub-screen was handed the party as it stood when Start was pressed,
+     * and that object never changed again. The polling worked, the server
+     * settled, and the customer sat on "Checking your identity" for ever —
+     * because nothing was reading the answer. The step now re-derives the live
+     * party from the latest read on every render.
+     */
+    mockCamera();
+    verificationStatus.mockResolvedValue(status({
+      parties: [{ ...party, verification_in_progress: true }],
+    }));
+    stubCanvas();
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /check progress/i }));
+    await act(async () => { await Promise.resolve(); });
+    expect(await screen.findByText(/checking your identity/i)).toBeTruthy();
+
+    // The processor finishes. The next poll carries the settled party.
+    verificationStatus.mockResolvedValue(status({
+      parties: [{
+        ...party, status: 'verified', can_attempt: false, verification_in_progress: false,
+      }],
+    }));
+
+    await waitFor(
+      async () => expect(await screen.findByText(/verification received/i)).toBeTruthy(),
+      { timeout: 8000 },
+    );
+  }, 15000);
 
   it('never shows the customer a provider window, frame or brand', async () => {
     mockCamera();

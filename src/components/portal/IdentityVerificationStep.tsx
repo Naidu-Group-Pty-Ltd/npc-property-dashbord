@@ -325,10 +325,27 @@ export function IdentityVerificationStep({
    * rather than a part of it.
    */
   if (checking) {
+    /**
+     * The LIVE party, re-read from the latest server state.
+     *
+     * `checking` is the party as it stood when the customer pressed Start, and
+     * it never changes again — so a sub-screen given it directly is looking at
+     * a snapshot. Found in a browser and not in jsdom: the capture screen
+     * polls, the poll refreshes `state`, and the customer sat on "Checking your
+     * identity" for ever because the object they were being judged against
+     * still said the check was in flight. The polling worked; nothing was
+     * reading its answer.
+     *
+     * Falls back to the snapshot if the party has gone from the list, which
+     * would otherwise unmount the screen out from under somebody mid-capture.
+     */
+    const live = state.parties.find(
+      (p) => (p.party_id ?? null) === (checking.party_id ?? null)) ?? checking;
+
     return (state.provider_flow ?? 'capture') === 'hosted' ? (
       <SecureIdentityCheck
         caseId={caseId}
-        party={checking}
+        party={live}
         maxAttempts={state.max_attempts}
         onRefresh={load}
         onExit={async () => { setChecking(null); await load(); }}
@@ -336,7 +353,7 @@ export function IdentityVerificationStep({
     ) : (
       <SecureCaptureCheck
         caseId={caseId}
-        party={checking}
+        party={live}
         maxAttempts={state.max_attempts}
         onRefresh={load}
         onExit={async () => { setChecking(null); await load(); }}
@@ -1384,11 +1401,18 @@ function SecureCaptureCheck({
   const captureStage = stage === 'document_front' || stage === 'document_back'
     || stage === 'selfie' ? stage : null;
 
-  const title = stage === 'choose' || stage === 'brief' ? 'Verify your identity'
-    : stage === 'processing' ? 'Checking your identity'
-      : stage === 'received' ? 'Verification received'
-        : captureStage ? CAPTURE_COPY[captureStage].title
-          : 'Verify your identity';
+  /**
+   * The card heading.
+   *
+   * Deliberately NEUTRAL for the two waiting states. The state itself is
+   * carried by the live region below, which is the element a screen reader is
+   * told about — putting it in the title as well printed "Checking your
+   * identity" twice, one line apart, which reads as a rendering fault rather
+   * than emphasis. Seen in a browser; jsdom queries do not notice a duplicate.
+   */
+  const title = captureStage ? CAPTURE_COPY[captureStage].title
+    : stage === 'processing' || stage === 'received' ? 'Identity verification'
+      : 'Verify your identity';
 
   return (
     <Card>
