@@ -243,10 +243,94 @@
       "deployed": false,
       "live_negative_test": false,
       "residual_risk": "WP-11B Phase 1 (backend cookie hardening) is source-fixed. `createSessionCookie()` now emits `__Host-session_token` (RFC 6265bis host-prefix; browsers enforce Secure, Path=/, no Domain). `extractSessionToken()` dual-reads `__Host-session_token` then falls back to legacy `session_token` for the migration window. `createClearSessionCookies()` clears BOTH names on logout so a legacy cookie cannot resurrect a session. **Not deployed** until every login/refresh issuer (`auth-login`, `auth-refresh-session`, `portal-login`, `finance-portal-login`, `security-step-up`) is redeployed and the frontend (`useAuth`, `useAuthenticatedSupabase`, `useFinancePortalAuth`) stops persisting the raw token in `sessionStorage`/`localStorage` and starts sending `credentials: 'include'` on every edge-function call. Rollout sequence and file inventory documented in `docs/security/WP11BC_COOKIE_ONLY_ROLLOUT.md`. Still owed: (a) redeploy issuers so new logins land on `__Host-` cookie; (b) frontend storage-token removal; (c) CORS credentials audit; (d) live negative tests (cookie without matching Origin, cookie replay across portal, idle-expired session, `credentials: 'include'` audit, `__Host-` cookie without Secure rejected by browser)."
+    },
+    {
+      "finding_id": "WP-16-GATE-WIRING",
+      "severity": "high",
+      "file_or_function": "scripts/security/check-gates-wired.mjs; .github/workflows/ci.yml",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": true,
+      "live_negative_test": false,
+      "residual_risk": "Twelve gates existed and were named by nothing; four failed on first run, two on live defects (credentialed wildcard CORS on three push endpoints; solicitor portfolio reads that skipped the per-client permission matrix). Gates now run and a meta-gate keeps them wired. The two gate-drift failures argue for periodically re-reading every literal-matching assertion, not just watching for green."
+    },
+    {
+      "finding_id": "WP-17-MIGRATION-SECURITY",
+      "severity": "high",
+      "file_or_function": "scripts/security/check-migration-security.mjs; supabase/migrations/20260909000000_wp17_secdef_drift_remediation.sql",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "Gate is live in CI; the remediation migration is AUTHORED AND UNAPPLIED, so the live advisor still reads 2 security_definer_view, ~96 secdef-executable and 5 mutable search_path until it is deployed. Pre-baseline migration debt (386/76/13) is grandfathered by design."
+    },
+    {
+      "finding_id": "WP-18-ERROR-DISCLOSURE",
+      "severity": "high",
+      "file_or_function": "supabase/functions/_shared/errorResponse.ts; scripts/security/check-error-disclosure.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": true,
+      "live_negative_test": false,
+      "residual_risk": "249 literals in 245 functions rewritten and gated at zero tolerance for 5xx. 16 non-5xx sites still echo a caught error under reviewed exemptions. 4xx bodies are unchanged in bulk: a validation message quoting a constraint name would still leak and no gate catches that."
+    },
+    {
+      "finding_id": "WP-19-CORS-CONTRACT",
+      "severity": "high",
+      "file_or_function": "supabase/functions/_shared/auth.ts; scripts/security/check-cors-contract.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": true,
+      "live_negative_test": false,
+      "residual_risk": "Ten browser-session functions moved onto the allowlist; 29 keep a wildcard by exposure class, now enforced rather than incidental. DEPLOYMENT RISK: ALLOWED_ORIGINS now fails closed when unset. If it is unset on the deployed project, credentialed responses stop being trusted for the two legacy origins until it is set or CORS_ALLOW_LEGACY_FALLBACK_ORIGINS=true is applied. Cannot be verified from the repository."
+    },
+    {
+      "finding_id": "WP-20-VALIDATION-AND-WRITES",
+      "severity": "high",
+      "file_or_function": "supabase/functions/_shared/validate.ts; _shared/amlWritableColumns.ts; scripts/security/check-mass-assignment.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": true,
+      "live_negative_test": false,
+      "residual_risk": "Five AML writes allowlisted; 51 request-derived writes across 26 files remain, capped by a baseline. parseJsonBody has no call sites yet, so the count of schema-validated edge functions is still 2 of 419."
+    },
+    {
+      "finding_id": "WP-21-SUPPLY-CHAIN",
+      "severity": "high",
+      "file_or_function": "package.json (xlsx); .github/dependabot.yml; scripts/security/dependency-audit.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": true,
+      "live_negative_test": false,
+      "residual_risk": "Both xlsx advisories closed by moving to the vendor's patched 0.20.3, and they were reachable — XLSX.read parses user-uploaded files. NEW FAILURE MODE: npm ci now requires cdn.sheetjs.com. image-size/pptxgenjs accepted with a 2026-11-04 review date; the migration off xlsx to exceljs (21 files, sync to async) remains the cleaner long-term answer."
+    },
+    {
+      "finding_id": "WP-22-RLS-RESIDUE",
+      "severity": "high",
+      "file_or_function": "supabase/migrations/20260909001000_wp22_rls_residue.sql; _shared/passwordValidation.ts",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "AUTHORED AND UNAPPLIED. email_copilot_emails still accepts an anon INSERT on the live project until it is deployed, and five browser-read tables still return nothing. The module keys in the new policies need confirming against how each screen is gated — a wrong key leaves the read denied. notifications targeting (as opposed to attribution) is still open and needs the edge-function mediation RLS_WARNING_TIER_REMEDIATION.md specified. Password minimum is 12 in source. Two owner actions remain: enable Auth leaked-password protection, and take the Postgres 17.4.1.074 security upgrade."
+    },
+    {
+      "finding_id": "WP-23-LIVE-VERIFICATION",
+      "severity": "high",
+      "file_or_function": ".github/workflows/security-negative-tests.yml; scripts/security/wp15-negative-tests.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "Runner is wired and extended to 10 rows (NT-37..NT-40 added) but HAS NEVER BEEN RUN: docs/security/wp15-evidence/ does not exist and every live_negative_test flag in this file is still false. Needs SUPABASE_URL, SUPABASE_ANON_KEY and a genuine non-superadmin NON_SUPERADMIN_JWT on a production-verification environment. 26 of the 36 original matrix rows still need a portal session, provider fixtures or a second tenant."
     }
   ]
 }
-
-
-
-
