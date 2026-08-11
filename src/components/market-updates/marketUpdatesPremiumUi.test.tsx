@@ -75,8 +75,13 @@ describe('Market News Feed premium visual contract', () => {
     renderPage();
     expect(screen.getByRole('heading', { level: 1, name: 'Market News Feed' })).toBeInTheDocument();
     expect(screen.getByText('Aurixa market intelligence')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/10\/12 sources live/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/ingested/i)).toBeInTheDocument());
+    // The registry chips (sources live / in shadow / failing) are deliberately absent.
+    expect(screen.queryByText(/sources live/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/in shadow/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ failing/i)).not.toBeInTheDocument();
   });
+
 
   it('renders the weighted KPI tiles as filter buttons', async () => {
     renderPage();
