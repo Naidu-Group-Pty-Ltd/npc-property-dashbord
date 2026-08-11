@@ -44,6 +44,19 @@ const DIDIT_CLIENT = readFileSync(
   'supabase/functions/_shared/aml/providers/diditClient.ts', 'utf8');
 const STEP = readFileSync('src/components/portal/IdentityVerificationStep.tsx', 'utf8');
 const RETURN_PAGE = readFileSync('src/pages/portal/PortalIdentityReturn.tsx', 'utf8');
+/**
+ * Source with comments removed.
+ *
+ * Several assertions here are "this identifier must not appear", and the
+ * comments explaining why it must not appear necessarily contain it — the
+ * hosted-cutover notes in particular. Strip them so the assertion reads code.
+ */
+function codeOnly(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
 const PORTAL_API = readFileSync('src/lib/aml/amlPortalApi.ts', 'utf8');
 
 /* ─────────────────────── the closed list of documents ────────────────────── */
@@ -220,9 +233,12 @@ describe('the session handler allow-lists the browser and nothing more', () => {
   });
 
   it('never lets the browser name a workflow, provider or environment', () => {
+    // Against code, not prose: since the hosted cutover both modules carry a
+    // comment recording that server-side settlement (didit-webhook) survives
+    // the removal of the capture UI.
     for (const source of [PORTAL_API, STEP]) {
-      expect(source).not.toMatch(/workflow_id/);
-      expect(source).not.toMatch(/didit/i);
+      expect(codeOnly(source)).not.toMatch(/workflow_id/);
+      expect(codeOnly(source)).not.toMatch(/didit/i);
     }
   });
 });
@@ -351,12 +367,21 @@ describe('the callback is a receipt, never a result', () => {
     expect(RETURN_PAGE).toMatch(/postMessage\(RETURN_NOTICE, window\.location\.origin\)/);
   });
 
-  it('the step acts on a return message by re-reading the server and nothing else', () => {
-    expect(STEP).toMatch(/if \(event\.origin !== window\.location\.origin\) return;/);
-    expect(STEP).toMatch(/data\.type !== RETURN_NOTICE_TYPE\) return;/);
-    // The only two statements in the handler: say we are checking, and ask.
-    expect(STEP).toMatch(/setPhase\('returned'\);\s*\n\s*void onRefresh\(\);/);
-    expect(STEP).not.toMatch(/data\.(status|verified|decision|outcome|result)/);
+  it('has no return-message handler, because nothing can message it', () => {
+    /*
+     * There used to be one, bounded to NPC's own origin and able only to
+     * re-read server state. It existed because a window NPC had opened needed
+     * a way to say "the customer came back".
+     *
+     * The hosted cutover removed the window, so there is no opener, no return
+     * page in the customer's path and nothing that could speak. The listener
+     * went with it — and its absence is a narrower boundary than its most
+     * careful version was.
+     */
+    const code = codeOnly(STEP);
+    expect(code).not.toMatch(/event\.origin/);
+    expect(code).not.toContain('RETURN_NOTICE_TYPE');
+    expect(code).not.toMatch(/addEventListener\('message'/);
   });
 
   it('the step holds no path from a browser event to a verification status', () => {
@@ -383,15 +408,20 @@ describe('the provider no longer runs inside NPC', () => {
     expect(STEP).not.toMatch(/'camera',\s*\n\s*'microphone'/);
   });
 
-  it('opens a top-level window synchronously, before the session call', () => {
-    // The rule the whole flow rests on: a window opened after an `await` is an
-    // unsolicited popup and browsers block it on default settings.
-    const begin = STEP.slice(STEP.indexOf('const beginCheck'));
-    const openAt = begin.indexOf("window.open('', CHECK_WINDOW_TARGET");
-    const awaitAt = begin.indexOf('await amlPortalApi.startHostedVerification');
-    expect(openAt).toBeGreaterThan(-1);
-    expect(awaitAt).toBeGreaterThan(-1);
-    expect(openAt).toBeLessThan(awaitAt);
+  it('opens no window at all — the popup rule no longer has anything to govern', () => {
+    /*
+     * This used to assert the ordering the whole hosted flow rested on: open
+     * the window synchronously inside the click, THEN await the session, or
+     * browsers classify it as an unsolicited popup and block it.
+     *
+     * The cutover removed the reason for the rule. A customer is never sent to
+     * a provider's page, so there is no window to open early, and the property
+     * worth holding is the absolute one.
+     */
+    const code = codeOnly(STEP);
+    expect(code).not.toMatch(/window\s*\.\s*open\s*\(/);
+    expect(code).not.toContain('CHECK_WINDOW_TARGET');
+    expect(code).not.toContain('startHostedVerification');
   });
 
   it('never writes the session URL to storage or a log', () => {

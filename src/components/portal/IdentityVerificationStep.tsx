@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Loader2, ShieldCheck, CheckCircle2, AlertTriangle, Camera, ArrowRight, ArrowLeft, RefreshCw,
-  ExternalLink, Clock,
+  Clock,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -60,10 +60,11 @@ const UNAVAILABLE_CODES = [
   'temporarily_unavailable',
   'attempts_exhausted',
   'already_processing',
-  // The server switched to a hosted provider while this dialog was open. Not a
-  // capture failure — hand it back to the step, which re-reads and renders the
-  // hosted flow instead.
+  // The server refused because the retired hosted flow is still configured for
+  // this tenant. Not a capture failure and never something the customer did —
+  // the step re-reads and renders the documentary route.
   'hosted_verification_required',
+  'hosted_flow_retired',
   // The active capture integration changed under us — the tenant moved between
   // the prepared-attempt journey and the older single-shot one. Also not a
   // capture failure, and never something the customer did.
@@ -271,10 +272,29 @@ export function IdentityVerificationStep({
   const allSettled = state.parties.every(
     (p) => p.status === 'verified' || p.status === 'in_review' || p.status === 'contact_adviser');
 
+  /**
+   * A backend that still says `hosted` is treated as UNAVAILABLE, never obeyed.
+   *
+   * The hosted capture UI is gone from this bundle, so there is nothing to
+   * render for that answer even if we wanted to. What matters is that the
+   * customer still gets somewhere real: the documentary route, which is a way
+   * to finish their onboarding rather than an error.
+   *
+   * This is the defence-in-depth line. A stale deployment, a tenant left on the
+   * retired provider, or a response from a server older than the cutover all
+   * arrive here — and the worst case is a customer told to upload their
+   * document, which is true and actionable, instead of a window opening on
+   * somebody else's website.
+   */
+  const hostedRetired = (state.provider_flow ?? 'capture') === 'hosted';
+  if (hostedRetired) reportRetiredHostedFlow(caseId);
+
   // The server refuses a selfie upload URL unless a live provider can examine
   // the result. Honour that here rather than offering a capture that ends in a
   // 409 — the same contradiction the request router was fixed to avoid.
-  const availability = state.availability ?? 'available';
+  const availability = hostedRetired
+    ? 'temporarily_unavailable'
+    : (state.availability ?? 'available');
   if (availability !== 'available') {
     return (
       <Card>
@@ -342,15 +362,16 @@ export function IdentityVerificationStep({
     const live = state.parties.find(
       (p) => (p.party_id ?? null) === (checking.party_id ?? null)) ?? checking;
 
-    return (state.provider_flow ?? 'capture') === 'hosted' ? (
-      <SecureIdentityCheck
-        caseId={caseId}
-        party={live}
-        maxAttempts={state.max_attempts}
-        onRefresh={load}
-        onExit={async () => { setChecking(null); await load(); }}
-      />
-    ) : (
+    /*
+     * There is exactly one branch, and that is the point.
+     *
+     * This used to choose between the capture journey and a hosted screen that
+     * opened the provider's own page in a new window. A backend saying `hosted`
+     * now reaches `hostedRetired` above, before this line, and never gets here
+     * — but even if it did, the only thing that can be rendered is NPC's own
+     * camera. A popup is not reachable from any state of this component.
+     */
+    return (
       <SecureCaptureCheck
         caseId={caseId}
         party={live}
@@ -415,16 +436,13 @@ export function IdentityVerificationStep({
                     trace of the window on this side.
                   */}
                   {/*
-                    "In progress" means two different things in the two flows,
-                    and the customer is owed the right one. Under the hosted
-                    flow a window is still open and they have something to go
-                    back to; under the capture flow their photographs are with
-                    us and there is nothing for them to do.
+                    "Continue verification" is gone with the flow it belonged
+                    to. It meant "your window is still open" — and there is no
+                    window any more, so the only honest label for work in
+                    flight is one that offers to show progress.
                   */}
                   {party.verification_in_progress ? (
-                    (state.provider_flow ?? 'capture') === 'hosted'
-                      ? <><Clock className="mr-1.5 h-3.5 w-3.5" /> Continue verification</>
-                      : <><Clock className="mr-1.5 h-3.5 w-3.5" /> Check progress</>
+                    <><Clock className="mr-1.5 h-3.5 w-3.5" /> Check progress</>
                   ) : party.attempts_used > 0 ? (
                     <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Try again</>
                   ) : (
@@ -436,11 +454,8 @@ export function IdentityVerificationStep({
 
             {party.verification_in_progress && party.can_attempt && (
               <p className="mt-3 text-xs text-muted-foreground">
-                {(state.provider_flow ?? 'capture') === 'hosted'
-                  ? 'Your secure identity check is still open. Continue where you left off — '
-                    + 'nothing has been used up.'
-                  : 'We are checking the photos you sent. You do not need to do anything — '
-                    + 'nothing has been used up, and we will show the result here.'}
+                We are checking the photos you sent. You do not need to do anything — nothing has
+                been used up, and we will show the result here.
               </p>
             )}
 
@@ -483,586 +498,55 @@ export function IdentityVerificationStep({
   );
 }
 
-/* ────────────────────── the secure identity check ───────────────────────── */
+/* ─────────────────── the hosted flow, and why it is gone ─────────────────── */
 
 /**
- * NPC's identity check, with the provider reduced to one short errand.
+ * There is no hosted verification component here any more, and that absence is
+ * the feature.
  *
- * ## What changed and why
+ * ## What was here
  *
- * The provider's flow used to be embedded in an iframe inside this step. That
- * put a third-party application inside NPC's own page — a customer could see
- * another product's chrome, its language and its errors framed as ours, and the
- * hosted flow owned far more of the visible journey than the one thing it is
- * actually needed for. It now runs where a payment authorisation runs: a
- * separate top-level window that opens, does its job, and goes away. NPC owns
- * the document choice, the instructions, the waiting state and the return.
+ * `SecureIdentityCheck` — a screen that opened a separate top-level window at
+ * the provider's own session URL, painted a placeholder into it, polled for it
+ * closing, and listened for a return message. It existed so that hosted
+ * sessions opened before the Standalone cutover could still be completed by the
+ * customer who started them.
  *
- * ## It still cannot report an outcome
+ * ## Why it was deleted rather than disabled
  *
- * Nothing in this component can mark anybody verified, and there is no field it
- * could read that would let it. The window closing, the return page messaging
- * us, the customer pressing a button — every one of them does exactly one
- * thing: re-read what NPC's own server already knows. The identity decision
- * arrives on a signed server-to-server webhook and is re-fetched from the
- * provider over an authenticated call before it settles anything.
+ * That grandfathering was revoked as a product decision: no customer may be
+ * sent to a verification vendor's page again. A component that is merely
+ * unreachable is one branch away from being reachable — a stale server, a
+ * misconfigured tenant, a future refactor of the flow token. Deleting it makes
+ * the guarantee structural: there is no code in this bundle that can open a
+ * window, so no state of the backend can produce one.
  *
- * ## The popup rule
+ * ## What deliberately still exists, server-side
  *
- * A window opened after an `await` is an unsolicited popup and browsers block
- * it. So `beginCheck` opens a BLANK window synchronously inside the click,
- * then asks the backend for a session, then points the window it already has
- * at the result. Getting that order wrong is not a subtle degradation — it is
- * the whole flow failing on default settings in Safari and Firefox.
+ * Nothing about hosted RESULTS was removed. `didit-webhook`, the decision
+ * parsing, the correlation rules and every historical `provider = 'didit'` row
+ * are untouched: a late signed outcome for a session that was already completed
+ * is still accepted and still settles the canonical record. Retiring the
+ * capture UI is not erasing the evidence.
  */
-
-/** One named window. A second open with the same name re-uses it, not clones it. */
-const CHECK_WINDOW_TARGET = 'npc-secure-identity-check';
 
 /**
- * The message the return page sends its opener.
+ * A backend said `hosted`. Report it; never act on it.
  *
- * Matched exactly, from this origin only, and it carries no status because
- * there is nothing this component would be allowed to do with one. It means
- * "the customer came back" and its only effect is a re-read.
- */
-const RETURN_NOTICE_TYPE = 'npc:identity-return';
-
-type CheckPhase =
-  /** Nothing chosen yet. */
-  | 'choose'
-  /** Document chosen; showing what to have ready. */
-  | 'brief'
-  /** Window open, session being minted. */
-  | 'opening'
-  /** Window open on the provider's capture page. */
-  | 'open'
-  /** The browser refused the window. Recoverable with one press. */
-  | 'blocked'
-  /** The window went away before the customer returned. Not a failure. */
-  | 'closed'
-  /** They came back. NPC is waiting on its own server, not on them. */
-  | 'returned';
-
-/** A separate, centred window — deliberately not a tab, and never an iframe. */
-function checkWindowFeatures(): string {
-  const width = 460;
-  const height = 780;
-  const screenWidth = window.screen?.width ?? width;
-  const screenHeight = window.screen?.height ?? height;
-  const left = Math.max(0, Math.round((screenWidth - width) / 2));
-  const top = Math.max(0, Math.round((screenHeight - height) / 2));
-  // `popup=yes` asks desktop browsers for a window rather than a tab. Mobile
-  // browsers ignore the geometry and open a tab, which is the right behaviour
-  // there and is why nothing below assumes a window exists beside this one.
-  return `popup=yes,width=${width},height=${height},left=${left},top=${top},`
-    + 'resizable=yes,scrollbars=yes';
-}
-
-/**
- * Something to look at while the session is minted.
+ * Defence in depth for the one thing this hotfix exists to make impossible. A
+ * stale deployment, a tenant still configured for the retired provider, or a
+ * response from a version of the server that predates the cutover all land
+ * here — and all of them get the documentary route, which is a real way
+ * forward, rather than a popup.
  *
- * Without it the customer stares at `about:blank` for as long as the round
- * trip takes, which reads as a broken window rather than a loading one. Wrapped
- * because a browser may refuse to let us write into the new document, and that
- * is cosmetic — the navigation that follows still works.
+ * Console only. This is an operator signal, not something to put in front of
+ * the customer, and it carries no session, URL or provider.
  */
-function paintPlaceholder(win: Window): void {
-  try {
-    win.document.write(
-      '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
-      + '<title>Secure identity check</title></head>'
-      /*
-       * No colours. This document lives for one round trip in a window that
-       * has none of NPC's stylesheets, so a brand colour here could only be a
-       * hardcoded hex — and the design tokens are the single source for those.
-       * Default browser styling is correct for a page nobody should have time
-       * to read.
-       */
-      + '<body style="margin:0;display:flex;align-items:center;justify-content:center;'
-      + 'height:100vh;font:16px/1.5 system-ui,sans-serif">'
-      + 'Preparing your secure identity check…</body></html>',
-    );
-    win.document.close();
-  } catch { /* not writable here; the window is still usable */ }
-}
-
-function SecureIdentityCheck({
-  caseId, party, maxAttempts, onRefresh, onExit,
-}: {
-  caseId: string;
-  party: AmlVerificationParty;
-  maxAttempts: number;
-  onRefresh: () => Promise<void>;
-  onExit: () => void | Promise<void>;
-}) {
-  const [phase, setPhase] = useState<CheckPhase>('choose');
-  const [choice, setChoice] = useState<IdentityDocumentChoice | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  /** The window we opened. Never re-created behind the customer's back. */
-  const winRef = useRef<Window | null>(null);
-  /**
-   * The session URL, held in memory for exactly as long as the flow runs.
-   *
-   * It embeds the customer's session token, so it is never written to
-   * `localStorage`, `sessionStorage`, a cookie, the URL bar, a log line or any
-   * telemetry — a token in web storage outlives the browser restart that should
-   * have ended it, and is readable by every script on the origin. It exists
-   * here only so that "open it again" can be a synchronous response to a click
-   * rather than another round trip the browser would block.
-   */
-  const urlRef = useRef<string | null>(null);
-  /** Guards a second session request from a double tap, before React re-renders. */
-  const busy = useRef(false);
-
-  useEffect(() => () => { urlRef.current = null; }, []);
-
-  /**
-   * Point the existing window at the session, or open one if it has gone.
-   *
-   * Called only from a click, and it never awaits before opening — both are
-   * what keep the browser treating this as user-initiated.
-   */
-  const showCheckWindow = useCallback((): boolean => {
-    const url = urlRef.current;
-    if (!url) return false;
-    const existing = winRef.current;
-    if (existing && !existing.closed) {
-      try { existing.location.replace(url); } catch { /* cross-origin: already there */ }
-      existing.focus();
-      return true;
-    }
-    const win = window.open(url, CHECK_WINDOW_TARGET, checkWindowFeatures());
-    if (!win) return false;
-    winRef.current = win;
-    win.focus();
-    return true;
-  }, []);
-
-  /**
-   * The one click that matters.
-   *
-   * Order is load-bearing and is the reason this is not simply
-   * `await start(); window.open(url)`:
-   *
-   *   1. open a blank window — synchronously, inside the gesture;
-   *   2. ask the backend for a session — which may reconcile and hand back the
-   *      one the customer already has rather than mint another;
-   *   3. navigate the window we already hold.
-   *
-   * A blocked window does not abandon the request: the session is still
-   * created and its URL kept in memory, so the recovery button is one press
-   * and not another round trip. Nothing about a blocked window is a
-   * verification failure and none of it consumes an attempt — the backend
-   * settles attempts from provider outcomes alone.
-   */
-  const beginCheck = useCallback((documentType: IdentityDocumentChoice) => {
-    if (busy.current) return;
-    busy.current = true;
-    setError(null);
-
-    // ── 1. Synchronous, before any await. Do not move this.
-    const win = window.open('', CHECK_WINDOW_TARGET, checkWindowFeatures());
-    if (win) {
-      winRef.current = win;
-      paintPlaceholder(win);
-    }
-    setPhase('opening');
-
-    void (async () => {
-      try {
-        // ── 2. The session. Server-minted, server-correlated, server-owned.
-        const res = await amlPortalApi.startHostedVerification(caseId, {
-          party_id: party.party_id,
-          party_label: party.label,
-          document_type: documentType,
-        });
-
-        if (!res.verification_url) {
-          // Already in flight elsewhere, or settled while nobody was looking.
-          // Neither is ours to interpret — say what the server said and let
-          // the step re-read.
-          win?.close();
-          winRef.current = null;
-          toast.info(res.message);
-          await onExit();
-          return;
-        }
-
-        urlRef.current = res.verification_url;
-
-        // ── 3. Navigate the window we already have.
-        if (!win || win.closed) {
-          setPhase('blocked');
-          return;
-        }
-        win.location.replace(res.verification_url);
-        setPhase('open');
-      } catch (e: unknown) {
-        const err = e as { code?: string; message?: string };
-        win?.close();
-        winRef.current = null;
-        if (err?.code && UNAVAILABLE_CODES.includes(err.code)) {
-          // Provider gone, manual route, or attempts exhausted. The step owns
-          // what the customer is shown for each of these, and it is never
-          // "verification failed".
-          toast.info(err.message ?? 'Verification is unavailable just now.');
-          await onExit();
-          return;
-        }
-        setPhase(err?.code === 'unsupported_document_type' ? 'choose' : 'brief');
-        setError(err?.message
-          ?? 'We could not start the secure check just now. Nothing has been used up — '
-          + 'please try again in a moment.');
-      } finally {
-        busy.current = false;
-      }
-    })();
-  }, [caseId, party.party_id, party.label, onExit]);
-
-  /**
-   * The customer came back.
-   *
-   * Origin-checked against this page's own origin, so only an NPC page can be
-   * heard at all, and matched on a bare type. There is deliberately no field
-   * in the message that could carry a status — the only action available here
-   * is a re-read of server state, so no message from any window can move a
-   * verification.
-   */
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      const data = event.data as { type?: unknown } | null;
-      if (!data || typeof data !== 'object' || data.type !== RETURN_NOTICE_TYPE) return;
-      setPhase('returned');
-      void onRefresh();
-    };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [onRefresh]);
-
-  /**
-   * The window went away.
-   *
-   * Polled, because there is no cross-origin close event. A closed window is
-   * NOT a failure and is never reported as one: the customer may have
-   * finished, may have given up, may have closed it by accident. All this does
-   * is stop claiming the check is in progress and re-read the server.
-   */
-  useEffect(() => {
-    if (phase !== 'open') return;
-    const timer = window.setInterval(() => {
-      if (winRef.current && !winRef.current.closed) return;
-      window.clearInterval(timer);
-      setPhase('closed');
-      void onRefresh();
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [phase, onRefresh]);
-
-  /**
-   * Coming back to this tab is itself a signal.
-   *
-   * On a phone the check usually opens as a tab, and returning to NPC is a tab
-   * switch rather than anything we are told about. Re-reading on focus is what
-   * makes the mobile journey land on the right state without the customer
-   * pressing anything.
-   */
-  useEffect(() => {
-    if (phase !== 'open' && phase !== 'closed' && phase !== 'returned') return;
-    const refresh = () => { if (!document.hidden) void onRefresh(); };
-    window.addEventListener('focus', refresh);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }, [phase, onRefresh]);
-
-  const chosen = choice ? IDENTITY_DOCUMENT_PRESENTATION[choice] : null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
-          {phase === 'choose' || phase === 'brief' ? 'Confirm your identity'
-            : phase === 'returned' ? 'Verification received'
-              : 'Identity verification'}
-        </CardTitle>
-        <CardDescription>
-          {party.label}
-          {chosen && phase !== 'choose' && <> · {chosen.label}</>}
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="space-y-5">
-        {error && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* ── A. Which document ─────────────────────────────────────────── */}
-        {phase === 'choose' && (
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-medium">Which identity document will you use?</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Choose the document you have with you. We only need one.
-              </p>
-            </div>
-
-            {/*
-              A radio group and not a row of buttons: this is a single choice
-              from a short closed list, so arrow keys should move through it,
-              the label should be clickable, and a screen reader should hear
-              "2 of 4". Pressing an option does not start anything — the launch
-              screen is a separate, deliberate step.
-            */}
-            {/*
-              `?? ''` and not `?? undefined`: an undefined value makes the
-              group UNCONTROLLED, and an uncontrolled group tracks its own
-              selection while ours stays null — the option looked chosen and
-              Continue stayed disabled. Found in a browser, not in jsdom.
-            */}
-            <RadioGroup
-              value={choice ?? ''}
-              onValueChange={(v) => setChoice(v as IdentityDocumentChoice)}
-              aria-label="Identity document"
-              className="gap-2"
-            >
-              {IDENTITY_DOCUMENT_CHOICES.map((option) => {
-                const presentation = IDENTITY_DOCUMENT_PRESENTATION[option];
-                const id = `identity-document-${option}`;
-                return (
-                  /*
-                    The label is a SIBLING of the control, not its wrapper.
-                    Measured in a browser: with the label wrapped around the
-                    radio, arrow keys did not move between options at all — the
-                    list could be tabbed into and then not moved through, which
-                    is the whole of keyboard operation for a radio group. As
-                    siblings it behaves correctly, and this is the shape shadcn
-                    documents.
-                  */
-                  <div
-                    key={option}
-                    className="flex items-start gap-3 rounded-md border p-3 transition-colors
-                      hover:bg-accent/50 has-[[data-state=checked]]:border-primary
-                      has-[[data-state=checked]]:bg-accent/40 motion-reduce:transition-none"
-                  >
-                    <RadioGroupItem value={option} id={id} className="mt-0.5" />
-                    <Label htmlFor={id} className="flex-1 cursor-pointer space-y-0.5 font-normal">
-                      <span className="block text-sm font-medium">{presentation.label}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {presentation.hint}
-                      </span>
-                    </Label>
-                  </div>
-                );
-              })}
-            </RadioGroup>
-
-            <div className="flex flex-wrap justify-between gap-2">
-              <Button variant="outline" onClick={() => void onExit()}>
-                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Back
-              </Button>
-              <Button disabled={!choice} onClick={() => setPhase('brief')}>
-                Continue <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* ── B. What to have ready ─────────────────────────────────────── */}
-        {phase === 'brief' && choice && chosen && (
-          <div className="space-y-4">
-            <div className="rounded-md border p-4">
-              <div className="text-sm font-medium">{chosen.label}</div>
-              <p className="mt-3 text-xs font-medium text-muted-foreground">You will need:</p>
-              <ul className="mt-2 space-y-1.5">
-                {identityCheckRequirements(choice).map((requirement) => (
-                  <li key={requirement} className="flex items-start gap-2 text-sm">
-                    <CheckCircle2
-                      className="mt-0.5 h-4 w-4 shrink-0 text-success"
-                      aria-hidden="true"
-                    />
-                    <span>{requirement}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/*
-              Said before the window opens, not after. A new window appearing
-              unannounced is the moment a customer decides something has gone
-              wrong — and someone using a screen reader or a magnifier needs to
-              know where their focus is about to be able to go.
-            */}
-            <p className="text-xs text-muted-foreground">
-              Selecting <strong>Begin secure verification</strong> opens a separate secure window
-              for the photo steps. This page stays open behind it, and you will come back here
-              when you are finished. Your identity check is completed securely using our
-              verification provider.
-            </p>
-
-            <div className="flex flex-wrap justify-between gap-2">
-              <Button variant="outline" onClick={() => { setPhase('choose'); setError(null); }}>
-                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Change document
-              </Button>
-              <Button onClick={() => beginCheck(choice)}>
-                Begin secure verification
-                <ExternalLink className="ml-1.5 h-4 w-4" aria-hidden="true" />
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* ── C–G. In flight ────────────────────────────────────────────── */}
-        {(phase === 'opening' || phase === 'open' || phase === 'blocked'
-          || phase === 'closed' || phase === 'returned') && (
-          <div className="space-y-4">
-            {/*
-              One live region for every in-flight state, so a screen reader is
-              told when the check moves from "preparing" to "in progress" to
-              "received" without the customer hunting for it. Each state pairs
-              an icon with words — none of them is distinguishable by colour
-              alone.
-            */}
-            <div className="rounded-md border p-4" role="status" aria-live="polite">
-              {phase === 'opening' && (
-                <p className="flex items-center gap-2 text-sm">
-                  <Loader2
-                    className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none"
-                    aria-hidden="true"
-                  />
-                  Preparing your secure identity check…
-                </p>
-              )}
-
-              {phase === 'open' && (
-                <div className="space-y-1">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <Clock className="h-4 w-4 text-primary" aria-hidden="true" />
-                    Identity verification in progress
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Complete the steps in the secure window that has opened. You can return to
-                    this page when you have finished.
-                  </p>
-                </div>
-              )}
-
-              {phase === 'blocked' && (
-                <div className="space-y-1">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
-                    We could not open the secure verification window
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Your browser blocked it. Nothing has gone wrong with your verification and
-                    nothing has been used up — select Open verification below, or allow pop-ups
-                    for this site and try again.
-                  </p>
-                </div>
-              )}
-
-              {phase === 'closed' && (
-                <div className="space-y-1">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <Clock className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                    Your identity check has not been confirmed yet
-                  </p>
-                  {/*
-                    Not "you failed" and not "you cancelled". The window closing
-                    tells us nothing about what happened inside it — they may
-                    have finished and closed it themselves — so this says only
-                    what is true and offers the way back.
-                  */}
-                  <p className="text-xs text-muted-foreground">
-                    The secure window is no longer open. If you have already finished, we may
-                    still be checking it. Otherwise you can continue where you left off —
-                    nothing has been used up.
-                  </p>
-                </div>
-              )}
-
-              {phase === 'returned' && (
-                <div className="space-y-1">
-                  <p className="flex items-center gap-2 text-sm font-medium">
-                    <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
-                    We are securely checking your verification
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Your information has been received. This usually takes under a minute, and
-                    we will show the result here. You do not need to do anything else.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <Button variant="outline" onClick={() => void onExit()}>
-                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Back to identity
-              </Button>
-
-              <div className="flex flex-wrap gap-2">
-                {/*
-                  One control, three labels. It is a direct response to a click
-                  every time — never a promise resolving into a window — because
-                  a browser blocks the second kind.
-                */}
-                {(phase === 'open' || phase === 'blocked' || phase === 'closed') && (
-                  <Button
-                    onClick={() => {
-                      if (showCheckWindow()) {
-                        setPhase('open');
-                        setError(null);
-                      } else if (choice) {
-                        // The URL is gone (a refresh, or the flow was re-entered).
-                        // Ask the backend again — it reconciles and hands back the
-                        // session already open rather than minting another.
-                        beginCheck(choice);
-                      }
-                    }}
-                  >
-                    {phase === 'open' ? 'Re-open verification'
-                      : phase === 'blocked' ? 'Open verification'
-                        : 'Continue verification'}
-                    <ExternalLink className="ml-1.5 h-4 w-4" aria-hidden="true" />
-                  </Button>
-                )}
-
-                {phase === 'returned' && (
-                  <Button onClick={() => void onExit()}>
-                    Return to Identity &amp; Compliance
-                    <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/*
-          The documentary route stays prominent and stays on every screen of
-          this flow. Consent to biometric collection is genuinely optional
-          (APP 3.3), so refusing has to be visible at the moment somebody
-          decides to refuse — not hidden behind the check they are declining.
-        */}
-        <Alert>
-          <AlertTitle className="text-sm">Prefer not to use the photo check?</AlertTitle>
-          <AlertDescription className="text-xs">
-            You do not have to. Tell your adviser and we will verify your identity from original
-            or certified copies of your documents instead. It takes a little longer, you keep all
-            {' '}{maxAttempts} attempts, and there is no disadvantage to you.
-          </AlertDescription>
-        </Alert>
-      </CardContent>
-    </Card>
+function reportRetiredHostedFlow(caseId: string): void {
+  console.warn(
+    '[aml/identity] server reported a retired hosted verification flow; '
+    + 'rendering the documentary route instead',
+    { case_id: caseId },
   );
 }
 

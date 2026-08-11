@@ -208,9 +208,11 @@ describe('portal privacy boundary', () => {
       expect(portalApi).not.toContain(secretish);
       expect(step).not.toContain(secretish);
     }
-    // The step branches on the two-word flow token, not a provider name.
+    // The step no longer branches INTO a hosted experience — it recognises the
+    // retired flow token only to refuse it and render the documentary route.
     expect(step).toContain("provider_flow ?? 'capture') === 'hosted'");
-    expect(step.toLowerCase()).not.toContain('didit');
+    expect(step).toContain("? 'temporarily_unavailable'");
+    expect(codeOnly(step).toLowerCase()).not.toContain('didit');
   });
 
   it('the frontend cannot mark anybody verified', () => {
@@ -245,36 +247,41 @@ describe('portal privacy boundary', () => {
     expect(codeOnly(step)).not.toMatch(/'(camera|microphone|gyroscope|magnetometer)'/);
   });
 
-  it('capture on this device is the primary path — NPC never forces a handoff', () => {
-    // No QR/second-device selection of our own. Which device is used is the
-    // provider's decision, driven by the workflow's is_desktop_allowed. Only
-    // code counts: the comments explaining that history say both words.
+  it('capture on this device is the ONLY path — there is no handoff at all', () => {
+    // No QR, no second device, and — since the hosted cutover — no window
+    // either. The customer photographs their document and their face on the
+    // device they are already holding, in this page.
     const code = codeOnly(step).toLowerCase();
     expect(code).not.toContain('qr');
     expect(code).not.toMatch(/cross[_-]?device/);
-    // The way back into the check is a first-class control now, not a
-    // "having trouble?" link — the window may simply have been closed, and
-    // that is not a fault the customer needs to admit to before recovering.
-    expect(step).toContain('Re-open verification');
-    expect(step).toContain('Continue verification');
+    /*
+     * These used to assert the RECOVERY controls for the hosted window:
+     * "Re-open verification" and "Continue verification" were first-class
+     * buttons because a window the customer had closed was not a fault they
+     * should have to admit to. Both are gone with the window, and their
+     * absence is now the property worth holding.
+     */
+    expect(codeOnly(step)).not.toContain('Re-open verification');
+    expect(codeOnly(step)).not.toContain('Continue verification');
+    expect(codeOnly(step)).not.toMatch(/window\s*\.\s*open\s*\(/);
   });
 
-  it('the message listener is origin-checked against NPC itself', () => {
+  it('has no cross-window message listener at all', () => {
     /*
-     * The origin used to be derived from the server-minted session URL,
-     * because the only window that could speak was the provider's frame. It
-     * is now NPC's own origin, because the only window that speaks is NPC's
-     * own return page — which is a narrower boundary, not a wider one: the
-     * provider's window cannot be heard at all.
+     * There used to be one, and it was carefully bounded: origin-checked
+     * against NPC's own origin, matched on a bare type, and able to do exactly
+     * one thing — re-read server state. It existed because a window NPC had
+     * opened needed a way to say "the customer came back".
+     *
+     * No window is opened now, so nothing can speak, so there is nothing to
+     * listen to. The narrowest boundary is the one that is not there.
      */
-    const listener = step.slice(step.indexOf('const onMessage'), step.indexOf('window.addEventListener'));
-    expect(listener).toContain('event.origin !== window.location.origin');
-    // It re-reads server state and nothing else. No status writing, and no
-    // field of the message is read beyond its type.
-    expect(listener).not.toMatch(/verified|passed|failed|declined/i);
-    expect(listener).toContain('void onRefresh()');
-    // The provider is still never named on this side.
-    expect(step.toLowerCase()).not.toContain('didit');
+    const code = codeOnly(step);
+    expect(code).not.toContain('addEventListener(\'message\'');
+    expect(code).not.toContain('const onMessage');
+    expect(code).not.toMatch(/\bpostMessage\s*\(/);
+    // The provider is still never named in code on this side.
+    expect(code.toLowerCase()).not.toContain('didit');
   });
 });
 
