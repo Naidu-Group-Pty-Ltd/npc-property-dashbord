@@ -18,6 +18,9 @@
  */
 import type { IdentityDocumentChoice } from "../identityDocuments.pure.ts";
 import { diditExpectedDetails } from "./didit.pure.ts";
+import {
+  classifyThreshold, readStandaloneThresholds, type ThresholdState,
+} from "./diditStandalone.pure.ts";
 
 export type IdvMethod = "document_and_liveness" | "document_only" | "database_lookup" | "manual";
 
@@ -134,6 +137,44 @@ export interface HostedIdvProvider {
   createSession(req: HostedIdvSessionRequest): Promise<HostedIdvSession>;
   /** Authoritative server-to-server read. Never the webhook body. */
   fetchDecision(sessionId: string): Promise<Record<string, unknown>>;
+}
+
+/**
+ * A capture-flow provider that examines NPC's own captures over its API.
+ *
+ * The third shape, and the one the product now uses. It is NOT `IdvProvider`:
+ * `runIdv()` is a single synchronous call with two images in it, and a
+ * Standalone verification is three separately-billed calls whose sequencing,
+ * fail-fast rule and partial results all have to be decided and recorded
+ * between them. Squeezing that into `runIdv()` would hide the one property
+ * that matters most about it — that each step costs money — inside an
+ * adapter that looks free.
+ *
+ * It is also NOT `HostedIdvProvider`: there is no session, no hosted URL, no
+ * callback and no webhook. The customer never leaves NPC.
+ *
+ * The provider object itself is deliberately thin: it holds the credential and
+ * the thresholds and exposes the three calls. The composition rule lives in
+ * `diditStandalone.pure.ts` and the orchestration in
+ * `standaloneVerification.ts`, so neither needs a network to be tested.
+ */
+export interface StandaloneIdvProvider {
+  readonly name: string;
+  readonly mode: ProviderMode;
+  readonly flow: "capture";
+  /** Server-owned decline thresholds. Never client-supplied, never returned. */
+  readonly thresholds: { liveness: number; faceMatch: number };
+  verifyIdentityDocument(args: {
+    frontImage: Uint8Array; backImage?: Uint8Array | null;
+    vendorData: string; metadata: Record<string, unknown>;
+  }): Promise<Record<string, unknown>>;
+  checkPassiveLiveness(args: {
+    userImage: Uint8Array; vendorData: string; metadata: Record<string, unknown>;
+  }): Promise<Record<string, unknown>>;
+  compareFaces(args: {
+    userImage: Uint8Array; refImage: Uint8Array;
+    vendorData: string; metadata: Record<string, unknown>;
+  }): Promise<Record<string, unknown>>;
 }
 
 export interface ScreeningProvider {
@@ -739,7 +780,25 @@ const LIVE_IDV_ADAPTERS: Record<string, (opts: FactoryOptions) => IdvProvider> =
 const HOSTED_IDV_ADAPTERS: Record<string, (opts: FactoryOptions) => HostedIdvProvider> = {
   // Didit — ID Verification + Face Match 1:1 + Passive Liveness.
   // See docs/aml/DIDIT_IDV_INTEGRATION.md.
+  //
+  // LEGACY. No new attempt is created against this adapter — the portal serves
+  // the NPC capture journey and `didit_standalone` below. It stays wired so the
+  // sessions already open on 2026-08-08 can still settle through the signed
+  // webhook. See docs/aml/DIDIT_STANDALONE_IDV.md.
   "didit": (opts) => makeDiditIdvProvider(opts),
+};
+
+/**
+ * Capture-flow providers NPC calls with its OWN captures.
+ *
+ * A third registry, for the third shape. Keeping it out of `LIVE_IDV_ADAPTERS`
+ * is what stops the outbox worker's `getIdvProvider()` handing back something
+ * with no `runIdv()`, and keeping it out of `HOSTED_IDV_ADAPTERS` is what makes
+ * `idvFlowFor()` answer `capture` — which is the one word the portal is told.
+ */
+const STANDALONE_IDV_ADAPTERS:
+Record<string, (opts: FactoryOptions) => StandaloneIdvProvider> = {
+  "didit_standalone": (opts) => makeDiditStandaloneProvider(opts),
 };
 
 /**
@@ -759,10 +818,16 @@ export function idvAdapterReadiness(
 ): { wired: boolean; configured: boolean; flow: IdvFlow } {
   const key = String(providerKey ?? "").toLowerCase();
   return {
-    wired: Boolean(LIVE_IDV_ADAPTERS[key]) || Boolean(HOSTED_IDV_ADAPTERS[key]),
+    wired: Boolean(LIVE_IDV_ADAPTERS[key]) || Boolean(HOSTED_IDV_ADAPTERS[key])
+      || Boolean(STANDALONE_IDV_ADAPTERS[key]),
     configured: adapterConfigured("idv", key, resolved),
     flow: idvFlowFor(key),
   };
+}
+
+/** Whether a provider key is the Standalone-API capture shape. */
+export function isStandaloneIdvProvider(providerKey: string | null | undefined): boolean {
+  return Boolean(STANDALONE_IDV_ADAPTERS[String(providerKey ?? "").toLowerCase()]);
 }
 
 /** Which flow a provider key implies. Unknown keys read as `capture`. */
@@ -851,6 +916,79 @@ function makeDiditIdvProvider(opts: FactoryOptions): HostedIdvProvider {
     },
   };
 }
+
+/**
+ * Didit over the Standalone APIs, against NPC's own captures.
+ *
+ * The credential and BOTH decline thresholds are read from the function
+ * environment at construction. That is the point at which a production
+ * deployment missing either threshold becomes unusable rather than
+ * silently permissive: the Standalone endpoints default to 30, which their own
+ * documentation calls permissive, and inheriting that would mean NPC's face
+ * match policy was a vendor default nobody chose. Construction throws instead,
+ * which the portal turns into "verification is unavailable" — so no customer is
+ * ever asked to photograph their face for a provider that could not judge it
+ * to NPC's standard.
+ */
+function makeDiditStandaloneProvider(_opts: FactoryOptions): StandaloneIdvProvider {
+  const apiKey = Deno.env.get("DIDIT_API_KEY") || "";
+  const thresholds = readStandaloneThresholds((k) => Deno.env.get(k) ?? undefined);
+
+  if (!apiKey || !thresholds) {
+    throw new ProviderResolutionError(
+      "provider_misconfigured",
+      "[aml/providers] didit_standalone is active but DIDIT_API_KEY / "
+      + "DIDIT_LIVENESS_THRESHOLD / DIDIT_FACE_MATCH_THRESHOLD are missing or "
+      + "outside 0-100.",
+    );
+  }
+
+  const metadataFor = (extra: Record<string, unknown>) => extra;
+
+  return {
+    name: "didit_standalone",
+    mode: "live",
+    flow: "capture",
+    thresholds,
+    async verifyIdentityDocument(args) {
+      const { verifyIdentityDocument } = await import("./diditStandaloneClient.ts");
+      const { body } = await verifyIdentityDocument({
+        apiKey,
+        frontImage: args.frontImage,
+        backImage: args.backImage ?? null,
+        vendorData: args.vendorData,
+        metadata: metadataFor(args.metadata),
+      });
+      return body;
+    },
+    async checkPassiveLiveness(args) {
+      const { checkPassiveLiveness } = await import("./diditStandaloneClient.ts");
+      const { body } = await checkPassiveLiveness({
+        apiKey,
+        userImage: args.userImage,
+        // Server configuration, applied here. There is no parameter on any
+        // portal operation through which a browser could reach it.
+        declineThreshold: thresholds.liveness,
+        vendorData: args.vendorData,
+        metadata: metadataFor(args.metadata),
+      });
+      return body;
+    },
+    async compareFaces(args) {
+      const { compareFaces } = await import("./diditStandaloneClient.ts");
+      const { body } = await compareFaces({
+        apiKey,
+        userImage: args.userImage,
+        refImage: args.refImage,
+        declineThreshold: thresholds.faceMatch,
+        vendorData: args.vendorData,
+        metadata: metadataFor(args.metadata),
+      });
+      return body;
+    },
+  };
+}
+
 const LIVE_SCREENING_ADAPTERS: Record<string, (opts: FactoryOptions) => ScreeningProvider> = {
   // Screening against lists we hold, downloaded from official primary sources.
   "local_lists": (opts) => makeLocalListsScreeningProvider(opts.admin, opts.resolved?.config),
@@ -1018,11 +1156,62 @@ function diditIdvConfigured(resolved?: ResolvedProvider | null): boolean {
     && Boolean(diditWorkflowId(resolved));
 }
 
+/**
+ * Whether the Standalone path can run.
+ *
+ * Notice what is NOT here. `DIDIT_WORKFLOW_ID` is absent because there is no
+ * workflow — the three endpoints are called directly. `DIDIT_WEBHOOK_SECRET` is
+ * absent because with `save_api_request=false` no session is persisted on the
+ * provider's side and no webhook is ever emitted; the authenticated response is
+ * the result. Requiring either would refuse a correctly configured deployment.
+ *
+ * Both thresholds ARE required, and that is the deliberate half: a production
+ * deployment that has not stated its liveness and face-match policy is not
+ * ready to collect a biometric, because nothing could judge it against a
+ * standard NPC chose.
+ */
+function diditStandaloneConfigured(): boolean {
+  return standaloneIdvReadiness().ready;
+}
+
+/**
+ * Why the Standalone provider is or is not ready — for STAFF, never a customer.
+ *
+ * `configured` is one boolean and it has to be, because the portal's answer is
+ * one word. An operator's answer cannot be: "misconfigured" leaves them
+ * guessing between a credential nobody set, a threshold nobody set, and a
+ * threshold somebody set to `0.6` on a 0–100 scale. Those are three different
+ * mistakes with three different fixes, and the Command Centre is where they get
+ * fixed.
+ *
+ * Reports PRESENCE and VALIDITY only. No value of any secret or threshold
+ * crosses this boundary — the caller renders booleans and state words.
+ */
+export interface StandaloneIdvReadiness {
+  api_key_present: boolean;
+  liveness_threshold: ThresholdState;
+  face_match_threshold: ThresholdState;
+  ready: boolean;
+}
+
+export function standaloneIdvReadiness(): StandaloneIdvReadiness {
+  const apiKeyPresent = Boolean(Deno.env.get("DIDIT_API_KEY"));
+  const liveness = classifyThreshold(Deno.env.get("DIDIT_LIVENESS_THRESHOLD"));
+  const faceMatch = classifyThreshold(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD"));
+  return {
+    api_key_present: apiKeyPresent,
+    liveness_threshold: liveness,
+    face_match_threshold: faceMatch,
+    ready: apiKeyPresent && liveness === "ok" && faceMatch === "ok",
+  };
+}
+
 function adapterConfigured(
   capability: "idv" | "screening", key: string, resolved?: ResolvedProvider | null,
 ): boolean {
   if (capability === "idv" && key === "selfhosted") return selfHostedIdvConfigured();
   if (capability === "idv" && key === "didit") return diditIdvConfigured(resolved);
+  if (capability === "idv" && key === "didit_standalone") return diditStandaloneConfigured();
   // Adapters without external configuration (e.g. local_lists screening)
   // count as configured once wired.
   return true;
@@ -1054,9 +1243,11 @@ function decideIdv(opts: FactoryOptions): { decision: ProviderDecision; key: str
       environment: currentEnvironment(),
       mode,
       providerKey: key,
-      // Either registry counts as wired. Without this a Didit tenant config
-      // would be refused as "no adapter wired" even though one exists.
-      adapterWired: Boolean(LIVE_IDV_ADAPTERS[key]) || Boolean(HOSTED_IDV_ADAPTERS[key]),
+      // Any of the three registries counts as wired. Without this a Didit
+      // tenant config would be refused as "no adapter wired" even though one
+      // exists.
+      adapterWired: Boolean(LIVE_IDV_ADAPTERS[key]) || Boolean(HOSTED_IDV_ADAPTERS[key])
+        || Boolean(STANDALONE_IDV_ADAPTERS[key]),
       adapterConfigured: adapterConfigured("idv", key, opts.resolved),
     }),
   };
@@ -1088,7 +1279,39 @@ export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
       "provider's own UI and the outcome arrives by signed webhook.",
     );
   }
+  if (STANDALONE_IDV_ADAPTERS[key]) {
+    // Same lock, opposite shape. A Standalone provider runs three separately
+    // billed calls with a fail-fast rule between them, which `runIdv()` cannot
+    // express — a caller that reached it here would either lose the sequencing
+    // or pay for steps the previous one had already ruled out.
+    throw new ProviderResolutionError(
+      "provider_misconfigured",
+      `[aml/providers] "${key}" is a Standalone-API provider and has no single-call ` +
+      "runIdv(). Use getStandaloneIdvProvider() via standaloneVerification.ts.",
+    );
+  }
   return LIVE_IDV_ADAPTERS[key](opts);
+}
+
+/**
+ * The Standalone-API capture provider.
+ *
+ * Throws rather than degrading, exactly like the other two factories: a caller
+ * that expected three billed calls against NPC's captures must never quietly
+ * receive the simulator, the self-hosted adapter, or a hosted session.
+ */
+export function getStandaloneIdvProvider(opts: FactoryOptions = {}): StandaloneIdvProvider {
+  const { decision, key } = decideIdv(opts);
+  if (decision.kind === "refuse") {
+    throw new ProviderResolutionError(decision.code, `[aml/providers] ${decision.message}`);
+  }
+  if (!STANDALONE_IDV_ADAPTERS[key]) {
+    throw new ProviderResolutionError(
+      "provider_misconfigured",
+      `[aml/providers] "${key}" is not a Standalone-API IDV provider.`,
+    );
+  }
+  return STANDALONE_IDV_ADAPTERS[key](opts);
 }
 
 /**
