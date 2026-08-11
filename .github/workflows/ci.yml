@@ -301,6 +301,17 @@ jobs:
 
       # And the gate that keeps the list above honest: every check-*.mjs must be
       # reachable from CI, or it is dead weight pretending to be a control.
+      # WP-29: a direct dependency may not require a React this project does not
+      # have. `react-leaflet@5` (peer react ^19, project on 18) merged from
+      # Dependabot and `npm ci` stopped resolving — every job of every PR went
+      # red at the install step, none of them for a reason in the diff.
+      #
+      # Reads the peer ranges out of `package-lock.json`, so it needs no
+      # node_modules and asks the question instead of maintaining a list of the
+      # 50 direct dependencies that declare a React peer.
+      - name: Direct dependencies agree with the pinned React (WP-29)
+        run: node scripts/security/check-peer-compatibility.mjs
+
       - name: Every security gate is wired (WP-16)
         run: node scripts/security/check-gates-wired.mjs
 
