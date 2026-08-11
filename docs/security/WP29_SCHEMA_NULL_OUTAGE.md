@@ -134,3 +134,65 @@ parsed out means it did not run — which needs no such prediction.
 - `check-security-gate-negatives.mjs` — 31/31.
 - Also fixed: `update-stamp-duty-rates` returned the caught exception on a 500
   (arrived on `main` with #2041, red on `check-error-disclosure`).
+
+---
+
+## Addendum: `main` could not install at all
+
+Pushing the fix above turned **all four CI jobs** red inside sixty seconds —
+`verify`, `security`, `supply-chain` and `render-container` — none of them for
+anything in the diff:
+
+```
+npm error The `npm ci` command can only install with an existing package-lock.json or
+npm error npm-shrinkwrap.json with lockfileVersion >= 1.
+```
+
+The file was present and began `"lockfileVersion": 3`. It was **unparseable**:
+a bad splice at line 20626 interleaved the `postcss-load-config` entry with a
+`radix-ui` one, so `postcss-load-config`'s `funding` array contained an
+`@types/react-dom` key and its `lilconfig` dependency ended up inside a
+`@radix-ui/react-dropdown-menu` entry.
+
+That message is worth remembering, because it names the wrong problem: it reads
+as "the lockfile is missing" when the lockfile is merely broken.
+
+`origin/main` carried the identical corruption at the identical byte offset —
+this was not local. It has happened before: **#2038 "Restore a
+package-lock.json that npm can parse"** landed earlier the same day, and the
+next sync re-corrupted it.
+
+### And a second, separate fault underneath it
+
+Regenerating did not work either:
+
+```
+npm error Could not resolve dependency:
+npm error peer react@"^19.0.0" from react-leaflet@5.0.0
+```
+
+Dependabot had raised `react-leaflet` 4.2.1 → **5.0.0**, a major requiring React
+19 against a project pinned at React 18, and it merged. So even a
+byte-perfect lockfile could not have been produced from this `package.json`. The
+map component would have been broken at runtime too, silently, until somebody
+opened it.
+
+Pinned back to 4.2.1 and regenerated; `npm ci` now succeeds.
+
+### The gate
+
+`.github/dependabot.yml` already refuses majors for `react` and `react-dom`, and
+that does not help — the danger is not React moving, it is something moving
+*past* React. **50 direct dependencies declare a React peer** (the whole Radix
+set, TanStack, framer-motion, recharts, tldraw, sonner, cmdk). A list of names
+is wrong the moment somebody adds the 51st.
+
+`scripts/security/check-peer-compatibility.mjs` asks the question instead of
+maintaining the answer: for every direct dependency naming a `react` peer, the
+range must admit the pinned major. It reads the peer ranges out of
+`package-lock.json`, so it needs no `node_modules` and runs in any job, and it
+fails on the exact bump that broke `main`. It also reports an unparseable
+lockfile in those words, with the regeneration command, rather than letting npm
+say the file is missing.
+
+Gates 46 → 47; negative-test controls 31 → 32.
