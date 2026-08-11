@@ -225,7 +225,7 @@ export default function AgreementCentreDetail() {
     }
   };
 
-  const sections = agreementSectionNav(templateKey);
+  const sections = agreementSectionNav(templateKey, false, values);
   const canWithdraw = ['partner_review', 'changes_requested', 'sent_for_signature'].includes(status);
   const can = agreementDispositionFromRow(agreement);
   const archivedAt = agreement.archived_at ?? null;

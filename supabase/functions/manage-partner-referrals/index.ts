@@ -658,7 +658,10 @@ Deno.serve(async (req) => {
     if (action === 'list_finance_users') {
       const { data, error } = await supabase
         .from('finance_portal_users')
-        .select('id, email, is_active, finance_contact_id, finance_agent_contacts:finance_contact_id (contact_name, company_name)')
+        // `finance_agent_contacts` carries `name` and `company` — not
+        // `contact_name`/`company_name`. A non-existent column fails the whole
+        // read, so the loan-writer picker came back empty.
+        .select('id, email, is_active, finance_contact_id, finance_agent_contacts:finance_contact_id (name, company)')
         .eq('is_active', true)
         .order('email', { ascending: true });
       if (error) throw error;

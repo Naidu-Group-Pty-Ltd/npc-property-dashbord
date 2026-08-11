@@ -106,7 +106,7 @@ export interface FinanceUserOption {
   id: string;
   email: string;
   finance_contact_id: string | null;
-  finance_agent_contacts?: { contact_name: string | null; company_name: string | null } | null;
+  finance_agent_contacts?: { name: string | null; company: string | null } | null;
 }
 
 const FN = 'manage-partner-referrals';

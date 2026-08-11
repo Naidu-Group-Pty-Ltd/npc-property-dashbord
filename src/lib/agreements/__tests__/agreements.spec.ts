@@ -103,10 +103,23 @@ describe('pre-issue validation', () => {
   it('flags every required field on an empty agreement', () => {
     const validation = validateForIssue('strategic_property_referral', {});
     expect(validation.ok).toBe(false);
+    // Conditional "Other" fields are not demanded while their parent choice is
+    // unset — nobody can see them, so they cannot be filled.
     const required = agreementFieldDefs('strategic_property_referral')
-      .filter((def) => def.requiredForIssue).map((def) => def.key).sort();
+      .filter((def) => def.requiredForIssue && !def.visibleWhen)
+      .map((def) => def.key).sort();
     expect(validation.missing.map((item) => item.key).sort()).toEqual(required);
   });
+
+  it('demands the free-text box once "Other" is chosen', () => {
+    const missing = validateForIssue('strategic_property_referral', { invoice_process: 'other' })
+      .missing.map((item) => item.key);
+    expect(missing).toContain('invoice_process_other');
+    const preset = validateForIssue('strategic_property_referral', { invoice_process: 'rcti' })
+      .missing.map((item) => item.key);
+    expect(preset).not.toContain('invoice_process_other');
+  });
+
 
   it('passes once the required set is filled', () => {
     const values: Record<string, unknown> = {};

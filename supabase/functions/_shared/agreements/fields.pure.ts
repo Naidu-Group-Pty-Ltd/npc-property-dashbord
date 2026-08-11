@@ -23,6 +23,17 @@
  */
 
 import type { AgreementFieldValues, AgreementTemplateKey } from './types.pure.ts';
+import {
+  CONTENT_OVERRIDES_EXTRA_KEY,
+  CONTENT_OVERRIDES_VALUE_KEY,
+  coerceContentOverrides,
+} from './contentOverrides.pure.ts';
+import {
+  ADDITIONAL_CLAUSES_EXTRA_KEY,
+  ADDITIONAL_CLAUSES_VALUE_KEY,
+  coerceAdditionalClauses,
+} from './additionalClauses.pure.ts';
+
 
 export type AgreementFieldType =
   | 'text'
@@ -56,11 +67,36 @@ export interface AgreementFieldDef {
   requiredForIssue?: boolean;
   db: AgreementFieldStorage;
   /**
+   * Conditional field: only collected (and only validated / stored) when the
+   * named field currently holds one of these values. This is how an "Other"
+   * choice grows its own free-text box — the box is meaningless, and its stored
+   * text misleading, when a preset option is selected.
+   */
+  visibleWhen?: { field: string; equals: string[] };
+  /**
    * Wizard grouping: party fields prefill from the tenant / the selected
    * partner record; commercial fields are the negotiable schedule.
    */
   group: 'agreement' | 'issuer' | 'counterparty' | 'commercial' | 'clauses' | 'execution' | 'supporting';
 }
+
+/**
+ * Is this field currently in play?
+ *
+ * Used by the wizard (what to render), by `rowPatchFromValues` (a hidden
+ * conditional field is stored as null, so switching away from "Other" cannot
+ * leave stale free text cascading into the executed document) and by
+ * `validateForIssue` (never demand a field nobody can see).
+ */
+export function isAgreementFieldVisible(
+  def: AgreementFieldDef,
+  values: AgreementFieldValues,
+): boolean {
+  if (!def.visibleWhen) return true;
+  const current = String(values[def.visibleWhen.field] ?? '');
+  return def.visibleWhen.equals.includes(current);
+}
+
 
 // ── Shared field fragments ───────────────────────────────────────────────────
 
@@ -118,6 +154,12 @@ const STRATEGIC_REFERRAL_FIELDS: AgreementFieldDef[] = [
     ],
     sectionId: 'commercial_schedule', requiredForIssue: true, db: { column: 'fee_model' }, group: 'commercial',
   },
+  {
+    key: 'remuneration_model_other', label: 'REMUNERATION MODEL — Other', type: 'text',
+    placeholder: '<<INSERT AGREED REMUNERATION MODEL>>', sectionId: 'commercial_schedule',
+    requiredForIssue: true, visibleWhen: { field: 'remuneration_model', equals: ['other'] },
+    db: { extra: 'remuneration_model_other' }, group: 'commercial',
+  },
   { key: 'agreed_fee_value', label: 'AGREED AMOUNT / PERCENTAGE', type: 'text', placeholder: '<<INSERT AMOUNT OR PERCENTAGE>>', sectionId: 'commercial_schedule', requiredForIssue: true, db: { extra: 'agreed_fee_value' }, group: 'commercial' },
   {
     key: 'gst_treatment', label: 'GST TREATMENT', type: 'choice', placeholder: '',
@@ -138,6 +180,12 @@ const STRATEGIC_REFERRAL_FIELDS: AgreementFieldDef[] = [
     ],
     sectionId: 'commercial_schedule', requiredForIssue: true, db: { column: 'qualifying_event' }, group: 'commercial',
   },
+  {
+    key: 'qualifying_event_other', label: 'QUALIFYING EVENT — Other', type: 'text',
+    placeholder: '<<INSERT AGREED QUALIFYING EVENT>>', sectionId: 'commercial_schedule',
+    requiredForIssue: true, visibleWhen: { field: 'qualifying_event', equals: ['other'] },
+    db: { extra: 'qualifying_event_other' }, group: 'commercial',
+  },
   { key: 'payment_timeframe_days', label: 'PAYMENT TIMEFRAME', type: 'number', placeholder: '<<NUMBER>>', sectionId: 'commercial_schedule', requiredForIssue: true, db: { column: 'payment_business_days' }, group: 'commercial' },
   {
     key: 'invoice_process', label: 'INVOICE PROCESS', type: 'choice', placeholder: '',
@@ -148,7 +196,12 @@ const STRATEGIC_REFERRAL_FIELDS: AgreementFieldDef[] = [
     ],
     sectionId: 'commercial_schedule', db: { column: 'invoice_process' }, group: 'commercial',
   },
-  { key: 'invoice_process_other', label: 'INVOICE PROCESS — Other', type: 'text', placeholder: INSERT, sectionId: 'commercial_schedule', db: { extra: 'invoice_process_other' }, group: 'commercial' },
+  {
+    key: 'invoice_process_other', label: 'INVOICE PROCESS — Other', type: 'text', placeholder: INSERT,
+    sectionId: 'commercial_schedule', requiredForIssue: true,
+    visibleWhen: { field: 'invoice_process', equals: ['other'] },
+    db: { extra: 'invoice_process_other' }, group: 'commercial',
+  },
   { key: 'excluded_matters', label: 'EXCLUDED MATTERS', type: 'longtext', placeholder: '<<INSERT EXCLUSIONS OR "NONE">>', sectionId: 'commercial_schedule', db: { column: 'exclusions' }, group: 'commercial' },
   { key: 'duplicate_referral_rule', label: 'DUPLICATE REFERRAL RULE', type: 'longtext', placeholder: '<<INSERT HOW PRIOR OR DUPLICATE CLIENTS ARE TREATED>>', sectionId: 'commercial_schedule', db: { column: 'duplicate_referral_rule' }, group: 'commercial' },
   { key: 'fee_cap_minimum', label: 'FEE CAP / MINIMUM', type: 'text', placeholder: '<<INSERT OR "NOT APPLICABLE">>', sectionId: 'commercial_schedule', db: { extra: 'fee_cap_minimum' }, group: 'commercial' },
@@ -192,6 +245,12 @@ const FINANCE_REFERRAL_FIELDS: AgreementFieldDef[] = [
     ],
     sectionId: 'commission_schedule', requiredForIssue: true, db: { column: 'commission_basis' }, group: 'commercial',
   },
+  {
+    key: 'commission_basis_other', label: 'COMMISSION BASIS — Other', type: 'text',
+    placeholder: '<<INSERT AGREED COMMISSION BASIS>>', sectionId: 'commission_schedule',
+    requiredForIssue: true, visibleWhen: { field: 'commission_basis', equals: ['other'] },
+    db: { extra: 'commission_basis_other' }, group: 'commercial',
+  },
   { key: 'qualifying_event_override', label: 'QUALIFYING EVENT', type: 'text', placeholder: INSERT, sectionId: 'commission_schedule', db: { extra: 'qualifying_event_override' }, group: 'commercial' },
   { key: 'payment_cycle', label: 'PAYMENT CYCLE', type: 'text', placeholder: '<<INSERT MONTHLY / SPECIFIC BUSINESS DAYS / OTHER>>', sectionId: 'commission_schedule', requiredForIssue: true, db: { column: 'payment_cycle' }, group: 'commercial' },
   {
@@ -211,7 +270,12 @@ const FINANCE_REFERRAL_FIELDS: AgreementFieldDef[] = [
     ],
     sectionId: 'commission_schedule', db: { column: 'invoice_process' }, group: 'commercial',
   },
-  { key: 'invoice_process_other', label: 'GST / TAX INVOICE PROCESS — Other', type: 'text', placeholder: INSERT, sectionId: 'commission_schedule', db: { extra: 'invoice_process_other' }, group: 'commercial' },
+  {
+    key: 'invoice_process_other', label: 'GST / TAX INVOICE PROCESS — Other', type: 'text', placeholder: INSERT,
+    sectionId: 'commission_schedule', requiredForIssue: true,
+    visibleWhen: { field: 'invoice_process', equals: ['other'] },
+    db: { extra: 'invoice_process_other' }, group: 'commercial',
+  },
   { key: 'clawback_treatment', label: 'CLAWBACK TREATMENT', type: 'longtext', placeholder: '<<INSERT PROPORTIONAL REPAYMENT / OFFSET / OTHER>>', sectionId: 'commission_schedule', requiredForIssue: true, db: { column: 'clawback_treatment' }, group: 'commercial' },
   { key: 'clawback_repayment_days', label: 'CLAWBACK REPAYMENT TIMEFRAME', type: 'number', placeholder: '<<NUMBER>>', sectionId: 'commission_schedule', requiredForIssue: true, db: { column: 'clawback_repayment_days' }, group: 'commercial' },
   { key: 'refinance_treatment', label: 'REFINANCES / TOP-UPS / SUBSEQUENT LOANS', type: 'longtext', placeholder: '<<INSERT WHETHER INCLUDED OR EXCLUDED>>', sectionId: 'commission_schedule', db: { extra: 'refinance_treatment' }, group: 'commercial' },
@@ -327,6 +391,17 @@ export function projectFieldValues(
   values.company_email = issuer.email ?? null;
   values.company_website = issuer.website ?? null;
 
+  /**
+   * The agreement's negotiated wording amendments travel WITH its values, not
+   * beside them: a version row freezes `field_values`, so freezing the values
+   * freezes the amended clauses too. Re-downloading version 1.0 after a later
+   * negotiation cannot repaint the document somebody signed.
+   */
+  values[CONTENT_OVERRIDES_VALUE_KEY] = coerceContentOverrides(extras[CONTENT_OVERRIDES_EXTRA_KEY]);
+  // Special conditions travel the same way, for the same reason.
+  values[ADDITIONAL_CLAUSES_VALUE_KEY] = coerceAdditionalClauses(extras[ADDITIONAL_CLAUSES_EXTRA_KEY]);
+
+
   return values;
 }
 
@@ -364,8 +439,10 @@ export function rowPatchFromValues(
   const extras: Record<string, unknown> = {};
 
   for (const def of agreementFieldDefs(key)) {
-    if (def.db === 'derived' || !(def.key in values)) continue;
-    let value = values[def.key];
+    if (def.db === 'derived') continue;
+    const hidden = !isAgreementFieldVisible(def, values);
+    if (!hidden && !(def.key in values)) continue;
+    let value = hidden ? null : values[def.key];
     if (value === '' || value === undefined) value = null;
     if (def.type === 'percent') value = parsePercent(value);
     if (def.type === 'number' && value !== null) {
@@ -395,6 +472,21 @@ export function rowPatchFromValues(
     const override = String(values.qualifying_event_override ?? '').trim();
     columns.qualifying_event = override || 'Settled loan and first drawdown';
   }
+
+  // Clause amendments are stored (and re-read) as one map. Written only when
+  // the caller actually carried it, so a partial values object — the wizard's
+  // per-step forms — cannot wipe an existing amendment set.
+  if (CONTENT_OVERRIDES_VALUE_KEY in values) {
+    const overrides = coerceContentOverrides(values[CONTENT_OVERRIDES_VALUE_KEY]);
+    extras[CONTENT_OVERRIDES_EXTRA_KEY] = Object.keys(overrides).length ? overrides : null;
+  }
+
+  // Additional clauses, likewise written only when the caller carried them.
+  if (ADDITIONAL_CLAUSES_VALUE_KEY in values) {
+    const clauses = coerceAdditionalClauses(values[ADDITIONAL_CLAUSES_VALUE_KEY]);
+    extras[ADDITIONAL_CLAUSES_EXTRA_KEY] = clauses.length ? clauses : null;
+  }
+
 
   return { columns, extras };
 }
@@ -426,6 +518,7 @@ export function validateForIssue(
   const missing: IssueValidationItem[] = [];
   for (const def of agreementFieldDefs(key)) {
     if (!def.requiredForIssue) continue;
+    if (!isAgreementFieldVisible(def, values)) continue;
     const value = values[def.key];
     const empty = value === null || value === undefined || String(value).trim() === '';
     if (empty) missing.push({ key: def.key, label: def.label, sectionId: def.sectionId });

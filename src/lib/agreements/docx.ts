@@ -57,7 +57,7 @@ import {
 } from 'docx';
 
 import {
-  agreementTemplate,
+  agreementContentForValues,
   substitutePlain,
   EXECUTION_PANEL_LINES,
   type AgreementBlock,
@@ -952,7 +952,10 @@ export async function buildAgreementDocx(
   fieldValues: AgreementFieldValues,
   options: AgreementDocxOptions = {},
 ): Promise<Blob> {
-  const content = agreementTemplate(templateKey);
+  // The Word export is the same instrument as the PDF and the on-screen view,
+  // so it must carry this agreement's negotiated clause amendments too — the
+  // supplied template alone would export wording nobody agreed to.
+  const content = agreementContentForValues(templateKey, fieldValues);
   const brand = options.brand ?? {};
   const palette = resolveDocxPalette(brand.brandColour);
   const includePack = options.includeTemplatePack !== false;
