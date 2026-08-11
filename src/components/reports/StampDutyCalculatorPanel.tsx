@@ -16,13 +16,30 @@
  * — base duty, concession, surcharge — and cites the financial year and the
  * revenue office page, because these numbers go into client-facing reports and
  * an adviser needs to be able to defend them.
+ *
+ * ── The dutiable value is not always the purchase price ──────────────────
+ *
+ * On a house-and-land package the land and the build are separate contracts,
+ * and duty is assessed on the land transfer alone — so the figure that belongs
+ * in this calculator is the land price, not the package price. That is ordinary
+ * practice on every new build NPC reports on, which is why `bases` exists: the
+ * land price is offered as a one-click basis and, for a new build, is what the
+ * caller defaults to.
+ *
+ * Choosing the land basis also switches the purchase category to vacant land,
+ * because that is what the dutiable transaction actually is. It matters: the
+ * first-home thresholds for vacant land are different figures from the ones for
+ * a home (NSW $350k/$450k against $800k/$1m; WA $450k/$550k against
+ * $600k/$800k), so assessing a land-only value under the "new home" category
+ * would apply the wrong concession.
  */
 
 import { useCallback, useMemo } from 'react';
-import { Building2, Check, ExternalLink, Info } from 'lucide-react';
+import { Building2, Check, ExternalLink, Info, TriangleAlert } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -33,6 +50,7 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
 import { cn } from '@/lib/utils';
 import {
   AUSTRALIAN_STATES,
@@ -42,9 +60,31 @@ import {
   type PurchaseIntent,
 } from '@/utils/stampDutyCalculator';
 
+/** A one-click value the dutiable amount can be set to. */
+export interface DutiableValueBasis {
+  id: string;
+  label: string;
+  value: number;
+  /** Short reason this basis exists, shown beneath the chip. */
+  hint?: string;
+  /** Category to switch to when this basis is chosen, if it implies one. */
+  impliesCategory?: PropertyCategory;
+}
+
 export interface StampDutyCalculatorPanelProps {
-  /** Dutiable value. Normally the report's purchase price. */
-  propertyValue: number;
+  /**
+   * The value duty is assessed on. Editable — for a house-and-land package this
+   * is the land price rather than the package price.
+   */
+  dutiableValue: number;
+  onDutiableValueChange: (value: number) => void;
+  /**
+   * The report's purchase price, shown for context when it differs from the
+   * dutiable value. Not used in the assessment.
+   */
+  purchasePrice?: number;
+  /** One-click bases, e.g. land price and full purchase price. */
+  bases?: DutiableValueBasis[];
   state: AustralianState;
   onStateChange: (state: AustralianState) => void;
   intent: PurchaseIntent;
@@ -110,7 +150,10 @@ function DutyLine({
 }
 
 export function StampDutyCalculatorPanel({
-  propertyValue,
+  dutiableValue,
+  onDutiableValueChange,
+  purchasePrice,
+  bases = [],
   state,
   onStateChange,
   intent,
@@ -129,14 +172,14 @@ export function StampDutyCalculatorPanel({
   const result = useMemo(
     () =>
       calculateStampDuty({
-        propertyValue,
+        propertyValue: dutiableValue,
         state,
         intent,
         category,
         isFirstHomeBuyer,
         isForeignBuyer,
       }),
-    [propertyValue, state, intent, category, isFirstHomeBuyer, isForeignBuyer],
+    [dutiableValue, state, intent, category, isFirstHomeBuyer, isForeignBuyer],
   );
 
   const handleUse = useCallback(() => {
@@ -147,7 +190,58 @@ export function StampDutyCalculatorPanel({
   // engine ignores the flag otherwise; hiding the control avoids offering a
   // switch that silently does nothing.
   const showFirstHomeBuyer = intent === 'owner_occupier';
-  const hasValue = propertyValue > 0;
+  const hasValue = dutiableValue > 0;
+
+  const handleDutiableValueChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const raw = removeCommas(event.target.value);
+      // Reject anything that is not a plain amount rather than silently coercing
+      // it: a value that quietly became 0 would report nil duty, which reads as
+      // a legitimate answer.
+      if (raw !== '' && !/^\d*\.?\d*$/.test(raw)) return;
+      onDutiableValueChange(raw === '' ? 0 : Number(raw));
+    },
+    [onDutiableValueChange],
+  );
+
+  /**
+   * Choosing a basis sets the category it implies as well as the amount. A land
+   * price assessed under the "new home" category would be tested against the
+   * wrong first-home thresholds, so the two move together — the category select
+   * stays editable afterwards for anything unusual.
+   */
+  const applyBasis = useCallback(
+    (basis: DutiableValueBasis) => {
+      onDutiableValueChange(basis.value);
+      if (basis.impliesCategory && basis.impliesCategory !== category) {
+        onCategoryChange(basis.impliesCategory);
+      }
+    },
+    [onDutiableValueChange, onCategoryChange, category],
+  );
+
+  const showsDifferentBasis =
+    typeof purchasePrice === 'number' &&
+    purchasePrice > 0 &&
+    Math.round(purchasePrice) !== Math.round(dutiableValue);
+
+  /**
+   * The amount matches a basis, but the category does not match what that basis
+   * implies — a land price being assessed as a home, say. Worth saying out loud
+   * rather than quietly assessing it: the concession thresholds for vacant land
+   * and for a home are different figures, so the mismatch changes the answer
+   * without changing anything the user can see.
+   */
+  const mismatchedBasis = useMemo(
+    () =>
+      bases.find(
+        (basis) =>
+          basis.impliesCategory !== undefined &&
+          basis.impliesCategory !== category &&
+          Math.round(basis.value) === Math.round(dutiableValue),
+      ),
+    [bases, category, dutiableValue],
+  );
 
   return (
     <div className={cn('glass-subtle space-y-4 rounded-lg p-4', className)}>
@@ -216,12 +310,92 @@ export function StampDutyCalculatorPanel({
         </div>
 
         <div className="space-y-2">
-          <Label className="text-sm font-medium">Dutiable value</Label>
-          <div className="glass-inset flex h-10 items-center rounded-md px-3 text-sm font-medium tabular-nums">
-            {hasValue ? currency(propertyValue) : 'Set a purchase price'}
+          <Label htmlFor="stamp-duty-dutiable-value" className="text-sm font-medium">
+            Dutiable value
+          </Label>
+          <div className="relative">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+              $
+            </span>
+            <Input
+              id="stamp-duty-dutiable-value"
+              type="text"
+              inputMode="numeric"
+              value={formatNumberWithCommas(String(dutiableValue || ''))}
+              onChange={handleDutiableValueChange}
+              placeholder="Amount duty is assessed on"
+              disabled={disabled}
+              className="pl-7 tabular-nums"
+            />
           </div>
         </div>
       </div>
+
+      {(bases.length > 0 || showsDifferentBasis) && (
+        <div className="space-y-2">
+          {bases.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Assess on:</span>
+              {bases.map((basis) => {
+                const active = Math.round(basis.value) === Math.round(dutiableValue);
+                return (
+                  <Button
+                    key={basis.id}
+                    type="button"
+                    size="sm"
+                    variant={active ? 'secondary' : 'outline'}
+                    onClick={() => applyBasis(basis)}
+                    disabled={disabled}
+                    className="h-auto flex-col items-start gap-0 px-2.5 py-1.5 text-left"
+                    aria-pressed={active}
+                  >
+                    <span className="text-xs font-medium">
+                      {basis.label} · {currency(basis.value)}
+                    </span>
+                    {basis.hint && (
+                      <span className="text-[0.68rem] font-normal text-muted-foreground">{basis.hint}</span>
+                    )}
+                  </Button>
+                );
+              })}
+            </div>
+          )}
+
+          {mismatchedBasis && hasValue && (
+            <div className="glass-inset flex flex-wrap items-center justify-between gap-2 rounded-md p-2.5">
+              <p className="flex gap-2 text-xs text-foreground">
+                <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-warning" aria-hidden="true" />
+                <span>
+                  Assessing the {mismatchedBasis.label.toLowerCase()} as{' '}
+                  {CATEGORY_LABELS[category].toLowerCase()}. A land transfer is normally assessed as{' '}
+                  {CATEGORY_LABELS[mismatchedBasis.impliesCategory as PropertyCategory].toLowerCase()},
+                  which carries different first home thresholds.
+                </span>
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={disabled}
+                onClick={() => onCategoryChange(mismatchedBasis.impliesCategory as PropertyCategory)}
+              >
+                Switch to {CATEGORY_LABELS[mismatchedBasis.impliesCategory as PropertyCategory].toLowerCase()}
+              </Button>
+            </div>
+          )}
+
+          {showsDifferentBasis && (
+            <p className="flex gap-2 text-xs text-muted-foreground">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>
+                Duty is being assessed on {currency(dutiableValue)}, not the{' '}
+                {currency(purchasePrice as number)} purchase price. Concession thresholds are tested
+                against this figure — check the total consideration if a concession is close to its cap.
+              </span>
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-2">
         {showFirstHomeBuyer && (
@@ -277,7 +451,10 @@ export function StampDutyCalculatorPanel({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            {result.effectiveRate.toFixed(2)}% of the purchase price
+            {result.effectiveRate.toFixed(2)}% of the dutiable value
+            {showsDifferentBasis && purchasePrice
+              ? `, ${((result.totalDuty / purchasePrice) * 100).toFixed(2)}% of the ${currency(purchasePrice)} purchase price`
+              : ''}
           </p>
 
           {result.notes.length > 0 && (
@@ -300,7 +477,8 @@ export function StampDutyCalculatorPanel({
         </div>
       ) : (
         <p className="py-4 text-center text-sm text-muted-foreground">
-          Enter a purchase price to assess stamp duty.
+          Enter the value duty is assessed on — the purchase price, or the land price on a
+          house-and-land package.
         </p>
       )}
 

@@ -94,6 +94,30 @@ first home, the SRO's \$21,970 for a Victorian PPR buyer at \$500,000, and WA's
 FHOR meeting the general scale at exactly \$20,140 on \$550,000 vacant land each
 independently confirm a whole chunk of a table.
 
+## The dutiable value is not always the purchase price
+
+On a house-and-land package the land and the build are separate contracts and
+duty is assessed on the **land transfer alone**. That is ordinary practice on
+every new build NPC reports on, so the calculator defaults a `new_build` or
+`land_only` report to its recorded land price rather than the package price, and
+offers both as one-click bases. The field is free-typed either way — a report
+whose split is not recorded still needs the figure to be enterable.
+
+`src/components/reports/dutiableValueBasis.ts` holds that decision for both call
+sites (the pre-generation overrides tab and the manual override modal), so the
+two cannot drift.
+
+**The category moves with the amount.** A land transfer is a vacant land
+transfer, and vacant land carries different first-home thresholds from a home —
+NSW exempts a home to \$800,000 but land only to \$350,000; WA \$600,000 against
+\$450,000. Assessing a land price under "new home" would silently test the wrong
+ones, so choosing a basis sets the category it implies, the defaults are paired,
+and the panel warns with a one-click correction if they ever disagree. The
+category select stays editable for anything unusual.
+
+Duty is reported against the dutiable value **and** against the purchase price
+when they differ, because the client is budgeting against the package.
+
 ## The cache
 
 `stamp_duty_rates_cache` holds one row per jurisdiction with the full schedule

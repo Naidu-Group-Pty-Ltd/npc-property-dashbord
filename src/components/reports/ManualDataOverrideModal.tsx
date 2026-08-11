@@ -27,6 +27,8 @@ import { AlertCircle, RotateCcw, Save, Calculator, ExternalLink, ChevronDown, Ch
 import { Table as UITable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { STATE_MAPPING } from '@/lib/states';
 import { StampDutyCalculatorPanel } from './StampDutyCalculatorPanel';
+import { defaultDutiableValue, dutiableValueBases } from './dutiableValueBasis';
+import type { BuildType } from '@/types/overrideFields';
 import {
   AUSTRALIAN_STATES,
   type AustralianState,
@@ -87,6 +89,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
   const [stampDutyStateOverride, setStampDutyStateOverride] = useState<AustralianState | null>(null);
   const [stampDutyIntent, setStampDutyIntent] = useState<PurchaseIntent>('investor');
   const [stampDutyCategory, setStampDutyCategory] = useState<PropertyCategory>('established');
+  const [dutiableValueOverride, setDutiableValueOverride] = useState<number | null>(null);
   const [stampDutyFirstHomeBuyer, setStampDutyFirstHomeBuyer] = useState(false);
   const [stampDutyForeignBuyer, setStampDutyForeignBuyer] = useState(false);
   
@@ -167,13 +170,42 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
       : 'NSW';
   }, [stampDutyStateOverride, detectedState]);
 
-  const stampDutyPropertyValue = useMemo(() => {
+  // Hoisted above the stamp duty derivations, which need to know whether this is
+  // a house-and-land package before they can pick a default dutiable value.
+  const currentBuildType = overrides.buildType || report?.manual_overrides?.buildType || 'existing_property';
+  const isNewBuild = currentBuildType === 'new_build';
+
+  const stampDutyPurchasePrice = useMemo(() => {
     const price = overrides.purchasePrice
       ?? report?.financial_calculations?.purchasePrice
       ?? report?.financial_calculations?.propertyValue
       ?? 0;
     return Number(price) || 0;
   }, [overrides.purchasePrice, report?.financial_calculations]);
+
+  const stampDutyLandPrice = useMemo(() => {
+    const land = overrides.landPrice
+      ?? report?.manual_overrides?.landPrice
+      ?? report?.financial_calculations?.landPrice
+      ?? 0;
+    return Number(land) || 0;
+  }, [overrides.landPrice, report?.manual_overrides, report?.financial_calculations]);
+
+  /**
+   * What duty is assessed on. A new build defaults to the land price because
+   * duty on a house-and-land package falls on the land contract — see
+   * `dutiableValueBasis.ts`. An explicit edit wins from then on.
+   */
+  const dutiableInputs = useMemo(
+    () => ({
+      buildType: currentBuildType as BuildType,
+      purchasePrice: stampDutyPurchasePrice,
+      landPrice: stampDutyLandPrice,
+    }),
+    [currentBuildType, stampDutyPurchasePrice, stampDutyLandPrice],
+  );
+  const stampDutyDutiableValue = dutiableValueOverride ?? defaultDutiableValue(dutiableInputs);
+  const stampDutyBases = useMemo(() => dutiableValueBases(dutiableInputs), [dutiableInputs]);
 
   const useStampDutyValue = useCallback((totalDuty: number) => {
     const value = Math.round(totalDuty);
@@ -252,8 +284,6 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
 
   // Define the confirmed input fields for manual overrides
   // Get current build type from overrides (default to 'existing_property')
-  const currentBuildType = overrides.buildType || report?.manual_overrides?.buildType || 'existing_property';
-  const isNewBuild = currentBuildType === 'new_build';
 
   // ========== INVESTMENT REPORT TAB FIELDS ==========
   
@@ -1458,7 +1488,10 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                         <Separator />
 
                         <StampDutyCalculatorPanel
-                          propertyValue={stampDutyPropertyValue}
+                          dutiableValue={stampDutyDutiableValue}
+                          onDutiableValueChange={setDutiableValueOverride}
+                          purchasePrice={stampDutyPurchasePrice}
+                          bases={stampDutyBases}
                           state={stampDutyState}
                           onStateChange={setStampDutyStateOverride}
                           intent={stampDutyIntent}
