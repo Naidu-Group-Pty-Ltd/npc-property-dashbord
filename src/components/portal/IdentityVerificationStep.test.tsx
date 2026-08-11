@@ -301,315 +301,471 @@ describe('identity verification step', () => {
 });
 
 /**
- * The hosted-provider flow, rendered for real.
+ * The secure identity check, rendered for real.
  *
  * A live run against the provider's own page is not possible here — outbound
  * browser traffic is blocked in this environment — so what is verified is the
- * half NPC owns: that the server decides the flow, that the session comes from
- * our backend, that the frame is built with the permissions the capture needs,
- * and that finishing in that frame cannot mark anybody verified.
+ * half NPC owns: that NPC asks which document before anything is created, that
+ * the window is opened synchronously inside the click (the rule that decides
+ * whether this works at all on default browser settings), that a blocked or
+ * closed window is never reported as a verification failure, and that nothing
+ * reaching the browser — a message, a callback, a closed window — can mark
+ * anybody verified.
  */
-describe('hosted provider flow', () => {
+describe('secure identity check', () => {
   const hostedStatus = (over: Record<string, unknown> = {}) =>
     status({ provider_flow: 'hosted', ...over });
 
-  it('opens the provider session inside the portal, from a server-minted URL', async () => {
+  const SESSION_URL = 'https://verify.didit.me/session/TOKEN';
+
+  /**
+   * A stand-in for the window the browser would open.
+   *
+   * jsdom's `window.open` returns null, which is indistinguishable from a
+   * blocked popup — so every test that expects a window installs this, and the
+   * blocked-popup test is the one that does not.
+   */
+  function mockPopup(opts: { blocked?: boolean } = {}) {
+    const replace = vi.fn();
+    const popup = {
+      closed: false,
+      focus: vi.fn(),
+      close: vi.fn(() => { popup.closed = true; }),
+      location: { replace },
+      document: { write: vi.fn(), close: vi.fn() },
+    };
+    const open = vi.spyOn(window, 'open')
+      .mockImplementation(() => (opts.blocked ? null : popup as unknown as Window));
+    return { open, popup, replace };
+  }
+
+  /** Walk from the party list to the launch screen for one document. */
+  async function chooseDocument(name: RegExp = /driver licence/i) {
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    fireEvent.click(await screen.findByRole('radio', { name }));
+    fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }));
+    return await screen.findByRole('button', { name: /begin secure verification/i });
+  }
+
+  /* ── document selection ──────────────────────────────────────────────── */
+
+  it('asks which document before creating anything', async () => {
+    mockPopup();
     verificationStatus.mockResolvedValue(hostedStatus());
-    startHostedVerification.mockResolvedValue({
-      started: true, verification_url: 'https://verify.didit.me/session/TOKEN',
-      message: 'Follow the steps to verify your identity.',
-    });
 
     renderStep();
     fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
 
+    expect(await screen.findByText(/which identity document will you use/i)).toBeTruthy();
+    // Nothing has been created and no window has been opened: choosing a
+    // document is NPC's screen, and a session that a customer never begins is
+    // one the provider still charges an allowance for.
+    expect(startHostedVerification).not.toHaveBeenCalled();
+    expect(window.open).not.toHaveBeenCalled();
+  });
+
+  it('offers exactly the four supported Australian documents, and no country picker', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    await screen.findByRole('radio', { name: /passport/i });
+
+    const options = screen.getAllByRole('radio').map((el) => el.getAttribute('value'));
+    expect(options).toEqual(['passport', 'driver_licence', 'identity_card', 'residence_permit']);
+
+    // Australia is enforced server-side and never asked about. A Medicare,
+    // health or concession card is not an identity document here and is not
+    // named — naming one only to refuse it invites the client to try it.
+    expect(screen.queryByText(/select.*country|choose.*country/i)).toBeNull();
+    expect(screen.queryByText(/medicare|concession|health care card/i)).toBeNull();
+  });
+
+  it('choosing a document arms Continue', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    const proceed = await screen.findByRole('button', { name: /^continue$/i });
+
+    // Nothing chosen, nothing to proceed with.
+    expect(proceed).toBeDisabled();
+
+    /*
+     * A regression guard for a bug a browser found and jsdom did not: the
+     * group was given `value={choice ?? undefined}`, and an undefined value
+     * makes a Radix radio group UNCONTROLLED. The option rendered as selected
+     * from the group's own internal state while ours stayed null, so the
+     * customer could see their document chosen and still find Continue dead.
+     */
+    fireEvent.click(await screen.findByRole('radio', { name: /passport/i }));
+    await waitFor(() => expect(proceed).not.toBeDisabled());
+  });
+
+  it('sends the chosen document and never a provider, workflow or country', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
+
+    renderStep();
+    fireEvent.click(await chooseDocument(/passport/i));
     await waitFor(() => expect(startHostedVerification).toHaveBeenCalled());
-    // The session is requested from OUR backend for THIS party — never a
-    // generic workflow link, which would arrive with no way to correlate it.
+
+    // The document type is the ONLY thing the browser declares. Provider
+    // selection, workflow authority and environment stay server-side; a
+    // browser that could name any of them would be choosing its own authority.
     expect(startHostedVerification).toHaveBeenCalledWith('case-1', {
-      party_id: null, party_label: 'You',
+      party_id: null, party_label: 'You', document_type: 'passport',
     });
-
-    const frame = await waitFor(() => {
-      const el = document.querySelector('iframe');
-      if (!el) throw new Error('no iframe');
-      return el;
-    });
-    expect(frame.getAttribute('src')).toBe('https://verify.didit.me/session/TOKEN');
+    const [, params] = startHostedVerification.mock.calls[0];
+    expect(Object.keys(params).sort())
+      .toEqual(['document_type', 'party_id', 'party_label']);
   });
 
-  /** Opens the hosted flow and hands back the frame. */
-  const openHosted = async () => {
+  /* ── the window ──────────────────────────────────────────────────────── */
+
+  it('opens the window synchronously in the click, before the session call', async () => {
+    const { open, replace } = mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    let resolveSession: (v: unknown) => void = () => {};
+    startHostedVerification.mockReturnValue(new Promise((r) => { resolveSession = r; }));
+
+    renderStep();
+    const begin = await chooseDocument();
+    fireEvent.click(begin);
+
+    /*
+     * The whole popup rule, in two assertions: the window exists before the
+     * session promise has resolved, and it was opened blank. Awaiting the API
+     * first and opening afterwards is what browsers classify as an unsolicited
+     * popup and block on default settings.
+     */
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0][0]).toBe('');
+    expect(replace).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveSession({ started: true, verification_url: SESSION_URL, message: 'ok' });
+    });
+
+    // Only now is the window we already hold pointed at the session.
+    await waitFor(() => expect(replace).toHaveBeenCalledWith(SESSION_URL));
+    // And it is still ONE window — never a second one opened at the URL.
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows verification in progress once the window is open', async () => {
+    mockPopup();
     verificationStatus.mockResolvedValue(hostedStatus());
     startHostedVerification.mockResolvedValue({
-      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
+      started: true, verification_url: SESSION_URL, message: 'ok',
     });
 
     renderStep();
-    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
-    return await waitFor(() => {
-      const el = document.querySelector('iframe');
-      if (!el) throw new Error('no iframe');
-      return el;
+    fireEvent.click(await chooseDocument());
+
+    expect(await screen.findByText(/identity verification in progress/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /re-open verification/i })).toBeTruthy();
+  });
+
+  it('never embeds the provider in the portal', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
     });
-  };
 
-  it('delegates every permission the provider documents for its embed', async () => {
-    const frame = await openHosted();
-    const allow = frame.getAttribute('allow') ?? '';
+    renderStep();
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
 
-    // `camera` is the one that decides whether this works at all. The rest are
-    // the provider's documented embed set — and the two that were missing,
-    // `autoplay` and `encrypted-media`, are what the liveness video pipeline
-    // needs: a blocked stream reads to the provider as "this device cannot
-    // capture", which is exactly how a same-device flow turns into a QR code.
-    for (const permission of ['camera', 'microphone', 'autoplay', 'encrypted-media',
-      'fullscreen', 'clipboard-write', 'picture-in-picture',
-      'accelerometer', 'gyroscope', 'magnetometer']) {
-      expect(allow).toContain(permission);
-    }
-    expect(frame.hasAttribute('allowfullscreen')).toBe(true);
+    // The iframe is gone for good: a third-party application inside NPC's page
+    // is the confusion this work exists to remove.
+    expect(document.querySelector('iframe')).toBeNull();
   });
 
-  it('does not sandbox the provider frame', async () => {
-    const frame = await openHosted();
+  it('double-clicking Begin creates one session, not two', async () => {
+    const { open } = mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
 
-    // A cross-origin frame already granted `allow-same-origin allow-scripts`
-    // is not meaningfully contained by a sandbox — the same-origin policy is
-    // what stops the provider reading this page. What the attribute *can* do
-    // is silently withhold something the capture pipeline needs and turn that
-    // into an unexplained cross-device handoff.
-    expect(frame.hasAttribute('sandbox')).toBe(false);
+    renderStep();
+    const begin = await chooseDocument();
+    fireEvent.click(begin);
+    fireEvent.click(begin);
+    await waitFor(() => expect(startHostedVerification).toHaveBeenCalled());
+
+    expect(startHostedVerification).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it('does not lead with a camera-failure warning before anything has failed', async () => {
-    await openHosted();
+  it('handles a blocked popup without losing the session or blaming the client', async () => {
+    const { open } = mockPopup({ blocked: true });
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
 
-    // The old dialog rendered a permanent notice about the camera not working
-    // above the frame, so every customer met an error message on a screen
-    // where nothing had gone wrong yet.
-    expect(screen.queryByRole('link', { name: /new tab/i })).toBeNull();
-    expect(screen.queryByText(/camera (is )?(not|isn't) work/i)).toBeNull();
-    expect(screen.queryByText(/blocked/i)).toBeNull();
+    renderStep();
+    fireEvent.click(await chooseDocument());
+
+    expect(await screen.findByText(/could not open the secure verification window/i)).toBeTruthy();
+    // Not a failure, and not an attempt: the wording has to say so, because a
+    // customer told "verification failed" by their own pop-up blocker will
+    // stop trying.
+    expect(screen.getByText(/nothing has been used up/i)).toBeTruthy();
+
+    /*
+     * Recovery is ONE press. The session was created even though the window
+     * was refused, and its URL is held in memory — so the retry is a direct
+     * response to a click rather than another promise the browser would
+     * block in turn.
+     */
+    const callsBefore = startHostedVerification.mock.calls.length;
+    open.mockReturnValue({
+      closed: false, focus: vi.fn(), close: vi.fn(),
+      location: { replace: vi.fn() }, document: { write: vi.fn(), close: vi.fn() },
+    } as unknown as Window);
+    fireEvent.click(screen.getByRole('button', { name: /open verification/i }));
+
+    await waitFor(() => expect(screen.getByText(/identity verification in progress/i)).toBeTruthy());
+    expect(open).toHaveBeenLastCalledWith(SESSION_URL, expect.any(String), expect.any(String));
+    expect(startHostedVerification.mock.calls.length).toBe(callsBefore);
   });
 
-  it('reveals the new-tab fallback only when the customer asks for it', async () => {
-    await openHosted();
+  it('a closed window is not a failure — it offers Continue and re-reads the server', async () => {
+    const { popup } = mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
 
-    fireEvent.click(await screen.findByRole('button', { name: /having trouble/i }));
+    renderStep();
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
 
-    const link = await screen.findByRole('link', { name: /new tab/i });
-    expect(link.getAttribute('href')).toBe('https://verify.didit.me/session/TOKEN');
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toContain('noopener');
+    const readsBefore = verificationStatus.mock.calls.length;
+    popup.closed = true;
+
+    // Real timers: the watcher polls once a second, because there is no
+    // cross-origin close event to listen for.
+    expect(await screen.findByText(/has not been confirmed yet/i, {}, { timeout: 4000 }))
+      .toBeTruthy();
+    // Never "failed" and never "cancelled": the window closing says nothing
+    // about what happened inside it. They may have finished.
+    expect(screen.queryByText(/failed|unsuccessful/i)).toBeNull();
+    expect(screen.getByRole('button', { name: /continue verification/i })).toBeTruthy();
+    // The server is asked; the browser does not decide.
+    expect(verificationStatus.mock.calls.length).toBeGreaterThan(readsBefore);
   });
 
-  it('offers exactly one "I have finished" control', async () => {
-    await openHosted();
+  it('re-opening focuses the window it already has rather than minting another', async () => {
+    const { open, popup } = mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
 
-    // There were two — one in the dialog body and one in its footer — which
-    // read as two different actions with two different meanings.
-    expect(screen.getAllByRole('button', { name: /i have finished/i })).toHaveLength(1);
+    renderStep();
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /re-open verification/i }));
+
+    expect(popup.focus).toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(startHostedVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores provider lifecycle messages until verification is complete', async () => {
-    const frame = await openHosted();
-    const callsBefore = verificationStatus.mock.calls.length;
+  /* ── nothing here can settle a verification ──────────────────────────── */
 
-    // Every one of these arrives mid-journey. Closing on any of them takes the
-    // customer out of a working capture — which is how the dialog came to look
-    // like a white panel that vanished after a few seconds.
-    //
-    // `*:step_completed` is the trap: a substring test for "completed" catches
-    // it, and it fires while the customer is still photographing a document.
-    // Every non-terminal name the provider's published SDK can post, plus the
-    // shapes a stray sender might use.
-    for (const data of [
-      { type: 'verification_started', sessionId: 'session-1' },
-      { type: 'didit:ready' },
-      { type: 'didit:started' },
-      { type: 'didit:step_started', step: 'document' },
-      { type: 'didit:step_changed', step: 'liveness' },
-      { type: 'didit:step_completed', step: 'document' },
-      { type: 'didit:media_started', mediaType: 'camera' },
-      { type: 'didit:media_captured', step: 'document' },
-      { type: 'didit:document_selected', documentType: 'PASSPORT' },
-      // Fires while the result is still being computed — closing here would
-      // drop the customer out during processing.
-      { type: 'didit:verification_submitted', step: 'liveness' },
-      { type: 'didit:status_updated', status: 'In Progress' },
-      { type: 'resize', height: 900 },
-      { type: '' },
-      'didit:step_completed',
-      JSON.stringify({ type: 'didit:step_completed' }),
-      null,
-      42,
-    ]) {
-      await act(async () => {
-        window.dispatchEvent(new MessageEvent('message', {
-          origin: 'https://verify.didit.me',
-          source: frame.contentWindow,
-          data,
-        }));
-        await Promise.resolve();
-      });
-      expect(verificationStatus.mock.calls.length, JSON.stringify(data)).toBe(callsBefore);
-      expect(document.querySelector('iframe'), JSON.stringify(data)).toBeTruthy();
-    }
+  it('the return message only re-reads server state — it cannot mark verified', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
+
+    renderStep();
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
+
+    const readsBefore = verificationStatus.mock.calls.length;
+    await act(async () => {
+      window.dispatchEvent(new MessageEvent('message', {
+        origin: window.location.origin,
+        // Everything a hostile page would put in it, including a verdict.
+        data: { type: 'npc:identity-return', status: 'Approved', verified: true },
+      }));
+    });
+
+    // The strongest thing it can do: NPC asks its own server again. The
+    // customer is told "we are checking", never "you are verified" — the only
+    // path to that is the signed webhook and the server-to-server decision.
+    expect(verificationStatus.mock.calls.length).toBeGreaterThan(readsBefore);
+    expect(await screen.findByText(/securely checking your verification/i)).toBeTruthy();
+    expect(screen.queryByText(/identity verified/i)).toBeNull();
   });
 
-  it('recognises the terminal event under any of the spellings the provider uses', async () => {
-    // The provider documents this vocabulary for its SDK callback but does not
-    // publish the wire format an embedded session posts, and the two have not
-    // historically agreed. Recognising too little only costs the customer a
-    // button press; recognising a lifecycle event ejects them from a working
-    // flow — so the set is wide but strictly terminal.
-    for (const data of [
-      // The four terminal names the provider's own SDK switches on.
-      { type: 'didit:completed' },
-      { type: 'didit:cancelled' },
-      { type: 'didit:error' },
-      { type: 'didit:close_request' },
-      // Alternative carriers and spellings.
-      { event: 'didit:completed' },
-      { name: 'didit:error' },
-      { type: 'verification_completed' },
-      { type: 'verification_complete' },
-      { type: 'verification_failed' },
-      'verification_completed',
-      JSON.stringify({ type: 'didit:completed' }),
-    ]) {
-      cleanup();
-      verificationStatus.mockClear();
-      const frame = await openHosted();
-      const callsBefore = verificationStatus.mock.calls.length;
+  it('ignores a return message from any other origin', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
 
-      await act(async () => {
-        window.dispatchEvent(new MessageEvent('message', {
-          origin: 'https://verify.didit.me', source: frame.contentWindow, data,
-        }));
-      });
+    renderStep();
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
 
-      await waitFor(() =>
-        expect(verificationStatus.mock.calls.length, JSON.stringify(data))
-          .toBeGreaterThan(callsBefore));
-    }
-  });
-
-  it('ignores a completion message from something other than this frame', async () => {
-    await openHosted();
-    const callsBefore = verificationStatus.mock.calls.length;
-
-    // Right origin, real event name, wrong window: a popup or a nested frame
-    // on the provider's origin cannot speak for the customer's session.
+    const readsBefore = verificationStatus.mock.calls.length;
     await act(async () => {
       window.dispatchEvent(new MessageEvent('message', {
         origin: 'https://verify.didit.me',
-        source: window,
-        data: { type: 'verification_completed' },
+        data: { type: 'npc:identity-return', status: 'Approved' },
       }));
-      await Promise.resolve();
-    });
-
-    expect(verificationStatus.mock.calls.length).toBe(callsBefore);
-    expect(document.querySelector('iframe')).toBeTruthy();
-  });
-
-  it('a provider completion message only re-reads server state — it cannot mark verified', async () => {
-    const frame = await openHosted();
-    const callsBefore = verificationStatus.mock.calls.length;
-
-    // The completion payload can claim success, but it can do no more than make
-    // NPC ask its own server what happened. Status/decision fields are ignored.
-    await act(async () => {
       window.dispatchEvent(new MessageEvent('message', {
-        origin: 'https://verify.didit.me',
-        source: frame.contentWindow,
-        data: {
-          type: 'verification_complete', sessionId: 'session-1',
-          status: 'Approved', verified: true, decision: 'passed',
-        },
+        origin: 'https://attacker.example',
+        data: { type: 'npc:identity-return' },
       }));
     });
 
-    await waitFor(() =>
-      expect(verificationStatus.mock.calls.length).toBeGreaterThan(callsBefore));
-    expect(screen.queryByText(/verified/i)).toBeNull();
-    expect(submitVerification).not.toHaveBeenCalled();
+    // Not even a re-read. The provider's own window cannot speak for NPC.
+    expect(verificationStatus.mock.calls.length).toBe(readsBefore);
+    expect(screen.getByText(/identity verification in progress/i)).toBeTruthy();
   });
 
-  it('ignores messages from any other origin', async () => {
-    await openHosted();
-    const callsBefore = verificationStatus.mock.calls.length;
-
-    await act(async () => {
-      window.dispatchEvent(new MessageEvent('message', {
-        origin: 'https://verify.didit.me.attacker.example',
-        data: { status: 'Approved' },
-      }));
-      await Promise.resolve();
-    });
-
-    expect(verificationStatus.mock.calls.length).toBe(callsBefore);
-    // The frame is still open — a stranger cannot close the customer's session.
-    expect(document.querySelector('iframe')).toBeTruthy();
-  });
-
-  it('never captures a document or selfie itself when hosted is active', async () => {
+  it('never puts the session URL in web storage', async () => {
+    mockPopup();
     verificationStatus.mockResolvedValue(hostedStatus());
     startHostedVerification.mockResolvedValue({
-      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
+      started: true, verification_url: SESSION_URL, message: 'ok',
     });
-    const camera = mockCamera();
+    const setLocal = vi.spyOn(Storage.prototype, 'setItem');
 
     renderStep();
-    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
-    await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy());
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
 
-    // The provider owns the capture; NPC opening a camera here would collect a
-    // second copy of the customer's face for no purpose it can serve.
-    expect(camera.getUserMedia).not.toHaveBeenCalled();
-    expect(screen.queryByRole('button', { name: /take photo/i })).toBeNull();
+    /*
+     * The URL embeds the customer's session token. Web storage survives the
+     * browser restart that should have ended it and is readable by every
+     * script on the origin, so the URL lives in memory for the length of the
+     * flow and nowhere else.
+     */
+    for (const [, value] of setLocal.mock.calls) {
+      expect(String(value)).not.toContain('TOKEN');
+      expect(String(value)).not.toContain(SESSION_URL);
+    }
+    expect(JSON.stringify(window.localStorage)).not.toContain('TOKEN');
+    expect(JSON.stringify(window.sessionStorage)).not.toContain('TOKEN');
   });
 
-  it('"I have finished" re-reads the server and asserts nothing itself', async () => {
-    verificationStatus.mockResolvedValue(hostedStatus());
-    startHostedVerification.mockResolvedValue({
-      started: true, verification_url: 'https://verify.didit.me/session/TOKEN', message: 'go',
-    });
-
-    renderStep();
-    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
-    await waitFor(() => expect(document.querySelector('iframe')).toBeTruthy());
-
-    const callsBefore = verificationStatus.mock.calls.length;
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /i have finished/i }));
-    });
-
-    // The customer saying they are done is a hint to re-read, not evidence.
-    await waitFor(() =>
-      expect(verificationStatus.mock.calls.length).toBeGreaterThan(callsBefore));
-    // The party still reads as the server reports it — not "verified".
-    expect(screen.queryByText(/verified/i)).toBeNull();
-  });
+  /* ── backend authority over sessions and attempts ────────────────────── */
 
   it('an already-open session is reported, not duplicated', async () => {
+    const { popup } = mockPopup();
     verificationStatus.mockResolvedValue(hostedStatus());
     startHostedVerification.mockResolvedValue({
       started: false, code: 'already_processing',
-      message: 'Your verification is already open.',
+      message: 'Your verification has been received. We will update you shortly.',
     });
 
     renderStep();
-    // `findByRole` must stay OUTSIDE act(): awaiting a query inside it blocks
-    // the microtask flush the query itself is waiting on.
-    const start = await screen.findByRole('button', { name: /^start$/i });
-    await act(async () => { fireEvent.click(start); });
+    fireEvent.click(await chooseDocument());
+    await waitFor(() => expect(startHostedVerification).toHaveBeenCalled());
 
-    // No frame is opened against a URL we do not have, and the step re-reads.
-    await waitFor(() => expect(document.querySelector('iframe')).toBeNull());
-    expect(startHostedVerification).toHaveBeenCalled();
+    // No URL means the backend reconciled it away — the blank window is closed
+    // rather than left on `about:blank`, and the step re-reads instead of
+    // asserting anything about the outcome. One session, whatever the client
+    // pressed.
+    await waitFor(() => expect(popup.close).toHaveBeenCalled());
+    expect(startHostedVerification).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(verificationStatus.mock.calls.length).toBeGreaterThan(2));
+  });
+
+  it('shows Continue verification after a refresh, from server state alone', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus({
+      parties: [{ ...party, verification_in_progress: true }],
+    }));
+
+    renderStep();
+
+    /*
+     * A refresh loses the window handle, the session URL and every scrap of
+     * local state. The server's boolean is what stops the client being offered
+     * "Start" while their verification window is still open behind the browser.
+     */
+    expect(await screen.findByRole('button', { name: /continue verification/i })).toBeTruthy();
+    expect(screen.getByText(/nothing has been used up/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
+  });
+
+  it('a provider outage exposes the documentary route and consumes nothing', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    const refusal = Object.assign(
+      new Error('Verification is temporarily unavailable. Please try again shortly — '
+        + 'nothing has been used up.'),
+      { code: 'temporarily_unavailable' },
+    );
+    startHostedVerification.mockRejectedValue(refusal);
+
+    renderStep();
+    const begin = await chooseDocument();
+
+    // The provider goes away between the launch screen and the click. Every
+    // read after this one says so, which is what the step re-reads on refusal.
+    verificationStatus.mockResolvedValue(
+      hostedStatus({ availability: 'temporarily_unavailable' }));
+    fireEvent.click(begin);
+    await waitFor(() => expect(startHostedVerification).toHaveBeenCalled());
+
+    // The manual route, not a dead end in the secure-window flow — and the
+    // copy says nothing has been used up, because nothing has.
+    expect(await screen.findByRole('button', { name: /upload identity document/i })).toBeTruthy();
+    expect(screen.getByText(/nothing has been used up/i)).toBeTruthy();
+  });
+
+  it('keeps the manual route visible throughout the secure flow', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+
+    // Refusing biometric collection is genuinely optional (APP 3.3), so the
+    // alternative has to be visible at the moment somebody decides to refuse.
+    expect(await screen.findByText(/prefer not to use the photo check/i)).toBeTruthy();
+  });
+
+  /* ── the provider is never named ─────────────────────────────────────── */
+
+  it('never names the provider or exposes its internals to the customer', async () => {
+    mockPopup();
+    verificationStatus.mockResolvedValue(hostedStatus());
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: SESSION_URL, message: 'ok',
+    });
+
+    renderStep();
+    fireEvent.click(await chooseDocument());
+    await screen.findByText(/identity verification in progress/i);
+
+    const rendered = document.body.textContent ?? '';
+    for (const forbidden of [/didit/i, /workflow/i, /provider session/i, /session id/i,
+      /liveness/i, /face match/i, /similarity/i, /threshold/i, /webhook/i]) {
+      expect(rendered).not.toMatch(forbidden);
+    }
+    // ...and the URL itself never reaches the page.
+    expect(rendered).not.toContain(SESSION_URL);
   });
 
   it('falls back to NPC capture when the server says the flow is capture', async () => {
@@ -621,9 +777,9 @@ describe('hosted provider flow', () => {
     fireEvent.click(startBtn);
     await act(async () => { await Promise.resolve(); });
 
-    // The self-hosted path is untouched: the camera dialog, not a frame.
+    // The self-hosted path is untouched: the camera dialog, and no document
+    // chooser — that screen belongs to the hosted flow alone.
     expect(startHostedVerification).not.toHaveBeenCalled();
-    expect(document.querySelector('iframe')).toBeNull();
     expect(await screen.findByText(/photograph your ID/i)).toBeTruthy();
   });
 });

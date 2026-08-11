@@ -168,6 +168,22 @@ export interface CreateSessionArgs {
   metadata: Record<string, unknown>;
   /** Where the hosted flow returns the customer. Carries no secret. */
   callback?: string | null;
+  /**
+   * Which device the return redirect applies to.
+   *
+   * Documented values are `initiator` (the default), `completer` and `both`.
+   * NPC sends `both`: the initiator is the window NPC opened, and the completer
+   * is a phone the customer handed off to. With the default, that phone
+   * finishes on the provider's own end screen — the one place in the journey
+   * NPC cannot dress, shown on the device the customer is actually holding.
+   */
+  callbackMethod?: 'initiator' | 'completer' | 'both' | null;
+  /**
+   * Session-level restrictions. Server-built only — see
+   * `diditExpectedDetails`. Carries a country and a document type and never
+   * customer PII.
+   */
+  expectedDetails?: Record<string, unknown> | null;
   /** Sandbox-only deterministic outcome. Ignored by the live environment. */
   sandboxScenario?: string | null;
 }
@@ -178,7 +194,15 @@ export async function createDiditSession(args: CreateSessionArgs): Promise<Creat
     vendor_data: args.vendorData,
     metadata: args.metadata,
   };
-  if (args.callback) body.callback = args.callback;
+  if (args.callback) {
+    body.callback = args.callback;
+    // Only meaningful alongside a callback, and the API rejects unknown
+    // values — so it is sent with one and omitted without one.
+    if (args.callbackMethod) body.callback_method = args.callbackMethod;
+  }
+  if (args.expectedDetails && Object.keys(args.expectedDetails).length > 0) {
+    body.expected_details = args.expectedDetails;
+  }
   if (args.sandboxScenario) body.sandbox_scenario = args.sandboxScenario;
 
   const json = await diditFetch(args.apiKey, '/v3/session/', {

@@ -35,6 +35,10 @@
  * unreadable is NOT a pass — it is a referral. Unknown never becomes passed.
  */
 
+import {
+  IDENTITY_DOCUMENT_COUNTRY, type IdentityDocumentChoice,
+} from '../identityDocuments.pure.ts';
+
 /** Session-level lifecycle vocabulary (Didit V3, case-sensitive). */
 export type DiditSessionStatus =
   | 'Not Started' | 'In Progress' | 'Awaiting User' | 'In Review'
@@ -67,6 +71,61 @@ export const FEATURE_LABEL: Record<RequiredDiditFeature, string> = {
   LIVENESS: 'Passive liveness',
   FACE_MATCH: 'Face match 1:1',
 };
+
+/* ─────────────────────── session-level expectations ─────────────────────── */
+
+/**
+ * NPC's document choice, in Didit's `expected_document_types` vocabulary.
+ *
+ * Read off the current Session API reference (`expected_details`), which
+ * documents the accepted values as `P`, `ID`, `DL`, `RP`, `HIC`, `TC`, `SSC`
+ * and states the field is case-insensitive. Only four of them are mapped, and
+ * that is the point: NPC verifies identity from a photographic document, so
+ * the health-insurance, tax and social-security codes are deliberately
+ * unreachable from the portal — a Medicare or concession card is not an
+ * identity document here, and the way to guarantee one is never accepted is to
+ * have no value that produces it.
+ *
+ * This mapping lives with the provider rather than with
+ * `identityDocuments.pure.ts` on purpose. The portal imports the choices; if
+ * the provider's codes travelled with them, the browser bundle would carry the
+ * vendor's vocabulary — the same reason the workflow id and the provider key
+ * never cross that boundary.
+ */
+const DIDIT_DOCUMENT_TYPE: Record<IdentityDocumentChoice, string> = {
+  passport: 'P',
+  driver_licence: 'DL',
+  identity_card: 'ID',
+  residence_permit: 'RP',
+};
+
+/**
+ * `expected_details` for a session, or `null` when nothing is restricted.
+ *
+ * Two things are asserted and neither comes from a browser: the country, which
+ * is always Australia because that is the only jurisdiction NPC operates this
+ * flow for, and the document type, which is the customer's declared intent.
+ *
+ * The country is emitted even when no document was declared. An unrestricted
+ * session still has no business offering a global country picker, and
+ * `id_country` on its own is what removes it.
+ *
+ * Nothing else is sent. `expected_details` also accepts a name, a date of
+ * birth, an address and a document number, and populating any of them would
+ * export customer PII into the provider's record of the session for no gain —
+ * the decision is read back and correlated on `vendor_data`, which discloses
+ * nothing.
+ */
+export function diditExpectedDetails(
+  choice: IdentityDocumentChoice | null | undefined,
+  country: string = IDENTITY_DOCUMENT_COUNTRY,
+): Record<string, unknown> | null {
+  const details: Record<string, unknown> = { id_country: country };
+  if (choice && DIDIT_DOCUMENT_TYPE[choice]) {
+    details.expected_document_types = [DIDIT_DOCUMENT_TYPE[choice]];
+  }
+  return details;
+}
 
 /**
  * A session status that means the provider has finished looking and reached a
