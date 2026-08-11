@@ -52,11 +52,7 @@ export function stripLabelledIdentifiers(input?: string | null): string {
     .replace(PATTERNS[0], '')
     .replace(/\(\s*[,;:]?\s*\)/g, '')
     .replace(/[,;:]\s*\)/g, ')')
-    // This variant runs over markdown prose: collapse only runs of spaces and
-    // tabs, never newlines — `\s{2,}` was flattening every paragraph break and
-    // heading line into one continuous blob, which is exactly how "## Risks
-    // and caveats" ended up rendered inline mid-sentence.
-    .replace(/[^\S\n]{2,}/g, ' ')
-    .replace(/[^\S\n]+([.,;:])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([.,;:])/g, '$1')
     .trim();
 }

@@ -15,7 +15,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AlertTriangle, Building2, CalendarClock, Eye, Landmark, Scale, TrendingUp, Users, Wallet } from 'lucide-react';
 import { stripLabelledIdentifiers } from '@/utils/stripTechnicalIdentifiers';
-import { dedupeSortTimeline, explodeCitationClusters, normaliseAnswerMarkdown } from '@/lib/marketQaAnswerFormat.pure';
 import { cn } from '@/lib/utils';
 import type { MarketQAImplications, MarketQAKeyFigure, MarketQARetrievedItem, MarketQATimelineEntry } from '@/types/marketUpdates';
 
@@ -48,11 +47,7 @@ const AUDIENCES: Array<{ key: keyof MarketQAImplications; label: string; icon: t
 function linkCitations(content: string, retrieved: MarketQARetrievedItem[]): string {
   const positions = new Map(retrieved.map((item, index) => [item.id, index + 1]));
   return content.replace(/\[\[([^\]]+)\]\]/g, (_whole, id: string) => {
-    const token = id.trim();
-    // Answers persisted before the server-side repair may still carry the
-    // model's 1-based display index instead of the source id — resolve it.
-    const numeric = /^\d{1,2}$/.test(token) ? Number(token) : null;
-    const position = positions.get(token) ?? (numeric && numeric >= 1 && numeric <= retrieved.length ? numeric : undefined);
+    const position = positions.get(id.trim());
     if (!position) return '';
     const item = retrieved[position - 1];
     const title = (item.title ?? '').replace(/"/g, "'");
@@ -75,15 +70,9 @@ function Section({ title, icon: Icon, tone = 'muted', children }: { title: strin
 }
 
 export function MarketQAAnswer({ content, retrieved = [], keyFigures = [], implications, timeline = [], watchItems = [], contrarianView, streaming }: Props) {
-  // The same repairs the server applies, re-run on render: answers persisted
-  // or shared before the fix carry glued headings and citation clusters too.
-  const prose = useMemo(
-    () => stripLabelledIdentifiers(linkCitations(explodeCitationClusters(normaliseAnswerMarkdown(content ?? '')), retrieved)),
-    [content, retrieved],
-  );
+  const prose = useMemo(() => stripLabelledIdentifiers(linkCitations(content ?? '', retrieved)), [content, retrieved]);
   const audiences = AUDIENCES.filter(a => (implications?.[a.key] ?? '').trim().length > 0);
   const figures = keyFigures.filter(f => f.label && f.value);
-  const orderedTimeline = useMemo(() => dedupeSortTimeline(timeline), [timeline]);
   const showStructured = !streaming;
 
   return (
@@ -138,7 +127,7 @@ export function MarketQAAnswer({ content, retrieved = [], keyFigures = [], impli
 
       {showStructured && audiences.length > 0 && (
         <Section title="What it means for" icon={Users} tone="primary">
-          <div className={cn('grid gap-2', audiences.length > 1 && 'sm:grid-cols-2')}>
+          <div className="grid gap-2 sm:grid-cols-2">
             {audiences.map(({ key, label, icon: Icon }) => (
               <div key={key} className="rounded-lg border border-border/60 bg-background/50 p-2.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -151,10 +140,10 @@ export function MarketQAAnswer({ content, retrieved = [], keyFigures = [], impli
         </Section>
       )}
 
-      {showStructured && orderedTimeline.length > 0 && (
+      {showStructured && timeline.length > 0 && (
         <Section title="Sequence of events" icon={CalendarClock}>
           <ol className="space-y-1.5 border-l border-border/60 pl-3">
-            {orderedTimeline.map((entry, index) => (
+            {timeline.map((entry, index) => (
               <li key={`${entry.date}-${index}`} className="relative text-xs">
                 <span className="absolute -left-[15px] top-1.5 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
                 <span className="font-semibold text-foreground">{entry.date}</span>
