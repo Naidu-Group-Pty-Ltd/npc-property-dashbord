@@ -43,6 +43,12 @@ export * from './documentRevision.pure.ts';
  */
 export * from './partnerAccess.pure.ts';
 
+/**
+ * Who a copy of the agreement is emailed to. A partner organisation is rarely
+ * one inbox, and none of the others changes who the agreement is addressed to.
+ */
+export * from './recipients.pure.ts';
+
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
 }

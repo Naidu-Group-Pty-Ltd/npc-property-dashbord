@@ -67,13 +67,29 @@ import {
   partnerIssueGate,
   partnerNotificationsAddressable,
   partnerPortalAccess,
+  resolveRecipients,
 } from '../_shared/agreements/index.pure.ts';
+import { agreementDownloadFileName } from '../_shared/agreements/documentHtml.pure.ts';
+import { sendAgreementEmail } from '../_shared/agreements/sendAgreementEmail.ts';
 import {
+  AGREEMENTS_BUCKET,
   captureBrandSnapshot,
   executionContextFromSignatures,
   loadIssuerDefaults,
   renderAndStoreVersionPdf,
 } from '../_shared/agreements/render.ts';
+
+/** Pinned for the same reason `finance-portal-invite` pins its own. */
+const PARTNER_PORTAL_BASE = 'https://command-centre.npcservices.com.au';
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -888,11 +904,67 @@ Deno.serve(async (req) => {
 
       // The as-issued PDF. Best-effort: a renderer outage must not block the
       // issue — the partner's first download generates it instead.
+      let issuedPdfPath: string | null = null;
       try {
         const stored = await renderAndStoreVersionPdf(supabase, supabaseUrl, updated, version, 'issued');
+        issuedPdfPath = stored.path;
         await supabase.from(VERSIONS_TABLE).update({ pdf_storage_path: stored.path }).eq('id', version.id);
       } catch (e) {
         console.warn('[partner-agreements] issued PDF deferred to first download:', e instanceof Error ? e.message : e);
+      }
+
+      // Tell the partner. Issuing used to write one in-app notification and
+      // stop, which is a fine signal for somebody already working in the portal
+      // and no signal at all for anybody else — a broker who has just been
+      // added and has never logged in received nothing, while the Command
+      // Centre said "issued". Best-effort, and reported: an email that did not
+      // send must not roll back an issue that did.
+      let emailSent = false;
+      let emailError: string | null = null;
+      if (body.email_partner !== false) {
+        try {
+          const recipients = resolveRecipients(
+            updated.partner_contact_email as string | null,
+            typeof body.additional_recipients === 'string' ? body.additional_recipients : '',
+          );
+          if (recipients.all.length === 0) {
+            emailError = 'no deliverable address on the partner record';
+          } else {
+            let pdf: { fileName: string; base64: string } | null = null;
+            if (issuedPdfPath) {
+              const { data: blob } = await supabase.storage
+                .from(AGREEMENTS_BUCKET).download(issuedPdfPath);
+              if (blob) {
+                pdf = {
+                  fileName: agreementDownloadFileName(
+                    template.title, updated.partner_legal_name, String(label), 'issued',
+                  ),
+                  base64: bytesToBase64(new Uint8Array(await blob.arrayBuffer())),
+                };
+              }
+            }
+            const issuer = await loadIssuerDefaults(supabase);
+            const result = await sendAgreementEmail({
+              to: recipients.all,
+              title: template.title,
+              partnerName: updated.partner_legal_name as string | null,
+              issuerName: issuer.companyName ?? issuer.legalName ?? '',
+              versionLabel: String(label),
+              portalUrl: `${PARTNER_PORTAL_BASE}/finance/agreements/${id}`,
+              note: typeof body.note === 'string' && body.note.trim() ? body.note.trim().slice(0, 2000) : null,
+              pdf,
+              isResend: issueSequence > 1,
+              awaitingActivation: agreementDelivery(updated.issued_at as string | null, access) === 'awaiting_activation',
+            });
+            emailSent = result.sent;
+            emailError = result.error;
+          }
+        } catch (e) {
+          emailError = e instanceof Error ? e.message : String(e);
+        }
+        if (!emailSent) {
+          console.warn('[partner-agreements] issue email not sent:', emailError);
+        }
       }
 
       // Whether the partner can actually open what was just sent. The caller
@@ -905,6 +977,8 @@ Deno.serve(async (req) => {
         version,
         partner_portal_access: access,
         delivery,
+        email_sent: emailSent,
+        email_error: emailError,
       }, corsHeaders);
     }
 

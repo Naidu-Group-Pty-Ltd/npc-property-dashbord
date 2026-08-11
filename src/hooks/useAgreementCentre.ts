@@ -577,6 +577,52 @@ export async function downloadAgreementPdf(
   };
 }
 
+export interface SendAgreementResult {
+  sent_to: string[];
+  attached: boolean;
+  notified_portal: boolean;
+  duplicates: string[];
+  overflow: string[];
+}
+
+/**
+ * Send (or resend) an issued agreement by email, with any extra recipients.
+ *
+ * Lives on the render function rather than the lifecycle one because it
+ * attaches the issued PDF, and everything that touches WeasyPrint is over
+ * there — a send is seconds, and lifecycle actions stay milliseconds.
+ */
+export function useSendAgreement() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: {
+      id: string;
+      additionalRecipients?: string;
+      note?: string;
+      notifyPortal?: boolean;
+      isResend?: boolean;
+    }) => callRender<SendAgreementResult>({
+      operation: 'send',
+      id: params.id,
+      additional_recipients: params.additionalRecipients ?? '',
+      note: params.note ?? '',
+      notify_portal: params.notifyPortal !== false,
+      is_resend: params.isResend === true,
+    }),
+    onSuccess: (result, params) => {
+      queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'detail', params.id] });
+      const count = result.sent_to?.length ?? 0;
+      toast.success(
+        `Sent to ${count} recipient${count === 1 ? '' : 's'}`
+        + (result.attached ? ' with the agreement attached.' : ' — the attachment could not be rendered.'),
+      );
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : 'The agreement could not be sent.');
+    },
+  });
+}
+
 /**
  * The white-labelled template itself — no agreement row required. For users
  * who send through an external platform (DocuSign, PandaDoc, …): the full
