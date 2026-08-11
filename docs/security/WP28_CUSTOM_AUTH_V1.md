@@ -175,12 +175,44 @@ controls.
 
 ## Not done here
 
-**These are authored, not deployed.** The fix reaches production when
-`deploy-supabase-functions.yml` runs on `main` — which now *can* deploy them,
-because the directories exist. Until that run completes, the live v1 endpoints
-are still the frozen 31 July bundle with no rate limiting. Check the workflow
-summary on the merge commit; it reports what it deployed, and warns loudly if
-`SUPABASE_ACCESS_TOKEN` is unset and it deployed nothing.
+### ⚠️ Authored, merged, and NOT deployed — measured, not assumed
+
+The merge ran `deploy-supabase-functions.yml` and it reported **success**. It
+deployed nothing. Read from the run on the merge commit (`951a0e8`):
+
+| Step | |
+|---|---|
+| 4. Check for a deploy credential | ✅ ran |
+| 5. **Report and stop when no credential is configured** | ✅ **ran** |
+| 6. Run `supabase/setup-cli` | ⏭️ skipped |
+| 7. **Deploy** | ⏭️ **skipped** |
+
+`SUPABASE_ACCESS_TOKEN` is not set, so the workflow took its report-and-stop
+path — which stays green by design, for the reason its own header gives.
+
+Confirmed against the project rather than inferred from the log:
+
+    custom-auth-login       version 16   last deployed 2026-07-31 02:04Z
+    custom-auth-login-v2    version 40   last deployed 2026-08-11 05:44Z
+
+**The bypass is still open in production.** `custom-auth-login` still serves the
+frozen 31 July bundle with no source-keyed rate limiting.
+
+And this is not specific to WP-28. The most recent deploy of *any* function on
+the project is **2026-08-11 05:48Z** — before this session's first merge landed
+at 06:26Z. So every edge-function change in this programme is in `main` and none
+of it is live: the WP-18 opaque 500s, the WP-19 CORS contract, the WP-27 body
+bounds, and this.
+
+Something other than this workflow deployed at 05:44–05:48Z, and whatever it is
+has not run since. That is the one fact worth chasing before anything else here
+is called done.
+
+**The action:** set `SUPABASE_ACCESS_TOKEN` in Settings → Secrets → Actions and
+re-run the workflow (it is `workflow_dispatch`-able, and deploying every
+function is idempotent). Then re-read the versions above — `custom-auth-login`
+should move off 16. Until it does, treat every `deployed: false` in the tracker
+as literal.
 
 **`mobile/api-surface.json` has pre-existing drift** unrelated to this work —
 six functions added to the registry by other merges without regenerating it
