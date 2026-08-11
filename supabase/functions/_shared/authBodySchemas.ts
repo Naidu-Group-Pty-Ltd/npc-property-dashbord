@@ -66,6 +66,13 @@ export const AUTH_MAX_BODY_BYTES = SMALL_BODY_BYTES;
 const emailField = z.string().max(320);
 const passwordField = z.string().max(512);
 const tokenField = z.string().max(512);
+/**
+ * Turnstile tokens are documented as "up to 2048 characters" and Cloudflare
+ * explicitly reserves the right to grow them, so the 512 bound above rejected
+ * real tokens as `invalid_body` and locked every login out. Bounded generously
+ * instead — the point of the check is that it is a *string*, not a length.
+ */
+const turnstileTokenField = z.string().max(4096);
 const actionField = z.string().max(64);
 
 /**
@@ -78,14 +85,14 @@ const actionField = z.string().max(64);
 export const PortalLoginRequest = z.object({
   email: optionalField(emailField),
   password: optionalField(passwordField),
-  turnstile_token: optionalField(tokenField),
+  turnstile_token: optionalField(turnstileTokenField),
 });
 
 /** `{ username, password, turnstile_token }` — the staff console login. */
 export const StaffLoginRequest = z.object({
   username: optionalField(z.string().max(256)),
   password: optionalField(passwordField),
-  turnstile_token: optionalField(tokenField),
+  turnstile_token: optionalField(turnstileTokenField),
 });
 
 /** `{ email }` — forgot-password, all four portals. */
