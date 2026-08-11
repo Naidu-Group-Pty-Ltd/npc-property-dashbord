@@ -48,8 +48,49 @@ const FUNC_DIR = join(root, 'supabase', 'functions');
 const BASELINE = join(root, 'supabase', 'functions-registry', 'mass-assignment-baseline.json');
 const update = process.argv.includes('--update');
 
-/** Helpers that return an allowlisted object. A write fed by one is fine. */
-const LAUNDERERS = /pickAllowed|pickKnownColumns|pickEditable|sanitize[A-Z]|normalise[A-Z]\w*Payload|build[A-Z]\w*Payload|mapPayload|WRITABLE|_COLUMNS\b|_FIELDS\b/;
+/**
+ * Helpers that return an allowlisted object. A write fed by one is fine.
+ *
+ * `pick(` is here alongside the longer names because three finance-portal
+ * functions define a local `pick(payload, X_COLS)` rather than importing
+ * `pickAllowed`. That duplication is worth removing on its own, but it is
+ * genuinely an allowlist and the gate must not claim otherwise.
+ */
+const LAUNDERERS = /\bpick\w*\(|pickAllowed|pickKnownColumns|pickEditable|sanitize[A-Z]|normalise[A-Z]\w*Payload|build[A-Z]\w*Payload|mapPayload|WRITABLE|_COLUMNS\b|_COLS\b|_FIELDS\b/;
+
+/**
+ * An object literal whose keys are written out is an allowlist by construction —
+ * `{ subject: payload.subject, body: payload.body }` can only ever write those
+ * two columns, however much the caller sends. It only stops being one when a
+ * request-derived object is spread into it, which is the thing being looked for.
+ *
+ * Without this the gate reported every hand-built row as mass assignment, which
+ * is both wrong and the fastest way to teach people the gate is noise.
+ */
+function isExplicitLiteral(rhs) {
+  if (!rhs.includes('{')) return false;
+  // Remove every balanced `{...}` group. What is left is the plumbing around the
+  // literals — a ternary condition, a `??`, nothing. If none of THAT is
+  // request-derived, the only things that can reach the table are the named keys.
+  //
+  // Written this way because `const update = unverify ? {a: 1} : {b: 2}` spans
+  // lines and starts with an identifier, so a "starts with {" test called it mass
+  // assignment and then followed `unverify` back to `!!body.unverify` — flagging
+  // an operation that can only ever write three hardcoded columns.
+  let outside = rhs;
+  for (let pass = 0; pass < 6; pass++) {
+    const next = outside.replace(/\{[^{}]*\}/g, ' ');
+    if (next === outside) break;
+    outside = next;
+  }
+  // A spread only breaks the guarantee when what is spread is REQUEST-derived.
+  // `{ ...defaults, name: body.name }` is still an allowlist — `defaults` is the
+  // author's object. `{ ...body.alert }` is not. Treating every `...` as
+  // disqualifying reported five hand-built rows that merely happened to spread a
+  // local default deep inside a 500-character literal.
+  if (/\.\.\.\s*(?:body|payload|data|req\.json)\b/.test(rhs)) return false;
+  return !/\bbody\b|req\.json\(\)|\bpayload\b|\.data\b/.test(outside);
+}
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -62,9 +103,28 @@ function walk(dir, out = []) {
 
 const found = new Map(); // relative path -> count
 
+/**
+ * Comments out, before anything is matched.
+ *
+ * This gate flagged `_shared/amlWritableColumns.ts` — the module whose entire
+ * purpose is to hold the allowlists — because its header quotes the bug it
+ * exists to prevent: `aml.from('alerts').update(a)`. Same class of fault as the
+ * comment that satisfied `check-client-portfolio-authz` by restating the call it
+ * asserts on. A gate that reads prose as code is wrong in both directions: it
+ * invents findings, and it can be silenced by a well-placed sentence.
+ *
+ * Replaced with spaces rather than removed so byte offsets, and therefore line
+ * numbers in any future message, stay true.
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, (m, p1) => p1 + ' '.repeat(m.length - p1.length));
+}
+
 for (const file of walk(FUNC_DIR)) {
   const rel = relative(root, file).replace(/\\/g, '/');
-  const src = readFileSync(file, 'utf8');
+  const src = stripComments(readFileSync(file, 'utf8'));
   let count = 0;
 
   for (const m of src.matchAll(
@@ -73,13 +133,42 @@ for (const file of walk(FUNC_DIR)) {
     const varName = m[1] || m[2];
     if (!varName) continue;
 
-    // How is it defined in this file? Follow bare-identifier aliases, because
+    // How is it defined? Follow bare-identifier aliases, because
     // `const alertRow = a;` where `a = body.alert` is still the caller's object
     // — the first version of this gate stopped at the alias and its own
     // negative test walked straight through it.
-    const define = (name) => new RegExp(
-      `\\b(?:const|let|var)\\s+${name}\\s*(?::[^=\\n]*)?=\\s*([^\\n;]{0,180})`,
-    ).exec(src)?.[1] ?? '';
+    //
+    // Take the definition NEAREST ABOVE the write, not the first in the file.
+    // These handlers multiplex a dozen operations and reuse short names, so
+    // `patch` is declared five times in `aml-risk` alone; matching the first one
+    // reported an operation that builds its object field-by-field — already an
+    // allowlist — as if it spread a request body.
+    const writeAt = m.index;
+    // The whole initialiser, across newlines, up to the statement terminator —
+    // not just the remainder of the declaring line. A ternary between two object
+    // literals is the common multi-line form here, and stopping at the newline
+    // captured only its condition.
+    const define = (name) => {
+      const re = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*(?::[^=\\n]*)?=\\s*`, 'g');
+      let best = '';
+      for (const d of src.matchAll(re)) {
+        if (d.index > writeAt) break;
+        let depth = 0;
+        let end = d.index + d[0].length;
+        // Generous: these initialisers are object literals and several run past a
+        // thousand characters. Truncating mid-literal leaves unbalanced braces,
+        // which made the explicit-literal test fail and reported five hand-built
+        // rows as mass assignment.
+        for (; end < src.length && end - d.index < 8000; end++) {
+          const c = src[end];
+          if ('([{'.includes(c)) depth++;
+          else if (')]}'.includes(c)) { if (depth === 0) break; depth--; }
+          else if (c === ';' && depth === 0) break;
+        }
+        best = src.slice(d.index + d[0].length, end);
+      }
+      return best;
+    };
 
     let rhs = define(varName);
     const seen = new Set([varName]);
@@ -97,8 +186,20 @@ for (const file of walk(FUNC_DIR)) {
       || ['body', 'payload'].includes(varName);
     if (!bodyDerived) continue;
 
-    // Laundered at definition, or by a helper named on the same line as the write?
-    if (LAUNDERERS.test(rhs) || LAUNDERERS.test(m[0])) continue;
+    // Laundered at definition, by a helper named on the write itself, or by
+    // being an explicitly-keyed literal in the first place.
+    if (LAUNDERERS.test(rhs) || LAUNDERERS.test(m[0]) || isExplicitLiteral(rhs)) continue;
+
+    // `const insert = { ...payload, client_id: body.client_id }` where
+    // `payload = buildMatterPayload(body, …)`. The spread is of an already
+    // allowlisted object, but the alias-follow above only chases a BARE
+    // identifier, so it never reached the helper. Resolve what is spread and ask
+    // the same question of it.
+    const spreadOf = rhs.match(/\{\s*\.\.\.\s*([A-Za-z_$][\w$]*)\b/);
+    if (spreadOf && !seen.has(spreadOf[1])) {
+      const inner = define(spreadOf[1]);
+      if (LAUNDERERS.test(inner) || isExplicitLiteral(inner)) continue;
+    }
 
     // Laundered on the way in — `const row = pickAllowed(rule, X)` two lines up
     // then `insert(row)` — is covered by the rhs test above. What is NOT covered

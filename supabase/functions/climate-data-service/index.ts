@@ -1,5 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 import { internalError } from '../_shared/errorResponse.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { LocalityRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,7 +15,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { suburb, state, postcode } = await req.json();
+    // WP-24: bounded and shape-checked. This endpoint takes no session,
+    // so a bare req.json() read whatever was sent.
+    const __parsed = await parseJsonBody(req, LocalityRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
+    if (!__parsed.ok) return __parsed.response;
+    const { suburb, state, postcode } = __parsed.data;
 
     if (!state) {
       throw new Error('State parameter is required');

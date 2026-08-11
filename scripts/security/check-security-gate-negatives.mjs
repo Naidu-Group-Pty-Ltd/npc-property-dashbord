@@ -233,6 +233,37 @@ const CASES = [
     replace: 'Deno.serve(async (req: Request) => __corsWrappedHandler(req));',
   },
 
+  {
+    gate: 'check-public-validation.mjs',
+    file: 'supabase/functions/abs-employment-service/index.ts',
+    what: 'an unauthenticated endpoint goes back to an unbounded req.json()',
+    find: 'const __parsed = await parseJsonBody(req, LocalityRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);\n    if (!__parsed.ok) return __parsed.response;\n    const { suburb, state, postcode } = __parsed.data;',
+    replace: 'const { suburb, state, postcode } = await req.json();',
+  },
+
+  // ── WP-24: the four items that were closed and ungated ───────────────────
+  {
+    gate: 'check-baseline-invariants.mjs',
+    file: 'supabase/functions/aml-finance/index.ts',
+    what: 'a generic SQL-execution RPC appears (item 6)',
+    find: '      const upsertResp = payload.id',
+    replace: "      await aml.rpc('exec_sql', { q: body.q });\n      const upsertResp = payload.id",
+  },
+  {
+    gate: 'check-baseline-invariants.mjs',
+    file: 'src/components/admin/ResetPasswordDialog.tsx',
+    what: 'user HTML is injected with no sanitiser (item 8)',
+    find: 'export',
+    replace: 'const Bad = () => <div dangerouslySetInnerHTML={{ __html: (window as any).x }} />;\nexport',
+  },
+  {
+    gate: 'check-baseline-invariants.mjs',
+    file: 'supabase/functions/aml-finance/index.ts',
+    what: 'a submitted secret is compared against a stored column (item 9)',
+    find: '      const comparisonRow =',
+    replace: '      if (body.pw === user.password_hash) { /* bypasses the hash verifier */ }\n      const comparisonRow =',
+  },
+
   // ── WP-20: field allowlists at the write ─────────────────────────────────
   // The alias hop matters: the first version of this gate stopped at
   // `const alertRow = a` without following `a` back to `body.alert`, so this

@@ -503,27 +503,40 @@ function parseAllowedOrigins(): string[] {
     return fromEnv;
   }
 
-  // WP-19: unset used to fall through to LEGACY_FALLBACK_ORIGINS behind a
-  // `console.warn` nobody reads. Two problems with that. It makes missing
-  // configuration invisible — the app works, so nobody sets the variable — and
-  // it pins trust to two hostnames in source, which keep being trusted after
-  // the app moves off them.
+  // WP-19: unset falls through to LEGACY_FALLBACK_ORIGINS. Two things are wrong
+  // with that and only one of them can be fixed from here.
   //
-  // Now it fails closed, with a one-variable way back for a deployment that is
-  // genuinely still relying on the fallback:
+  // The problem is config hygiene, not exposure. The fallback is two exact,
+  // legitimate production hostnames — an allowlist, not a wildcard — so nothing
+  // is over-trusted today. What is wrong is that a missing variable is invisible
+  // (the app works, so nobody sets it) and that trust stays pinned to hostnames
+  // in source after the app moves off them.
   //
-  //     ALLOWED_ORIGINS=https://command-centre.npcservices.com.au,...   (do this)
-  //     CORS_ALLOW_LEGACY_FALLBACK_ORIGINS=true                        (or this, temporarily)
+  // This deliberately does NOT fail closed. Whether `ALLOWED_ORIGINS` is set on
+  // the deployed project cannot be determined from this repository, and it
+  // cannot be determined from outside either: probing a deployed function with a
+  // disallowed origin returns `allowedOrigins[0]`, which is
+  // `command-centre.npcservices.com.au` whether the variable is set to it or the
+  // fallback supplied it. The two states are indistinguishable, and guessing
+  // wrong takes every browser client offline at once — an outage traded for a
+  // hygiene improvement is a bad trade.
   //
-  // Failing closed means a disallowed origin gets a mismatched ACAO, which the
-  // browser refuses — the same treatment any other unlisted origin gets, not a
-  // crash.
-  if ((Deno.env.get('CORS_ALLOW_LEGACY_FALLBACK_ORIGINS') || '').trim().toLowerCase() === 'true') {
-    console.warn('[auth.cors] ALLOWED_ORIGINS is unset; using the legacy fallback origins because CORS_ALLOW_LEGACY_FALLBACK_ORIGINS=true. Set ALLOWED_ORIGINS and remove this flag.');
-    return LEGACY_FALLBACK_ORIGINS;
+  // So it stays available and gets loud instead. `CORS_STRICT_ALLOWED_ORIGINS=true`
+  // opts into failing closed once the operator has confirmed the variable is
+  // set; NT-41 in the live negative-test matrix is what confirms it, because
+  // that harness runs against the deployed system, which is the only place the
+  // answer exists.
+  if ((Deno.env.get('CORS_STRICT_ALLOWED_ORIGINS') || '').trim().toLowerCase() === 'true') {
+    console.error('[auth.cors] ALLOWED_ORIGINS is unset and CORS_STRICT_ALLOWED_ORIGINS=true — no production origin is trusted for credentialed responses. Set ALLOWED_ORIGINS.');
+    return [];
   }
-  console.error('[auth.cors] ALLOWED_ORIGINS is unset and CORS_ALLOW_LEGACY_FALLBACK_ORIGINS is not set — no production origin is trusted for credentialed responses. Set ALLOWED_ORIGINS.');
-  return [];
+  console.error(
+    '[auth.cors] ALLOWED_ORIGINS is UNSET. Falling back to hardcoded legacy origins '
+    + `(${LEGACY_FALLBACK_ORIGINS.join(', ')}). This is configuration debt: those hostnames stay `
+    + 'trusted for credentialed responses even after this app moves off them. Set ALLOWED_ORIGINS, '
+    + 'then set CORS_STRICT_ALLOWED_ORIGINS=true to make this state fail closed.',
+  );
+  return LEGACY_FALLBACK_ORIGINS;
 }
 
 /**

@@ -4,6 +4,7 @@
 // daily quotas, kill switch, email normalization, dedupe, redacted errors.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { getGhlCredentials, validateGhlCredentials, buildGhlHeaders } from '../_shared/ghl-account.ts';
+import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 import {
   enforceIpQuota,
   enforceKeyQuota,
@@ -51,7 +52,12 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    // WP-24: bounded. The fields are sanitised below and the bot filters run
+    // after; neither helps if the read itself is unbounded, and this endpoint
+    // takes no credential. 16 KiB comfortably fits a lead form.
+    const __bounded = await enforceJsonBodyLimit<Record<string, unknown>>(req, 16 * 1024);
+    if (!__bounded.ok) return __bounded.error;
+    const body = __bounded.value ?? {};
 
     // Bot filters — cheap and silent (return generic error, don't leak reason).
     if (honeypotTripped(body)) return j({ error: 'invalid_request' }, 400);

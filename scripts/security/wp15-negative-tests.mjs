@@ -197,6 +197,48 @@ let ok = true;
   ok = record('NT-39', 'aml-monitoring', 'write naming a protected column', [401, 403], r.status) && ok;
 }
 
+// NT-41 — WP-19. The Lovable *preview* origins must not be trusted for
+// credentialed responses. `lovablePreviewSuffixAllowed` has always been gated
+// behind CORS_ALLOW_LOVABLE_PREVIEW and says production leaves it unset — but
+// the two EXACT preview URLs sat in the allowlist unconditionally, and a probe
+// against the deployed project on 11 Aug 2026 confirmed both were echoed back.
+// A hostile page on either host could read a response carrying the staff session
+// cookie. This is the row that says whether the fix is deployed.
+//
+// It also prints the allowlist head. `allowedOrigins[0]` is what a disallowed
+// origin gets, so this is the one externally-visible clue to whether
+// ALLOWED_ORIGINS is configured at all — compare it against what you set. It is
+// reported, not asserted, because the fallback and a correctly-set variable
+// produce the same string.
+{
+  const previews = [
+    'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
+    'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
+  ];
+  const trusted = [];
+  let allowlistHead = '<unknown>';
+  for (const origin of previews) {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-user-management`, {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'POST' },
+    });
+    await res.text().catch(() => '');
+    const acao = res.headers.get('access-control-allow-origin');
+    if (acao === origin) trusted.push(origin);
+    else if (acao) allowlistHead = acao;
+  }
+  lines.push(JSON.stringify({
+    id: 'NT-41', target: 'admin-user-management',
+    input: 'credentialed preflight from the Lovable preview origins',
+    expected: 'neither preview origin is echoed back',
+    observed: trusted.length ? `TRUSTED: ${trusted.join(', ')}` : `not trusted (allowlist head: ${allowlistHead})`,
+    note: `allowlist head is ${allowlistHead} — compare against your ALLOWED_ORIGINS; if it does not match, the variable is probably unset and the legacy fallback is supplying it`,
+    result: trusted.length ? 'FAIL' : 'expected_denial',
+  }));
+  console.log(lines.at(-1));
+  ok = trusted.length === 0 && ok;
+}
+
 // NT-40 — WP-18. Nothing in this run may have answered a 5xx that carries the
 // exception. Asserted over every response the harness saw rather than by
 // provoking a failure: deliberately breaking a production endpoint to watch it

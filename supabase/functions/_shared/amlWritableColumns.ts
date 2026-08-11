@@ -64,3 +64,28 @@ export const TRANSACTION_PARTY_WRITABLE = new Set([
   'transaction_id', 'case_id', 'party_type', 'capacity', 'display_name',
   'entity_id', 'external_reference', 'contact', 'metadata',
 ]);
+
+/**
+ * `aml.finance_comparisons` via `upsert_comparison`.
+ *
+ * `captured_by` is absent: it records which operator captured the figures and is
+ * stamped from the verified session at the call site.
+ */
+export const FINANCE_COMPARISON_WRITABLE = new Set([
+  'case_id', 'purchase_file_id', 'source', 'captured_at', 'purchase_price',
+  'loan_amount', 'lender', 'lvr', 'borrower_contribution', 'refi_equity',
+  'gift_amount', 'gift_source', 'smsf_lrba', 'smsf_details', 'loan_purpose',
+  'funding_notes', 'raw_payload',
+]);
+
+/**
+ * `aml.evidence_references` via `attach_evidence`.
+ *
+ * `added_by` is absent for the same reason, and `external_url` is absent because
+ * the call site writes a *validated* absolute URL rather than the raw one — an
+ * allowlist that let the unvalidated value through would undo that check.
+ */
+export const EVIDENCE_REFERENCE_WRITABLE = new Set([
+  'case_id', 'comparison_id', 'reference_type', 'reference_id', 'label',
+  'detail', 'metadata',
+]);

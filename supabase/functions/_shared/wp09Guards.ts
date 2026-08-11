@@ -145,7 +145,12 @@ export async function resolveGeneratedDocumentAccess(
 
 // ─── PDF hashing ──────────────────────────────────────────────────────────
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', bytes);
+  // `Uint8Array<ArrayBufferLike>` is not assignable to `BufferSource`, because
+  // `ArrayBufferLike` admits `SharedArrayBuffer` and WebCrypto will not accept
+  // one. Copying into a plain `Uint8Array` narrows the buffer type honestly
+  // rather than asserting past the check — and a hash input is small.
+  const view = new Uint8Array(bytes);
+  const buf = await crypto.subtle.digest('SHA-256', view);
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 

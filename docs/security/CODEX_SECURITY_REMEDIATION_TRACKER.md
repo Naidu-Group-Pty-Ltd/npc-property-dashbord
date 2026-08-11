@@ -297,7 +297,7 @@
       "source_fixed": true,
       "deployed": true,
       "live_negative_test": false,
-      "residual_risk": "Five AML writes allowlisted; 51 request-derived writes across 26 files remain, capped by a baseline. parseJsonBody has no call sites yet, so the count of schema-validated edge functions is still 2 of 419."
+      "residual_risk": "Superseded in part by WP-24: parseJsonBody now has call sites (all seven body-reading `public` endpoints), and mass assignment is down from 51 sites to 15 across 8 files, capped by a baseline. Each remaining site needs a per-table decision about which columns are legitimately writable. Adoption across the 31 public-auth and 70 portal-authenticated functions is still per-function work."
     },
     {
       "finding_id": "WP-21-SUPPLY-CHAIN",
@@ -331,6 +331,17 @@
       "deployed": false,
       "live_negative_test": false,
       "residual_risk": "Runner is wired and extended to 10 rows (NT-37..NT-40 added) but HAS NEVER BEEN RUN: docs/security/wp15-evidence/ does not exist and every live_negative_test flag in this file is still false. Needs SUPABASE_URL, SUPABASE_ANON_KEY and a genuine non-superadmin NON_SUPERADMIN_JWT on a production-verification environment. 26 of the 36 original matrix rows still need a portal session, provider fixtures or a second tenant."
+    },
+    {
+      "finding_id": "WP-24-CLOSING-THE-LIST",
+      "severity": "high",
+      "file_or_function": "scripts/security/check-baseline-invariants.mjs; check-public-validation.mjs; _shared/publicServiceSchemas.ts; _shared/assetWritableColumns.ts",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "All seven body-reading `public` endpoints now bound their reads; items 6/8/9/13 gained gates with negative tests; mass assignment 51 -> 15. CONFIRMED LIVE AND STILL OPEN: both Lovable preview origins are trusted for credentialed responses on the deployed project (NT-41 is the row that closes it). The WP-19 fail-closed change on ALLOWED_ORIGINS was reversed — the set and unset states are indistinguishable from outside, so failing closed risked a full outage on a guess; CORS_STRICT_ALLOWED_ORIGINS=true opts in once the operator confirms."
     }
   ]
 }

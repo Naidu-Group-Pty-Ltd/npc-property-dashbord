@@ -63,6 +63,8 @@ async function appendCaseEvent(
 import { detectDiscrepancies, type Comparison } from "../_shared/amlFinanceEngine.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import { EVIDENCE_REFERENCE_WRITABLE, FINANCE_COMPARISON_WRITABLE } from '../_shared/amlWritableColumns.ts';
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -296,9 +298,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         raw_payload: payload.raw_payload ?? {},
         smsf_details: payload.smsf_details ?? {},
       };
+      // WP-24: only declared columns. `row` spreads the caller's payload, so
+      // without this any column the caller named was written — including
+      // `captured_by`, which is stamped just above from the verified session.
+      const comparisonRow = { ...pickAllowed(row, FINANCE_COMPARISON_WRITABLE), captured_by: userId };
       const upsertResp = payload.id
-        ? await aml.from("finance_comparisons").update(row).eq("id", payload.id).select("*").maybeSingle()
-        : await aml.from("finance_comparisons").insert(row).select("*").maybeSingle();
+        ? await aml.from("finance_comparisons").update(comparisonRow).eq("id", payload.id).select("*").maybeSingle()
+        : await aml.from("finance_comparisons").insert(comparisonRow).select("*").maybeSingle();
       if (upsertResp.error) return jr({ error: upsertResp.error.message }, 400);
       const comparison = upsertResp.data;
 
@@ -503,8 +509,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (ev.external_url != null && ev.external_url !== "" && !externalUrl) {
         return jr({ error: "external_url must be an absolute HTTP(S) URL" }, 400);
       }
+      // WP-24: `external_url` is deliberately outside the allowlist so the
+      // VALIDATED absolute URL below is the only one that can be written — an
+      // allowlist that admitted the raw value would undo the check above it.
       const { data, error } = await aml.from("evidence_references")
-        .insert({ ...ev, external_url: externalUrl, added_by: userId }).select("*").maybeSingle();
+        .insert({ ...pickAllowed(ev, EVIDENCE_REFERENCE_WRITABLE), external_url: externalUrl, added_by: userId })
+        .select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       await appendCaseEvent(admin, ev.case_id, "document_added",
         `Finance evidence attached: ${ev.label}`, { reference_type: ev.reference_type }, userId, userLabel);

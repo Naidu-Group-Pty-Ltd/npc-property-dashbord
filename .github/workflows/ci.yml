@@ -311,6 +311,17 @@ jobs:
       - name: No new mass assignment (WP-20)
         run: node scripts/security/check-mass-assignment.mjs
 
+      # WP-24: items 6, 8, 9 and 13 of the 20-item review were already in good
+      # shape and gated by nothing — true because of how somebody wrote the code
+      # once, with no mechanism to notice the next person writing it differently.
+      - name: Baseline security invariants (WP-24)
+        run: node scripts/security/check-baseline-invariants.mjs
+
+      # WP-24: the nine `public` functions take no credential at all, so an
+      # unbounded `await req.json()` there is an anonymous memory-pressure vector.
+      - name: Unauthenticated endpoints bound their bodies (WP-24)
+        run: node scripts/security/check-public-validation.mjs
+
       # The gates above assert their properties by matching source literals, so
       # a legitimate refactor can make one stop matching and a careless repair
       # can loosen it until it passes. This removes each control from a
