@@ -284,11 +284,18 @@ import { internalError } from '../_shared/errorResponse.ts';
   AUSTRALIAN_STATES,
 ```
 
-That function could not parse, so it could not boot. It arrived in **#2043 —
-this work package's own fix** — and shipped, because the one gate that reads
-every entry point had been unable to run since around the same day. Two failures
-compounding: the gate went blind, and the next thing through was a hard error it
+That function cannot parse, so it cannot boot. It arrived in **#2043 — this work
+package's own fix** — and stayed, because the one gate that reads every entry
+point had been unable to run since around the same day. Two failures
+compounding: the gate went blind, and the next thing past it was a hard error it
 was built to catch.
+
+**Production was not affected**, which is worth stating precisely rather than
+assuming in either direction. The deployed copy (`update-stamp-duty-rates`
+v105, redeployed the same morning) carries the import correctly placed on its
+own line — so whatever deploys this project repaired the ordering on the way
+out and never wrote the repair back to git. The repository was the broken copy,
+and it is the one the next deploy from git would have shipped.
 
 Swept for the class rather than the instance — every `.ts` under
 `supabase/functions`, looking for an `import` statement inside an unclosed
