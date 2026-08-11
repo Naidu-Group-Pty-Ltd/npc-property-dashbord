@@ -214,6 +214,16 @@ contradicted rather than as a defect. The doc also records the endpoint it
 replaces: `layout_reconciliation_repair` reads a field its only client never
 sent, so it answered "no changes" to every request ever made of it.
 
+Chart reconstruction is **inert in production and now says so**. Read
+[`CHART_RECONSTRUCTION_STATUS.md`](./docs/pdf-import/CHART_RECONSTRUCTION_STATUS.md)
+before touching `chartCandidate.pure.ts` or anything in the chart path: 0 chart
+overlays exist across 245 imports, for four independent reasons (the scene graph
+never runs, so `chart_candidates.py` never executes; Docling's picture classifier
+runs on 2 of 84 jobs; `chartNativeEnabled` is off). The client-side detector
+recovers the classification from geometry the import already holds and **never
+reads a value off a chart** — a misread number in a client's financial report is
+this programme's top risk, and a classification cannot misstate a figure.
+
 An import now also brings a **design system** with it, read off the source and
 bound to its own overlays. Read
 [`IMPORT_DESIGN_SYSTEM.md`](./docs/pdf-import/IMPORT_DESIGN_SYSTEM.md) before

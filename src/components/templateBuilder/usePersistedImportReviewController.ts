@@ -474,12 +474,18 @@ export function usePersistedImportReviewController(options: PersistedImportRevie
         const [sourceImageDataUrl, renderedImageDataUrl] = await Promise.all([
           fetchAsDataUrl(sourceUrl), fetchAsDataUrl(renderedUrl),
         ]);
+        const measureText = createCanvasMeasurer();
         const client = new TemplateDesignAgentReconciliationClient(invokeSecureFunction as any);
         const result = await runVisualCritique({
           context: {
             pageId, page: page as never,
             sourceImageDataUrl, renderedImageDataUrl,
-            measure: createCanvasMeasurer(),
+            // `TextWidthMeasurer` takes (text, family, sizePt); the critique
+            // contract takes (text, sizePt, family). Adapt rather than cast —
+            // swapped arguments measure every string in the wrong font and
+            // silently flip every clipped/overflow verdict.
+            measure: (text, fontSizePt, fontFamily, fontWeight) =>
+              measureText(text, fontFamily, fontSizePt, fontWeight) ?? 0,
           },
           fetchFindings: (request) => client.critiquePage(request),
         });
@@ -497,7 +503,9 @@ export function usePersistedImportReviewController(options: PersistedImportRevie
           ...(prev ?? {}),
           stage: 'ai_critique_ran',
           critiquePageId: pageId,
-          critiqueSummary: result.summary,
+          critiqueConfirmed: result.summary.confirmed,
+          critiqueUnverifiable: result.summary.unverifiable,
+          critiqueRefuted: result.summary.refuted,
           critiqueRejected: result.rejected.length,
         }));
       } catch (err) {

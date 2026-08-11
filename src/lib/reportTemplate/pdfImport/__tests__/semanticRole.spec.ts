@@ -134,6 +134,25 @@ describe('figureAltText', () => {
       .toBe('The director\'s portrait');
   });
 
+  it('refuses a caption that is only a number', () => {
+    // Caption pairing falls back to the nearest caption-labelled block within
+    // 36pt, and a chart's axis ticks sit exactly there. `"186,000"` names one
+    // number and calls it a description — and Stage 2 sends it to `/Alt`, where
+    // a screen reader reads it as the whole content of the figure.
+    for (const caption of ['186,000', '$785,000', '97%', '2026', ' 8.65 ']) {
+      expect(figureAltText({ caption }), caption).toBeNull();
+      expect(figureAltText({ captionText: caption }), caption).toBeNull();
+    }
+    // …and still falls through to a detected kind when one is available.
+    expect(figureAltText({ caption: '186,000', pictureClass: 'bar_chart' })).toBe('Bar chart');
+  });
+
+  it('keeps a caption that actually describes something', () => {
+    expect(figureAltText({ caption: 'Figure 1 — income by source' }))
+      .toBe('Figure 1 — income by source');
+    expect(figureAltText({ caption: '2026 income by source' })).toBe('2026 income by source');
+  });
+
   it('returns null rather than a placeholder', () => {
     // `[image]` satisfies a checker and tells a reader nothing, which is the
     // failure this stage exists to stop asserting.

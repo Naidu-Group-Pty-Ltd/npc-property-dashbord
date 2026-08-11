@@ -29,6 +29,7 @@ import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pur
 import { resolveTextWrapping } from '../resolveTextWrapping.pure';
 import { alignBoxToSourceBaseline, type FontVerticalMetrics } from '../firstBaseline.pure';
 import { annotateFromSource, figureAltText } from '../semanticRole.pure';
+import { detectChartCandidate, chartCandidateAltText } from '../chartCandidate.pure';
 import { deriveTokensFromExtraction, type FillObservation, type TextObservation } from '../tokenDerivation';
 import { fontLookupKey } from '../fontResolver';
 
@@ -113,6 +114,43 @@ function promotePicturesToCharts(
   });
 }
 
+/**
+ * Mark the pictures that are charts, from the page's own geometry.
+ *
+ * The sidecar's chart detection lives behind the source scene graph, which does
+ * not run in production — 0 of 84 jobs produced one — and Docling's picture
+ * classifier runs on the `design_heavy` lane only, 2 of 84 jobs. So the class
+ * that would have said "this is a bar chart" is absent from essentially every
+ * import, which is why 1,111 of 1,226 stored image overlays are named
+ * `[image]` and **none of them carries alternative text**.
+ *
+ * The evidence is here regardless: vectors are extracted with exact geometry
+ * (5,741 of them in production), and every axis tick and value label is a
+ * measured text block. Classification costs nothing extra and needs no model.
+ *
+ * It classifies only. A chart's VALUES are never read — a misread number in a
+ * client's financial report is this programme's stated top risk, and this
+ * cannot misstate a figure because it never states one.
+ */
+function annotateChartCandidates(blocks: RawImportBlock[]): RawImportBlock[] {
+  const pictures = blocks.filter((b) => b.type === 'image');
+  if (!pictures.length) return blocks;
+  const vectors = blocks
+    .filter((b) => b.type === 'vector')
+    .map((b) => ({ ...b.bbox, paths: (b.meta?.vector?.paths ?? []).map((p: { d?: string }) => String(p?.d ?? '')) }));
+  const labels = blocks
+    .filter((b) => b.type === 'text')
+    .map((b) => ({ ...b.bbox, text: b.text }));
+  if (!vectors.length && !labels.length) return blocks;
+
+  return blocks.map((block) => {
+    if (block.type !== 'image') return block;
+    const candidate = detectChartCandidate(block.bbox, vectors, labels);
+    if (!candidate) return block;
+    return { ...block, meta: { ...(block.meta ?? {}), chartCandidate: candidate } };
+  });
+}
+
 /** Metrics for a source font, keyed exactly as `embeddedFontFamilies` is. */
 function lookupFontMetrics(
   sourceFont: string | undefined,
@@ -136,8 +174,13 @@ function blockToOverlay(
   opts: Pick<DoclingPlanOptions, 'measureTextWidth' | 'fontMetrics'> = {},
 ): Overlay | null {
   // Phase B: prefer alt-text / caption for the human-readable layer label.
+  // A detected chart kind comes before the raw text because that text is
+  // `[image]` for 1,111 of the 1,226 image overlays in production — a layer
+  // list of identical `[image]` entries is not a layer list.
   const layerName = (block.meta?.altText
     ?? block.meta?.caption
+    ?? block.meta?.captionText
+    ?? (block.type === 'image' ? chartCandidateAltText(block.meta?.chartCandidate) ?? undefined : undefined)
     ?? block.text
     ?? block.type)
     .trim()
@@ -288,7 +331,13 @@ function blockToOverlay(
       altText: block.meta?.altText,
       caption: block.meta?.caption,
       captionText: block.meta?.captionText,
-      pictureClass: block.meta?.pictureClass,
+      // Last: a detected kind is a weak description and must never beat the
+      // source's own words. It is also the only one that ever arrives — the
+      // Docling `pictureClass` this used to fall back to is empty on 98% of
+      // production traffic, which is why no imported figure has ever carried
+      // alternative text.
+      pictureClass: block.meta?.pictureClass
+        ?? chartCandidateAltText(block.meta?.chartCandidate) ?? undefined,
     });
     const overlay: ImageOverlay = {
       ...base,
@@ -411,6 +460,21 @@ function pageWarnings(
       message: `Page ${pageNo}: ${glyphArtifactBlocks} text block(s) contained GLYPH<n> extraction artifacts (font without a usable character map); the artifacts were stripped but the text needs manual review.`,
     });
   }
+  // A chart shipped as a picture is a chart nobody can edit, and until now
+  // nothing said so — the chart path is inert in production for four
+  // independent reasons (see `chartCandidate.pure.ts`) and an import reported
+  // "no charts" identically whether the document had none or the pipeline
+  // never looked. Saying it per page is what turns silence into a decision.
+  const chartPictures = blocks.filter((b) => b.type === 'image' && b.meta?.chartCandidate);
+  if (chartPictures.length) {
+    const kinds = Array.from(new Set(chartPictures.map((b) => String(b.meta!.chartCandidate.kind))));
+    warnings.push({
+      code: 'docling.chart_kept_as_picture',
+      severity: 'info',
+      pageId: pageId(pageNo),
+      message: `Page ${pageNo}: ${chartPictures.length} chart(s) detected (${kinds.join(', ')}) and kept as source pictures — the reconstruction is not editable and its values are not extracted.`,
+    });
+  }
   const lowConf = blocks.filter((b) => b.confidence < lockThreshold).length;
   if (!blocks.length) return warnings;
   const ratio = lowConf / blocks.length;
@@ -488,10 +552,10 @@ export function mapDoclingToPagePlan(
       // W3 — join the sidecar's chart reads onto Docling's picture blocks here,
       // rather than inside mapDoclingToRawBlocks, so that mapper stays a pure
       // function of the Docling document and knows nothing about scene graphs.
-      promotePicturesToCharts(
+      annotateChartCandidates(promotePicturesToCharts(
         mapped.byPage[page.page_no] ?? [],
         opts.sourceChartsByPage?.[page.page_no] ?? [],
-      ),
+      )),
       opts,
       doc,
     ),
@@ -533,12 +597,12 @@ export function mapDoclingToPagePlan(
     if (page.background?.color) {
       fillObservations.push({
         color: page.background.color,
-        area: (page.size?.width ?? 0) * (page.size?.height ?? 0),
+        area: (page.width ?? 0) * (page.height ?? 0),
       });
     }
   }
   const derivedTokens = deriveTokensFromExtraction(textObservations, fillObservations, {
-    pageArea: (pages[0]?.size?.width ?? 0) * (pages[0]?.size?.height ?? 0) || undefined,
+    pageArea: (pages[0]?.width ?? 0) * (pages[0]?.height ?? 0) || undefined,
   });
 
   return {

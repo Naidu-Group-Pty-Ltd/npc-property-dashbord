@@ -77,7 +77,7 @@ export const MAX_CONTAINED_REGIONS_PER_PAGE = 24;
  */
 export function pageContainedRegions(
   policy: PdfImportPagePolicy | null | undefined,
-  pageSize: { width: number; height: number } | null | undefined,
+  pageSize: { width?: number; height?: number } | null | undefined,
 ): PageContainedRegion[] {
   if (!policy || policy.outputStrategy !== 'native') return [];
   const regions = Array.isArray(policy.containedRegions) ? policy.containedRegions : [];

@@ -67,6 +67,9 @@ export class BackgroundFirstReconciliationClient implements ReconciliationAiClie
   async repairPage(): Promise<unknown> {
     return [];
   }
+
+  /** No critique without a backend: these clients are deterministic stand-ins. */
+  async critiquePage(): Promise<unknown> { return { findings: [] }; }
 }
 
 export class StaticPlanReconciliationClient implements ReconciliationAiClient {
@@ -83,6 +86,9 @@ export class StaticPlanReconciliationClient implements ReconciliationAiClient {
   async repairPage(): Promise<unknown> {
     return [];
   }
+
+  /** No critique without a backend: these clients are deterministic stand-ins. */
+  async critiquePage(): Promise<unknown> { return { findings: [] }; }
 }
 
 function extractPlanCandidate(data: unknown): unknown {

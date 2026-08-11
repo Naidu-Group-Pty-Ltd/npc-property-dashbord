@@ -163,6 +163,27 @@ export function headingTagFor(annotation: SemanticAnnotation | null | undefined)
  * worse than none: it satisfies a checker while telling a reader nothing, and
  * that is exactly the failure this stage exists to stop asserting.
  */
+/**
+ * A description has to describe. A caption that is only a number does not.
+ *
+ * Caption pairing falls back to the nearest `caption`-labelled block within
+ * 36pt, and a chart's axis ticks and value labels are small text sitting
+ * exactly there — so a bar chart could take `"186,000"` as its alternative
+ * text, naming one number and calling it a description. Stage 2 made that reach
+ * `/Alt` in a tagged PDF, where a screen reader would read it out as the whole
+ * content of the figure.
+ *
+ * Found by a test, not in production: the fixture that exposed it was a chart
+ * whose ticks were labelled captions.
+ */
+function describesSomething(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  // A bare number, currency amount, percentage or year — with or without a
+  // trailing unit — is a datum, not a description.
+  return !/^[$€£¥]?\s?-?\d[\d,. ]*\s?[%kKmMbB]?$/.test(trimmed);
+}
+
 export function figureAltText(source: {
   altText?: unknown;
   caption?: unknown;
@@ -176,7 +197,7 @@ export function figureAltText(source: {
   pictureClass?: unknown;
 } | null | undefined): string | null {
   const explicit = firstText(source?.altText, source?.caption, source?.captionText);
-  if (explicit) return explicit;
+  if (explicit && describesSomething(explicit)) return explicit;
   const kind = typeof source?.pictureClass === 'string' ? source.pictureClass.trim() : '';
   if (!kind) return null;
   // `bar_chart` → `Bar chart`. A classifier label is a machine token; putting it

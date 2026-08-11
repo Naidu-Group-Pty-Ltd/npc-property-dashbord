@@ -27,10 +27,10 @@ const PAGE = { pageWidth: 595, pageHeight: 842 };
 const IDS = ['title', 'body', 'logo', 'rule'];
 const ctx = { overlayIds: IDS, ...PAGE };
 
-const finding = (over: Record<string, unknown> = {}) => ({
+const finding = (over: Partial<VisualCritiqueFinding> & Record<string, unknown> = {}): VisualCritiqueFinding => ({
   kind: 'text_clipped', severity: 'critical', overlayId: 'title',
   note: 'The title is cut off on the right.', ...over,
-});
+} as VisualCritiqueFinding);
 
 describe('parseCritiqueFindings', () => {
   it('accepts a well-formed finding', () => {
@@ -64,9 +64,9 @@ describe('parseCritiqueFindings', () => {
   it('rejects a kind or severity outside the closed vocabulary', () => {
     // Open categories mean nothing downstream can corroborate them and the
     // review surface fills with prose.
-    expect(parseCritiqueFindings([finding({ kind: 'vibes_off' })], ctx).rejected[0].reason)
+    expect(parseCritiqueFindings([finding({ kind: 'vibes_off' as never })], ctx).rejected[0].reason)
       .toContain('unknown kind');
-    expect(parseCritiqueFindings([finding({ severity: 'catastrophic' })], ctx).rejected[0].reason)
+    expect(parseCritiqueFindings([finding({ severity: 'catastrophic' as never })], ctx).rejected[0].reason)
       .toContain('unknown severity');
   });
 
@@ -89,7 +89,7 @@ describe('parseCritiqueFindings', () => {
       { x: 10, y: 10, width: 50 },
     ]) {
       const { rejected } = parseCritiqueFindings(
-        [finding({ kind: 'missing_element', overlayId: undefined, region: bad })], ctx,
+        [finding({ kind: 'missing_element', overlayId: undefined, region: bad as never })], ctx,
       );
       expect(rejected[0]?.reason, JSON.stringify(bad)).toContain('region');
     }
@@ -238,7 +238,7 @@ describe('occlusion is decided by the boxes and the paint order', () => {
 });
 
 describe('the claims only pixels can settle are marked as such', () => {
-  it.each(['wrong_colour', 'wrong_typeface', 'spurious_element', 'artifact'])('%s is unverifiable', (kind) => {
+  it.each(['wrong_colour', 'wrong_typeface', 'spurious_element', 'artifact'] as const)('%s is unverifiable', (kind) => {
     const result = verdictOf(finding({ kind }), [overlay()], perChar(10));
     expect(result.verdict).toBe('unverifiable');
     expect(result.basis).toContain('source pixels');
@@ -301,7 +301,7 @@ describe('what a reviewer is shown', () => {
     { kind: 'text_clipped', severity: 'critical', overlayId: 'title', note: 'Cut off.' },
     { kind: 'text_clipped', severity: 'critical', overlayId: 'body', note: 'Also cut off.' },
     { kind: 'wrong_typeface', severity: 'critical', overlayId: 'title', note: 'Wrong font.' },
-  ], {
+  ] as VisualCritiqueFinding[], {
     overlays: [
       overlay({ nowrap: true, width: 100 }),
       overlay({ id: 'body', nowrap: true, width: 4000 }),

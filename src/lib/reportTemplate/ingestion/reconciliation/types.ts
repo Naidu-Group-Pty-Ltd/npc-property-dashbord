@@ -113,6 +113,13 @@ export interface RawImportBlock {
     };
     /** Caption text linked to this image/table item (when the parser provides it). */
     caption?: string;
+    /** The paired caption's WORDS — Docling states a caption by reference. */
+    captionText?: string;
+    /**
+     * Chart-likeness decided from the page's own geometry. Detection only: it
+     * never carries a value read off the chart.
+     */
+    chartCandidate?: import('../../pdfImport/chartCandidate.pure').ChartCandidate;
     /** Phase B: VLM-generated alt-text/description for images. */
     altText?: string;
     /** Phase B: picture classifier label (e.g. chart, logo, photo, diagram, map). */
