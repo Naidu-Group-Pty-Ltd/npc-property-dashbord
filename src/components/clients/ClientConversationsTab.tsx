@@ -28,8 +28,8 @@ import {
   Phone,
   Mail,
   MessageCircle,
-  Instagram,
-  Facebook,
+  Camera,
+  ThumbsUp,
   Globe,
   RefreshCw,
   ChevronRight,
@@ -67,8 +67,8 @@ const channelIcons: Record<string, any> = {
   sms: Phone,
   email: Mail,
   whatsapp: MessageCircle,
-  instagram: Instagram,
-  facebook: Facebook,
+  instagram: Camera,
+  facebook: ThumbsUp,
   live_chat: Globe,
 };
 
