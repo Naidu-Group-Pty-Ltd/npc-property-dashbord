@@ -32,6 +32,7 @@
  * payload: no suburb name is 120 characters.
  */
 import { z } from 'npm:zod@3.25.76';
+import { optionalField } from './schemaHelpers.ts';
 
 /** Australian state/territory abbreviations, plus the long forms seen in the wild. */
 const stateField = z.string().trim().min(2).max(40);
@@ -59,18 +60,18 @@ const postcodeField = z.union([
  * business rules live.
  */
 export const LocalityRequest = z.object({
-  suburb: localityField.optional(),
+  suburb: optionalField(localityField),
   state: stateField,
-  postcode: postcodeField.optional(),
+  postcode: optionalField(postcodeField),
 }).strict();
 
 /** `school-data-service` — the locality plus optional coordinates. */
 export const SchoolDataRequest = z.object({
-  suburb: localityField.optional(),
+  suburb: optionalField(localityField),
   state: stateField,
-  postcode: postcodeField.optional(),
-  latitude: z.number().min(-90).max(90).optional(),
-  longitude: z.number().min(-180).max(180).optional(),
+  postcode: optionalField(postcodeField),
+  latitude: optionalField(z.number().min(-90).max(90)),
+  longitude: optionalField(z.number().min(-180).max(180)),
 }).strict();
 
 /** `public-transport-service` — coordinates are required here, the locality is not. */
@@ -78,7 +79,7 @@ export const PublicTransportRequest = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   state: stateField,
-  suburb: localityField.optional(),
+  suburb: optionalField(localityField),
 }).strict();
 
 /**

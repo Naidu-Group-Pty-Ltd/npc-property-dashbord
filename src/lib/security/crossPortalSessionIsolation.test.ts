@@ -116,8 +116,12 @@ describe('cross-portal session cookie isolation', () => {
       '_shared/auth.ts',
       '_shared/sessionRotate.ts',
       'admin-user-management/index.ts',
-      'custom-auth-login-v2/index.ts',
-      'custom-auth-logout-v2/index.ts',
+      // WP-28 moved the staff cookie writer out of the two `custom-auth-*`
+      // entrypoints and into the handler they now both shim onto. The
+      // entrypoints are deliberately NOT listed: they contain no logic any
+      // more, so inlining a cookie write into one should be caught here.
+      '_shared/customAuth/login.ts',
+      '_shared/customAuth/logout.ts',
       'security-step-up/index.ts',
     ]);
     const root = join(repo, 'supabase/functions');

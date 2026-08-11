@@ -39,6 +39,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
 import {
+import { internalError } from '../_shared/errorResponse.ts';
   AUSTRALIAN_STATES,
   DRIFT_REVIEW_THRESHOLD_PCT,
   DUTY_SCHEDULES,
@@ -258,7 +259,11 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[update-stamp-duty-rates]', error);
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+      // WP-18: the caught exception never reaches the caller. `internalError`
+      // logs the detail server-side and returns an opaque body with a
+      // correlation id. `success: false` is spread over first so this keeps the
+      // shape its callers switch on.
+      JSON.stringify({ success: false, ...internalError(error, 'update-stamp-duty-rates') }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 },
     );
   }

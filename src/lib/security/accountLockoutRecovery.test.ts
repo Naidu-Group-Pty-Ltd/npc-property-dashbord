@@ -28,6 +28,8 @@
  * mailbox and a real fifteen-minute lockout to prove it.
  */
 import { readFileSync } from 'node:fs';
+// @ts-expect-error - plain .mjs helper shared with the CI gates
+import { readEntrypointSource } from '../../../scripts/security/lib/entrypointSource.mjs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -41,8 +43,37 @@ const repo = process.cwd();
 const stripComments = (source: string) =>
   source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 
+/**
+ * An entrypoint's source, INCLUDING the handler it delegates to.
+ *
+ * `custom-auth-login-v2` is a one-line shim onto `_shared/customAuth/login.ts`
+ * (WP-28), so reading the entrypoint alone finds none of the lockout logic
+ * asserted below and every assertion here fails. The same relocation broke two
+ * CI gates; this spec broke with them and nobody saw it, because
+ * `src/lib/security` is in no workflow.
+ *
+ * Deliberately the same helper the gates use, so "the source an entrypoint
+ * runs" has one definition rather than three.
+ */
 const fn = (name: string) =>
   stripComments(readFileSync(join(repo, 'supabase/functions', name, 'index.ts'), 'utf8'));
+
+/**
+ * The entrypoint PLUS the handler it delegates to — for POSITIVE assertions
+ * only.
+ *
+ * The distinction is the same one `check-auth-rate-limit-coverage.mjs` records,
+ * and it is easy to get wrong twice: following the imports for a NEGATIVE
+ * assertion pulls in the shared modules an entrypoint reaches, and those
+ * contain the very identifiers the assertion forbids. Using this for
+ * `expect(fn('admin-password-reset')).not.toContain('verifyAuth')` fails
+ * immediately, because `createCorsHeaders` comes from `_shared/auth.ts` and
+ * `verifyAuth` lives beside it.
+ *
+ * So: `served()` to assert something IS there, `fn()` to assert something is
+ * NOT.
+ */
+const served = (name: string) => stripComments(readEntrypointSource(repo, name));
 
 /** Every function that sets a new password from a proof-of-mailbox code. */
 const RESET_FUNCTIONS = [
@@ -92,7 +123,8 @@ describe('administrator-driven password writes release the lockout too', () => {
 });
 
 describe('a locked Command Centre account is told that it is locked', () => {
-  const login = fn('custom-auth-login-v2');
+  // Positive assertions about logic that WP-28 moved into the shared handler.
+  const login = served('custom-auth-login-v2');
 
   it('answers a live lockout distinctly rather than as bad credentials', () => {
     expect(login).toMatch(/status:\s*429/);

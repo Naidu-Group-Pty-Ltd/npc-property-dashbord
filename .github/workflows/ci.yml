@@ -61,6 +61,20 @@ jobs:
           npm run security:edd-boundary
           npm run security:screening-boundary
 
+      # `src/lib/security` held EIGHT specs and ran in no workflow at all — the
+      # same defect WP-16 found in the gates, in the other half of the suite.
+      #
+      # It cost something real. `requestSchemas.spec.ts` asserts that each
+      # schema accepts the body its callers actually send; had it existed and
+      # run, it would have caught `.optional()` rejecting a JSON `null` before
+      # that took four of the five logins down in production. Two more of these
+      # specs were already red from a refactor nobody could see, and two went
+      # red from the WP-28 shim without anything reporting it.
+      #
+      # Every gate in the `security` job reads source. These run it.
+      - name: Security invariant suites (WP-29)
+        run: npx vitest run src/lib/security
+
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as
