@@ -211,19 +211,30 @@ export default function MarketUpdates() {
     let cancelled = false;
     const start = async () => {
       const loaded = await loadUpdates();
+      // Held items are already merged into the feed above; promote them server-side
+      // so the single Published feed is the truth in the database too.
+      if (!cancelled && loaded.held.length) {
+        const promoted = await reconcileHeldIntoFeed(loaded.held);
+        if (!cancelled && promoted) await loadUpdates();
+      }
       if (cancelled || !loaded.updates || !loaded.health) return;
       try {
         setActionIssue(null);
         const result = await ensureMarketUpdatesFresh(loaded.health, loaded.updates.length);
         if (!cancelled && result) {
           setMessage(result.active ? 'Checking for newer market intelligence…' : `Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);
-          await loadUpdates();
+          const refreshed = await loadUpdates();
+          if (!cancelled && refreshed.held.length) {
+            const promoted = await reconcileHeldIntoFeed(refreshed.held);
+            if (!cancelled && promoted) await loadUpdates();
+          }
         }
       } catch (error) { if (!cancelled) setActionIssue(issueFrom(error)); }
     };
     void start();
     return () => { cancelled = true; };
   }, []);
+
   useEffect(() => { void loadDigest(period); }, [period]);
 
   // Recency alone let the highest-volume masthead take most of the first screen, so the
