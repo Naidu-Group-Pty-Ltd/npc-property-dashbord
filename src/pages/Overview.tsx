@@ -850,7 +850,7 @@ export default function Overview() {
                   <YAxis tick={chartAxisTick(isMobile)} tickLine={false} axisLine={false} width={isMobile ? 25 : 60} />
                   <Tooltip
                     labelFormatter={(value) => {
-                      const date = new Date(value);
+                      const date = new Date(value as string | number);
                       return date.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
                     }}
                     contentStyle={premiumTooltipStyle}
