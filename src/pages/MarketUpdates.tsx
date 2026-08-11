@@ -313,6 +313,30 @@ export default function MarketUpdates() {
     } finally { setPublishingId(null); }
   };
 
+  // Promotes everything still held into the published feed through the same
+  // server-authoritative publish path an operator used to click, so the audit
+  // trail, publication reason and shadow-mode protections all still apply. It is
+  // silent by design: the items are already visible in the feed, and a source
+  // the server legitimately refuses (a shadow row) simply stays unpublished
+  // without disturbing the reader.
+  const reconcileHeldIntoFeed = async (held: MarketUpdate[]) => {
+    if (!held.length || promotingHeld) return false;
+    setPromotingHeld(true);
+    let promoted = 0;
+    try {
+      const queue = [...held];
+      const worker = async () => {
+        for (let next = queue.shift(); next; next = queue.shift()) {
+          try { await publishMarketUpdate(next.id); promoted += 1; }
+          catch { /* left held server-side; still rendered in the single feed */ }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+    } finally { setPromotingHeld(false); }
+    return promoted > 0;
+  };
+
+
 
   const restoreArchived = async (updateId:string,title:string):Promise<boolean> => {
     if(archivePendingRef.current.has(updateId))return false;
