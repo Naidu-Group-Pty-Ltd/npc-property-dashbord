@@ -78,6 +78,9 @@ Respond with ONLY a valid JSON object in this exact format, no other text:
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'expense_estimation',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         {
           role: 'system',

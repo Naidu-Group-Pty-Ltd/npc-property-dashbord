@@ -68,6 +68,9 @@ Note type context: ${noteType || 'general'}`;
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'transcript_cleaning',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Please clean up this voice transcript into a professional note:\n\n"${transcript}"` },
