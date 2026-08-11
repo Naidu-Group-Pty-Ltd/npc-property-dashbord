@@ -19,6 +19,9 @@ import {
   type AmlPortalOverview, type AmlSection, type AmlConsentDocument,
 } from '@/lib/aml/amlPortalApi';
 import { IdentityVerificationStep } from '@/components/portal/IdentityVerificationStep';
+// Lifted out of this file so it can be tested on its own — it now reads the
+// canonical document list rather than rendering requirements alone.
+import { DocumentsStep } from '@/components/portal/DocumentsStep';
 import { ClientJourneyStrip } from '@/components/portal/ClientJourneyStrip';
 import { resolveRequestStep, type IdvAvailability } from '@/lib/aml/portalRequestRoute';
 
@@ -1009,118 +1012,6 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
         </RadioGroup>
       </Field>
     </div>
-  );
-}
-
-/* ─────────────────────────  Documents  ──────────────────────── */
-
-function DocumentsStep({
-  caseId, requirements, onChange, onNext, onBack,
-}: {
-  caseId: string; requirements: any[]; onChange: () => void;
-  onNext: () => void; onBack: () => void;
-}) {
-  const inputRef = useRef<Record<string, HTMLInputElement | null>>({});
-  const [uploading, setUploading] = useState<string | null>(null);
-
-  const handleUpload = async (reqId: string | null, file: File | undefined) => {
-    if (!file) return;
-    setUploading(reqId ?? 'freeform');
-    try {
-      await uploadAmlDocument(caseId, file, reqId);
-      toast.success('Uploaded');
-      onChange();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Upload failed');
-    } finally {
-      setUploading(null);
-    }
-  };
-
-  const missing = requirements.filter(r => r.required && !['uploaded', 'accepted'].includes(r.status));
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Documents</CardTitle>
-        <CardDescription>Upload the items your advisor has requested. Accepted formats: PDF, JPG, PNG (≤ 25 MB).</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {requirements.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No document requirements have been set yet.</p>
-        ) : (
-          <ul className="divide-y divide-border/60">
-            {requirements.map(r => {
-              const done = ['uploaded', 'accepted'].includes(r.status);
-              const rejected = r.status === 'rejected';
-              return (
-                <li key={r.id} className="py-3 flex items-start gap-3">
-                  <div className={cn(
-                    'h-8 w-8 rounded-full flex items-center justify-center shrink-0',
-                    done ? 'bg-success/15 text-success' :
-                    rejected ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground',
-                  )}>
-                    {done ? <CheckCircle2 className="h-4 w-4" /> : rejected ? <AlertTriangle className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium truncate">{r.label}</p>
-                      {r.required && <Badge variant="outline" className="text-[10px]">Required</Badge>}
-                      <Badge variant="outline" className="text-[10px] capitalize">{r.status.replace(/_/g, ' ')}</Badge>
-                    </div>
-                    {r.description && <p className="text-xs text-muted-foreground mt-0.5">{r.description}</p>}
-                  </div>
-                  <input
-                    ref={el => (inputRef.current[r.id] = el)}
-                    type="file"
-                    accept="application/pdf,image/*"
-                    className="hidden"
-                    onChange={e => handleUpload(r.id, e.target.files?.[0])}
-                  />
-                  <Button
-                    size="sm" variant={done ? 'outline' : 'default'}
-                    onClick={() => inputRef.current[r.id]?.click()}
-                    disabled={uploading === r.id}
-                  >
-                    {uploading === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Upload className="h-4 w-4 mr-1" /> {done ? 'Replace' : 'Upload'}</>}
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        <Separator />
-        <div>
-          <Label className="text-xs">Upload additional document</Label>
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              ref={el => (inputRef.current['freeform'] = el)}
-              type="file"
-              accept="application/pdf,image/*"
-              className="hidden"
-              onChange={e => handleUpload(null, e.target.files?.[0])}
-            />
-            <Button variant="outline" onClick={() => inputRef.current['freeform']?.click()} disabled={uploading === 'freeform'}>
-              {uploading === 'freeform' ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Upload className="h-4 w-4 mr-1" /> Choose file</>}
-            </Button>
-          </div>
-        </div>
-
-        {missing.length > 0 && (
-          <Alert>
-            <Clock className="h-4 w-4" />
-            <AlertTitle>{missing.length} required document{missing.length === 1 ? '' : 's'} still outstanding</AlertTitle>
-            <AlertDescription>You can still continue and submit later once uploads are complete.</AlertDescription>
-          </Alert>
-        )}
-
-        <div className="flex justify-between">
-          <Button variant="outline" onClick={onBack}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
-          <Button onClick={onNext}>Continue <ArrowRight className="h-4 w-4 ml-1" /></Button>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
 
