@@ -20,8 +20,8 @@ export function ResetPasswordDialog({ open, onOpenChange, userId, username }: Re
   const [resetting, setResetting] = useState(false);
 
   const handleReset = async () => {
-    if (!newPassword || newPassword.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    if (!newPassword || newPassword.length < 12) {
+      toast.error('Password must be at least 12 characters');
       return;
     }
     if (newPassword !== confirmPassword) {
