@@ -26,6 +26,7 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { toReportableEvent, type UsageLogRow } from "../_shared/apiUsageBilling.pure.ts";
+import { verifyRequiredCronSecret } from "../_shared/requestSecurity.ts";
 import {
   reportApiUsage,
   USAGE_REPORT_MAX_EVENTS,
@@ -39,25 +40,31 @@ const json = (body: unknown, status = 200) =>
   });
 
 /** Constant-time string compare — a timing oracle on a cron secret is still an oracle. */
-function constantTimeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 
 function authorized(req: Request): boolean {
-  const internal = (Deno.env.get("INTERNAL_EDGE_SECRET") ?? "").trim();
-  const cron = (Deno.env.get("MARKET_INGESTION_CRON_SECRET") ?? "").trim();
-  const presented = (req.headers.get("x-internal-edge-secret") ?? "").trim();
+  // WP-24: this used to read `x-internal-edge-secret` off the request and
+  // compare it here. Two things were wrong with that.
+  //
+  // A static shared secret in a header is the legacy internal-auth path WP-12
+  // Phase C hard-locked: a genuine edge-function caller must use
+  // `callInternalFunction`, which signs the body, so a leaked header value is
+  // not by itself a key to the billing queue. `check-internal-legacy-fallback.mjs`
+  // has been failing on exactly this line, on `main`, for as long as the job it
+  // lives in has been red.
+  //
+  // And the comparison was hand-rolled. `verifyRequiredCronSecret` is the shared
+  // one — constant-time, and it refuses a secret shorter than the minimum rather
+  // than quietly accepting a weak one, which the `length < 16` check below it
+  // was doing by hand and only for two specific variables.
+  //
+  // What remains is the scheduled-caller path: a cron secret presented as
+  // `Authorization: Bearer …` or `X-Cron-Secret`, which is how every other
+  // scheduled worker in this repo is invoked.
+  const cron = Deno.env.get("MARKET_INGESTION_CRON_SECRET") ?? "";
   const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  const cronHeader = (req.headers.get("x-cron-secret") ?? "").trim();
 
-  for (const secret of [internal, cron]) {
-    if (secret.length < 16) continue;
-    if (presented.length > 0 && constantTimeEqual(secret, presented)) return true;
-    if (bearer.length > 0 && constantTimeEqual(secret, bearer)) return true;
-  }
-  return false;
+  return verifyRequiredCronSecret(cron, bearer) || verifyRequiredCronSecret(cron, cronHeader);
 }
 
 /**
