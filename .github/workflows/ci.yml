@@ -222,6 +222,30 @@ jobs:
         with:
           deno-version: v2.x
 
+      # Warm the Deno module cache across runs.
+      #
+      # Every `deno check` below resolves `https://esm.sh/...` and
+      # `https://deno.land/x/...` from the network. When one of those is
+      # unhealthy the whole job fails on somebody else's outage — esm.sh
+      # answered 408 for `@supabase/storage-js` and took this job down twice in
+      # an hour, with nothing in the diff to act on.
+      #
+      # A restored cache means most runs fetch nothing at all. Deno keys its
+      # cache by URL and integrity, so a cached module is byte-identical to the
+      # one it replaces — this removes a dependency on a third party being up,
+      # not a check.
+      #
+      # The key follows the import lines in the functions themselves, so adding
+      # or bumping a remote specifier misses and refetches; `restore-keys` still
+      # gives the new run a warm start from the previous cache.
+      - name: Cache Deno modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
+          restore-keys: |
+            deno-${{ runner.os }}-
+
       - name: Deno type-check shared trust modules
         run: |
           deno check \
