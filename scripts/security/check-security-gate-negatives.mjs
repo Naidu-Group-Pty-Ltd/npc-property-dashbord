@@ -166,6 +166,60 @@ const CASES = [
       "      await fetch('https://www.googleapis.com/webfonts/v1/webfonts?key=AIzaSyAPjKmIVPd3M30RFnb1pCqJ1fT-BaKkPNI');\n" +
       '      const { data, error } = await invokeSecureFunction<{',
   },
+
+  // ── WP-16: the twelve gates that had never run ───────────────────────────
+  // Two of these four found live defects the first time they executed, so they
+  // are exactly the gates most worth proving can still fail.
+  {
+    gate: 'check-cors-contract.mjs',
+    file: 'supabase/functions/push-unsubscribe/index.ts',
+    what: 'a credentialed endpoint goes back to answering a wildcard origin',
+    find: 'Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));',
+    replace: 'Deno.serve(async (req: Request) => __corsWrappedHandler(req));',
+  },
+  {
+    gate: 'check-client-portfolio-authz.mjs',
+    file: 'supabase/functions/calculate-borrowing-capacity/index.ts',
+    what: 'borrowing-capacity stops binding the request to a client the actor may see',
+    find: 'if (!await canAccessClient(supabase, actor, clientId)) {',
+    replace: 'if (false) {',
+  },
+  {
+    gate: 'check-solicitor-intelligence-authz.mjs',
+    file: 'supabase/functions/solicitor-portal-intelligence/index.ts',
+    what: 'portfolio matter reads stop resolving the per-client permission matrix',
+    find: "        if (permissions && can(permissions, 'matters', 'view')) visibleClientIds.push(clientId);",
+    replace: '        visibleClientIds.push(clientId);',
+  },
+  {
+    gate: 'security-check.mjs',
+    gatePath: 'scripts/builder-portal/security-check.mjs',
+    file: 'supabase/functions/builder-portal-login/index.ts',
+    what: 'builder login looks an account up before the throttle again',
+    find: '    const rateLimit = await enforceAuthRateLimit(supabase, req, {',
+    replace:
+      "    const { data: __earlyLookup } = await supabase.from('builder_portal_users').select('id');\n"
+      + '    const rateLimit = await enforceAuthRateLimit(supabase, req, {',
+  },
+
+  // ── WP-17: the database's own gate ───────────────────────────────────────
+  {
+    gate: 'check-migration-security.mjs',
+    file: 'supabase/migrations/20260909000000_wp17_secdef_drift_remediation.sql',
+    what: 'a SECURITY DEFINER function lands with no search_path and no EXECUTE revoke',
+    find: 'ALTER VIEW public.partner_agreement_retention_register SET (security_invoker = true);',
+    replace:
+      'CREATE OR REPLACE FUNCTION public.wp17_negative_probe(_x uuid)\n'
+      + "RETURNS boolean LANGUAGE sql SECURITY DEFINER AS $probe$ SELECT true $probe$;\n"
+      + 'ALTER VIEW public.partner_agreement_retention_register SET (security_invoker = true);',
+  },
+  {
+    gate: 'check-gates-wired.mjs',
+    file: '.github/workflows/ci.yml',
+    what: 'a security gate is dropped from CI and left orphaned',
+    find: '          node scripts/security/check-cors-contract.mjs\n',
+    replace: '',
+  },
 ];
 
 /**
@@ -217,7 +271,13 @@ for (const test of CASES) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-negative-'));
   try {
     mirror(dir, new Map([[test.file, mutated]]));
-    const run = spawnSync(process.execPath, [join(root, 'scripts', 'security', test.gate)], {
+    // `gatePath` for the checks that live outside scripts/security/ — the two
+    // per-portal ones. The gate itself is run from the real tree (only its cwd
+    // is the mirror), so it must resolve its targets from process.cwd().
+    const gateFile = test.gatePath
+      ? join(root, ...test.gatePath.split('/'))
+      : join(root, 'scripts', 'security', test.gate);
+    const run = spawnSync(process.execPath, [gateFile], {
       cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
     });
     checked++;

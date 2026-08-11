@@ -38,10 +38,14 @@
  * in UNWIRED_BY_DESIGN below, with a reason. An empty list is the goal.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, relative, resolve } from 'node:path';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Resolve from the process cwd, NOT from `import.meta.url`. The negative-test
+// harness (check-security-gate-negatives.mjs) runs each gate against a symlinked
+// mirror of the tree with one file mutated; a gate that resolves relative to its
+// own location reads the REAL repository instead and passes on mutated source —
+// which is precisely the "gate that is not a gate" this suite exists to catch.
+const root = resolve(process.cwd());
 const WORKFLOW_DIR = join(root, '.github', 'workflows');
 
 /** Gates intentionally not run by CI. Each entry needs a written reason. */

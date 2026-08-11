@@ -289,6 +289,14 @@ jobs:
       - name: Every security gate is wired (WP-16)
         run: node scripts/security/check-gates-wired.mjs
 
+      # WP-17: the database layer had no gate of its own, and it was the layer
+      # that regressed. Three weeks after the July hardening closed at 3/116/9
+      # -> 0/9/0, the live advisor read 2 SECURITY DEFINER views, 96 over-broad
+      # EXECUTE grants and 5 unpinned search_paths — because those were one-off
+      # migrations, and Postgres grants EXECUTE to PUBLIC at CREATE time.
+      - name: Migration security invariants (WP-17)
+        run: node scripts/security/check-migration-security.mjs
+
       # The gates above assert their properties by matching source literals, so
       # a legitimate refactor can make one stop matching and a careless repair
       # can loosen it until it passes. This removes each control from a

@@ -12,9 +12,16 @@
  * Run with: npm run security:builder-portal
  */
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const root = new URL('../..', import.meta.url);
+// Resolve from the process cwd, NOT from `import.meta.url`. The negative-test
+// harness (scripts/security/check-security-gate-negatives.mjs) runs each gate
+// against a symlinked mirror of the tree with one file mutated; resolving
+// relative to this script's own location read the REAL repository instead, so
+// every assertion here passed on mutated source. Same convention as
+// scripts/security/check-admin-authorization-server-side.mjs.
+const root = pathToFileURL(`${resolve(process.cwd())}/`);
 const read = (path) => readFileSync(new URL(path, root), 'utf8');
 
 const failures = [];

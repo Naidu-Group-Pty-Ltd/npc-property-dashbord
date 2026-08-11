@@ -191,8 +191,12 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
   // per request by withRequestOrigin — those answer an exact origin.
   // `createTokenAuthCorsHeaders(origin)` counts too, but ONLY when it is passed
   // an origin: the no-argument form still answers `*` to everyone.
+  // Each form must be CALLED, not merely imported. `withRequestOrigin` used to
+  // be matched as a bare identifier, so unwrapping the handler and leaving the
+  // now-unused import behind still satisfied this — the negative test for this
+  // rule caught it.
   const usesSharedOrigin = /createCorsHeaders\s*\(/.test(src)
-    || /withRequestOrigin/.test(src)
+    || /withRequestOrigin\s*\(/.test(src)
     || /createTokenAuthCorsHeaders\s*\(\s*[^)\s]/.test(src);
 
   // (a) A credentialed request whose response carries a wildcard origin is

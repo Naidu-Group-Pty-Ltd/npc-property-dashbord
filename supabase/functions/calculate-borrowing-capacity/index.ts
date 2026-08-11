@@ -1383,8 +1383,10 @@ Deno.serve(async (req) => {
 
     // Named once, as in get-client-data and manage-bc-scenarios. The authz gate
     // (scripts/security/check-client-portfolio-authz.mjs) asserts on the exact
-    // `canAccessClient(supabase, actor, clientId)` call, so the shape is not
-    // inlined at the call site.
+    // access-check call below, so the actor shape is not inlined at the call
+    // site. Do not restate that call in a comment either — a comment satisfies
+    // the gate's literal match just as well as the code does, which is how this
+    // very line first defeated its own negative test.
     const actor = { userId, authMethod };
 
     // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
