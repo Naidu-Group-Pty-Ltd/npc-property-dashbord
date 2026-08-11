@@ -701,7 +701,7 @@ function pictureItemToBlock(
   pageInfo: DoclingPageInfo,
   index: number,
   readingOrder: number,
-  captionGroupId: string | undefined,
+  captionPair: { groupId: string; text?: string } | undefined,
   opts: MapOptions,
 ): RawImportBlock | null {
   const prov = pickProv(item.prov, pageInfo.page_no);
@@ -726,9 +726,13 @@ function pictureItemToBlock(
       label: 'picture',
       readingOrder,
       caption: item.caption,
+      // The paired caption's words. Docling states a caption by REFERENCE, so
+      // `item.caption` is usually empty while the text sits in its own block —
+      // which is why a figure's alternative text could never see it.
+      ...(captionPair?.text ? { captionText: captionPair.text } : {}),
       altText,
       pictureClass,
-      groupId: captionGroupId,
+      groupId: captionPair?.groupId,
       imageUri,
       imageDiagnosticsPath,
       // A refused picture renders as a grey placeholder. Recording WHY makes the
@@ -868,7 +872,7 @@ export function mapDoclingToRawBlocks(
     refs: Array<DoclingRef | string> | undefined,
     pageNo: number,
     figureBBox: ImportBBox,
-  ): string | undefined {
+  ): { groupId: string; text?: string } | undefined {
     // 1) explicit refs from the parser
     const explicit: RawImportBlock[] = [];
     for (const ref of refs ?? []) {
@@ -883,7 +887,11 @@ export function mapDoclingToRawBlocks(
       for (const t of explicit) {
         t.meta = { ...(t.meta ?? {}), groupId: gid };
       }
-      return gid;
+      // The caption's WORDS, not just the link. A figure needs alternative text
+      // or it is a PDF/UA failure, and this text is the page's own description
+      // of the figure — a far better answer than the classifier's "Bar chart".
+      // Pairing only ever returned the group id, so nothing could reach it.
+      return { groupId: gid, text: explicit.map((t) => t.text ?? '').filter(Boolean).join(' ').trim() || undefined };
     }
     // 2) proximity fallback — nearest caption above/below within PROXIMITY_PT
     const pool = captionPool[pageNo] ?? [];
@@ -904,7 +912,7 @@ export function mapDoclingToRawBlocks(
       captionGroupSeq += 1;
       const gid = `docling-figure-p${pageNo}-${captionGroupSeq}`;
       best.block.meta = { ...(best.block.meta ?? {}), groupId: gid };
-      return gid;
+      return { groupId: gid, text: best.block.text?.trim() || undefined };
     }
     return undefined;
   }
@@ -918,8 +926,8 @@ export function mapDoclingToRawBlocks(
     if (!page) { tableIdx += 1; continue; }
     const order = typeof table.reading_order === 'number' ? table.reading_order : nextOrder(page.page_no);
     const figureBBox = bboxToTopLeft(prov.bbox, page.size.height);
-    const captionGid = pairCaption(table.captions, page.page_no, figureBBox);
-    const block = tableItemToBlock(table, page, tableIdx, order, captionGid, opts);
+    const captionPair = pairCaption(table.captions, page.page_no, figureBBox);
+    const block = tableItemToBlock(table, page, tableIdx, order, captionPair?.groupId, opts);
     if (block) byPage[page.page_no]?.push(block);
     tableIdx += 1;
   }
@@ -933,8 +941,8 @@ export function mapDoclingToRawBlocks(
     if (!page) { pictureIdx += 1; continue; }
     const order = typeof picture.reading_order === 'number' ? picture.reading_order : nextOrder(page.page_no);
     const figureBBox = bboxToTopLeft(prov.bbox, page.size.height);
-    const captionGid = pairCaption(picture.captions, page.page_no, figureBBox);
-    const block = pictureItemToBlock(picture, page, pictureIdx, order, captionGid, opts);
+    const captionPair = pairCaption(picture.captions, page.page_no, figureBBox);
+    const block = pictureItemToBlock(picture, page, pictureIdx, order, captionPair, opts);
     if (block) byPage[page.page_no]?.push(block);
     pictureIdx += 1;
   }

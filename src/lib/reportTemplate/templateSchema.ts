@@ -277,6 +277,35 @@ const BaseOverlay = z.object({
     width: z.enum(['fixed', 'scale']).optional(),
     height: z.enum(['fixed', 'scale']).optional(),
   }).optional(),
+  /**
+   * What this element IS, as the source pipeline classified it.
+   *
+   * Docling labels every text item it extracts — title, section header with a
+   * level, page header/footer, caption, footnote, list item, code, formula —
+   * and the import mapper already reads those labels to pick default weights
+   * and sizes. Until this field existed they died at the plan boundary, so a
+   * stored template knew the geometry of every box and the meaning of none.
+   *
+   * Annotation only: nothing here moves a box or changes a style. It decides
+   * the ELEMENT NAME the renderer emits, which is what puts headings in the
+   * exported PDF's structure tree — `render-template-pdf` asks WeasyPrint for
+   * `pdf/ua-1`, and before this every imported page tagged as a flat run of
+   * `/Div`. See `pdfImport/semanticRole.pure.ts`.
+   *
+   * Absent means "no classification", never "body copy": the non-Docling import
+   * paths emit no labels, and defaulting there would state a call nobody made.
+   */
+  semantics: z.object({
+    version: z.string(),
+    role: z.enum([
+      'title', 'heading', 'body', 'listItem', 'caption', 'footnote',
+      'pageHeader', 'pageFooter', 'code', 'formula', 'figure', 'table',
+    ]),
+    headingLevel: z.number().int().min(1).max(6).optional(),
+    /** Position in the SOURCE's reading order, which paint order does not preserve. */
+    readingOrder: z.number().int().min(0).optional(),
+    listGroupId: z.string().optional(),
+  }).optional(),
 });
 
 
@@ -481,6 +510,17 @@ export const TableOverlaySchema = BaseOverlay.extend({
 export const ImageOverlaySchema = BaseOverlay.extend({
   type: z.literal('image'),
   src: BindableStringSchema,
+  /**
+   * Alternative text. Emitted as the `alt` attribute, which WeasyPrint writes
+   * straight into the tagged PDF as the figure's `/Alt`.
+   *
+   * A figure with no alternative text is a hard PDF/UA failure, and every
+   * imported picture was one — the import mapper extracts Docling's own
+   * description and caption and, until this field existed, spent them on the
+   * Layers-panel name. Absent stays absent: a placeholder like `[image]`
+   * satisfies a checker and tells a reader nothing.
+   */
+  alt: z.string().optional(),
   fit: z.enum(['cover', 'contain', 'fill']).default('cover'),
   // Manual crop, expressed as percent (0–100) of the source image trimmed
   // from each edge before fit/positioning is applied.

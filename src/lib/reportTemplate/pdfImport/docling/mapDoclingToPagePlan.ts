@@ -28,6 +28,7 @@ import { CHART_ARBITRATION_VERSION as CHART_PRESERVATION_VERSION } from '../char
 import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pure';
 import { resolveTextWrapping } from '../resolveTextWrapping.pure';
 import { alignBoxToSourceBaseline, type FontVerticalMetrics } from '../firstBaseline.pure';
+import { annotateFromSource, figureAltText } from '../semanticRole.pure';
 import { fontLookupKey } from '../fontResolver';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
@@ -140,6 +141,16 @@ function blockToOverlay(
     ?? block.type)
     .trim()
     .slice(0, MAX_OVERLAY_NAME_LENGTH);
+  // What the source said this IS. The raw mapper already reads Docling's label
+  // to pick a default size and weight; carrying it through is what lets the
+  // renderer emit a heading as a heading, and lets anything downstream act on
+  // meaning rather than on a box. Annotation only — it moves nothing.
+  const semantics = annotateFromSource({
+    label: block.meta?.label,
+    headingLevel: block.meta?.headingLevel,
+    readingOrder: block.meta?.readingOrder,
+    listGroupId: block.meta?.listGroupId,
+  });
   const base = {
     id: overlayId(block),
     x: block.bbox.x,
@@ -152,6 +163,7 @@ function blockToOverlay(
     locked,
     name: layerName,
     ...(block.meta?.groupId ? { groupId: block.meta.groupId } : {}),
+    ...(semantics ? { semantics } : {}),
   } as const;
 
   if (block.type === 'text' || block.type === 'formula' || block.type === 'code') {
@@ -266,12 +278,24 @@ function blockToOverlay(
     return overlay;
   }
   if (block.type === 'image') {
+    // The source's own description of the picture. It was already extracted —
+    // `pictureAltText` reads Docling's description annotation, and the caption
+    // is resolved by ref — and then spent on the Layers-panel name and nothing
+    // else, so every exported figure was a `/Figure` with no `/Alt`, which is a
+    // hard PDF/UA failure in a document rendered as `pdf/ua-1`.
+    const alt = figureAltText({
+      altText: block.meta?.altText,
+      caption: block.meta?.caption,
+      captionText: block.meta?.captionText,
+      pictureClass: block.meta?.pictureClass,
+    });
     const overlay: ImageOverlay = {
       ...base,
       type: 'image',
       // Phase D: wire embedded picture crop URI when the parser provided one.
       src: block.meta?.imageUri ?? '',
       fit: 'contain',
+      ...(alt ? { alt } : {}),
     } as ImageOverlay;
     return overlay;
   }

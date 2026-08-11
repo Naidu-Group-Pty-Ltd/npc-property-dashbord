@@ -203,6 +203,18 @@ the agent treats them as authoritative), and **absent grounding is not empty
 grounding** (an empty element list tells the model a scanned page has no text,
 which it then reproduces).
 
+An imported overlay also carries what the source said it **is** —
+`overlay.semantics`, from Docling's own label. Read
+[`SEMANTIC_STRUCTURE.md`](./docs/pdf-import/SEMANTIC_STRUCTURE.md) before
+touching `semanticRole.pure.ts`, the overlay element name in
+`blocks/_shared.html.ts`, or image `alt`. WeasyPrint builds the tagged PDF's
+structure tree from the **element name**, and `render-template-pdf` asks for
+`pdf/ua-1` — so a `<div>` is why an imported page's structure tree used to be
+flat with zero headings. The stage's hard constraint is that it adds meaning and
+moves nothing: pixel identity at 300 DPI is asserted before and after, and the
+`margin:0` reset and the `<span>` inside a heading are both there for measured
+reasons the doc records.
+
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the
 visual editor: `/admin/template-builder/converter` extracts a template's section
