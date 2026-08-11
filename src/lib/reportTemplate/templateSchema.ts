@@ -762,6 +762,18 @@ export const PageSchema = z.object({
         decidedAt: z.string(),
         decidedBy: z.enum(['quality-gate', 'operator', 'migration']),
       }).optional(),
+      // A1 — region-scoped containment on an otherwise NATIVE page: windows onto
+      // the page's own source raster, painted over regions that could not be
+      // verified. The alternative to rasterizing the whole page, not an addition
+      // to it — so it is only ever meaningful with `outputStrategy: 'native'`.
+      // Bounded: geometry and overlay ids only, never pixels or a signed URL.
+      containedRegions: z.array(z.object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number(),
+        height: z.number(),
+        overlayIds: z.array(z.string()).max(512).default([]),
+      })).max(24).optional(),
     }).optional(),
     // ── E6 (pdf-region-output-policy-v1) additive, OPTIONAL, backward-compatible.
     // Bounded per-page region-composition summary + a reference to the private
