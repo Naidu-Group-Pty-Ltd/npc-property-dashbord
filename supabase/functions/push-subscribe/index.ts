@@ -14,6 +14,7 @@ import { resolveSolicitorSession } from '../_shared/solicitorPortalAuth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
@@ -151,7 +152,7 @@ const __corsWrappedHandler = async (req: Request) => {
     return jsonResponse({ success: true, id: data?.id, subscriber_type });
   } catch (err) {
     console.error('[push-subscribe] error', err);
-    return jsonResponse({ error: (err as Error).message }, 500);
+    return jsonResponse({ ...internalError(err, 'push-subscribe') }, 500);
   }
 };
 

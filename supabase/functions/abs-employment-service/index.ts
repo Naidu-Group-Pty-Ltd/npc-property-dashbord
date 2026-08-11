@@ -1,4 +1,5 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -39,9 +40,9 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('Error in ABS Employment service:', error);
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    return new Response(JSON.stringify({
+      ...internalError(error, 'abs-employment-service'),
+      success: false,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

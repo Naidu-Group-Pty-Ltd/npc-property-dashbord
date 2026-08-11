@@ -15,6 +15,7 @@ import { PROMPT_CATALOG, getPromptCatalogEntry } from '../_shared/engine-prompts
 import { COMPASS_40_SECTIONS } from '../_shared/compassSectionRegistry.ts';
 import { FIN_SECTION_ORDER, PLDD_SECTION_ORDER } from '../_shared/reportSplitRegistry.ts';
 import { buildNewTemplateRow } from './templateProposal.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 async function isSuperadmin(supabase: any, userId: string): Promise<boolean> {
   const { data } = await supabase
@@ -688,7 +689,7 @@ Deno.serve(async (req) => {
         }, corsHeaders, 400);
     }
   } catch (e: any) {
-    return json({ error: e?.message || String(e) }, createCorsHeaders(origin), 500);
+    return json({ ...internalError(e, 'report-engine-inspector') }, createCorsHeaders(origin), 500);
   }
 });
 

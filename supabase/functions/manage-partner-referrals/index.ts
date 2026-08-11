@@ -19,6 +19,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
 
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   UNDERTAKING_TABLE,
   expireLapsedUndertakings,
@@ -854,6 +855,6 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (error) {
     console.error('[manage-partner-referrals] error:', error);
-    return json({ error: 'internal_error', message: (error as Error).message }, corsHeaders, 500);
+    return json({ ...internalError(error, 'manage-partner-referrals'), error: 'internal_error' }, corsHeaders, 500);
   }
 });

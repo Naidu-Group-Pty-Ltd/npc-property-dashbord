@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   mergeExtractedData,
   parseVisionResponse,
@@ -699,9 +700,9 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('❌ Error in parse-property-pdf:', error);
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message || 'Failed to parse document',
+    return new Response(JSON.stringify({
+      ...internalError(error, 'parse-property-pdf'),
+      success: false,
       details: 'If this error persists, try uploading a clearer image or a different PDF.',
     }), {
       status: 500,

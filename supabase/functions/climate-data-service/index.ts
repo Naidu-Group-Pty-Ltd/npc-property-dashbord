@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -85,9 +86,9 @@ Deno.serve(async (req) => {
       console.error('Failed to log error:', logError);
     }
 
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    return new Response(JSON.stringify({
+      ...internalError(error, 'climate-data-service'),
+      success: false,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,

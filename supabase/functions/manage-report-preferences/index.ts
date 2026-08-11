@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 type Operation = 'get' | 'upsert';
 
 interface PrefsPatch {
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error('[manage-report-preferences] Error:', e);
     return new Response(
-      JSON.stringify({ success: false, error: e instanceof Error ? e.message : String(e) }),
+      JSON.stringify({ ...internalError(e, 'manage-report-preferences'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

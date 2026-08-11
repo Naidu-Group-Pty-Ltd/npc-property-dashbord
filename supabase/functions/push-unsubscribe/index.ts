@@ -3,6 +3,7 @@ import { verifyAuth } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -54,7 +55,7 @@ const __corsWrappedHandler = async (req: Request) => {
     });
   } catch (err) {
     console.error('[push-unsubscribe] error', err);
-    return new Response(JSON.stringify({ error: (err as Error).message }), {
+    return new Response(JSON.stringify(internalError(err, 'push-unsubscribe')), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

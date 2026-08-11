@@ -62,6 +62,7 @@ async function appendCaseEvent(
 // exact same reconciliation as staff-entered snapshots.
 import { detectDiscrepancies, type Comparison } from "../_shared/amlFinanceEngine.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -629,7 +630,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   } catch (e: any) {
     if (e instanceof Response) return e;
     console.error("aml-finance error", e);
-    return jr({ error: e?.message ?? "internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-finance') }, 500);
   }
 });
 

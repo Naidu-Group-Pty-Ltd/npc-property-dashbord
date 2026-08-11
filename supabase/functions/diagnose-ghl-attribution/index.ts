@@ -1,3 +1,4 @@
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -64,7 +65,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[diagnose] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'diagnose-ghl-attribution')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }

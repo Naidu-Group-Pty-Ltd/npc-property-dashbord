@@ -220,6 +220,15 @@ const CASES = [
     find: '          node scripts/security/check-cors-contract.mjs\n',
     replace: '',
   },
+
+  // ── WP-18: opaque 5xx ────────────────────────────────────────────────────
+  {
+    gate: 'check-error-disclosure.mjs',
+    file: 'supabase/functions/send-email-reply/index.ts',
+    what: 'a 500 goes back to handing the caller the caught exception',
+    find: "JSON.stringify(internalError(error, 'send-email-reply'))",
+    replace: "JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' })",
+  },
 ];
 
 /**

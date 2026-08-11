@@ -1,5 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -46,9 +47,9 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('Error in Crime Statistics service:', error);
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    return new Response(JSON.stringify({
+      ...internalError(error, 'crime-statistics-service'),
+      success: false,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

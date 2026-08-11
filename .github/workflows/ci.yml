@@ -297,6 +297,13 @@ jobs:
       - name: Migration security invariants (WP-17)
         run: node scripts/security/check-migration-security.mjs
 
+      # WP-18: 329 catch blocks across 275 functions returned the caught error
+      # to the caller. A Postgres message names tables, columns and constraints;
+      # at that scale it is a readable map of the database, and provoking a 500
+      # is usually just a malformed body.
+      - name: No caught error reaches a client 5xx (WP-18)
+        run: node scripts/security/check-error-disclosure.mjs
+
       # The gates above assert their properties by matching source literals, so
       # a legitimate refactor can make one stop matching and a careless repair
       # can loosen it until it passes. This removes each control from a

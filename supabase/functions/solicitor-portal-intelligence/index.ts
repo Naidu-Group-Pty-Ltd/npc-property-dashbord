@@ -49,6 +49,7 @@ import {
   normaliseAnalysisPayload,
 } from "../_shared/legalIntelligence.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MODEL = "google/gemini-3.6-flash";
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -443,7 +444,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[solicitor-portal-intelligence] error:', error);
     return new Response(
-      JSON.stringify({ error: error?.message || 'Unexpected error' }),
+      JSON.stringify(internalError(error, 'solicitor-portal-intelligence')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

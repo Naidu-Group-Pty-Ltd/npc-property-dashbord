@@ -15,6 +15,7 @@ import {
 } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const BUCKET = 'ghl-marketing-dump';
 const EXPORT_BUCKET = 'ghl-marketing-dump';
 
@@ -200,7 +201,7 @@ Deno.serve(async (req) => {
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e: any) {
     console.error('[ghl-marketing-dump-export] error:', e);
-    return new Response(JSON.stringify({ success: false, error: e.message || 'Internal error' }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'ghl-marketing-dump-export'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

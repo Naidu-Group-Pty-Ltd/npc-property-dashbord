@@ -38,6 +38,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   AUSTRALIAN_STATES,
   DRIFT_REVIEW_THRESHOLD_PCT,
@@ -265,7 +266,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[update-stamp-duty-rates]', error);
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ ...internalError(error, 'update-stamp-duty-rates'), success: false }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 },
     );
   }

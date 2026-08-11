@@ -18,6 +18,7 @@ import {
   type AcquisitionContext as SharedAcquisitionContext,
 } from '../_shared/scenarioDeltaEngine.ts';
 import { reconcileSegments } from './segments/reconcile.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 
 
@@ -2060,7 +2061,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("[calculate-borrowing-capacity] Error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'calculate-borrowing-capacity'), success: false }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

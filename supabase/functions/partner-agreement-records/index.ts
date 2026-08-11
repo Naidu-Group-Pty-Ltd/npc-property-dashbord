@@ -41,6 +41,7 @@ import { fetchReportBrandSnapshot } from '../_shared/reportDesign/fetchBrandSnap
 import { renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import { renderMarkdown } from '../_shared/reports/markdown.pure.ts';
 import { PORTAL_TERMS_ACKNOWLEDGEMENTS } from '../_shared/portalAgreement.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   agreementFileName,
   agreementStoragePath,
@@ -278,7 +279,7 @@ Deno.serve(async (req) => {
     return json({ error: 'Unknown operation' }, 400);
   } catch (error: any) {
     console.error('[partner-agreement-records] error:', error);
-    return json({ error: error?.message || 'Internal server error' }, 500);
+    return json({ ...internalError(error, 'partner-agreement-records') }, 500);
   }
 });
 

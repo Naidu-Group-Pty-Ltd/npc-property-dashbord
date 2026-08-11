@@ -6,6 +6,7 @@ import { buildProvenance, logClientActivity } from '../_shared/client-data-prove
 import { buildDocumentDedupeKey, buildNoteDedupeKey, createSyncEvent, resolveSyncConflict, sha256Text, SYNC_CONFLICT_WINDOW_MS } from '../_shared/client-sync.ts';
 import { resolvePortfolioReportDeletionTarget } from './portfolioReportDeletion.ts';
 import { canManageClient, canPublishPortfolioForClient } from './portfolioPublicationAuthorization.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 type TableName = 'clients' | 'client_properties' | 'client_income' | 'client_expenses' |
                  'client_assets' | 'client_liabilities' | 'client_employment' |
@@ -1120,7 +1121,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('manage-client-data error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ ...internalError(error, 'manage-client-data'), error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

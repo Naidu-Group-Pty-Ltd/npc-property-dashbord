@@ -7,6 +7,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -135,7 +136,7 @@ Deno.serve(async (req) => {
       success: true, scanned: (candidates || []).length, updated, missing, errors, remaining,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e) {
-    return new Response(JSON.stringify({ success: false, error: (e as Error).message }),
+    return new Response(JSON.stringify({ ...internalError(e, 'email-body-backfill'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

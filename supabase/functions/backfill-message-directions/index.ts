@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -139,7 +140,7 @@ Deno.serve(async (req) => {
     });
 
   } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'backfill-message-directions')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

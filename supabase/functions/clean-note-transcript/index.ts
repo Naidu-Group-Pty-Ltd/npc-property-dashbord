@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -110,7 +111,7 @@ Note type context: ${noteType || 'general'}`;
   } catch (error) {
     console.error('[Clean Note Transcript] Error:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify(internalError(error, 'clean-note-transcript')),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

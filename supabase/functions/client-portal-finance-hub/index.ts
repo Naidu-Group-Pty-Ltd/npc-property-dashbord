@@ -17,6 +17,7 @@
  *         fields are explicitly whitelisted.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -295,7 +296,7 @@ Deno.serve(async (req) => {
     );
   } catch (err) {
     console.error('[client-portal-finance-hub]', err);
-    return new Response(JSON.stringify({ error: (err as Error).message }),
+    return new Response(JSON.stringify(internalError(err, 'client-portal-finance-hub')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

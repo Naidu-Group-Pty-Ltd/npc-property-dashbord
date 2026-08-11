@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callLLMRaw } from '../_shared/llmRouter.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -557,7 +558,7 @@ Provide a concise 3-4 sentence analysis of what these trends mean for the busine
 
   } catch (error) {
     console.error('Phase 3 error:', error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : 'Internal error' }), {
+    return new Response(JSON.stringify(internalError(error, 'analyze-meta-ads-phase3')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

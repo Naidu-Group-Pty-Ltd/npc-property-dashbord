@@ -4,6 +4,7 @@
 // connectivity status. Cache TTL is 24h; pass { force: true } to re-probe.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -348,7 +349,7 @@ Deno.serve(async (req) => {
     );
   } catch (e: any) {
     return new Response(
-      JSON.stringify({ success: false, error: e?.message ?? 'Unknown error' }),
+      JSON.stringify({ ...internalError(e, 'check-model-availability'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

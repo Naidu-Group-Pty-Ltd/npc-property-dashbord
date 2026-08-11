@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -286,7 +287,7 @@ Format your response as valid JSON with this structure:
   } catch (error) {
     console.error('Error in compare-cash-flow-reports:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ ...internalError(error, 'compare-cash-flow-reports'), error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -351,7 +352,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('Error in get-api-usage-stats:', error);
-    return new Response(JSON.stringify({ success: false, error: error.message }), {
+    return new Response(JSON.stringify({ ...internalError(error, 'get-api-usage-stats'), success: false }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

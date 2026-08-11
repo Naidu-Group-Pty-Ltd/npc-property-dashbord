@@ -19,6 +19,7 @@ import {
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callInternalFunction } from '../_shared/internalCall.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
   } catch (e: any) {
     console.error('[start-conversations-export] error:', e?.message || e);
     return new Response(
-      JSON.stringify({ success: false, error: e?.message || String(e) }),
+      JSON.stringify({ ...internalError(e, 'start-conversations-export'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

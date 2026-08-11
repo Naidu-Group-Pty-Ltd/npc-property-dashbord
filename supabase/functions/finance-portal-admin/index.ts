@@ -19,6 +19,7 @@ import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shar
 import { requireModulePermission } from "../_shared/authz.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const PERMISSION_TABLES = [
   'properties', 'income', 'expenses', 'assets',
   'liabilities', 'employment', 'address_history', 'notes', 'contacts',
@@ -1436,7 +1437,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[finance-portal-admin] Error:', error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error?.message }),
+      JSON.stringify({ ...internalError(error, 'finance-portal-admin'), error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

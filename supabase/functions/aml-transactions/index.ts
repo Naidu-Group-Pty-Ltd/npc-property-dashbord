@@ -22,6 +22,7 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -706,7 +707,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     return jr({ error: `Unknown op: ${op}` }, 400);
   } catch (e: any) {
     if (e instanceof Response) return e;
-    return jr({ error: e?.message ?? "Internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-transactions') }, 500);
   }
 });
 

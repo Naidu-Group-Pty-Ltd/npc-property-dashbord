@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 /**
  * Sync GHL marketing assets (workflows, forms/quizzes/surveys, funnels & pages)
  * into Supabase as a stateful snapshot. Designed for re-ingestion into the new
@@ -351,7 +352,7 @@ Deno.serve(async (req) => {
     );
   } catch (e: any) {
     console.error('[sync-ghl-marketing-assets] fatal', e);
-    return new Response(JSON.stringify({ success: false, error: e.message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'sync-ghl-marketing-assets'), success: false }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

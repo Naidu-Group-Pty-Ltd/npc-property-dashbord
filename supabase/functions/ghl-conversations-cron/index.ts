@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 /**
  * GHL Conversations Cron Sync
@@ -149,7 +150,7 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('[ghl-conversations-cron] Error:', error);
-    return new Response(JSON.stringify({ error: error.message, success: false }), {
+    return new Response(JSON.stringify({ ...internalError(error, 'ghl-conversations-cron'), success: false }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

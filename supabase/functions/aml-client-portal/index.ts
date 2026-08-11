@@ -45,6 +45,7 @@ import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
 import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
 } from "../_shared/aml/diditOutcome.ts";
@@ -1694,6 +1695,6 @@ Deno.serve(async (req) => {
     }
   } catch (err: any) {
     console.error('aml-client-portal error', err);
-    return jsonResponse({ error: err?.message ?? String(err) }, 500);
+    return jsonResponse({ ...internalError(err, 'aml-client-portal') }, 500);
   }
 });

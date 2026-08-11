@@ -4,6 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin') || '';
   const corsHeaders = createCorsHeaders(origin);
@@ -56,7 +57,7 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (e: any) {
-    return new Response(JSON.stringify({ success: false, error: e?.message || 'Unknown error' }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'get-user-names'), success: false }), {
       status: 500,
       headers: { ...createCorsHeaders(req.headers.get('origin') || ''), 'Content-Type': 'application/json' },
     });

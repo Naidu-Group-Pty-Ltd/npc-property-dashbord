@@ -12,6 +12,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { notifyFinancePortalAssignees } from "../_shared/finance-portal-notify.ts";
 import { LEGAL_MATTER_CLIENT_PROJECTION_SELECT } from "../_shared/legalMatters.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const CASE_PROJECTIONS_V1 = Deno.env.get('CASE_PROJECTIONS_V1') !== 'false';
 
 const corsHeaders = {
@@ -280,6 +281,6 @@ Deno.serve(async (req) => {
     return json({ error: `Unknown operation: ${operation}` }, 400);
   } catch (e: any) {
     console.error('[client-portal-batch6]', e);
-    return json({ error: e?.message || 'Internal error' }, 500);
+    return json({ ...internalError(e, 'client-portal-batch6') }, 500);
   }
 });
