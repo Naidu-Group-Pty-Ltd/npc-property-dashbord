@@ -27,7 +27,7 @@ import { resolveRequestStep, type IdvAvailability } from '@/lib/aml/portalReques
 // One canonical journey drives the stepper, the progress figure, the resume
 // target and the review summary. Presentation only — the truth is the server's.
 import {
-  buildPortalStepStates, initialStepIndex, portalProgress,
+  buildPortalStepStates, initialStepIndex, onboardingStatusPresentation, portalProgress,
   type PortalStepState, type PortalStepTone,
 } from '@/lib/aml/portalStepPresentation';
 
@@ -83,23 +83,98 @@ export default function PortalAml() {
   // 'manual_verification_required'). Needed here, not just inside the capture
   // step, because it decides which step an identity request opens at all.
   const [idvAvailability, setIdvAvailability] = useState<IdvAvailability | null>(null);
+  /**
+   * A background re-read failed while a good page was already on screen.
+   *
+   * Deliberately not `loadFailed`: that one replaces the whole portal, which
+   * is the right answer when there is nothing to replace and the wrong answer
+   * when the customer is halfway through a step. This is a line of text.
+   */
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const resumedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadFailed(null);
+  /**
+   * ## Initial load and background refresh are not the same operation
+   *
+   * They used to be one `load()` that set `loading = true`, and the render
+   * swaps the entire portal for skeletons while that is set. So every refresh
+   * — a document upload, a questionnaire save, an identity state change —
+   * unmounted the step the customer was standing in.
+   *
+   * With identity verification that became an infinite loop: the step read a
+   * check that was already in flight, told the page, the page blanked itself,
+   * the step unmounted and forgot what it had seen, remounted, read the same
+   * state, and told the page again. The portal blinked until the customer
+   * gave up. Both halves are fixed — the step no longer reports its baseline
+   * (see IdentityVerificationStep), and a refresh no longer blanks the page.
+   *
+   * A refresh may update the page. It may never erase it.
+   */
+  const requestToken = useRef(0);
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const trailingRef = useRef(false);
+
+  /**
+   * One canonical read. `foreground` decides only what a FAILURE does — the
+   * request is identical either way.
+   *
+   * The token makes the newest response win: a slow first read must never
+   * land on top of a fresher one triggered by something the customer just did.
+   */
+  const readOverview = useCallback(async (foreground: boolean) => {
+    const token = ++requestToken.current;
     try {
       const res = await amlPortalApi.overview();
+      if (token !== requestToken.current) return;
       setData(res);
+      setLoadFailed(null);
+      setRefreshFailed(false);
     } catch (e: any) {
-      setLoadFailed(e?.message ?? 'Failed to load AML onboarding');
-      toast.error(e?.message ?? 'Failed to load AML onboarding');
-    } finally {
-      setLoading(false);
+      if (token !== requestToken.current) return;
+      if (foreground) {
+        setLoadFailed(e?.message ?? 'Failed to load AML onboarding');
+        toast.error(e?.message ?? 'Failed to load AML onboarding');
+      } else {
+        // Keep the last known-good page. A failed background read is not a
+        // reason to tell somebody their case has vanished.
+        setRefreshFailed(true);
+      }
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  /** First paint, and the explicit retry from the failure card. */
+  const loadInitial = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(null);
+    try { await readOverview(true); } finally { setLoading(false); }
+  }, [readOverview]);
+
+  /**
+   * Re-read the canonical overview underneath the customer.
+   *
+   * Coalesced: concurrent callers (an upload landing while an identity change
+   * is announced) share the in-flight read, and one trailing read follows so
+   * the later event is never answered with data fetched before it. No
+   * skeleton, no unmount, no polling.
+   */
+  const refreshOverview = useCallback(async (): Promise<void> => {
+    if (inFlightRef.current) {
+      trailingRef.current = true;
+      return inFlightRef.current;
+    }
+    const run = async () => {
+      await readOverview(false);
+      if (trailingRef.current) {
+        trailingRef.current = false;
+        await readOverview(false);
+      }
+    };
+    const promise = run().finally(() => { inFlightRef.current = null; });
+    inFlightRef.current = promise;
+    return promise;
+  }, [readOverview]);
+
+  useEffect(() => { void loadInitial(); }, [loadInitial]);
 
   // Readiness is advisory to the UI and never a gate on requesting anything;
   // an unknown value resolves identity requests to the manual route, which
@@ -158,9 +233,18 @@ export default function PortalAml() {
     setStepIdx(initialStepIndex({ states: stepStates, storedIndex: stored, consentSatisfied: consented }));
   }, [caseObj, consented, loading, stepStates]);
 
-  // Persist current step for resume
+  /**
+   * Persist the current step for next time — but never before resume has read
+   * it.
+   *
+   * `stepIdx` starts at 0, and there is a render where the case has arrived
+   * and the resume decision has not been made yet. Writing in that window
+   * overwrites the customer's stored step with 0 and then "resumes" them to
+   * the answer it just destroyed. The guard is the fix; the ordering of the
+   * two effects is not something to rely on.
+   */
   useEffect(() => {
-    if (!caseObj) return;
+    if (!caseObj || !resumedRef.current) return;
     try { localStorage.setItem(resumeKey(caseObj.id), String(stepIdx)); } catch { /* ignore */ }
   }, [caseObj, stepIdx]);
 
@@ -183,6 +267,14 @@ export default function PortalAml() {
    * the common one — was capped at 60% no matter how much the client uploaded.
    */
   const progress = useMemo(() => portalProgress(stepStates), [stepStates]);
+
+  // Presentation only — never written back, never a case-stage change.
+  const onboardingStatus = useMemo(() => onboardingStatusPresentation({
+    caseStatus: caseObj?.status,
+    statusLabel: caseObj?.status_label,
+    statusTone: caseObj?.status_tone,
+    states: stepStates,
+  }), [caseObj?.status, caseObj?.status_label, caseObj?.status_tone, stepStates]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 p-4 md:p-6">
@@ -208,7 +300,7 @@ export default function PortalAml() {
               We couldn’t load your onboarding details just now. This doesn’t affect
               anything your advisor has set up for you.
             </p>
-            <Button variant="outline" size="sm" onClick={() => void load()}>
+            <Button variant="outline" size="sm" onClick={() => void loadInitial()}>
               Try again
             </Button>
             <p className="text-xs text-muted-foreground">
@@ -234,9 +326,12 @@ export default function PortalAml() {
                 <div className="font-medium">{caseObj.reference}</div>
               </div>
               <div className="flex-1 min-w-[180px]">
-                <div className="text-xs text-muted-foreground">Status</div>
-                <Badge variant={caseObj.status_tone === 'positive' ? 'default' : 'outline'} className="mt-1">
-                  {caseObj.status_label}
+                {/* "Onboarding status", because that is what the customer is
+                    looking at. The case's own workflow label said "Not
+                    started" over five completed steps. */}
+                <div className="text-xs text-muted-foreground">Onboarding status</div>
+                <Badge variant={onboardingStatus.tone === 'positive' ? 'default' : 'outline'} className="mt-1">
+                  {onboardingStatus.label}
                 </Badge>
               </div>
               <div className="flex-[2] min-w-[240px]">
@@ -255,6 +350,26 @@ export default function PortalAml() {
               </div>
             </CardContent>
           </Card>
+
+          {refreshFailed && (
+            // One line, and the page stays exactly where it was. This used to
+            // be the full-page failure card, which threw away a step the
+            // customer was halfway through because a background read timed out.
+            <p
+              role="status"
+              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              We couldn’t check for updates just now — what you can see may be a
+              moment out of date. Nothing you have sent us is affected.
+              <Button
+                variant="link" size="sm" className="h-auto p-0 text-xs"
+                onClick={() => void refreshOverview()}
+              >
+                Try again
+              </Button>
+            </p>
+          )}
 
           {!consented && (
             <Alert>
@@ -282,7 +397,7 @@ export default function PortalAml() {
             {step.key === 'consent' && (
               <ConsentStep
                 caseId={caseObj.id}
-                onDone={async () => { await load(); setStepIdx(1); }}
+                onDone={async () => { await refreshOverview(); setStepIdx(1); }}
               />
             )}
             {step.section && consented && (
@@ -292,7 +407,7 @@ export default function PortalAml() {
                 section={step.section}
                 title={step.label}
                 structureType={data?.structure_type ?? null}
-                onSaved={load}
+                onSaved={refreshOverview}
                 onNext={() => setStepIdx(i => Math.min(steps.length - 1, i + 1))}
                 onBack={() => setStepIdx(i => Math.max(0, i - 1))}
               />
@@ -301,7 +416,7 @@ export default function PortalAml() {
               <DocumentsStep
                 caseId={caseObj.id}
                 requirements={data?.requirements ?? []}
-                onChange={load}
+                onChange={refreshOverview}
                 onNext={() => setStepIdx(i => i + 1)}
                 onBack={() => setStepIdx(i => i - 1)}
               />
@@ -318,7 +433,7 @@ export default function PortalAml() {
                 // "Verify identity" stay grey until they reloaded the page.
                 // It re-reads the SERVER — the child reports that something
                 // moved, never what it moved to.
-                onStatusChange={load}
+                onStatusChange={refreshOverview}
               />
             )}
             {step.key === 'review' && consented && (
@@ -327,7 +442,7 @@ export default function PortalAml() {
                 stepStates={stepStates}
                 caseId={caseObj.id}
                 onBack={() => setStepIdx(i => i - 1)}
-                onSubmitted={load}
+                onSubmitted={refreshOverview}
               />
             )}
           </div>
@@ -335,7 +450,7 @@ export default function PortalAml() {
           {(data?.open_requests?.length ?? 0) > 0 && (
             <OpenRequestsCard
               requests={data!.open_requests!}
-              onDone={load}
+              onDone={refreshOverview}
               availability={idvAvailability}
               onNavigate={(target, sectionCode) => {
                 // Internal routing only: resolve the validated target to a
@@ -419,19 +534,51 @@ function Stepper({
   states: PortalStepState[]; currentIdx: number; onSelect: (i: number) => void;
   consented: boolean;
 }) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLLIElement | null>(null);
+  const scrolledForRef = useRef<number | null>(null);
 
-  // A row that scrolls has to bring the client's own step to them. Without
-  // this, step 7 of 8 on a phone is off-screen to the right and the stepper
-  // shows them where they are not.
+  /**
+   * Bring the client's own step into the row — and otherwise leave the row
+   * alone.
+   *
+   * This was `element.scrollIntoView({ behavior: 'smooth' })`, which is the
+   * wrong tool three times over. It scrolls every scrollable ancestor, so the
+   * PAGE moved vertically; it re-centred whether or not the step was already
+   * visible, so the row slid about and clipped its left end; and it ran again
+   * on re-render, so a background journey refresh animated the stepper for no
+   * reason.
+   *
+   * This scrolls the stepper's own container, by the smallest amount that
+   * makes the step visible, only when the step actually changed, and only when
+   * it is actually out of view. Reduced-motion gets no animation.
+   */
   useEffect(() => {
+    if (scrolledForRef.current === currentIdx) return;
+    scrolledForRef.current = currentIdx;
+    const scroller = scrollerRef.current;
     const el = activeRef.current;
-    if (typeof el?.scrollIntoView !== 'function') return;
-    el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    if (!scroller || !el || typeof scroller.scrollTo !== 'function') return;
+    if (typeof el.getBoundingClientRect !== 'function') return;
+
+    const step = el.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    const PAD = 12;
+    let delta = 0;
+    if (step.left - PAD < box.left) delta = step.left - PAD - box.left;
+    else if (step.right + PAD > box.right) delta = step.right + PAD - box.right;
+    if (delta === 0) return;
+
+    const reduced = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scroller.scrollTo({
+      left: scroller.scrollLeft + delta,
+      behavior: reduced ? 'auto' : 'smooth',
+    });
   }, [currentIdx]);
 
   return (
-    <div className="-mx-1 overflow-x-auto px-1 pb-1">
+    <div ref={scrollerRef} className="-mx-1 overflow-x-auto scrollbar-thin px-1 pb-1">
       <ol className="flex w-max min-w-full items-center gap-2">
         {states.map((state, i) => {
           const active = i === currentIdx;

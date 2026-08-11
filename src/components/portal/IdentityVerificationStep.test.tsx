@@ -796,6 +796,18 @@ describe('secure identity check', () => {
  * The callback carries NO argument, and that is the contract. It says
  * something moved; the page answers by re-reading the server. Nothing the
  * browser works out can mark anybody verified.
+ *
+ * ## The loop these also guard
+ *
+ * The first version notified on the first read whenever that read was not
+ * "quiet". A customer sitting on a check that was already `in_review`
+ * therefore announced a change that had not happened; the page reloaded, the
+ * reload blanked the portal, this component unmounted, its memory of what it
+ * had seen died with it, and the remount made the same server state new
+ * again — forever. The page blinked and could not be used.
+ *
+ * The first successful read for a case is a BASELINE, never a change. The
+ * page loaded its overview from the same server; there is nothing to tell it.
  */
 describe('parent refresh on canonical change', () => {
   const onStatusChange = vi.fn();
@@ -816,11 +828,39 @@ describe('parent refresh on canonical change', () => {
     expect(onStatusChange).not.toHaveBeenCalled();
   });
 
-  it('tells the page on the first read when a check is already in flight', async () => {
+  it('stays quiet on the first read when a check is ALREADY in flight', async () => {
+    // The production loop, in one assertion. `in_review` at mount is not news:
+    // the page's own overview came from the same server, and announcing it
+    // reloaded the page, which unmounted this component, which forgot it had
+    // seen anything, which made the same state new again on remount.
     verificationStatus.mockResolvedValue(
       status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
     renderWithStatusChange();
-    await waitFor(() => expect(onStatusChange).toHaveBeenCalled());
+    await screen.findByText(/with our team/i);
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet on the first read for every settled state', async () => {
+    for (const partyStatus of ['verified', 'action_required', 'contact_adviser'] as const) {
+      onStatusChange.mockReset();
+      verificationStatus.mockResolvedValue(
+        status({ parties: [{ ...party, status: partyStatus, can_attempt: false }] }));
+      const view = renderWithStatusChange();
+      await waitFor(() => expect(verificationStatus).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); });
+      expect(onStatusChange).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  });
+
+  it('stays quiet when a hosted check is open at mount', async () => {
+    verificationStatus.mockResolvedValue(status({
+      parties: [{ ...party, status: 'not_started', verification_in_progress: true }],
+    }));
+    renderWithStatusChange();
+    await waitFor(() => expect(verificationStatus).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).not.toHaveBeenCalled();
   });
 
   it('tells the page when the party state moves, and says nothing about what to', async () => {
@@ -841,12 +881,78 @@ describe('parent refresh on canonical change', () => {
   });
 
   it('does not notify again while the state is unchanged', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+
+    // Same state read again — not news, whatever prompts the read.
+    fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('takes a fresh baseline for a genuinely different case', async () => {
+    verificationStatus.mockResolvedValue(status());
+    const view = render(
+      <IdentityVerificationStep
+        caseId="case-1" onBack={noop} onNext={noop} onNeedsConsent={noop}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    await screen.findByRole('button', { name: /^start$/i });
+
+    // A different case, already in review. Its first read is its baseline —
+    // not a change, even though it differs from the previous case's state.
     verificationStatus.mockResolvedValue(
       status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    view.rerender(
+      <IdentityVerificationStep
+        caseId="case-2" onBack={noop} onNext={noop} onNeedsConsent={noop}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    await screen.findByText(/with our team/i);
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('an ordinary parent re-render does not make an unchanged state new', async () => {
+    // The parent re-renders this component on every background refresh, with
+    // fresh inline callback props. That must not be mistaken for a change —
+    // it is the other half of what made the loop endless.
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    const view = render(
+      <IdentityVerificationStep
+        caseId="case-1" onBack={noop} onNext={noop} onNeedsConsent={noop}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    await screen.findByText(/with our team/i);
+
+    for (let i = 0; i < 5; i++) {
+      view.rerender(
+        <IdentityVerificationStep
+          caseId="case-1" onBack={() => {}} onNext={() => {}} onNeedsConsent={() => {}}
+          onStatusChange={onStatusChange}
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+    }
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('reports a change once, then goes quiet again on the same state', async () => {
+    verificationStatus.mockResolvedValue(status());
     renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
     await waitFor(() => expect(onStatusChange).toHaveBeenCalledTimes(1));
 
-    // A second read of the same state is not news; nothing re-fetches.
+    // Re-rendering with new parent props must not make it look new again —
+    // that is what turned one announcement into an endless one.
     await act(async () => { await Promise.resolve(); });
     expect(onStatusChange).toHaveBeenCalledTimes(1);
   });

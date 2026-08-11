@@ -202,6 +202,51 @@ export function portalProgress(states: PortalStepState[]): PortalProgress {
 }
 
 /**
+ * The one-line onboarding status shown at the top of the page.
+ *
+ * ## The contradiction this resolves
+ *
+ * The header rendered `case.status_label` verbatim, and that label describes
+ * the CASE in the adviser's workflow, not the client's progress through the
+ * portal. A customer who had accepted every consent, answered every section
+ * and started an identity check was reading "Not started" directly above
+ * "5 of 8 steps complete". Both came from the server and they contradicted
+ * each other in the customer's own words.
+ *
+ * So this is presentation, and only presentation. It never writes anything,
+ * never touches case stage or the service gate, and never invents a status
+ * when the server has an authoritative one to give:
+ *
+ *   - complete, or any caution state (action required, more information
+ *     needed, contact your adviser) → the server's own label wins outright.
+ *     Those are the ones the customer must not be talked out of.
+ *   - otherwise, if they have finished anything or started anything →
+ *     "In progress", because they demonstrably have.
+ *   - otherwise → the server's label, which is "Not started" and correct.
+ */
+export function onboardingStatusPresentation(args: {
+  caseStatus?: string | null;
+  statusLabel?: string | null;
+  statusTone?: 'neutral' | 'progress' | 'positive' | 'caution' | null;
+  states: PortalStepState[];
+}): { label: string; tone: 'neutral' | 'progress' | 'positive' | 'caution' } {
+  const label = args.statusLabel || 'In progress';
+  const tone = args.statusTone ?? 'progress';
+
+  // Authoritative and never overridden: a finished case, and anything that
+  // asks something of the customer or sends them to their adviser.
+  if (args.caseStatus === 'complete' || tone === 'caution' || tone === 'positive') {
+    return { label, tone };
+  }
+
+  const started = args.states.some((s) =>
+    s.status === 'complete' || s.status === 'in_progress' || s.status === 'action_required');
+  if (started) return { label: 'In progress', tone: 'progress' };
+
+  return { label, tone };
+}
+
+/**
  * Where to put the client when they come back.
  *
  * Priority, in order:

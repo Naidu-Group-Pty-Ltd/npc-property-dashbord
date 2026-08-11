@@ -16,8 +16,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  buildPortalStepStates, initialStepIndex, portalProgress, presentStep,
-  resumeStepIndex, sectionJourneyStatus,
+  buildPortalStepStates, initialStepIndex, onboardingStatusPresentation, portalProgress,
+  presentStep, resumeStepIndex, sectionJourneyStatus,
   type PortalStepDescriptor,
 } from './portalStepPresentation';
 import type { AmlPortalJourneyStatus, AmlPortalJourneyStep, AmlSection } from './amlPortalApi';
@@ -245,5 +245,71 @@ describe('resume', () => {
       sections: sections('not_started'), consentSatisfied: false,
     });
     expect(initialStepIndex({ states: list, storedIndex: 6, consentSatisfied: false })).toBe(0);
+  });
+});
+
+/* ── the top-of-page status ──────────────────────────────────────────────── */
+
+/**
+ * A customer was shown "Not started" directly above "5 of 8 steps complete".
+ * Both came from the server; the first describes the CASE in the adviser's
+ * workflow and the second describes what the customer has done.
+ */
+describe('onboarding status', () => {
+  const notStarted = () => states({
+    consent: 'not_started', questionnaire: 'not_started',
+    documents: 'not_started', verification: 'not_started', submission: 'not_started',
+  }, 'not_started');
+
+  it('says In progress once anything has been completed', () => {
+    expect(onboardingStatusPresentation({
+      caseStatus: 'not_started', statusLabel: 'Not started', statusTone: 'neutral',
+      states: states({ verification: 'in_progress' }),
+    })).toEqual({ label: 'In progress', tone: 'progress' });
+  });
+
+  it('says In progress once anything has been started', () => {
+    expect(onboardingStatusPresentation({
+      caseStatus: 'not_started', statusLabel: 'Not started', statusTone: 'neutral',
+      states: buildPortalStepStates({
+        steps: STEPS,
+        journey: journey({
+          consent: 'action_required', questionnaire: 'blocked', documents: 'not_started',
+          verification: 'not_started', submission: 'not_started',
+        }),
+        sections: sections('not_started'),
+        consentSatisfied: false,
+      }),
+    })).toEqual({ label: 'In progress', tone: 'progress' });
+  });
+
+  it('still says Not started when genuinely nothing has happened', () => {
+    expect(onboardingStatusPresentation({
+      caseStatus: 'not_started', statusLabel: 'Not started', statusTone: 'neutral',
+      states: notStarted(),
+    })).toEqual({ label: 'Not started', tone: 'neutral' });
+  });
+
+  it('never talks over an authoritative caution status', () => {
+    // "Additional information required" and "Please contact your adviser" are
+    // the ones the customer must not be reassured out of.
+    for (const label of ['Additional information required', 'Please contact your adviser']) {
+      expect(onboardingStatusPresentation({
+        caseStatus: 'additional_info_required', statusLabel: label, statusTone: 'caution',
+        states: states({ documents: 'complete' }),
+      })).toEqual({ label, tone: 'caution' });
+    }
+  });
+
+  it('never talks over a completed case', () => {
+    expect(onboardingStatusPresentation({
+      caseStatus: 'complete', statusLabel: 'Complete', statusTone: 'positive',
+      states: states({ documents: 'complete', verification: 'complete', submission: 'complete' }),
+    })).toEqual({ label: 'Complete', tone: 'positive' });
+  });
+
+  it('falls back safely when the server sends no label', () => {
+    const result = onboardingStatusPresentation({ states: notStarted() });
+    expect(result.label.length).toBeGreaterThan(0);
   });
 });
