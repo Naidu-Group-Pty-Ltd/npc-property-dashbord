@@ -18,6 +18,10 @@ import { validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSche
 import { expandIconOverlay, ICON_NAMES } from '../_shared/iconPack.ts';
 import { validateVisionImageDataUrl } from '../_shared/visionImage.ts';
 import { CRITIQUE_TOOL_SCHEMA, VISUAL_CRITIQUE_VERSION } from '../_shared/visualCritique.pure.ts';
+// Used at both 5xx sites below. Missing since #2013, which added the calls
+// without the import — so this file has not type-checked on `main` since, and
+// `check-edge-functions.mjs` has been failing the `security` job on it.
+import { internalError } from '../_shared/errorResponse.ts';
 
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
