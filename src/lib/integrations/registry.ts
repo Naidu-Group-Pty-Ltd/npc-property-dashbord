@@ -263,7 +263,12 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     tags: ['email', 'smtp', 'transactional', 'notifications'],
     docsUrl: 'https://resend.com/docs',
     fallbackIcon: 'mail',
-    fields: [{ key: 'RESEND_API_KEY', label: 'API Key', placeholder: 're_...', type: 'password', required: true }],
+    fields: [
+      { key: 'RESEND_API_KEY', label: 'API Key', placeholder: 're_...', type: 'password', required: true },
+      // Same reasoning as Twilio's number: optional, and the default a workflow
+      // "Send an email" step uses when its own From is blank.
+      { key: 'RESEND_FROM_EMAIL', label: 'Default From address', placeholder: 'NPC Services <hello@example.com>', type: 'text' },
+    ],
   },
   {
     id: 'microsoft',
@@ -291,6 +296,10 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     fields: [
       { key: 'TWILIO_ACCOUNT_SID', label: 'Account SID', placeholder: 'AC...', type: 'text', required: true },
       { key: 'TWILIO_AUTH_TOKEN', label: 'Auth Token', placeholder: 'Enter auth token', type: 'password', required: true },
+      // Optional so an existing Twilio setup does not become "unconfigured"
+      // overnight. Workflow SMS steps fall back to it when their own From is
+      // blank, which is what stops the number being retyped on every step.
+      { key: 'TWILIO_FROM_NUMBER', label: 'Default sending number', placeholder: '+61...', type: 'text' },
     ],
   },
   {

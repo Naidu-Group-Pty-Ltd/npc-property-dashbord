@@ -39,6 +39,12 @@ export interface PendingConnection {
 export interface QuickAdd {
   source: string;
   sourceBranch?: string;
+  /**
+   * Set when the picker was opened from the "+" on a connection. The chosen
+   * step is spliced into that connection rather than hung off its source, so
+   * the step downstream keeps its input instead of being orphaned.
+   */
+  insertEdgeId?: string;
   /** Canvas space — where the new step lands. */
   canvasPosition: Vec2;
   /** Screen space — where the picker opens. */

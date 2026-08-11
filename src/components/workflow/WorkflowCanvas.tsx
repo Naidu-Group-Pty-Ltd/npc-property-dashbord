@@ -208,6 +208,34 @@ export function WorkflowCanvas({
     if (dragRef.current.kind === 'connect') useWorkflowStore.getState().completeConnection(nodeId);
   }, []);
 
+  /**
+   * The "+" on a connection.
+   *
+   * Opens the same picker a dropped connection opens, with the edge recorded so
+   * the choice is spliced in rather than appended. The new step lands on the
+   * connection's own midpoint, which is where the person just clicked — placing
+   * it anywhere else means they have to go and find it.
+   */
+  const handleInsertOnEdge = useCallback((edgeId: string, at: Vec2) => {
+    const store = useWorkflowStore.getState();
+    const edge = store.graph.edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    const { x, y, zoom } = store.viewport;
+    store.openQuickAdd({
+      source: edge.source,
+      sourceBranch: edge.sourceBranch,
+      insertEdgeId: edgeId,
+      canvasPosition: { x: snap(at.x - NODE_WIDTH / 2), y: snap(at.y - NODE_HEIGHT / 2) },
+      // Canvas space back to screen space, so the picker opens under the cursor.
+      screenPosition: {
+        x: (rect?.left ?? 0) + at.x * zoom + x,
+        y: (rect?.top ?? 0) + at.y * zoom + y,
+      },
+    });
+  }, []);
+
   // --- Background: pan or marquee -----------------------------------------
   const handleSurfacePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -543,6 +571,7 @@ export function WorkflowCanvas({
                 dragging={dragKind === 'node'}
                 onSelectEdge={(id) => useWorkflowStore.getState().selectEdge(id)}
                 onRemoveEdge={(id) => useWorkflowStore.getState().removeEdge(id)}
+                onInsertOnEdge={handleInsertOnEdge}
               />
 
               {/* Smart guides, drawn only while dragging. */}
@@ -763,11 +792,18 @@ export function WorkflowCanvas({
           at={quickAdd.screenPosition}
           configuredIntegrations={configuredIntegrations}
           credentialsLoaded={credentialsLoaded}
-          onChoose={(catalogId) =>
-            useWorkflowStore
-              .getState()
-              .addConnectedNode(catalogId, quickAdd.canvasPosition, quickAdd.source, quickAdd.sourceBranch)
-          }
+          onChoose={(catalogId) => {
+            const store = useWorkflowStore.getState();
+            if (quickAdd.insertEdgeId) {
+              // Place it, then let the store rewire the connection around it —
+              // the same path a step dragged onto a connection takes.
+              const id = store.addNode(catalogId, quickAdd.canvasPosition);
+              store.spliceNodeIntoEdge(id, quickAdd.insertEdgeId);
+              store.closeQuickAdd();
+              return;
+            }
+            store.addConnectedNode(catalogId, quickAdd.canvasPosition, quickAdd.source, quickAdd.sourceBranch);
+          }}
           onDismiss={() => useWorkflowStore.getState().closeQuickAdd()}
         />
       )}

@@ -20,7 +20,11 @@ import {
   type WorkflowRunOutcome,
 } from '../../../../supabase/functions/_shared/workflow/dispatch.pure';
 import { LIVE_CAPABLE } from '../runtime/performers';
-import { LIVE_CAPABLE_STEP_TYPES } from '../../../../supabase/functions/_shared/workflow/stepExecutor';
+import {
+  CLIENT_ONLY_STEP_TYPES,
+  DESCRIBED_STEP_TYPES,
+  SERVER_CAPABLE_STEP_TYPES,
+} from '../liveCapability';
 import type { MatchCandidate } from '../runtime/triggerMatch';
 
 const clientAdded = (config: Record<string, unknown> = {}): MatchCandidate['graph'] => ({
@@ -132,24 +136,33 @@ describe('the batch wall-clock budget', () => {
   });
 });
 
-describe('the two live-capability lists', () => {
+describe('what can run live', () => {
   /**
-   * The browser refuses an unsupported step locally so it gets a useful message
-   * instead of a 400, and the dispatcher refuses one for the same reason. Both
-   * are copies of what the executor actually implements; a step added to one
-   * and not the others is either an unreachable executor or a promise the
-   * server cannot keep.
+   * These were two hand-maintained lists kept honest by comparing them, which
+   * works until somebody adds an integration and updates one. Both are now
+   * derived from the catalog, so the assertion is about the *rule* rather than
+   * about the two copies agreeing.
    */
-  it('agree with each other', () => {
-    expect([...LIVE_CAPABLE].sort()).toEqual(
-      [...LIVE_CAPABLE_STEP_TYPES, 'core.webhook_respond'].sort(),
-    );
+  it('offers every operation the catalog taught to call itself', () => {
+    expect(DESCRIBED_STEP_TYPES.length).toBeGreaterThan(0);
+    for (const id of DESCRIBED_STEP_TYPES) {
+      expect(SERVER_CAPABLE_STEP_TYPES.has(id)).toBe(true);
+      expect(LIVE_CAPABLE.has(id)).toBe(true);
+    }
   });
 
-  it('names core.webhook_respond only on the client side', () => {
-    // It needs no executor: it shapes the reply to an inbound webhook, which
-    // the caller of the workflow is holding open, not the server.
-    expect(LIVE_CAPABLE.has('core.webhook_respond')).toBe(true);
-    expect(LIVE_CAPABLE_STEP_TYPES.has('core.webhook_respond')).toBe(false);
+  it('keeps the client’s extra step off the server’s list', () => {
+    // `core.webhook_respond` answers a caller the browser is holding open;
+    // there is nothing for a server to do, so its allow-list must not offer it.
+    for (const id of CLIENT_ONLY_STEP_TYPES) {
+      expect(LIVE_CAPABLE.has(id)).toBe(true);
+      expect(SERVER_CAPABLE_STEP_TYPES.has(id)).toBe(false);
+    }
+  });
+
+  it('is the server’s set plus exactly that', () => {
+    expect([...LIVE_CAPABLE].sort()).toEqual(
+      [...new Set([...SERVER_CAPABLE_STEP_TYPES, ...CLIENT_ONLY_STEP_TYPES])].sort(),
+    );
   });
 });
