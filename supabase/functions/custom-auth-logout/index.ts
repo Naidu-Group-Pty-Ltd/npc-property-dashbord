@@ -1,5 +1,5 @@
 /**
- * Command Centre staff logout — the current entrypoint.
+ * Command Centre staff logout — the LEGACY v1 entrypoint.
  *
  * The handler is `_shared/customAuth/logout.ts`, shared with the other entrypoint
  * for this operation. Both URLs are deployed and both mint or consume a staff
@@ -12,4 +12,4 @@
  */
 import { handleStaffLogout } from '../_shared/customAuth/logout.ts';
 
-Deno.serve((req: Request) => handleStaffLogout(req, 'v2'));
+Deno.serve((req: Request) => handleStaffLogout(req, 'v1'));

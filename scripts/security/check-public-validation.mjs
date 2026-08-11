@@ -38,6 +38,7 @@
  */
 import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readEntrypointSource } from './lib/entrypointSource.mjs';
 
 // cwd, not import.meta.url — the negative-test harness mutates a mirror.
 const root = resolve(process.cwd());
@@ -90,7 +91,14 @@ for (const [name, meta] of Object.entries(entries)) {
   const path = join(FUNC_DIR, name, 'index.ts');
   try { statSync(path); } catch { continue; }
 
-  const src = stripComments(readFileSync(path, 'utf8'));
+  // The entrypoint AND the handler it serves. Both `custom-auth-login` and
+  // `-v2` are one-line shims onto `_shared/customAuth/login.ts` (WP-28), and
+  // reading the shim alone found no body read — so the gate skipped them and
+  // said nothing. That is the failure mode worth guarding against here: the
+  // rate-limit gate broke loudly on the same refactor and was fixed in minutes;
+  // this one would have gone on reporting a passing count that had quietly
+  // stopped including two unauthenticated login endpoints.
+  const src = stripComments(readEntrypointSource(root, name));
   checked++;
 
   const readsBody = /\breq\.json\s*\(|\breq\.text\s*\(|\breq\.arrayBuffer\s*\(|\breq\.formData\s*\(|enforceJsonBodyLimit|enforceRawBodyLimit|parseJsonBody/.test(src);

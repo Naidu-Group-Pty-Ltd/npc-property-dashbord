@@ -136,10 +136,19 @@ project on 11 August 2026:
 | `custom-auth-logout` | **ACTIVE** | 2026-07-31T02:04:31Z |
 | `custom-auth-verify` | **ACTIVE** | **2026-08-11T05:44:53Z** |
 
-All three are deployed and serving. The third was updated **the same day this
-was written**, about an hour and a half before the check — so this is not
-abandoned code that happens to still be reachable, it is code somebody or
-something is still shipping.
+> **Correction (WP-28).** The third row above is wrong. `custom-auth-verify`
+> was last deployed 2026-07-31T02:04Z like the other two; the 05:44Z deploy that
+> morning was `custom-auth-verify-v2`, misread from the function list. All three
+> v1 functions are **frozen at version 16** while their v2 counterparts are at
+> 37-40.
+>
+> That is the worse reading, not the better one. Nobody shipping them is
+> precisely the problem: the deploy workflow finds functions by listing
+> directories, so these could never be redeployed, and they sat at a 31 July
+> bundle that predates the source-keyed rate limiting added to v2. See
+> [`WP28_CUSTOM_AUTH_V1.md`](./WP28_CUSTOM_AUTH_V1.md), which also closes it.
+
+All three are deployed and serving.
 
 What that means for every static control in this repository, including the one
 this work package just extended:
@@ -154,11 +163,10 @@ this work package just extended:
   here that the v1 endpoints were, and a v1 login that still answers is a
   bypass of every improvement made to v2.
 
-Not fixed here, because the right fix depends on an answer this repository does
-not contain: whether the source lives somewhere else (a Lovable-managed deploy
-would explain both the absence and the update), or whether these are orphans
-that should be deleted from the project. Guessing wrong in one direction deletes
-a live login endpoint; in the other it leaves an unreviewed one running.
+Not fixed here — **fixed in WP-28**, which found the answer: they were created
+on the project on 30 July, superseded by `-v2` the next day, and predate this
+repository's git history, which begins 2026-08-07. Both entrypoints are now
+shims onto one shared handler.
 
 **The action is to find out, and it is worth doing before the next tranche of
 this programme rather than after.** If they are orphans, remove them from the
