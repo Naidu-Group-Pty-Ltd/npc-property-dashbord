@@ -344,12 +344,35 @@ existing `ImportPdfDialog` / `parse-template-document` path is a different
 destination and stays.
 
 ## Report templates
-The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look
-comes from `scripts/template-library/designSystem.ts` — five voices keyed to the
+The seeded PDF catalogue is **generated**, not hand-edited. Never hand-edit the
+generated migration — edit the source and run `npm run templates:library:seed`,
+which revalidates every schema against the live Zod contract, the production
+renderer allow-list and the publish gate before writing anything.
+
+It carries **two authoring systems over one renderer**. The 43 *voice* templates
+come from `scripts/template-library/designSystem.ts` — five voices keyed to the
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
-tokens. Edit the voice, then run `npm run templates:library:seed`. Never hand-edit
-the generated migration. See
-[`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
+tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
+
+The *family* templates come from the approved Claude Design **Investment Compass
+Template Catalogue**: ten design families × five structural variants × ten
+colourways. Read
+[`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
+before touching `scripts/template-library/investmentCompass/` or
+`_shared/templateColourways.pure.ts`. **Private Banking is the only family
+implemented**; the other nine are declared in the Design source and not here.
+
+Three rules there keep biting. **A colourway is tokens and nothing else** — the
+catalogue's own rule is "tokens carry no layout meaning", which is why this is 50
+masters × 10 palettes and not 500 templates; preview applies a `tokenOverrides`
+map and "Use template" bakes it into the copy's `tokens.colors`. **A colourway's
+`ink` is the cover FIELD, not body copy** — body ink is derived by lifting it 4
+points, the measured gap between `--aurixa-obsidian` and `--foreground`, and
+setting body copy to the field colour is invisible on screen and wrong on paper.
+And **`family_id` is version lineage, not a design family** — it is what the
+publish path deprecates siblings by, so overloading it would make publishing one
+master deprecate the other four; family metadata lives in the additive
+`design_meta` column instead.
 
 ## Mobile (Flutter) translation
 The four portals are being translated into one cross-platform Flutter app.

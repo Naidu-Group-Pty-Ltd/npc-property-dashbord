@@ -17,17 +17,26 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { useCreateWorkingCopy } from '@/hooks/useTemplateLibrary';
+import { findColourway, resolveColourway } from '@/lib/templateLibrary/colourways';
 import type { TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
 
 interface Props {
   entry: TemplateLibraryListEntry | null;
+  /**
+   * The colourway the user was looking at. Null means the entry's default.
+   *
+   * Sent to the server as a request, not an instruction:
+   * `resolveRequestedColourway` validates it against the entry's own curated
+   * list and rejects anything else rather than falling back silently.
+   */
+  colourwayId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
 const MAX_NAME = 200;
 
-export function UseTemplateDialog({ entry, open, onOpenChange }: Props) {
+export function UseTemplateDialog({ entry, colourwayId = null, open, onOpenChange }: Props) {
   const navigate = useNavigate();
   const createCopy = useCreateWorkingCopy();
   const [name, setName] = useState('');
@@ -46,6 +55,12 @@ export function UseTemplateDialog({ entry, open, onOpenChange }: Props) {
 
   if (!entry) return null;
 
+  // Named on the confirmation, because the copy is baked in this palette and a
+  // colour is not something a user should have to open the Builder to verify.
+  const selectedColourway = entry.designMeta?.familyKey
+    ? findColourway(entry.designMeta.familyKey, colourwayId ?? entry.designMeta.defaultColourway)
+    : null;
+
   const trimmed = name.trim();
   const nameError = !trimmed
     ? 'Give the working copy a name.'
@@ -57,10 +72,19 @@ export function UseTemplateDialog({ entry, open, onOpenChange }: Props) {
     setTouched(true);
     if (nameError) return;
     createCopy.mutate(
-      { entryId: entry.id, name: trimmed, description: description.trim() || undefined },
+      {
+        entryId: entry.id,
+        name: trimmed,
+        description: description.trim() || undefined,
+        ...(colourwayId ? { colourwayId } : {}),
+      },
       {
         onSuccess: ({ templateId }) => {
-          toast.success('Working copy created');
+          toast.success(
+            selectedColourway
+              ? `Working copy created in ${selectedColourway.name}`
+              : 'Working copy created',
+          );
           onOpenChange(false);
           navigate(`/admin/template-builder/${templateId}`);
         },
@@ -112,6 +136,31 @@ export function UseTemplateDialog({ entry, open, onOpenChange }: Props) {
               placeholder="What this version is for, or who it is for."
             />
           </div>
+
+          {selectedColourway && (
+            <div className="flex items-center gap-3 rounded-md border border-border p-3">
+              {/* The document's own colours, so they arrive as custom
+                  properties rather than inline paint — see the note on
+                  `Swatch` in TemplateColourwayPicker. */}
+              <span
+                aria-hidden="true"
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] bg-[var(--sw-paper)] ring-1 ring-black/15"
+                style={{
+                  ['--sw-paper' as string]: resolveColourway(selectedColourway).surface,
+                  ['--sw-accent' as string]: resolveColourway(selectedColourway).primary,
+                }}
+              >
+                <span className="h-3 w-3 rounded-[1px] bg-[var(--sw-accent)]" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{selectedColourway.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {selectedColourway.ground === 'dark' ? 'Dark ground' : 'Light ground'} · baked into
+                  your copy. Change it any time in the Template Builder.
+                </p>
+              </div>
+            </div>
+          )}
 
           {!entry.compatibility.productionReady && (
             <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">

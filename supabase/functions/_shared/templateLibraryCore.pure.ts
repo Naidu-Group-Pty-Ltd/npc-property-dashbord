@@ -16,6 +16,12 @@ import {
   PRODUCTION_SAFE_BLOCK_TYPES,
   PRODUCTION_REPORT_TEMPLATE_TYPES,
 } from './productionBlockTypes.ts';
+import {
+  applyColourwayToSchema,
+  defaultColourwayFor,
+  findColourway,
+  type ApprovedColourway,
+} from './templateColourways.pure.ts';
 
 // ── Operations and authorisation ─────────────────────────────────────────────
 
@@ -41,7 +47,14 @@ export function requiredAuthzFor(operation: string): RequiredAuthz {
   return { kind: 'superadmin' };
 }
 
-/** Columns returned by `list`. Never includes the heavy `schema` payload. */
+/**
+ * Columns returned by `list`. Never includes the heavy `schema` payload.
+ *
+ * `design_meta` is small — a manifest of ~21 short strings plus ten colourway
+ * ids — and the browse card reads family, variant axis, density, ground and
+ * recommended use straight off it, so leaving it out would cost one detail
+ * fetch per visible card.
+ */
 export const LIST_COLUMNS: readonly string[] = [
   'id', 'family_id', 'slug', 'version', 'name', 'description',
   'category', 'report_type', 'tier', 'variant', 'industry', 'tags', 'style',
@@ -50,7 +63,7 @@ export const LIST_COLUMNS: readonly string[] = [
   'supported_modules', 'required_bindings', 'brand_safe', 'production_ready',
   'compatibility_version', 'status', 'access_tier', 'visibility', 'engine',
   'source_template_id', 'created_at', 'updated_at', 'published_at',
-  'usage_count', 'last_used_at',
+  'usage_count', 'last_used_at', 'design_meta',
 ];
 
 export const LIST_SELECT = LIST_COLUMNS.join(',');
@@ -247,6 +260,7 @@ export const EDITABLE_ENTRY_KEYS: ReadonlySet<string> = new Set([
   'name', 'description', 'long_description', 'category', 'report_type', 'tier',
   'variant', 'industry', 'tags', 'style', 'page_size', 'access_tier',
   'schema', 'config', 'custom_css', 'thumbnail_path', 'preview_image_paths',
+  'design_meta',
 ]);
 
 export function pickEditable(input: Record<string, unknown> | undefined | null): Record<string, unknown> {
@@ -255,6 +269,92 @@ export function pickEditable(input: Record<string, unknown> | undefined | null):
     if (EDITABLE_ENTRY_KEYS.has(k)) out[k] = v;
   }
   return out;
+}
+
+// ── Colourway selection ──────────────────────────────────────────────────────
+
+/** The design family an entry belongs to, or null if it is not a family entry. */
+export function familyKeyOf(entry: Record<string, unknown>): string | null {
+  const meta = entry?.design_meta;
+  if (!meta || typeof meta !== 'object') return null;
+  const key = (meta as Record<string, unknown>).familyKey;
+  return typeof key === 'string' && key ? key : null;
+}
+
+/** The colourway ids this entry offers, in the approved order. */
+export function offeredColourwayIds(entry: Record<string, unknown>): string[] {
+  const meta = entry?.design_meta;
+  if (!meta || typeof meta !== 'object') return [];
+  const ids = (meta as Record<string, unknown>).colourways;
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+}
+
+export interface ColourwaySelection {
+  colourway: ApprovedColourway | null;
+  problem: PublishProblem | null;
+}
+
+/**
+ * Resolve the colourway a copy should be baked in.
+ *
+ * Validated against **this entry's own curated list**, not against the global
+ * registry. A colourway id is only meaningful inside the family that curated
+ * it, and accepting any known id would let a request paint a Private Banking
+ * master in a palette from a family that never approved the pairing.
+ *
+ * Three outcomes, all deliberate:
+ *   - no id requested → the family default, or null for a non-family entry
+ *     (which then keeps whatever tokens its schema already carries);
+ *   - a requested id the entry offers → that colourway;
+ *   - anything else → a problem. Never a silent fallback to the default:
+ *     a user who picked Oxblood Night and got Gold on Obsidian would only
+ *     find out after opening the copy in the Builder.
+ */
+export function resolveRequestedColourway(
+  entry: Record<string, unknown>,
+  requestedId: unknown,
+): ColourwaySelection {
+  const familyKey = familyKeyOf(entry);
+  const requested = typeof requestedId === 'string' ? requestedId.trim() : '';
+
+  if (!familyKey) {
+    if (requested) {
+      return {
+        colourway: null,
+        problem: {
+          code: 'colourway_not_supported',
+          message: 'This template does not belong to a design family, so it has no colourways.',
+        },
+      };
+    }
+    return { colourway: null, problem: null };
+  }
+
+  if (!requested) {
+    return { colourway: defaultColourwayFor(familyKey), problem: null };
+  }
+
+  if (!offeredColourwayIds(entry).includes(requested)) {
+    return {
+      colourway: null,
+      problem: {
+        code: 'colourway_not_offered',
+        message: `"${requested}" is not one of this template's colourways.`,
+      },
+    };
+  }
+
+  const colourway = findColourway(familyKey, requested);
+  if (!colourway) {
+    return {
+      colourway: null,
+      problem: {
+        code: 'colourway_unknown',
+        message: `Colourway "${requested}" is not registered for family "${familyKey}".`,
+      },
+    };
+  }
+  return { colourway, problem: null };
 }
 
 export interface WorkingCopyRequest {
@@ -268,6 +368,11 @@ export interface WorkingCopyRequest {
   entry: Record<string, unknown>;
   /** Validated + migrated schema. */
   schema: unknown;
+  /**
+   * Colourway to bake into the copy's tokens. Resolved server-side by
+   * `resolveRequestedColourway`; never taken from the request body directly.
+   */
+  colourway?: ApprovedColourway | null;
 }
 
 /**
@@ -282,12 +387,61 @@ export interface WorkingCopyRequest {
  */
 export function buildWorkingCopyPayload(req: WorkingCopyRequest): Record<string, unknown> {
   const { entry } = req;
+
+  // Bake the colourway into the copy's own tokens rather than referencing it.
+  //
+  // That is what makes the choice survive everywhere without any downstream
+  // system needing to know colourways exist: the Template Builder, the
+  // WeasyPrint PDF and live report generation all see an ordinary template that
+  // happens to be that colour. A reference would have meant teaching three
+  // pipelines to resolve one, and a copy whose appearance could change later —
+  // which is exactly what the library's snapshot rule exists to prevent.
+  const schema = req.colourway
+    ? applyColourwayToSchema(req.schema, req.colourway)
+    : req.schema;
+
+  const meta = (entry.design_meta && typeof entry.design_meta === 'object')
+    ? entry.design_meta as Record<string, unknown>
+    : {};
+
+  const baseConfig = (entry.config && typeof entry.config === 'object')
+    ? entry.config as Record<string, unknown>
+    : {};
+
+  // Lineage a person can read months later, on the copy itself. The library's
+  // own `template_library_instantiations` row records which ENTRY was copied;
+  // this records what it was copied AS — the family, the variant and the
+  // colourway — which that row cannot know.
+  //
+  // Written ONLY for a design-family entry. A copy of one of the forty voice
+  // templates has no family, no variant axis and no colourway, so a lineage
+  // block there would be eleven null fields added to a column other code
+  // round-trips — a behaviour change with nothing to show for it.
+  const config = meta.familyKey
+    ? {
+      ...baseConfig,
+      libraryLineage: {
+        entryId: entry.id ?? null,
+        entrySlug: entry.slug ?? null,
+        entryVersion: entry.version ?? null,
+        familyKey: meta.familyKey ?? null,
+        familyName: meta.familyName ?? null,
+        templateCode: meta.templateCode ?? null,
+        variantAxis: meta.variantAxis ?? null,
+        density: meta.density ?? null,
+        colourway: req.colourway?.id ?? null,
+        colourwayName: req.colourway?.name ?? null,
+        ground: req.colourway?.ground ?? null,
+      },
+    }
+    : baseConfig;
+
   return {
     name: req.name,
     description: req.description ?? (entry.description as string | null) ?? null,
-    schema: req.schema,
+    schema,
     // report_templates.config is NOT NULL.
-    config: entry.config ?? {},
+    config,
     custom_css: entry.custom_css ?? null,
     report_type: entry.report_type ?? null,
     tier: entry.tier ?? null,

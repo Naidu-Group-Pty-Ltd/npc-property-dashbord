@@ -31,6 +31,11 @@ import {
 } from 'lucide-react';
 import { TemplateDocumentPreview } from './TemplateDocumentPreview';
 import { TemplateDataSource } from './TemplateDataSource';
+import { TemplateColourwayPicker } from './TemplateColourwayPicker';
+import {
+  axisLabel, colourwayOverridesFor, densityLabel, effectiveGround, entryColourways,
+  entryDefaultColourwayId,
+} from '@/lib/templateLibrary/entryDesign';
 import { PAGE_GUTTER_PT, PT_TO_PX, pageGeometry } from '@/lib/templateLibrary/pageGeometry';
 import { TemplatePreviewSvg } from './TemplatePreviewSvg';
 import { useTemplateLibraryEntry } from '@/hooks/useTemplateLibrary';
@@ -43,7 +48,12 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   canUse: boolean;
-  onUse: (entry: TemplateLibraryListEntry) => void;
+  /**
+   * Opens "Use template". The colourway the reader is currently showing travels
+   * with it — a user who spent a minute choosing Midnight Navy and then got a
+   * copy in the default palette would reasonably call that a bug.
+   */
+  onUse: (entry: TemplateLibraryListEntry, colourwayId: string | null) => void;
 }
 
 /**
@@ -83,6 +93,17 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
     setDataLabel(label);
   }, []);
 
+  // ── Colourway ────────────────────────────────────────────────────────────
+  // Held here rather than in the preview so the header, the facts rail and the
+  // "Use template" hand-off all agree on which palette the reader is looking at.
+  const colourways = useMemo(() => entryColourways(entry), [entry]);
+  const [colourwayId, setColourwayId] = useState<string | null>(null);
+  const activeColourwayId = colourwayId ?? entryDefaultColourwayId(entry);
+  const tokenOverrides = useMemo(
+    () => colourwayOverridesFor(entry, activeColourwayId),
+    [entry, activeColourwayId],
+  );
+
   const schema = detail?.schema;
   const pages: any[] = Array.isArray((schema as any)?.pages) ? (schema as any).pages : [];
   const { w: pw, h: ph } = useMemo(() => pageGeometry(schema), [schema]);
@@ -97,6 +118,10 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
     setProgress(0);
     setData(SAMPLE_REPORT_DATA);
     setDataLabel('sample data');
+    // Back to the template's own default palette. Carrying a previous
+    // template's colourway across would be meaningless — the ids are scoped to
+    // the family that curated them.
+    setColourwayId(null);
     scroller.current?.scrollTo({ top: 0 });
   }, [open, entry?.id]);
 
@@ -213,8 +238,19 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
             </Button>
           </div>
 
+          {colourways.length > 0 && (
+            <div className="hidden md:block">
+              <TemplateColourwayPicker
+                colourways={colourways}
+                selectedId={activeColourwayId ?? ''}
+                onSelect={setColourwayId}
+                size="sm"
+              />
+            </div>
+          )}
+
           {canUse && (
-            <Button size="sm" onClick={() => onUse(entry)}>
+            <Button size="sm" onClick={() => onUse(entry, activeColourwayId)}>
               <Plus className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Use template
             </Button>
           )}
@@ -317,6 +353,7 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
                     schema={schema}
                     variant="document"
                     data={data}
+                    tokenOverrides={tokenOverrides}
                     label={`${entry.name} rendered in full with ${dataLabel}`}
                     className="w-full"
                   />
@@ -394,6 +431,52 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
                 <Fact label="Style" value={styleLabel(entry.style) ?? '—'} />
                 <Fact label="Version" value={`v${entry.version}`} />
               </dl>
+
+              {/* The design-family facts. Absent for the voice templates, which
+                  carry no family — the rail simply stops after the panel above. */}
+              {entry.designMeta && (
+                <div className="space-y-3">
+                  <h3 className="text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                    Design family
+                  </h3>
+                  <dl className="grid grid-cols-2 gap-3">
+                    <Fact label="Family" value={entry.designMeta.familyName} />
+                    <Fact label="Variant" value={axisLabel(entry.designMeta.variantAxis) ?? '—'} />
+                    <Fact label="Density" value={densityLabel(entry.designMeta.density) ?? '—'} />
+                    <Fact
+                      label="Ground"
+                      value={effectiveGround(entry, activeColourwayId) === 'dark' ? 'Dark' : 'Light'}
+                    />
+                  </dl>
+                  <div className="space-y-0.5">
+                    <dt className="text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                      Recommended use
+                    </dt>
+                    <dd className="text-[13px] leading-relaxed">{entry.designMeta.recommendedUse}</dd>
+                  </div>
+                  <div className="space-y-0.5">
+                    <dt className="text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                      Typefaces
+                    </dt>
+                    <dd className="text-[13px]">{entry.designMeta.faces}</dd>
+                  </div>
+                  {/* Below the xl breakpoint the header's picker is hidden, so
+                      the rail carries the control instead of losing it. */}
+                  {colourways.length > 0 && (
+                    <div className="space-y-1.5 md:hidden">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                        Colourway
+                      </p>
+                      <TemplateColourwayPicker
+                        colourways={colourways}
+                        selectedId={activeColourwayId ?? ''}
+                        onSelect={setColourwayId}
+                        size="sm"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <h3 className="text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">

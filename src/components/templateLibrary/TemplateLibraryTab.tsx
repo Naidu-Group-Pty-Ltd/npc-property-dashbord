@@ -6,7 +6,7 @@
  * ordinary working copy to the existing Builder. Nothing here reads or writes
  * `report_templates` directly.
  */
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,7 +15,8 @@ import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTemplateLibraryEntries } from '@/hooks/useTemplateLibrary';
 import {
-  EMPTY_FILTERS, availableReportTypes, filterLibraryEntries, hasActiveFilters,
+  EMPTY_FILTERS, availableDensities, availableFamilies, availableReportTypes,
+  availableUseBuckets, filterLibraryEntries, hasActiveFilters,
   sortLibraryEntries, type TemplateLibrarySort,
 } from '@/lib/templateLibrary/filterEntries';
 import type { TemplateLibraryFilters as Filters, TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
@@ -37,11 +38,35 @@ export function TemplateLibraryTab() {
   const [sort, setSort] = useState<TemplateLibrarySort>('recent');
   const [previewEntry, setPreviewEntry] = useState<TemplateLibraryListEntry | null>(null);
   const [useEntry, setUseEntry] = useState<TemplateLibraryListEntry | null>(null);
+  const [useColourway, setUseColourway] = useState<string | null>(null);
+
+  /**
+   * Colourway chosen per entry, by entry id.
+   *
+   * Held at the grid rather than on each card so a choice survives the card
+   * re-rendering, and so the Light/Dark filter can read the palette the user is
+   * actually looking at rather than the template's declared ground.
+   */
+  const [colourways, setColourways] = useState<Record<string, string>>({});
+  const chooseColourway = useCallback(
+    (entry: TemplateLibraryListEntry, colourwayId: string) => {
+      setColourways((prev) => ({ ...prev, [entry.id]: colourwayId }));
+    },
+    [],
+  );
+
+  const openUse = useCallback((entry: TemplateLibraryListEntry, colourwayId: string | null) => {
+    setUseColourway(colourwayId);
+    setUseEntry(entry);
+  }, []);
 
   const reportTypes = useMemo(() => availableReportTypes(entries), [entries]);
+  const families = useMemo(() => availableFamilies(entries), [entries]);
+  const useBuckets = useMemo(() => availableUseBuckets(entries), [entries]);
+  const densities = useMemo(() => availableDensities(entries), [entries]);
   const visible = useMemo(
-    () => sortLibraryEntries(filterLibraryEntries(entries, filters), sort),
-    [entries, filters, sort],
+    () => sortLibraryEntries(filterLibraryEntries(entries, filters, colourways), sort),
+    [entries, filters, sort, colourways],
   );
 
   return (
@@ -87,6 +112,9 @@ export function TemplateLibraryTab() {
             sort={sort}
             onSortChange={setSort}
             reportTypes={reportTypes}
+            families={families}
+            useBuckets={useBuckets}
+            densities={densities}
             onClear={() => setFilters(EMPTY_FILTERS)}
             resultCount={visible.length}
             totalCount={entries.length}
@@ -130,8 +158,10 @@ export function TemplateLibraryTab() {
                   key={entry.id}
                   entry={entry}
                   canUse={canEdit}
+                  colourwayId={colourways[entry.id] ?? null}
                   onPreview={setPreviewEntry}
-                  onUse={setUseEntry}
+                  onUse={openUse}
+                  onColourway={chooseColourway}
                 />
               ))}
             </div>
@@ -146,11 +176,18 @@ export function TemplateLibraryTab() {
         open={!!previewEntry}
         onOpenChange={(open) => { if (!open) setPreviewEntry(null); }}
         canUse={canEdit}
-        onUse={(entry) => { setPreviewEntry(null); setUseEntry(entry); }}
+        onUse={(entry, colourwayId) => {
+          // Keep the reader's choice on the grid too, so closing the copy
+          // dialog leaves the card showing what the user was just reading.
+          if (colourwayId) chooseColourway(entry, colourwayId);
+          setPreviewEntry(null);
+          openUse(entry, colourwayId);
+        }}
       />
 
       <UseTemplateDialog
         entry={useEntry}
+        colourwayId={useColourway}
         open={!!useEntry}
         onOpenChange={(open) => { if (!open) setUseEntry(null); }}
       />

@@ -52,6 +52,65 @@ export function esc(s: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Resolve a `*Font` block prop to a CSS `font-family` value.
+ *
+ * ## Why this returns a variable rather than the font name
+ *
+ * A `token:heading` prop could be resolved through `resolveBindable` and
+ * emitted verbatim — and that would put a template-controlled string inside a
+ * quoted style attribute, which is a new injection surface for a value that
+ * already has a safe representation. `tokensToCssVariables` emits every font
+ * token as `--font-<key>` and runs it through `safeTokenValue` first, so
+ * pointing at the variable reuses that guarantee instead of re-earning it.
+ *
+ * A literal (`"Inter, sans-serif"`) is still accepted for templates that name a
+ * face directly, but only through a conservative allow-list: letters, digits,
+ * spaces, commas, hyphens, dots and quotes. Anything else — a semicolon, a
+ * `url(`, a brace — drops the whole declaration rather than emitting a
+ * sanitised guess at what the author meant.
+ *
+ * Returns `null` when the prop is absent, so callers keep whatever default
+ * they had before this existed. That is what makes every `*Font` prop additive.
+ */
+export function fontFamilyValue(value: unknown, fallback?: string): string | null {
+  if (value == null || value === '') return fallback ?? null;
+  const raw = String(value).trim();
+  if (raw.startsWith('token:')) {
+    const key = raw.slice(6).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!key) return fallback ?? null;
+    return fallback ? `var(--font-${key}, ${fallback})` : `var(--font-${key})`;
+  }
+  if (!/^[a-zA-Z0-9\s,'"._-]+$/.test(raw)) return fallback ?? null;
+  return raw;
+}
+
+/**
+ * A `font-family:` declaration, or an empty string when there is no font to set.
+ *
+ * Blocks compose this into their inline styles so an unset prop emits nothing
+ * at all and the element keeps inheriting, exactly as it did before.
+ */
+export function fontFamilyDecl(value: unknown, fallback?: string): string {
+  const family = fontFamilyValue(value, fallback);
+  return family ? `font-family:${family};` : '';
+}
+
+/**
+ * A `letter-spacing:` declaration in em, clamped to a sane typographic range.
+ *
+ * The brand's signature is the wide uppercase eyebrow — `--tracking-eyebrow` is
+ * 0.18em and the Private Banking cover goes to 0.34em — so tracking has to be
+ * settable per element rather than baked at 0.18em in the renderer. Clamped
+ * because a value outside this range is a mistake rather than a design, and an
+ * unbounded one can push a label off the page.
+ */
+export function trackingDecl(value: unknown, fallback?: number): string {
+  const n = value == null || value === '' ? fallback : Number(value);
+  if (n == null || !Number.isFinite(n)) return '';
+  return `letter-spacing:${Math.max(-0.1, Math.min(1, n))}em;`;
+}
+
 /** Render the absolute-positioning wrapper for blocks that use x/y/width/height. */
 export function absBoxStyle(p: Record<string, unknown>, fallback: { x?: number; y?: number; w?: number; h?: number } = {}): string {
   const x = Number(p.x ?? fallback.x ?? 0);

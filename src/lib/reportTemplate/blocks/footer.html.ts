@@ -14,7 +14,15 @@ export function renderFooterHtml(block: Block, ctx: HtmlBlockContext): string {
   const rule = p.ruleColor
     ? `border-top:0.5pt solid ${resolveBindableColor(p.ruleColor, ctx, '#DCDCDC')};`
     : '';
-  return `<div style="position:absolute;left:0;right:0;bottom:0;height:${h}pt;background:${bg};color:${color};${rule}display:flex;align-items:center;justify-content:${align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center'};padding:0 24pt;font-size:8pt;">
+  // How far in from the page edge the footer — and therefore its rule — sits.
+  //
+  // Defaults to the 24pt this block has always used. A template whose margin is
+  // not 24pt needs to say so, or the footer rule spans a different measure from
+  // the content above it: on a 20mm page that is a 33pt discrepancy, which
+  // reads as a mistake on a document whose whole argument is precision.
+  const inset = Number.isFinite(Number(p.inset)) ? Number(p.inset) : 24;
+  const size = Number(p.fontSize ?? 8);
+  return `<div style="position:absolute;left:${inset}pt;right:${inset}pt;bottom:0;height:${h}pt;background:${bg};color:${color};${rule}display:flex;align-items:center;justify-content:${align === 'left' ? 'flex-start' : align === 'right' ? 'flex-end' : 'center'};font-size:${size}pt;">
     ${text ? esc(text) : ''}
   </div>`;
 }

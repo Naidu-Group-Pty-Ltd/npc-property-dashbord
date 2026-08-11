@@ -91,6 +91,55 @@ export interface TemplateLibraryCompatibility {
   engine: 'weasyprint' | 'jspdf';
 }
 
+/**
+ * Design-system metadata for a catalogue-family entry.
+ *
+ * Empty for every entry that is not part of a design family — the forty voice
+ * templates carry `{}` and read back as `null` here, which is what
+ * `isFamilyEntry()` tests. Nothing in this shape is used for routing or
+ * authorisation; it describes how a template LOOKS and what it is FOR.
+ *
+ * Mirrors `template_library_entries.design_meta`. See
+ * `20260811110000_template_library_design_meta.sql` for why this is one jsonb
+ * column rather than typed columns, and why `family_id` and `variant` were left
+ * alone.
+ */
+export interface TemplateDesignMeta {
+  /** Stable design-family key, e.g. `private_banking`. */
+  familyKey: string;
+  familyCode: string;
+  familyName: string;
+  familyNote: string;
+  familyOrdinal: string;
+  /** The approved face list, as displayed. */
+  faces: string;
+  /** Approved catalogue code, e.g. `pb-03`. */
+  templateCode: string;
+  /** The variant axis, e.g. `C · expansive`. */
+  variantAxis: string;
+  /** Page architecture: band / grid / bleed / rail / stack. */
+  architecture: string;
+  density: 'compact' | 'balanced' | 'spacious';
+  printDensity: string;
+  /** The template's own declared ground, before a colourway is chosen. */
+  ground: 'light' | 'dark';
+  /** The approved one-line recommended use. */
+  recommendedUse: string;
+  /** The catalogue's recommended-use bucket, e.g. `Client-facing`. */
+  useBucket: string | null;
+  /** The resolved manifest — the design decision, in full. */
+  manifest: Record<string, string>;
+  /** What this variant overrides on the family base. Empty for the reference. */
+  overrides: Record<string, string>;
+  isFamilyReference: boolean;
+  /** Colourway id applied to the stored schema's tokens. */
+  defaultColourway: string;
+  /** Every colourway id this entry offers, in the approved order. */
+  colourways: string[];
+  archetypeCoverage: string;
+  source: string;
+}
+
 /** A master catalogue entry. Immutable once published — a change is a new version. */
 export interface TemplateLibraryEntry {
   id: string;
@@ -122,6 +171,9 @@ export interface TemplateLibraryEntry {
   visibility: TemplateLibraryVisibility;
 
   compatibility: TemplateLibraryCompatibility;
+
+  /** Design-family metadata, or null for an entry outside a family. */
+  designMeta: TemplateDesignMeta | null;
 
   /**
    * Storage paths in the public preview bucket — never signed URLs.
@@ -181,6 +233,9 @@ export interface TemplateLibraryInstantiation {
   createdAt: string;
 }
 
+/** Ground filter for the browse grid. `all` is the default. */
+export type TemplateLibraryGroundFilter = 'all' | 'light' | 'dark';
+
 /** Browse-grid query state. Filters compose as AND across axes, OR within one. */
 export interface TemplateLibraryFilters {
   search: string;
@@ -191,6 +246,21 @@ export interface TemplateLibraryFilters {
   orientations: TemplateLibraryOrientation[];
   /** Restrict to entries that can be activated for live report generation. */
   productionReadyOnly: boolean;
+  /** Design families, by key. Empty means every family and every non-family entry. */
+  families: string[];
+  /**
+   * Light or dark ground.
+   *
+   * Filters on the colourway CURRENTLY SELECTED for an entry, not on the
+   * template's declared ground — a Chancery in Obsidian Reverse is a dark
+   * document, and a filter that said otherwise would be filtering on metadata
+   * rather than on what the user is looking at.
+   */
+  ground: TemplateLibraryGroundFilter;
+  /** Recommended-use bucket, e.g. `Client-facing`. Empty means all. */
+  useBuckets: string[];
+  /** Density steps, e.g. `compact`. Empty means all. */
+  densities: string[];
 }
 
 /** Input for "Use template". */
@@ -199,10 +269,17 @@ export interface CreateWorkingCopyInput {
   /** User-supplied; required and non-empty. */
   name: string;
   description?: string;
+  /**
+   * Colourway to bake into the copy. Validated server-side against the entry's
+   * own curated list; omitted means the family default.
+   */
+  colourwayId?: string;
 }
 
 /** Result of a successful copy. `templateId` is an ordinary Builder template. */
 export interface CreateWorkingCopyResult {
   templateId: string;
   instantiationId: string;
+  /** The colourway actually baked in, as the server resolved it. */
+  colourwayId: string | null;
 }

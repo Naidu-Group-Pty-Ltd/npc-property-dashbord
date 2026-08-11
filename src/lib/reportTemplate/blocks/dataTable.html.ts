@@ -46,30 +46,74 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
     ? resolveBindableColor(p.negativeColor, ctx, '#B91C1C')
     : null;
 
+  // ── Ledger treatment (additive; every default reproduces the filled look) ──
+  //
+  // The approved Investment Compass catalogue distinguishes table treatments
+  // per template — Private Banking alone declares `ledger_hairline`,
+  // `ledger_tight` and `double_rule_statement` — and none of the three has a
+  // filled header band. A statement sets its column heads in small tracked
+  // capitals over a single heavy rule, separates rows with hairlines, and
+  // closes a total with a doubled rule. Expressing that as a differently
+  // coloured fill would have lost the distinction the catalogue is making.
+  //
+  // `headerStyle: 'fill'` is the pre-existing behaviour and stays the default,
+  // so no template already in the library changes.
+  const headerStyle = String(p.headerStyle ?? 'fill');
+  const ruledHeader = headerStyle === 'rule';
+  const headerFont = tokenFont(p.headerFont);
+  const headerSize = Number(p.headerSize) > 0 ? Number(p.headerSize) : fontSize;
+  const headerTracking = Number.isFinite(Number(p.headerTracking))
+    ? Math.max(0, Math.min(1, Number(p.headerTracking)))
+    : 0.06;
+  // Rows that close a total. `double_rule_statement` sets them in a heavier
+  // weight over a doubled rule — the accounting convention for "this is the
+  // number the ones above add up to".
+  const totals = new Set(
+    (Array.isArray(p.totalRows) ? (p.totalRows as unknown[]) : [])
+      .map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n >= 0),
+  );
+  const rowRule = p.rowRule === true;
+  const outerBorder = p.outerBorder !== false;
+  const emphasisColor = resolveBindableColor(p.emphasisColor ?? borderColor, ctx, '#1A1A1A');
+
   const colgroup = `<colgroup>${widths.map(w => `<col style="width:${w * 100}%;"/>`).join('')}</colgroup>`;
-  const thead = `<thead><tr style="background:${headerBg};color:${headerFg};">
-    ${headers.map((h, i) => `<th style="padding:${cellPad}pt 8pt;text-align:${numeric.has(i) ? 'right' : 'left'};font-size:${fontSize}pt;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">${esc(h)}</th>`).join('')}
+  const thead = `<thead><tr style="${ruledHeader ? '' : `background:${headerBg};`}color:${ruledHeader ? cellFg : headerFg};">
+    ${headers.map((h, i) => {
+    const cellStyle = `padding:${cellPad}pt ${ruledHeader ? '4pt' : '8pt'};text-align:${numeric.has(i) ? 'right' : 'left'};`
+      + `font-size:${headerSize}pt;font-weight:${ruledHeader ? 500 : 700};text-transform:uppercase;`
+      + `letter-spacing:${headerTracking}em;`
+      + (ruledHeader ? `border-bottom:1.5pt solid ${emphasisColor};` : '')
+      + (headerFont ? `font-family:${headerFont};` : '');
+    return `<th style="${cellStyle}">${esc(h)}</th>`;
+  }).join('')}
   </tr></thead>`;
   const tbody = `<tbody>${rows.map((row, i) => {
     const cells = row.cells || [];
     if (sections.has(i)) {
       return `<tr><td colspan="${headers.length}" style="background:${sectionBg};color:${sectionFg};padding:${cellPad}pt 8pt;font-size:${fontSize}pt;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">${esc(resolveBindable(cells[0], ctx))}</td></tr>`;
     }
+    const isTotal = totals.has(i);
     return `<tr style="background:${i % 2 ? stripeBg : 'transparent'};color:${cellFg};">
       ${cells.map((c, col) => {
     const isNumeric = numeric.has(col);
     const text = resolveBindable(c, ctx);
     const isNegative = negativeFg !== null && /^-\s*[$(]?\d/.test(String(text).trim());
-    const cellStyle = `padding:${cellPad}pt 8pt;font-size:${fontSize}pt;font-variant-numeric:tabular-nums;`
+    const cellStyle = `padding:${cellPad}pt ${ruledHeader ? '4pt' : '8pt'};font-size:${fontSize}pt;font-variant-numeric:tabular-nums lining-nums;`
       + (isNumeric ? `text-align:right;` : '')
       + (isNumeric && numericFont ? `font-family:${numericFont};` : '')
+      + (rowRule && !isTotal ? `border-bottom:1pt solid ${borderColor};` : '')
+      // A total is closed by a doubled rule: the heavy line the figures sit on
+      // and the hairline under it. `border-double` collapses at these weights
+      // in WeasyPrint, so it is drawn as two borders on the same cell.
+      + (isTotal ? `border-top:1.5pt solid ${emphasisColor};border-bottom:1pt solid ${emphasisColor};font-weight:600;` : '')
       + (isNegative ? `color:${negativeFg};font-weight:600;` : '');
     return `<td style="${cellStyle}">${esc(text)}</td>`;
   }).join('')}
     </tr>`;
   }).join('')}</tbody>`;
 
-  return `<div style="${style}"><table style="width:100%;border-collapse:collapse;border:0.5pt solid ${borderColor};">${colgroup}${thead}${tbody}</table></div>`;
+  return `<div style="${style}"><table style="width:100%;border-collapse:collapse;${outerBorder ? `border:0.5pt solid ${borderColor};` : ''}">${colgroup}${thead}${tbody}</table></div>`;
 }
 
 /**
