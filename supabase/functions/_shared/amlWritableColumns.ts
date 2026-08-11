@@ -89,3 +89,69 @@ export const EVIDENCE_REFERENCE_WRITABLE = new Set([
   'case_id', 'comparison_id', 'reference_type', 'reference_id', 'label',
   'detail', 'metadata',
 ]);
+
+/**
+ * `aml.source_of_funds` via `upsert_sof`.
+ *
+ * `verified_by` and `verified_at` are absent. The call site stamps them from the
+ * verified session when the item is marked verified — but it only did so on
+ * INSERT, so on the update path a caller could set `verified: true` alongside a
+ * `verified_by` naming somebody else. In an EDD file the question "who checked
+ * this source of funds" has a regulator behind it; it is not a field the
+ * subject of the check gets to answer.
+ */
+export const SOURCE_OF_FUNDS_WRITABLE = new Set([
+  'edd_case_id', 'case_id', 'source_type', 'description', 'amount', 'currency',
+  'evidence_path', 'evidence_provider', 'verified', 'notes', 'metadata',
+]);
+
+/**
+ * `aml.source_of_wealth` via `upsert_sow`.
+ *
+ * The same table one column apart: `wealth_type`/`estimated_value` where funds
+ * has `source_type`/`amount`, and no `evidence_provider`. Kept as two sets
+ * rather than one union so a column that exists on only one table cannot be
+ * written to the other — the union would have quietly accepted `amount` on
+ * `source_of_wealth` and let PostgREST reject it at runtime instead.
+ */
+export const SOURCE_OF_WEALTH_WRITABLE = new Set([
+  'edd_case_id', 'case_id', 'wealth_type', 'description', 'estimated_value',
+  'currency', 'evidence_path', 'verified', 'notes', 'metadata',
+]);
+
+/**
+ * `aml.existing_customer_reviews` via `upsert_review`.
+ *
+ * Two groups are deliberately absent.
+ *
+ * The **closure record** — `outcome`, `outcome_at`, `outcome_by` — is written by
+ * `complete_review`, which stamps the actor from the session. This is the same
+ * shape as `ALERT_WRITABLE`'s missing `resolved_*`: letting the generic upsert
+ * set an outcome produces a completed review with nobody's name on it.
+ *
+ * The **extension ledger** — `original_due_at`, `extension_count`,
+ * `extension_reason` — is maintained by `extend_review`, which reads the current
+ * row and increments. A caller who could set `extension_count` directly could
+ * reset a review's extension history to zero, and that history is the audit
+ * trail for how long a periodic review has been allowed to slip.
+ *
+ * `trigger_event_id` is absent for the same reason: it links the review to the
+ * event that raised it and is set by the op that raises it.
+ */
+export const CUSTOMER_REVIEW_WRITABLE = new Set([
+  'case_id', 'client_id', 'classification', 'status', 'priority', 'due_at',
+  'assigned_to', 'reviewer_notes', 'trigger_kind', 'metadata',
+]);
+
+/**
+ * `aml.counterparty_attempts` via `add_cp_attempt`.
+ *
+ * `actor_id` is absent because the call site stamps it. That call site already
+ * spread the body *before* the stamp, so the stamp won and this one was never
+ * forgeable — but the ordering was the only thing making it safe, and ordering
+ * is not a control anybody can see from the schema.
+ */
+export const COUNTERPARTY_ATTEMPT_WRITABLE = new Set([
+  'request_id', 'counterparty_case_id', 'attempted_at', 'channel', 'outcome',
+  'notes', 'metadata',
+]);

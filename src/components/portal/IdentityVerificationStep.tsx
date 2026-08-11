@@ -67,13 +67,40 @@ const STATUS_PRESENTATION: Record<AmlVerificationParty['status'], { label: strin
   contact_adviser: { label: 'We will contact you', tone: 'text-warning' },
 };
 
+/**
+ * What this party's state looks like right now, as one comparable string.
+ *
+ * Used only to notice that something MOVED. It is not sent anywhere and it is
+ * not an outcome — the parent's response to it is to re-read the server, never
+ * to believe anything the browser worked out.
+ */
+function statusSignature(status: AmlVerificationStatus): string {
+  return status.parties
+    .map((p) => `${p.party_id ?? 'self'}:${p.status}:${p.verification_in_progress ? 1 : 0}`)
+    .join('|');
+}
+
 export function IdentityVerificationStep({
-  caseId, onBack, onNext, onNeedsConsent,
+  caseId, onBack, onNext, onNeedsConsent, onStatusChange,
 }: {
   caseId: string;
   onBack: () => void;
   onNext: () => void;
   onNeedsConsent: () => void;
+  /**
+   * Canonical verification state changed on the SERVER.
+   *
+   * This step keeps its own copy of the verification status; the journey that
+   * draws the stepper, the progress figure and the review summary lives on the
+   * page above it. Without this the two drifted apart — a client could return
+   * from a completed check and see "Verify identity" still grey, with the
+   * progress bar unmoved, until they reloaded the page by hand.
+   *
+   * It carries no argument on purpose. It reports that something moved, never
+   * what it moved to: the parent answers by re-reading the server, so a
+   * browser callback can never be the thing that marks anybody verified.
+   */
+  onStatusChange?: () => void;
 }) {
   const [state, setState] = useState<AmlVerificationStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -88,14 +115,39 @@ export function IdentityVerificationStep({
    */
   const [checking, setChecking] = useState<AmlVerificationParty | null>(null);
 
+  /**
+   * The last party-state we told the page about.
+   *
+   * `null` until the first successful read. That first read only notifies when
+   * it has something to say — a case where nothing has been started yet is the
+   * state the page already assumes, and telling it so would cost an overview
+   * fetch every time the client so much as opened this step.
+   */
+  const reportedRef = useRef<string | null>(null);
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+
+  /** Adopt a fresh server read, and tell the page if the state moved. */
+  const applyStatus = useCallback((next: AmlVerificationStatus) => {
+    setState(next);
+    const signature = statusSignature(next);
+    const first = reportedRef.current === null;
+    const quiet = next.parties.every(
+      (p) => p.status === 'not_started' && !p.verification_in_progress);
+    if (reportedRef.current !== signature) {
+      reportedRef.current = signature;
+      if (!(first && quiet)) onStatusChangeRef.current?.();
+    }
+  }, []);
+
   const load = useCallback(async () => {
     try {
-      setState(await amlPortalApi.verificationStatus(caseId));
+      applyStatus(await amlPortalApi.verificationStatus(caseId));
       setLoadError(null);
     } catch (e: any) {
       setLoadError(e?.message ?? 'Unable to load verification status.');
     }
-  }, [caseId]);
+  }, [caseId, applyStatus]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -113,7 +165,7 @@ export function IdentityVerificationStep({
     setStarting(party.party_id ?? 'self');
     try {
       const fresh = await amlPortalApi.verificationStatus(caseId);
-      setState(fresh);
+      applyStatus(fresh);
       const stillAllowed = fresh.parties.find(
         (p) => (p.party_id ?? null) === (party.party_id ?? null))?.can_attempt;
       if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
@@ -145,7 +197,7 @@ export function IdentityVerificationStep({
     } finally {
       setStarting(null);
     }
-  }, [caseId, load]);
+  }, [caseId, load, applyStatus]);
 
   if (loadError) {
     return (

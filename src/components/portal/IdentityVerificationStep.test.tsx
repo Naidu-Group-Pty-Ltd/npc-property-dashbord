@@ -783,3 +783,71 @@ describe('secure identity check', () => {
     expect(await screen.findByText(/photograph your ID/i)).toBeTruthy();
   });
 });
+
+/* ── telling the page when canonical verification state moves ──────────── */
+
+/**
+ * This step keeps its own copy of the verification status; the journey that
+ * draws the stepper, the overall progress figure and the review summary lives
+ * on the page above it. They used to drift: a customer could finish a check,
+ * come back, and find "Verify identity" still grey with the progress bar
+ * unmoved until they reloaded the page by hand.
+ *
+ * The callback carries NO argument, and that is the contract. It says
+ * something moved; the page answers by re-reading the server. Nothing the
+ * browser works out can mark anybody verified.
+ */
+describe('parent refresh on canonical change', () => {
+  const onStatusChange = vi.fn();
+  const renderWithStatusChange = () => render(
+    <IdentityVerificationStep
+      caseId="case-1" onBack={noop} onNext={noop} onNeedsConsent={noop}
+      onStatusChange={onStatusChange}
+    />,
+  );
+
+  beforeEach(() => { onStatusChange.mockReset(); });
+
+  it('stays quiet on the first read when nothing has been started', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+    // The page already assumes this state; an overview fetch here buys nothing.
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('tells the page on the first read when a check is already in flight', async () => {
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    renderWithStatusChange();
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalled());
+  });
+
+  it('tells the page when the party state moves, and says nothing about what to', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+    expect(onStatusChange).not.toHaveBeenCalled();
+
+    // The server has settled the party since the page loaded; the step's next
+    // read is where it finds out.
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'verified', can_attempt: false }] }));
+    fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
+
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledTimes(1));
+    // No outcome crosses the callback — the parent re-reads the server.
+    for (const call of onStatusChange.mock.calls) expect(call).toHaveLength(0);
+  });
+
+  it('does not notify again while the state is unchanged', async () => {
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    renderWithStatusChange();
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledTimes(1));
+
+    // A second read of the same state is not news; nothing re-fetches.
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).toHaveBeenCalledTimes(1);
+  });
+});

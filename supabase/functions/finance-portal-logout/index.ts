@@ -5,6 +5,7 @@ import {
 } from "../_shared/auth.ts"
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
 /**
  * Clears the Finance Portal cookie and NOTHING ELSE.
@@ -56,7 +57,7 @@ Deno.serve(async (req) => {
 
     let body: Record<string, unknown> | undefined;
     try {
-      body = await req.json();
+      body = await readBoundedJson(req);
     } catch { /* ignore */ }
 
     const sessionToken = extractFinanceSessionToken(req.headers, body);

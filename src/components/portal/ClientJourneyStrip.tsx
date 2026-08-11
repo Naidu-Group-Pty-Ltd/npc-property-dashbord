@@ -1,9 +1,10 @@
 import { cn } from '@/lib/utils';
 import { Check, FileText, ShieldCheck, BadgeCheck, Users } from 'lucide-react';
-import type { AmlPortalOverview } from '@/lib/aml/amlPortalApi';
+import type { AmlPortalOverview, AmlPortalJourneyStatus } from '@/lib/aml/amlPortalApi';
+import { findJourneyStep } from '@/lib/aml/portalStepPresentation';
 
 /**
- * The client's view of the five-portal journey — deliberately built from the
+ * The client's view of the four-stage journey — deliberately built from the
  * portal-safe overview payload ALONE. No risk vocabulary, no gate names, no
  * partner detail: the client sees where they are and what happens next, in
  * their own language.
@@ -11,34 +12,86 @@ import type { AmlPortalOverview } from '@/lib/aml/amlPortalApi';
  * The pay-off line ("your whole purchase team reuses this") is the product
  * promise from the owner's flow diagram: verify once, never repeat it for the
  * broker, builder, developer or conveyancer.
+ *
+ * ## Why it reads the journey now
+ *
+ * It used to derive its own four states from `case.status`, which is a
+ * different question from the one the detailed stepper below it answers. Two
+ * formulas, one page: the strip could say the client's information was still
+ * being gathered while every step underneath it was green. There is one
+ * canonical journey and this renders a coarser view of the same thing —
+ * `case.status` remains the fallback for a server that has not sent one.
+ *
+ * ## The copy
+ *
+ * "We check it — securely, in-house" was retired. The identity check runs with
+ * a verification provider, and a sentence that tells the customer otherwise is
+ * wrong in exactly the place they are deciding whether to trust us with a
+ * photograph of their face. The replacement is accurate without naming the
+ * provider, which is not the customer's to know from here.
  */
 
 type StripState = 'done' | 'active' | 'todo';
 
 const STEPS = [
   { icon: FileText, label: 'Tell us about you', sub: 'a few guided questions' },
-  { icon: ShieldCheck, label: 'We check it', sub: 'securely, in-house' },
-  { icon: BadgeCheck, label: 'You are verified', sub: 'nothing more to do' },
+  { icon: ShieldCheck, label: 'We verify your identity', sub: 'securely with our verification provider' },
+  { icon: BadgeCheck, label: 'Your adviser checks it', sub: 'nothing more to do' },
   { icon: Users, label: 'Your team reuses it', sub: 'broker · builder · conveyancer' },
 ] as const;
+
+/** `complete` is done; anything a client is part-way through is active. */
+function stateFor(status: AmlPortalJourneyStatus | undefined, started: boolean): StripState {
+  if (status === 'complete') return 'done';
+  if (status === 'in_progress' || status === 'action_required') return 'active';
+  return started ? 'active' : 'todo';
+}
 
 export function ClientJourneyStrip({ overview }: { overview: AmlPortalOverview }) {
   const status = overview.case?.status ?? 'not_started';
   const consented = overview.consent?.satisfied ?? false;
+  const journey = overview.journey;
 
-  // Portal-safe status token → journey position. Everything the strip knows
-  // comes from fields the client is already shown elsewhere.
+  // Fallbacks for a server that predates the journey — the same tokens this
+  // strip has always used, so it degrades to its previous behaviour rather
+  // than to a blank row.
   const submitted = ['submitted', 'under_review', 'complete'].includes(status);
-  const complete = status === 'complete';
+  const caseComplete = status === 'complete';
+
+  const consentStep = findJourneyStep(journey, 'consent');
+  const questionnaireStep = findJourneyStep(journey, 'questionnaire');
+  const documentsStep = findJourneyStep(journey, 'documents');
+  const verificationStep = findJourneyStep(journey, 'verification');
+  const adviserStep = findJourneyStep(journey, 'review');
+
+  // Stage one covers everything the client fills in: consents, their answers,
+  // and any documents asked of them. It is done when all three are.
+  const gatheringSteps = [consentStep, questionnaireStep, documentsStep].filter(Boolean);
+  const gathering: AmlPortalJourneyStatus | undefined = gatheringSteps.length === 0
+    ? undefined
+    : gatheringSteps.every((s) => s!.status === 'complete')
+      ? 'complete'
+      : gatheringSteps.some((s) => s!.status === 'action_required')
+        ? 'action_required'
+        : 'in_progress';
+
+  const complete = adviserStep ? adviserStep.status === 'complete' : caseComplete;
   const sharingConsented = !(overview.consent?.outstanding ?? []).includes('compliance_sharing')
     && consented;
 
-  const states: StripState[] = [
-    submitted ? 'done' : 'active',
-    complete ? 'done' : submitted ? 'active' : 'todo',
-    complete ? 'done' : 'todo',
-    complete && sharingConsented ? 'done' : complete ? 'active' : 'todo',
-  ];
+  const states: StripState[] = journey
+    ? [
+      stateFor(gathering, consented),
+      stateFor(verificationStep?.status, gathering === 'complete'),
+      stateFor(adviserStep?.status, submitted),
+      complete && sharingConsented ? 'done' : complete ? 'active' : 'todo',
+    ]
+    : [
+      submitted ? 'done' : 'active',
+      caseComplete ? 'done' : submitted ? 'active' : 'todo',
+      caseComplete ? 'done' : 'todo',
+      caseComplete && sharingConsented ? 'done' : caseComplete ? 'active' : 'todo',
+    ];
   const doneCount = states.filter((s) => s === 'done').length;
 
   return (

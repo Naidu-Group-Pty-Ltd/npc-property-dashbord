@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { extractSessionToken, verifySession, createCorsHeaders } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
 Deno.serve(async (req) => {
   // Keep this entrypoint deployment coupled to the shared exact-origin CORS
@@ -26,7 +27,7 @@ Deno.serve(async (req) => {
     let sessionToken: string | null = null;
     let parsedBody: any = {};
     try {
-      parsedBody = await req.json();
+      parsedBody = await readBoundedJson(req);
       sessionToken = extractSessionToken(req.headers, parsedBody);
     } catch {
       // If body parsing fails, try to extract from headers/cookies only

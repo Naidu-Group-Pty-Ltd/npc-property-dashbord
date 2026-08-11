@@ -82,6 +82,21 @@ Both say **nothing was changed**, and both name the artefact to ship. A raw
 slug in a toast reads like a broken feature and sends whoever receives it
 looking in the one place the fault is not.
 
+## The same gap, one layer down
+
+An Edge Function that never deployed is visible: the feature answers
+`unknown_action`. A **render** function that never deployed is not — it returns
+a perfectly good PDF in last month's format. Worse, the Agreement Centre used
+to cache what it rendered, so even after the deploy landed, every document
+already issued kept coming out in the old format for ever.
+
+[`DOCUMENT_REVISIONS.md`](./DOCUMENT_REVISIONS.md) is the fix for both halves:
+the stored artefact carries the revision that rendered it and gets re-rendered
+when the build moves on, and the running revision is reported on the wire so a
+render service older than the bundle is stated on screen instead of discovered
+in a partner's inbox. Read it before touching anything that renders, stores or
+serves an agreement PDF.
+
 ## Deploy order
 
 Migration first, then the functions.

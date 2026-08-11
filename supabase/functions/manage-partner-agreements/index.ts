@@ -136,7 +136,16 @@ const INT_FIELDS = new Set([
 ]);
 const DATE_FIELDS = new Set(['effective_date', 'termination_date']);
 
-function sanitize(input: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Copy only the columns in `WRITABLE_FIELDS`, dropping everything else the
+ * caller sent.
+ *
+ * Named for what it does rather than `sanitize`, which claimed something had
+ * been cleaned without saying against what — and left the allowlist invisible at
+ * the call site, where it is the only thing standing between a request body and
+ * every column of the table.
+ */
+function pickWritable(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of WRITABLE_FIELDS) {
     if (!(key in input)) continue;
@@ -486,7 +495,7 @@ Deno.serve(async (req) => {
 
     // ─── CREATE ─────────────────────────────────────────────
     if (action === 'create') {
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       if (!payload.direction || !DIRECTIONS.has(String(payload.direction))) {
         return json({ error: 'direction_invalid' }, corsHeaders, 400);
       }
@@ -538,7 +547,7 @@ Deno.serve(async (req) => {
         }, corsHeaders, 409);
       }
 
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       delete payload.direction; // direction is immutable once created
       const changedKeys = Object.keys(payload).filter((k) => String(existing[k] ?? '') !== String(payload[k] ?? ''));
 
@@ -748,6 +757,10 @@ Deno.serve(async (req) => {
         issue_sequence: issueSequence,
         template_key: templateKey,
         template_content_hash: templateContentHash(templateKey),
+        // Which build issued this version — a fact about the issue, not about
+        // the stored PDF. The artefact's own revision lives in its storage path
+        // and is the only thing a refresh consults; see
+        // `_shared/agreements/documentRevision.pure.ts`.
         document_revision: AGREEMENT_CENTRE_DOCUMENT_REVISION,
         field_values: values,
         brand_snapshot: snapshot,

@@ -124,7 +124,7 @@ jobs:
     outputs:
       image: ${{ steps.image.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -144,12 +144,12 @@ jobs:
           echo "ref=${base}:${tag}" >> "$GITHUB_OUTPUT"
           echo "building ${base}:${tag}"
 
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       # --timeout: the default is ten minutes, and the veraPDF layer alone
       # fetches a 33 MB installer and installs a JRE before `pip install` of the
@@ -171,12 +171,12 @@ jobs:
       canary: ${{ steps.deploy.outputs.canary }}
       previous: ${{ steps.previous.outputs.revision }}
     steps:
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       # Recorded before anything moves. After a cutover nothing else remembers
       # which revision was serving, and that is precisely when it is wanted.
@@ -245,16 +245,16 @@ jobs:
     env:
       CANARY: ${{ needs.stage.outputs.canary }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       # Read from the deployed service rather than kept as a GitHub secret. The
       # deploy account can already describe the service, and a third copy of
@@ -296,7 +296,7 @@ jobs:
           echo "pinned=$PINNED canary=$GOT"
           [ "$PINNED" = "$GOT" ] || { echo "::error::engine drift: expected $PINNED, canary runs $GOT"; exit 1; }
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -373,12 +373,12 @@ jobs:
     if: needs.gate.outputs.ready == 'true' && inputs.promote == 'cutover'
     runs-on: ubuntu-latest
     steps:
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       # `--to-latest` sends traffic; it does not remove the tag. A tag pins its
       # revision against garbage collection, so leaving one behind on every

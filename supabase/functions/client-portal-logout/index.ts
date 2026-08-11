@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders, createClearClientPortalSessionCookie } from "../_shared/auth.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -16,7 +17,7 @@ Deno.serve(async (req) => {
 
     let sessionToken: string | null = null;
     try {
-      const body = await req.json();
+      const body = await readBoundedJson(req);
       sessionToken = body?.portal_session_token || body?.session_token;
     } catch {}
 
