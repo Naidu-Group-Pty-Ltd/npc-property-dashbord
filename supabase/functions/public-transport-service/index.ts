@@ -1,4 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { PublicTransportRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -58,7 +60,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const input: PublicTransportInput = await req.json();
+    // WP-24: bounded and shape-checked. This endpoint takes no session,
+    // so a bare req.json() read whatever was sent.
+    const __parsed = await parseJsonBody(req, PublicTransportRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
+    if (!__parsed.ok) return __parsed.response;
+    const input: PublicTransportInput = __parsed.data;
     console.log('🚇 Public transport request:', { lat: input.lat, lng: input.lng, state: input.state, suburb: input.suburb });
 
     const { lat, lng, state, suburb } = input;

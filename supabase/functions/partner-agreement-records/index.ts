@@ -41,6 +41,7 @@ import { fetchReportBrandSnapshot } from '../_shared/reportDesign/fetchBrandSnap
 import { renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import { renderMarkdown } from '../_shared/reports/markdown.pure.ts';
 import { PORTAL_TERMS_ACKNOWLEDGEMENTS } from '../_shared/portalAgreement.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   agreementFileName,
   agreementStoragePath,
@@ -278,7 +279,7 @@ Deno.serve(async (req) => {
     return json({ error: 'Unknown operation' }, 400);
   } catch (error: any) {
     console.error('[partner-agreement-records] error:', error);
-    return json({ error: error?.message || 'Internal server error' }, 500);
+    return json({ ...internalError(error, 'partner-agreement-records') }, 500);
   }
 });
 
@@ -305,7 +306,11 @@ async function generateAgreementCopy(supabase: any, record: any): Promise<string
   // `landscapeWideTables` is off because a legal document has no wide tables and
   // a landscape page in the middle of a contract reads as a fault.
   const markdown = renderMarkdown(version.content_markdown, { idPrefix: 'agreement' });
-  if (markdown.truncated) {
+  // `degraded` is the renderer's content-loss flag (MarkdownResult.degraded);
+  // it was read here as `truncated`, which the type has never had — so the
+  // guard was `undefined` on every render and a clipped agreement would have
+  // shipped silently.
+  if (markdown.degraded) {
     // A clipped legal document is worse than no document: fail loudly.
     throw new Error('The agreement text exceeded the renderer limits and would have been clipped');
   }

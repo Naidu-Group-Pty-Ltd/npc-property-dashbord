@@ -23,6 +23,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -252,6 +253,6 @@ Deno.serve(async (req) => {
 
     return json({ error: `Unknown operation: ${operation}` }, 400);
   } catch (err: any) {
-    return json({ error: err?.message || 'Unhandled error' }, 500);
+    return json({ ...internalError(err, 'finance-portal-settings') }, 500);
   }
 });

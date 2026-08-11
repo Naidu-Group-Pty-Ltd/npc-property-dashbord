@@ -37,6 +37,7 @@ import { normalizeImportUrl } from '@/lib/reportTemplate/importUrl';
 import { codeFlavorForFile } from '@/lib/reportTemplate/ingestion/detect';
 import { summarizeCodeIntake, formatBytes, type CodeIntakeSummary } from '@/lib/reportTemplate/ingestion/codeIntake';
 import { isFigmaMakeFile } from '@/lib/reportTemplate/ingestion/makeImport';
+import type { ScannedRouting } from '@/lib/reportTemplate/pdfImport/scannedDocumentPolicy.pure';
 import {
   runReferenceImport,
   classifyReferenceFile,
@@ -95,6 +96,13 @@ export function ReferenceImportDialog({
   const [mode, setMode] = useState<FidelityMode>('hybrid');
   const [imageMode, setImageMode] = useState<ImageMode>('reconciled'); // background-first hybrid is the safest default
   const [pdfClaude, setPdfClaude] = useState(false); // §7a: route the PDF straight to Claude
+  // Stage 6 — what the file's own text layer says, measured in the browser
+  // before anything is uploaded. A scanned PDF has no text for the
+  // deterministic importer to read, and OCR is off at the sidecar's capability
+  // ceiling (0 OCR pages across 1,164 in production), so the only engine that
+  // can read it is the one behind the checkbox above.
+  const [textLayer, setTextLayer] = useState<ScannedRouting | null>(null);
+  const [textLayerBusy, setTextLayerBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [stage, setStage] = useState<string | null>(null);
@@ -116,7 +124,7 @@ export function ReferenceImportDialog({
   const onCodeFileRef = useRef<((f: File | null) => Promise<void>) | null>(null);
 
   const reset = () => {
-    setFile(null); setKind('unsupported'); setBusy(false);
+    setFile(null); setKind('unsupported'); setBusy(false); setTextLayer(null); setTextLayerBusy(false);
     setProgress(null); setStage(null); setError(null); setDone(null); setDragging(false);
     setUrl(''); setUrlBusy(false); setCodeText(''); setCodeSourceName(null); setCodeSourceFlavor(null); setCodeBusy(false); setCodeIntake(null); setPdfClaude(false); setBindingCandidates(null);
   };
@@ -129,6 +137,32 @@ export function ReferenceImportDialog({
     if (k === 'pdf' && f.size > PDF_MAX) { toast.error('PDF too large (max 50 MB).'); return; }
     if (k === 'image' && f.size > IMG_MAX) { toast.error('Image too large (max 6 MB).'); return; }
     setFile(f); setKind(k as ReferenceKind); setError(null); setDone(null);
+    setTextLayer(null);
+    if (k !== 'pdf') return;
+    // Cheap: PDF.js counts characters per page in the browser. No upload, no
+    // sidecar, no cost — and it is the difference between a user getting a
+    // template of pictures and being told why before they wait for it.
+    setTextLayerBusy(true);
+    void (async () => {
+      try {
+        const [{ probeTextLayer }, { assessTextLayer, describeScannedRouting }] = await Promise.all([
+          import('@/lib/reportTemplate/pdfImport/groundPdfDocument'),
+          import('@/lib/reportTemplate/pdfImport/scannedDocumentPolicy.pure'),
+        ]);
+        const probe = await probeTextLayer(new Uint8Array(await f.arrayBuffer()));
+        const routing = describeScannedRouting(assessTextLayer(probe.pages, probe.totalPages));
+        setTextLayer(routing.notify ? routing : null);
+        // Pre-select rather than force: the recommendation is visible next to the
+        // checkbox, and a designer who wants the picture can still untick it.
+        if (routing.preferClaude) setPdfClaude(true);
+      } catch {
+        // A probe that fails says nothing, which is the behaviour that shipped
+        // before it existed.
+        setTextLayer(null);
+      } finally {
+        setTextLayerBusy(false);
+      }
+    })();
   }, []);
 
   // Paste an image straight from the clipboard while the dialog is open.
@@ -555,6 +589,12 @@ export function ReferenceImportDialog({
                         <Sparkles className="h-3.5 w-3.5 text-primary" /> Reconstruct with Claude (reads the PDF directly)
                       </Label>
                       <p className="text-xs text-muted-foreground mt-0.5">Best for scanned / image-only PDFs. Skips the fidelity modes below.</p>
+                      {textLayerBusy && (
+                        <p className="text-xs text-muted-foreground mt-1">Checking the document's text layer…</p>
+                      )}
+                      {textLayer && (
+                        <p className="text-xs text-warning mt-1">{textLayer.message}</p>
+                      )}
                     </div>
                   </div>
                 </Card>

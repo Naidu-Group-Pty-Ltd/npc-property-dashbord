@@ -19,6 +19,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
 
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   UNDERTAKING_TABLE,
   expireLapsedUndertakings,
@@ -108,7 +109,16 @@ function projectForPartner(row: Record<string, unknown>) {
   return out;
 }
 
-function sanitize(input: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Copy only the columns in `WRITABLE_FIELDS`, dropping everything else the
+ * caller sent.
+ *
+ * Named for what it does rather than `sanitize`, which claimed something had
+ * been cleaned without saying against what — and left the allowlist invisible at
+ * the call site, where it is the only thing standing between a request body and
+ * every column of the table.
+ */
+function pickWritable(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of WRITABLE_FIELDS) {
     if (!(key in input)) continue;
@@ -367,7 +377,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'create') {
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       const direction = String(payload.direction ?? '');
       if (!DIRECTIONS.has(direction)) return json({ error: 'direction_invalid' }, corsHeaders, 400);
       if (!payload.client_first_name) return json({ error: 'client_first_name_required' }, corsHeaders, 400);
@@ -439,7 +449,7 @@ Deno.serve(async (req) => {
         return json({ error: 'referral_closed', message: 'Closed referrals are read-only.' }, corsHeaders, 409);
       }
 
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       delete payload.direction; // immutable
 
       if (payload.consent_obtained === true && !existing.consent_obtained) {
@@ -658,7 +668,10 @@ Deno.serve(async (req) => {
     if (action === 'list_finance_users') {
       const { data, error } = await supabase
         .from('finance_portal_users')
-        .select('id, email, is_active, finance_contact_id, finance_agent_contacts:finance_contact_id (contact_name, company_name)')
+        // `finance_agent_contacts` carries `name` and `company` — not
+        // `contact_name`/`company_name`. A non-existent column fails the whole
+        // read, so the loan-writer picker came back empty.
+        .select('id, email, is_active, finance_contact_id, finance_agent_contacts:finance_contact_id (name, company)')
         .eq('is_active', true)
         .order('email', { ascending: true });
       if (error) throw error;
@@ -851,6 +864,6 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (error) {
     console.error('[manage-partner-referrals] error:', error);
-    return json({ error: 'internal_error', message: (error as Error).message }, corsHeaders, 500);
+    return json({ ...internalError(error, 'manage-partner-referrals'), error: 'internal_error' }, corsHeaders, 500);
   }
 });

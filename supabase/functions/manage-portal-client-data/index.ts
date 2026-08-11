@@ -1,6 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { createSyncEvent } from "../_shared/client-sync.ts"
+import { pickAllowed } from "../_shared/wp09Guards.ts"
+import { portalWritableColumnsFor } from "../_shared/clientDataWritableColumns.ts"
 
 /**
  * Portal-specific data management Edge Function
@@ -849,7 +851,22 @@ Deno.serve(async (req) => {
         );
       }
 
-      let sanitizedPayload = { ...payload };
+      // WP-25 (item 15): narrow to the columns this table declares writable FROM
+      // THE PORTAL, before either branch below touches it.
+      //
+      // `sanitizeClientData` (a denylist of 32 names) still runs underneath on
+      // the `clients` branch. It is redundant now — everything it removes is
+      // already absent from the allowlist — and it stays because a redundant
+      // deny is free and this is the client-facing surface.
+      const portalWritable = portalWritableColumnsFor(table);
+      if (!portalWritable) {
+        console.error(`[manage-portal-client-data] No portal column set declared for table ${table}`);
+        return new Response(
+          JSON.stringify({ error: `Updates to ${table} are not configured`, success: false }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      let sanitizedPayload: Record<string, any> = pickAllowed(payload ?? {}, portalWritable);
 
       if (table === 'clients') {
         sanitizedPayload = sanitizeClientData(sanitizedPayload);

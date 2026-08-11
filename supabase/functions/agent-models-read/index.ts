@@ -10,6 +10,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 function admin() {
   return createClient(
@@ -81,7 +82,7 @@ Deno.serve(async (req) => {
 
     return json({ success: false, error: `Unknown action: ${action}` }, 400, corsHeaders);
   } catch (e: any) {
-    return json({ success: false, error: e?.message ?? 'Unknown error' }, 500, corsHeaders);
+    return json({ ...internalError(e, 'agent-models-read'), success: false }, 500, corsHeaders);
   }
 });
 

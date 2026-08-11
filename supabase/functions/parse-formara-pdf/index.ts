@@ -9,6 +9,7 @@ import {
 import { parseLlmJson } from '../_shared/llmJson.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = createCorsHeaders();
 
 Deno.serve(async (req) => {
@@ -160,7 +161,7 @@ JSON Schema:
   } catch (error) {
     console.error('[parse-formara-pdf] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'parse-formara-pdf'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

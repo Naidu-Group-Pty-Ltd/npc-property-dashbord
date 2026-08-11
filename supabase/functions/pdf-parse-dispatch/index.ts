@@ -33,6 +33,7 @@ import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 import { resolvePdfDescriptionTier } from '../_shared/pdfDescriptionTier.pure.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -45,7 +46,22 @@ const ENGINE = 'docling';
 // programs (exact source glyphs) and ships per-line measured advance widths.
 // Cached artifacts predating that carry neither, so they must not be reused —
 // a cache hit would quietly bring the font substitutes back.
-const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v1';
+//
+// +align-v2: `text_align` changed MEANING rather than shape — a two-line block
+// is no longer reported as justified. An older artifact answers the same key
+// with the old semantics, which is exactly the case a fingerprint exists to
+// catch. Mirrors the sidecar's ENGINE_VERSION; the two must move together.
+//
+// +source-measure-v2: per-line x0/x1/baseline, so two fields sharing a baseline
+// can be told from a wrapped paragraph.
+//
+// +cmap-repair-v1: the embedded font BYTES changed. A subset's cmap need not
+// address every glyph it carries, and a cached program still cannot — serving
+// one would put the fallback typeface back mid-word.
+//
+// +font-metrics-v1: per-font hhea ascent/descent, without which the importer
+// cannot place a block by its baseline and every line lands ~0.36em low.
+const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v2+align-v2+cmap-repair-v1+font-metrics-v1';
 const ARTIFACT_CONTRACT_VERSION = 'raster-manifest-v1';
 const DOCLING_PAGE_REBASE_VERSION = 'chunk-page-rebase-v1';
 const CHUNK_MERGE_VALIDATION_VERSION = 'chunk-merge-validation-v1';
@@ -1427,6 +1443,6 @@ Deno.serve(async (req) => {
     return json({ error: `unknown operation: ${operation}` }, 400);
   } catch (e) {
     console.error('[pdf-parse-dispatch] unhandled', e);
-    return json({ error: String((e as Error)?.message ?? e) }, 500);
+    return json({ ...internalError(e, 'pdf-parse-dispatch') }, 500);
   }
 });

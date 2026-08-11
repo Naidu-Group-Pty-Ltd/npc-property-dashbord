@@ -38,6 +38,28 @@ export const INTELLIGENCE_NODES: CatalogNode[] = [
         fields: promptFields([opt('gpt-4o', 'GPT-4o', 'Vision, 128k context'), opt('gpt-4o-mini', 'GPT-4o mini', 'Cheapest, good for classification'), opt('o3', 'o3', 'Reasoning, slower')]),
         outputs: COMPLETION_OUTPUTS,
         keywords: ['gpt', 'llm', 'completion', 'write'],
+        request: {
+          method: 'POST',
+          url: 'https://api.openai.com/v1/chat/completions',
+          auth: { type: 'bearer', secret: 'OPENAI_API_KEY' },
+          body: {
+            model: '{{model}}',
+            messages: [
+              { $when: '{{system}}', role: 'system', content: '{{system}}' },
+              { role: 'user', content: '{{prompt}}' },
+            ],
+            max_tokens: '{{maxTokens}}',
+            temperature: '{{temperature}}',
+          },
+          outputs: {
+            text: 'choices.0.message.content',
+            finishReason: 'choices.0.finish_reason',
+            promptTokens: 'usage.prompt_tokens',
+            completionTokens: 'usage.completion_tokens',
+          },
+          errorPath: 'error',
+          requires: ['OPENAI_API_KEY'],
+        },
       },
       {
         op: 'structured',
@@ -108,6 +130,30 @@ export const INTELLIGENCE_NODES: CatalogNode[] = [
         fields: promptFields([opt('claude-opus-4', 'Opus', 'Deepest reasoning'), opt('claude-sonnet-4', 'Sonnet', 'Balanced'), opt('claude-haiku-4', 'Haiku', 'Fastest, cheapest')]),
         outputs: COMPLETION_OUTPUTS,
         keywords: ['claude', 'llm', 'reasoning', 'write'],
+        request: {
+          method: 'POST',
+          url: 'https://api.anthropic.com/v1/messages',
+          // Anthropic authenticates with its own header rather than a bearer.
+          auth: { type: 'header', name: 'x-api-key', secret: 'ANTHROPIC_API_KEY' },
+          headers: { 'anthropic-version': '2023-06-01' },
+          body: {
+            model: '{{model}}',
+            // Top-level rather than a message, which is the API's own shape —
+            // so a blank one is simply an absent key and needs no guard.
+            system: '{{system}}',
+            messages: [{ role: 'user', content: '{{prompt}}' }],
+            max_tokens: '{{maxTokens}}',
+            temperature: '{{temperature}}',
+          },
+          outputs: {
+            text: 'content.0.text',
+            finishReason: 'stop_reason',
+            promptTokens: 'usage.input_tokens',
+            completionTokens: 'usage.output_tokens',
+          },
+          errorPath: 'error',
+          requires: ['ANTHROPIC_API_KEY'],
+        },
       },
       {
         op: 'analyse_document',

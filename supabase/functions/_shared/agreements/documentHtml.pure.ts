@@ -151,21 +151,43 @@ function renderCoverPage(
   const mark = brand.lockup?.markDataUri
     ? `<img class="agc-cover-mark" src="${brand.lockup.markDataUri}" alt="" />`
     : `<div class="agc-cover-mark-fallback">${companyName}</div>`;
-  const badges = block.badges
-    .map((badge) => `<span class="agc-cover-badge">${escapeHtml(badge)}</span>`)
+  // Who is bound, and on what terms — the block a front sheet exists to carry.
+  // It replaced a template descriptor and a row of EDITABLE / BRAND-READY
+  // chips: those describe the product to somebody choosing a template, and on
+  // an executed agreement they are marketing.
+  const particulars = block.particulars
+    .map((entry) => {
+      const value = substituteTokens(entry.value, key, values);
+      const unfilled = /^&lt;&lt;.*&gt;&gt;$/.test(value.trim()) || value.trim() === '';
+      return `<div class="agc-cover-particular">
+          <dt>${escapeHtml(entry.label)}</dt>
+          <dd${unfilled ? ' class="agc-unfilled"' : ''}>${value || '&mdash;'}</dd>
+        </div>`;
+    })
     .join('');
 
+  // Three bands, matching the Word cover exactly: a full-bleed brand canvas,
+  // the paper carrying the mark and the particulars, and a quiet foot.
+  //
+  // The bands exist because `page-cover` is a ZERO-MARGIN page — the design
+  // system reserves it for a full-bleed treatment ("Full-bleed obsidian. No
+  // chrome."). This cover was written as ordinary flowed content and inherited
+  // that page, so every line sat hard against the paper's edge with the title
+  // set at report-cover scale, four lines deep and running out of the page.
+  // Each band now owns its own inset.
   return `
     <section class="agc-cover page-cover">
-      <div class="agc-cover-top">
-        ${mark}
+      <div class="agc-cover-canvas">
         <div class="agc-cover-company">${companyName}</div>
-      </div>
-      <div class="agc-cover-middle">
         <h1 class="agc-cover-title">${block.titleLines.map((line) => escapeHtml(line)).join('<br/>')}</h1>
+        <div class="agc-cover-hair"></div>
         <div class="agc-cover-issued">${escapeHtml(block.issuedByLine)}</div>
-        <p class="agc-cover-descriptor">${escapeHtml(block.descriptor)}</p>
-        <div class="agc-cover-badges">${badges}</div>
+      </div>
+      <div class="agc-cover-paper">
+        ${mark}
+        <div class="agc-cover-particulars-label">Particulars</div>
+        <div class="agc-cover-particulars-rule"></div>
+        <dl class="agc-cover-particulars">${particulars}</dl>
       </div>
       <div class="agc-cover-foot">
         <div class="agc-cover-version">${substituteTokens(block.versionLine, key, values)}</div>
@@ -509,16 +531,25 @@ export function buildAgreementDocument(input: AgreementDocumentInput): Agreement
 
 /**
  * `agreement-centre/<agreement id>/v1-0/issued.pdf` in the private
- * `partner-agreements` bucket. One object per version per artefact kind;
- * written once, never replaced.
+ * `partner-agreements` bucket. One object per version per artefact kind per
+ * document revision; written once, never replaced.
+ *
+ * The revision is a path suffix (`issued-r2.pdf`) rather than a column, and
+ * **revision 1 carries no suffix** so every artefact stored before revisions
+ * existed still resolves at the path already recorded against its row. A
+ * refresh therefore writes a new object beside the old one and repoints the
+ * row, which is what keeps `upsert: false` honest — see
+ * `documentRevision.pure.ts` for why the bytes are a cache and not the record.
  */
 export function agreementCentreStoragePath(
   agreementId: string,
   versionLabel: string,
   kind: 'issued' | 'executed',
+  revision = 1,
 ): string {
   const safeLabel = versionLabel.replace(/[^0-9A-Za-z]+/g, '-');
-  return `agreement-centre/${agreementId}/v${safeLabel}/${kind}.pdf`;
+  const suffix = revision > 1 ? `-r${revision}` : '';
+  return `agreement-centre/${agreementId}/v${safeLabel}/${kind}${suffix}.pdf`;
 }
 
 export function agreementDownloadFileName(
@@ -558,62 +589,115 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
   .page-contents .toc-note { display: none; }
   .page-contents h1 { font-size: ${pt(type.subhead)}; line-height: 1.2; max-width: 150mm; }
 
-  /* Cover — the issuing organisation's page. Claims the named cover page via
-     the generated .page-cover rule; no page geometry of its own. */
+  /* Cover — three full-bleed bands on the zero-margin cover page.
+     Matches the Word cover band for band, so the two deliverables are one
+     document in two formats rather than two designs. */
   .agc-cover {
     page-break-after: always;
     color: ${palette.bodyInk};
+    /* A4 exactly: the bands sum to the page so none can spill to a second. */
+    height: 297mm;
   }
-  .agc-cover-top { padding-top: 10mm; }
-  .agc-cover-mark { max-height: 22mm; max-width: 70mm; }
-  .agc-cover-mark-fallback {
-    font-family: ${PRINT_STACK.display};
-    font-size: ${pt(type.h2)};
-    color: ${palette.accentOnPaper};
+  .agc-cover-canvas {
+    box-sizing: border-box;
+    height: 100mm;
+    padding: 24mm 22mm 0;
+    background: ${palette.field};
   }
   .agc-cover-company {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
     text-transform: uppercase;
-    color: ${palette.mutedInk};
-    margin-top: ${pt(d.paragraphGapPt)};
+    /* Not accentOnField: its contrast floor is the DISPLAY floor, so it is only
+       promised to be legible at display size and this is 7.5pt. The hairline
+       below keeps the brand note, which is what that floor is actually for.
+       This line is a token, so it also depends on the .agc-cover-canvas
+       override further down — without it the span's paper ink wins over
+       whatever the band sets here. */
+    color: ${palette.onFieldInk};
+    margin: 0 0 9mm;
   }
-  .agc-cover-middle { margin-top: 42mm; }
   .agc-cover-title {
     font-family: ${PRINT_STACK.display};
-    font-size: ${pt(type.coverTitle)};
-    line-height: 1.05;
-    color: ${palette.bodyInk};
-    margin: 0 0 ${pt(d.blockGapPt)};
-    max-width: 165mm;
+    /* Explicitly sized rather than the coverTitle scale: the report cover's
+       display scale set this four lines deep and past the page edge. */
+    font-size: 27pt;
+    line-height: 1.14;
+    font-weight: 400;
+    color: ${palette.onFieldInk};
+    margin: 0;
+    /* The band's full measure. The content module declares its own line breaks
+       in titleLines; a narrower measure re-wrapped the first of them and put
+       the title three ragged lines deep. */
+    max-width: 166mm;
+  }
+  .agc-cover-hair {
+    width: 34mm;
+    border-top: 0.75pt solid ${palette.accentOnField};
+    margin: 7mm 0 4mm;
   }
   .agc-cover-issued {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
     text-transform: uppercase;
-    color: ${palette.accentOnPaper};
-    margin-bottom: ${pt(d.blockGapPt)};
+    color: ${palette.onFieldInk};
+    opacity: 0.72;
   }
-  .agc-cover-descriptor {
-    font-size: ${pt(type.body + 1)};
-    color: ${palette.mutedInk};
-    max-width: 140mm;
+  .agc-cover-paper {
+    box-sizing: border-box;
+    height: 151mm;
+    padding: 16mm 22mm 0;
+    background: ${palette.paper};
   }
-  .agc-cover-badges { margin-top: ${pt(d.blockGapPt)}; }
-  .agc-cover-badge {
-    display: inline-block;
+  .agc-cover-mark { max-height: 18mm; max-width: 60mm; margin-bottom: 12mm; }
+  .agc-cover-mark-fallback {
+    font-family: ${PRINT_STACK.display};
+    font-size: ${pt(type.h2)};
+    color: ${palette.bodyInk};
+    margin-bottom: 12mm;
+  }
+  .agc-cover-particulars-label {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
-    color: ${palette.accentOnPaper};
-    border: 0.75pt solid ${palette.rule};
-    border-radius: 2pt;
-    padding: 2pt 6pt;
-    margin-right: 4pt;
+    text-transform: uppercase;
+    color: ${palette.mutedInk};
   }
-  .agc-cover-foot { margin-top: 34mm; }
+  .agc-cover-particulars-rule {
+    width: 22mm;
+    border-top: 1pt solid ${palette.accentOnPaper};
+    margin: 2mm 0 5mm;
+  }
+  .agc-cover-particulars { max-width: 150mm; margin: 0; }
+  .agc-cover-particular {
+    display: flex;
+    gap: 8mm;
+    padding: 2.6mm 0;
+    border-bottom: 0.5pt solid ${palette.rule};
+  }
+  .agc-cover-particular dt {
+    flex: 0 0 30mm;
+    font-family: ${PRINT_STACK.mono};
+    font-size: ${pt(type.micro)};
+    letter-spacing: ${PRINT_TRACKING.eyebrow};
+    text-transform: uppercase;
+    color: ${palette.mutedInk};
+    align-self: center;
+  }
+  .agc-cover-particular dd {
+    margin: 0;
+    font-family: ${PRINT_STACK.display};
+    font-size: ${pt(type.body + 1)};
+    color: ${palette.bodyInk};
+  }
+  .agc-cover-foot {
+    box-sizing: border-box;
+    height: 46mm;
+    padding: 10mm 22mm 0;
+    background: ${palette.paperAlt};
+  }
   .agc-cover-version {
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.caption)};
@@ -633,9 +717,20 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
     padding-top: ${pt(d.paragraphGapPt)};
   }
 
-  /* Field states. The unfilled bracket keeps the template's own text. */
+  /* Field states. The unfilled bracket keeps the template's own text.
+
+     Both inks are PAPER roles — bodyInk and mutedInk are only allowed on the
+     paper grounds — and every substituted token wears one of them wherever it
+     lands. On the cover's dark canvas that painted graphite on near-black: the
+     tenant's own name at the head of its own agreement, at about 1.2:1. The
+     ground has to win there, so a token on the canvas inherits the band's ink
+     instead. The distinction between bound and unfilled is worth nothing if
+     neither can be read. */
   .agc-bound { color: ${palette.bodyInk}; }
   .agc-unfilled { color: ${palette.mutedInk}; }
+  .agc-cover-canvas .agc-bound,
+  .agc-cover-canvas .agc-unfilled { color: inherit; }
+  .agc-cover-canvas .agc-unfilled { opacity: 0.72; }
   .agc-rule { color: ${palette.mutedInk}; letter-spacing: 0.06em; }
 
   /* Detail / schedule grids — four columns, label/value twice. */

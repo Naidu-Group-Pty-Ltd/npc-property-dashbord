@@ -169,7 +169,19 @@ export const OPERATIONS_NODES: CatalogNode[] = [
 
   // ── Team tools ───────────────────────────────────────────────────────────
   ...provider({ integrationId: 'slack', category: 'productivity', docs: 'https://api.slack.com/methods' }, [
-    { op: 'post_message', name: 'Post a message', summary: 'Posts to a Slack channel.', fields: [f.text('channel', 'Channel', { required: true, placeholder: '#deals' }), f.textarea('text', 'Message', { required: true }), f.text('threadTs', 'Reply in thread', { help: 'Leave blank to start a new message.' })], outputs: outs('ts:string:Message ID', 'channel:string', 'permalink:string:Link') },
+    { op: 'post_message', name: 'Post a message', summary: 'Posts to a Slack channel.', fields: [f.text('channel', 'Channel', { placeholder: '#deals', help: 'Leave blank to use the default channel from the Integrations page.' }), f.textarea('text', 'Message', { required: true }), f.text('threadTs', 'Reply in thread', { help: 'Leave blank to start a new message.' })], outputs: outs('ts:string:Message ID', 'channel:string', 'permalink:string:Link'),
+      request: {
+        method: 'POST',
+        url: 'https://slack.com/api/chat.postMessage',
+        auth: { type: 'bearer', secret: 'SLACK_BOT_TOKEN' },
+        body: { channel: { $first: ['{{channel}}', '{{secret.SLACK_DEFAULT_CHANNEL}}'] }, text: '{{text}}', thread_ts: '{{threadTs}}' },
+        outputs: { ts: 'ts', channel: 'channel' },
+        // Slack answers 200 for a rejected post and puts the reason in the body.
+        // Without these two paths a message that never appeared records as sent.
+        okPath: 'ok',
+        errorPath: 'error',
+        requires: ['SLACK_BOT_TOKEN'],
+      } },
     { op: 'upload_file', name: 'Upload a file', summary: 'Shares a file in a Slack channel.', fields: [f.text('channel', 'Channel', { required: true }), f.expr('fileUrl', 'File', { required: true }), f.expr('title', 'Title')], outputs: outs('fileId:string:File ID', 'permalink:string:Link') },
     { op: 'message_posted', kind: 'trigger', name: 'Message posted', summary: 'Runs when someone posts in a channel.', fields: [f.text('channel', 'Channel', { required: true }), f.text('contains', 'Containing')], outputs: outs('text:string', 'user:string', 'channel:string', 'ts:string:Message ID') },
   ]),
@@ -268,11 +280,27 @@ export const OPERATIONS_NODES: CatalogNode[] = [
   ]),
 
   ...provider({ integrationId: 'zapier', category: 'automation', docs: 'https://zapier.com/developer' }, [
-    { op: 'send_webhook', name: 'Trigger a Zap', summary: 'Posts data to a Zapier catch hook.', fields: [f.json('payload', 'Data', { required: true })], outputs: outs('status:string') },
+    { op: 'send_webhook', name: 'Trigger a Zap', summary: 'Posts data to a Zapier catch hook.', fields: [f.json('payload', 'Data', { required: true }), f.text('hookUrl', 'Catch hook', { help: 'Leave blank to use the hook saved on the Integrations page.' })], outputs: outs('status:string'),
+      request: {
+        method: 'POST',
+        // The hook URL *is* the credential — it is unguessable and grants the
+        // right to start the Zap — so it lives with the other secrets.
+        url: ['{{hookUrl}}', '{{secret.ZAPIER_WEBHOOK_URL}}'],
+        // The body is whatever JSON the person entered — a catch hook has no
+        // schema of its own, so there is nothing to map it onto.
+        body: '{{payload}}',
+        outputs: { status: '$status' },
+      } },
   ]),
 
   ...provider({ integrationId: 'make', category: 'automation', docs: 'https://www.make.com/en/api-documentation' }, [
-    { op: 'trigger_scenario', name: 'Trigger a scenario', summary: 'Posts data to a Make webhook to start a scenario.', fields: [f.json('payload', 'Data', { required: true })], outputs: outs('status:string') },
+    { op: 'trigger_scenario', name: 'Trigger a scenario', summary: 'Posts data to a Make webhook to start a scenario.', fields: [f.json('payload', 'Data', { required: true }), f.text('hookUrl', 'Webhook', { help: 'Leave blank to use the webhook saved on the Integrations page.' })], outputs: outs('status:string'),
+      request: {
+        method: 'POST',
+        url: ['{{hookUrl}}', '{{secret.MAKE_WEBHOOK_URL}}'],
+        body: '{{payload}}',
+        outputs: { status: '$status' },
+      } },
   ]),
 
   ...provider({ integrationId: 'n8n', category: 'automation', docs: 'https://docs.n8n.io/api/' }, [

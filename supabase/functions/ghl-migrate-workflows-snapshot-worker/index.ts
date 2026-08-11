@@ -24,6 +24,7 @@ import {
   resolveGhlAccessTokenForLocation,
 } from '../_shared/ghl-account.ts';
 import { startJob, finishJob, recordItem, recordIdMapping, updateJobProgress } from '../_shared/migration-jobs.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -159,6 +160,6 @@ Deno.serve(async (req) => {
   } catch (err: any) {
     console.error('[workflows-snapshot] error:', err);
     if (jobId && supabase) await finishJob(supabase, jobId, 'failed', err.message?.substring(0, 500));
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+    return new Response(JSON.stringify(internalError(err, 'ghl-migrate-workflows-snapshot-worker')), { status: 500 });
   }
 });

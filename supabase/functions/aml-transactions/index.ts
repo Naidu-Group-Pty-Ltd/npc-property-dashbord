@@ -22,6 +22,12 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import {
+  COUNTERPARTY_ATTEMPT_WRITABLE,
+  TRANSACTION_PARTY_WRITABLE,
+} from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -390,9 +396,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!p.transaction_id || !p.case_id || !p.display_name || !p.party_type) {
         return jr({ error: "transaction_id, case_id, display_name, party_type required" }, 400);
       }
+      // WP-20: only declared columns; `p` is the caller's object.
+      const partyRow = pickAllowed(p, TRANSACTION_PARTY_WRITABLE);
       const resp = p.id
-        ? await aml.from("transaction_parties").update(p).eq("id", p.id).select("*").maybeSingle()
-        : await aml.from("transaction_parties").insert(p).select("*").maybeSingle();
+        ? await aml.from("transaction_parties").update(partyRow).eq("id", p.id).select("*").maybeSingle()
+        : await aml.from("transaction_parties").insert(partyRow).select("*").maybeSingle();
       if (resp.error) return jr({ error: resp.error.message }, 400);
       await appendTxEvent(aml, p.transaction_id, p.case_id, "party_updated",
         `Party ${p.display_name} (${p.party_type}) ${p.id ? "updated" : "added"}`,
@@ -488,7 +496,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({ error: "request_id, counterparty_case_id, channel required" }, 400);
       }
       const { data, error } = await aml.from("counterparty_attempts")
-        .insert({ ...p, actor_id: userId }).select("*").maybeSingle();
+        .insert({ ...pickAllowed(p, COUNTERPARTY_ATTEMPT_WRITABLE), actor_id: userId })
+        .select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       return jr({ attempt: data });
     }
@@ -706,7 +715,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     return jr({ error: `Unknown op: ${op}` }, 400);
   } catch (e: any) {
     if (e instanceof Response) return e;
-    return jr({ error: e?.message ?? "Internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-transactions') }, 500);
   }
 });
 

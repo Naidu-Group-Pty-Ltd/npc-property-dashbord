@@ -20,6 +20,7 @@ import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSaf
 // produce a single PDF.
 import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 import { wrapInlineInsightParagraphs } from "./insightSections.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // The house cover artwork used to be inlined here as ~490 KB of base64
 // (`_shared/reportDesign/defaultAssets.generated.ts`). Every file under
 // `supabase/functions/` counts toward *every* function's deploy upload, so those
@@ -5675,7 +5676,7 @@ if (import.meta.main) Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error("[render-investment-report-pdf]", err);
-    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+    return new Response(JSON.stringify(internalError(err, 'render-investment-report-pdf')), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

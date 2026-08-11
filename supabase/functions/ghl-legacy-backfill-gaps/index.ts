@@ -28,6 +28,7 @@ import {
 } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const GHL_BASE = 'https://services.leadconnectorhq.com';
 
 function parseDate(v: any): string | null {
@@ -314,7 +315,7 @@ Deno.serve(async (req) => {
     }), { headers: { ...cors, 'Content-Type': 'application/json' } });
   } catch (e: any) {
     console.error('[backfill] error', e);
-    return new Response(JSON.stringify({ success: false, error: e.message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'ghl-legacy-backfill-gaps'), success: false }), {
       status: 500, headers: { ...cors, 'Content-Type': 'application/json' },
     });
   }

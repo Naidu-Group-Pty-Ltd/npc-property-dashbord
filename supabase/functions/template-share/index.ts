@@ -10,6 +10,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { enforceIpQuota, enforceKeyQuota, getClientIp, redactError } from '../_shared/publicAbuseControls.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -27,7 +28,7 @@ function j(payload: unknown, status = 200) {
   });
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'GET') return j({ error: 'method not allowed' }, 405);
 
@@ -99,4 +100,12 @@ Deno.serve(async (req) => {
     console.error('[template-share]', e instanceof Error ? e.message : String(e));
     return j({ error: redactError(e) }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

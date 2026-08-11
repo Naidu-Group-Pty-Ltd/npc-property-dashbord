@@ -24,12 +24,19 @@
  * the first download renders from the FROZEN version row, so the partner gets
  * the document as issued, not as the tenant's brand looks today.
  */
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+// `npm:` rather than `https://esm.sh/…` deliberately: the client built here is
+// handed to `resolveFinancePartner` in _shared/finance-portal-session.ts, which
+// imports `npm:@supabase/supabase-js@2.55.0`. The two specifiers resolve the
+// same package at the same version but produce distinct type identities, so the
+// hand-off failed to type-check (TS2345, `supabaseUrl` is protected). Same
+// library either way — Deno Deploy resolves `npm:` from the registry natively.
+import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import {
+  AGREEMENT_CENTRE_DOCUMENT_REVISION,
   PARTNER_VISIBLE_STATUSES,
   isPartnerVisible,
   agreementTemplate,
@@ -41,7 +48,7 @@ import {
   AGREEMENTS_BUCKET,
   SIGNED_URL_TTL_SECONDS,
   executionContextFromSignatures,
-  renderAndStoreVersionPdf,
+  resolveVersionArtefact,
 } from '../_shared/agreements/render.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -51,9 +58,6 @@ const EVENTS_TABLE = 'partner_agreement_events';
 const VERSIONS_TABLE = 'partner_agreement_versions';
 const CHANGE_REQUESTS_TABLE = 'partner_agreement_change_requests';
 const SIGNATURES_TABLE = 'partner_agreement_signatures';
-
-const EXTRA_HEADERS =
-  'authorization, x-client-info, apikey, content-type, x-correlation-id, x-finance-session-token, x-session-token';
 
 /** Row fields a partner may see. Everything else stays inside the tenant. */
 const PARTNER_ROW_FIELDS = [
@@ -176,10 +180,11 @@ async function notifyAgreementsTeam(
 }
 
 Deno.serve(async (req) => {
-  const corsHeaders = {
-    ...createCorsHeaders(req.headers.get('origin')),
-    'Access-Control-Allow-Headers': EXTRA_HEADERS,
-  };
+  // The canonical lists in _shared/auth.ts are the only source of truth. This
+  // used to restate Allow-Headers after the spread, which (a) wins over the
+  // spread and (b) had already gone stale — it was missing `x-step-up-token`
+  // and `x-portal-request`, so those preflights failed.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -199,14 +204,32 @@ Deno.serve(async (req) => {
     const portalUser = (session as { portalUser: { id: string; email: string | null } }).portalUser;
 
     // The session helper's projection does not carry the org link; read it once.
-    const { data: userRow } = await supabase
+    //
+    // `finance_portal_users` has NO `name` column — the partner's display name
+    // lives on `finance_agent_contacts`. Selecting a column that does not exist
+    // makes PostgREST fail the whole row read, which previously surfaced as
+    // "Portal user is not linked to a partner record" for every partner and hid
+    // every issued agreement. Read the link here and the label from the contact.
+    const { data: userRow, error: userRowError } = await supabase
       .from('finance_portal_users')
-      .select('finance_contact_id, name')
+      .select('finance_contact_id, email')
       .eq('id', portalUser.id)
       .maybeSingle();
+    if (userRowError) {
+      console.error('[finance-portal-agreements] portal user read failed:', userRowError.message);
+      return json({ error: 'Could not resolve your partner organisation' }, 500);
+    }
     const financeContactId = userRow?.finance_contact_id as string | undefined;
     if (!financeContactId) return json({ error: 'Portal user is not linked to a partner record' }, 403);
-    const actorLabel = (userRow?.name as string | null) || portalUser.email || 'Finance partner';
+    const { data: contactRow } = await supabase
+      .from('finance_agent_contacts')
+      .select('name')
+      .eq('id', financeContactId)
+      .maybeSingle();
+    const actorLabel = (contactRow?.name as string | null)
+      || (userRow?.email as string | null)
+      || portalUser.email
+      || 'Finance partner';
 
     const operation = typeof body.operation === 'string' ? body.operation : null;
 
@@ -310,22 +333,23 @@ Deno.serve(async (req) => {
         return json({ error: 'The agreement has not been fully executed yet' }, 409);
       }
 
-      let path: string | null = kind === 'executed'
-        ? version.executed_pdf_storage_path
-        : version.pdf_storage_path;
-
-      // Deferred render: generate now from the frozen version row.
-      if (!path) {
-        const execution = kind === 'executed'
-          ? executionContextFromSignatures(
-            (await supabase.from(SIGNATURES_TABLE).select('*').eq('version_id', version.id)).data ?? [])
-          : null;
-        const stored = await renderAndStoreVersionPdf(supabase, supabaseUrl, agreement as never, version, kind, execution);
-        path = stored.path;
+      // Deferred render on first ask, and a re-render from the same frozen
+      // version row when this build's document revision has moved past the
+      // stored artefact's — but never once the version carries a signature.
+      // One decision, shared with the staff route: `resolveVersionArtefact`.
+      const signatureRows = (await supabase.from(SIGNATURES_TABLE)
+        .select('*').eq('version_id', version.id)).data ?? [];
+      const artefact = await resolveVersionArtefact(
+        supabase, supabaseUrl, agreement as never, version, kind, {
+          signatureCount: signatureRows.length,
+          execution: kind === 'executed' ? executionContextFromSignatures(signatureRows) : null,
+        },
+      );
+      if (artefact.rendered) {
         await supabase.from(VERSIONS_TABLE)
           .update(kind === 'executed'
-            ? { executed_pdf_storage_path: path, executed_pdf_bytes: stored.bytes }
-            : { pdf_storage_path: path })
+            ? { executed_pdf_storage_path: artefact.path, executed_pdf_bytes: artefact.bytes }
+            : { pdf_storage_path: artefact.path })
           .eq('id', version.id);
       }
 
@@ -337,16 +361,21 @@ Deno.serve(async (req) => {
       );
       const { data: signed, error: signError } = await supabase.storage
         .from(AGREEMENTS_BUCKET)
-        .createSignedUrl(path!, SIGNED_URL_TTL_SECONDS, { download: fileName });
+        .createSignedUrl(artefact.path, SIGNED_URL_TTL_SECONDS, { download: fileName });
       if (signError || !signed?.signedUrl) {
         throw new Error(`signing failed: ${signError?.message ?? 'no url returned'}`);
       }
 
       await logEvent(supabase, id, 'partner_downloaded', actorLabel,
         `${kind === 'executed' ? 'Executed copy' : 'Reference copy'} downloaded by ${actorLabel}`,
-        { kind, version_label: version.version_label });
+        { kind, version_label: version.version_label, artefact_state: artefact.state });
 
-      return json({ url: signed.signedUrl, file_name: fileName, expires_in: SIGNED_URL_TTL_SECONDS });
+      return json({
+        url: signed.signedUrl,
+        file_name: fileName,
+        expires_in: SIGNED_URL_TTL_SECONDS,
+        document_revision: AGREEMENT_CENTRE_DOCUMENT_REVISION,
+      });
     }
 
     // ─── ACCEPT ─────────────────────────────────────────────

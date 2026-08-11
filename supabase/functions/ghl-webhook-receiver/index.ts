@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { verifyWebhookSecret } from '../_shared/auth_v2.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -894,7 +895,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[ghl-webhook] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'ghl-webhook-receiver')), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

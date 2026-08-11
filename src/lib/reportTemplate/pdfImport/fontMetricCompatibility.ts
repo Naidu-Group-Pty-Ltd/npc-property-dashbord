@@ -31,11 +31,20 @@
  * testable without a browser and cannot silently fall back to guessing.
  */
 
-/** Measures the advance width of `text` in `family` at `sizePt`, in points. */
+/**
+ * Measures the advance width of `text` in `family` at `sizePt`, in points.
+ *
+ * `fontWeight` matters more than it looks. Bold and semibold faces run several
+ * percent wider than the regular of the same family, so measuring a semibold
+ * heading at the default 400 under-states its natural width — and any spacing
+ * derived from that difference comes out too large by exactly the amount the
+ * weight was worth. Optional so existing callers and test doubles are unchanged.
+ */
 export type TextWidthMeasurer = (
   text: string,
   family: string,
   sizePt: number,
+  fontWeight?: number | string,
 ) => number | null;
 
 /**
@@ -166,11 +175,15 @@ export function createCanvasMeasurer(): TextWidthMeasurer {
     ctx = null;
   }
 
-  return (text, family, sizePt) => {
+  return (text, family, sizePt, fontWeight) => {
     if (!ctx) return null;
     try {
       const sizePx = sizePt * (96 / 72);
-      ctx.font = `${sizePx}px ${family}`;
+      // `font` is a shorthand: omitting the weight resets it to `normal`, so a
+      // semibold heading was being measured as regular and came out narrower
+      // than it renders.
+      const weight = fontWeight != null && `${fontWeight}`.trim() ? `${fontWeight} ` : '';
+      ctx.font = `${weight}${sizePx}px ${family}`;
       const width = ctx.measureText(text).width;
       if (!Number.isFinite(width) || width <= 0) return null;
       return width * (72 / 96);

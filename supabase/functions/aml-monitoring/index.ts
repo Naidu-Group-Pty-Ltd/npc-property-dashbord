@@ -19,6 +19,15 @@ import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import {
+  ALERT_WRITABLE,
+  CUSTOMER_REVIEW_WRITABLE,
+  MONITORING_RULE_WRITABLE,
+  SOURCE_OF_FUNDS_WRITABLE,
+  SOURCE_OF_WEALTH_WRITABLE,
+} from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-token, x-session-token, x-command-centre-session-token",
@@ -109,7 +118,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       requireWrite();
       const rule = body.rule ?? {};
       if (!rule.name || !rule.trigger_kind) return jr({ error: "name and trigger_kind required" }, 400);
-      const row = { ...rule, created_by: rule.id ? rule.created_by : userId };
+      // WP-20: only declared columns. `rule` is the caller's object, so an
+      // unfiltered spread wrote whatever it named.
+      const row = { ...pickAllowed(rule, MONITORING_RULE_WRITABLE), created_by: rule.id ? rule.created_by : userId };
       const q = rule.id
         ? aml.from("monitoring_rules").update(row).eq("id", rule.id).select("*").single()
         : aml.from("monitoring_rules").insert(row).select("*").single();
@@ -166,9 +177,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       requireWrite();
       const a = body.alert ?? {};
       if (!a.title) return jr({ error: "title required" }, 400);
+      // WP-20: `a` is the caller's object and was written unfiltered, which
+      // reached `resolved_by`/`resolved_at` — the record of who closed the alert
+      // and when. Those belong to `resolve_alert`, which stamps them from the
+      // verified session, so they are absent from ALERT_WRITABLE.
+      const alertRow = pickAllowed(a, ALERT_WRITABLE);
       const q = a.id
-        ? aml.from("alerts").update(a).eq("id", a.id).select("*").single()
-        : aml.from("alerts").insert(a).select("*").single();
+        ? aml.from("alerts").update(alertRow).eq("id", a.id).select("*").single()
+        : aml.from("alerts").insert(alertRow).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       if (data?.case_id) await appendCaseEvent(admin, data.case_id, "system", `Alert ${a.id ? "updated" : "opened"}: ${data.title}`, { alert_id: data.id, severity: data.severity }, userId, userLabel);
@@ -275,10 +291,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const table = op === "upsert_sof" ? "source_of_funds" : "source_of_wealth";
       const item = body.item ?? {};
       if (!item.case_id) return jr({ error: "case_id required" }, 400);
-      if (item.verified && !item.id) { item.verified_by = userId; item.verified_at = new Date().toISOString(); }
+      // The two tables differ by a column each, so pick the matching set rather
+      // than a union — see the note in `_shared/amlWritableColumns.ts`.
+      const row: Record<string, unknown> = pickAllowed(
+        item,
+        op === "upsert_sof" ? SOURCE_OF_FUNDS_WRITABLE : SOURCE_OF_WEALTH_WRITABLE,
+      );
+      // Stamp the verifier from the session, on BOTH paths. This used to run
+      // only when there was no `item.id`, i.e. only on insert — so marking an
+      // existing item verified went through the update path with whatever
+      // `verified_by` the caller sent. The allowlist above already drops that
+      // field; stamping here is what puts the right name in it.
+      if (row.verified) {
+        row.verified_by = userId;
+        row.verified_at = new Date().toISOString();
+      }
       const q = item.id
-        ? aml.from(table).update(item).eq("id", item.id).select("*").single()
-        : aml.from(table).insert(item).select("*").single();
+        ? aml.from(table).update(row).eq("id", item.id).select("*").single()
+        : aml.from(table).insert(row).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ item: data });
@@ -303,9 +333,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_review") {
       requireWrite();
       const r = body.review ?? {};
+      // The closure record (`outcome*`) and the extension ledger belong to
+      // `complete_review` and `extend_review`; this op may not reach either.
+      const reviewRow = pickAllowed(r, CUSTOMER_REVIEW_WRITABLE);
       const q = r.id
-        ? aml.from("existing_customer_reviews").update(r).eq("id", r.id).select("*").single()
-        : aml.from("existing_customer_reviews").insert(r).select("*").single();
+        ? aml.from("existing_customer_reviews").update(reviewRow).eq("id", r.id).select("*").single()
+        : aml.from("existing_customer_reviews").insert(reviewRow).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ review: data });
@@ -753,7 +786,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   } catch (e) {
     if (e instanceof Response) return e;
     console.error("aml-monitoring error", e);
-    return jr({ error: (e as Error).message ?? "internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-monitoring') }, 500);
   }
 });
 

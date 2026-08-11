@@ -25,8 +25,14 @@ import type {
   ImportBBox,
 } from '@/lib/reportTemplate/ingestion/reconciliation';
 import { resolveSourceFontFamily, lookupEmbeddedFamily } from '../fontResolver';
-import { detrackText, deriveTrackingPt, type WidthMeasurer } from '../detrackText.pure';
+import {
+  detrackJoinedLines,
+  deriveTrackingPt,
+  deriveTrackingFromLines,
+  type WidthMeasurer,
+} from '../detrackText.pure';
 import { deriveWeight } from '../fontFaceBuilder';
+import { countDistinctBaselines, splitBaselineColumns } from '../splitBaselineColumns.pure';
 import type {
   DoclingBBox,
   DoclingDocument,
@@ -270,6 +276,31 @@ interface MapOptions {
   measureTextWidth?: WidthMeasurer | null;
 }
 
+/**
+ * Give a tracked box back the one letter-space that line-breaking charges it.
+ *
+ * CSS `letter-spacing` behaves two different ways at once, and the difference
+ * is a whole line. Measured against WeasyPrint with `CONSULTING SERVICES` at
+ * 11.25pt, tracked 3.72pt:
+ *
+ *   drawn ink extent   natural + spacing × (n − 1)  = 199.71pt
+ *   layout width       natural + spacing × n        = 203.43pt
+ *   observed wrap point                             between 203.0 and 203.5pt
+ *
+ * The box is copied from the source's own INK extent, so it is exactly as wide
+ * as the glyphs — and then the trailing space nobody can see pushes the line
+ * over it. The brand lockup's second line wrapped for want of 3.7pt of nothing.
+ *
+ * Widening the box by one space adds room for the space that is already there.
+ * No glyph moves: the text still starts at the source's x and its ink still
+ * ends where the source's ink ended. Only the phantom wrap goes away.
+ */
+function withTrackingSlack(bbox: ImportBBox, letterSpacingPt: number | null): ImportBBox {
+  const slack = Number(letterSpacingPt);
+  if (!Number.isFinite(slack) || slack <= 0) return bbox;
+  return { ...bbox, width: bbox.width + slack };
+}
+
 function textItemToBlock(
   item: DoclingTextItem,
   pageInfo: DoclingPageInfo,
@@ -277,11 +308,11 @@ function textItemToBlock(
   readingOrder: number,
   listGroupId: string | undefined,
   opts: MapOptions,
-): RawImportBlock | null {
+): RawImportBlock[] {
   const prov = pickProv(item.prov, pageInfo.page_no);
-  if (!prov) return null;
+  if (!prov) return [];
   const bbox = bboxToTopLeft(prov.bbox, pageInfo.size.height);
-  if (bbox.width <= 0 || bbox.height <= 0) return null;
+  if (bbox.width <= 0 || bbox.height <= 0) return [];
   const headingLevel = item.label === 'title'
     ? 1
     : item.label === 'section_header'
@@ -322,22 +353,22 @@ function textItemToBlock(
   // R1 — recover real words from tracked (letter-spaced) source text. The
   // extractor turns "NAIDU" set as N A I D U into per-letter tokens with the
   // real word gaps degraded or lost; stored as-is it reads, edits and searches
-  // as gibberish. Span char-counts from source_measure are the word-boundary
-  // authority (the PDF drew one span per word); the string's own multi-space
-  // gaps are the fallback. Untracked text passes through byte-identical.
+  // as gibberish. Untracked text passes through byte-identical.
+  //
+  // De-track PER SOURCE LINE. The extractor joins an item's lines with a single
+  // space, and inside tracked text a single space is a letter gap — so the join
+  // itself erased the PROPERTY|CONSULTING boundary in the brand lockup, and no
+  // amount of looking at the merged string could find it again. The line char
+  // counts locate the seam exactly, because a line break is always a word break.
+  const sourceLines = item.source_measure?.lines;
+  const detracked = detrackJoinedLines(sanitized.text ?? '', sourceLines);
   const singleLineMeasure = item.source_measure?.lineCount === 1
-    ? item.source_measure?.lines?.[0]
+    ? sourceLines?.[0]
     : undefined;
-  const detracked = detrackText(
-    sanitized.text,
-    singleLineMeasure?.spans
-      ?.map((s) => Number(s.chars ?? 0))
-      .filter((n) => n > 0),
-  );
   const displayText = blockType === 'formula' && latex ? latex : detracked.text;
   // Nothing recoverable after stripping GLYPH artifacts → no overlay at all
   // (hybrid keeps the raster reference; semantic drops the garbage cleanly).
-  if (!displayText || !displayText.trim()) return null;
+  if (!displayText || !displayText.trim()) return [];
   // Phase D: capture explicit cross-reference if exactly one ref present.
   const refList = (item.refs ?? []).map((r) => (typeof r === 'string' ? r : (r.$ref ?? r.cref))).filter(Boolean) as string[];
   const xref = refList.length === 1 ? refList[0] : undefined;
@@ -356,11 +387,52 @@ function textItemToBlock(
     : fontResolution && !fontResolution.substituted
       ? fontResolution.family
       : nearestDesignFont(sourceFont, item.label);
-  return {
+  // R1 — de-tracked text needs its tracking back as a STYLE, or the collapsed
+  // words render far narrower than the box the source measured. Derived from
+  // measured width minus natural width. Overrides the (always-absent) sidecar
+  // `letter_spacing` when de-tracking actually changed the text.
+  //
+  // Measured against `fontFamily` — the stack the overlay will actually render
+  // in, not `fontResolution.family`. Those two differ whenever the source font
+  // was SUBSTITUTED, because the overlay then falls back to the label-aware
+  // design font while the resolution keeps its own guess. Deriving spacing from
+  // one font and rendering it in another is the same error as deriving it with
+  // no measurer at all, only harder to see: on this cover the lockup was
+  // measured in a Helvetica stack and drawn in an Inter one, and came out wide
+  // enough to wrap.
+  //
+  // Derived per LINE and reconciled, not from the joined string: the equation is
+  // (measured width − natural width) ÷ gaps, and the joined string has every
+  // line's glyphs while the only width available for it is the widest single
+  // line. That mismatch produced no tracking at all for the two-line brand
+  // lockup while the single-line labels around it kept theirs — which is what
+  // "inconsistent letter-spacing" was.
+  const derivedTracking = detracked.changed
+    ? (detracked.lines?.length && sourceLines?.length
+        ? deriveTrackingFromLines(
+            detracked.lines,
+            sourceLines.map((l) => Number(l?.widthPt)),
+            fontSize,
+            fontFamily,
+            opts.measureTextWidth,
+            fontWeight,
+          )
+        : deriveTrackingPt(
+            displayText,
+            singleLineMeasure?.widthPt ?? bbox.width,
+            fontSize,
+            fontFamily,
+            opts.measureTextWidth,
+            fontWeight,
+          ))
+    : null;
+  const letterSpacing = derivedTracking
+    ?? (typeof item.font?.letter_spacing === 'number' ? item.font.letter_spacing : null);
+  const block: RawImportBlock = {
     id: blockId(String(item.label ?? 'text'), pageInfo.page_no, index),
     type: blockType,
     text: displayText,
-    bbox,
+    bbox: withTrackingSlack(bbox, letterSpacing),
     style: {
       fontFamily,
       fontSize,
@@ -370,25 +442,7 @@ function textItemToBlock(
       // Phase 2: prefer real alignment/leading/tracking from the PyMuPDF pass.
       textAlign: item.text_align ?? 'left',
       ...(typeof item.font?.line_height === 'number' ? { lineHeight: item.font.line_height } : {}),
-      ...(typeof item.font?.letter_spacing === 'number' ? { letterSpacing: item.font.letter_spacing } : {}),
-      // R1 — de-tracked text needs its tracking back as a STYLE, or the
-      // collapsed words render far narrower than the box the source measured.
-      // Derived from measured width minus natural width; the fallback family's
-      // metrics stand in for the embedded face, which is not loaded in the
-      // measuring document. Placed last so it wins over the (always-absent)
-      // sidecar letter_spacing when de-tracking actually changed the text.
-      ...(detracked.changed
-        ? (() => {
-            const tracking = deriveTrackingPt(
-              displayText,
-              singleLineMeasure?.widthPt ?? bbox.width,
-              fontSize,
-              fontResolution?.family ?? nearestDesignFont(sourceFont, item.label),
-              opts.measureTextWidth,
-            );
-            return tracking != null ? { letterSpacing: tracking } : {};
-          })()
-        : {}),
+      ...(letterSpacing != null ? { letterSpacing } : {}),
     },
     confidence: Math.min(
       typeof item.confidence === 'number' ? item.confidence : opts.defaultConfidence ?? 0.85,
@@ -407,10 +461,74 @@ function textItemToBlock(
       codeLanguage,
       language: item.language,
       xref,
+      // How many lines the SOURCE drew in this box. Docling joins them with a
+      // space, so the string cannot say; this can, and it is what stops a
+      // two-line title being forced onto one line and off the page.
+      ...(Number.isFinite(Number(item.source_measure?.lineCount))
+        && Number(item.source_measure?.lineCount) >= 1
+        ? { sourceLineCount: Math.round(Number(item.source_measure!.lineCount)) }
+        : {}),
+      // And how many ROWS those lines occupy. From v2 geometry this is exact,
+      // so the box-height heuristic above it never has to run.
+      ...(() => {
+        const rows = countDistinctBaselines(sourceLines);
+        return rows ? { sourceBaselineCount: rows } : {};
+      })(),
+      // D1 — where the source's FIRST line actually sits. The sidecar sorts
+      // the matched lines by baseline, so [0] is the topmost.
+      ...(Number.isFinite(Number(sourceLines?.[0]?.baselineYPt))
+        ? { sourceFirstBaselineY: Number(sourceLines![0]!.baselineYPt) }
+        : {}),
       ...(sourceFont ? { sourceFont } : {}),
       ...(!embeddedFamily && fontResolution?.substituted ? { fontSubstituted: true } : {}),
     },
   };
+
+  // Two fields that share a baseline are not one field. Docling groups the
+  // footer's `PRIVATE AND CONFIDENTIAL` and `REF 90E5DF34` — 260pt apart at
+  // opposite ends of the page — into one item, and one left-aligned overlay
+  // walks the reference number into the middle of the page. Split on the
+  // source's own per-line x, so each half lands where it was drawn.
+  return splitIntoBaselineColumns(block, detracked.lines, sourceLines, fontSize, letterSpacing);
+}
+
+/**
+ * Expand one block into per-column blocks when its source lines are separable
+ * fields sharing a baseline. Returns `[block]` unchanged in every other case,
+ * including when the de-tracked per-line text is unavailable to fill them.
+ */
+function splitIntoBaselineColumns(
+  block: RawImportBlock,
+  lineTexts: string[] | undefined,
+  sourceLines: readonly { widthPt?: number; x0Pt?: number; x1Pt?: number; baselineYPt?: number }[] | undefined,
+  fontSizePt: number,
+  letterSpacingPt: number | null,
+): RawImportBlock[] {
+  const columns = splitBaselineColumns(sourceLines, fontSizePt);
+  if (!columns || !lineTexts || lineTexts.length !== (sourceLines?.length ?? -1)) return [block];
+  const parts: RawImportBlock[] = [];
+  for (let c = 0; c < columns.length; c += 1) {
+    const column = columns[c];
+    const text = column.lineIndices.map((i) => lineTexts[i]).filter(Boolean).join(' ').trim();
+    if (!text) return [block];
+    parts.push({
+      ...block,
+      id: `${block.id}-c${c}`,
+      text,
+      // The row's vertical extent is shared; only the horizontal changes. Each
+      // column carries its own ink width, so each needs its own tracking slack.
+      bbox: withTrackingSlack(
+        { ...block.bbox, x: column.xPt, width: column.widthPt },
+        letterSpacingPt,
+      ),
+      meta: {
+        ...block.meta,
+        // Each column is one drawn line, whatever the item as a whole was.
+        sourceLineCount: column.lineIndices.length,
+      },
+    });
+  }
+  return parts;
 }
 
 type DoclingMappedTableCell = {
@@ -583,7 +701,7 @@ function pictureItemToBlock(
   pageInfo: DoclingPageInfo,
   index: number,
   readingOrder: number,
-  captionGroupId: string | undefined,
+  captionPair: { groupId: string; text?: string } | undefined,
   opts: MapOptions,
 ): RawImportBlock | null {
   const prov = pickProv(item.prov, pageInfo.page_no);
@@ -608,9 +726,13 @@ function pictureItemToBlock(
       label: 'picture',
       readingOrder,
       caption: item.caption,
+      // The paired caption's words. Docling states a caption by REFERENCE, so
+      // `item.caption` is usually empty while the text sits in its own block —
+      // which is why a figure's alternative text could never see it.
+      ...(captionPair?.text ? { captionText: captionPair.text } : {}),
       altText,
       pictureClass,
-      groupId: captionGroupId,
+      groupId: captionPair?.groupId,
       imageUri,
       imageDiagnosticsPath,
       // A refused picture renders as a grey placeholder. Recording WHY makes the
@@ -722,7 +844,13 @@ export function mapDoclingToRawBlocks(
     }
 
     const order = typeof text.reading_order === 'number' ? text.reading_order : nextOrder(page.page_no);
-    const block = textItemToBlock(text, page, textIdx, order, listGroupId, opts);
+    // One Docling item can reconstruct as several blocks — two fields sharing a
+    // baseline are separated back out. The first is the one everything else
+    // (captions, cross-references, self_ref lookups) binds to, since it holds
+    // the item's leading text.
+    const blocks = textItemToBlock(text, page, textIdx, order, listGroupId, opts);
+    for (const extra of blocks.slice(1)) byPage[page.page_no]?.push(extra);
+    const block = blocks[0];
     if (block) {
       byPage[page.page_no]?.push(block);
       if (text.self_ref) textBlocksBySelfRef.set(text.self_ref, block);
@@ -744,7 +872,7 @@ export function mapDoclingToRawBlocks(
     refs: Array<DoclingRef | string> | undefined,
     pageNo: number,
     figureBBox: ImportBBox,
-  ): string | undefined {
+  ): { groupId: string; text?: string } | undefined {
     // 1) explicit refs from the parser
     const explicit: RawImportBlock[] = [];
     for (const ref of refs ?? []) {
@@ -759,7 +887,11 @@ export function mapDoclingToRawBlocks(
       for (const t of explicit) {
         t.meta = { ...(t.meta ?? {}), groupId: gid };
       }
-      return gid;
+      // The caption's WORDS, not just the link. A figure needs alternative text
+      // or it is a PDF/UA failure, and this text is the page's own description
+      // of the figure — a far better answer than the classifier's "Bar chart".
+      // Pairing only ever returned the group id, so nothing could reach it.
+      return { groupId: gid, text: explicit.map((t) => t.text ?? '').filter(Boolean).join(' ').trim() || undefined };
     }
     // 2) proximity fallback — nearest caption above/below within PROXIMITY_PT
     const pool = captionPool[pageNo] ?? [];
@@ -780,7 +912,7 @@ export function mapDoclingToRawBlocks(
       captionGroupSeq += 1;
       const gid = `docling-figure-p${pageNo}-${captionGroupSeq}`;
       best.block.meta = { ...(best.block.meta ?? {}), groupId: gid };
-      return gid;
+      return { groupId: gid, text: best.block.text?.trim() || undefined };
     }
     return undefined;
   }
@@ -794,8 +926,8 @@ export function mapDoclingToRawBlocks(
     if (!page) { tableIdx += 1; continue; }
     const order = typeof table.reading_order === 'number' ? table.reading_order : nextOrder(page.page_no);
     const figureBBox = bboxToTopLeft(prov.bbox, page.size.height);
-    const captionGid = pairCaption(table.captions, page.page_no, figureBBox);
-    const block = tableItemToBlock(table, page, tableIdx, order, captionGid, opts);
+    const captionPair = pairCaption(table.captions, page.page_no, figureBBox);
+    const block = tableItemToBlock(table, page, tableIdx, order, captionPair?.groupId, opts);
     if (block) byPage[page.page_no]?.push(block);
     tableIdx += 1;
   }
@@ -809,8 +941,8 @@ export function mapDoclingToRawBlocks(
     if (!page) { pictureIdx += 1; continue; }
     const order = typeof picture.reading_order === 'number' ? picture.reading_order : nextOrder(page.page_no);
     const figureBBox = bboxToTopLeft(prov.bbox, page.size.height);
-    const captionGid = pairCaption(picture.captions, page.page_no, figureBBox);
-    const block = pictureItemToBlock(picture, page, pictureIdx, order, captionGid, opts);
+    const captionPair = pairCaption(picture.captions, page.page_no, figureBBox);
+    const block = pictureItemToBlock(picture, page, pictureIdx, order, captionPair, opts);
     if (block) byPage[page.page_no]?.push(block);
     pictureIdx += 1;
   }

@@ -171,6 +171,7 @@ const PortalPropertyInsights = lazyWithRetry(() => import("./pages/portal/Portal
 const PortalBooking = lazyWithRetry(() => import("./pages/portal/PortalBooking"));
 const PortalAppointments = lazyWithRetry(() => import("./pages/portal/PortalAppointments"));
 const PortalAml = lazyWithRetry(() => import("./pages/portal/PortalAml"));
+const PortalIdentityReturn = lazyWithRetry(() => import("./pages/portal/PortalIdentityReturn"));
 const PortalLegal = lazyWithRetry(() => import("./pages/portal/PortalLegal"));
 const PortalLegalDetail = lazyWithRetry(() => import("./pages/portal/PortalLegalDetail"));
 const PortalConfig = lazyWithRetry(() => import("./pages/PortalConfig"));
@@ -369,6 +370,16 @@ const App = () => (
                           <PortalAcceptInvite />
                         } />
                         <Route path="/client/handoff" element={<PortalHandoff />} />
+                        {/*
+                          Where the secure identity check returns the customer.
+                          Outside the authenticated tree on purpose: they may
+                          land here in a window with no portal session — a
+                          handed-off phone is the ordinary case — and a login
+                          wall at the end of a verification is the third-party
+                          ending this flow exists to remove. The page displays
+                          no case data and reads no status from the redirect.
+                        */}
+                        <Route path="/client/aml/identity-return" element={<PortalIdentityReturn />} />
                         <Route path="/client/consent" element={
                           <PortalAuthProvider>
                             <PortalConsentWall />

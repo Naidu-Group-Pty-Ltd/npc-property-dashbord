@@ -7,6 +7,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -97,6 +98,6 @@ Deno.serve(async (req) => {
 
     return json({ error: 'unknown_action' }, 400);
   } catch (err) {
-    return json({ error: String((err as Error).message) }, 500);
+    return json({ ...internalError(err, 'phase6-quality-ops') }, 500);
   }
 });

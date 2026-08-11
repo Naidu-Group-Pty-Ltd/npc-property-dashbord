@@ -1,5 +1,8 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { internalError } from '../_shared/errorResponse.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { LocalityRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -15,7 +18,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { suburb, state, postcode } = await req.json();
+    // WP-24: bounded and shape-checked. This endpoint takes no session,
+    // so a bare req.json() read whatever was sent.
+    const __parsed = await parseJsonBody(req, LocalityRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
+    if (!__parsed.ok) return __parsed.response;
+    const { suburb, state, postcode } = __parsed.data;
     console.log('Fetching crime statistics for:', suburb, state, postcode);
 
     if (!suburb || !state) {
@@ -46,9 +53,9 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('Error in Crime Statistics service:', error);
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    return new Response(JSON.stringify({
+      ...internalError(error, 'crime-statistics-service'),
+      success: false,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

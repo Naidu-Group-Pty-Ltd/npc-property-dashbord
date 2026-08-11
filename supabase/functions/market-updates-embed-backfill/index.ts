@@ -4,6 +4,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { enforceRawBodyLimit, verifyRequiredCronSecret, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -109,7 +110,7 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     return new Response(
-      JSON.stringify({ ok: false, error: String((err as Error).message), ...stats }),
+      JSON.stringify({ ...internalError(err, 'market-updates-embed-backfill'), ok: false, ...stats }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

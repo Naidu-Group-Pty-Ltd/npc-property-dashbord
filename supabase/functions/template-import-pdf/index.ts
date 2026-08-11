@@ -20,6 +20,7 @@ import {
 } from '../_shared/templateImportArtifactAuthorization.pure.ts';
 import { authorizeTemplateResync } from '../_shared/templateResyncAuthorization.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -2179,6 +2180,6 @@ Deno.serve(async (req) => {
     // toast than just "unknown operation" (which previously surfaced raw).
     return json({ error: `unknown operation: ${operation}`, operation }, 400);
   } catch (e) {
-    return json({ error: String((e as Error).message ?? e) }, 500);
+    return json({ ...internalError(e, 'template-import-pdf') }, 500);
   }
 });

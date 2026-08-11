@@ -13,7 +13,7 @@ import {
   type Tokens,
   parseTemplate,
 } from './templateSchema';
-import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks } from './rendering/pdfImportPagePolicy';
+import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks, pageContainedRegions } from './rendering/pdfImportPagePolicy';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -548,7 +548,29 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // overlays and paint its final crops; absent a plan this is a no-op (identical
   // legacy output). Editor references are never painted in final output.
   const regionPlan = resolveRegionRenderPlanProjection(page as unknown as Page);
+  // A1 — region-scoped containment. An unverified table used to rasterize its
+  // whole page, taking every heading and paragraph on it into the pixels. The
+  // window below shows the SAME source pixels over the table's own box, so
+  // nothing about the table is trusted any further, while the rest of the page
+  // keeps a text layer. See tableRegionContainment.pure.ts.
+  //
+  // The raster is resolved FIRST, and the whole mechanism stands down without
+  // it. Suppressing an overlay whose window never paints would delete the table
+  // outright — the one outcome worse than the page-wide raster this replaces.
+  // Same principle as `shouldFallBackToNativeBlocks`: degraded beats absent.
+  //
+  // The editor's `showReconstructedLayers` opt-in reveals what is underneath,
+  // exactly as it does on a raster-only page: same affordance, same meaning,
+  // so a reviewer can inspect and correct the table the window is covering.
+  const containedRasterUrl = resolveBindable(page.background?.imageUrl, ctxBase);
+  const containedRegions = containedRasterUrl
+    && !(ctxBase as { _showReconstructedLayers?: boolean })._showReconstructedLayers
+    ? pageContainedRegions(pagePolicy, page.size)
+    : [];
   const suppressedOverlays = suppressedOverlayIdSet(regionPlan);
+  for (const region of containedRegions) {
+    for (const id of region.overlayIds ?? []) suppressedOverlays.add(id);
+  }
   const blockCtxBase = suppressedOverlays.size
     ? ({ ...ctxBase, _pdfSuppressedOverlayIds: suppressedOverlays } as ResolveContext)
     : ctxBase;
@@ -588,6 +610,24 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
       },
     });
 
+  // The contained windows themselves. Painted AFTER the native blocks so the
+  // source pixels are what a reader sees in that box — the suppression above
+  // handles ownership, this handles paint order, and neither alone is enough.
+  //
+  // The image is the full page raster, sized to the page and offset so that
+  // exactly the window's own area shows through. That is the same picture the
+  // page-wide raster would have put there, cut to the region rather than
+  // re-cut as a new artifact: no second asset, no second signing path, and no
+  // possibility of the crop and the page disagreeing about geometry.
+  const containedHtml = containedRegions.map((r) => (
+    `<div aria-hidden="true" data-pdf-contained-region="1" style="position:absolute;`
+    + `left:${r.x}pt;top:${r.y}pt;width:${r.width}pt;height:${r.height}pt;overflow:hidden;">`
+    + `<img alt="" src="${escapeHtml(String(containedRasterUrl))}" style="position:absolute;`
+    + `left:${-r.x}pt;top:${-r.y}pt;width:${page.size.width}pt;height:${page.size.height}pt;`
+    + `max-width:none;" />`
+    + `</div>`
+  )).join('');
+
   // Phase 5 — baseline grid (printed when page.baselineGrid.show is true).
   let baselineEl = '';
   const bg = (page as any).baselineGrid;
@@ -605,7 +645,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const editorAttrs = editorMode ? ` data-page-id="${escapeHtml(String(page.id))}" data-page-index="${pageIndex}"` : '';
   const compositionAttrs = ` ${pageCompositionDataAttrs(page as unknown as Page, regionPlan, escapeHtml)}`;
   const dataAttrs = editorAttrs + compositionAttrs;
-  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle)}">${baselineEl}${blocks.join('\n')}${regionCropsHtml}</section>`;
+  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle)}">${baselineEl}${blocks.join('\n')}${containedHtml}${regionCropsHtml}</section>`;
 }
 interface CascadeIndexEntry {
   pageIndex: number;

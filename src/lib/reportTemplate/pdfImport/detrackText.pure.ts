@@ -17,17 +17,34 @@
  * THE RECONSTRUCTION
  * ------------------
  * Tracked text is words plus a letter-spacing STYLE, so that is what we emit:
- * `NAIDU PROPERTY CONSULTING SERVICES` + `letterSpacing: N pt`. Two evidence
+ * `NAIDU PROPERTY CONSULTING SERVICES` + `letterSpacing: N pt`. Three evidence
  * sources, in order of authority:
  *
- *   1. Span char-counts from the sidecar's `source_measure`. PDFs draw tracked
- *      text as one span per word, so the span partition IS the word structure —
- *      it recovers boundaries the string has lost (PROPERTY|CONSULTING above).
- *   2. The string's own multi-space runs, which survive as word gaps when the
+ *   1. Per-LINE char counts from the sidecar's `source_measure`. See below —
+ *      this is the one that recovers PROPERTY|CONSULTING.
+ *   2. Span char-counts. SOME PDFs draw tracked text as one span per word, in
+ *      which case the span partition is the word structure. Not a rule: this
+ *      cover draws each tracked line as a SINGLE span, so nothing here helps
+ *      it. Kept because when it does hold it is exact.
+ *   3. The string's own multi-space runs, which survive as word gaps when the
  *      extractor preserved them. Cannot recover a lost boundary, but never
  *      invents one either.
  *
- * When neither yields a confident answer the text is LEFT ALONE. A wrongly
+ * WHERE THE LOST BOUNDARY ACTUALLY WENT
+ * -------------------------------------
+ * The source drew the lockup as two lines, each with its word gaps intact:
+ *
+ *     line 1  'N A I D U  P R O P E R T Y'
+ *     line 2  'C O N S U L T I N G  S E R V I C E S'
+ *
+ * Docling joins an item's lines with a SINGLE space, and inside tracked text a
+ * single space is a letter gap, not a word gap. So the join manufactured
+ * `...P R O P E R T Y C O N S U L T I N G...` and the collapse dutifully read
+ * it as one word. Nothing in the merged string marks the seam — but the line
+ * char counts locate it exactly, because a line boundary is always a word
+ * boundary. De-track each line separately, then join with a space.
+ *
+ * When no source yields a confident answer the text is LEFT ALONE. A wrongly
  * merged heading would be worse than the artifact — the artifact is at least
  * visibly broken, where a wrong merge looks intentional.
  *
@@ -44,11 +61,56 @@ export const MIN_TRACKED_TOKENS = 4;
  */
 export const MIN_SINGLE_CHAR_SHARE = 0.8;
 
+/**
+ * Longest token that can still be a KERN PAIR rather than a word.
+ *
+ * Tracked text is not reliably one letter per token. Where the source kerns a
+ * pair — `AT`, `PA`, `VA` — the two glyphs are drawn with no positioning
+ * operator between them, so the extractor emits them joined. Requiring every
+ * token in a run to be a single character therefore refuses to collapse the run
+ * at all, and the word survives with a hole in it. Measured across this
+ * document, on every one of its seven pages:
+ *
+ *     'C A PA C I T Y'   pages 2-7      → CAPACITY
+ *     'P R I VAT E'      pages 2-7      → PRIVATE
+ *     'D AT E' / 'R AT E'  page 1       → DATE / RATE
+ *     'W H AT', 'B U I LT'  page 6      → WHAT / BUILT
+ *     'N YA W O'         page 7         → NYAWO
+ *
+ * Three characters covers the longest of them (`VAT`). A real word next to
+ * single letters would have to be three characters or fewer AND sit inside a
+ * string that already reads as tracked overall, which is the same as saying it
+ * was tracked too.
+ */
+export const MAX_KERNED_TOKEN_LENGTH = 3;
+
+/**
+ * Minimum share of a run's tokens that must be single characters before the run
+ * is collapsed. Lower than the whole-string bar because a short run has few
+ * tokens to average over: `D AT E` is 2 of 3.
+ */
+export const MIN_RUN_SINGLE_CHAR_SHARE = 0.6;
+
 export interface DetrackResult {
   text: string;
   changed: boolean;
   /** Which evidence decided the word boundaries. */
-  method: 'span-partition' | 'multi-space' | 'none';
+  method: 'line-partition' | 'span-partition' | 'multi-space' | 'none';
+  /**
+   * The de-tracked text of each source line, when the lines were located.
+   *
+   * Tracking is derived from a measured width divided by a glyph count, and
+   * both terms are per-LINE facts. Deriving it from the joined string against
+   * one line's width answers a question nobody asked.
+   */
+  lines?: string[];
+}
+
+/** One source line's measurement, as `source_measure.lines[]` ships it. */
+export interface SourceLineMeasure {
+  charCount?: number;
+  widthPt?: number;
+  spans?: ReadonlyArray<{ chars?: number }>;
 }
 
 /** Is this the letter-spread pattern at all? */
@@ -69,10 +131,18 @@ function collapseByMultiSpace(raw: string): string {
     .split(/\s{2,}/)
     .map((segment) => {
       const tokens = segment.split(' ').filter(Boolean);
-      const allSingle = tokens.length > 1 && tokens.every((t) => [...t].length === 1);
-      return allSingle ? tokens.join('') : segment;
+      return isLetterRun(tokens) ? tokens.join('') : segment;
     })
     .join(' ');
+}
+
+/** Is this run of tokens a spread-out word rather than several words? */
+function isLetterRun(tokens: readonly string[]): boolean {
+  if (tokens.length < 2) return false;
+  const lengths = tokens.map((t) => [...t].length);
+  if (lengths.some((n) => n > MAX_KERNED_TOKEN_LENGTH)) return false;
+  const single = lengths.filter((n) => n === 1).length;
+  return single / tokens.length >= MIN_RUN_SINGLE_CHAR_SHARE;
 }
 
 /**
@@ -126,10 +196,99 @@ export function detrackText(
   return { text: raw, changed: false, method: 'none' };
 }
 
+/**
+ * De-track a string the extractor built by joining several source lines.
+ *
+ * Each line is de-tracked on its own evidence and the results are joined with a
+ * space, because a line boundary is a word boundary — which is precisely the
+ * boundary the join destroyed. Falls back to whole-string de-tracking when the
+ * lines cannot be located in the string, so this is safe to call unconditionally.
+ */
+export function detrackJoinedLines(
+  raw: string,
+  lines: readonly SourceLineMeasure[] | undefined,
+): DetrackResult {
+  if (typeof raw !== 'string' || !looksTracked(raw)) {
+    return { text: raw, changed: false, method: 'none' };
+  }
+  const segments = lines && lines.length >= 2
+    ? partitionByLineCounts(raw, lines.map((l) => Number(l?.charCount ?? 0)))
+    : null;
+  if (!segments) {
+    return detrackText(
+      raw,
+      lines?.length === 1
+        ? lines[0]?.spans?.map((s) => Number(s?.chars ?? 0)).filter((n) => n > 0)
+        : undefined,
+    );
+  }
+  const perLine = segments.map((segment, i) =>
+    detrackText(segment, lines![i]?.spans?.map((s) => Number(s?.chars ?? 0)).filter((n) => n > 0)));
+  const lineTexts = perLine.map((r) => r.text.trim());
+  const text = lineTexts.join(' ');
+  return {
+    text,
+    changed: text !== raw.trim(),
+    // The partition is what recovered the seam even when each line then
+    // collapsed on its own multi-space gaps, so name the evidence that mattered.
+    method: text !== raw.trim() ? 'line-partition' : 'none',
+    lines: lineTexts,
+  };
+}
+
+/**
+ * Split `raw` back into the source lines it was joined from, using each line's
+ * character count.
+ *
+ * The separator the extractor used is not stated anywhere, so it is DERIVED:
+ * the only width that makes the counts add up to the string's own length is the
+ * one that was used. A single space and an empty join are the realistic cases;
+ * both are checked, and if neither reproduces the length exactly the counts
+ * describe something other than this string — a different extractor's view of
+ * the item, a line the geometry matched but Docling did not — and are refused.
+ *
+ * Refusing costs a missed word boundary. Accepting a partition that is off by
+ * one puts the seam inside a word, which is worse and looks deliberate.
+ */
+export function partitionByLineCounts(
+  raw: string,
+  lineCharCounts: readonly number[],
+): string[] | null {
+  const counts = lineCharCounts
+    .filter((n) => Number.isFinite(n) && n >= 1)
+    .map((n) => Math.round(n));
+  if (counts.length < 2 || counts.length !== lineCharCounts.length) return null;
+  const chars = [...raw];
+  const total = counts.reduce((a, b) => a + b, 0);
+  for (const separator of [1, 0]) {
+    if (total + separator * (counts.length - 1) !== chars.length) continue;
+    const segments: string[] = [];
+    let at = 0;
+    for (const count of counts) {
+      segments.push(chars.slice(at, at + count).join(''));
+      at += count + separator;
+    }
+    if (segments.every((s) => s.trim())) return segments;
+  }
+  return null;
+}
+
 // ── Letter-spacing recovery ──────────────────────────────────────────────────
 
-/** Measures the advance width of `text` in `family` at `sizePt`, in points. */
-export type WidthMeasurer = (text: string, family: string, sizePt: number) => number | null;
+/**
+ * Measures the advance width of `text` in `family` at `sizePt`, in points.
+ *
+ * `fontWeight` is not decoration: a semibold face runs several percent wider
+ * than its regular, so measuring a semibold heading at the default 400 makes
+ * the natural width too small and the derived spacing too large by exactly what
+ * the weight was worth. Optional, so a caller without one is unchanged.
+ */
+export type WidthMeasurer = (
+  text: string,
+  family: string,
+  sizePt: number,
+  fontWeight?: number | string,
+) => number | null;
 
 /**
  * Widest credible tracking, as a multiple of the font size. Beyond this the
@@ -163,6 +322,7 @@ export function deriveTrackingPt(
   fontSizePt: number,
   fontFamily: string,
   measure?: WidthMeasurer | null,
+  fontWeight?: number | string,
 ): number | null {
   const glyphs = [...collapsedText];
   if (glyphs.length < 2) return null;
@@ -172,7 +332,7 @@ export function deriveTrackingPt(
   let naturalWidth: number | null = null;
   if (measure) {
     try {
-      naturalWidth = measure(collapsedText, fontFamily, fontSizePt);
+      naturalWidth = measure(collapsedText, fontFamily, fontSizePt, fontWeight);
     } catch {
       naturalWidth = null;
     }
@@ -184,5 +344,67 @@ export function deriveTrackingPt(
   const spacing = (measuredWidthPt - naturalWidth) / (glyphs.length - 1);
   if (!Number.isFinite(spacing) || spacing <= 0) return null;
   const clamped = Math.min(spacing, fontSizePt * MAX_TRACKING_EM);
-  return Math.round(clamped * 100) / 100;
+  // Rounded DOWN, not to nearest. The width this reproduces is the width the
+  // source measured, and the box is exactly that wide — so a hundredth of a
+  // point over the true value is text that no longer fits, while the same
+  // amount under is invisible. `Math.round` turned 3.725 into 3.73 and put the
+  // brand lockup's second line 0.09pt past its box, which cost it a whole line.
+  return Math.floor(clamped * 100) / 100;
+}
+
+/**
+ * Derive one tracking value for an item whose text spans several source lines.
+ *
+ * WHY NOT JUST MEASURE THE WHOLE STRING
+ * -------------------------------------
+ * `deriveTrackingPt` divides a measured width by a glyph count, and neither
+ * term survives the join. The item's `measuredWidthPt` is the widest LINE, and
+ * its box width is the same thing; the joined string has every line's glyphs.
+ * Feeding one line's width and every line's glyphs to the same equation gives a
+ * number with no meaning — for the BC Snapshot lockup it produced a spacing at
+ * or below zero, so the tracked brand line came out with no tracking at all
+ * while the single-line labels beside it kept theirs. That is the inconsistency.
+ *
+ * WHY THE SMALLEST ESTIMATE AND NOT THE AVERAGE
+ * ---------------------------------------------
+ * Each line is its own measurement, so each yields its own estimate, and a
+ * design applies one tracking to a lockup — so they very nearly agree. The
+ * lockup's two lines want 3.89pt and 3.72pt.
+ *
+ * They are not interchangeable, because the errors are not symmetric. The box
+ * comes from the source, so it is exactly as wide as the widest line with no
+ * slack at all. Tracking a shade under leaves that line a fraction of a point
+ * narrow, which nobody can see. Tracking a shade over pushes it past the box
+ * and it WRAPS — a whole extra line, and every line below it moves. Splitting
+ * the difference at 3.81pt did exactly that: `CONSULTING SERVICES` came out
+ * 1.5pt over its 199.8pt box and the two-line lockup rendered as three.
+ *
+ * So take the smallest: it is the only value at which no line can overflow the
+ * width the source measured for it. A line whose estimate is spuriously small
+ * would pull the result down, but `deriveTrackingPt` already returns null for
+ * anything at or below zero, so the pull is bounded by real measurements.
+ */
+export function deriveTrackingFromLines(
+  lineTexts: readonly string[],
+  lineWidthsPt: readonly number[],
+  fontSizePt: number,
+  fontFamily: string,
+  measure?: WidthMeasurer | null,
+  fontWeight?: number | string,
+): number | null {
+  const estimates: number[] = [];
+  for (let i = 0; i < lineTexts.length; i += 1) {
+    const tracking = deriveTrackingPt(
+      lineTexts[i] ?? '',
+      Number(lineWidthsPt[i]),
+      fontSizePt,
+      fontFamily,
+      measure,
+      fontWeight,
+    );
+    if (tracking != null) estimates.push(tracking);
+  }
+  // Each estimate is already floored by `deriveTrackingPt`, so the minimum of
+  // them is too — no line can exceed the width its own measurement allows.
+  return estimates.length ? Math.min(...estimates) : null;
 }

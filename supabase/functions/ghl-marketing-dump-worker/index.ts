@@ -12,6 +12,7 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { getGhlCredentials, buildGhlHeaders, type GhlAccount } from '../_shared/ghl-account.ts';
 import { processAsset, type AssetTask, type DumpRow } from '../_shared/ghl-asset-harvester.ts';
 import { callInternalFunction } from '../_shared/internalCall.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const TIME_BUDGET_MS = 50_000;
 const CHUNK_SIZE = 3;
@@ -145,7 +146,7 @@ Deno.serve(async (req) => {
         }).eq('id', body.job_id);
       }
     } catch {}
-    return new Response(JSON.stringify({ success: false, error: e.message || 'Internal error' }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'ghl-marketing-dump-worker'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

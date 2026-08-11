@@ -150,8 +150,21 @@ describe('the existing non-KYC AML architecture is untouched', () => {
     const amlShared = walk('supabase/functions/_shared/aml')
       .filter((f) => f.endsWith('.ts') && !/didit/i.test(f));
     const offenders = amlShared.filter((f) => /didit/i.test(read(f)));
-    // Only the provider registry legitimately references the new adapter.
-    expect(offenders).toEqual(['supabase/functions/_shared/aml/providers/index.ts']);
+    /*
+     * Two files may name the adapter, and neither is a PEP, EDD,
+     * source-of-funds or monitoring module:
+     *
+     *   - the provider registry, which wires it;
+     *   - the identity-document list, whose header points a reader at where
+     *     the provider's own document codes live. That is a comment and not a
+     *     dependency — `identityDocumentSession.test.ts` asserts the compiled
+     *     code carries no provider vocabulary at all, which is the property
+     *     that actually matters for the browser bundle.
+     */
+    expect(offenders.sort()).toEqual([
+      'supabase/functions/_shared/aml/identityDocuments.pure.ts',
+      'supabase/functions/_shared/aml/providers/index.ts',
+    ]);
   });
 });
 
@@ -203,23 +216,25 @@ describe('portal privacy boundary', () => {
     expect(step).toContain('await load()');
   });
 
-  it('delegates every documented embed permission and does not sandbox', () => {
-    const from = step.indexOf('<iframe');
-    expect(from).toBeGreaterThan(-1);
-    const iframe = step.slice(from, step.indexOf('/>', from));
-    expect(iframe).toContain('allow={HOSTED_IFRAME_ALLOW}');
-    expect(iframe).not.toContain('sandbox=');
-
-    // The permission list itself, including the two whose absence let the
-    // provider decide this device could not capture.
-    const list = step.slice(step.indexOf('const HOSTED_IFRAME_ALLOW'), step.indexOf('].join'));
-    for (const perm of ['camera', 'microphone', 'autoplay', 'encrypted-media',
-      'fullscreen', 'clipboard-write', 'picture-in-picture']) {
-      expect(list).toContain(`'${perm}'`);
-    }
-    // The fallback still exists — just not as the headline.
-    expect(step).toContain('target="_blank"');
-    expect(step).toContain('rel="noopener noreferrer"');
+  it('delegates no permission, because the provider no longer runs inside NPC', () => {
+    /*
+     * This test used to assert the opposite — that the embed was handed
+     * `camera`, `microphone`, the media permissions and the motion sensors,
+     * and was deliberately not sandboxed. All of that was correct FOR AN
+     * EMBED, and the embed is what went: a third-party application inside
+     * NPC's own page, showing another product's chrome and errors to a
+     * customer who believed they were still in NPC.
+     *
+     * The capture now runs in its own top-level window, so it asks for the
+     * camera in its own right, under its own origin, in a permission prompt
+     * that names whose page is asking. NPC delegates nothing and there is no
+     * frame to sandbox — which is a stronger boundary than the sandbox
+     * attribute ever was.
+     */
+    expect(step).not.toContain('<iframe');
+    expect(step).not.toContain('HOSTED_IFRAME_ALLOW');
+    expect(step).not.toContain('allowFullScreen');
+    expect(codeOnly(step)).not.toMatch(/'(camera|microphone|gyroscope|magnetometer)'/);
   });
 
   it('capture on this device is the primary path — NPC never forces a handoff', () => {
@@ -229,18 +244,29 @@ describe('portal privacy boundary', () => {
     const code = codeOnly(step).toLowerCase();
     expect(code).not.toContain('qr');
     expect(code).not.toMatch(/cross[_-]?device/);
-    // And the fallback is behind an explicit ask, not rendered by default.
-    expect(step).toContain('showFallback');
+    // The way back into the check is a first-class control now, not a
+    // "having trouble?" link — the window may simply have been closed, and
+    // that is not a fault the customer needs to admit to before recovering.
+    expect(step).toContain('Re-open verification');
+    expect(step).toContain('Continue verification');
   });
 
-  it('the message listener is origin-checked against the minted URL', () => {
+  it('the message listener is origin-checked against NPC itself', () => {
+    /*
+     * The origin used to be derived from the server-minted session URL,
+     * because the only window that could speak was the provider's frame. It
+     * is now NPC's own origin, because the only window that speaks is NPC's
+     * own return page — which is a narrower boundary, not a wider one: the
+     * provider's window cannot be heard at all.
+     */
     const listener = step.slice(step.indexOf('const onMessage'), step.indexOf('window.addEventListener'));
-    expect(listener).toContain('event.origin !== origin');
-    // It calls done() — a status re-read — and nothing else. No status writing.
+    expect(listener).toContain('event.origin !== window.location.origin');
+    // It re-reads server state and nothing else. No status writing, and no
+    // field of the message is read beyond its type.
     expect(listener).not.toMatch(/verified|passed|failed|declined/i);
-    // The origin is derived from the server-minted session URL, so the portal
-    // still never names a provider.
-    expect(step).toContain('new URL(url).origin');
+    expect(listener).toContain('void onRefresh()');
+    // The provider is still never named on this side.
+    expect(step.toLowerCase()).not.toContain('didit');
   });
 });
 

@@ -20,15 +20,34 @@ export interface PasswordValidationResult {
  * @param checkLeaked - Whether to check if password has been leaked (default: true)
  * @returns Validation result with error message if invalid
  */
+/**
+ * Minimum password length, server-side and authoritative.
+ *
+ * The browser copies of this rule live in the two admin dialogs that set a
+ * password directly; they exist so the user is told before the round-trip, and
+ * they are advisory. This is the one that decides.
+ */
+export const MIN_PASSWORD_LENGTH = 12;
+
 export async function validatePasswordStrength(
   password: string,
   checkLeaked: boolean = true
 ): Promise<PasswordValidationResult> {
-  // Check minimum length (8 characters per industry standards)
-  if (password.length < 8) {
+  // WP-22: 12, not 8.
+  //
+  // Eight characters with two of four character classes is a 2010 policy. This
+  // console holds client financial positions, identity documents and AML files,
+  // and staff sign in with a password against a custom store rather than an IdP
+  // — so the password IS the boundary, not one factor behind one.
+  //
+  // Length is also the only part of a policy that reliably helps. Character-class
+  // rules mostly push people to `Password1!`, which is why the class requirement
+  // stays at 2-of-4 rather than being raised alongside: the breach check below
+  // does the work those rules were pretending to do.
+  if (password.length < MIN_PASSWORD_LENGTH) {
     return {
       isValid: false,
-      error: 'Password must be at least 8 characters'
+      error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
     };
   }
 

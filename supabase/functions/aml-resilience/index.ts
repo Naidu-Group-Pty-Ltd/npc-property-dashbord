@@ -15,6 +15,7 @@ import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -163,7 +164,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({ error: "Unknown op" }, 400);
     }
   } catch (e) {
-    return jr({ error: String((e as Error)?.message ?? e) }, 500);
+    return jr({ ...internalError(e, 'aml-resilience') }, 500);
   }
 });
 

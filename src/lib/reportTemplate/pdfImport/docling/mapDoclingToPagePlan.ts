@@ -26,6 +26,12 @@ import { mapDoclingToRawBlocks } from './mapDoclingToRawBlocks';
 import { deriveNativeHeaderPolicy, TABLE_PRESERVATION_VERSION } from '../tableArbitration.pure';
 import { CHART_ARBITRATION_VERSION as CHART_PRESERVATION_VERSION } from '../chartArbitration.pure';
 import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pure';
+import { resolveTextWrapping } from '../resolveTextWrapping.pure';
+import { alignBoxToSourceBaseline, type FontVerticalMetrics } from '../firstBaseline.pure';
+import { annotateFromSource, figureAltText } from '../semanticRole.pure';
+import { detectChartCandidate, chartCandidateAltText } from '../chartCandidate.pure';
+import { deriveTokensFromExtraction, type FillObservation, type TextObservation } from '../tokenDerivation';
+import { fontLookupKey } from '../fontResolver';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
 
@@ -48,6 +54,12 @@ export interface DoclingPlanOptions {
   sourceChartsByPage?: Record<number, BridgedChart[]>;
   /** R1 — width measurer for tracked-text spacing derivation (browser: canvas). */
   measureTextWidth?: import('../detrackText.pure').WidthMeasurer | null;
+  /**
+   * D1 — per-source-font vertical metrics, keyed the same way as
+   * `embeddedFontFamilies`. Needed to place a block by its BASELINE rather than
+   * by its ink top; without them the block stays where the source's box put it.
+   */
+  fontMetrics?: Record<string, FontVerticalMetrics>;
 }
 
 // Phase 4: lowered 0.7 → 0.6 now that reconstruction (vectors/typography/fonts) is
@@ -102,6 +114,52 @@ function promotePicturesToCharts(
   });
 }
 
+/**
+ * Mark the pictures that are charts, from the page's own geometry.
+ *
+ * The sidecar's chart detection lives behind the source scene graph, which does
+ * not run in production — 0 of 84 jobs produced one — and Docling's picture
+ * classifier runs on the `design_heavy` lane only, 2 of 84 jobs. So the class
+ * that would have said "this is a bar chart" is absent from essentially every
+ * import, which is why 1,111 of 1,226 stored image overlays are named
+ * `[image]` and **none of them carries alternative text**.
+ *
+ * The evidence is here regardless: vectors are extracted with exact geometry
+ * (5,741 of them in production), and every axis tick and value label is a
+ * measured text block. Classification costs nothing extra and needs no model.
+ *
+ * It classifies only. A chart's VALUES are never read — a misread number in a
+ * client's financial report is this programme's stated top risk, and this
+ * cannot misstate a figure because it never states one.
+ */
+function annotateChartCandidates(blocks: RawImportBlock[]): RawImportBlock[] {
+  const pictures = blocks.filter((b) => b.type === 'image');
+  if (!pictures.length) return blocks;
+  const vectors = blocks
+    .filter((b) => b.type === 'vector')
+    .map((b) => ({ ...b.bbox, paths: (b.meta?.vector?.paths ?? []).map((p: { d?: string }) => String(p?.d ?? '')) }));
+  const labels = blocks
+    .filter((b) => b.type === 'text')
+    .map((b) => ({ ...b.bbox, text: b.text }));
+  if (!vectors.length && !labels.length) return blocks;
+
+  return blocks.map((block) => {
+    if (block.type !== 'image') return block;
+    const candidate = detectChartCandidate(block.bbox, vectors, labels);
+    if (!candidate) return block;
+    return { ...block, meta: { ...(block.meta ?? {}), chartCandidate: candidate } };
+  });
+}
+
+/** Metrics for a source font, keyed exactly as `embeddedFontFamilies` is. */
+function lookupFontMetrics(
+  sourceFont: string | undefined,
+  metrics: Record<string, FontVerticalMetrics> | undefined,
+): FontVerticalMetrics | null {
+  if (!sourceFont || !metrics) return null;
+  return metrics[fontLookupKey(sourceFont)] ?? null;
+}
+
 function pageId(pageNo: number): string {
   return `docling-page-${pageNo}`;
 }
@@ -110,14 +168,32 @@ function overlayId(block: RawImportBlock, suffix = 'ov'): string {
   return `${block.id}-${suffix}`;
 }
 
-function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null {
+function blockToOverlay(
+  block: RawImportBlock,
+  locked: boolean,
+  opts: Pick<DoclingPlanOptions, 'measureTextWidth' | 'fontMetrics'> = {},
+): Overlay | null {
   // Phase B: prefer alt-text / caption for the human-readable layer label.
-  const layerName = (block.meta?.altText
-    ?? block.meta?.caption
-    ?? block.text
-    ?? block.type)
-    .trim()
-    .slice(0, MAX_OVERLAY_NAME_LENGTH);
+  // A detected chart kind comes before the raw text because that text is
+  // `[image]` for 1,111 of the 1,226 image overlays in production — a layer
+  // list of identical `[image]` entries is not a layer list.
+  const meta = (block.meta ?? {}) as Record<string, any>;
+  const chartLabel = block.type === 'image'
+    ? chartCandidateAltText(meta.chartCandidate) || undefined
+    : undefined;
+  const rawLayerName: string =
+    meta.altText || meta.caption || meta.captionText || chartLabel || block.text || block.type;
+  const layerName = rawLayerName.trim().slice(0, MAX_OVERLAY_NAME_LENGTH);
+  // What the source said this IS. The raw mapper already reads Docling's label
+  // to pick a default size and weight; carrying it through is what lets the
+  // renderer emit a heading as a heading, and lets anything downstream act on
+  // meaning rather than on a box. Annotation only — it moves nothing.
+  const semantics = annotateFromSource({
+    label: block.meta?.label,
+    headingLevel: block.meta?.headingLevel,
+    readingOrder: block.meta?.readingOrder,
+    listGroupId: block.meta?.listGroupId,
+  });
   const base = {
     id: overlayId(block),
     x: block.bbox.x,
@@ -130,6 +206,7 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
     locked,
     name: layerName,
     ...(block.meta?.groupId ? { groupId: block.meta.groupId } : {}),
+    ...(semantics ? { semantics } : {}),
   } as const;
 
   if (block.type === 'text' || block.type === 'formula' || block.type === 'code') {
@@ -137,23 +214,51 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
     const isFormula = block.type === 'formula';
     const fontSize = block.style?.fontSize ?? 11;
     const lineHeight = block.style?.lineHeight ?? (isCode ? 1.4 : 1.3);
-    // Single-line source text must never wrap: substituted fonts run slightly
-    // wider than the original, and a wrapped second line collides with the
-    // block below (the dominant overlap artifact in imported previews). A
-    // bbox taller than ~1.6 line-heights indicates a real multi-line
-    // paragraph, which keeps normal wrapping.
-    const isSingleLine = Boolean(
-      (block.text ?? '').trim()
-      && !(block.text ?? '').includes('\n')
-      && block.bbox.height <= fontSize * lineHeight * 1.6,
+    const fontFamily = isCode ? 'Menlo, Consolas, monospace'
+      : isFormula ? 'Times, "Times New Roman", serif'
+      : (block.style?.fontFamily ?? DEFAULT_IMPORT_FONT_STACK);
+    const letterSpacing = block.style?.letterSpacing ?? 0;
+    // Wrapping is a fidelity decision, not a style default, and both answers
+    // have a production defect behind them: text the source set on one line
+    // must not gain a second (it lands on the block below), and text the
+    // source set on TWO lines must not be forced onto one (it leaves the
+    // page — the BC Snapshot cover title did exactly that). The source's own
+    // line count settles it; see resolveTextWrapping.pure.ts.
+    const wrapping = resolveTextWrapping({
+      text: block.text ?? '',
+      boxWidthPt: block.bbox.width,
+      boxHeightPt: block.bbox.height,
+      fontSizePt: fontSize,
+      lineHeight,
+      letterSpacingPt: letterSpacing,
+      fontFamily,
+      sourceLineCount: block.meta?.sourceLineCount ?? null,
+      sourceBaselineCount: block.meta?.sourceBaselineCount ?? null,
+      sourceAlign: block.style?.textAlign ?? null,
+      measure: opts.measureTextWidth,
+    });
+    // D1 — place the block by its BASELINE, not by its ink top.
+    //
+    // The box's top is where the source's ink starts; CSS puts the first
+    // baseline a full ascent plus half the leading below the box top, and
+    // ascent sits well above the cap line. Every imported line therefore
+    // rendered ~0.36em low — 2.5pt at 6.75pt type and 12.3pt at 34.5pt, which
+    // looked like an outlier and is the same constant. Solving the renderer's
+    // own formula for the box position removes it exactly; see
+    // firstBaseline.pure.ts for the measurement behind the formula.
+    const aligned = alignBoxToSourceBaseline(
+      base.y,
+      block.meta?.sourceFirstBaselineY,
+      lookupFontMetrics(block.meta?.sourceFont, opts.fontMetrics),
+      fontSize,
+      lineHeight,
     );
     const overlay: TextOverlay = {
       ...base,
+      ...(aligned ? { y: aligned.y } : {}),
       type: 'text',
       content: block.text ?? '',
-      fontFamily: isCode ? 'Menlo, Consolas, monospace'
-        : isFormula ? 'Times, "Times New Roman", serif'
-        : (block.style?.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
+      fontFamily,
       fontSize,
       // Phase 6E — preserve a numeric weight grade (e.g. 300/600 derived from the
       // source font name) instead of collapsing every weight to bold/normal.
@@ -174,8 +279,8 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       align: (block.style?.textAlign ?? 'left') as TextOverlay['align'],
       // Phase 2: prefer real leading/tracking from the PyMuPDF span pass.
       lineHeight,
-      letterSpacing: block.style?.letterSpacing ?? 0,
-      ...(isSingleLine ? { whiteSpace: 'nowrap' as const } : {}),
+      letterSpacing,
+      ...(wrapping.nowrap ? { whiteSpace: 'nowrap' as const } : {}),
     } as TextOverlay;
     return overlay;
   }
@@ -216,12 +321,30 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
     return overlay;
   }
   if (block.type === 'image') {
+    // The source's own description of the picture. It was already extracted —
+    // `pictureAltText` reads Docling's description annotation, and the caption
+    // is resolved by ref — and then spent on the Layers-panel name and nothing
+    // else, so every exported figure was a `/Figure` with no `/Alt`, which is a
+    // hard PDF/UA failure in a document rendered as `pdf/ua-1`.
+    const alt = figureAltText({
+      altText: block.meta?.altText,
+      caption: block.meta?.caption,
+      captionText: block.meta?.captionText,
+      // Last: a detected kind is a weak description and must never beat the
+      // source's own words. It is also the only one that ever arrives — the
+      // Docling `pictureClass` this used to fall back to is empty on 98% of
+      // production traffic, which is why no imported figure has ever carried
+      // alternative text.
+      pictureClass: block.meta?.pictureClass
+        ?? chartCandidateAltText(block.meta?.chartCandidate) ?? undefined,
+    });
     const overlay: ImageOverlay = {
       ...base,
       type: 'image',
       // Phase D: wire embedded picture crop URI when the parser provided one.
       src: block.meta?.imageUri ?? '',
       fit: 'contain',
+      ...(alt ? { alt } : {}),
     } as ImageOverlay;
     return overlay;
   }
@@ -336,6 +459,21 @@ function pageWarnings(
       message: `Page ${pageNo}: ${glyphArtifactBlocks} text block(s) contained GLYPH<n> extraction artifacts (font without a usable character map); the artifacts were stripped but the text needs manual review.`,
     });
   }
+  // A chart shipped as a picture is a chart nobody can edit, and until now
+  // nothing said so — the chart path is inert in production for four
+  // independent reasons (see `chartCandidate.pure.ts`) and an import reported
+  // "no charts" identically whether the document had none or the pipeline
+  // never looked. Saying it per page is what turns silence into a decision.
+  const chartPictures = blocks.filter((b) => b.type === 'image' && b.meta?.chartCandidate);
+  if (chartPictures.length) {
+    const kinds = Array.from(new Set(chartPictures.map((b) => String(b.meta!.chartCandidate.kind))));
+    warnings.push({
+      code: 'docling.chart_kept_as_picture',
+      severity: 'info',
+      pageId: pageId(pageNo),
+      message: `Page ${pageNo}: ${chartPictures.length} chart(s) detected (${kinds.join(', ')}) and kept as source pictures — the reconstruction is not editable and its values are not extracted.`,
+    });
+  }
   const lowConf = blocks.filter((b) => b.confidence < lockThreshold).length;
   if (!blocks.length) return warnings;
   const ratio = lowConf / blocks.length;
@@ -368,7 +506,7 @@ function pagePlanForPage(
     } else if (opts.mode === 'pixel-perfect') locked = true;
     else if (opts.mode === 'hybrid') locked = block.confidence < lockThreshold;
     else locked = false; // semantic
-    const ov = blockToOverlay(block, locked);
+    const ov = blockToOverlay(block, locked, opts);
     if (ov) overlays.push(ov);
   }
   return {
@@ -413,10 +551,10 @@ export function mapDoclingToPagePlan(
       // W3 — join the sidecar's chart reads onto Docling's picture blocks here,
       // rather than inside mapDoclingToRawBlocks, so that mapper stays a pure
       // function of the Docling document and knows nothing about scene graphs.
-      promotePicturesToCharts(
+      annotateChartCandidates(promotePicturesToCharts(
         mapped.byPage[page.page_no] ?? [],
         opts.sourceChartsByPage?.[page.page_no] ?? [],
-      ),
+      )),
       opts,
       doc,
     ),
@@ -431,10 +569,46 @@ export function mapDoclingToPagePlan(
   const meanConfidence = allConfidences.length
     ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length
     : 0.7;
+  // The design system, measured from this document rather than assumed.
+  //
+  // `deriveTokensFromExtraction` has always been able to read a source's real
+  // palette and typefaces — it ran only on the CDIR→template direction, which
+  // this path never takes, so a Docling import shipped `{ colors: {}, fonts: {} }`
+  // and every overlay carried a literal. Weighting is the module's own: text
+  // colours by glyph count, families by usage and size, fills by painted area.
+  const textObservations: TextObservation[] = [];
+  const fillObservations: FillObservation[] = [];
+  for (const page of pages) {
+    for (const overlay of page.overlays as Array<Record<string, unknown>>) {
+      if (overlay?.type === 'text') {
+        textObservations.push({
+          color: typeof overlay.color === 'string' ? overlay.color : undefined,
+          fontFamily: typeof overlay.fontFamily === 'string' ? overlay.fontFamily : undefined,
+          fontSize: Number(overlay.fontSize) || 11,
+          chars: String(overlay.content ?? '').length,
+        });
+      } else if (overlay?.type === 'shape' || overlay?.type === 'vector') {
+        const fill = typeof overlay.fill === 'string' ? overlay.fill : null;
+        const area = (Number(overlay.width) || 0) * (Number(overlay.height) || 0);
+        if (fill && area > 0) fillObservations.push({ color: fill, area });
+      }
+    }
+    if (page.background?.color) {
+      fillObservations.push({
+        color: page.background.color,
+        area: (page.width ?? 0) * (page.height ?? 0),
+      });
+    }
+  }
+  const derivedTokens = deriveTokensFromExtraction(textObservations, fillObservations, {
+    pageArea: (pages[0]?.width ?? 0) * (pages[0]?.height ?? 0) || undefined,
+  });
+
   return {
     version: 1,
     importId: opts.importId,
     pages,
+    tokens: { colors: { ...derivedTokens.colors }, fonts: { ...derivedTokens.fonts } },
     warnings,
     confidenceScore: Number(meanConfidence.toFixed(3)),
     importSummary: {

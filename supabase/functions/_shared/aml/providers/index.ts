@@ -16,6 +16,8 @@
  * Providers MUST NEVER be selected client-side. Callers pass a hint only;
  * the shared factory + tenant configuration decide.
  */
+import type { IdentityDocumentChoice } from "../identityDocuments.pure.ts";
+import { diditExpectedDetails } from "./didit.pure.ts";
 
 export type IdvMethod = "document_and_liveness" | "document_only" | "database_lookup" | "manual";
 
@@ -111,6 +113,14 @@ export interface HostedIdvSessionRequest {
   /** Internal identifiers only — echoed back on every webhook. */
   metadata: Record<string, unknown>;
   callbackUrl?: string | null;
+  /**
+   * The document the customer said they would present, in NPC's vocabulary.
+   *
+   * Deliberately not a provider document code: the adapter translates, so a
+   * caller cannot reach the provider's payload by naming one of its enum
+   * values. Absent means "not declared" and restricts nothing but the country.
+   */
+  documentChoice?: IdentityDocumentChoice | null;
   /** Sandbox-only deterministic outcome; ignored by a live application. */
   sandboxScenario?: string | null;
 }
@@ -822,6 +832,12 @@ function makeDiditIdvProvider(opts: FactoryOptions): HostedIdvProvider {
         vendorData: req.vendorData,
         metadata: req.metadata,
         callback: req.callbackUrl ?? null,
+        // Only where a callback was supplied; see `CreateSessionArgs`.
+        callbackMethod: req.callbackUrl ? "both" : null,
+        // NPC's choice, translated here and nowhere else. Australia is applied
+        // whether or not a document was declared — the customer is never asked
+        // to select a country and must never be shown a picker for one.
+        expectedDetails: diditExpectedDetails(req.documentChoice ?? null),
         sandboxScenario: req.sandboxScenario ?? null,
       });
       return created;

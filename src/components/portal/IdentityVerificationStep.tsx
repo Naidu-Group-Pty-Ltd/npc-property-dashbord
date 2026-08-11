@@ -1,16 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Loader2, ShieldCheck, CheckCircle2, AlertTriangle, Camera, ArrowRight, ArrowLeft, RefreshCw,
+  ExternalLink, Clock,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import {
   amlPortalApi, type AmlVerificationParty, type AmlVerificationStatus,
 } from '@/lib/aml/amlPortalApi';
+import {
+  IDENTITY_DOCUMENT_CHOICES, IDENTITY_DOCUMENT_PRESENTATION, identityCheckRequirements,
+  type IdentityDocumentChoice,
+} from '@/lib/aml/identityDocuments';
 import { frameToJpeg, toUploadableJpeg, MAX_CAPTURE_EDGE_PX } from '@/lib/aml/captureImage';
 
 /**
@@ -60,29 +67,108 @@ const STATUS_PRESENTATION: Record<AmlVerificationParty['status'], { label: strin
   contact_adviser: { label: 'We will contact you', tone: 'text-warning' },
 };
 
+/**
+ * What this party's state looks like right now, as one comparable string.
+ *
+ * Used only to notice that something MOVED. It is not sent anywhere and it is
+ * not an outcome — the parent's response to it is to re-read the server, never
+ * to believe anything the browser worked out.
+ */
+function statusSignature(status: AmlVerificationStatus): string {
+  return status.parties
+    .map((p) => `${p.party_id ?? 'self'}:${p.status}:${p.verification_in_progress ? 1 : 0}`)
+    .join('|');
+}
+
 export function IdentityVerificationStep({
-  caseId, onBack, onNext, onNeedsConsent,
+  caseId, onBack, onNext, onNeedsConsent, onStatusChange,
 }: {
   caseId: string;
   onBack: () => void;
   onNext: () => void;
   onNeedsConsent: () => void;
+  /**
+   * Canonical verification state changed on the SERVER.
+   *
+   * This step keeps its own copy of the verification status; the journey that
+   * draws the stepper, the progress figure and the review summary lives on the
+   * page above it. Without this the two drifted apart — a client could return
+   * from a completed check and see "Verify identity" still grey, with the
+   * progress bar unmoved, until they reloaded the page by hand.
+   *
+   * It carries no argument on purpose. It reports that something moved, never
+   * what it moved to: the parent answers by re-reading the server, so a
+   * browser callback can never be the thing that marks anybody verified.
+   */
+  onStatusChange?: () => void;
 }) {
   const [state, setState] = useState<AmlVerificationStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeParty, setActiveParty] = useState<AmlVerificationParty | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
-  /** An open hosted session: the party plus the URL the server just minted. */
-  const [hosted, setHosted] = useState<{ party: AmlVerificationParty; url: string } | null>(null);
+  /**
+   * The party currently going through the secure identity check.
+   *
+   * Holds a party and NOT a session: the URL is minted only once the customer
+   * presses Begin, inside the click that opens the window. Keeping it out of
+   * this state is what makes the popup rule satisfiable — see `beginCheck`.
+   */
+  const [checking, setChecking] = useState<AmlVerificationParty | null>(null);
+
+  /**
+   * The party-state this step has already accounted for.
+   *
+   * ## The loop this ref caused
+   *
+   * It used to notify the page on the first read whenever that read was not
+   * "quiet" — anything other than every party `not_started`. A client sitting
+   * on a check that was already `in_review` therefore announced a change that
+   * had not happened, the page reloaded, the reload blanked the portal, this
+   * component unmounted, the ref died with it, and the remount made the very
+   * same server state look new again. Forever. The page blinked and the
+   * customer could not use it.
+   *
+   * So the first successful read for a case is a BASELINE and never a change.
+   * The page has already loaded the overview from the same server; there is
+   * nothing to tell it. `onStatusChange` announces a change AFTER the baseline
+   * and nothing else.
+   */
+  const reportedRef = useRef<string | null>(null);
+  /**
+   * Which case that baseline belongs to.
+   *
+   * A genuinely different case needs a fresh baseline — its first read is not
+   * a change either. Keyed on the case rather than on mount so an ordinary
+   * parent refresh, which re-renders this component without remounting it,
+   * cannot make an unchanged identity state look new.
+   */
+  const baselineCaseRef = useRef<string | null>(null);
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+
+  /** Adopt a fresh server read, and tell the page only if the state moved. */
+  const applyStatus = useCallback((next: AmlVerificationStatus) => {
+    setState(next);
+    const signature = statusSignature(next);
+    if (baselineCaseRef.current !== caseId) {
+      // First read for this case: record where we are starting from, silently.
+      baselineCaseRef.current = caseId;
+      reportedRef.current = signature;
+      return;
+    }
+    if (reportedRef.current === signature) return;
+    reportedRef.current = signature;
+    onStatusChangeRef.current?.();
+  }, [caseId]);
 
   const load = useCallback(async () => {
     try {
-      setState(await amlPortalApi.verificationStatus(caseId));
+      applyStatus(await amlPortalApi.verificationStatus(caseId));
       setLoadError(null);
     } catch (e: any) {
       setLoadError(e?.message ?? 'Unable to load verification status.');
     }
-  }, [caseId]);
+  }, [caseId, applyStatus]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -100,28 +186,24 @@ export function IdentityVerificationStep({
     setStarting(party.party_id ?? 'self');
     try {
       const fresh = await amlPortalApi.verificationStatus(caseId);
-      setState(fresh);
+      applyStatus(fresh);
       const stillAllowed = fresh.parties.find(
         (p) => (p.party_id ?? null) === (party.party_id ?? null))?.can_attempt;
       if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
 
       /**
-       * A hosted provider runs its own capture. The session is minted by our
-       * backend — never a generic workflow link, which would arrive with no
-       * way to tie the result back to this case and party.
+       * A hosted provider runs the short capture on its own page. NPC owns
+       * everything either side of it, so this opens NPC's own screens — pick a
+       * document, then read what to have ready — and no session is created
+       * until the customer presses Begin.
+       *
+       * That ordering is not cosmetic. The verification window has to be
+       * opened synchronously inside the customer's click or the browser
+       * classifies it as an unsolicited popup and blocks it, so the click that
+       * opens the window cannot be the same click that waits for a session.
        */
       if ((fresh.provider_flow ?? 'capture') === 'hosted') {
-        const res = await amlPortalApi.startHostedVerification(caseId, {
-          party_id: party.party_id, party_label: party.label,
-        });
-        if (res.verification_url) {
-          setHosted({ party, url: res.verification_url });
-        } else {
-          // Already in flight or already settled server-side. Re-read rather
-          // than guessing, and never assert an outcome from here.
-          toast.info(res.message);
-          await load();
-        }
+        setChecking(party);
         return;
       }
 
@@ -136,7 +218,7 @@ export function IdentityVerificationStep({
     } finally {
       setStarting(null);
     }
-  }, [caseId, load]);
+  }, [caseId, load, applyStatus]);
 
   if (loadError) {
     return (
@@ -216,6 +298,26 @@ export function IdentityVerificationStep({
     );
   }
 
+  /**
+   * The secure check takes over the step while it is running.
+   *
+   * A sub-screen rather than a dialog: this is NPC's own journey — choose a
+   * document, read what to have ready, then a short trip out and back — and
+   * wrapping it in a modal would frame it as an interruption to the portal
+   * rather than a part of it.
+   */
+  if (checking) {
+    return (
+      <SecureIdentityCheck
+        caseId={caseId}
+        party={checking}
+        maxAttempts={state.max_attempts}
+        onRefresh={load}
+        onExit={async () => { setChecking(null); await load(); }}
+      />
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -261,7 +363,17 @@ export function IdentityVerificationStep({
                   // server will refuse collects a face for nothing (APP 3).
                   onClick={() => void startCapture(party)}
                 >
-                  {party.attempts_used > 0 ? (
+                  {/*
+                    Three labels, and the middle one matters most: a client
+                    who already has a check open has NOT failed and has NOT
+                    used anything up, so they are asked to continue rather
+                    than to try again. `verification_in_progress` is the
+                    server's answer and survives the refresh that loses every
+                    trace of the window on this side.
+                  */}
+                  {party.verification_in_progress ? (
+                    <><Clock className="mr-1.5 h-3.5 w-3.5" /> Continue verification</>
+                  ) : party.attempts_used > 0 ? (
                     <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Try again</>
                   ) : (
                     <><Camera className="mr-1.5 h-3.5 w-3.5" /> Start</>
@@ -269,6 +381,13 @@ export function IdentityVerificationStep({
                 </Button>
               ) : null}
             </div>
+
+            {party.verification_in_progress && party.can_attempt && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Your secure identity check is still open. Continue where you left off — nothing
+                has been used up.
+              </p>
+            )}
 
             {party.retake_required && party.can_attempt && (
               <p className="mt-3 text-xs text-muted-foreground">
@@ -317,270 +436,590 @@ export function IdentityVerificationStep({
           onUnavailable={async () => { setActiveParty(null); await load(); }}
         />
       )}
-
-      {hosted && (
-        <HostedVerificationDialog
-          party={hosted.party}
-          url={hosted.url}
-          onClose={async () => { setHosted(null); await load(); }}
-        />
-      )}
     </Card>
   );
 }
 
-/* ─────────────────────────── hosted verification ────────────────────────── */
+/* ────────────────────── the secure identity check ───────────────────────── */
 
 /**
- * The permissions the hosted flow is delegated.
+ * NPC's identity check, with the provider reduced to one short errand.
  *
- * `camera` is the one that decides whether this works at all — without it the
- * provider's capture step dies on a permission error the customer cannot act
- * on. The rest are the documented embed set: `autoplay` and `encrypted-media`
- * for the liveness video pipeline (a blocked stream reads to the provider as
- * "this device cannot capture"), `clipboard-write` and `picture-in-picture`
- * because the integration snippet grants them, and the motion sensors for the
- * document-tilt and liveness steps.
+ * ## What changed and why
  *
- * There is deliberately NO `sandbox` attribute. The documented embed does not
- * use one, and the one we had bought nothing: a cross-origin frame already
- * granted `allow-same-origin allow-scripts` is not meaningfully contained by
- * it — the same-origin policy, not the sandbox, is what stops the provider
- * reading this page. What it could do is silently withhold something the
- * capture pipeline needs (downloads, presentation, storage access, pointer
- * lock) and turn that into an unexplained handoff to a second device.
+ * The provider's flow used to be embedded in an iframe inside this step. That
+ * put a third-party application inside NPC's own page — a customer could see
+ * another product's chrome, its language and its errors framed as ours, and the
+ * hosted flow owned far more of the visible journey than the one thing it is
+ * actually needed for. It now runs where a payment authorisation runs: a
+ * separate top-level window that opens, does its job, and goes away. NPC owns
+ * the document choice, the instructions, the waiting state and the return.
+ *
+ * ## It still cannot report an outcome
+ *
+ * Nothing in this component can mark anybody verified, and there is no field it
+ * could read that would let it. The window closing, the return page messaging
+ * us, the customer pressing a button — every one of them does exactly one
+ * thing: re-read what NPC's own server already knows. The identity decision
+ * arrives on a signed server-to-server webhook and is re-fetched from the
+ * provider over an authenticated call before it settles anything.
+ *
+ * ## The popup rule
+ *
+ * A window opened after an `await` is an unsolicited popup and browsers block
+ * it. So `beginCheck` opens a BLANK window synchronously inside the click,
+ * then asks the backend for a session, then points the window it already has
+ * at the result. Getting that order wrong is not a subtle degradation — it is
+ * the whole flow failing on default settings in Safari and Firefox.
  */
-/**
- * Namespaced terminal events, matched by shape rather than by vendor name.
- *
- * Taken from the provider's own published SDK, which posts this vocabulary
- * across the frame boundary. The full set it can send is:
- *
- *   ready · started · step_started · step_changed · step_completed ·
- *   media_started · media_captured · document_selected ·
- *   verification_submitted · status_updated · code_sent · code_verified ·
- *   completed · cancelled · error · close_request
- *
- * Only the last four end the journey. Everything before them happens while
- * the customer is still working, and acting on one takes them out of a flow
- * that was going fine — `step_completed` fires between document and selfie,
- * `verification_submitted` fires while the result is still being computed.
- *
- * Matching the shape rather than the literal keeps the vendor's name out of
- * the portal bundle, for the same reason the expected origin is derived from
- * the server-minted URL instead of being written down here.
- *
- * The colon is load-bearing: `<vendor>:step_completed` ends in "completed",
- * and a substring test would close the dialog on a customer mid-capture.
- * Requiring the separator immediately before the terminal word does not.
- */
-const HOSTED_TERMINAL_NAMESPACED =
-  /^[a-z][a-z0-9-]*:(completed|cancelled|canceled|error|failed|close_request)$/;
+
+/** One named window. A second open with the same name re-uses it, not clones it. */
+const CHECK_WINDOW_TARGET = 'npc-secure-identity-check';
 
 /**
- * Unprefixed spellings, kept as a safety net.
+ * The message the return page sends its opener.
  *
- * The provider's integration writing has used `verification_completed` for
- * the same moment its SDK calls `<vendor>:completed`, and the wire format of
- * an embedded session is not itself published. Recognising too little only
- * costs the customer a button press; recognising a lifecycle event ejects
- * them from a working flow — so this list stays strictly terminal.
+ * Matched exactly, from this origin only, and it carries no status because
+ * there is nothing this component would be allowed to do with one. It means
+ * "the customer came back" and its only effect is a re-read.
  */
-const HOSTED_TERMINAL_EVENTS = new Set([
-  'verification_completed',
-  'verification_complete',
-  'verification_failed',
-  'verification_cancelled',
-  'verification_error',
-]);
+const RETURN_NOTICE_TYPE = 'npc:identity-return';
 
-/**
- * Whether a message means the hosted journey has ended.
- *
- * Reads a NAME and nothing else. It cannot reach a status, a decision or a
- * score, so there is no field an embedded page could set to influence an
- * identity outcome — the strongest thing any message can do is cause NPC to
- * re-read what its own server already knows.
- *
- * Recognising too little is safe (the customer presses "I have finished");
- * recognising too much throws them out of a working flow. Hence terminal-only,
- * matched exactly.
- */
-function isHostedTerminalMessage(data: unknown): boolean {
-  let payload: unknown = data;
-  // The provider's SDK JSON-parses string payloads before reading the type,
-  // so an embedded session may send either shape.
-  if (typeof payload === 'string') {
-    const raw = payload;
-    try { payload = JSON.parse(raw); } catch { /* a bare event name */ }
-    if (typeof payload === 'string') {
-      return HOSTED_TERMINAL_EVENTS.has(raw) || HOSTED_TERMINAL_NAMESPACED.test(raw);
-    }
-  }
-  let name = '';
-  if (payload && typeof payload === 'object') {
-    const d = payload as Record<string, unknown>;
-    for (const key of ['type', 'event', 'name']) {
-      if (typeof d[key] === 'string') { name = d[key] as string; break; }
-    }
-  }
-  return HOSTED_TERMINAL_EVENTS.has(name) || HOSTED_TERMINAL_NAMESPACED.test(name);
+type CheckPhase =
+  /** Nothing chosen yet. */
+  | 'choose'
+  /** Document chosen; showing what to have ready. */
+  | 'brief'
+  /** Window open, session being minted. */
+  | 'opening'
+  /** Window open on the provider's capture page. */
+  | 'open'
+  /** The browser refused the window. Recoverable with one press. */
+  | 'blocked'
+  /** The window went away before the customer returned. Not a failure. */
+  | 'closed'
+  /** They came back. NPC is waiting on its own server, not on them. */
+  | 'returned';
+
+/** A separate, centred window — deliberately not a tab, and never an iframe. */
+function checkWindowFeatures(): string {
+  const width = 460;
+  const height = 780;
+  const screenWidth = window.screen?.width ?? width;
+  const screenHeight = window.screen?.height ?? height;
+  const left = Math.max(0, Math.round((screenWidth - width) / 2));
+  const top = Math.max(0, Math.round((screenHeight - height) / 2));
+  // `popup=yes` asks desktop browsers for a window rather than a tab. Mobile
+  // browsers ignore the geometry and open a tab, which is the right behaviour
+  // there and is why nothing below assumes a window exists beside this one.
+  return `popup=yes,width=${width},height=${height},left=${left},top=${top},`
+    + 'resizable=yes,scrollbars=yes';
 }
 
-const HOSTED_IFRAME_ALLOW = [
-  'camera',
-  'microphone',
-  'autoplay',
-  'encrypted-media',
-  'fullscreen',
-  'clipboard-write',
-  'picture-in-picture',
-  'accelerometer',
-  'gyroscope',
-  'magnetometer',
-].join('; ');
-
 /**
- * The provider's own verification flow, embedded in the portal.
+ * Something to look at while the session is minted.
  *
- * ## It never reports an outcome
- *
- * There is no path from this component to an identity decision. The `message`
- * listener below is origin-checked and does exactly one thing — re-read server
- * state — because the identity result reaches NPC on a signed
- * server-to-server webhook and nowhere else. Nothing the frame, the customer
- * or a return URL says can mark anybody verified; the strongest claim this
- * screen can make is "we are checking".
- *
- * ## Capturing on this device is the normal path
- *
- * Handing the customer off to a second device is the provider's fallback for
- * one that genuinely cannot capture, and it should stay that way. It became
- * the default because the workflow carried `is_desktop_allowed = false`, which
- * tells the provider to refuse desktop capture outright — fixed in the
- * workflow, not here. This component's job is to not re-create the problem:
- * full permissions, no sandbox, and enough room that the capture UI is usable.
+ * Without it the customer stares at `about:blank` for as long as the round
+ * trip takes, which reads as a broken window rather than a loading one. Wrapped
+ * because a browser may refuse to let us write into the new document, and that
+ * is cosmetic — the navigation that follows still works.
  */
-function HostedVerificationDialog({
-  party, url, onClose,
-}: {
-  party: AmlVerificationParty;
-  url: string;
-  onClose: () => void | Promise<void>;
-}) {
-  const [closing, setClosing] = useState(false);
-  /** Revealed on request. Not shown up front — nothing has failed yet. */
-  const [showFallback, setShowFallback] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+function paintPlaceholder(win: Window): void {
+  try {
+    win.document.write(
+      '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+      + '<meta name="viewport" content="width=device-width,initial-scale=1">'
+      + '<title>Secure identity check</title></head>'
+      /*
+       * No colours. This document lives for one round trip in a window that
+       * has none of NPC's stylesheets, so a brand colour here could only be a
+       * hardcoded hex — and the design tokens are the single source for those.
+       * Default browser styling is correct for a page nobody should have time
+       * to read.
+       */
+      + '<body style="margin:0;display:flex;align-items:center;justify-content:center;'
+      + 'height:100vh;font:16px/1.5 system-ui,sans-serif">'
+      + 'Preparing your secure identity check…</body></html>',
+    );
+    win.document.close();
+  } catch { /* not writable here; the window is still usable */ }
+}
 
-  const done = useCallback(async () => {
-    setClosing(true);
-    await onClose();
-  }, [onClose]);
+function SecureIdentityCheck({
+  caseId, party, maxAttempts, onRefresh, onExit,
+}: {
+  caseId: string;
+  party: AmlVerificationParty;
+  maxAttempts: number;
+  onRefresh: () => Promise<void>;
+  onExit: () => void | Promise<void>;
+}) {
+  const [phase, setPhase] = useState<CheckPhase>('choose');
+  const [choice, setChoice] = useState<IdentityDocumentChoice | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  /** The window we opened. Never re-created behind the customer's back. */
+  const winRef = useRef<Window | null>(null);
+  /**
+   * The session URL, held in memory for exactly as long as the flow runs.
+   *
+   * It embeds the customer's session token, so it is never written to
+   * `localStorage`, `sessionStorage`, a cookie, the URL bar, a log line or any
+   * telemetry — a token in web storage outlives the browser restart that should
+   * have ended it, and is readable by every script on the origin. It exists
+   * here only so that "open it again" can be a synchronous response to a click
+   * rather than another round trip the browser would block.
+   */
+  const urlRef = useRef<string | null>(null);
+  /** Guards a second session request from a double tap, before React re-renders. */
+  const busy = useRef(false);
+
+  useEffect(() => () => { urlRef.current = null; }, []);
 
   /**
-   * The provider posts lifecycle messages while the embedded app boots and
-   * moves between steps; only a terminal one means the journey has finished.
-   * Treating every same-origin message as completion unmounted the iframe
-   * during startup, which the customer saw as a white panel that vanished
-   * after a few seconds.
+   * Point the existing window at the session, or open one if it has gone.
    *
-   * Three checks, all of which must pass: the origin (derived from the
-   * server-minted session URL, never hardcoded, so the portal still does not
-   * name a provider), the source (this exact frame, so a popup or a nested
-   * frame cannot speak for it), and the event name against a terminal
-   * allow-list.
-   *
-   * Only the NAME is read. Nothing in the payload can reach an identity
-   * outcome, because the sole action available here is to re-read what the
-   * server already knows.
+   * Called only from a click, and it never awaits before opening — both are
+   * what keep the browser treating this as user-initiated.
    */
-  const origin = useMemo(() => {
-    try { return new URL(url).origin; } catch { return null; }
-  }, [url]);
+  const showCheckWindow = useCallback((): boolean => {
+    const url = urlRef.current;
+    if (!url) return false;
+    const existing = winRef.current;
+    if (existing && !existing.closed) {
+      try { existing.location.replace(url); } catch { /* cross-origin: already there */ }
+      existing.focus();
+      return true;
+    }
+    const win = window.open(url, CHECK_WINDOW_TARGET, checkWindowFeatures());
+    if (!win) return false;
+    winRef.current = win;
+    win.focus();
+    return true;
+  }, []);
 
+  /**
+   * The one click that matters.
+   *
+   * Order is load-bearing and is the reason this is not simply
+   * `await start(); window.open(url)`:
+   *
+   *   1. open a blank window — synchronously, inside the gesture;
+   *   2. ask the backend for a session — which may reconcile and hand back the
+   *      one the customer already has rather than mint another;
+   *   3. navigate the window we already hold.
+   *
+   * A blocked window does not abandon the request: the session is still
+   * created and its URL kept in memory, so the recovery button is one press
+   * and not another round trip. Nothing about a blocked window is a
+   * verification failure and none of it consumes an attempt — the backend
+   * settles attempts from provider outcomes alone.
+   */
+  const beginCheck = useCallback((documentType: IdentityDocumentChoice) => {
+    if (busy.current) return;
+    busy.current = true;
+    setError(null);
+
+    // ── 1. Synchronous, before any await. Do not move this.
+    const win = window.open('', CHECK_WINDOW_TARGET, checkWindowFeatures());
+    if (win) {
+      winRef.current = win;
+      paintPlaceholder(win);
+    }
+    setPhase('opening');
+
+    void (async () => {
+      try {
+        // ── 2. The session. Server-minted, server-correlated, server-owned.
+        const res = await amlPortalApi.startHostedVerification(caseId, {
+          party_id: party.party_id,
+          party_label: party.label,
+          document_type: documentType,
+        });
+
+        if (!res.verification_url) {
+          // Already in flight elsewhere, or settled while nobody was looking.
+          // Neither is ours to interpret — say what the server said and let
+          // the step re-read.
+          win?.close();
+          winRef.current = null;
+          toast.info(res.message);
+          await onExit();
+          return;
+        }
+
+        urlRef.current = res.verification_url;
+
+        // ── 3. Navigate the window we already have.
+        if (!win || win.closed) {
+          setPhase('blocked');
+          return;
+        }
+        win.location.replace(res.verification_url);
+        setPhase('open');
+      } catch (e: unknown) {
+        const err = e as { code?: string; message?: string };
+        win?.close();
+        winRef.current = null;
+        if (err?.code && UNAVAILABLE_CODES.includes(err.code)) {
+          // Provider gone, manual route, or attempts exhausted. The step owns
+          // what the customer is shown for each of these, and it is never
+          // "verification failed".
+          toast.info(err.message ?? 'Verification is unavailable just now.');
+          await onExit();
+          return;
+        }
+        setPhase(err?.code === 'unsupported_document_type' ? 'choose' : 'brief');
+        setError(err?.message
+          ?? 'We could not start the secure check just now. Nothing has been used up — '
+          + 'please try again in a moment.');
+      } finally {
+        busy.current = false;
+      }
+    })();
+  }, [caseId, party.party_id, party.label, onExit]);
+
+  /**
+   * The customer came back.
+   *
+   * Origin-checked against this page's own origin, so only an NPC page can be
+   * heard at all, and matched on a bare type. There is deliberately no field
+   * in the message that could carry a status — the only action available here
+   * is a re-read of server state, so no message from any window can move a
+   * verification.
+   */
   useEffect(() => {
-    if (!origin) return;
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== origin) return;
-      if (event.source !== iframeRef.current?.contentWindow) return;
-      if (!isHostedTerminalMessage(event.data)) return;
-      void done();
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as { type?: unknown } | null;
+      if (!data || typeof data !== 'object' || data.type !== RETURN_NOTICE_TYPE) return;
+      setPhase('returned');
+      void onRefresh();
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [origin, done]);
+  }, [onRefresh]);
+
+  /**
+   * The window went away.
+   *
+   * Polled, because there is no cross-origin close event. A closed window is
+   * NOT a failure and is never reported as one: the customer may have
+   * finished, may have given up, may have closed it by accident. All this does
+   * is stop claiming the check is in progress and re-read the server.
+   */
+  useEffect(() => {
+    if (phase !== 'open') return;
+    const timer = window.setInterval(() => {
+      if (winRef.current && !winRef.current.closed) return;
+      window.clearInterval(timer);
+      setPhase('closed');
+      void onRefresh();
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [phase, onRefresh]);
+
+  /**
+   * Coming back to this tab is itself a signal.
+   *
+   * On a phone the check usually opens as a tab, and returning to NPC is a tab
+   * switch rather than anything we are told about. Re-reading on focus is what
+   * makes the mobile journey land on the right state without the customer
+   * pressing anything.
+   */
+  useEffect(() => {
+    if (phase !== 'open' && phase !== 'closed' && phase !== 'returned') return;
+    const refresh = () => { if (!document.hidden) void onRefresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [phase, onRefresh]);
+
+  const chosen = choice ? IDENTITY_DOCUMENT_PRESENTATION[choice] : null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-background/80 sm:items-center sm:p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Verify ${party.label}`}
-    >
-      {/*
-        Full-bleed on a phone, where the capture UI needs every pixel it can
-        get, and a generous panel on a desktop. The old fixed `h-[60vh]` inside
-        a `max-w-2xl` card squeezed a camera viewfinder into a small inner
-        scroll box with the controls below the fold.
-      */}
-      <Card className="flex h-full w-full max-w-3xl flex-col overflow-hidden rounded-none sm:h-[min(90vh,900px)] sm:rounded-lg">
-        <CardHeader className="shrink-0 py-3">
-          <CardTitle className="text-base">Verify your identity</CardTitle>
-        </CardHeader>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
+          {phase === 'choose' || phase === 'brief' ? 'Confirm your identity'
+            : phase === 'returned' ? 'Verification received'
+              : 'Identity verification'}
+        </CardTitle>
+        <CardDescription>
+          {party.label}
+          {chosen && phase !== 'choose' && <> · {chosen.label}</>}
+        </CardDescription>
+      </CardHeader>
 
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-2 p-0 sm:px-4 sm:pb-4">
-          <iframe
-            ref={iframeRef}
-            src={url}
-            title="Identity verification"
-            className="min-h-0 w-full flex-1 border-0 sm:rounded-md sm:border"
-            allow={HOSTED_IFRAME_ALLOW}
-            allowFullScreen
-          />
+      <CardContent className="space-y-5">
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3 sm:px-0 sm:pb-0">
-            <Button variant="ghost" size="sm" onClick={done} disabled={closing}>
-              Cancel
-            </Button>
+        {/* ── A. Which document ─────────────────────────────────────────── */}
+        {phase === 'choose' && (
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-sm font-medium">Which identity document will you use?</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Choose the document you have with you. We only need one.
+              </p>
+            </div>
 
-            <div className="flex items-center gap-3">
-              {/*
-                Offered quietly, and only when asked for. Leading with "camera
-                not working?" told every customer something had gone wrong
-                before anything had.
-              */}
-              {showFallback ? (
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs underline underline-offset-2"
-                >
-                  Open in a new tab
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowFallback(true)}
-                  className="text-xs text-muted-foreground underline underline-offset-2"
-                >
-                  Having trouble?
-                </button>
-              )}
+            {/*
+              A radio group and not a row of buttons: this is a single choice
+              from a short closed list, so arrow keys should move through it,
+              the label should be clickable, and a screen reader should hear
+              "2 of 4". Pressing an option does not start anything — the launch
+              screen is a separate, deliberate step.
+            */}
+            {/*
+              `?? ''` and not `?? undefined`: an undefined value makes the
+              group UNCONTROLLED, and an uncontrolled group tracks its own
+              selection while ours stays null — the option looked chosen and
+              Continue stayed disabled. Found in a browser, not in jsdom.
+            */}
+            <RadioGroup
+              value={choice ?? ''}
+              onValueChange={(v) => setChoice(v as IdentityDocumentChoice)}
+              aria-label="Identity document"
+              className="gap-2"
+            >
+              {IDENTITY_DOCUMENT_CHOICES.map((option) => {
+                const presentation = IDENTITY_DOCUMENT_PRESENTATION[option];
+                const id = `identity-document-${option}`;
+                return (
+                  /*
+                    The label is a SIBLING of the control, not its wrapper.
+                    Measured in a browser: with the label wrapped around the
+                    radio, arrow keys did not move between options at all — the
+                    list could be tabbed into and then not moved through, which
+                    is the whole of keyboard operation for a radio group. As
+                    siblings it behaves correctly, and this is the shape shadcn
+                    documents.
+                  */
+                  <div
+                    key={option}
+                    className="flex items-start gap-3 rounded-md border p-3 transition-colors
+                      hover:bg-accent/50 has-[[data-state=checked]]:border-primary
+                      has-[[data-state=checked]]:bg-accent/40 motion-reduce:transition-none"
+                  >
+                    <RadioGroupItem value={option} id={id} className="mt-0.5" />
+                    <Label htmlFor={id} className="flex-1 cursor-pointer space-y-0.5 font-normal">
+                      <span className="block text-sm font-medium">{presentation.label}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {presentation.hint}
+                      </span>
+                    </Label>
+                  </div>
+                );
+              })}
+            </RadioGroup>
 
-              <Button size="sm" onClick={done} disabled={closing}>
-                {closing ? (
-                  <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Checking…</>
-                ) : (
-                  <>I have finished <ArrowRight className="ml-1 h-4 w-4" /></>
-                )}
+            <div className="flex flex-wrap justify-between gap-2">
+              <Button variant="outline" onClick={() => void onExit()}>
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Back
+              </Button>
+              <Button disabled={!choice} onClick={() => setPhase('brief')}>
+                Continue <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        )}
+
+        {/* ── B. What to have ready ─────────────────────────────────────── */}
+        {phase === 'brief' && choice && chosen && (
+          <div className="space-y-4">
+            <div className="rounded-md border p-4">
+              <div className="text-sm font-medium">{chosen.label}</div>
+              <p className="mt-3 text-xs font-medium text-muted-foreground">You will need:</p>
+              <ul className="mt-2 space-y-1.5">
+                {identityCheckRequirements(choice).map((requirement) => (
+                  <li key={requirement} className="flex items-start gap-2 text-sm">
+                    <CheckCircle2
+                      className="mt-0.5 h-4 w-4 shrink-0 text-success"
+                      aria-hidden="true"
+                    />
+                    <span>{requirement}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/*
+              Said before the window opens, not after. A new window appearing
+              unannounced is the moment a customer decides something has gone
+              wrong — and someone using a screen reader or a magnifier needs to
+              know where their focus is about to be able to go.
+            */}
+            <p className="text-xs text-muted-foreground">
+              Selecting <strong>Begin secure verification</strong> opens a separate secure window
+              for the photo steps. This page stays open behind it, and you will come back here
+              when you are finished. Your identity check is completed securely using our
+              verification provider.
+            </p>
+
+            <div className="flex flex-wrap justify-between gap-2">
+              <Button variant="outline" onClick={() => { setPhase('choose'); setError(null); }}>
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Change document
+              </Button>
+              <Button onClick={() => beginCheck(choice)}>
+                Begin secure verification
+                <ExternalLink className="ml-1.5 h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── C–G. In flight ────────────────────────────────────────────── */}
+        {(phase === 'opening' || phase === 'open' || phase === 'blocked'
+          || phase === 'closed' || phase === 'returned') && (
+          <div className="space-y-4">
+            {/*
+              One live region for every in-flight state, so a screen reader is
+              told when the check moves from "preparing" to "in progress" to
+              "received" without the customer hunting for it. Each state pairs
+              an icon with words — none of them is distinguishable by colour
+              alone.
+            */}
+            <div className="rounded-md border p-4" role="status" aria-live="polite">
+              {phase === 'opening' && (
+                <p className="flex items-center gap-2 text-sm">
+                  <Loader2
+                    className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                  Preparing your secure identity check…
+                </p>
+              )}
+
+              {phase === 'open' && (
+                <div className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <Clock className="h-4 w-4 text-primary" aria-hidden="true" />
+                    Identity verification in progress
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Complete the steps in the secure window that has opened. You can return to
+                    this page when you have finished.
+                  </p>
+                </div>
+              )}
+
+              {phase === 'blocked' && (
+                <div className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
+                    We could not open the secure verification window
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Your browser blocked it. Nothing has gone wrong with your verification and
+                    nothing has been used up — select Open verification below, or allow pop-ups
+                    for this site and try again.
+                  </p>
+                </div>
+              )}
+
+              {phase === 'closed' && (
+                <div className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <Clock className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    Your identity check has not been confirmed yet
+                  </p>
+                  {/*
+                    Not "you failed" and not "you cancelled". The window closing
+                    tells us nothing about what happened inside it — they may
+                    have finished and closed it themselves — so this says only
+                    what is true and offers the way back.
+                  */}
+                  <p className="text-xs text-muted-foreground">
+                    The secure window is no longer open. If you have already finished, we may
+                    still be checking it. Otherwise you can continue where you left off —
+                    nothing has been used up.
+                  </p>
+                </div>
+              )}
+
+              {phase === 'returned' && (
+                <div className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
+                    We are securely checking your verification
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Your information has been received. This usually takes under a minute, and
+                    we will show the result here. You do not need to do anything else.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" onClick={() => void onExit()}>
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Back to identity
+              </Button>
+
+              <div className="flex flex-wrap gap-2">
+                {/*
+                  One control, three labels. It is a direct response to a click
+                  every time — never a promise resolving into a window — because
+                  a browser blocks the second kind.
+                */}
+                {(phase === 'open' || phase === 'blocked' || phase === 'closed') && (
+                  <Button
+                    onClick={() => {
+                      if (showCheckWindow()) {
+                        setPhase('open');
+                        setError(null);
+                      } else if (choice) {
+                        // The URL is gone (a refresh, or the flow was re-entered).
+                        // Ask the backend again — it reconciles and hands back the
+                        // session already open rather than minting another.
+                        beginCheck(choice);
+                      }
+                    }}
+                  >
+                    {phase === 'open' ? 'Re-open verification'
+                      : phase === 'blocked' ? 'Open verification'
+                        : 'Continue verification'}
+                    <ExternalLink className="ml-1.5 h-4 w-4" aria-hidden="true" />
+                  </Button>
+                )}
+
+                {phase === 'returned' && (
+                  <Button onClick={() => void onExit()}>
+                    Return to Identity &amp; Compliance
+                    <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/*
+          The documentary route stays prominent and stays on every screen of
+          this flow. Consent to biometric collection is genuinely optional
+          (APP 3.3), so refusing has to be visible at the moment somebody
+          decides to refuse — not hidden behind the check they are declining.
+        */}
+        <Alert>
+          <AlertTitle className="text-sm">Prefer not to use the photo check?</AlertTitle>
+          <AlertDescription className="text-xs">
+            You do not have to. Tell your adviser and we will verify your identity from original
+            or certified copies of your documents instead. It takes a little longer, you keep all
+            {' '}{maxAttempts} attempts, and there is no disadvantage to you.
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </Card>
   );
 }
 

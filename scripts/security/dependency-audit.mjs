@@ -80,10 +80,8 @@ const vulns = report.vulnerabilities;
 const blocking = [];
 const belowThreshold = [];
 
-for (const [pkg, v] of Object.entries(vulns)) {
-  const severity = String(v.severity || 'info').toLowerCase();
-  const rank = RANK[severity] ?? 0;
-  // Collect advisory identifiers for allowlist matching.
+/** Advisory identifiers this package is flagged under, for allowlist matching. */
+function advisoryIds(v) {
   const ids = new Set();
   for (const via of v.via || []) {
     if (typeof via === 'object') {
@@ -92,7 +90,67 @@ for (const [pkg, v] of Object.entries(vulns)) {
       if (via.name && via.title) ids.add(`${via.name}: ${via.title}`);
     }
   }
-  const isAccepted = [...ids].some((id) => accepted.has(id)) || accepted.has(pkg);
+  return ids;
+}
+
+/**
+ * Is this package accepted?
+ *
+ * Directly, when one of its own advisory ids is on the allowlist. Or
+ * TRANSITIVELY: `npm audit` also flags a package whose only fault is depending
+ * on a vulnerable one, and represents that as a `via` entry which is a bare
+ * package NAME rather than an advisory object. `pptxgenjs` is flagged solely
+ * because it pulls in `image-size`; it has no advisory of its own, so there is
+ * no id to allowlist and no way to accept it without naming the bare package —
+ * which the allowlist's own policy forbids, because accepting a package accepts
+ * every future advisory against it sight unseen.
+ *
+ * So a package flagged only through other packages is accepted exactly when all
+ * of those are. The judgement stays attached to the advisory that was actually
+ * read, and a NEW advisory against `pptxgenjs` itself would arrive as an
+ * advisory object and block, as it should.
+ *
+ * ## The `seen` set is per-PATH, not per-traversal
+ *
+ * `seen` guards against a cycle, and a cycle is a repeat along ONE path. Sharing
+ * a single set across the sibling branches of `.every` also rejects a **diamond**
+ * — a package legitimately reached twice by two different routes — because the
+ * second visit looks like a repeat.
+ *
+ * That is not hypothetical. It blocked `main`:
+ *
+ *     radix-ui ─┬─ @radix-ui/react-form ── @radix-ui/react-label ── image-size
+ *               └─ @radix-ui/react-label ─────────────────────────── image-size
+ *
+ * `image-size`'s two advisories are on the allowlist with reasons and a review
+ * date, and both radix packages were reported `accepted-via-allowlist`. But
+ * evaluating `react-form` first put `react-label` in the shared set, so the
+ * second branch returned false, `.every` failed, and `radix-ui [high]` was
+ * reported as an unaccepted advisory that nobody could act on — there is no
+ * advisory id to allowlist, and naming the bare package is what the allowlist's
+ * own policy forbids.
+ *
+ * A fresh copy per branch keeps the guard doing what it is for.
+ */
+function isAcceptedPkg(pkg, seen = new Set()) {
+  if (seen.has(pkg)) return false;  // cycle guard — see the note above
+  seen.add(pkg);
+  const v = vulns[pkg];
+  if (!v) return false;
+  if (accepted.has(pkg)) return true;                       // explicit, discouraged
+  if ([...advisoryIds(v)].some((id) => accepted.has(id))) return true;
+
+  const parents = (v.via || []).filter((via) => typeof via === 'string');
+  const ownAdvisories = (v.via || []).filter((via) => typeof via === 'object');
+  if (ownAdvisories.length > 0 || parents.length === 0) return false;
+  return parents.every((parent) => isAcceptedPkg(parent, new Set(seen)));
+}
+
+for (const [pkg, v] of Object.entries(vulns)) {
+  const severity = String(v.severity || 'info').toLowerCase();
+  const rank = RANK[severity] ?? 0;
+  const ids = advisoryIds(v);
+  const isAccepted = isAcceptedPkg(pkg);
   const record = { pkg, severity, ids: [...ids], accepted: isAccepted };
 
   if (rank >= blockRank && !isAccepted) blocking.push(record);

@@ -13,13 +13,20 @@ let _globalAuthExhausted = false;
 const GLOBAL_AUTH_FAIL_LIMIT = 5;
 let _globalAuthFailCount = 0;
 
+/** Fired once when the breaker trips, so auth state can clear and redirect. */
+export const AUTH_EXHAUSTED_EVENT = 'npc-auth-exhausted';
+
 export function markAuthFailure(): void {
   _globalAuthFailCount++;
-  if (_globalAuthFailCount >= GLOBAL_AUTH_FAIL_LIMIT) {
+  if (_globalAuthFailCount >= GLOBAL_AUTH_FAIL_LIMIT && !_globalAuthExhausted) {
     _globalAuthExhausted = true;
     console.warn('[secureInvoke] Global auth circuit breaker tripped – all polling stopped until re-login.');
+    // Without this, a revoked/expired session left every poller 401-ing behind a
+    // blank screen instead of returning the user to the login page.
+    try { window.dispatchEvent(new Event(AUTH_EXHAUSTED_EVENT)); } catch { /* non-browser */ }
   }
 }
+
 
 export function resetAuthFailures(): void {
   _globalAuthFailCount = 0;

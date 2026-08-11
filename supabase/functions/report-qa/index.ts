@@ -550,6 +550,7 @@ function decodePdfStringFast(str: string): string {
 }
 // CORS headers sourced from shared helper (uses ALLOWED_ORIGINS env var with safe legacy fallback).
 import { createCorsHeaders } from '../_shared/auth.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 /**
  * Decode base64 to Uint8Array - simple and reliable approach
@@ -4448,7 +4449,7 @@ ${cleanContent.length + 500}
   } catch (error) {
     console.error("[report-qa] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify(internalError(error, 'report-qa')),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

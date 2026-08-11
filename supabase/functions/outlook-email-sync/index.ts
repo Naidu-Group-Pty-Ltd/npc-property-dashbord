@@ -6,6 +6,7 @@ import { isSuperadmin, logSecurityEvent } from "../_shared/auth_v2.ts";
 import { checkPermission } from "../_shared/permissions.ts";
 import { insertTargetedNotification } from "../_shared/notify.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -718,7 +719,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[Outlook Sync] Error:', error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify(internalError(error, 'outlook-email-sync')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
