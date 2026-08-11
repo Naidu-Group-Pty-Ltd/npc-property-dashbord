@@ -18,7 +18,9 @@
  */
 import type { IdentityDocumentChoice } from "../identityDocuments.pure.ts";
 import { diditExpectedDetails } from "./didit.pure.ts";
-import { readStandaloneThresholds } from "./diditStandalone.pure.ts";
+import {
+  classifyThreshold, readStandaloneThresholds, type ThresholdState,
+} from "./diditStandalone.pure.ts";
 
 export type IdvMethod = "document_and_liveness" | "document_only" | "database_lookup" | "manual";
 
@@ -1169,8 +1171,39 @@ function diditIdvConfigured(resolved?: ResolvedProvider | null): boolean {
  * standard NPC chose.
  */
 function diditStandaloneConfigured(): boolean {
-  return Boolean(Deno.env.get("DIDIT_API_KEY"))
-    && readStandaloneThresholds((k) => Deno.env.get(k) ?? undefined) !== null;
+  return standaloneIdvReadiness().ready;
+}
+
+/**
+ * Why the Standalone provider is or is not ready — for STAFF, never a customer.
+ *
+ * `configured` is one boolean and it has to be, because the portal's answer is
+ * one word. An operator's answer cannot be: "misconfigured" leaves them
+ * guessing between a credential nobody set, a threshold nobody set, and a
+ * threshold somebody set to `0.6` on a 0–100 scale. Those are three different
+ * mistakes with three different fixes, and the Command Centre is where they get
+ * fixed.
+ *
+ * Reports PRESENCE and VALIDITY only. No value of any secret or threshold
+ * crosses this boundary — the caller renders booleans and state words.
+ */
+export interface StandaloneIdvReadiness {
+  api_key_present: boolean;
+  liveness_threshold: ThresholdState;
+  face_match_threshold: ThresholdState;
+  ready: boolean;
+}
+
+export function standaloneIdvReadiness(): StandaloneIdvReadiness {
+  const apiKeyPresent = Boolean(Deno.env.get("DIDIT_API_KEY"));
+  const liveness = classifyThreshold(Deno.env.get("DIDIT_LIVENESS_THRESHOLD"));
+  const faceMatch = classifyThreshold(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD"));
+  return {
+    api_key_present: apiKeyPresent,
+    liveness_threshold: liveness,
+    face_match_threshold: faceMatch,
+    ready: apiKeyPresent && liveness === "ok" && faceMatch === "ok",
+  };
 }
 
 function adapterConfigured(

@@ -199,12 +199,47 @@ CREATE INDEX IF NOT EXISTS idx_aml_verification_standalone_queue
 -- compliance position is a deployment action with a record rather than a row
 -- edit.
 -- ─────────────────────────────────────────────────────────────────────────
+-- ## What `cost_per_unit_cents` means here, and why it is not zero
+--
+-- Traced before setting it: `runWithMetrics` adds this value to
+-- `aml.provider_metrics_daily.cost_cents_sum` once per SUCCESSFUL provider
+-- call, and `AmlConfiguration.tsx` renders that sum as "30-day cost". It is
+-- real cost reporting, and the UNIT is one provider call — not one
+-- verification. A paid integration left at 0 would report a growing spend as
+-- free, which is the one answer worse than an imprecise number.
+--
+-- Didit prices the three Standalone endpoints separately, per successful
+-- request, in USD (docs.didit.me/getting-started/pricing, read 2026-08-11):
+--
+--     ID Verification   USD 0.20
+--     Passive Liveness  USD 0.05
+--     Face Match        USD 0.05
+--
+-- One integer cannot express three prices, so the exact per-call figures go in
+-- `config.standalone_unit_costs_cents` and the ORCHESTRATOR passes the matching
+-- one to `runWithMetrics` per step. That makes the variable fail-fast sequence
+-- account correctly by construction: an attempt that stops at a declined
+-- document records 20, and a full pass records 30. No estimate, no average, and
+-- nothing that has to be kept in step by hand.
+--
+-- The column itself carries **the dearest single call (20)** rather than the
+-- full-sequence 30. It is the fallback for any caller that does not pass a
+-- per-step cost, and at a per-call unit a fallback that errs high is safe for
+-- budget reporting while one that errs low is not. Setting 30 here would make
+-- such a caller over-report threefold.
+--
+-- `currency` is USD because that is what Didit bills. The existing metrics
+-- roll-up sums `cost_cents_sum` without a currency dimension — every provider
+-- in it is currently 0, so this is the first real figure and the first mixed
+-- currency. Converting is a finance decision and changing that aggregation is
+-- out of scope here; it is recorded in docs/aml/DIDIT_STANDALONE_IDV.md as a
+-- known limitation rather than silently mislabelled as AUD.
 INSERT INTO aml.provider_configs
   (tenant_id, capability, provider_key, display_label, priority,
    cost_per_unit_cents, currency, active, mode, secret_ref, config)
 SELECT 'default', 'idv', 'didit_standalone',
        'Didit Standalone APIs (NPC capture)', 5,
-       0, 'AUD', false, 'live', 'DIDIT_API_KEY',
+       20, 'USD', false, 'live', 'DIDIT_API_KEY',
        jsonb_build_object(
          'flow', 'capture',
          'integration_mode', 'standalone',
@@ -213,6 +248,17 @@ SELECT 'default', 'idv', 'didit_standalone',
          'save_api_request', false,
          'required_env', jsonb_build_array(
            'DIDIT_API_KEY', 'DIDIT_LIVENESS_THRESHOLD', 'DIDIT_FACE_MATCH_THRESHOLD'),
+         -- Per-call prices, in cents of `pricing_currency`. Read by
+         -- standaloneVerification.ts so each billed step is metered at its own
+         -- price and a fail-fast sequence costs what it actually cost.
+         'standalone_unit_costs_cents', jsonb_build_object(
+           'id_verification', 20, 'passive_liveness', 5, 'face_match', 5),
+         'pricing_currency', 'USD',
+         'pricing_source', 'https://docs.didit.me/getting-started/pricing',
+         'pricing_observed_at', '2026-08-11',
+         'pricing_note', 'Per successful request. A full three-call sequence is USD 0.30; '
+                 'a sequence that fail-fasts costs less and is metered per step. '
+                 'cost_per_unit_cents carries the dearest single call as a fallback.',
          'note', 'Identity verification only — ID document, passive liveness, face match 1:1. '
                  'Didit AML/PEP/sanctions/KYB/proof-of-address screening is NOT enabled and '
                  'must not be: NPC screens against its own DFAT/UN/OFAC lists. '

@@ -241,11 +241,18 @@ describe('thresholds', () => {
 
 describe('provider readiness', () => {
   it('does not require a workflow id or a webhook secret', () => {
-    const fn = REGISTRY.slice(REGISTRY.indexOf('function diditStandaloneConfigured'));
+    // Readiness is decided by `standaloneIdvReadiness`, which reads the key and
+    // the two thresholds and nothing else. There is no workflow on this path,
+    // and with save_api_request=false no webhook is ever emitted — requiring
+    // either would refuse a correctly configured deployment.
+    const fn = REGISTRY.slice(REGISTRY.indexOf('export function standaloneIdvReadiness'));
     const body = fn.slice(0, fn.indexOf('\n}'));
     expect(body).toContain('DIDIT_API_KEY');
+    expect(body).toContain('DIDIT_LIVENESS_THRESHOLD');
+    expect(body).toContain('DIDIT_FACE_MATCH_THRESHOLD');
     expect(body).not.toContain('DIDIT_WORKFLOW_ID');
     expect(body).not.toContain('DIDIT_WEBHOOK_SECRET');
+    expect(REGISTRY).toContain('function diditStandaloneConfigured');
   });
 
   it('gates the capture UI, not just the submission', () => {
@@ -463,6 +470,13 @@ describe('the hosted cutover', () => {
     expect(PORTAL).toContain('capture_flow_superseded');
   });
 
+  it('records the exact drain condition, in real column and status names', () => {
+    const doc = read('docs/aml/DIDIT_STANDALONE_IDV.md');
+    expect(doc).toContain("processing_status IN ('submitted', 'queued', 'processing')");
+    expect(doc).toContain('superseded_at IS NULL');
+    expect(doc).toContain("provider = 'didit'");
+  });
+
   it('answers the portal with `capture` and never names the integration', () => {
     const status = PORTAL.slice(PORTAL.indexOf("case 'verification_status':"));
     const body = status.slice(0, status.indexOf("case 'start_hosted_verification':"));
@@ -504,6 +518,76 @@ describe('status refresh', () => {
 
 /* ───────────────────────── processor access ────────────────────────────── */
 
+/* ─────────────── the outbox trigger, and the draft transition ──────────── */
+
+describe('the durable event a submitted draft has to emit', () => {
+  // `lastIndexOf` for the DROP: the ROLLBACK comment at the top of the
+  // migration names the same statement, and slicing to the FIRST occurrence
+  // produced an empty string that every assertion then passed against.
+  const emitFn = MIGRATION.slice(
+    MIGRATION.indexOf('CREATE OR REPLACE FUNCTION aml.tg_emit_verification_requested'),
+    MIGRATION.lastIndexOf('DROP TRIGGER IF EXISTS trg_aml_verification_outbox'));
+
+  it('fires on UPDATE as well as INSERT', () => {
+    /*
+     * Measured against production before writing the migration: the trigger
+     * there is `tgtype = 5` — ROW (1) + INSERT (4), and no UPDATE bit. A
+     * Standalone attempt is INSERTed as a draft and becomes queued by an
+     * UPDATE, so on the old trigger the durable event was never written and
+     * the outbox path silently did not exist for the new flow.
+     */
+    expect(MIGRATION).toContain('AFTER INSERT OR UPDATE ON aml.verification_checks');
+  });
+
+  it('emits only for a queued or submitted check that has a capture', () => {
+    expect(emitFn).toContain("NEW.processing_status IN ('submitted', 'queued')");
+    // The condition from 20260908000000 stays: a hosted-session check has no
+    // NPC-held document and must never enter the image worker.
+    expect(emitFn).toContain('NEW.document_reference IS NOT NULL');
+  });
+
+  it('cannot emit for a draft', () => {
+    // `draft` is absent from the emitting states, so preparing an attempt
+    // writes no event — which is what makes preparation free.
+    const states = emitFn.match(/NEW\.processing_status IN \(([^)]*)\)/)?.[1] ?? '';
+    expect(states).not.toContain('draft');
+  });
+
+  it('de-duplicates per row, so a second UPDATE emits nothing new', () => {
+    // The key is the row id, and the insert is ON CONFLICT DO NOTHING — so a
+    // row emits exactly once however many times it is updated into an
+    // emitting state.
+    expect(emitFn).toContain("'aml-verify-' || NEW.id::text");
+    expect(emitFn).toContain('ON CONFLICT (idempotency_key) DO NOTHING');
+  });
+
+  it('asserts at apply time that the UPDATE bit actually took', () => {
+    // A silent no-op here would mean submitted attempts emitting no durable
+    // event in production, which is invisible until somebody is stranded.
+    expect(MIGRATION).toContain('(t.tgtype & 4) = 4 AND (t.tgtype & 16) = 16');
+    expect(MIGRATION).toContain('does not fire on UPDATE');
+  });
+});
+
+describe('the draft transition', () => {
+  const submit = PORTAL.slice(
+    PORTAL.indexOf("case 'submit_verification_attempt':"),
+    PORTAL.indexOf("case 'request_verification_upload_url':"));
+
+  it('sets document_reference in the same update that queues the attempt', () => {
+    // The trigger keys on `document_reference IS NOT NULL`, so setting it in a
+    // later statement would emit nothing.
+    const update = submit.slice(submit.indexOf(".update({\n            processing_status: 'queued'"));
+    const block = update.slice(0, update.indexOf('.eq('));
+    expect(block).toContain("processing_status: 'queued'");
+    expect(block).toContain('document_reference:');
+  });
+
+  it('only ever transitions FROM draft', () => {
+    expect(submit).toContain(".eq('processing_status', 'draft')");
+  });
+});
+
 describe('the processor', () => {
   it('accepts signed internal callers only', () => {
     expect(PROCESSOR).toContain('verifySignedInternal');
@@ -529,5 +613,129 @@ describe('the processor', () => {
 
   it('leaves the self-hosted capture path to the outbox worker', () => {
     expect(PROCESSOR).toContain('isStandaloneIdvProvider(row.provider)');
+  });
+
+  it('runs on its own schedule, not the retention one', () => {
+    const processorCron = read(
+      'supabase/migrations/20260911000100_aml_verification_processor_schedule.sql');
+    const retentionCron = read(
+      'supabase/migrations/20260911000200_aml_idv_capture_retention.sql');
+    // Different jobs, different cadences, different blast radii. Coupling them
+    // would put deletion of evidence on a one-minute loop.
+    expect(processorCron).toContain("'aml-verification-processor-1min'");
+    expect(retentionCron).toContain("'aml-idv-retention-daily'");
+    expect(processorCron).not.toContain('aml-idv-retention');
+    expect(retentionCron).not.toContain('aml-verification-processor');
+  });
+});
+
+/* ────────────── implementing is not the same as switching on ───────────── */
+
+describe('deploying this changes nobody’s journey', () => {
+  it('seeds the provider INACTIVE', () => {
+    // The whole point of the separation: migrations and functions can ship,
+    // and the customer still meets exactly the flow they met yesterday until
+    // an operator decides otherwise.
+    expect(MIGRATION).toMatch(/20, 'USD', false, 'live', 'DIDIT_API_KEY'/);
+    // The activation statements exist only as commented instructions.
+    const activations = [...MIGRATION.matchAll(/^\s*--\s*UPDATE aml\.provider_configs SET active/gm)];
+    expect(activations.length).toBeGreaterThanOrEqual(2);
+    // …and no executable statement flips it on.
+    const executable = MIGRATION.split('\n')
+      .filter((l) => !l.trim().startsWith('--')).join('\n');
+    expect(executable).not.toMatch(/UPDATE aml\.provider_configs\s+SET active\s*=\s*true/i);
+  });
+
+  it('cannot have two IDV providers serving new attempts at once', () => {
+    // The resolver takes the single highest-priority ACTIVE row, so even a
+    // mis-set pair resolves deterministically rather than alternating.
+    const resolver = REGISTRY.slice(REGISTRY.indexOf('export async function resolveTenantProvider'));
+    const body = resolver.slice(0, resolver.indexOf('\n}'));
+    expect(body).toContain('.eq("active", true)');
+    expect(body).toContain('.order("priority", { ascending: true })');
+    expect(body).toContain('.limit(1)');
+    // And the standalone row outranks the hosted one, so the safe direction
+    // wins a misconfiguration: NPC's own camera, never a surprise popup.
+    expect(MIGRATION).toMatch(/'Didit Standalone APIs \(NPC capture\)', 5,/);
+  });
+});
+
+/* ─────────────────── staff diagnostics and cost metadata ───────────────── */
+
+describe('an operator can tell WHICH thing is unconfigured', () => {
+  const VERIFICATION = read('supabase/functions/aml-verification/index.ts');
+
+  it('separates a missing credential from a missing threshold from a bad one', () => {
+    expect(REGISTRY).toContain('export function standaloneIdvReadiness');
+    expect(REGISTRY).toContain('api_key_present');
+    expect(REGISTRY).toContain('liveness_threshold');
+    expect(REGISTRY).toContain('face_match_threshold');
+    // "missing" and "invalid" are different faults with opposite fixes: a
+    // secret nobody set, versus one set to 0.6 on a 0-100 scale.
+    expect(REGISTRY).toContain('classifyThreshold');
+  });
+
+  it('is reported on the staff readiness endpoint only', () => {
+    expect(VERIFICATION).toContain('standalone_readiness: standaloneReadiness');
+    // Never on the customer's side.
+    expect(PORTAL).not.toContain('standaloneIdvReadiness');
+    expect(PORTAL_API).not.toContain('standalone_readiness');
+    expect(STEP).not.toContain('standalone_readiness');
+  });
+
+  it('does not ask a Standalone deployment for hosted-only secrets', () => {
+    // There is no workflow and no webhook on this path, so reporting them
+    // would send an operator hunting for a secret that is correctly absent.
+    const secrets = VERIFICATION.slice(
+      VERIFICATION.indexOf('const isStandalone = capability === "idv"'),
+      VERIFICATION.indexOf('const standaloneReadiness'));
+    const standaloneBranch = secrets.slice(secrets.indexOf('} : isStandalone ? {'));
+    expect(standaloneBranch).toContain('DIDIT_LIVENESS_THRESHOLD');
+    expect(standaloneBranch).toContain('DIDIT_FACE_MATCH_THRESHOLD');
+    expect(standaloneBranch).not.toContain('DIDIT_WEBHOOK_SECRET');
+    expect(standaloneBranch).not.toContain('DIDIT_WORKFLOW_ID');
+  });
+
+  it('reports presence and validity, never a value', () => {
+    const fn = REGISTRY.slice(REGISTRY.indexOf('export function standaloneIdvReadiness'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    // Every read is reduced to a boolean or a state word before it is returned.
+    expect(body).toContain('Boolean(Deno.env.get("DIDIT_API_KEY"))');
+    expect(body).not.toMatch(/return[\s\S]*Deno\.env\.get\("DIDIT_LIVENESS_THRESHOLD"\)\s*[,}]/);
+  });
+});
+
+describe('a paid integration does not report as free', () => {
+  it('records the per-call price of each endpoint, not one flat figure', () => {
+    // `cost_per_unit_cents` is added to provider_metrics_daily.cost_cents_sum
+    // once per SUCCESSFUL call and rendered as "30-day cost". Didit prices the
+    // three endpoints separately, so one figure would misreport every attempt.
+    expect(MIGRATION).toContain('standalone_unit_costs_cents');
+    expect(MIGRATION).toContain("'id_verification', 20");
+    expect(MIGRATION).toContain("'passive_liveness', 5");
+    expect(MIGRATION).toContain("'face_match', 5");
+    expect(MIGRATION).toContain("'pricing_currency', 'USD'");
+    expect(MIGRATION).toContain('pricing_source');
+  });
+
+  it('is not seeded at zero', () => {
+    // A growing spend reported as free is the one answer worse than an
+    // imprecise number.
+    expect(MIGRATION).not.toMatch(/'didit_standalone',[\s\S]{0,200}\n\s*0, 'AUD'/);
+    expect(MIGRATION).toMatch(/20, 'USD', false, 'live'/);
+  });
+
+  it('meters each step at its own price', () => {
+    expect(ORCHESTRATOR).toContain("meter('id_verification'");
+    expect(ORCHESTRATOR).toContain("meter('passive_liveness'");
+    expect(ORCHESTRATOR).toContain("meter('face_match'");
+    expect(ORCHESTRATOR).toContain('standalone_unit_costs_cents');
+    // A fail-fast sequence therefore costs what it actually cost: the later
+    // steps never ran, so they are never metered.
+    expect(ORCHESTRATOR).toContain('costCents: stepCost(step)');
+  });
+
+  it('falls back to the column when a deployment predates the map', () => {
+    expect(ORCHESTRATOR).toContain('resolved?.costCents ?? 0');
   });
 });

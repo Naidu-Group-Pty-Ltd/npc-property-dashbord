@@ -308,16 +308,42 @@ export async function runStandaloneVerification(
     }).eq('id', checkId);
   };
 
-  const meter = <T>(fn: () => Promise<T>) => runWithMetrics(db, {
+  /**
+   * Meter one billed step, at that step's own price.
+   *
+   * `runWithMetrics` adds `costCents` to `provider_metrics_daily.cost_cents_sum`
+   * once per successful call, and the Command Centre renders that sum as the
+   * 30-day spend. Didit prices the three endpoints separately — ID 20c,
+   * liveness 5c, face match 5c — so passing one flat figure for all three would
+   * misreport every attempt: three times over on a full pass, and by more on a
+   * sequence that stopped at the first step.
+   *
+   * Per-step pricing makes the fail-fast sequence account correctly by
+   * construction. A declined document records 20 and nothing else, because the
+   * later steps genuinely never happened. `cost_per_unit_cents` is the fallback
+   * when a deployment's config predates the map.
+   */
+  const unitCosts = (resolved?.config?.['standalone_unit_costs_cents'] ?? {}) as
+    Record<string, unknown>;
+  const stepCost = (step: 'id_verification' | 'passive_liveness' | 'face_match'): number => {
+    const value = unitCosts[step];
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? value
+      : (resolved?.costCents ?? 0);
+  };
+
+  const meter = <T>(
+    step: 'id_verification' | 'passive_liveness' | 'face_match', fn: () => Promise<T>,
+  ) => runWithMetrics(db, {
     tenantId: 'default', capability: 'idv', providerKey: provider.name,
-    costCents: resolved?.costCents ?? 0, configId: resolved?.configId ?? null,
+    costCents: stepCost(step), configId: resolved?.configId ?? null,
   }, fn);
 
   /* ── Step A: ID verification ─────────────────────────────────────────── */
 
   let id: IdVerificationReading;
   try {
-    const body = await meter(() => provider.verifyIdentityDocument({
+    const body = await meter('id_verification', () => provider.verifyIdentityDocument({
       frontImage: frontBytes,
       backImage: required.document_back ? backBytes : null,
       vendorData, metadata,
@@ -341,7 +367,7 @@ export async function runStandaloneVerification(
 
   if (mayProceed(id.verdict)) {
     try {
-      const body = await meter(() => provider.checkPassiveLiveness({
+      const body = await meter('passive_liveness', () => provider.checkPassiveLiveness({
         userImage: selfieBytes, vendorData, metadata,
       }));
       liveness = readLiveness(body);
@@ -367,7 +393,7 @@ export async function runStandaloneVerification(
   // be paying for a comparison against a photograph of a page.
   if (liveness && mayProceed(liveness.verdict) && portraitBytes) {
     try {
-      const body = await meter(() => provider.compareFaces({
+      const body = await meter('face_match', () => provider.compareFaces({
         userImage: selfieBytes, refImage: portraitBytes, vendorData, metadata,
       }));
       faceMatch = readFaceMatch(body);

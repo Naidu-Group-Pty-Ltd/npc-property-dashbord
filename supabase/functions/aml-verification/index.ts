@@ -16,6 +16,8 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   getIdvProvider,
   idvAdapterReadiness,
+  isStandaloneIdvProvider,
+  standaloneIdvReadiness,
   getScreeningProvider,
   resolveTenantProvider,
   runWithMetrics,
@@ -902,14 +904,34 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             ? idvAdapterReadiness(key, resolved) : null;
           // Secret PRESENCE only, and only the ones the active flow actually
           // needs. Never a value.
+          const isStandalone = capability === "idv" && isStandaloneIdvProvider(key);
           const secrets = capability !== "idv" ? {}
             : idvReadiness?.flow === "hosted_session" ? {
               DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
               DIDIT_WEBHOOK_SECRET: Boolean(Deno.env.get("DIDIT_WEBHOOK_SECRET")),
+            } : isStandalone ? {
+              // The Standalone path needs neither the workflow id nor the
+              // webhook secret — there is no workflow and, with
+              // save_api_request=false, no webhook is ever emitted. Reporting
+              // them would send an operator hunting for a secret that is
+              // correctly absent.
+              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              DIDIT_LIVENESS_THRESHOLD: Boolean(Deno.env.get("DIDIT_LIVENESS_THRESHOLD")),
+              DIDIT_FACE_MATCH_THRESHOLD: Boolean(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD")),
             } : {
               AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
               AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
             };
+          /**
+           * The specific fault, for the person who has to fix it.
+           *
+           * `secrets_present` answers "is it set", which cannot distinguish a
+           * threshold nobody set from one set to `0.6` on a 0-100 scale — the
+           * two mistakes an operator is most likely to make here, with opposite
+           * fixes. Presence and validity only; no value crosses this boundary,
+           * and nothing here is ever sent to the client portal.
+           */
+          const standaloneReadiness = isStandalone ? standaloneIdvReadiness() : null;
           const wired = capability === "idv" ? Boolean(idvReadiness?.wired) : key === "local_lists";
           const configured = capability === "idv" ? Boolean(idvReadiness?.configured) : true;
           const wantsSimulator = mode === "simulator" || key === "simulator";
@@ -948,6 +970,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             mode,
             adapter_wired: wired,
             secrets_present: secrets,
+            // Null for every provider except the Standalone one.
+            standalone_readiness: standaloneReadiness,
             last_health: cfg ? {
               at: cfg.last_health_at, status: cfg.last_health_status,
               message: cfg.last_health_message,

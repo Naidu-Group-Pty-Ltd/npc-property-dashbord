@@ -150,6 +150,24 @@ export function parseThreshold(raw: unknown): number | null {
   return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 }
 
+/**
+ * Why a threshold is unusable, for the operator who has to fix it.
+ *
+ * `parseThreshold` collapses "absent" and "present but wrong" into null,
+ * which is right for the decision and useless for the diagnosis. An operator
+ * told only "misconfigured" has to guess between a secret that was never set
+ * and one set to `0.6` when the scale is 0–100 — and those are opposite
+ * mistakes with opposite fixes.
+ */
+export type ThresholdState = 'ok' | 'missing' | 'invalid';
+
+export function classifyThreshold(raw: unknown): ThresholdState {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && !raw.trim())) {
+    return 'missing';
+  }
+  return parseThreshold(raw) === null ? 'invalid' : 'ok';
+}
+
 export interface StandaloneThresholds {
   liveness: number;
   faceMatch: number;

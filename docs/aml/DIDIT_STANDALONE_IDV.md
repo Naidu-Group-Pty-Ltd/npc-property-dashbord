@@ -145,10 +145,81 @@ record, entered by the customer and adjudicated by staff.
 The ID portrait is used **in server memory** as the face-match reference and
 discarded. It is never persisted, logged, or returned to a browser.
 
-**Retention of the source captures is unchanged and unresolved.** Nothing
-deletes them after the provider answers. NPC's AML/privacy retention policy
-governs them, and this programme deliberately did not invent a duration — that
-is an operational follow-up, not a code change.
+## Retention
+
+The mechanism exists. **The duration does not, and this programme did not
+invent one.**
+
+### Why it is not a day counter
+
+`20260726140000_aml_retention_triggers.sql` records the programme's §18
+position and it is explicit:
+
+> "Retention must not be implemented as automatic deletion seven years after
+> upload." The clock starts at a recorded TRIGGER EVENT — relationship end,
+> occasional transaction completion, transaction date, investigation
+> completion, report completion, legal-hold release — and **a record with no
+> recorded trigger has not started its clock and is never disposal-eligible.**
+
+So "delete N days after capture" is not a smaller version of NPC's policy; it
+is the thing that policy was written to forbid. It would also contradict what
+NPC has already told these customers. The biometric consent (catalogue 2026.2)
+says their facial image is *"kept for the record-keeping period required by
+anti-money laundering law, **measured from the end of our business relationship
+with you**, and are then destroyed"* — §18's trigger model, not a counter from
+upload.
+
+### Both clocks, and it fails closed
+
+`captureRetention.pure.ts` deletes only when **every** one of these holds:
+
+| Condition | Otherwise |
+| --- | --- |
+| `AML_IDV_CAPTURE_RETENTION_DAYS` set, integer > 0 | `not_configured` — nothing is deleted anywhere |
+| The case has a live `aml.retention_triggers` row | `awaiting_retention_trigger` (§18) |
+| Its `minimum_retention_date` has passed | `within_aml_retention` |
+| Settled ≥ that many days ago | `within_capture_window` |
+| `processing_status` is a settled state | `in_flight` |
+| `status` is not `referred`/`pending`/`in_progress` | `under_review` |
+| No active `aml.legal_holds` row on the case or the check | `legal_hold` |
+| Provider is the Standalone one, with recorded objects | `not_eligible` / `no_captures` |
+
+Every unknown is a retain: an unparseable timestamp, an unrecognised state, a
+missing settlement time. There is one path to a deletion and eleven to a
+retain, and that asymmetry is the design — keeping evidence a week too long
+costs storage; destroying it a week too early costs a record that cannot be
+reconstructed.
+
+The variable has **no default**. Absent means "NPC has not decided", which is
+a reportable state, not a licence to apply a number somebody made up. Zero is
+refused as firmly as a negative.
+
+### The worker
+
+`aml-idv-retention`, signed-internal only (`pg_cron`, `aml-verification`,
+`aml-records`), daily at 03:17 UTC. Deliberately **not** on the verification
+processor's one-minute schedule: processing a submission and destroying
+evidence are different responsibilities with different blast radii.
+
+- `{"dry_run": true}` reports what would go and deletes nothing. Run this
+  first, always.
+- The only thing it reads off the request body is `dry_run`. A caller cannot
+  name a bucket, a path, a case or a check — arbitrary deletion is
+  unrepresentable, not merely refused.
+- Every object is re-checked with `mayDeleteObject` before removal: the bucket
+  must be `aml-documents` or `aml-biometrics`, and the path must sit under
+  `{caseId}/`. Traversal is refused, not normalised.
+- A pass that removed some objects records `partial`, leaves `capture_deleted_at`
+  NULL, and the next pass finishes it. An object already gone counts as
+  removed, so retrying converges.
+
+### The audit record
+
+Three columns (`capture_deleted_at`, `capture_cleanup_status`,
+`capture_retention_days_used`) plus
+`outcome_detail.standalone.capture_retention`. Together they answer *which
+attempt, when, and under which policy* — and carry no image, no base64, no
+signed URL and no name, so they cannot reconstruct what was destroyed.
 
 ## Attempts
 
@@ -188,10 +259,165 @@ decisions. **No new attempt uses any of it**: the portal renders the capture
 journey, and the older single-shot capture ops answer `capture_flow_superseded`
 under the Standalone provider.
 
-They can be removed once no `verification_checks` row has
-`provider = 'didit'` with `processing_status` in
-`('submitted','queued','processing')` and `superseded_at IS NULL`. At that
-point `DIDIT_WORKFLOW_ID` and `DIDIT_WEBHOOK_SECRET` can go too.
+### The exact drain condition
+
+Column and status names read off production, not guessed:
+
+```sql
+SELECT count(*) AS still_in_flight
+  FROM aml.verification_checks
+ WHERE provider = 'didit'
+   AND check_type = 'electronic_idv'
+   AND processing_status IN ('submitted', 'queued', 'processing')
+   AND superseded_at IS NULL;
+```
+
+Measured 2026-08-11: **2**. Both were created on 2026-08-08 and have sat
+`processing` since. A Didit hosted session lives seven days, so they expire on
+or about 2026-08-15; `start_hosted_verification` reconciles and retires an
+expired session when a customer returns, and neither has consumed an attempt.
+
+Remove the hosted infrastructure only when that query has returned **0 for a
+full safety window after the last hosted attempt was created** — two weeks is
+the sensible floor, since it covers the seven-day session lifetime twice. At
+that point `DIDIT_WORKFLOW_ID` and `DIDIT_WEBHOOK_SECRET` can go too, along
+with `didit-webhook`, `start_hosted_verification`, `SecureIdentityCheck`, the
+hosted adapter and `didit.pure.ts`'s decision mapping.
+
+## Cost
+
+`cost_per_unit_cents` is not decorative: `runWithMetrics` adds it to
+`aml.provider_metrics_daily.cost_cents_sum` once per **successful provider
+call**, and `AmlConfiguration.tsx` renders that sum as "30-day cost". The unit
+is one call, not one verification.
+
+Didit prices the three endpoints separately, per successful request, in **USD**
+(docs.didit.me/getting-started/pricing, read 2026-08-11):
+
+| Endpoint | Price |
+| --- | --- |
+| `/v3/id-verification/` | USD 0.20 |
+| `/v3/passive-liveness/` | USD 0.05 |
+| `/v3/face-match/` | USD 0.05 |
+
+One integer cannot express three prices, so the exact figures live in
+`config.standalone_unit_costs_cents` and the orchestrator passes the matching
+one to `runWithMetrics` per step. The variable fail-fast sequence therefore
+accounts correctly **by construction**: an attempt that stops at a declined
+document records 20 and nothing more, because the later calls genuinely never
+happened. No estimate, no average, nothing to keep in step by hand.
+
+The column itself carries the dearest single call (20) as a fallback for any
+caller that does not pass a per-step cost — at a per-call unit, a fallback that
+errs high is safe for budget reporting and one that errs low is not.
+
+**Known limitation.** `currency` is `USD` because that is what Didit bills, and
+the metrics roll-up sums `cost_cents_sum` with no currency dimension. Every
+other provider in it is currently 0, so this is the first real figure and the
+first mixed currency. Converting is a finance decision; changing that
+aggregation was out of scope here and is recorded rather than silently
+mislabelled as AUD.
+
+## Diagnosing a provider that will not start
+
+`configured` is one boolean because the customer's answer is one word. An
+operator's is not: `standalone_readiness` on the staff readiness endpoint
+separates the faults that look identical from outside.
+
+| Field | Values |
+| --- | --- |
+| `api_key_present` | true / false |
+| `liveness_threshold` | `ok` / `missing` / `invalid` |
+| `face_match_threshold` | `ok` / `missing` / `invalid` |
+
+`missing` and `invalid` are different mistakes with opposite fixes — a secret
+nobody set, versus one set to `0.6` on a 0–100 scale. Presence and validity
+only; no value crosses the boundary, and none of it is ever sent to the client
+portal, which keeps saying *"We couldn't complete the secure check just now.
+Nothing has been used up."*
+
+Runtime failures are separated too, on `provider_error_category`:
+`provider_not_configured`, `insufficient_credits`, `rate_limited`, `timeout`,
+`provider_unavailable`, `provider_rejected_request`, `storage_unreadable`,
+`capture_unusable`, `worker_failure`.
+
+## Sandbox vs live
+
+A Didit **sandbox key returns mock data without billing or processing**. The
+switch is the key, not a URL — same host, same endpoints.
+
+| Setting | Staging | Production |
+| --- | --- | --- |
+| `DIDIT_API_KEY` | sandbox key | live key |
+| `DIDIT_API_BASE_URL` | unset | unset |
+| `DIDIT_STANDALONE_TIMEOUT_MS` | optional | optional |
+
+Never put a key in source. To exercise the three endpoints for real:
+
+```bash
+DIDIT_SANDBOX_API_KEY=… npx vitest run \
+  src/lib/aml/diditStandaloneSandbox.integration.test.ts
+```
+
+That test is gated on `DIDIT_SANDBOX_API_KEY` and skips without it, so CI and
+a plain `npm test` cannot reach a paid API. The variable is deliberately not
+`DIDIT_API_KEY`: a test reading the production variable would spend live
+credits the moment somebody exported it for an unrelated reason.
+
+## Real-device status
+
+Chromium desktop and a 390×844 Chromium mobile viewport are covered by
+automated QA with a synthetic camera. **iPhone Safari, Android Chrome and iPad
+Safari are NOT TESTED.** A synthetic camera says nothing about permissions,
+orientation, lens selection, HEIC or backgrounding.
+
+[`IDV_DEVICE_QA_CHECKLIST.md`](./IDV_DEVICE_QA_CHECKLIST.md) is the gate. It
+blocks **activation**, not merge.
+
+## Deployment and activation order
+
+Implementation and activation are separate on purpose. After merge and deploy
+the provider is still **inactive** and no customer's journey has changed.
+
+1. **Merge** once the gates pass.
+2. **Migrations**: `20260911000000` (draft state, error vocabulary, INSERT OR
+   UPDATE trigger, draft uniqueness, inactive provider row), `20260911000100`
+   (processor cron), `20260911000200` (retention columns, index, retention cron).
+3. **Edge Functions**: `aml-verification-processor` (new), `aml-idv-retention`
+   (new), `aml-client-portal`, `cross-portal-outbox-worker`, `aml-verification`.
+4. **Secrets**: `DIDIT_API_KEY` (sandbox on staging), `DIDIT_LIVENESS_THRESHOLD`,
+   `DIDIT_FACE_MATCH_THRESHOLD`, and — when compliance has decided —
+   `AML_IDV_CAPTURE_RETENTION_DAYS`. `INTERNAL_EDGE_SECRET` must already be set;
+   both new functions are signed-internal only.
+5. **Verify the schedules**: `aml-verification-processor-1min` and
+   `aml-idv-retention-daily` in `cron.job`.
+6. **Leave `didit_standalone` inactive.** Confirm:
+   `SELECT active FROM aml.provider_configs WHERE provider_key='didit_standalone'`
+   → `false`.
+7. **Sandbox run** on staging: activate there, complete a passport journey and
+   a licence journey, confirm three request ids and a non-zero cost.
+8. **`aml-idv-retention` dry run**: expect `configured: false` until the policy
+   is set, and zero deletions.
+9. **Controlled live test**: one real verification with a live key, by a member
+   of staff, on a real case.
+10. **Real-device QA**: [`IDV_DEVICE_QA_CHECKLIST.md`](./IDV_DEVICE_QA_CHECKLIST.md),
+    sections A–D signed.
+11. **Activate** — see below.
+12. **Drain** the hosted sessions.
+
+### Rollback
+
+At any point before step 11 there is nothing to roll back: the provider is
+inactive and no customer reaches the new path. After step 11:
+
+```sql
+UPDATE aml.provider_configs SET active = false WHERE provider_key = 'didit_standalone';
+UPDATE aml.provider_configs SET active = true  WHERE provider_key = 'didit';
+```
+
+New attempts return to the hosted flow immediately; attempts already processing
+settle on the Standalone path and are unaffected. Each migration carries its own
+`ROLLBACK:` header if the schema itself has to come back out.
 
 ## Switching a tenant on
 
