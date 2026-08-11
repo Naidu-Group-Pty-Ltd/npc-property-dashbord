@@ -36,6 +36,7 @@ import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-p
 import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import {
+  AGREEMENT_CENTRE_DOCUMENT_REVISION,
   PARTNER_VISIBLE_STATUSES,
   isPartnerVisible,
   agreementTemplate,
@@ -47,7 +48,7 @@ import {
   AGREEMENTS_BUCKET,
   SIGNED_URL_TTL_SECONDS,
   executionContextFromSignatures,
-  renderAndStoreVersionPdf,
+  resolveVersionArtefact,
 } from '../_shared/agreements/render.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -332,22 +333,23 @@ Deno.serve(async (req) => {
         return json({ error: 'The agreement has not been fully executed yet' }, 409);
       }
 
-      let path: string | null = kind === 'executed'
-        ? version.executed_pdf_storage_path
-        : version.pdf_storage_path;
-
-      // Deferred render: generate now from the frozen version row.
-      if (!path) {
-        const execution = kind === 'executed'
-          ? executionContextFromSignatures(
-            (await supabase.from(SIGNATURES_TABLE).select('*').eq('version_id', version.id)).data ?? [])
-          : null;
-        const stored = await renderAndStoreVersionPdf(supabase, supabaseUrl, agreement as never, version, kind, execution);
-        path = stored.path;
+      // Deferred render on first ask, and a re-render from the same frozen
+      // version row when this build's document revision has moved past the
+      // stored artefact's — but never once the version carries a signature.
+      // One decision, shared with the staff route: `resolveVersionArtefact`.
+      const signatureRows = (await supabase.from(SIGNATURES_TABLE)
+        .select('*').eq('version_id', version.id)).data ?? [];
+      const artefact = await resolveVersionArtefact(
+        supabase, supabaseUrl, agreement as never, version, kind, {
+          signatureCount: signatureRows.length,
+          execution: kind === 'executed' ? executionContextFromSignatures(signatureRows) : null,
+        },
+      );
+      if (artefact.rendered) {
         await supabase.from(VERSIONS_TABLE)
           .update(kind === 'executed'
-            ? { executed_pdf_storage_path: path, executed_pdf_bytes: stored.bytes }
-            : { pdf_storage_path: path })
+            ? { executed_pdf_storage_path: artefact.path, executed_pdf_bytes: artefact.bytes }
+            : { pdf_storage_path: artefact.path })
           .eq('id', version.id);
       }
 
@@ -359,16 +361,21 @@ Deno.serve(async (req) => {
       );
       const { data: signed, error: signError } = await supabase.storage
         .from(AGREEMENTS_BUCKET)
-        .createSignedUrl(path!, SIGNED_URL_TTL_SECONDS, { download: fileName });
+        .createSignedUrl(artefact.path, SIGNED_URL_TTL_SECONDS, { download: fileName });
       if (signError || !signed?.signedUrl) {
         throw new Error(`signing failed: ${signError?.message ?? 'no url returned'}`);
       }
 
       await logEvent(supabase, id, 'partner_downloaded', actorLabel,
         `${kind === 'executed' ? 'Executed copy' : 'Reference copy'} downloaded by ${actorLabel}`,
-        { kind, version_label: version.version_label });
+        { kind, version_label: version.version_label, artefact_state: artefact.state });
 
-      return json({ url: signed.signedUrl, file_name: fileName, expires_in: SIGNED_URL_TTL_SECONDS });
+      return json({
+        url: signed.signedUrl,
+        file_name: fileName,
+        expires_in: SIGNED_URL_TTL_SECONDS,
+        document_revision: AGREEMENT_CENTRE_DOCUMENT_REVISION,
+      });
     }
 
     // ─── ACCEPT ─────────────────────────────────────────────

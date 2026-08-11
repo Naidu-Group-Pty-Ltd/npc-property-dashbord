@@ -288,8 +288,29 @@ async function importPdf(
     const dataUrl = await fileToDataUrl(source.file);
     const pdfBase64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
     const invoke = ctx.invoke ?? defaultInvoke;
+    // Ground the model in what the file states. A PDF carries each run's
+    // baseline and advance width exactly; reading them off a rendered page is
+    // the one thing a model is genuinely bad at. Measured from the ATTACHED
+    // bytes — never from the open template, whose overlays may have come from a
+    // different document, and measurements from the wrong document are worse
+    // than none. Degrades to no measurements, which is the behaviour that
+    // shipped before this existed.
+    ctx.onStage?.('Measuring the PDF…');
+    const { groundPdfDocument } = await import('../pdfImport/groundPdfDocument');
+    const grounding = await groundPdfDocument(source.file.arrayBuffer
+      ? new Uint8Array(await source.file.arrayBuffer())
+      : pdfBase64);
+    if (grounding.pages.length) {
+      const measured = grounding.pages.reduce((n, p) => n + p.reference.elements.length, 0);
+      ctx.onStage?.(`Grounding Claude in ${measured} measured text line${measured === 1 ? '' : 's'} across ${grounding.pages.length} page${grounding.pages.length === 1 ? '' : 's'}…`);
+    } else {
+      ctx.onStage?.('Reading the PDF with Claude…');
+    }
     const res = await reconstructPdfWithClaude(
-      { pdfBase64, schema: ctx.schema, activePageId: ctx.activePageId, sampleData: ctx.sampleData },
+      {
+        pdfBase64, schema: ctx.schema, activePageId: ctx.activePageId,
+        sampleData: ctx.sampleData, grounding,
+      },
       invoke as any,
     );
     return {

@@ -18,6 +18,13 @@ import {
   type ClaudeReconstructArgs,
   type ClaudeReconstructResult,
 } from './claudeReconstruct.pure.ts';
+import { logApiUsage } from './logApiUsage.ts';
+import {
+  CLAUDE_RECONSTRUCT_BINDING,
+  extractUsageTokens,
+  resolveModelUsed,
+} from './llmUsageBinding.pure.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
 export type {
   ClaudeReconstructArgs,
@@ -98,7 +105,39 @@ async function aggregateStream(resp: Response): Promise<any> {
  * Build + send the claude-opus-4-8 request and return an OpenAI-shaped result
  * that is a drop-in for `callAnthropic`.
  */
+/**
+ * Write one `api_usage_log` row for a successful reconstruction.
+ *
+ * Deliberately best-effort and detached: metering is a ledger concern, and a
+ * failure to record must not turn a completed reconstruction into an error the
+ * user sees. `logApiUsage` already swallows its own failures; the try/catch
+ * here covers the client construction above it.
+ */
+async function meterReconstructCall(data: unknown, responseMs: number, requestedModel: string): Promise<void> {
+  try {
+    const url = Deno.env.get('SUPABASE_URL');
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!url || !key) return;
+    const tokens = extractUsageTokens(data);
+    await logApiUsage(createClient(url, key), {
+      service_name: CLAUDE_RECONSTRUCT_BINDING.serviceName,
+      endpoint: '/v1/messages',
+      model_used: resolveModelUsed(data, requestedModel),
+      prompt_tokens: tokens?.promptTokens ?? 0,
+      completion_tokens: tokens?.completionTokens ?? 0,
+      tokens_used: tokens?.totalTokens ?? 0,
+      response_time_ms: responseMs,
+      status: 'success',
+      // The exact credential beats the derived one — see logApiUsage's header.
+      metadata: { secret_name: CLAUDE_RECONSTRUCT_BINDING.secretName, source: 'claudeReconstruct' },
+    });
+  } catch (e) {
+    console.warn('[claudeReconstruct] usage metering failed (non-fatal)', e);
+  }
+}
+
 export async function callClaudeReconstruct(args: ClaudeReconstructArgs): Promise<ClaudeReconstructResult> {
+  const startedAt = Date.now();
   const { body } = buildAnthropicRequestBody(args, RECONSTRUCT_MODEL);
   if (args.stream) body.stream = true;
 
@@ -128,5 +167,13 @@ export async function callClaudeReconstruct(args: ClaudeReconstructArgs): Promis
   }
 
   const message = args.stream ? await aggregateStream(resp) : await resp.json();
-  return { ok: true, status: 200, data: toOpenAIShape(message) };
+  const data = toOpenAIShape(message);
+  // BILLING. This adapter never goes through `llmRouter`, so router-side
+  // metering does not cover it — and it is the Template Builder's entire
+  // reconstruction path. Every call here spends ANTHROPIC_API_KEY, which in a
+  // Mission-Control-provisioned workspace is the prime's key: unlogged, the
+  // tenant is never recharged. Fire-and-forget by contract (`logApiUsage`
+  // swallows its own errors); a metering failure must never fail a render.
+  void meterReconstructCall(data, Date.now() - startedAt, args.model ?? RECONSTRUCT_MODEL);
+  return { ok: true, status: 200, data };
 }

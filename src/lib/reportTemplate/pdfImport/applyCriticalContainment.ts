@@ -31,6 +31,7 @@ import {
   ensureDurableSourceRasterForPage,
   type SourceCriticalEvidence,
 } from './criticalVisualContainmentAdapters';
+import { planTableRegionContainment } from './tableRegionContainment.pure';
 
 export interface ContainmentPageContext {
   pageNumber: number;
@@ -70,6 +71,8 @@ export interface CriticalContainmentSummary {
   pagesForcedHybrid: number;
   pagesForcedPixel: number;
   pagesBlockedNoRaster: number;
+  /** A1 — pages whose table veto was served by windows instead of the page. */
+  pagesRegionContained: number;
   nativeSuppressed: boolean;
   perPage: CriticalContainmentPerPageSummary[];
 }
@@ -145,6 +148,7 @@ export function runCriticalContainment(args: RunCriticalContainmentArgs): RunCri
   let pagesForcedHybrid = 0;
   let pagesForcedPixel = 0;
   let pagesBlockedNoRaster = 0;
+  let pagesRegionContained = 0;
   let changed = false;
   let manualReviewRequired = false;
 
@@ -193,8 +197,38 @@ export function runCriticalContainment(args: RunCriticalContainmentArgs): RunCri
         // false fallback claim (never a blank raster-only page).
         action = 'block_manual_review';
       } else {
-        const basePolicy = action === 'force_pixel_fallback' ? pixelFallbackPolicy() : hybridFallbackPolicy();
+        // A1 — an unverified TABLE does not need its whole page in pixels. When
+        // every critical defect here is a table defect, the page keeps its text
+        // and each table gets a window onto the same source raster the
+        // page-wide fallback would have used. The table's fidelity is
+        // unchanged; the headings and prose around it stop being pictures.
+        // `planTableRegionContainment` returns null — page scope stands —
+        // whenever that is not provably safe.
+        const contained = planTableRegionContainment({
+          defects: assessment.defects,
+          overlays: input.candidateOverlays,
+          pageWidth: page.size?.width,
+          pageHeight: page.size?.height,
+          sourceRasterAvailable: assessment.sourceRasterAvailable,
+        });
         changed = true;
+        if (contained) {
+          pagesRegionContained += 1;
+          return applyPagePolicyToPage(ensured.page, {
+            ...decoratePolicy(
+              // `final-output` on a NATIVE page: the raster is not a dim editor
+              // reference here, it is what a reader sees inside the windows.
+              // The distinction is not cosmetic — `applyPagePolicyToPage` marks
+              // an editor reference `underlay: true`, and `preloadImages` skips
+              // resolving those, which would leave the windows with no pixels.
+              { ...nativePolicy('hybrid'), sourceRasterRole: 'final-output' as const },
+              { ...assessment, reason: 'unsafe_table_contained_by_region' },
+              decidedAt,
+            ),
+            containedRegions: contained.windows,
+          });
+        }
+        const basePolicy = action === 'force_pixel_fallback' ? pixelFallbackPolicy() : hybridFallbackPolicy();
         if (action === 'force_pixel_fallback') pagesForcedPixel += 1;
         else pagesForcedHybrid += 1;
         return applyPagePolicyToPage(ensured.page, decoratePolicy(basePolicy, assessment, decidedAt));
@@ -227,6 +261,7 @@ export function runCriticalContainment(args: RunCriticalContainmentArgs): RunCri
     pagesForcedHybrid,
     pagesForcedPixel,
     pagesBlockedNoRaster,
+    pagesRegionContained,
     nativeSuppressed: pagesForcedHybrid + pagesForcedPixel > 0,
     perPage,
   };

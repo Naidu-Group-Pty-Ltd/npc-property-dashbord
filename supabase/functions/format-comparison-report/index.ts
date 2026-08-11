@@ -297,6 +297,9 @@ Return ONLY the formatted markdown report. Do not include any commentary or expl
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'comparison_formatter',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         {
           role: 'system',

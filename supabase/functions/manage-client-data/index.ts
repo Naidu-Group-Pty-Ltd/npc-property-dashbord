@@ -7,6 +7,8 @@ import { buildDocumentDedupeKey, buildNoteDedupeKey, createSyncEvent, resolveSyn
 import { resolvePortfolioReportDeletionTarget } from './portfolioReportDeletion.ts';
 import { canManageClient, canPublishPortfolioForClient } from './portfolioPublicationAuthorization.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import { writableColumnsFor } from '../_shared/clientDataWritableColumns.ts';
 
 type TableName = 'clients' | 'client_properties' | 'client_income' | 'client_expenses' |
                  'client_assets' | 'client_liabilities' | 'client_employment' |
@@ -452,7 +454,7 @@ Deno.serve(async (req) => {
 
     const authMethod = (await verifyAuth(supabase, req.headers, body)).authMethod;
 
-    const { operation, table, clientId, recordId, reportId, data } = body;
+    const { operation, table, clientId, recordId, reportId, data: rawData } = body;
     // A report ID is the sole browser-supplied identifier for portfolio report deletion.
     // Never trust a browser-provided client ID to establish report ownership.
     const portfolioReportId = table === 'portfolio_analysis_reports' && operation === 'delete'
@@ -488,6 +490,44 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    // WP-25 (item 15): narrow the body to the columns this table declares
+    // writable, ONCE, here — before `data` is visible to the create/update/
+    // upsert branches. Doing it per-branch was the alternative and it is the
+    // worse one: three call sites is three chances to add a fourth branch that
+    // forgets, and the whole point of a multiplexer is that branches get added.
+    //
+    // `ALLOWED_TABLES` above checks which table the caller may write. This
+    // checks which columns, which nothing checked before: one `data` object
+    // reached 29 tables, so the writable surface was the union of all of them.
+    //
+    // ONLY the three operations that spread `data` into a write are narrowed.
+    // `publish_portfolio_report` is not one of them: it builds its insert
+    // field-by-field and reads `data.notify_email` and `data.client_visible_notes`
+    // as control flags — `notify_email` is not a column of any table, and
+    // `client_visible_notes` belongs to `client_portal_reports` while the
+    // operation runs against `portfolio_analysis_reports`. Narrowing it against
+    // the named table stripped both and silently turned the email notification
+    // off. Narrowing an object that is not a column set is not a safer version
+    // of the same thing; it is a different thing that happens to compile.
+    const SPREADS_DATA_INTO_WRITE = ['create', 'update', 'upsert'];
+    const writable = writableColumnsFor(table);
+    if (SPREADS_DATA_INTO_WRITE.includes(operation) && !writable) {
+      // Every entry in ALLOWED_TABLES has a column set, so this only fires if
+      // somebody adds a table there without adding its columns. The safe answer
+      // to "I do not know what may be written here" is nothing.
+      console.error(`[manage-client-data] No writable column set declared for table ${table}`);
+      return new Response(
+        JSON.stringify({ error: `Writes to ${table} are not configured`, code: 'table_not_writable' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const data: any = !SPREADS_DATA_INTO_WRITE.includes(operation) || !writable
+        || rawData === undefined || rawData === null
+      ? rawData
+      : Array.isArray(rawData)
+        ? rawData.map((row: Record<string, any>) => pickAllowed(row, writable!))
+        : pickAllowed(rawData as Record<string, any>, writable!);
 
     // Tables that don't require clientId
     const STANDALONE_TABLES = ['clients', 'report_qa_messages', 'report_qa_conversations', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'portal_configuration', 'client_portal_report_requests', 'client_reminders'];
@@ -1017,7 +1057,7 @@ Deno.serve(async (req) => {
         }
 
         // For client-related tables, add client_id
-        const upsertData = STANDALONE_TABLES.includes(table)
+        const upsertData: Record<string, any> = STANDALONE_TABLES.includes(table)
           ? { ...data as Record<string, any> }
           : { ...data as Record<string, any>, client_id: clientId };
         if (table === 'clients') upsertData.id = clientId;

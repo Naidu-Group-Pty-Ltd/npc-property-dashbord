@@ -12,6 +12,7 @@ import {
 } from '../bindingResolver';
 import { shouldRenderOverlay } from '../renderVisibility';
 import { buildTextOverlayCssDecls } from '../rendering/textOverlayStyle.pure';
+import { headingTagFor, type SemanticAnnotation } from '../pdfImport/semanticRole.pure';
 
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
@@ -303,13 +304,47 @@ function renderOverlayContent(overlay: Overlay, ctx: ResolveContext): string {
           inner = renderWithDropCap(String(text));
         }
       }
-      return withCascadeWrapper(`<div style="${style}">${inner}</div>`, overlay as any, ctx);
+      // A heading is emitted as a heading. WeasyPrint builds the tagged PDF's
+      // structure tree from the ELEMENT NAME, so a `<div>` tags as `/Div` and an
+      // `<h2>` tags as `/H2` — measured, and the only reason an imported page
+      // rendered at `pdf/ua-1` had a flat structure tree with no headings in it.
+      //
+      // Purely a tag change. The inline declarations already set every property
+      // the UA stylesheet would otherwise apply to h1–h6 (font-size always,
+      // font-weight always — see textOverlayStyle.pure.ts) EXCEPT margin, and an
+      // absolutely-positioned box with a margin does move. Hence the reset.
+      //
+      // Never when the body was split into paragraphs: `<p>` inside a heading is
+      // invalid, and a parser recovering from it would close the heading early
+      // and leave the rest of the copy outside the structure element.
+      const headingTag = headingTagFor((o as { semantics?: SemanticAnnotation }).semantics);
+      const tag = headingTag && !inner.includes('<p') ? headingTag : 'div';
+      const reset = tag === 'div' ? '' : 'margin:0;';
+      // The span is not decoration. Vertical alignment makes this box a flex
+      // container, and WeasyPrint emits a structure element for the anonymous
+      // flex item it then has to create — which inherits the tag and yields a
+      // heading nested inside an identical heading. Giving the flex container a
+      // real child costs nothing (verified pixel-identical at 300 DPI) and
+      // produces one `/H2` over a `/Span` instead of `/H2` over `/H2`.
+      const body = tag === 'div' ? inner : `<span>${inner}</span>`;
+      return withCascadeWrapper(`<${tag} style="${style}${reset}">${body}</${tag}>`, overlay as any, ctx);
     }
     case 'image': {
       const src = resolveBindable(overlay.src, ctx);
       if (!src) return '';
       const fit = overlay.fit === 'fill' ? 'fill' : overlay.fit;
-      return withCascadeWrapper(`<img src="${esc(src)}" style="${base}object-fit:${fit};"/>`, overlay as any, ctx);
+      // Alternative text. WeasyPrint writes it straight into the tagged PDF as
+      // the figure's `/Alt`, and a `/Figure` without one is a hard PDF/UA
+      // failure — which every imported picture was, while the source's own
+      // description sat unused in the Layers-panel name.
+      const alt = typeof (overlay as { alt?: unknown }).alt === 'string'
+        ? (overlay as { alt?: string }).alt!.trim()
+        : '';
+      return withCascadeWrapper(
+        `<img src="${esc(src)}"${alt ? ` alt="${esc(alt)}"` : ''} style="${base}object-fit:${fit};"/>`,
+        overlay as any,
+        ctx,
+      );
     }
     case 'shape': {
       // Gradient fills (captured from PDF shading ops / DOM computed styles)

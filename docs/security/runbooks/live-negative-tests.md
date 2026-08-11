@@ -35,6 +35,16 @@ this is the one input where being wrong is worse than being absent.
 Access tokens expire. Expect to refresh this before each run; a stale token
 shows up as NT-11 returning 401 instead of 403.
 
+## Two optional secrets, each unlocking one row
+
+Neither is required and the run is honest without them — the row records itself
+as `skipped` with the reason, which lands in the evidence next to the rows that
+did run.
+
+| | Unlocks | Why it is optional |
+|---|---|---|
+| `OUTLOOK_WEBHOOK_CLIENT_STATE` | **NT-26**, webhook replay/idempotency | Idempotency is checked *after* the `clientState` match — correctly, since a caller who could claim nonces unauthenticated could poison the dedupe table. So proving it needs the live webhook secret, and adding it here is a second place for that secret to live. Weigh that against one row. |
+
 ## Running it
 
 Actions → **Security — live negative tests (WP-15)** → *Run workflow*.
@@ -42,6 +52,23 @@ Actions → **Security — live negative tests (WP-15)** → *Run workflow*.
 Two optional inputs pick which cron-worker and internal-service function get
 probed; the defaults (`market-updates-digest`, `agent-task-runner`) are fine
 unless one of those has been retired.
+
+### The one input that costs money
+
+**`run_quota_test`** (default off) enables **NT-29**, which proves the public
+rate limit by exhausting it.
+
+The quota on `google-places-autocomplete` is 30 requests per 60 seconds per IP,
+and it is consumed *before* the vendor call — which is the property being
+checked, and also why observing the 429 means about thirty billable Google
+Places requests first. A few cents. Per
+[`API_USAGE_METERING.md`](../../integrations/API_USAGE_METERING.md) this
+deployment may be spending the **prime's** credential rather than its own, so
+the cost may not land where you expect.
+
+Turn it on when you want to confirm rate limiting is deployed. Leave it off for
+routine runs. It is an input rather than a default precisely so the decision is
+made each time, by a person.
 
 ## Reading the result
 

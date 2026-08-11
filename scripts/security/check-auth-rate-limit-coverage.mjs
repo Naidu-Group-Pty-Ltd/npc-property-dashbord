@@ -29,6 +29,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readEntrypointSource } from './lib/entrypointSource.mjs';
 
 // Resolve from the process cwd, NOT from `import.meta.url`. The negative-test
 // harness (check-security-gate-negatives.mjs) runs each gate against a symlinked
@@ -37,7 +38,21 @@ import { join, resolve } from 'node:path';
 // which is precisely the "gate that is not a gate" this suite exists to catch.
 const root = resolve(process.cwd());
 const fn = (name) => join(root, 'supabase', 'functions', name, 'index.ts');
-const read = (name) => readFileSync(fn(name), 'utf8');
+// Reads the entrypoint AND the handler it serves, so a one-line shim onto a
+// shared handler is analysed as the thing it actually runs. `custom-auth-login`
+// and `-v2` are both shims onto `_shared/customAuth/login.ts` (WP-28); without
+// this, the rate-limit call reads as missing on both.
+const read = (name) => readEntrypointSource(root, name);
+// The entrypoint's OWN source, without the handler it delegates to.
+//
+// The distinction matters and is the general rule for this helper: a POSITIVE
+// assertion ("must call the limiter") follows the delegation, because the call
+// legitimately lives in the handler. A NEGATIVE one ("must not read
+// X-Forwarded-For") must not, because the shared modules an entrypoint reaches
+// contain the very expressions they exist to encapsulate — `getTrustedClientIp`
+// has to read that header to sanitise it, and following the import made five
+// correct portal handlers fail for using the helper written to protect them.
+const readOwn = (name) => readFileSync(fn(name), 'utf8');
 
 /**
  * Strip comments before pattern-matching. The forbidden expression is quoted
@@ -104,7 +119,8 @@ for (const name of RATE_LIMITED_ENDPOINTS) {
     );
   }
 
-  if (XFF.test(stripComments(source))) {
+  // Entrypoint only — see `readOwn`.
+  if (XFF.test(stripComments(readOwn(name)))) {
     failures.push(
       `${name}: keys on X-Forwarded-For, which the caller controls — the ceiling is ` +
         `one header away from gone. Use the shared helper (getTrustedClientIp).`,

@@ -211,7 +211,11 @@ export default function TemplateBuilderEdit() {
   const { update, create } = useReportTemplateMutations();
   const { data: versions = [] } = useReportTemplateVersions(id);
   const qc = useQueryClient();
-  const importReview = usePersistedImportReviewController({ onRepairApplied: () => { if (id) void qc.invalidateQueries({ queryKey: ['report-templates', id] }); } });
+  // Stage 3 — see TemplateBuilder.tsx: a critique reports and cannot write.
+  const importReview = usePersistedImportReviewController({
+    onRepairApplied: () => { if (id) void qc.invalidateQueries({ queryKey: ['report-templates', id] }); },
+    enableAiCritique: true,
+  });
   const { data: linkedImport, isLoading: linkedImportLoading } = useQuery({
     queryKey: ['template-imports', 'linked-template', id],
     enabled: !!id,

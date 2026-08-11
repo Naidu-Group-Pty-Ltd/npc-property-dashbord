@@ -4,6 +4,8 @@ import { createCorsHeaders } from "../_shared/auth.ts"
 import { verifyResetToken, MAX_RESET_ATTEMPTS } from "../_shared/resetTokens.ts"
 import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
 import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ResetPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 // The per-account OTP attempt cap only ever sees one account; this bounds a
 // caller walking a dictionary of addresses six digits at a time.
@@ -23,7 +25,12 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { action, email, otp, new_password } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ResetPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { action, email, otp, new_password } = __body.data
 
     if (!email) {
       return new Response(

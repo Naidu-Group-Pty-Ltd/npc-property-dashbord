@@ -4,6 +4,8 @@ import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
 import { auditSolicitorIdentity, GENERIC_AUTH_ERROR, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
 import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { PortalLoginRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -29,7 +31,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const { email, password, turnstile_token } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, PortalLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { email, password, turnstile_token } = __body.data
 
     if (!email || !password) {
       return new Response(

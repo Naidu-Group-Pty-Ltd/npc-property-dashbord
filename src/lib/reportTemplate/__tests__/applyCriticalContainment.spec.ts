@@ -65,13 +65,68 @@ describe('policy application', () => {
     expect(policy.nativeLayerPolicy).toBe('editable');
   });
 
-  it('#20 pixel containment (unsafe table) → raster-only / final-output / locked', () => {
-    const t = template([page('docling-page-1', [ov({ type: 'table', id: 'tbl', columns: [{ label: 'Column 1' }, { label: 'Column 2' }], rows: [['a', 'b']] } as never)])]);
+  /**
+   * A1 — an unverified table is contained at REGION scope, not page scope.
+   *
+   * The veto is unchanged: this table's pixels come from the source raster, not
+   * from its reconstruction. What changed is how much of the page goes with it —
+   * a heading and a paragraph beside a table are not under suspicion, and on a
+   * production import (template 355c6c63) the page-scope remedy cost 59% of the
+   * document's characters for exactly this reason.
+   */
+  it('#20 unsafe table → contained by region, page stays native', () => {
+    const t = template([page('docling-page-1', [
+      ov({ type: 'table', id: 'tbl', x: 48, y: 200, width: 500, height: 126, columns: [{ label: 'Column 1' }, { label: 'Column 2' }], rows: [['a', 'b']] } as never),
+      ov({ type: 'text', id: 'heading', x: 48, y: 96, width: 400, height: 24, content: 'Heading' } as never),
+    ])]);
     const r = runCriticalContainment({ template: t, contextByPageId: new Map([['docling-page-1', tablePageContext()]]) });
     const policy = resolvePageOutputPolicy(r.template.pages[0]);
+    expect(r.summary.pagesRegionContained).toBe(1);
+    expect(r.summary.pagesForcedPixel).toBe(0);
+    expect(policy.outputStrategy).toBe('native');
+    expect(policy.decision?.reason).toBe('unsafe_table_contained_by_region');
+    // The window covers the table and nothing else.
+    expect(policy.containedRegions).toHaveLength(1);
+    expect(policy.containedRegions?.[0].overlayIds).toEqual(['tbl']);
+    // The raster is still the pixel source, so it must stay resolvable — an
+    // editor-reference role would mark it an underlay and skip resolution.
+    expect(policy.sourceRasterRole).toBe('final-output');
+  });
+
+  it('#20b a table the plan cannot contain still takes the whole page', () => {
+    // No usable box for the table → containing it is not possible, and half a
+    // veto is worse than the page-wide one. Today's behaviour stands.
+    const t = template([page('docling-page-1', [
+      ov({ type: 'table', id: 'tbl', width: 0, height: 0, columns: [{ label: 'Column 1' }], rows: [['a']] } as never),
+    ])]);
+    const r = runCriticalContainment({ template: t, contextByPageId: new Map([['docling-page-1', tablePageContext()]]) });
+    const policy = resolvePageOutputPolicy(r.template.pages[0]);
+    expect(r.summary.pagesRegionContained).toBe(0);
     expect(r.summary.pagesForcedPixel).toBe(1);
     expect(policy.outputStrategy).toBe('raster-only');
     expect(policy.nativeLayerPolicy).toBe('locked');
+  });
+
+  it('#20c a non-table defect on the same page keeps page scope', () => {
+    // The chart defect is not covered by the table's window, so narrowing the
+    // scope would leave it unprotected.
+    const t = template([page('docling-page-1', [
+      ov({ type: 'table', id: 'tbl', x: 48, y: 200, width: 500, height: 126, columns: [{ label: 'Column 1' }], rows: [['a']] } as never),
+      ov({ type: 'image', id: 'img', src: '' } as never),
+    ])]);
+    const ctx = tablePageContext(1, {
+      source: {
+        regions: [
+          { id: 's-table', kind: 'table', pageNumber: 1, hasCrop: false, tableRowCount: 6, tableColCount: 4, tableHasHeaderCells: true, tableCellCount: 24 },
+          { id: 's-chart', kind: 'chart', pageNumber: 1, hasCrop: false, chartLike: true },
+        ],
+        pageTitleChartTerms: ['price history'],
+        hasNumericLabels: true,
+      },
+    });
+    const r = runCriticalContainment({ template: t, contextByPageId: new Map([['docling-page-1', ctx]]) });
+    expect(r.summary.pagesRegionContained).toBe(0);
+    expect(resolvePageOutputPolicy(r.template.pages[0]).outputStrategy).toBe('raster-only');
   });
 
   it('#21 semantic page with empty background + durable raster ref → ref attached, resolvable', () => {

@@ -15,6 +15,8 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { convertContent, anthropicRejectsSampling } from './claudeReconstruct.pure.ts';
+import { logApiUsage } from './logApiUsage.ts';
+import { extractUsageTokens, resolveLlmCredential, resolveModelUsed } from './llmUsageBinding.pure.ts';
 
 export type LLMRoute = 'gateway' | 'native' | 'openrouter';
 export type LLMMessage = { role: 'system' | 'user' | 'assistant' | 'tool'; content: any; tool_call_id?: string; name?: string };
@@ -50,6 +52,23 @@ export interface CallLLMArgs {
   /** Absolute wall-clock deadline (epoch ms) for the WHOLE fallback chain. Once
    *  passed, `callLLM` stops trying further fallbacks instead of compounding latency. */
   deadlineAt?: number;
+  /**
+   * Write an `api_usage_log` row for the successful attempt. **Defaults to
+   * true** — an unlogged call on a forwarded vendor key is never recharged to
+   * the tenant that made it.
+   *
+   * Pass `false` ONLY from a caller that already logs this same call itself.
+   * Six do (`email-copilot`, `clean-note-transcript`, `generate-chart-analysis`,
+   * `estimate-property-expenses`, `parse-property-pdf`,
+   * `format-comparison-report`); logging twice bills the tenant twice, which
+   * `API_USAGE_METERING.md` calls worse than not billing.
+   *
+   * Importing `logApiUsage` is NOT itself a reason to opt out:
+   * `vapi-call-webhook` logs a Vapi call, `parse-template-document` logs an
+   * embeddings call, and `report-qa` logs neither of its LLM attempts — all
+   * three route through here and all three were unbilled.
+   */
+  meterUsage?: boolean;
 }
 
 export interface CallLLMResult {
@@ -352,6 +371,51 @@ async function callGeminiNative(model: string, messages: LLMMessage[], opts: any
 
 // ----- Public entry point -----
 
+/**
+ * Write one `api_usage_log` row for the attempt that succeeded.
+ *
+ * The credential is resolved from `(route, modelId)` by the same rules
+ * `callRoute` dispatches on — mirrored in `llmUsageBinding.pure.ts` and locked
+ * together by a CI test. A family neither knows resolves to null, and then this
+ * logs NOTHING and warns instead: a row naming the wrong credential recharges
+ * the wrong tenant, which `API_USAGE_METERING.md` rates worse than no row.
+ */
+async function meterRouterCall(
+  route: LLMRoute,
+  modelId: string,
+  data: unknown,
+  responseMs: number,
+  agentKey: string,
+): Promise<void> {
+  try {
+    const binding = resolveLlmCredential(route, modelId);
+    if (!binding) {
+      console.warn(`[llmRouter] usage NOT metered — unmapped model family: ${route}/${modelId}`);
+      return;
+    }
+    // Gemini is the one route whose key is chosen at call time
+    // (`GEMINI_API_KEY ?? GOOGLE_API_KEY`), so report the one actually present
+    // rather than the nominal default.
+    const secretName = binding.secretName === 'GEMINI_API_KEY' && !Deno.env.get('GEMINI_API_KEY')
+      ? 'GOOGLE_API_KEY'
+      : binding.secretName;
+    const tokens = extractUsageTokens(data);
+    await logApiUsage(getAdminClient(), {
+      service_name: binding.serviceName,
+      endpoint: '/v1/chat/completions',
+      model_used: resolveModelUsed(data, modelId),
+      prompt_tokens: tokens?.promptTokens ?? 0,
+      completion_tokens: tokens?.completionTokens ?? 0,
+      tokens_used: tokens?.totalTokens ?? 0,
+      response_time_ms: responseMs,
+      status: 'success',
+      metadata: { secret_name: secretName, source: 'llmRouter', agent_key: agentKey, route },
+    });
+  } catch (e) {
+    console.warn('[llmRouter] usage metering failed (non-fatal)', e);
+  }
+}
+
 export async function callLLM(args: CallLLMArgs): Promise<CallLLMResult> {
   const assignment = await loadAssignment(args.agentKey);
   const chain = args.forceRoute && args.forceModelId
@@ -373,6 +437,7 @@ export async function callLLM(args: CallLLMArgs): Promise<CallLLMResult> {
       }
       perAttemptArgs = { ...args, timeoutMs: Math.min(args.timeoutMs ?? remaining, remaining) };
     }
+    const attemptStartedAt = Date.now();
     const res = await callRoute(step.route, step.model_id, perAttemptArgs, assignment);
     attempts.push({ route: step.route, model_id: step.model_id, ok: res.ok, status: res.status, error: safeAttemptError(res.status, res.error) });
 
@@ -404,6 +469,12 @@ export async function callLLM(args: CallLLMArgs): Promise<CallLLMResult> {
         const admin = getAdminClient();
         await admin.from('agent_model_assignments').update({ last_used_at: new Date().toISOString(), last_error: null }).eq('agent_key', args.agentKey);
       } catch { /* swallow */ }
+
+      // BILLING. Detached and best-effort: a ledger write must never turn a
+      // completed model call into a failure the caller sees.
+      if (args.meterUsage !== false) {
+        void meterRouterCall(step.route, step.model_id, res.data, Date.now() - attemptStartedAt, args.agentKey);
+      }
 
       return {
         content: typeof content === 'string' ? content : JSON.stringify(content),

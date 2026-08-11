@@ -223,6 +223,9 @@ async function extractWithVisionSingle(
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'pdf_property_extraction',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         { role: 'user', content: userContent as any },
@@ -352,6 +355,9 @@ async function extractFromSingleImage(
   const { callLLMRaw } = await import('../_shared/llmRouter.ts');
   const response = await callLLMRaw({
     agentKey: 'pdf_property_extraction',
+    // This function already writes its own api_usage_log row for this call;
+    // letting the router log it too would bill the tenant twice.
+    meterUsage: false,
     messages: [
       { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
       {
