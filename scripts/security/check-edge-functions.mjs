@@ -62,21 +62,54 @@ const entries = readdirSync(functionsDir, { withFileTypes: true })
     try { return statSync(index).isFile() ? [index] : []; } catch { return []; }
   }).sort();
 
-const result = spawnSync('deno', ['check', ...entries], {
+const runCheck = () => spawnSync('deno', ['check', ...entries], {
   cwd: root,
   encoding: 'utf8',
   maxBuffer: 256 * 1024 * 1024,
   // See the header: the frontend's node_modules must not be in scope.
   env: { ...process.env, DENO_NO_PACKAGE_JSON: '1' },
 });
-if (result.error) {
-  console.error(`Edge Function check could not start: ${result.error.message}`);
-  process.exit(1);
-}
 
-const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
-// Deno prints colour codes even when piped; strip them before matching.
-const plain = output.replace(/\[[0-9;]*m/g, '');
+/**
+ * A registry that times out is not a verdict — in either direction.
+ *
+ * These entry points import from `esm.sh` and `deno.land`, and when one of those
+ * is briefly unhealthy Deno reports
+ *
+ *     error: Import 'https://esm.sh/...' failed: 408 Request Timeout
+ *
+ * Before the guard below existed that was read as "0 type errors" and the gate
+ * passed. With the guard it fails, correctly — but failing a whole build on
+ * somebody else's blip is the other wrong answer, and a red build nobody can act
+ * on is how a gate earns a reputation for noise. Both happened within an hour.
+ *
+ * So: retry with backoff. Deno caches what it already fetched, so a later
+ * attempt needs less. If every attempt still fails the gate fails closed — this
+ * shortens the window, it does not reopen it.
+ */
+const TRANSIENT = /Import '[^']*' failed: (408|429|5\d\d)|error sending request|connection closed|dns error|timed out/i;
+const ATTEMPTS = 3;
+let result;
+let plain = '';
+for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+  result = runCheck();
+  if (result.error) {
+    console.error(`Edge Function check could not start: ${result.error.message}`);
+    process.exit(1);
+  }
+  // Deno prints colour codes even when piped; strip them before matching.
+  plain = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.replace(/\[[0-9;]*m/g, '');
+  if (result.status === 0 || !TRANSIENT.test(plain)) break;
+  if (attempt < ATTEMPTS) {
+    const waitMs = attempt * 5000;
+    console.error(
+      `Edge Function check: a module registry failed transiently (attempt ${attempt}/${ATTEMPTS}). `
+      + `Retrying in ${waitMs / 1000}s.`,
+    );
+    // Synchronous sleep: this is a sequential gate, not a server.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, waitMs);
+  }
+}
 
 /**
  * A resolution failure is not a type error and must never be baselined — it
