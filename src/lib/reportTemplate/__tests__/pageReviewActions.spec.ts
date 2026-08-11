@@ -124,7 +124,7 @@ describe('applyPageReviewAction — single-page mutation', () => {
 
   it('non-policy actions never mutate the template', () => {
     const t = template();
-    for (const action of ['accept', 'repair', 'ai_repair', 'open_editor'] as PageReviewAction[]) {
+    for (const action of ['accept', 'repair', 'ai_repair', 'ai_critique', 'open_editor'] as PageReviewAction[]) {
       const res = applyPageReviewAction(t, 'p1', action);
       expect(res.changed).toBe(false);
       expect(res.template).toBe(t);
@@ -143,5 +143,37 @@ describe('applyPageReviewAction — single-page mutation', () => {
     const t = template();
     applyPageReviewAction(t, 'p1', 'force_pixel');
     expect((t.pages[0].meta as any)?.pdfImport).toBeUndefined();
+  });
+});
+
+describe('the visual critique action', () => {
+  const base = { hasSourceRaster: true, outputStrategy: null, score: 0.6 } as const;
+  const critique = (ctx: Record<string, unknown> = {}) =>
+    describePageActions({ ...base, ...ctx } as never).find((d) => d.action === 'ai_critique')!;
+
+  it('is offered only when the operator has enabled it', () => {
+    expect(critique({ aiCritiqueEnabled: true }).available).toBe(true);
+    expect(critique().available).toBe(false);
+    expect(critique().disabledReason).toContain('operator-only');
+  });
+
+  it('needs both rasters, because it compares two images', () => {
+    expect(critique({ aiCritiqueEnabled: true, hasSourceRaster: false }).available).toBe(false);
+    expect(critique({ aiCritiqueEnabled: true, hasRenderedRaster: false }).available).toBe(false);
+    expect(critique({ aiCritiqueEnabled: true, hasRenderedRaster: false }).disabledReason)
+      .toContain('rendered page');
+  });
+
+  it('needs no confirmation, because nothing on its path can write', () => {
+    // The repair action confirms because it changes the document. A critique
+    // returns findings and cannot, so a confirmation step would be theatre.
+    expect(critique({ aiCritiqueEnabled: true }).requiresConfirm).toBe(false);
+  });
+
+  it('is independent of the AI-repair gate', () => {
+    expect(critique({ aiCritiqueEnabled: true, aiRepairEnabled: false }).available).toBe(true);
+    const repair = describePageActions({ ...base, aiCritiqueEnabled: true } as never)
+      .find((d) => d.action === 'ai_repair')!;
+    expect(repair.available).toBe(false);
   });
 });

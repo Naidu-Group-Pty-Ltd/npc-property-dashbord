@@ -132,21 +132,48 @@ The sweep converted 51 direct vendor `fetch` calls across 38 functions, plus two
 shared clients that cover many routes at once — `weasyprintClient.ts` (all
 eleven PDF render routes) and the PDF-parse sidecar dispatcher.
 
-### What is deliberately still uninstrumented
+### Model calls: metered at the router, opt-out at the caller
 
-**Everything routed through `_shared/llmRouter.ts`.** The router is the obvious
-choke point — one swap in `fetchWithTimeout` would meter the gateway, OpenAI,
-Anthropic, Perplexity, OpenRouter and Gemini together — but its callers are
-split: 11 already call `logApiUsage` themselves and 16 meter nothing. Metering
-the router without first removing those 11 legacy call sites would **double-bill
-them**, and over-billing a customer is a worse failure than under-metering.
-Moving meter ownership down into the router and deleting the redundant call
-sites is the correct fix and belongs in its own change, where the 11 edits can
-be verified individually.
+`_shared/llmRouter.ts` is the choke point for the gateway, OpenAI, Anthropic,
+Perplexity, OpenRouter and Gemini, and it now meters every call it makes.
+
+Measured before the change: **25 edge functions call `callLLM`/`callLLMRaw`, and
+19 of them never logged anything** — including `report-qa`,
+`parse-template-document` and `vapi-call-webhook`, whose only `logApiUsage`
+calls turned out to be for embeddings or a different vendor entirely. Those were
+spending a forwarded key for free.
+
+Exactly **6 functions log adjacently to their own call** and would otherwise be
+billed twice, which is worse than not billing. They opt out explicitly:
+
+| function | call sites opted out |
+|---|---|
+| `email-copilot` | 7 |
+| `clean-note-transcript` | 1 |
+| `generate-chart-analysis` | 1 |
+| `estimate-property-expenses` | 1 |
+| `parse-property-pdf` | 2 |
+| `format-comparison-report` | 1 |
+
+The flag is `meterUsage`, and it **defaults to true** — the whole liability was
+silence, so an omitted flag must never mean unbilled. `email-copilot` has an
+eighth `callLLM` with no adjacent logging; it is deliberately NOT opted out.
+
+Which credential a call spent is resolved by
+`_shared/llmUsageBinding.pure.ts`, which mirrors the router's own `(route,
+modelId)` dispatch. An unrecognised model family returns **null**, and the
+router then logs nothing and warns — a `service_name` the map does not know is
+metered and never billed, and a wrong one bills the wrong tenant. A CI test
+reads the router's source and fails if a new `modelId.startsWith(...)` branch
+appears that the resolver cannot bind.
+
+`template-design-agent` does not go through the router: it calls the Anthropic
+Messages API directly via `_shared/claudeReconstruct.ts`, which meters
+unconditionally against `ANTHROPIC_API_KEY`.
 
 The remaining uninstrumented functions that touch a billable credential are
-mostly those 16 llmRouter callers plus a handful whose vendor URL is assembled
-from a variable the sweep could not resolve statically.
+those whose vendor URL is assembled from a variable the sweep could not resolve
+statically.
 
 ## Deployment
 

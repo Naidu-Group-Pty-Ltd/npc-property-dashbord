@@ -5,6 +5,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 // carriers (see `extractPortalSessionToken` below).
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { extractClientPortalSessionToken } from "../_shared/clientPortalSessionToken.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
 function smartCapitalizeStr(name: string): string {
   if (!name) return '';
@@ -37,7 +38,7 @@ Deno.serve(async (req) => {
     let sessionToken: string | null = null;
     let action: string | null = null;
     try {
-      const body = await req.json();
+      const body = await readBoundedJson(req);
       // Cookie-first (see `extractClientPortalSessionToken`). The body field is
       // no longer preferred over it: preferring a caller-supplied value over the
       // HttpOnly cookie would defeat the point of moving to the cookie.

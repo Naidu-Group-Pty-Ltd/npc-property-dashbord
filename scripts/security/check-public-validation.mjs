@@ -38,14 +38,28 @@
  */
 import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readEntrypointSource } from './lib/entrypointSource.mjs';
 
 // cwd, not import.meta.url — the negative-test harness mutates a mirror.
 const root = resolve(process.cwd());
 const FUNC_DIR = join(root, 'supabase', 'functions');
 const REGISTRY = join(root, 'supabase', 'functions-registry', 'SECURITY_REGISTRY.json');
 
-/** Classes reachable without any credential. */
-const UNAUTHENTICATED = new Set(['public']);
+/**
+ * Classes reachable without any credential.
+ *
+ * `public-auth` joined in WP-27. Those 31 are the pre-session endpoints — login,
+ * forgot-password, reset-password, accept-invite, verify, across four portals
+ * and the staff console — and they are reachable exactly as anonymously as the
+ * `public` nine. The measured state when the class was added: **all 27 that read
+ * a body read it with a bare `await req.json()`**, three times as many as the
+ * class this gate was written for.
+ *
+ * They are not lower-risk for being auth endpoints. They are the endpoints an
+ * attacker reaches first, by design, and the only thing in front of them is the
+ * rate limiter — which is itself keyed off values taken from the body.
+ */
+const UNAUTHENTICATED = new Set(['public', 'public-auth']);
 
 /**
  * Reviewed exceptions. `public` functions that read a body but cannot use the
@@ -77,7 +91,14 @@ for (const [name, meta] of Object.entries(entries)) {
   const path = join(FUNC_DIR, name, 'index.ts');
   try { statSync(path); } catch { continue; }
 
-  const src = stripComments(readFileSync(path, 'utf8'));
+  // The entrypoint AND the handler it serves. Both `custom-auth-login` and
+  // `-v2` are one-line shims onto `_shared/customAuth/login.ts` (WP-28), and
+  // reading the shim alone found no body read — so the gate skipped them and
+  // said nothing. That is the failure mode worth guarding against here: the
+  // rate-limit gate broke loudly on the same refactor and was fixed in minutes;
+  // this one would have gone on reporting a passing count that had quietly
+  // stopped including two unauthenticated login endpoints.
+  const src = stripComments(readEntrypointSource(root, name));
   checked++;
 
   const readsBody = /\breq\.json\s*\(|\breq\.text\s*\(|\breq\.arrayBuffer\s*\(|\breq\.formData\s*\(|enforceJsonBodyLimit|enforceRawBodyLimit|parseJsonBody/.test(src);

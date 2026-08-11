@@ -109,7 +109,16 @@ function projectForPartner(row: Record<string, unknown>) {
   return out;
 }
 
-function sanitize(input: Record<string, unknown>): Record<string, unknown> {
+/**
+ * Copy only the columns in `WRITABLE_FIELDS`, dropping everything else the
+ * caller sent.
+ *
+ * Named for what it does rather than `sanitize`, which claimed something had
+ * been cleaned without saying against what — and left the allowlist invisible at
+ * the call site, where it is the only thing standing between a request body and
+ * every column of the table.
+ */
+function pickWritable(input: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of WRITABLE_FIELDS) {
     if (!(key in input)) continue;
@@ -368,7 +377,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'create') {
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       const direction = String(payload.direction ?? '');
       if (!DIRECTIONS.has(direction)) return json({ error: 'direction_invalid' }, corsHeaders, 400);
       if (!payload.client_first_name) return json({ error: 'client_first_name_required' }, corsHeaders, 400);
@@ -440,7 +449,7 @@ Deno.serve(async (req) => {
         return json({ error: 'referral_closed', message: 'Closed referrals are read-only.' }, corsHeaders, 409);
       }
 
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       delete payload.direction; // immutable
 
       if (payload.consent_obtained === true && !existing.consent_obtained) {

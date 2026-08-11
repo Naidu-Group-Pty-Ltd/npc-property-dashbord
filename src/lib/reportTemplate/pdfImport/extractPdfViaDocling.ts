@@ -40,6 +40,7 @@ import { buildEmbeddedFontFace, type FontFaceEntry } from './fontFaceBuilder';
 import { fontLookupKey, resolveSourceFontFamily, lookupEmbeddedFamily } from './fontResolver';
 import { recommendFidelityMode } from './recommendFidelityMode';
 import { createCanvasMeasurer } from './fontMetricCompatibility';
+import type { FontVerticalMetrics } from './firstBaseline.pure';
 import {
   bridgePageCharts,
   readSceneChartRegions,
@@ -738,8 +739,20 @@ export async function extractPdfViaDocling(
     // Text therefore renders in the source's own outlines, not a substitute.
     const embeddedFaces: FontFaceEntry[] = [];
     const embeddedFontFamilies: Record<string, string> = {};
+    // D1 — the vertical metrics of the program that will actually draw the
+    // text. CSS puts a line's first baseline at
+    // `(lineHeight - (ascent + descent))/2 + ascent` below the box, so without
+    // these the mapper cannot know where its text lands and has to place every
+    // block by its ink top — which sits ~0.36em high of the baseline.
+    const fontMetrics: Record<string, FontVerticalMetrics> = {};
     for (const f of doclingDoc.fonts ?? []) {
       if (!f?.base64) continue;
+      if (typeof f.ascender === 'number' && typeof f.descender === 'number') {
+        fontMetrics[fontLookupKey(f.basename)] = {
+          ascender: f.ascender,
+          descender: f.descender,
+        };
+      }
       const built = buildEmbeddedFontFace({
         loadedName: f.basename,
         postscriptName: f.psName ?? f.basename,
@@ -770,6 +783,7 @@ export async function extractPdfViaDocling(
       rastersByPage: rasters,
       engineVersion: job.engine_version ?? 'docling',
       embeddedFontFamilies,
+      fontMetrics,
       sourceChartsByPage,
       // R1 — real canvas metrics for tracked-text spacing derivation; degrades
       // to the documented estimate when no canvas exists.

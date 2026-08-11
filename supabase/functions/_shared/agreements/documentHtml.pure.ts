@@ -531,16 +531,25 @@ export function buildAgreementDocument(input: AgreementDocumentInput): Agreement
 
 /**
  * `agreement-centre/<agreement id>/v1-0/issued.pdf` in the private
- * `partner-agreements` bucket. One object per version per artefact kind;
- * written once, never replaced.
+ * `partner-agreements` bucket. One object per version per artefact kind per
+ * document revision; written once, never replaced.
+ *
+ * The revision is a path suffix (`issued-r2.pdf`) rather than a column, and
+ * **revision 1 carries no suffix** so every artefact stored before revisions
+ * existed still resolves at the path already recorded against its row. A
+ * refresh therefore writes a new object beside the old one and repoints the
+ * row, which is what keeps `upsert: false` honest — see
+ * `documentRevision.pure.ts` for why the bytes are a cache and not the record.
  */
 export function agreementCentreStoragePath(
   agreementId: string,
   versionLabel: string,
   kind: 'issued' | 'executed',
+  revision = 1,
 ): string {
   const safeLabel = versionLabel.replace(/[^0-9A-Za-z]+/g, '-');
-  return `agreement-centre/${agreementId}/v${safeLabel}/${kind}.pdf`;
+  const suffix = revision > 1 ? `-r${revision}` : '';
+  return `agreement-centre/${agreementId}/v${safeLabel}/${kind}${suffix}.pdf`;
 }
 
 export function agreementDownloadFileName(
@@ -600,7 +609,13 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.eyebrow};
     text-transform: uppercase;
-    color: ${palette.accentOnField};
+    /* Not accentOnField: its contrast floor is the DISPLAY floor, so it is only
+       promised to be legible at display size and this is 7.5pt. The hairline
+       below keeps the brand note, which is what that floor is actually for.
+       This line is a token, so it also depends on the .agc-cover-canvas
+       override further down — without it the span's paper ink wins over
+       whatever the band sets here. */
+    color: ${palette.onFieldInk};
     margin: 0 0 9mm;
   }
   .agc-cover-title {
@@ -702,9 +717,20 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
     padding-top: ${pt(d.paragraphGapPt)};
   }
 
-  /* Field states. The unfilled bracket keeps the template's own text. */
+  /* Field states. The unfilled bracket keeps the template's own text.
+
+     Both inks are PAPER roles — bodyInk and mutedInk are only allowed on the
+     paper grounds — and every substituted token wears one of them wherever it
+     lands. On the cover's dark canvas that painted graphite on near-black: the
+     tenant's own name at the head of its own agreement, at about 1.2:1. The
+     ground has to win there, so a token on the canvas inherits the band's ink
+     instead. The distinction between bound and unfilled is worth nothing if
+     neither can be read. */
   .agc-bound { color: ${palette.bodyInk}; }
   .agc-unfilled { color: ${palette.mutedInk}; }
+  .agc-cover-canvas .agc-bound,
+  .agc-cover-canvas .agc-unfilled { color: inherit; }
+  .agc-cover-canvas .agc-unfilled { opacity: 0.72; }
   .agc-rule { color: ${palette.mutedInk}; letter-spacing: 0.06em; }
 
   /* Detail / schedule grids — four columns, label/value twice. */

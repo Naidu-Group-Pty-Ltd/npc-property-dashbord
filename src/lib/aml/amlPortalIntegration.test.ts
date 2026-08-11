@@ -210,15 +210,43 @@ describe("staff technical retry", () => {
 });
 
 describe("server-derived journey", () => {
+  // The journey moved to `_shared/aml/portalJourney.pure.ts` so it could be
+  // tested as behaviour rather than as source text (see portalJourney.test.ts)
+  // — the same move `projectParty` made, and for the same reason: a defect
+  // here is a defect the client sees in four places at once.
+  const journeyModule = readFileSync(
+    "supabase/functions/_shared/aml/portalJourney.pure.ts", "utf8");
+
   it("verified wording requires actual party verification state", () => {
-    const journey = portalFn.slice(portalFn.indexOf("function buildJourney"), portalFn.indexOf("const MAX_UPLOAD_BYTES") > 0 ? portalFn.length : portalFn.length);
-    expect(journey).toContain("partiesResolved");
-    expect(journey).toContain("'You are verified.'");
-    expect(journey).toContain("Your adviser is reviewing your information.");
-    expect(journey).not.toContain("reuses it");
+    expect(journeyModule).toContain("verificationJourneyStatus");
+    expect(journeyModule).toContain("'You are verified.'");
+    expect(journeyModule).toContain("Your adviser is reviewing your information.");
+    expect(journeyModule).not.toContain("reuses it");
   });
   it("overview returns the journey computed server-side", () => {
     expect(portalFn).toContain("journey: buildJourney({");
+    expect(portalFn).toContain('from "../_shared/aml/portalJourney.pure.ts"');
+  });
+  it("documents completion reads what arrived, not only what was asked for", () => {
+    // `docsDone` used to require `requiredReqs.length > 0`, so a case with no
+    // formal requirements could never complete its documents step however
+    // much the client uploaded.
+    expect(portalFn).toContain("documents: documentFacts ?? []");
+    expect(portalFn).toMatch(/from\('documents'\)\s*\n?\s*\.select\('requirement_id,status'\)/);
+    expect(journeyModule).toContain("documentsJourneyStatus");
+  });
+  it("only unanswered requests count as a client action", () => {
+    // A `responded` request is waiting on the adviser. Counting it kept the
+    // journey telling the client their adviser had asked for something after
+    // they had already answered.
+    expect(portalFn).toMatch(/openRequestCount:[\s\S]{0,200}filter\(\(r: any\) => r\.status === 'open'\)/);
+  });
+  it("the journey never learns a score, a provider or a reviewer", () => {
+    // Code only — the header explains what it is forbidden to see, and would
+    // otherwise trip its own rule.
+    const codeOnly = journeyModule.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(codeOnly).not.toMatch(/risk_|score|threshold|mlro|didit|provider_/i);
   });
 });
 

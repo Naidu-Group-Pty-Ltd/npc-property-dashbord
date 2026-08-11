@@ -49,6 +49,38 @@ export type AmlSection =
   // Phase 5 — conditional sections; the server decides which apply per case.
   | 'entity_details' | 'related_parties';
 
+/**
+ * Where the client is, as the SERVER says — the one canonical journey.
+ *
+ * `aml-client-portal` has derived this since Stage 22 and the browser had
+ * never had a type for it, so every consumer read `overview.sections` instead
+ * and inferred the rest. That is why the stepper could only ever turn
+ * questionnaire steps green: consent, documents, identity and submission carry
+ * no `section`, so nothing client-side could see them complete.
+ *
+ * Nothing here is internal AML state. Each entry is a machine key, a
+ * presentation-neutral status, and two strings written to be read by the
+ * customer — no score, no threshold, no provider, no reviewer.
+ */
+export type AmlPortalJourneyStatus =
+  | 'complete'
+  | 'in_progress'
+  | 'action_required'
+  | 'not_started'
+  | 'blocked';
+
+export interface AmlPortalJourneyStep {
+  /** `consent | questionnaire | documents | verification | submission | review` */
+  step: string;
+  status: AmlPortalJourneyStatus;
+  action_required: boolean;
+  safe_label: string;
+  safe_description: string;
+  /** The portal step that answers this one. */
+  target_step: string;
+  completed_at?: string | null;
+}
+
 export interface AmlPortalOverview {
   case: {
     id: string; reference: string; subject: string;
@@ -69,6 +101,12 @@ export interface AmlPortalOverview {
   recent_submissions?: any[];
   /** Server-owned consent gate — the stepper mirrors this, never a local flag. */
   consent?: AmlConsentState;
+  /**
+   * The canonical journey. Optional only because an older deployed function
+   * may not send it; every read site degrades to "not started" rather than
+   * inventing a completion the server did not state.
+   */
+  journey?: AmlPortalJourneyStep[];
 }
 
 /** Acceptance state for the current AUSTRAC-referenced consent catalogue. */

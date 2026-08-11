@@ -295,6 +295,7 @@ describe('Template Import Reconciliation Engine foundation', () => {
         },
         repair: async () => [],
         repairPage: async () => [],
+        critiquePage: async () => ({ findings: [] }),
       },
     });
 
@@ -374,6 +375,7 @@ describe('Template Import Reconciliation Engine foundation', () => {
         { operation: 'updatePageBackground' as const, pageId: template.pages[0].id, changes: { imageUrl: '' } },
       ]),
       repairPage: async () => [],
+      critiquePage: async () => ({ findings: [] }),
     };
 
     const result = await runReconciliationRepairPass({ template, plan, diffReport: { diffScore: 0.2 }, client, maxOperations: 2 });

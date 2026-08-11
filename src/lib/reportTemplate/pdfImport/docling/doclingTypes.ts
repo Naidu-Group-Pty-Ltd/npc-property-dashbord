@@ -74,6 +74,10 @@ export interface DoclingTextItem {
       widthPt?: number;
       charCount?: number;
       sizePt?: number;
+      /** source-measure-v2. Where the line sits; absent on v1 artifacts. */
+      x0Pt?: number;
+      x1Pt?: number;
+      baselineYPt?: number;
       spans?: Array<{ width?: number; chars?: number; size?: number; font?: string }>;
     }>;
   };
@@ -207,6 +211,26 @@ export interface DoclingEmbeddedFont {
   base64?: string;          // present only when embeddable
   /** R2: CSS unicode-range segments the font's cmap actually maps, e.g. ["U+0041-005A"]. */
   coverage_ranges?: string[];
+  /**
+   * B5: Unicode→glyph entries the sidecar ADDED to this program's cmap before
+   * embedding it, from the PDF's own ToUnicode CMap.
+   *
+   * A PDF subset selects glyphs by CID, so its cmap need not be complete — and
+   * a web font is looked up by Unicode, so whatever the cmap omits is
+   * unreachable. Diagnostic only; the widened `coverage_ranges` above is what
+   * the renderer acts on.
+   */
+  cmapRepairedCodepoints?: number;
+  /**
+   * D1: the program's own hhea metrics, in em (descender as a magnitude).
+   *
+   * CSS puts a line's first baseline at
+   * `(lineHeight - (ascender + descender)) / 2 + ascender` below the box top,
+   * so these are what let the importer place a block by its BASELINE instead of
+   * by its ink top. Absent on pre-D1 sidecar payloads.
+   */
+  ascender?: number;
+  descender?: number;
 }
 
 export interface DoclingPageSize {

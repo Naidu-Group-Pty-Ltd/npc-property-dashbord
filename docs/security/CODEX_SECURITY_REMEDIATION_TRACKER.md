@@ -330,7 +330,7 @@
       "source_fixed": true,
       "deployed": false,
       "live_negative_test": false,
-      "residual_risk": "Runner is wired and extended to 10 rows (NT-37..NT-40 added) but HAS NEVER BEEN RUN: docs/security/wp15-evidence/ does not exist and every live_negative_test flag in this file is still false. Needs SUPABASE_URL, SUPABASE_ANON_KEY and a genuine non-superadmin NON_SUPERADMIN_JWT on a production-verification environment. 26 of the 36 original matrix rows still need a portal session, provider fixtures or a second tenant."
+      "residual_risk": "Superseded in part by WP-26: the runner is now 17 rows (NT-20/21/26/27/29/30 added) and items 5/10/16/20 have live coverage for the first time. STILL NEVER RUN — docs/security/wp15-evidence/ does not exist and every live_negative_test flag in this file is still false. Needs SUPABASE_URL, SUPABASE_ANON_KEY and a genuine non-superadmin NON_SUPERADMIN_JWT on a production-verification environment. The rows beyond those 17 still need a portal session, provider fixtures or a second tenant."
     },
     {
       "finding_id": "WP-24-CLOSING-THE-LIST",
@@ -342,6 +342,50 @@
       "deployed": false,
       "live_negative_test": false,
       "residual_risk": "All seven body-reading `public` endpoints now bound their reads; items 6/8/9/13 gained gates with negative tests; mass assignment 51 -> 15. CONFIRMED LIVE AND STILL OPEN: both Lovable preview origins are trusted for credentialed responses on the deployed project (NT-41 is the row that closes it). The WP-19 fail-closed change on ALLOWED_ORIGINS was reversed — the set and unset states are indistinguishable from outside, so failing closed risked a full outage on a guess; CORS_STRICT_ALLOWED_ORIGINS=true opts in once the operator confirms."
+    },
+    {
+      "finding_id": "WP-25-MASS-ASSIGNMENT-ZERO",
+      "severity": "high",
+      "file_or_function": "_shared/clientDataWritableColumns.ts; _shared/amlWritableColumns.ts; scripts/security/check-mass-assignment.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "Item 15 backlog 15 -> 0; the ratchet baseline now reads 0 and any new unallowlisted write is a regression. Of the fifteen, nine were real, five were already allowlisted behind a `sanitize()` that hid it (renamed to pickWritable), and one was the gate matching `inserted.data` — a database read — because the `body.data` pattern had no root. The client portal had a DENYlist of 32 names on a 69-column table plus nothing at all on ten others; a portal client could set finance_contact_id, assigned_team_user_id, client_properties.sourced_by, custom_shading_rate and client_portal_messages.sender_type. NOT CLOSED BY THIS: pickAllowed bounds which COLUMNS a body may write, never the VALUES — client_properties.value is still any number the client sends, which is item 7 territory on these two functions."
+    },
+    {
+      "finding_id": "WP-26-NEGATIVE-TEST-ROWS",
+      "severity": "medium",
+      "file_or_function": "scripts/security/wp15-negative-tests.mjs; .github/workflows/security-negative-tests.yml",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "NT-20/21/26/27/29/30 implemented; harness 11 -> 17 rows, items with live coverage 10 -> 14. STILL NEVER RUN — this raises what COULD be checked, not what has been. NT-26 is skipped without OUTLOOK_WEBHOOK_CLIENT_STATE (idempotency is checked after the clientState match, correctly). NT-29 is skipped unless RUN_QUOTA_TEST=true because observing the 429 costs ~30 billable Google Places calls, possibly against the prime's credential. NT-21 and NT-30 were reworded to what is testable from outside: signature verification rather than cross-client rebinding, and token validation rather than idle-timeout expiry."
+    },
+    {
+      "finding_id": "WP-27-PUBLIC-AUTH-VALIDATION",
+      "severity": "high",
+      "file_or_function": "_shared/authBodySchemas.ts; _shared/validate.ts; scripts/security/check-public-validation.mjs; 27 public-auth functions",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "All 27 body-reading public-auth functions read with a bare req.json() — no size bound, no runtime shape check — on endpoints reachable with no session. Now bounded; gate covers 37 functions rather than 9. Fixed on the way: parseJsonBody dropped the caller's CORS headers on the 413 path (a login form showed the browser a 413 it could not read); readBoundedJson defaults its generic to `any` to match req.json() so the substitution is type-neutral. STILL OPEN: 70 portal-authenticated functions. STILL OPEN: 70 portal-authenticated functions. The custom-auth-login/logout/verify finding recorded here is superseded by WP-28, which also corrects it: all three are FROZEN at version 16 (2026-07-31), not actively shipped — the 05:44Z deploy was the -v2 counterpart."
+    },
+    {
+      "finding_id": "WP-28-CUSTOM-AUTH-V1",
+      "severity": "critical",
+      "file_or_function": "supabase/functions/_shared/customAuth/*; custom-auth-{login,logout,verify}[-v2]/index.ts; scripts/security/lib/entrypointSource.mjs",
+      "owner": "twenty-item-security-programme",
+      "pr_or_commit": null,
+      "source_fixed": true,
+      "deployed": false,
+      "live_negative_test": false,
+      "residual_risk": "custom-auth-login was a RATE-LIMIT BYPASS of custom-auth-login-v2 in production. Both are ACTIVE and both mint the same staff session cookie and JWT, but deploy-supabase-functions.yml discovers functions by listing directories and never reads config.toml — so the v1 trio, which has no directory, was frozen at its 2026-07-31 bundle (version 16) while v2 reached version 40. enforceAuthRateLimit (ABUSE-003) was added in between and could never reach v1, so credential spraying against the Command Centre met no source-keyed ceiling on that URL. The frozen bundle also lacks the WP-27 body bound and carries a July snapshot of _shared/auth.ts that still accepts x-internal-edge-secret (the WP-12 legacy path). FIXED IN SOURCE by moving all three handlers to _shared/customAuth/ and making both entrypoints one-line shims, sharing the 'ccl' limiter scope so alternating URLs cannot double a budget. NOT YET DEPLOYED — and deployment is the whole fix here: until deploy-supabase-functions.yml runs on main (which it now CAN, because the directories exist), production still serves the unrate-limited v1. DELETION IS NOT DECIDED: nothing in this repository calls them, but that is a claim about source, so every v1-served request now logs [custom-auth.legacy_v1] on success as well as failure. Watch it, then delete the functions, the config.toml stanzas and the registry entries together. ALSO FOUND: the shim pattern broke two gates in opposite directions — check-auth-rate-limit-coverage failed loudly, check-public-validation silently stopped checking two unauthenticated logins while still reporting a pass. scripts/security/lib/entrypointSource.mjs now reads an entrypoint with the handler it serves, one level deep, for POSITIVE assertions only."
     }
   ]
 }

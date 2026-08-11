@@ -23,11 +23,25 @@ export interface SinglePageRepairRequest {
   maxOperations?: number;
 }
 
+/**
+ * Stage 3 — a page critique request. Two images and the ids on the page; the
+ * response is findings only, and no part of it can touch a template.
+ */
+export interface VisualCritiqueRequest {
+  pageId: string;
+  pageWidth: number;
+  pageHeight: number;
+  sourceImageDataUrl: string;
+  renderedImageDataUrl: string;
+  elements: unknown[];
+}
+
 export interface ReconciliationAiClient {
   reconcile(input: ReconciliationRequest): Promise<TemplateImportPlan>;
   repair(input: RepairRequest): Promise<TemplateImportPatch[]>;
   /** C9 — page-scoped repair; returns the raw (unvalidated) patch payload. */
   repairPage(input: SinglePageRepairRequest): Promise<unknown>;
+  critiquePage(input: VisualCritiqueRequest): Promise<unknown>;
 }
 
 export type ReconciliationInvoke = (
@@ -53,6 +67,9 @@ export class BackgroundFirstReconciliationClient implements ReconciliationAiClie
   async repairPage(): Promise<unknown> {
     return [];
   }
+
+  /** No critique without a backend: these clients are deterministic stand-ins. */
+  async critiquePage(): Promise<unknown> { return { findings: [] }; }
 }
 
 export class StaticPlanReconciliationClient implements ReconciliationAiClient {
@@ -69,6 +86,9 @@ export class StaticPlanReconciliationClient implements ReconciliationAiClient {
   async repairPage(): Promise<unknown> {
     return [];
   }
+
+  /** No critique without a backend: these clients are deterministic stand-ins. */
+  async critiquePage(): Promise<unknown> { return { findings: [] }; }
 }
 
 function extractPlanCandidate(data: unknown): unknown {
@@ -137,6 +157,28 @@ export class TemplateDesignAgentReconciliationClient implements ReconciliationAi
     }, { timeoutMs: 120000 });
     if (error) throw new Error(error.message);
     return extractPatchesCandidate(data);
+  }
+
+  /**
+   * Stage 3 — show the model the source page and the rendered page and ask what
+   * differs. Returns the RAW envelope; `runVisualCritique` drops findings that
+   * name elements the page does not contain and checks the rest against the
+   * measured geometry before any of it reaches a reviewer.
+   *
+   * There is no patch in this response and no path from it to the template.
+   */
+  async critiquePage(input: VisualCritiqueRequest): Promise<unknown> {
+    const { data, error } = await this.invoke('template-design-agent', {
+      mode: 'visual_critique',
+      pageId: input.pageId,
+      pageWidth: input.pageWidth,
+      pageHeight: input.pageHeight,
+      sourceImageDataUrl: input.sourceImageDataUrl,
+      renderedImageDataUrl: input.renderedImageDataUrl,
+      elements: input.elements,
+    }, { timeoutMs: 120000 });
+    if (error) throw new Error(error.message);
+    return data;
   }
 }
 

@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 
 import { createCorsHeaders as __createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { readBoundedJson } from '../_shared/validate.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -37,7 +38,7 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const body = await req.json().catch(() => ({}));
+    const body = await readBoundedJson(req).catch(() => ({}));
     const { token } = body;
     if (!token || typeof token !== 'string') {
       return jsonResponse({ error: 'token required' }, 400);
