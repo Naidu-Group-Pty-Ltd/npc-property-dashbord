@@ -152,8 +152,8 @@ jobs:
           cd scripts/reports && python3 -m unittest test_measure_pages -v
 
       # The PDF-import sidecar's pure modules — lane policy, OCR language
-      # contract, operational metrics — import no Docling and need no model
-      # download, so they are cheap to gate here.
+      # contract, operational metrics, text alignment — import no Docling and
+      # need no model download, so they are cheap to gate here.
       #
       # Nothing ran them before. test_ocr_config.py already encoded the rule
       # that EasyOCR cannot construct a reader from an incompatible script mix,
@@ -167,7 +167,8 @@ jobs:
         run: |
           cd pdf-parse-service
           python3 -m unittest test_lane_policy test_ocr_config test_operational_metrics \
-            test_chart_candidates test_chart_series_wiring -v
+            test_chart_candidates test_chart_series_wiring test_text_alignment \
+            test_font_cmap_repair -v
 
       - name: Build
         run: npm run build

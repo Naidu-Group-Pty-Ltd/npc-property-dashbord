@@ -81,8 +81,16 @@ New vendor calls should use `_shared/meteredFetch.ts` rather than `fetch` — it
 resolves the credential from the URL and logs the call itself, so metering
 cannot be forgotten. Never add it to a call site that already calls
 `logApiUsage` for the same request: that bills the tenant twice, which is worse
-than not billing. That constraint is why everything behind `_shared/llmRouter.ts`
-is still uninstrumented; the doc explains what it would take to fix.
+than not billing.
+
+**Model calls are metered by `_shared/llmRouter.ts` itself**, which is why
+`meterUsage` exists and why it **defaults to true** — 19 of the 25 edge
+functions that call the router were spending a forwarded key for free, and an
+omitted flag must never mean unbilled. Only the six functions that log
+adjacently to their own call pass `meterUsage: false`. The credential a
+`(route, modelId)` pair spends is resolved by `_shared/llmUsageBinding.pure.ts`,
+which mirrors the router's dispatch and returns **null** rather than guessing; a
+CI test reads the router's source and fails when the two drift.
 
 ## Stamp duty
 Every duty figure in the product comes from `supabase/functions/_shared/stampDuty/`
@@ -217,6 +225,73 @@ Sidecar options live in `app.py`'s `GLOBAL_CAPABILITIES`, the lane matrix in
 mistyped language code is not inert, it fails the whole conversion (`zh` is not
 an EasyOCR code and cost 9 production jobs). Those three modules are pure and
 gated by `ci.yml`; nothing else in `pdf-parse-service/` runs in CI.
+
+That sidecar is only **one** of the two PDF engines. A checkbox in the import
+dialog routes the file to Claude instead, via `template-design-agent`. Read
+[`CLAUDE_RECONSTRUCTION_GROUNDING.md`](./docs/pdf-import/CLAUDE_RECONSTRUCTION_GROUNDING.md)
+before touching that path: it was the only reference kind the importer did not
+ground, and it now measures the attached PDF with PDF.js first. Two rules there
+keep biting — grounding is read from the **attached bytes and never from the
+open template** (measurements from the wrong document are worse than none, since
+the agent treats them as authoritative), and **absent grounding is not empty
+grounding** (an empty element list tells the model a scanned page has no text,
+which it then reproduces).
+
+The import review can now ask a model **what differs** between the source page
+and the rendered one, per page, on an operator click. Read
+[`VISUAL_CRITIQUE.md`](./docs/pdf-import/VISUAL_CRITIQUE.md) before touching
+`_shared/visualCritique.pure.ts` or the `visual_critique` mode. It is a judge and
+never a fixer: the model notices, and every claim geometry can settle is settled
+by geometry before a reviewer sees it — a finding naming an element the page does
+not contain is **dropped**, and one measurement contradicts is shown as
+contradicted rather than as a defect. The doc also records the endpoint it
+replaces: `layout_reconciliation_repair` reads a field its only client never
+sent, so it answered "no changes" to every request ever made of it.
+
+A scanned PDF is routed to the engine that can read it. Read
+[`SCANNED_ROUTING.md`](./docs/pdf-import/SCANNED_ROUTING.md) before touching
+`scannedDocumentPolicy.pure.ts` or `probeTextLayer`: the deterministic path
+cannot read a scan and **OCR is not the fallback** — 0 OCR pages across 1,164 in
+production, because the capability ceiling defaults false — so the dialog
+measures the text layer in the browser and pre-selects the Claude engine. Two
+rules there: a **failed probe is `unknown`, never `scanned`** (it fails on
+encrypted files, which are not scans), and a stray watermark character must not
+make a scanned page look native.
+
+Chart reconstruction is **inert in production and now says so**. Read
+[`CHART_RECONSTRUCTION_STATUS.md`](./docs/pdf-import/CHART_RECONSTRUCTION_STATUS.md)
+before touching `chartCandidate.pure.ts` or anything in the chart path: 0 chart
+overlays exist across 245 imports, for four independent reasons (the scene graph
+never runs, so `chart_candidates.py` never executes; Docling's picture classifier
+runs on 2 of 84 jobs; `chartNativeEnabled` is off). The client-side detector
+recovers the classification from geometry the import already holds and **never
+reads a value off a chart** — a misread number in a client's financial report is
+this programme's top risk, and a classification cannot misstate a figure.
+
+An import now also brings a **design system** with it, read off the source and
+bound to its own overlays. Read
+[`IMPORT_DESIGN_SYSTEM.md`](./docs/pdf-import/IMPORT_DESIGN_SYSTEM.md) before
+touching `designSystemBinding.pure.ts`, the token derivation in
+`mapDoclingToPagePlan`, or `applyTemplateImportPlan`'s token merge. One rule
+carries it: **bind only where the token's value is exactly what the overlay
+measured** — that is what makes the render byte-identical and the import
+restyleable at the same time, and there is no tolerance parameter. Two things
+that bit: anything which **measures** a template (CDIR) has to resolve the
+references first or it derives a palette of `token:heading`, and the base
+template's tokens win every conflict so an import cannot restyle pages it lands
+beside.
+
+An imported overlay also carries what the source said it **is** —
+`overlay.semantics`, from Docling's own label. Read
+[`SEMANTIC_STRUCTURE.md`](./docs/pdf-import/SEMANTIC_STRUCTURE.md) before
+touching `semanticRole.pure.ts`, the overlay element name in
+`blocks/_shared.html.ts`, or image `alt`. WeasyPrint builds the tagged PDF's
+structure tree from the **element name**, and `render-template-pdf` asks for
+`pdf/ua-1` — so a `<div>` is why an imported page's structure tree used to be
+flat with zero headings. The stage's hard constraint is that it adds meaning and
+moves nothing: pixel identity at 300 DPI is asserted before and after, and the
+`margin:0` reset and the `<span>` inside a heading are both there for measured
+reasons the doc records.
 
 ## The template converter
 An existing template can be brought *onto* the design system rather than into the

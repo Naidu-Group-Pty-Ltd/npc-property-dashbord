@@ -70,6 +70,9 @@ interface Props {
   onPageAction?: (pageId: string, action: PageReviewAction) => void;
   pageActionBusyId?: string | null;
   aiRepairEnabled?: boolean;
+  aiCritiqueEnabled?: boolean;
+  /** Stage 3 — per-page critique findings, keyed by page id. */
+  pageCritiques?: Record<string, { findings: import('@/lib/reportTemplate/pdfImport/visualCritique').CorroboratedFinding[]; summary: import('@/lib/reportTemplate/pdfImport/visualCritique').CritiqueSummary }> | null;
 }
 
 function flattenLayers(layers: CdirLayer[]): CdirLayer[] {
@@ -95,7 +98,7 @@ function pct(value: number | null | undefined): string {
   return `${Math.round(value * 100)}%`;
 }
 
-export function ImportReviewDialog({ open, onOpenChange, draft, onOpenTemplate, onRetry, onRecordDecision, recordedDecision, onRunReconciliation, reconciliationAvailable, reconciliationBusy, onRunVisualQa, visualQaAvailable, visualQaBusy, visualQaSummary, visualQualitySignedUrls, visualQualityArtifactPaths, onRunRepair, repairAvailable, repairBusy, repairSummary, repairAuditPath, reviewDebug, onApplyRepair, applyRepairAvailable, applyRepairBusy, onForceMode, forceModeAvailable, forceModeBusy, onRunAiReconciliation, reconciliationPolicy, aiReconciliationBusy, aiReconciliationSummary, visualQualityReport, onPageAction, pageActionBusyId, aiRepairEnabled }: Props) {
+export function ImportReviewDialog({ open, onOpenChange, draft, onOpenTemplate, onRetry, onRecordDecision, recordedDecision, onRunReconciliation, reconciliationAvailable, reconciliationBusy, onRunVisualQa, visualQaAvailable, visualQaBusy, visualQaSummary, visualQualitySignedUrls, visualQualityArtifactPaths, onRunRepair, repairAvailable, repairBusy, repairSummary, repairAuditPath, reviewDebug, onApplyRepair, applyRepairAvailable, applyRepairBusy, onForceMode, forceModeAvailable, forceModeBusy, onRunAiReconciliation, reconciliationPolicy, aiReconciliationBusy, aiReconciliationSummary, visualQualityReport, onPageAction, pageActionBusyId, aiRepairEnabled, aiCritiqueEnabled, pageCritiques }: Props) {
   const [savingDecision, setSavingDecision] = useState<ImportReviewDecision | null>(null);
   const [decisionNote, setDecisionNote] = useState('');
   // C7 — assemble the per-page review view-model from the persisted per-page
@@ -425,6 +428,8 @@ export function ImportReviewDialog({ open, onOpenChange, draft, onOpenTemplate, 
               <VisualQualityPageReviewGrid
                 collection={pageReviewCollection}
                 aiRepairEnabled={aiRepairEnabled}
+                aiCritiqueEnabled={aiCritiqueEnabled}
+                pageCritiques={pageCritiques}
                 busyPageId={pageActionBusyId}
                 onAction={onPageAction}
               />

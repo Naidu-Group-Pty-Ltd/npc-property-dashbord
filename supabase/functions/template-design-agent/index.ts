@@ -17,7 +17,7 @@ import { callClaudeReconstruct } from '../_shared/claudeReconstruct.ts';
 import { validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
 import { expandIconOverlay, ICON_NAMES } from '../_shared/iconPack.ts';
 import { validateVisionImageDataUrl } from '../_shared/visionImage.ts';
-import { internalError } from '../_shared/errorResponse.ts';
+import { CRITIQUE_TOOL_SCHEMA, VISUAL_CRITIQUE_VERSION } from '../_shared/visualCritique.pure.ts';
 
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
@@ -587,6 +587,18 @@ Deno.serve(async (req) => {
       body.groundedReference && typeof body.groundedReference === 'object' && Array.isArray(body.groundedReference.elements)
         ? body.groundedReference
         : null;
+    // Stage 1 — per-source-page measurements from a PDF's own content stream.
+    // A document has more than one page; `groundedReference` names only the
+    // first, and grounding page 1 while the model guesses pages 2..n is the same
+    // gap one page down.
+    const groundedPages: { pageNumber: number; reference: any; dropped?: number }[] =
+      Array.isArray(body.groundedPages)
+        ? body.groundedPages.filter((p: any) =>
+            p && typeof p === 'object' && Array.isArray(p.reference?.elements) && p.reference.elements.length)
+        : [];
+    // What the caps excluded. A bound nobody is told about reads as full coverage.
+    const groundingCoverage: { totalPages?: number; pagesOmitted?: number; elementsDropped?: number } =
+      body.groundingCoverage && typeof body.groundingCoverage === 'object' ? body.groundingCoverage : {};
 
     // C9 — page-scoped AI visual repair. This mode may ONLY return patches from
     // the visual-diff-repair-patch-v1 allowlist, scoped to a single page; it must
@@ -598,8 +610,123 @@ Deno.serve(async (req) => {
       const pageId = typeof body.pageId === 'string' ? body.pageId : '';
       if (!pageId) return json({ error: 'layout_reconciliation_repair requires a pageId' }, 400);
       const maxOps = Math.min(Math.max(Number(body.maxOperations) || 20, 1), 40);
-      const { patches, rejected } = sanitizeVisualDiffRepairPatches(body.candidatePatches ?? [], pageId, maxOps);
+      // This mode is a SANITISER, not a generator: it validates patches the
+      // caller already holds. It has never called a model, and the only client
+      // that reaches it (`aiClient.repairPage`) sends `plan`/`diffReport` and no
+      // `candidatePatches` — so every request ever made of it returned zero
+      // patches AND zero rejections, which the review UI reported as "AI repair
+      // produced no changes", indistinguishable from "the page was fine".
+      //
+      // Say so instead. A caller with nothing to sanitise is a caller that meant
+      // to ask for something else — the judge lives in `visual_critique`.
+      if (body.candidatePatches === undefined) {
+        return json({
+          patches: [],
+          rejected: [{ index: -1, reason: 'no candidatePatches supplied — this mode validates patches, it does not generate them (see mode: visual_critique)' }],
+          pageId,
+          allowlistVersion: VISUAL_DIFF_REPAIR_ALLOWLIST_VERSION,
+        });
+      }
+      const { patches, rejected } = sanitizeVisualDiffRepairPatches(body.candidatePatches, pageId, maxOps);
       return json({ patches, rejected, pageId, allowlistVersion: VISUAL_DIFF_REPAIR_ALLOWLIST_VERSION });
+    }
+
+    // ─── Stage 3 — look at the rendered page and say what is wrong with it ───
+    //
+    // The quality gate already renders every page and diffs it against the
+    // source raster, and reports a NUMBER: the same document scored 0.507 on the
+    // visual gate and 1.0 on CDIR fidelity, and 74% of pages come back "needing
+    // review" with no statement of what is wrong with any of them.
+    //
+    // This mode returns FINDINGS, and only findings. It never proposes geometry
+    // and never touches a template: a model is good at noticing and bad at
+    // measuring, which is the same reason the PDF path is grounded rather than
+    // eyeballed. Everything the model claims that geometry can settle is settled
+    // by geometry, client-side, in `visualCritique.pure.ts`.
+    if (body.mode === 'visual_critique') {
+      const pageId = typeof body.pageId === 'string' ? body.pageId : '';
+      if (!pageId) return json({ error: 'visual_critique requires a pageId' }, 400);
+      if (!USE_CLAUDE) return json({ error: 'Visual critique requires Claude (set ANTHROPIC_API_KEY).' }, 400);
+
+      const sourceImage = validateVisionImageDataUrl(body.sourceImageDataUrl, MAX_VISION_IMAGE_BYTES);
+      const renderedImage = validateVisionImageDataUrl(body.renderedImageDataUrl, MAX_VISION_IMAGE_BYTES);
+      if (!sourceImage?.ok || !renderedImage?.ok) {
+        // Refuse rather than critique one image. Asked to judge a reconstruction
+        // with nothing to compare it against, a model reports what it dislikes
+        // about a page rather than how it differs from the source — which is a
+        // redesign brief wearing a defect report's clothes.
+        return json({
+          error: 'Visual critique needs BOTH the source page and the rendered page as base64 image data URLs (≤10 MB each).',
+        }, 400);
+      }
+
+      const inventory = Array.isArray(body.elements) ? body.elements.slice(0, 200) : [];
+      const pageWidth = Number(body.pageWidth) || 595;
+      const pageHeight = Number(body.pageHeight) || 842;
+      const inventoryText = inventory.length
+        ? inventory.map((e: any) =>
+            `[${String(e?.id ?? '')}] ${String(e?.type ?? '?')} x=${e?.x} y=${e?.y} w=${e?.width} h=${e?.height}`
+            + `${e?.content ? ` :: ${JSON.stringify(String(e.content)).slice(0, 120)}` : ''}`,
+          ).join('\n')
+        : '(no element inventory supplied)';
+
+      const critiqueSystem = `You are reviewing a PDF page that was automatically rebuilt as an editable template.
+
+The FIRST image is the SOURCE page. The SECOND image is the RECONSTRUCTION.
+
+Report only differences you can actually SEE between them, as findings. Rules:
+- Judge the reconstruction against the source. Never against your own taste — a difference you would prefer is not a finding.
+- Name the element from the ELEMENT INVENTORY whenever one applies. Never invent an id.
+- Do NOT propose fixes, coordinates, sizes or colours. A separate measurement step decides those, and a number you estimate from a picture is worse than the one already measured.
+- Do NOT report a difference you are unsure of. An unreported minor difference costs far less than a confident wrong one.
+- If the two pages match, return an empty findings array. That is a valid and common answer.
+
+The page is ${pageWidth}×${pageHeight}pt, top-left origin.
+
+ELEMENT INVENTORY (ids you may reference):
+${inventoryText}`;
+
+      const critique = await callClaudeReconstruct({
+        apiKey: ANTHROPIC_API_KEY!,
+        messages: [
+          { role: 'system', content: critiqueSystem },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'SOURCE page:' },
+              { type: 'image_url', image_url: { url: sourceImage.dataUrl } },
+              { type: 'text', text: 'RECONSTRUCTION of the same page:' },
+              { type: 'image_url', image_url: { url: renderedImage.dataUrl } },
+              { type: 'text', text: 'Report the differences as findings.' },
+            ],
+          },
+        ],
+        tools: [{
+          type: 'function',
+          function: {
+            name: CRITIQUE_TOOL_SCHEMA.name,
+            description: CRITIQUE_TOOL_SCHEMA.description,
+            parameters: CRITIQUE_TOOL_SCHEMA.input_schema,
+          },
+        }],
+        // Forced: a critique that has to be parsed out of a paragraph silently
+        // becomes zero findings the first time the wording changes.
+        tool_choice: { type: 'function', function: { name: CRITIQUE_TOOL_SCHEMA.name } },
+        max_tokens: 4096,
+        timeoutMs: 120_000,
+      });
+      if (!critique.ok) {
+        return json({ error: `Visual critique failed: ${critique.errorText ?? critique.status}` }, 502);
+      }
+      const call = critique.data?.choices?.[0]?.message?.tool_calls?.[0];
+      let raw: unknown = null;
+      try { raw = JSON.parse(call?.function?.arguments ?? '{}'); } catch { raw = null; }
+      return json({
+        findings: (raw as { findings?: unknown } | null)?.findings ?? [],
+        pageId,
+        modelUsed: critique.data?.model ?? null,
+        critiqueVersion: VISUAL_CRITIQUE_VERSION,
+      });
     }
 
     // Decide whether to run the Design Brief pipeline.
@@ -658,6 +785,49 @@ Focus especially on exact palette roles (background, surface, text, accent, mute
       }
     }
 
+    // ─── Measured ground truth, shared by every faithful-reconstruction mode ──
+    //
+    // Both reconstruction modes are transcription tasks, and both are strictly
+    // better when the model is handed measurements instead of asked to derive
+    // them. This block was originally built inside `screenshot_to_block` only,
+    // which left the PDF path — the path holding the BEST evidence in the system,
+    // real glyph geometry rather than OCR — as the one asked to eyeball it.
+    //
+    // Server-side slice is a backstop against an oversized payload. The client
+    // selects the elements that survive a cap (see
+    // `pdfImport/groundedReferenceFromImport.pure.ts`); position-based truncation
+    // here would drop the footer and say nothing about it.
+    const MAX_GROUNDED_ELEMENTS = 160;
+    const describeElementStyle = (e: any): string => {
+      const parts: string[] = [];
+      if (e.color) parts.push(`color=${e.color}`);
+      if (e.fontFamily) parts.push(`font=${JSON.stringify(String(e.fontFamily))}`);
+      if (e.fontWeight != null) parts.push(`weight=${e.fontWeight}`);
+      if (e.italic) parts.push('italic');
+      return parts.length ? ` ${parts.join(' ')}` : '';
+    };
+    const elementRows = (ref: any): string =>
+      (ref.elements ?? []).slice(0, MAX_GROUNDED_ELEMENTS).map((e: any) =>
+        `[${e.id}] x=${e.x} y=${e.y} w=${e.width} h=${e.height} size≈${e.fontSize}pt${describeElementStyle(e)} :: ${JSON.stringify(String(e.text ?? '')).slice(0, 240)}`,
+      ).join('\n');
+    const groundingBlock = groundedPages.length
+      // Multi-page: one section per SOURCE page, each with its own page size, so
+      // the model never has to infer which measurements belong where.
+      ? `\n\nMEASURED TEXT ELEMENTS — read from this exact PDF's content stream. These are AUTHORITATIVE for text, position and size; each source page is listed separately with its own dimensions (points, top-left origin).${
+          groundedPages.map((p) =>
+            `\n\n— SOURCE PAGE ${p.pageNumber} (${p.reference.pageWidth ?? '?'}×${p.reference.pageHeight ?? '?'}pt)${
+              p.dropped ? ` [${p.dropped} smaller element(s) not listed — read them off the document]` : ''
+            }:\n${elementRows(p.reference)}`,
+          ).join('')
+        }${
+          groundingCoverage.pagesOmitted
+            ? `\n\n[Pages ${groundedPages.length + 1}–${groundingCoverage.totalPages} were not measured — reconstruct them by reading the document.]`
+            : ''
+        }`
+      : groundedReference && groundedReference.elements!.length
+        ? `\n\nMEASURED TEXT ELEMENTS — measured ground truth on a ${groundedReference.pageWidth ?? '?'}×${groundedReference.pageHeight ?? '?'}pt page (top-left origin). These are AUTHORITATIVE for text, position, and any style fields present:\n${elementRows(groundedReference)}`
+        : '';
+
     // Mode-specific system addendum
     let modeAddendum = '';
     if (mode === 'art_director') {
@@ -667,21 +837,6 @@ Improve in place: refine typographic hierarchy, fix alignment to a 12pt grid, ti
     } else if (mode === 'screenshot_to_block') {
       // R5 — FAITHFUL reconstruction. This is a transcription/placement task, NOT
       // a redesign: text content + positions come from measurement, never invention.
-      const describeElementStyle = (e: any): string => {
-        const parts: string[] = [];
-        if (e.color) parts.push(`color=${e.color}`);
-        if (e.fontFamily) parts.push(`font=${JSON.stringify(String(e.fontFamily))}`);
-        if (e.fontWeight != null) parts.push(`weight=${e.fontWeight}`);
-        if (e.italic) parts.push('italic');
-        return parts.length ? ` ${parts.join(' ')}` : '';
-      };
-      const groundingBlock = groundedReference && groundedReference.elements!.length
-        ? `\n\nMEASURED TEXT ELEMENTS — measured ground truth on a ${groundedReference.pageWidth ?? '?'}×${groundedReference.pageHeight ?? '?'}pt page (top-left origin). These are AUTHORITATIVE for text, position, and any style fields present:\n${
-            groundedReference.elements!.slice(0, 160).map((e: any) =>
-              `[${e.id}] x=${e.x} y=${e.y} w=${e.width} h=${e.height} size≈${e.fontSize}pt${describeElementStyle(e)} :: ${JSON.stringify(String(e.text ?? '')).slice(0, 240)}`,
-            ).join('\n')
-          }`
-        : '';
       modeAddendum = `\n\n[SCREENSHOT-TO-BLOCK MODE — FAITHFUL RECONSTRUCTION]
 Recreate the attached reference on the active page (id=${activePageId}) as native editable blocks/overlays. This is a FAITHFUL reconstruction, NOT a redesign.
 - FIRST emit a 'clear_page' op for page ${activePageId} (the reference replaces existing blocks).
@@ -773,8 +928,20 @@ ACTIVE SELECTION:
       return json({ error: 'PDF document reconstruction requires Claude (set ANTHROPIC_API_KEY).' }, 400);
     }
     if (usePdfDocument && activePageId) {
+      // When the deterministic importer has already parsed this document, its
+      // overlays are exact glyph geometry — better evidence than the model can
+      // recover by reading the rendered page, and the reason this branch now
+      // carries the same grounding block the screenshot path always had.
+      const readInstruction = groundingBlock
+        ? 'The MEASURED TEXT ELEMENTS below were read from this exact PDF\'s content stream and are AUTHORITATIVE for text, position and size: transcribe each element\'s text verbatim and place ONE text overlay at its given x/y/width/height. Never substitute your own reading of the page where a measurement exists — use the document itself for what the measurements do not cover (fills, rules, shapes, image regions, icons, typeface and weight). If the document plainly contains text that has no measurement, add it; do not drop it.'
+        : 'Read the PDF directly: transcribe text EXACTLY at its real positions (page is PDF points, top-left origin).';
+      // Measurements are per SOURCE page, so the multi-page contract has to be
+      // stated: without it a many-page document collapses onto the active one.
+      const pageInstruction = groundedPages.length > 1
+        ? `The source has ${groundingCoverage.totalPages ?? groundedPages.length} pages. Reconstruct SOURCE PAGE 1 on the active page (id=${activePageId}), then emit one 'add_page' per further source page and reconstruct it there, in order. Every overlay's coordinates are relative to its own page.`
+        : `Reconstruct it on the active page (id=${activePageId}) as native editable blocks.`;
       modeAddendum += `\n\n[PDF DOCUMENT MODE — FAITHFUL RECONSTRUCTION]
-A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as native editable blocks. FIRST emit a 'clear_page' for ${activePageId}. Read the PDF directly: transcribe text EXACTLY at its real positions (page is PDF points, top-left origin) and reproduce non-text design (background/section fills, accent shapes/rules, image regions). Preserve observed colours for page backgrounds, text, fills, strokes, borders, and accents; use rgba(...) or #RRGGBBAA for translucency. Reproduce source pictograms as icon-pack vector overlays ({ type:'vector', icon:'<name>', color }) rather than dropping them. Match each text run's typeface: read the PDF's font names/styles and set fontFamily to the same family (or the closest of: Inter, Lato, Open Sans, Roboto, Montserrat, Helvetica, Playfair Display, Lora, Merriweather, EB Garamond, Georgia, Times New Roman, Roboto Slab, JetBrains Mono, Courier New), with the numeric fontWeight and italic style it uses. Do NOT redesign, summarise, translate, or use placeholders.`;
+A PDF is attached. ${pageInstruction} FIRST emit a 'clear_page' for ${activePageId}. ${readInstruction} Reproduce non-text design (background/section fills, accent shapes/rules, image regions). Preserve observed colours for page backgrounds, text, fills, strokes, borders, and accents; use rgba(...) or #RRGGBBAA for translucency. Reproduce source pictograms as icon-pack vector overlays ({ type:'vector', icon:'<name>', color }) rather than dropping them. Match each text run's typeface: read the PDF's font names/styles and set fontFamily to the same family (or the closest of: Inter, Lato, Open Sans, Roboto, Montserrat, Helvetica, Playfair Display, Lora, Merriweather, EB Garamond, Georgia, Times New Roman, Roboto Slab, JetBrains Mono, Courier New), with the numeric fontWeight and italic style it uses. Do NOT redesign, summarise, translate, or use placeholders.${groundingBlock}`;
     }
 
     // Brief pipeline runs synthesis on text-only context (image already digested

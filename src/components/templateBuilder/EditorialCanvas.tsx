@@ -811,6 +811,7 @@ function EditorialCanvasImpl({
                     zoom={zoom}
                     editing={editing}
                     tokenColors={(template.tokens?.colors ?? {}) as Record<string, string>}
+                    tokenFonts={(template.tokens?.fonts ?? {}) as Record<string, string>}
                     onCommit={(v) => finishInlineEdit(o, v)}
                   />
 
@@ -915,7 +916,8 @@ function OverlayEditLayer({
   editing,
   onCommit,
   tokenColors,
-}: { overlay: Overlay; zoom: number; editing: boolean; tokenColors: Record<string, string>; onCommit: (v: string) => void }) {
+  tokenFonts,
+}: { overlay: Overlay; zoom: number; editing: boolean; tokenColors: Record<string, string>; tokenFonts: Record<string, string>; onCommit: (v: string) => void }) {
   if (o.type === 'text') {
     const t: any = o;
     const isEmpty = !String(t.content ?? '').trim()
@@ -940,7 +942,11 @@ function OverlayEditLayer({
     }
     const color = previewCssColor(t.color, tokenColors, '#111111');
     const shared = cssDeclsToReactStyle(buildTextOverlayCssDecls({
-      fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
+      // An imported overlay now carries `token:heading` here (Stage 4). Passing
+      // that through as a literal family would set the editing caret in a font
+      // that does not exist, while the iframe beneath it renders the resolved
+      // one — the editor/export divergence R3 exists to prevent.
+      fontFamily: previewCssFont(t.fontFamily, tokenFonts, 'inherit'),
       fontSizePt: Number(t.fontSize) || 12,
       color,
       fontWeightNumeric: t.fontWeightNumeric,
@@ -1010,6 +1016,14 @@ function OverlayEditLayer({
   return null;
 }
 
+
+function previewCssFont(value: unknown, tokenFonts: Record<string, string>, fallback: string): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return fallback;
+  if (raw.startsWith('token:')) return tokenFonts[raw.slice(6)] || fallback;
+  if (raw.includes('{{')) return fallback;
+  return raw;
+}
 
 function previewCssColor(value: unknown, tokenColors: Record<string, string>, fallback: string): string {
   const raw = typeof value === 'string' ? value.trim() : '';
