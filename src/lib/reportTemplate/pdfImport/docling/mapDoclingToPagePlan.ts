@@ -177,10 +177,11 @@ function blockToOverlay(
   // A detected chart kind comes before the raw text because that text is
   // `[image]` for 1,111 of the 1,226 image overlays in production — a layer
   // list of identical `[image]` entries is not a layer list.
-  const layerName = (block.meta?.altText
-    ?? block.meta?.caption
-    ?? block.meta?.captionText
-    ?? (block.type === 'image' ? chartCandidateAltText(block.meta?.chartCandidate) ?? undefined : undefined)
+  const meta = block.meta as Record<string, any> | undefined;
+  const layerName = (meta?.altText
+    ?? meta?.caption
+    ?? meta?.captionText
+    ?? (block.type === 'image' ? chartCandidateAltText(meta?.chartCandidate) ?? undefined : undefined)
     ?? block.text
     ?? block.type)
     .trim()
