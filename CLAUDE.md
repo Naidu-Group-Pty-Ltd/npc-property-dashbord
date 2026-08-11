@@ -214,6 +214,16 @@ contradicted rather than as a defect. The doc also records the endpoint it
 replaces: `layout_reconciliation_repair` reads a field its only client never
 sent, so it answered "no changes" to every request ever made of it.
 
+A scanned PDF is routed to the engine that can read it. Read
+[`SCANNED_ROUTING.md`](./docs/pdf-import/SCANNED_ROUTING.md) before touching
+`scannedDocumentPolicy.pure.ts` or `probeTextLayer`: the deterministic path
+cannot read a scan and **OCR is not the fallback** — 0 OCR pages across 1,164 in
+production, because the capability ceiling defaults false — so the dialog
+measures the text layer in the browser and pre-selects the Claude engine. Two
+rules there: a **failed probe is `unknown`, never `scanned`** (it fails on
+encrypted files, which are not scans), and a stray watermark character must not
+make a scanned page look native.
+
 Chart reconstruction is **inert in production and now says so**. Read
 [`CHART_RECONSTRUCTION_STATUS.md`](./docs/pdf-import/CHART_RECONSTRUCTION_STATUS.md)
 before touching `chartCandidate.pure.ts` or anything in the chart path: 0 chart

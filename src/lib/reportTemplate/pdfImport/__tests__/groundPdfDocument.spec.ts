@@ -27,7 +27,7 @@ vi.mock('@/lib/pdf/pdfjs', async () => {
   return { loadPdfjs: async () => pdfjs };
 });
 
-const { groundPdfDocument, DEFAULT_MAX_GROUNDED_PAGES } = await import('../groundPdfDocument');
+const { groundPdfDocument, probeTextLayer, DEFAULT_MAX_GROUNDED_PAGES } = await import('../groundPdfDocument');
 
 const GOLDEN = resolve(__dirname, '../../../../../reports/golden/borrowing-capacity-snapshot.pdf');
 const present = existsSync(GOLDEN);
@@ -130,3 +130,70 @@ describe('groundPdfDocument — degrading to no measurements', () => {
     expect(DEFAULT_MAX_GROUNDED_PAGES).toBeGreaterThan(0);
   });
 });
+
+describe('probeTextLayer — telling a scan from a native document', () => {
+  /**
+   * A real image-only PDF, built here rather than checked in: one page whose
+   * entire content is an embedded PNG and which carries no text operator at all.
+   * That is what a scan is, and it is the case the deterministic importer cannot
+   * read a word from.
+   */
+  async function scannedPdf(): Promise<Uint8Array> {
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([595, 842]);
+    // 1×1 PNG, scaled to fill the page — pixels, no glyphs.
+    // `Buffer` is jsdom's shim here and does not satisfy pdf-lib's Uint8Array
+    // check, so hand it a plain typed array.
+    const png = await doc.embedPng(Uint8Array.from(Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    )));
+    page.drawImage(png, { x: 0, y: 0, width: 595, height: 842 });
+    return await doc.save();
+  }
+
+  it('reports no characters for a page that is only pixels', async () => {
+    const probe = await probeTextLayer(await scannedPdf());
+    expect(probe.totalPages).toBe(1);
+    expect(probe.pages).toEqual([{ pageNumber: 1, characters: 0 }]);
+
+    const { assessTextLayer, describeScannedRouting } = await import('../scannedDocumentPolicy.pure');
+    const routing = describeScannedRouting(assessTextLayer(probe.pages, probe.totalPages));
+    expect(routing.preferClaude).toBe(true);
+    expect(routing.message).toContain('no text layer');
+  });
+
+  it.runIf(present)('reports real characters for a native document', async () => {
+    const probe = await probeTextLayer(bytes());
+    expect(probe.totalPages).toBe(8);
+    // Measured: the cover is vector-only (0 characters) and the body pages
+    // carry 275–1,148 — all far above the threshold, which is the point.
+    expect(probe.pages.find((p) => p.pageNumber === 1)!.characters).toBe(0);
+    const body = probe.pages.filter((p) => p.pageNumber > 1);
+    expect(body).toHaveLength(7);
+    expect(Math.min(...body.map((p) => p.characters))).toBeGreaterThan(200);
+
+    const { assessTextLayer, describeScannedRouting } = await import('../scannedDocumentPolicy.pure');
+    const assessment = assessTextLayer(probe.pages, probe.totalPages);
+    // One text-less cover out of eight is not a scanned document.
+    expect(assessment.verdict).toBe('native');
+    expect(describeScannedRouting(assessment).notify).toBe(false);
+  });
+
+  it('degrades to nothing measurable rather than throwing', async () => {
+    for (const bad of [new Uint8Array(0), new Uint8Array([1, 2, 3, 4]), 'not-base64-@@@']) {
+      const probe = await probeTextLayer(bad as never);
+      expect(probe.pages).toEqual([]);
+      expect(probe.totalPages).toBe(0);
+    }
+  });
+
+  it('leaves the caller\'s bytes intact', async () => {
+    const source = await scannedPdf();
+    const before = source.byteLength;
+    await probeTextLayer(source);
+    expect(source.byteLength).toBe(before);
+  });
+});
+

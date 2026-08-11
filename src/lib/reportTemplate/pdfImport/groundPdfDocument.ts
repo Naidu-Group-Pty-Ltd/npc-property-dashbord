@@ -68,6 +68,16 @@ export const DEFAULT_MAX_GROUNDED_PAGES = 12;
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+/**
+ * Pages the text-layer probe walks.
+ *
+ * Higher than the grounding cap because the question is different: grounding
+ * bounds a prompt, and this bounds a verdict. A 60-page document whose first 12
+ * pages happen to be a scanned cover letter is not a scanned document, and a cap
+ * of 12 would call it one.
+ */
+export const DEFAULT_MAX_PROBE_PAGES = 60;
+
 /** The slice of PDF.js this walk touches, named so the casts stay in one place. */
 interface PdfPageLike {
   getViewport: (params: { scale: number }) => { width: number; height: number; transform: number[] };
@@ -148,6 +158,74 @@ export async function groundPdfDocument(
     return { pages, totalPages: total, pagesOmitted: Math.max(0, total - walk), elementsDropped };
   } catch (error) {
     console.warn('[pdf-grounding] could not measure the document:', String((error as Error)?.message ?? error));
+    return empty;
+  } finally {
+    try { await doc?.destroy?.(); } catch { /* best effort */ }
+  }
+}
+
+/**
+ * Count the text each page yields, and nothing else.
+ *
+ * Deliberately not `groundPdfDocument`: that merges fragments into lines, ranks
+ * them and builds a prompt block, none of which a "does this page have text"
+ * question needs. This walks the same document and counts non-whitespace
+ * characters, so it stays cheap enough to run on every PDF the user picks —
+ * including the ones that will take the deterministic path.
+ *
+ * Same degradation contract: every failure returns fewer pages, never an error.
+ * A document that cannot be probed is reported as `totalPages` with no page
+ * evidence, which `assessTextLayer` correctly calls `unknown` rather than
+ * `scanned`.
+ */
+export async function probeTextLayer(
+  source: Uint8Array | ArrayBuffer | string,
+  options: { maxPages?: number; timeoutMs?: number } = {},
+): Promise<{ pages: Array<{ pageNumber: number; characters: number }>; totalPages: number }> {
+  const empty = { pages: [], totalPages: 0 };
+  const maxPages = Math.max(1, Math.floor(options.maxPages ?? DEFAULT_MAX_PROBE_PAGES));
+  const deadline = Date.now() + Math.max(1_000, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+
+  let bytes: Uint8Array;
+  try {
+    bytes = typeof source === 'string'
+      ? base64ToBytes(source)
+      : source instanceof Uint8Array ? source : new Uint8Array(source);
+  } catch {
+    return empty;
+  }
+  if (!bytes.length) return empty;
+
+  let doc: PdfDocumentLike | null = null;
+  try {
+    const pdfjs = await loadPdfjs();
+    doc = await pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false })
+      .promise as unknown as PdfDocumentLike;
+    const total = Number(doc.numPages) || 0;
+    if (!total) return empty;
+
+    const pages: Array<{ pageNumber: number; characters: number }> = [];
+    const walk = Math.min(total, maxPages);
+    for (let pageNumber = 1; pageNumber <= walk; pageNumber += 1) {
+      if (Date.now() > deadline) break;
+      try {
+        const page = await doc.getPage(pageNumber);
+        const content = await page.getTextContent();
+        let characters = 0;
+        for (const item of content.items ?? []) {
+          const str = (item as { str?: unknown }).str;
+          if (typeof str === 'string') characters += str.replace(/\s+/g, '').length;
+        }
+        page.cleanup?.();
+        pages.push({ pageNumber, characters });
+      } catch {
+        // A page that will not parse has no text we can count. Recording nothing
+        // for it is what makes `assessTextLayer` treat it as text-less.
+      }
+    }
+    return { pages, totalPages: total };
+  } catch (error) {
+    console.warn('[pdf-probe] could not read the document:', String((error as Error)?.message ?? error));
     return empty;
   } finally {
     try { await doc?.destroy?.(); } catch { /* best effort */ }
