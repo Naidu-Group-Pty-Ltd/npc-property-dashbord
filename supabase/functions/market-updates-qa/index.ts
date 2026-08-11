@@ -30,6 +30,7 @@ import {
   embedQueries, MARKET_QA_SELECT, normaliseInlineMarkers, pickTerms, remapCitedId, rrfFuse,
   type DepthMode, type DepthProfile, type MarketDoc, type RankedList,
 } from '../_shared/marketQaResearch.ts';
+import { explodeCitationClusters, normaliseAnswerMarkdown, supplementTimeline } from '../_shared/marketQaAnswerFormat.pure.ts';
 
 const REFUSAL = 'I do not have enough sourced market updates to answer that yet.';
 
@@ -321,8 +322,9 @@ ${GROUNDING_RULES(REFUSAL)}
 6. used_ids MUST contain the raw id shown after "id=" on each context item — never the "[[N]]" marker, never the title. Copy it verbatim. Do not fabricate ids.
 7. Put every concrete number (rates, percentages, prices, volumes, dates, budgets) into key_figures with its source id.
 8. implications must be written for the named audience and only where CONTEXT supports it; leave a field empty rather than padding it.
-9. what_would_change_this states the observable events that would overturn the current read.
-10. contrarian_view states the strongest evidence-backed case against the mainstream read, or empty if CONTEXT offers none.` },
+9. what_would_change_this states 2–4 observable events that would overturn the current read — concrete triggers, not restatements of uncertainty.
+10. contrarian_view states the strongest evidence-backed case against the mainstream read, or empty if CONTEXT offers none.
+11. timeline MUST contain one entry for EVERY distinct dated event in CONTEXT — publication dates, effective dates and dates named inside summaries all count. A single-entry timeline is only acceptable when CONTEXT genuinely contains one dated event. Order oldest first; attach the source id to each entry.` },
       ...history.slice(-4).map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content: `QUESTION: ${plan.resolved_question}\n\nCOVERAGE: ${coverage}\n\nCONTEXT:\n${contextBlock}` },
     ],
@@ -377,6 +379,9 @@ ${GROUNDING_RULES(REFUSAL)}
     toolChoice: { type: 'function', function: { name: 'submit_market_answer' } },
     requiredToolName: 'submit_market_answer',
     requireValidToolArguments: true,
+    // Structure (timeline coverage, watch items, figures) must be repeatable
+    // across identical runs; prose creativity lives in the narrative pass.
+    temperature: 0,
     maxTokens: profile.evidenceTokens,
     timeoutMs: 45_000,
     deadlineAt: Date.now() + 75_000,
@@ -427,7 +432,9 @@ ${GROUNDING_RULES(REFUSAL)}
 7. ${shape}
 8. Explain mechanism and consequence, not just the headline. The reader has already read the headline — tell them what it does to borrowing capacity, supply, pricing, timing or risk.
 9. Where sources disagree or a claim is single-sourced, say so in the text rather than smoothing it over.
-10. Never open with filler such as "Great question" or restate the question back.` },
+10. Never open with filler such as "Great question" or restate the question back.
+11. Every "## " heading starts at the beginning of its own line with a blank line before it and the section prose on the next line — never glue a heading to the end of a paragraph.
+12. One marker per source: write [[2]] [[5]], never [[2, 5]] or [[2], [5]].` },
     ...history.slice(-4).map(h => ({ role: h.role, content: h.content })),
     { role: 'user' as const, content: `QUESTION: ${plan.resolved_question}\n\nCOVERAGE: ${coverage}\n\nCONTEXT:\n${contextBlock}` },
   ];
@@ -704,7 +711,14 @@ Deno.serve(async (req) => {
       follow_up_questions = ai.follow_up_questions;
       key_figures = aiKeyFigures.filter(k => Boolean(k.source_id) && contextIds.has(k.source_id!));
       implications = ai.implications;
-      timeline = ai.timeline.filter(t => !t.source_id || contextIds.has(remapCitedId(t.source_id, contextIds, context)));
+      // The model's entries are kept (better event descriptions) but every
+      // used dated source is guaranteed representation, so two identical runs
+      // can no longer disagree about how many events the sequence has.
+      timeline = supplementTimeline(
+        ai.timeline.filter(t => !t.source_id || contextIds.has(remapCitedId(t.source_id, contextIds, context))),
+        context,
+        used_ids,
+      );
       watch_items = ai.watch_items;
       contrarian_view = ai.contrarian_view;
       time_horizon = ai.time_horizon;
@@ -718,7 +732,7 @@ Deno.serve(async (req) => {
     // The streamed long-form analysis becomes the answer when it is grounded
     // and substantive; the structured summary remains the fallback.
     if (grounded && narrative.trim().length > 80) {
-      answer = normaliseInlineMarkers(narrative.trim(), context);
+      answer = normaliseInlineMarkers(explodeCitationClusters(normaliseAnswerMarkdown(narrative.trim())), context);
     }
 
     const citations = Array.from(new Set(

@@ -24,6 +24,7 @@ import { MarketQAProgress } from '@/components/market-updates/MarketQAProgress';
 import { MarketQADepthSelector, type DepthChoice } from '@/components/market-updates/MarketQADepthSelector';
 import type { MarketQAImplications, MarketQARetrievedItem, MarketQAStage, MarketQATimelineEntry } from '@/types/marketUpdates';
 import { GlassCard, AurixaMark } from '@/components/aurixa';
+import { citationHost } from '@/lib/marketQaAnswerFormat.pure';
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { clearMarketUpdateArticleFilters, DEFAULT_MARKET_UPDATE_ARTICLE_FILTERS, hasClearableMarketUpdateFilters } from '@/lib/marketUpdateFilters';
@@ -489,7 +490,7 @@ export default function MarketUpdates() {
               {turn.citations && turn.citations.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {turn.citations.map((url, j) => (
-                    <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
+                    <a key={url + j} href={url} target="_blank" rel="noreferrer" title={url} className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-3.5 w-3.5" aria-hidden />{citationHost(url) ?? 'Source'}</a>
                   ))}
                 </div>
               )}
@@ -1140,7 +1141,7 @@ export default function MarketUpdates() {
                       {turn.citations && turn.citations.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
                           {turn.citations.map((url, j) => (
-                            <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
+                            <a key={url + j} href={url} target="_blank" rel="noreferrer" title={url} className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-3.5 w-3.5" aria-hidden />{citationHost(url) ?? 'Source'}</a>
                           ))}
                         </div>
                       )}
