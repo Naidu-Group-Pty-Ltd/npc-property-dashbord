@@ -57,11 +57,16 @@ export async function handleStaffVerify(
     // until the 24h JWT expired). Verification now relies solely on the
     // `__Host-session_token` cookie.
     if (!sessionToken) {
+      // "No cookie" is the normal signed-out state, not a malformed request:
+      // every page load on /auth hits this path. A 400 here surfaced in the
+      // browser as a runtime error with a blank-screen flag. The client's
+      // contract is `valid:false`, which it already handles by clearing state.
       return new Response(
-        JSON.stringify({ error: 'Session token is required', valid: false }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        JSON.stringify({ error: 'No session', valid: false }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
+
 
     // WP-11A: verify through the hardened shared lifecycle — hash-first lookup,
     // revocation check, and idle-expiry (not just absolute expiry). This closes

@@ -28,7 +28,7 @@
  * mailbox and a real fifteen-minute lockout to prove it.
  */
 import { readFileSync } from 'node:fs';
-// @ts-expect-error - plain .mjs helper shared with the CI gates
+// @ts-ignore - plain .mjs helper shared with the CI gates
 import { readEntrypointSource } from '../../../scripts/security/lib/entrypointSource.mjs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';

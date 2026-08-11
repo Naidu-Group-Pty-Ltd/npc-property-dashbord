@@ -28,3 +28,7 @@ declare module 'npm:@supabase/supabase-js@2.55.0' {
 declare module 'npm:@supabase/supabase-js@2' {
   export * from '@supabase/supabase-js';
 }
+
+declare module 'npm:zod@3.25.76' {
+  export * from 'zod';
+}

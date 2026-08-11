@@ -108,7 +108,7 @@ function pathFromSeries(series: Series[], w: number, h: number): { line: string;
     s,
   }));
   const line = pts.map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ');
-  const area = `${line} L${(pts.at(-1)?.x ?? 0).toFixed(1)},${h} L0,${h} Z`;
+  const area = `${line} L${(pts[pts.length - 1]?.x ?? 0).toFixed(1)},${h} L0,${h} Z`;
   return { line, area, points: pts };
 }
 
