@@ -311,7 +311,10 @@ describe('provider selection stays server-side', () => {
   });
 
   it('the browser is told only capture|hosted, never the provider key', () => {
-    expect(portal).toContain("provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture'");
+    // Since the hosted cutover this is unconditional: there is one customer
+    // capture experience and it is NPC's own. A tenant still configured for the
+    // retired provider is carried by `availability`, to the documentary route.
+    expect(portal).toContain("provider_flow: 'capture'");
     const statusBlock = portal.slice(
       portal.indexOf("case 'verification_status'"), portal.indexOf("case 'start_hosted_verification'"));
     expect(statusBlock).not.toContain('didit');

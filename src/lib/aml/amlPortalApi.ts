@@ -226,27 +226,21 @@ export const amlPortalApi = {
   requestVerificationUpload: (case_id: string, kind: 'document' | 'selfie') =>
     call<{ upload_url: string; token: string; path: string; bucket: string }>(
       'request_verification_upload_url', { case_id, kind }),
-  /**
-   * Open (or resume) a provider-hosted verification session.
+  /*
+   * `startHostedVerification` used to live here.
    *
-   * Returns a URL and nothing else. There is no session token to hold, no
-   * provider name, and no configuration — and completing the flow in that
-   * window does NOT mark anybody verified. The identity outcome arrives on a
-   * signed server-to-server webhook; this call only opens the door.
+   * It asked the server for a provider-hosted session URL, which the portal
+   * then opened in a separate window. Both halves are gone: the window, and
+   * now the only way to ask for one. The server still refuses the operation
+   * (`hosted_flow_retired`), but a client that cannot form the request is a
+   * stronger guarantee than a server that says no — there is no code path in
+   * this bundle through which a customer reaches a verification vendor's page.
    *
-   * `document_type` is the one thing the browser declares, and it declares an
-   * INTENT: it narrows the document picker the client is shown and nothing
-   * else. The server matches it against a closed list and refuses anything
-   * else — it cannot name a provider, a workflow, an environment or a country,
-   * and no value of it can reach an identity outcome.
+   * Hosted RESULTS are untouched. `didit-webhook` still accepts a late signed
+   * outcome for a session that was already completed, and every historical
+   * `provider = 'didit'` row is preserved. Retiring the capture UI is not
+   * erasing the evidence.
    */
-  startHostedVerification: (case_id: string, params: {
-    party_id?: string | null; party_label?: string;
-    document_type?: IdentityDocumentChoice;
-  }) => call<{
-    started: boolean; resumed?: boolean;
-    verification_url?: string; message: string; code?: string;
-  }>('start_hosted_verification', { case_id, ...params }),
   submitVerification: (case_id: string, params: {
     party_id?: string | null; party_label?: string;
     document_storage_path: string; selfie_storage_path: string;

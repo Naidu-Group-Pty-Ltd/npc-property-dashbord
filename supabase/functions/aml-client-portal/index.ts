@@ -586,13 +586,28 @@ async function clientSafeIdvState(
       return { availability: 'available', flow, standalone };
     }
 
+    /**
+     * The hosted capture experience is RETIRED, and a tenant still configured
+     * for it has no electronic path — not a popup.
+     *
+     * This used to answer `available` + `hosted_session`, which the portal
+     * rendered as a window opening on the provider's own page. That is the
+     * defect this hotfix exists to remove, and removing it only from the
+     * browser would leave the server still asking for it: an older bundle, a
+     * cached page or a second client would all still obey.
+     *
+     * So the refusal is here as well. `manual_verification_required` is the
+     * honest answer — the adviser arranges verification from documents, which
+     * is a real route the portal already renders and which disadvantages
+     * nobody. The flow word is `capture`, because that is the only capture
+     * experience that exists now; `availability` is what actually gates the
+     * customer.
+     *
+     * Nothing about hosted RESULTS changes. The webhook, the decision parsing
+     * and every historical row stay exactly as they were.
+     */
     if (flow === 'hosted_session') {
-      // Throws ProviderResolutionError when the adapter is unwired or its
-      // configuration (API key, webhook secret, workflow id) is incomplete.
-      // No network probe: creating a session to test one would be a chargeable
-      // call on every portal page load.
-      getHostedIdvProvider({ resolved, admin });
-      return { availability: 'available', flow, standalone };
+      return { availability: 'manual_verification_required', flow, standalone };
     }
 
     const provider = getIdvProvider({ resolved, admin });
@@ -1050,12 +1065,17 @@ const __corsWrappedHandler = async (req: Request) => {
          * session id, no provider and no token, so the strongest thing it can
          * do is change which sentence the client reads.
          */
-        if (flow === 'hosted_session') {
-          for (const party of parties) {
-            party.verification_in_progress = Boolean(
-              await activeHostedCheck(admin, c.id, party.party_id));
-          }
-        } else if (standalone) {
+        /*
+         * The hosted branch is gone from here too.
+         *
+         * `activeHostedCheck` is what produced "Continue verification" — the
+         * button that reopened the provider's window. There is no window to
+         * continue into any more, so reporting an old hosted session as
+         * in-progress could only offer the customer a door that no longer
+         * exists. Those rows are retired by `20260911000300`; a late signed
+         * outcome for one still settles, server-side, exactly as before.
+         */
+        if (standalone) {
           /**
            * The same boolean, for the capture journey.
            *
@@ -1078,10 +1098,17 @@ const __corsWrappedHandler = async (req: Request) => {
         return jsonResponse({
           enabled: true,
           availability,
-          // Which experience to render, and nothing more. `hosted` does not
-          // name Didit, and the portal has no way to ask for one flow or the
-          // other — it is told.
-          provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture',
+          /*
+           * Always `capture`. There is one customer capture experience and it
+           * is NPC's own.
+           *
+           * This used to be `hosted` whenever the tenant resolved a
+           * hosted-session provider, and that single word is what the portal
+           * turned into a window on the provider's page. `availability` is now
+           * what carries a retired-provider tenant — to the documentary route
+           * — so no value of this field can send anybody off NPC.
+           */
+          provider_flow: 'capture',
           max_attempts: MAX_VERIFICATION_ATTEMPTS,
           // The biometric consent is separate (APP 3.3) and is what unlocks
           // the facial check specifically.
@@ -1107,6 +1134,43 @@ const __corsWrappedHandler = async (req: Request) => {
        * logged, or written to the timeline.
        */
       case 'start_hosted_verification': {
+        /**
+         * RETIRED. This operation can no longer mint or resume a session.
+         *
+         * It is kept, rather than deleted, for one reason: a browser running a
+         * cached build from before the cutover will still call it, and a typed
+         * 409 is a far better answer for that customer than a 400 on an unknown
+         * op. The portal treats `hosted_flow_retired` as an availability
+         * refusal, re-reads, and lands them on the documentary route.
+         *
+         * The refusal is UNCONDITIONAL and comes before every other check —
+         * before the case lookup, before consent, before provider resolution.
+         * There is deliberately no tenant, provider or configuration under
+         * which this returns a URL, because "never creates a hosted session
+         * after cutover" is only true if no branch can reach the creation.
+         *
+         * Server-side settlement of sessions that ALREADY exist is untouched:
+         * `didit-webhook` still verifies a signed outcome, still re-fetches the
+         * decision over an authenticated call, and still settles the canonical
+         * row. This closes the door to new sessions, not to old results.
+         */
+        return jsonResponse({
+          error: 'Please continue with the verification step shown on your screen.',
+          code: 'hosted_flow_retired',
+        }, 409);
+      }
+
+      /*
+       * Everything from here to the end of this block is the former body of
+       * `start_hosted_verification`, now unreachable. It is retained for one
+       * release so the reconciliation logic it contains — stale-session
+       * detection, decision re-fetch, correlation — can be lifted into the
+       * webhook path if a late outcome ever needs it, rather than being
+       * rewritten from memory. It is deleted in the follow-up that removes the
+       * hosted adapter; see docs/aml/DIDIT_STANDALONE_IDV.md for the drain
+       * condition that gates that.
+       */
+      case '__retired_start_hosted_verification': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
 

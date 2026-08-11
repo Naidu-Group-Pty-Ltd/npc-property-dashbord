@@ -459,11 +459,20 @@ describe('the hosted cutover', () => {
     expect(capture).not.toContain('startHostedVerification');
   });
 
-  it('keeps the hosted path wired for sessions already open', () => {
-    // Two hosted checks were still `processing` in production at the cutover.
-    // Removing the adapter would strand their decisions.
+  it('keeps the hosted RESULT path wired, while the capture UI is gone', () => {
+    /*
+     * The adapter and the webhook stay: a late signed outcome for a session
+     * that already ran must still settle the canonical record, and removing
+     * them would strand it.
+     *
+     * What changed at the cutover is that no customer can start or resume one.
+     * The operation still exists so a cached browser build gets a typed 409
+     * rather than an unknown-op error — see hostedIdvRetired.test.ts, which
+     * asserts the refusal precedes every other statement in it.
+     */
     expect(REGISTRY).toContain('"didit": (opts) => makeDiditIdvProvider(opts)');
     expect(PORTAL).toContain("case 'start_hosted_verification':");
+    expect(PORTAL).toContain("code: 'hosted_flow_retired'");
   });
 
   it('refuses the older single-shot capture ops under the standalone provider', () => {
@@ -480,7 +489,8 @@ describe('the hosted cutover', () => {
   it('answers the portal with `capture` and never names the integration', () => {
     const status = PORTAL.slice(PORTAL.indexOf("case 'verification_status':"));
     const body = status.slice(0, status.indexOf("case 'start_hosted_verification':"));
-    expect(body).toContain("provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture'");
+    // Unconditional since the hosted cutover — see hostedIdvRetired.test.ts.
+    expect(body).toContain("provider_flow: 'capture'");
     expect(body).not.toContain("'didit_standalone'");
   });
 });
