@@ -196,3 +196,141 @@ lockfile in those words, with the regeneration command, rather than letting npm
 say the file is missing.
 
 Gates 46 → 47; negative-test controls 31 → 32.
+
+---
+
+## Addendum 2: the type-check gate had been blind for days, and something walked through
+
+Point 3 above ends with the edge type-check failing closed instead of open. It
+then failed closed on **every run, on every branch, including `main`**, for the
+same specifier:
+
+```
+error: Import 'https://esm.sh/@supabase/storage-js@2.99.3/dist/module/StorageClient' failed: 408 Request Timeout
+```
+
+That reads as an outage. It is not one. **It is permanent, and it had been
+misdiagnosed three commits running** — one to widen the resolution guard, one to
+retry with backoff, one to warm a module cache. All three treated a missing file
+as a slow server.
+
+### What is actually broken
+
+`@supabase/supabase-js@2.55.0` — imported by **184 of the 421 entry points** —
+ships this in its own declarations (`dist/module/lib/types.d.ts:4`):
+
+```ts
+import { StorageClientOptions } from '@supabase/storage-js/dist/module/StorageClient'
+```
+
+a deep import into a subpath of a dependency it pins only as a **range**,
+`^2.10.4`. storage-js has since been restructured to a flat bundle: `2.99.3`
+ships `dist/index.d.mts` and `dist/index.d.cts` and **no `dist/module/`
+directory at all**. The subpath those declarations reach for does not exist in
+the version the range resolves to.
+
+esm.sh resolves that range at build time, rewrites the specifier to a URL under
+`/@supabase/storage-js@2.99.3/dist/module/`, and its build service then **hangs
+on the missing file rather than returning 404** — every request answers `408`
+after ~30s, indefinitely. `deno check` follows `x-typescript-types`, so it
+inherits the hang.
+
+Nothing in this repository is wrong, and nothing in this repository could fix it
+by waiting.
+
+### The repair
+
+`scripts/security/edge-typecheck.deno.json` — passed explicitly via
+`deno check --config`, deliberately **not** named `deno.json` so no other Deno
+invocation and no deploy can discover it. One mapping, from the specifier
+upstream got wrong to the **same package at the same version's real
+declarations**, which do export `StorageClientOptions`.
+
+The evidence that this is a repair and not a relaxation is the number: the gate
+now reports **421 entry points, 376 errors, baseline 376**. Not one file's count
+moved. A weakened check would have reported fewer.
+
+### And a second blocker underneath it
+
+With that fixed, the gate got further and stopped again:
+
+```
+Could not find npm package '@lovable.dev/mcp-js' matching '0.26.2'.
+A newer matching version was found, but it was not used because it was newer
+than the specified minimum dependency date of 2026-08-10 …
+```
+
+Deno 2.9 refuses npm packages published in the last 24 hours. That is a good
+default at the wrong control point. `supabase/functions/mcp/index.ts` is
+**generated** by a Lovable sync that pins the version it has just published, so
+the pin is always fresh and the gate would be red for a day after every sync —
+reporting a supply-chain concern while the type errors it exists to catch went
+unreported.
+
+Decisive: **the same sync deploys that dependency to production, and no deploy
+path applies an age policy.** Blocking the type-check delays the type-check, not
+the dependency. Dependency risk is owned by the `supply-chain` job, Dependabot,
+GitGuardian and gitleaks, and still is; the flag is scoped to this one
+invocation.
+
+### What the blindness cost
+
+A syntax error on `main`. `update-stamp-duty-rates/index.ts` had an import
+landed **inside an open multi-line import block**:
+
+```ts
+import {
+import { internalError } from '../_shared/errorResponse.ts';
+  AUSTRALIAN_STATES,
+```
+
+That function cannot parse, so it cannot boot. It arrived in **#2043 — this work
+package's own fix** — and stayed, because the one gate that reads every entry
+point had been unable to run since around the same day. Two failures
+compounding: the gate went blind, and the next thing past it was a hard error it
+was built to catch.
+
+**Production was not affected**, which is worth stating precisely rather than
+assuming in either direction. The deployed copy (`update-stamp-duty-rates`
+v105, redeployed the same morning) carries the import correctly placed on its
+own line — so whatever deploys this project repaired the ordering on the way
+out and never wrote the repair back to git. The repository was the broken copy,
+and it is the one the next deploy from git would have shipped.
+
+Swept for the class rather than the instance — every `.ts` under
+`supabase/functions`, looking for an `import` statement inside an unclosed
+import block. One occurrence, the one above.
+
+Fixing it revealed the type error underneath, which was also real:
+`body?.states` is `unknown` off a `Record<string, unknown>` body and was
+*asserted* to be `string[]`. `{"states": "NSW"}` reached `.map` on a string and
+threw a 500; a non-string element reached `.toUpperCase()` and did the same.
+Now narrowed, and still filtered against `AUSTRALIAN_STATES`, so no caller can
+widen the set.
+
+### Two smaller things the diagnosis exposed
+
+**The gate described faults it could not be acted on.** It printed only lines
+beginning `error:`, which is right for a resolution failure — those name the
+specifier — and useless for a syntax error, where the file, the line and the
+offending token are all on the *indented* lines beneath. It reported
+`SyntaxError: Expected ',', got '{'` against a tree of 421 entry points and said
+nothing about where. It now prints the whole block up to the stack trace.
+
+**The module cache could never be seeded during the outage it exists to
+survive.** `actions/cache` writes in a post step that runs only when the job
+**succeeded**. The fetch failed, the job went red, nothing was saved, and the
+next run started cold — every time. Split into `restore` + `save` with
+`if: always()`, so a partly-fetched cache is banked and each attempt starts
+warmer than the last. Guarded against the opposite mistake too: an **empty**
+cache must never be written, because a key is writable once and an exact hit
+does not consult `restore-keys`, so an empty entry would freeze that tree state
+cold permanently.
+
+### The rule
+
+**A fault that never resolves is not transient, however much it looks like
+weather.** Retry, backoff and caching all encode a belief that waiting helps. If
+a retry exhausts on the same specifier run after run, that belief is wrong, and
+every further commit spent shortening the window is a commit not spent reading
+what is actually being fetched.
