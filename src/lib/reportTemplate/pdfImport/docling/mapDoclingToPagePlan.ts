@@ -177,15 +177,13 @@ function blockToOverlay(
   // A detected chart kind comes before the raw text because that text is
   // `[image]` for 1,111 of the 1,226 image overlays in production — a layer
   // list of identical `[image]` entries is not a layer list.
-  const meta = block.meta as Record<string, any> | undefined;
-  const layerName = (meta?.altText
-    ?? meta?.caption
-    ?? meta?.captionText
-    ?? (block.type === 'image' ? chartCandidateAltText(meta?.chartCandidate) ?? undefined : undefined)
-    ?? block.text
-    ?? block.type)
-    .trim()
-    .slice(0, MAX_OVERLAY_NAME_LENGTH);
+  const meta = (block.meta ?? {}) as Record<string, any>;
+  const chartLabel = block.type === 'image'
+    ? chartCandidateAltText(meta.chartCandidate) || undefined
+    : undefined;
+  const rawLayerName: string =
+    meta.altText || meta.caption || meta.captionText || chartLabel || block.text || block.type;
+  const layerName = rawLayerName.trim().slice(0, MAX_OVERLAY_NAME_LENGTH);
   // What the source said this IS. The raw mapper already reads Docling's label
   // to pick a default size and weight; carrying it through is what lets the
   // renderer emit a heading as a heading, and lets anything downstream act on
