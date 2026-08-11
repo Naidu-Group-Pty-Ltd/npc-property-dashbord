@@ -269,6 +269,17 @@ export interface TemplateImportPlan {
   version: 1;
   importId: string;
   pages: TemplateImportPagePlan[];
+  /**
+   * The design system measured FROM this import — the source's own palette and
+   * typefaces, weighted by glyph count and painted area.
+   *
+   * Until this field existed an import shipped `{ colors: {}, fonts: {} }` and
+   * every overlay carried a literal, so a reconstructed template could not be
+   * restyled at all. `applyTemplateImportPlan` merges these under any base
+   * template's tokens and binds the overlays that match — see
+   * `pdfImport/designSystemBinding.pure.ts` for why the match must be exact.
+   */
+  tokens?: { colors?: Record<string, string>; fonts?: Record<string, string> };
   warnings: ImportWarning[];
   confidenceScore: number;
   importSummary: {

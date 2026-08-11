@@ -126,3 +126,57 @@ describe('the annotation survives the schema', () => {
       .toBe('Bar chart of gross versus shaded income.');
   });
 });
+
+describe('the design system the import measured', () => {
+  const styled: DoclingDocument = {
+    pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+    texts: [
+      { label: 'title', text: 'Borrowing Capacity Snapshot', prov: at(60, 92),
+        font: { family: 'Segoe UI', size: 22, weight: 700, color: '#251F18' }, confidence: 0.95 },
+      { label: 'paragraph', text: 'Based on the financial information provided…', prov: at(150, 190),
+        font: { family: 'Segoe UI', size: 9, color: '#251F18' }, confidence: 0.9 },
+      { label: 'footnote', text: 'Figures are indicative only.', prov: at(200, 212),
+        font: { family: 'Segoe UI', size: 7, color: '#7A7A7A' }, confidence: 0.9 },
+    ],
+  };
+
+  const build = (base?: unknown) => {
+    const plan = mapDoclingToPagePlan(styled, { importId: 'imp-ds', mode: 'semantic' });
+    return parseTemplate(applyTemplateImportPlan(plan as never, { baseTemplate: base } as never) as never);
+  };
+
+  it('ships a palette read off the document, not an assumed one', () => {
+    // The importer used to ship `{ colors: {}, fonts: {} }` — the derivation
+    // existed and ran only on a direction this path never takes.
+    const t = build();
+    expect(t.tokens.colors).toMatchObject({ text: '#251F18', muted: '#7A7A7A', bg: '#FFFFFF' });
+    expect(Object.keys(t.tokens.fonts ?? {}).length).toBeGreaterThan(0);
+  });
+
+  it('binds every overlay whose value the palette actually holds', () => {
+    const overlays = build().pages.flatMap((p) => p.blocks.flatMap((b) => (b as { overlays?: unknown[] }).overlays ?? []));
+    const texts = overlays.filter((o) => (o as { type: string }).type === 'text') as Array<{ color: string; fontFamily: string; semantics?: { role: string } }>;
+    expect(texts.length).toBeGreaterThan(0);
+    expect(texts.every((o) => o.color.startsWith('token:'))).toBe(true);
+    expect(texts.every((o) => o.fontFamily.startsWith('token:'))).toBe(true);
+    // The role picks the NAME when two tokens share a value.
+    expect(texts.find((o) => o.semantics?.role === 'title')!.color).toBe('token:primary');
+    expect(texts.find((o) => o.semantics?.role === 'footnote')!.color).toBe('token:muted');
+  });
+
+  it('never restyles an existing template it is imported into', () => {
+    // The base template's tokens win, so its other pages keep their look — and
+    // the imported overlay whose colour no longer matches stays a literal.
+    const base = parseTemplate({
+      version: 1,
+      tokens: { colors: { text: '#000000' }, fonts: {}, spacing: {} },
+      pages: [{ id: 'p', name: 'P', size: { width: 595, height: 842 }, background: {}, blocks: [] }],
+    } as never);
+    const t = build(base);
+    expect(t.tokens.colors.text).toBe('#000000');
+    const overlays = t.pages.flatMap((p) => p.blocks.flatMap((b) => (b as { overlays?: unknown[] }).overlays ?? []));
+    const body = overlays.find((o) => (o as { semantics?: { role: string } }).semantics?.role === 'body') as { color: string } | undefined;
+    expect(body?.color).toBe('token:primary'); // primary still holds #251F18
+  });
+});
+

@@ -29,6 +29,7 @@ import { matchChartToPicture, type BridgedChart } from '../sourceChartBridge.pur
 import { resolveTextWrapping } from '../resolveTextWrapping.pure';
 import { alignBoxToSourceBaseline, type FontVerticalMetrics } from '../firstBaseline.pure';
 import { annotateFromSource, figureAltText } from '../semanticRole.pure';
+import { deriveTokensFromExtraction, type FillObservation, type TextObservation } from '../tokenDerivation';
 import { fontLookupKey } from '../fontResolver';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
@@ -505,10 +506,46 @@ export function mapDoclingToPagePlan(
   const meanConfidence = allConfidences.length
     ? allConfidences.reduce((a, b) => a + b, 0) / allConfidences.length
     : 0.7;
+  // The design system, measured from this document rather than assumed.
+  //
+  // `deriveTokensFromExtraction` has always been able to read a source's real
+  // palette and typefaces — it ran only on the CDIR→template direction, which
+  // this path never takes, so a Docling import shipped `{ colors: {}, fonts: {} }`
+  // and every overlay carried a literal. Weighting is the module's own: text
+  // colours by glyph count, families by usage and size, fills by painted area.
+  const textObservations: TextObservation[] = [];
+  const fillObservations: FillObservation[] = [];
+  for (const page of pages) {
+    for (const overlay of page.overlays as Array<Record<string, unknown>>) {
+      if (overlay?.type === 'text') {
+        textObservations.push({
+          color: typeof overlay.color === 'string' ? overlay.color : undefined,
+          fontFamily: typeof overlay.fontFamily === 'string' ? overlay.fontFamily : undefined,
+          fontSize: Number(overlay.fontSize) || 11,
+          chars: String(overlay.content ?? '').length,
+        });
+      } else if (overlay?.type === 'shape' || overlay?.type === 'vector') {
+        const fill = typeof overlay.fill === 'string' ? overlay.fill : null;
+        const area = (Number(overlay.width) || 0) * (Number(overlay.height) || 0);
+        if (fill && area > 0) fillObservations.push({ color: fill, area });
+      }
+    }
+    if (page.background?.color) {
+      fillObservations.push({
+        color: page.background.color,
+        area: (page.size?.width ?? 0) * (page.size?.height ?? 0),
+      });
+    }
+  }
+  const derivedTokens = deriveTokensFromExtraction(textObservations, fillObservations, {
+    pageArea: (pages[0]?.size?.width ?? 0) * (pages[0]?.size?.height ?? 0) || undefined,
+  });
+
   return {
     version: 1,
     importId: opts.importId,
     pages,
+    tokens: { colors: { ...derivedTokens.colors }, fonts: { ...derivedTokens.fonts } },
     warnings,
     confidenceScore: Number(meanConfidence.toFixed(3)),
     importSummary: {

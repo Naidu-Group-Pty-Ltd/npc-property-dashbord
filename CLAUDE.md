@@ -214,6 +214,19 @@ contradicted rather than as a defect. The doc also records the endpoint it
 replaces: `layout_reconciliation_repair` reads a field its only client never
 sent, so it answered "no changes" to every request ever made of it.
 
+An import now also brings a **design system** with it, read off the source and
+bound to its own overlays. Read
+[`IMPORT_DESIGN_SYSTEM.md`](./docs/pdf-import/IMPORT_DESIGN_SYSTEM.md) before
+touching `designSystemBinding.pure.ts`, the token derivation in
+`mapDoclingToPagePlan`, or `applyTemplateImportPlan`'s token merge. One rule
+carries it: **bind only where the token's value is exactly what the overlay
+measured** — that is what makes the render byte-identical and the import
+restyleable at the same time, and there is no tolerance parameter. Two things
+that bit: anything which **measures** a template (CDIR) has to resolve the
+references first or it derives a palette of `token:heading`, and the base
+template's tokens win every conflict so an import cannot restyle pages it lands
+beside.
+
 An imported overlay also carries what the source said it **is** —
 `overlay.semantics`, from Docling's own label. Read
 [`SEMANTIC_STRUCTURE.md`](./docs/pdf-import/SEMANTIC_STRUCTURE.md) before
