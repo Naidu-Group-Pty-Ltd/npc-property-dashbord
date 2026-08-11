@@ -111,15 +111,34 @@ describe('Workflow Playground on a viewport too narrow to dock the panels', () =
     expect(within(sheet).getByLabelText('Search the step library')).toBeInTheDocument();
   });
 
+  /**
+   * Browsing is app-first, so adding a step is two moves: choose the app, then
+   * the operation. The assertion covers both because the drill-in is the part
+   * that a narrow viewport has to keep working — an app row that opens nothing
+   * is as unusable as no library at all.
+   */
   it('adds a step from that library and closes it again', async () => {
     openCanvas();
     fireEvent.click(screen.getByRole('button', { name: /add step/i }));
 
     const sheet = await screen.findByRole('dialog');
-    fireEvent.click(within(sheet).getByRole('button', { name: /^Add Client added/ }));
+    fireEvent.click(within(sheet).getByRole('button', { name: /^Triggers\./ }));
+    fireEvent.click(await within(sheet).findByRole('button', { name: /^Add Client added/ }));
 
     expect(useWorkflowStore.getState().graph.nodes).toHaveLength(1);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('finds a step by app name without drilling in', async () => {
+    openCanvas();
+    fireEvent.click(screen.getByRole('button', { name: /add step/i }));
+
+    const sheet = await screen.findByRole('dialog');
+    fireEvent.change(within(sheet).getByLabelText('Search the step library'), {
+      target: { value: 'airtable' },
+    });
+
+    expect(await within(sheet).findByRole('button', { name: /^Add Create a record/ })).toBeInTheDocument();
   });
 
   it('reaches the settings for a step from the header', async () => {

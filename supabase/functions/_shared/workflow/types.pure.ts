@@ -117,6 +117,65 @@ export interface CatalogNode {
   keywords?: string[];
   /** Branch-style nodes emit more than one edge; these label the handles. */
   branches?: { id: string; label: string }[];
+  /**
+   * How to actually call this operation.
+   *
+   * A step with a request descriptor can run for real; one without it can only
+   * be simulated. This is deliberately data rather than code: 252 operations
+   * cannot each have a hand-written executor, and the difference between
+   * "sends an SMS" and "posts to Slack" is a URL, an auth style and a body
+   * shape — none of which needs a function to express. See
+   * `httpRequest.pure.ts` for the template language and `stepExecutor.ts` for
+   * the one executor that performs every descriptor there is.
+   */
+  request?: NodeRequest;
+}
+
+/** How a request presents the integration's credentials. */
+export type NodeAuth =
+  | { type: 'bearer'; secret: string }
+  | { type: 'basic'; userSecret: string; passSecret: string }
+  | { type: 'header'; name: string; secret: string; prefix?: string }
+  | { type: 'query'; name: string; secret: string }
+  | { type: 'none' };
+
+/**
+ * A declarative HTTP call.
+ *
+ * Every string is a template — see `httpRequest.pure.ts`. An array of strings
+ * is a candidate list: the first that resolves to something non-empty wins,
+ * which is how a step-level override falls back to an integration-wide default
+ * (Twilio's sending number, say) without a special case.
+ */
+export interface NodeRequest {
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  /** Candidate list allowed, so a per-step endpoint can fall back to a saved one. */
+  url: string | string[];
+  auth?: NodeAuth;
+  headers?: Record<string, string>;
+  /** Appended to the URL. An entry resolving to empty is omitted entirely. */
+  query?: Record<string, string | string[]>;
+  /** `form` sends application/x-www-form-urlencoded, as Twilio requires. */
+  encoding?: 'json' | 'form';
+  /**
+   * An object template, or a single template resolving to one — a webhook step
+   * whose whole body is the JSON the person typed has no field names to map.
+   */
+  body?: Record<string, unknown> | string;
+  /**
+   * Declared output key → dotted path into the response body. `$status` yields
+   * the HTTP status, `$body` the whole payload.
+   */
+  outputs?: Record<string, string>;
+  /**
+   * Vendors that answer 200 and put the failure in the body. Slack is the
+   * common one: `{"ok": false, "error": "channel_not_found"}` is a failure that
+   * every HTTP-status check in the world calls a success.
+   */
+  okPath?: string;
+  errorPath?: string;
+  /** Credential keys without which the call cannot be attempted. */
+  requires?: string[];
 }
 
 export interface Vec2 {

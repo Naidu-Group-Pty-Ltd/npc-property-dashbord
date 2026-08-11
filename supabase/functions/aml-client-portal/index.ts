@@ -50,6 +50,9 @@ import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
   applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
 } from "../_shared/aml/diditOutcome.ts";
+import {
+  parseDocumentChoice, identityReturnUrl, type IdentityDocumentChoice,
+} from "../_shared/aml/identityDocuments.pure.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -480,6 +483,32 @@ async function releaseHostedCheck(
     .eq('id', checkId)
     .eq('attempt_consumed', false)
     .in('processing_status', ['submitted', 'queued', 'processing']);
+}
+
+/**
+ * The origin the customer is returned to when the hosted flow finishes.
+ *
+ * Compiled in, with `PUBLIC_APP_URL` as the deployment override — the same
+ * pair `consentLinkFor` uses. Deliberately NOT the request's `Origin` header:
+ * this string is handed to the provider as a redirect target, so accepting one
+ * from the caller would let any origin that can reach this function have NPC
+ * mint a redirect to it and hand it to a customer mid-verification.
+ */
+const RETURN_ORIGIN_FALLBACK = 'https://command-centre.npcservices.com.au';
+
+function hostedReturnUrl(): string {
+  return identityReturnUrl(Deno.env.get('PUBLIC_APP_URL'), RETURN_ORIGIN_FALLBACK);
+}
+
+/**
+ * The document choice a hosted session was minted under, if it recorded one.
+ *
+ * Sessions created before document selection existed have none, and are
+ * reusable for any choice — they were minted with no document restriction at
+ * all, so the provider still offers the customer every supported document.
+ */
+function sessionDocumentChoice(check: any): IdentityDocumentChoice | null {
+  return parseDocumentChoice(check?.outcome_detail?.didit_session?.document_choice);
 }
 
 type IdvAvailability = 'available' | 'temporarily_unavailable' | 'manual_verification_required';
@@ -928,6 +957,28 @@ const __corsWrappedHandler = async (req: Request) => {
         // Client-safe availability only — never provider names, environment
         // classification, secret presence or internal health detail.
         const { availability, flow } = await clientSafeIdvState(admin);
+
+        /**
+         * Whether this party already has a secure check open.
+         *
+         * One boolean, and it is what lets the portal survive a refresh: the
+         * window handle, the session URL and every scrap of local state are
+         * gone after one, so without asking the server the client is shown
+         * "Start" while their verification window is still sitting open behind
+         * the browser. They then start again — which the backend correctly
+         * de-duplicates, but only after telling them nothing about why.
+         *
+         * Deliberately a boolean and not the session. It carries no URL, no
+         * session id, no provider and no token, so the strongest thing it can
+         * do is change which sentence the client reads.
+         */
+        if (flow === 'hosted_session') {
+          for (const party of parties) {
+            party.verification_in_progress = Boolean(
+              await activeHostedCheck(admin, c.id, party.party_id));
+          }
+        }
+
         return jsonResponse({
           enabled: true,
           availability,
@@ -968,6 +1019,29 @@ const __corsWrappedHandler = async (req: Request) => {
 
         const partyId = body.party_id ? String(body.party_id) : null;
         const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
+
+        /**
+         * The document the customer says they will present.
+         *
+         * The ONLY thing the browser is permitted to declare about the
+         * session, and it is matched against a closed list rather than
+         * forwarded. What it cannot say — and what this handler reads from
+         * server state alone — is the provider, the workflow, the environment,
+         * the country, the callback, or anything about the outcome.
+         *
+         * Absent is allowed and means "not declared": an older portal build,
+         * or a caller resuming a session. Present-but-unrecognised is refused,
+         * because a typo that silently became an unrestricted session would
+         * put the country and document pickers back in front of the customer
+         * with nothing to show that it had happened.
+         */
+        const documentChoice = parseDocumentChoice(body.document_type);
+        if (body.document_type !== undefined && body.document_type !== null && !documentChoice) {
+          return jsonResponse({
+            error: 'That is not a document we can verify. Please choose one of the options shown.',
+            code: 'unsupported_document_type',
+          }, 400);
+        }
 
         // The biometric consent must exist BEFORE a face is captured, and the
         // hosted flow captures one. Consent after collection is not consent
@@ -1079,7 +1153,43 @@ const __corsWrappedHandler = async (req: Request) => {
             });
             if (result.kind === 'in_flight') {
               const url = typeof decision['session_url'] === 'string' ? decision['session_url'] : '';
-              if (url) {
+              /**
+               * A session minted for a different document cannot serve this
+               * request — its `expected_document_types` restricts the provider
+               * to the document the customer chose last time, so handing it
+               * back to somebody who has since picked their passport dead-ends
+               * them on a picker that will not offer it.
+               *
+               * Only replaced while the customer has not begun. `Not Started`
+               * is the provider's word for a session whose link has never been
+               * opened, so nothing is lost and no work is discarded; once they
+               * are `In Progress` or `Awaiting User` the session in their hands
+               * is the one that matters and they are returned to it, whatever
+               * they picked on this screen.
+               *
+               * The replacement is a technical supersede — `status` and
+               * `attempt_consumed` untouched — for the same reason a workflow
+               * revision is: changing your mind about which card to hold up is
+               * not a failed identity check.
+               */
+              const startedAlready = String(decision['status'] ?? '') !== 'Not Started';
+              if (documentChoice && !startedAlready
+                && sessionDocumentChoice(existing) !== documentChoice) {
+                await releaseHostedCheck(admin, String(existing.id), 'document_choice_changed');
+                await appendDiditCaseEvent(admin, c.id,
+                  `Identity verification session superseded for ${partyLabel}: a different `
+                  + `identity document was chosen before the check was started`,
+                  {
+                    verification_check_id: existing.id,
+                    provider: 'didit',
+                    provider_reference: existing.provider_reference,
+                    reason: 'document_choice_changed',
+                    category: 'technical',
+                    attempt_consumed: false,
+                    scope: 'identity_verification_only',
+                  });
+                existing = null;
+              } else if (url) {
                 return jsonResponse({
                   started: true, resumed: true, verification_url: url,
                   message: 'Your verification is already open. Continue where you left off.',
@@ -1186,6 +1296,20 @@ const __corsWrappedHandler = async (req: Request) => {
               verification_check_id: created.id,
               capture_sequence: captureSequence,
             },
+            /**
+             * Where the customer lands when the hosted flow finishes.
+             *
+             * Server-built from a compiled-in origin, never from the request.
+             * The page it names is a receipt and nothing more — it reads no
+             * status out of the redirect and settles nothing; the identity
+             * outcome still arrives only on the signed webhook. Its job is to
+             * stop the journey ending on a page NPC does not own.
+             */
+            callbackUrl: hostedReturnUrl(),
+            // Narrows the provider's own document picker to the one the
+            // customer said they would present, and pins the country to
+            // Australia. Translated to provider vocabulary inside the adapter.
+            documentChoice,
           });
 
           await admin.schema('aml').from('verification_checks').update({
@@ -1209,6 +1333,12 @@ const __corsWrappedHandler = async (req: Request) => {
                 // published workflow is edited.
                 attempt: captureSequence,
                 workflow_revised_at: resolved?.config?.['workflow_revised_at'] ?? null,
+                // What the customer said they would present. NPC's own
+                // vocabulary, not the provider's code — it is read back by the
+                // reuse check above, and it is the audit record of what the
+                // session was restricted to. Not a verification finding: the
+                // document actually presented is whatever the decision says.
+                document_choice: documentChoice,
                 status: session.status,
                 expires_at: session.expiresAt,
               },

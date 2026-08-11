@@ -51,6 +51,21 @@ export interface ProjectedParty {
   can_attempt: boolean;
   /** The last capture could not be examined — ask for a new one. */
   retake_required: boolean;
+  /**
+   * A provider-hosted check is open for this party right now.
+   *
+   * Set by the caller rather than derived here, because it is a question about
+   * a live provider session and this module projects stored rows. Optional
+   * because only the hosted flow has an answer — the capture flow has no
+   * session to be in the middle of.
+   *
+   * It is NOT a status: an open check is neither a pass nor a failure, and it
+   * carries no session, URL, provider or token. Its whole job is to stop the
+   * portal offering "Start" to somebody whose verification window is still
+   * open — which is what a page refresh does, since it loses every trace of
+   * that window on the browser's side.
+   */
+  verification_in_progress?: boolean;
 }
 
 /**

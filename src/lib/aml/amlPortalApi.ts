@@ -7,6 +7,7 @@
  * survived restarts and was readable by any script. See src/lib/portalSession.ts.
  */
 import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
+import type { IdentityDocumentChoice } from '@/lib/aml/identityDocuments';
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
@@ -92,6 +93,19 @@ export interface AmlVerificationParty {
    * rather than left waiting on a review that is not happening.
    */
   retake_required?: boolean;
+  /**
+   * A secure identity check is already open for this party, server-side.
+   *
+   * Survives a page refresh, which nothing in the browser does: the window
+   * handle and the session URL are gone the moment the page reloads, so
+   * without this the client is offered "Start" while their verification
+   * window is still open behind the browser.
+   *
+   * A boolean and nothing else — no session, no URL, no provider — so it can
+   * change which sentence is shown and nothing more. It is NOT a status:
+   * an open check is neither a pass nor a failure.
+   */
+  verification_in_progress?: boolean;
 }
 
 export interface AmlVerificationStatus {
@@ -153,9 +167,16 @@ export const amlPortalApi = {
    * provider name, and no configuration — and completing the flow in that
    * window does NOT mark anybody verified. The identity outcome arrives on a
    * signed server-to-server webhook; this call only opens the door.
+   *
+   * `document_type` is the one thing the browser declares, and it declares an
+   * INTENT: it narrows the document picker the client is shown and nothing
+   * else. The server matches it against a closed list and refuses anything
+   * else — it cannot name a provider, a workflow, an environment or a country,
+   * and no value of it can reach an identity outcome.
    */
   startHostedVerification: (case_id: string, params: {
     party_id?: string | null; party_label?: string;
+    document_type?: IdentityDocumentChoice;
   }) => call<{
     started: boolean; resumed?: boolean;
     verification_url?: string; message: string; code?: string;

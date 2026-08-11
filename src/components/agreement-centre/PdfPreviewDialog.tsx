@@ -79,17 +79,25 @@ export default function PdfPreviewDialog({ agreementId, onOpenChange }: Props) {
 
   return (
     <Dialog open={!!agreementId} onOpenChange={onOpenChange}>
+      {/*
+        `bareLayout` is essential here: the shared dialog treatment applies
+        `sm:w-full sm:max-w-lg` in a media query, which outranks any unprefixed
+        width class a caller passes — that is what squeezed this dialog to
+        ~512px and stacked the title one letter per line. Owning the layout
+        outright keeps the A4 page fitted.
+      */}
       <DialogContent
-        className="flex h-[96vh] max-h-[96vh] w-[96vw] max-w-[min(96vw,1400px)] flex-col gap-3 p-4 sm:p-5"
+        bareLayout
+        className="fixed left-1/2 top-1/2 z-50 flex h-[96dvh] w-[96vw] max-w-[1400px] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 overflow-hidden rounded-xl p-4 sm:p-5"
       >
-        <DialogHeader className="shrink-0 flex-row items-center justify-between gap-3 space-y-0 pr-8">
-          <div className="min-w-0">
+        <DialogHeader className="shrink-0 flex-row flex-wrap items-center justify-between gap-3 space-y-0 pr-10 text-left">
+          <div className="min-w-[16rem] flex-1">
             <DialogTitle>Document preview</DialogTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
               The exact printed form, fitted to the page. Every edit on the preview step re-renders here.
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             <Button variant="outline" size="sm" disabled={loading} onClick={() => setNonce((n) => n + 1)}>
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Re-render
             </Button>
@@ -102,6 +110,7 @@ export default function PdfPreviewDialog({ agreementId, onOpenChange }: Props) {
             </Button>
           </div>
         </DialogHeader>
+
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-muted/30">
           {loading ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">

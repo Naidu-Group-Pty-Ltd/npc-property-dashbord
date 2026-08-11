@@ -606,7 +606,8 @@
       "resume-bulk-generation/index.ts",
       "resume-investment-reports/index.ts",
       "security-step-up/index.ts",
-      "send-web-push/index.ts"
+      "send-web-push/index.ts",
+      "update-stamp-duty-rates/index.ts"
     ]
   },
   "statically_derivable_inter_function_graph": [

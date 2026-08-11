@@ -87,25 +87,67 @@ previous run, and a workflow dispatched twice sends the message twice.
 
 ## What live execution can actually perform
 
-**Eight of 252 catalog steps.** `LIVE_CAPABLE_STEP_TYPES` in
-`_shared/workflow/stepExecutor.ts` is the authority; `LIVE_CAPABLE` in
-`runtime/performers.ts` is the browser's copy so it can refuse locally with a
-useful message rather than take a 400. `dispatch.spec.ts` asserts they agree.
+**Derived from the catalog, never listed.** `liveCapability.pure.ts` computes
+the answer once and all three callers read it — the browser (to refuse locally
+with a useful message rather than take a 400), the executor, and the dispatcher.
+It used to be two hand-maintained lists kept honest by a test comparing them,
+which holds right up until somebody adds an integration and updates one.
 
-- `core.http`, `core.graphql` — generic protocols the author pointed somewhere
-  themselves. SSRF-guarded (`assertCallableUrl`): no private ranges, no cloud
-  metadata, 30s and 512KB ceilings.
-- `core.notify_team` — internal, writes `notifications`.
-- the four `mcp.*` steps.
-- `core.webhook_respond` is client-only: it shapes the reply the *caller* of an
-  inbound webhook is holding open, so there is nothing for a server to do. A
-  dispatched run records it as succeeded with a note saying there was no caller.
+A step is runnable for one of two reasons:
 
-Everything else simulates, and says so on the step. **Extending this is per-vendor
-work, not a generic switch** — and any new vendor call must go through
-`_shared/meteredFetch.ts` with a `service_name` mapped in
-`_shared/apiUsageBilling.pure.ts`, or the call is metered and never billed. See
-`docs/integrations/API_USAGE_METERING.md`.
+1. **It declares a `request` descriptor.** This is the scalable half — see
+   `httpRequest.pure.ts`. The difference between "send an SMS" and "post to
+   Slack" is a URL, an auth style, a body shape and where the id comes back;
+   none of that needs a function, so the catalog carries it as data and one
+   executor performs all of it. Adding a vendor is a declaration beside the
+   operation.
+2. **It has a hand-written executor**, for the few a descriptor cannot express:
+   `core.http` and `core.graphql` (generic protocols the author pointed
+   somewhere themselves, SSRF-guarded by `assertCallableUrl` — no private
+   ranges, no cloud metadata, 30s and 512KB ceilings), `core.notify_team`
+   (writes our own `notifications`), and the four `mcp.*` steps (JSON-RPC).
+
+`core.webhook_respond` is client-only: it shapes the reply the *caller* of an
+inbound webhook is holding open, so there is nothing for a server to do. A
+dispatched run records it as succeeded with a note saying there was no caller.
+
+Everything else simulates, and says so on the step.
+
+### The template language, and the three things it exists for
+
+`{{name}}` reads resolved config, `{{secret.KEY}}` a saved credential. Beyond
+that there are exactly three forms, each because leaving it out forces every
+descriptor to work around it:
+
+| Form | Why |
+|---|---|
+| `{{name\|object}}` | a `keyValue` field is edited as `{key,value}[]` and APIs want an object — Airtable's `fields` cannot be expressed without it |
+| `{ $first: [a, b] }` | a per-step override falling back to an integration default (Twilio's sending number). Named rather than a bare array because inside a body an array is a JSON array |
+| `{ $when: x, … }` | drops a whole object, not just an empty key — `{ role: 'system' }` with no content is rejected by every model API |
+
+A template that is exactly one reference yields the **value**, not a string, so a
+webhook body stays an object and `max_tokens` stays a number.
+
+Two rules the builder enforces that are otherwise silent failures: a blank
+optional field is **omitted**, never sent as `""` (several APIs validate the
+presence of a key rather than its content), and an unresolved reference never
+interpolates the text `undefined` into a customer's message.
+
+### Vendors that answer 200 for a failure
+
+Slack replies `{"ok": false, "error": "channel_not_found"}` with HTTP 200. A
+descriptor declares `okPath`/`errorPath` so a message that never appeared is
+recorded as failed rather than sent. Any vendor with the same habit needs the
+same two lines.
+
+### Metering
+
+Every described call goes through `_shared/meteredFetch.ts`, which resolves the
+credential from the host and logs the call itself — so a vendor added by
+declaration is billed without anybody remembering to say so. A host absent from
+`_shared/apiUsageBilling.pure.ts` is metered and **never billed**; see
+`docs/integrations/API_USAGE_METERING.md` before adding one whose key the prime
+supplies.
 
 ### `core.poll` is deliberately not implemented
 

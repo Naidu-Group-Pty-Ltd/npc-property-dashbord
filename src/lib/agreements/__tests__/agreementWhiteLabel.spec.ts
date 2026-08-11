@@ -133,3 +133,44 @@ describe('an empty party name prints a bracket, not a company', () => {
     expect(substitutePlain('{{ba_legal_name}}', key, values)).toBe('<<INSERT>>');
   });
 });
+
+/**
+ * The PDF cover's band structure.
+ *
+ * `page-cover` is a zero-margin page — the design system reserves it for a
+ * full-bleed treatment. This cover was written as ordinary flowed content and
+ * inherited that page, so it rendered with every line hard against the paper's
+ * edge, the title at report-cover scale four lines deep and running off the
+ * page, and the whole cover spilling onto a second sheet. The three bands are
+ * what supply the insets; asserting they are emitted is the cheap half of the
+ * guard, and the render is the other half.
+ */
+describe('the PDF cover supplies its own page geometry', () => {
+  it('emits a canvas, a paper band and a foot', async () => {
+    const { buildAgreementDocument } = await import(
+      '../../../../supabase/functions/_shared/agreements/documentHtml.pure.ts');
+    const snapshot = {
+      version: 1,
+      company: { name: 'Harbourline Property Co', tradingName: 'Harbourline', abn: '11 222 333 444',
+        website: '', email: '', phone: '', address: '' },
+      brandHex: '#1F4D8F', preset: 'signature',
+      logo: { report: null, mono: null },
+      document: { confidentiality: '', preparedBy: 'Harbourline' },
+      source: { whitelabelSettingId: null, themeVersion: 1, capturedAt: '2026-08-09T00:00:00Z' },
+    };
+    const { html } = buildAgreementDocument({
+      content: agreementTemplate('strategic_property_referral') as never,
+      values: {}, snapshot: snapshot as never, versionLabel: 'Draft', includeTemplatePack: true,
+    } as never);
+
+    for (const band of ['agc-cover-canvas', 'agc-cover-paper', 'agc-cover-foot']) {
+      expect(html).toContain(band);
+    }
+    // Each band carries its own inset, so no cover line can sit on the trim.
+    expect(html).toMatch(/\.agc-cover-canvas\s*\{[^}]*padding:/);
+    expect(html).toMatch(/\.agc-cover-paper\s*\{[^}]*padding:/);
+    expect(html).toMatch(/\.agc-cover-foot\s*\{[^}]*padding:/);
+    // And the bands are height-bounded so the cover cannot spill to page two.
+    expect(html).toMatch(/\.agc-cover\s*\{[^}]*height:\s*297mm/);
+  });
+});
