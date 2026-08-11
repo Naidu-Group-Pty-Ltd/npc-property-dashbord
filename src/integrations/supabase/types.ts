@@ -16339,43 +16339,76 @@ export type Database = {
         Row: {
           body: string | null
           client_id: string | null
+          command_centre_authorised: boolean
+          correlation_id: string | null
           created_at: string
+          finance_file_id: string | null
           id: string
           integration_event_id: string | null
           is_read: boolean
           link_path: string | null
           metadata: Json | null
+          notification_domain: string
           notification_type: string
+          origin_portal: string
           portal_user_id: string
           read_at: string | null
+          recipient_organisation_id: string | null
+          recipient_role: string | null
+          recipient_team_id: string | null
+          related_entity_id: string | null
+          related_entity_type: string | null
+          target_portal: string
           title: string
         }
         Insert: {
           body?: string | null
           client_id?: string | null
+          command_centre_authorised?: boolean
+          correlation_id?: string | null
           created_at?: string
+          finance_file_id?: string | null
           id?: string
           integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
+          notification_domain?: string
           notification_type: string
+          origin_portal?: string
           portal_user_id: string
           read_at?: string | null
+          recipient_organisation_id?: string | null
+          recipient_role?: string | null
+          recipient_team_id?: string | null
+          related_entity_id?: string | null
+          related_entity_type?: string | null
+          target_portal?: string
           title: string
         }
         Update: {
           body?: string | null
           client_id?: string | null
+          command_centre_authorised?: boolean
+          correlation_id?: string | null
           created_at?: string
+          finance_file_id?: string | null
           id?: string
           integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
+          notification_domain?: string
           notification_type?: string
+          origin_portal?: string
           portal_user_id?: string
           read_at?: string | null
+          recipient_organisation_id?: string | null
+          recipient_role?: string | null
+          recipient_team_id?: string | null
+          related_entity_id?: string | null
+          related_entity_type?: string | null
+          target_portal?: string
           title?: string
         }
         Relationships: [
