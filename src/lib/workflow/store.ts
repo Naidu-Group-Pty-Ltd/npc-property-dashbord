@@ -289,20 +289,20 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => {
     selectNode: (id) =>
       set({ selection: id ? [id] : [], selectedNodeId: id, selectedEdgeId: null }),
 
-    setSelection: (ids) => set({ selection: ids, selectedNodeId: ids.at(-1) ?? null, selectedEdgeId: null }),
+    setSelection: (ids) => set({ selection: ids, selectedNodeId: ids[ids.length - 1] ?? null, selectedEdgeId: null }),
 
     toggleInSelection: (id) =>
       set((state) => {
         const next = state.selection.includes(id)
           ? state.selection.filter((s) => s !== id)
           : [...state.selection, id];
-        return { selection: next, selectedNodeId: next.at(-1) ?? null, selectedEdgeId: null };
+        return { selection: next, selectedNodeId: next[next.length - 1] ?? null, selectedEdgeId: null };
       }),
 
     selectAll: () =>
       set((state) => {
         const ids = state.graph.nodes.map((n) => n.id);
-        return { selection: ids, selectedNodeId: ids.at(-1) ?? null, selectedEdgeId: null };
+        return { selection: ids, selectedNodeId: ids[ids.length - 1] ?? null, selectedEdgeId: null };
       }),
 
     deleteSelection: () => {
@@ -371,7 +371,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => {
         }
         return next;
       });
-      set({ selection: created, selectedNodeId: created.at(-1) ?? null });
+      set({ selection: created, selectedNodeId: created[created.length - 1] ?? null });
     },
 
     duplicateSelection: () => {
@@ -494,7 +494,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => {
     endMarquee: (ids, additive) =>
       set((state) => {
         const next = additive ? [...new Set([...state.selection, ...ids])] : ids;
-        return { marquee: null, selection: next, selectedNodeId: next.at(-1) ?? null };
+        return { marquee: null, selection: next, selectedNodeId: next[next.length - 1] ?? null };
       }),
 
     setViewport: (viewport) => set({ viewport }),
@@ -513,7 +513,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => {
 
     undo: () =>
       set((state) => {
-        const previous = state.past.at(-1);
+        const previous = state.past[state.past.length - 1];
         if (!previous) return {};
         return {
           graph: previous,

@@ -38,8 +38,8 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { meteredFetch } from '../_shared/meteredFetch.ts';
-import {
 import { internalError } from '../_shared/errorResponse.ts';
+import {
   AUSTRALIAN_STATES,
   DRIFT_REVIEW_THRESHOLD_PCT,
   DUTY_SCHEDULES,
@@ -214,7 +214,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    const requested: string[] | undefined = body?.states;
+    // Narrowed rather than asserted: `states` arrives from a request body typed
+    // `Record<string, unknown>`, and the old annotation only claimed it was a
+    // string array. `{"states": "NSW"}` reached `.map` on a string and threw a
+    // 500; a non-string element reached `.toUpperCase()` and did the same. Both
+    // are now simply ignored, and the result still passes through the
+    // AUSTRALIAN_STATES filter below, so nothing a caller sends can widen the set.
+    const rawStates = body?.states;
+    const requested: string[] | undefined = Array.isArray(rawStates)
+      ? rawStates.filter((value): value is string => typeof value === 'string')
+      : undefined;
     const states = (requested?.length
       ? AUSTRALIAN_STATES.filter((s) => requested.map((r) => r.toUpperCase()).includes(s))
       : AUSTRALIAN_STATES) as readonly AustralianState[];

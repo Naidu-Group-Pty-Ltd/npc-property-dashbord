@@ -244,6 +244,19 @@ const CASES = [
     replace: 'const { suburb, state, postcode } = await req.json();',
   },
 
+  // WP-29. A direct dependency that outruns the pinned React breaks `npm ci`
+  // on every job of every PR — the install step, before any test or gate.
+  {
+    gate: 'check-peer-compatibility.mjs',
+    file: 'package-lock.json',
+    what: 'a direct dependency requires a React the project does not have',
+    // Mutate the EXISTING peer range rather than prepending a second
+    // `peerDependencies` key — JSON.parse keeps the last of a duplicate pair, so
+    // the real entry silently won and the control removed nothing.
+    find: '"@react-leaflet/core": "^2.1.0"\n      },\n      "peerDependencies": {\n        "leaflet": "^1.9.0",\n        "react": "^18.0.0",',
+    replace: '"@react-leaflet/core": "^2.1.0"\n      },\n      "peerDependencies": {\n        "leaflet": "^1.9.0",\n        "react": "^19.0.0",',
+  },
+
   // WP-28. The v1 entrypoint must be held to the same rule as v2. Without this
   // control the shim pattern is a way to remove a function from a gate's
   // coverage without removing it from production: `check-public-validation`

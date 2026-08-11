@@ -83,10 +83,22 @@ describe('the payloads real callers send are accepted', () => {
       { email: 'solicitor@example.com', password: 'pw', turnstile_token: null },
       'src/hooks/useSolicitorPortalAuth.tsx:55'],
 
-    // A CAPTCHA that HAS been solved must still work.
+    // A CAPTCHA that HAS been solved must still work — at a REALISTIC length.
+    //
+    // The first version of this row used `'0.abcdef'`, and that was the same
+    // mistake this file's header warns about, committed in the file that warns
+    // about it: a payload invented to match the schema. `tokenField` bounded
+    // turnstile_token at 512 characters, Cloudflare documents tokens as "up to
+    // 2048" and reserves the right to grow them, and a real token therefore came
+    // back `invalid_body` — so the null fix restored the unsolved-CAPTCHA path
+    // and left the solved one broken. An eight-character fixture could never
+    // have shown that.
     ['StaffLoginRequest',
-      { username: 'a.person', password: 'pw', turnstile_token: '0.abcdef' },
-      'the same call site, after the widget resolves'],
+      { username: 'a.person', password: 'pw', turnstile_token: `0.${'A'.repeat(1200)}` },
+      'a real Turnstile token, which runs to four figures'],
+    ['PortalLoginRequest',
+      { email: 'client@example.com', password: 'pw', turnstile_token: `0.${'A'.repeat(2048)}` },
+      "Cloudflare's documented ceiling of 2048"],
 
     // Forgot-password: one field, and the form may hold it empty.
     ['ForgotPasswordRequest', { email: 'a@example.com' }, 'the four forgot-password forms'],
@@ -170,6 +182,19 @@ describe('null tolerance did not open the door it was closing', () => {
 
   it.each(HOSTILE)('PortalLoginRequest still rejects %s as a turnstile token', (_label, value) => {
     expect(PortalLoginRequest.safeParse({ email: 'a@b.c', turnstile_token: value }).success).toBe(false);
+  });
+
+  it('accepts a Turnstile token at the documented ceiling, and beyond it', () => {
+    // The bound exists to stop an unbounded string, not to second-guess
+    // Cloudflare's format. 2048 is documented; the field allows 4096 so a
+    // format change does not lock everyone out again.
+    for (const len of [512, 1024, 2048, 4096]) {
+      const token = 'A'.repeat(len);
+      expect(
+        StaffLoginRequest.safeParse({ username: 'a', password: 'b', turnstile_token: token }).success,
+        `a ${len}-character Turnstile token was rejected`,
+      ).toBe(true);
+    }
   });
 
   it('still rejects an over-long value', () => {

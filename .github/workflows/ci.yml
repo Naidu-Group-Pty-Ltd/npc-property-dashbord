@@ -222,6 +222,39 @@ jobs:
         with:
           deno-version: v2.x
 
+      # Warm the Deno module cache across runs.
+      #
+      # Every `deno check` below resolves `https://esm.sh/...` and
+      # `https://deno.land/x/...` from the network. When one of those is
+      # unhealthy the whole job fails on somebody else's outage — esm.sh
+      # answered 408 for `@supabase/storage-js` and took this job down twice in
+      # an hour, with nothing in the diff to act on.
+      #
+      # A restored cache means most runs fetch nothing at all. Deno keys its
+      # cache by URL and integrity, so a cached module is byte-identical to the
+      # one it replaces — this removes a dependency on a third party being up,
+      # not a check.
+      #
+      # The key follows the import lines in the functions themselves, so adding
+      # or bumping a remote specifier misses and refetches; `restore-keys` still
+      # gives the new run a warm start from the previous cache.
+      #
+      # Restore and save are SEPARATE steps on purpose. `actions/cache` writes
+      # its cache in a post step that runs only when the job SUCCEEDED, so the
+      # first version of this could never be seeded during the very outage it
+      # exists to survive: the fetch failed, the job went red, nothing was
+      # saved, and the next run started cold again. `if: always()` on the save
+      # banks whatever was fetched before the failure, so each attempt starts
+      # warmer than the last.
+      - name: Restore Deno module cache
+        id: deno-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
+          restore-keys: |
+            deno-${{ runner.os }}-
+
       - name: Deno type-check shared trust modules
         run: |
           deno check \
@@ -246,6 +279,31 @@ jobs:
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs
+
+      # Guards the save below. An EMPTY cache must never be banked: a cache key
+      # can be written once, and an exact hit does not consult `restore-keys` —
+      # so an empty entry under this key would make every future run on this
+      # tree state start cold, which is precisely what the cache exists to
+      # prevent. `always()` means this step can be reached after a failure that
+      # happened before Deno ever ran.
+      - name: Measure the Deno module cache
+        if: always()
+        id: deno-cache-size
+        run: echo "bytes=$(du -sb ~/.cache/deno 2>/dev/null | cut -f1 || echo 0)" >> "$GITHUB_OUTPUT"
+
+      # See the restore step: this runs on failure too, so a partly-fetched
+      # cache is still banked and the next run starts warmer. Skipped on an
+      # exact hit, which has nothing new to write.
+      - name: Save Deno module cache
+        if: >-
+          always()
+          && steps.deno-cache.outputs.cache-hit != 'true'
+          && steps.deno-cache-size.outputs.bytes != ''
+          && steps.deno-cache-size.outputs.bytes != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
 
       # WP-12: block reintroduction of legacy internal-auth trust paths.
       - name: Internal-auth legacy-fallback gate (WP-12)
@@ -301,6 +359,17 @@ jobs:
 
       # And the gate that keeps the list above honest: every check-*.mjs must be
       # reachable from CI, or it is dead weight pretending to be a control.
+      # WP-29: a direct dependency may not require a React this project does not
+      # have. `react-leaflet@5` (peer react ^19, project on 18) merged from
+      # Dependabot and `npm ci` stopped resolving — every job of every PR went
+      # red at the install step, none of them for a reason in the diff.
+      #
+      # Reads the peer ranges out of `package-lock.json`, so it needs no
+      # node_modules and asks the question instead of maintaining a list of the
+      # 50 direct dependencies that declare a React peer.
+      - name: Direct dependencies agree with the pinned React (WP-29)
+        run: node scripts/security/check-peer-compatibility.mjs
+
       - name: Every security gate is wired (WP-16)
         run: node scripts/security/check-gates-wired.mjs
 
