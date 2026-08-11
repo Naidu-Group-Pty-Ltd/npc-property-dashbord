@@ -56,3 +56,29 @@ Store results at `docs/security/wp15-evidence/<date>/negative-tests.jsonl`.
 The negative-test runner lives at `scripts/security/wp15-negative-tests.mjs`
 (to be added by the QA owner). It reads `WP15_NEGATIVE_TEST_MATRIX.md` inline
 IDs and posts each request via `fetch()` with expected status codes.
+
+---
+
+## Rows added by the 20-item programme (WP-16 … WP-21)
+
+| ID | Target | Attack | Expected result |
+|----|--------|--------|-----------------|
+| NT-37 | `template-share` (any browser-session fn) | Credentialed request with `Origin: https://negative-test.invalid` | `Access-Control-Allow-Origin` is neither `*` nor the request origin |
+| NT-38 | `get-client-data` | UUID belonging to another tenant, ordinary staff token | 401/403/404, and no row (never leak existence) |
+| NT-39 | `aml-monitoring` `upsert_alert` | Write naming `resolved_by`, a column no request may set | 401/403 |
+| NT-40 | any | Every 5xx seen during the run | no schema detail in any body — no `relation "…"`, `column "…"`, `constraint "…"`, `permission denied for table`, or stack frame |
+
+NT-40 is asserted over whatever responses the run happened to produce rather
+than by provoking a failure. Deliberately breaking a production endpoint to
+watch it break is not a test worth running against a live system, and this
+catches the same regression whenever any other row trips a 5xx.
+
+NT-39 asserts the authorization denial, which is what an ordinary staff token
+can reach. Proving the field allowlist itself needs an AML-write session, so
+that stays a source-level concern in
+`scripts/security/check-mass-assignment.mjs`.
+
+## Running it
+
+`.github/workflows/security-negative-tests.yml`, `workflow_dispatch` only.
+Runbook: [`runbooks/live-negative-tests.md`](./runbooks/live-negative-tests.md).

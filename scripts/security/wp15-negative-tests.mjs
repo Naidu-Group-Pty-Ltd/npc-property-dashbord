@@ -41,6 +41,13 @@ mkdirSync(OUTPUT_DIR, { recursive: true });
 const OUT = join(OUTPUT_DIR, 'negative-tests.jsonl');
 const lines = [];
 
+/**
+ * Every 5xx body this run happened to see, for NT-40. Collected rather than
+ * provoked: deliberately breaking a production endpoint to watch it break is not
+ * a test worth running against a live system.
+ */
+const observed5xx = [];
+
 async function call(fn, headers, body) {
   const url = `${SUPABASE_URL}/functions/v1/${fn}`;
   const res = await fetch(url, {
@@ -50,6 +57,7 @@ async function call(fn, headers, body) {
   });
   // Consume body so Deno / node fetch doesn't leak
   const text = await res.text().catch(() => '');
+  if (res.status >= 500) observed5xx.push({ fn, body: text.slice(0, 400) });
   return { status: res.status, bodyPreview: text.slice(0, 200) };
 }
 
@@ -133,6 +141,79 @@ let ok = true;
     'Unauthorized: Superadmin access required',
     r.bodyPreview,
   ) && ok;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Rows added for the 20-item programme (WP-16 … WP-21). Same rule as above:
+// every one must come back a denial, and a pass here is the only evidence that
+// a source fix is also a deployed fix.
+// ───────────────────────────────────────────────────────────────────────────
+
+// NT-37 — WP-19. A credentialed request from an origin that is not on the
+// allowlist must not be told it may read the response. The function may answer
+// 200; what must not happen is `Access-Control-Allow-Origin` coming back as `*`
+// or echoing the attacker's origin, either of which lets a hostile page read a
+// response carrying the session cookie.
+{
+  const evil = 'https://negative-test.invalid';
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/template-share`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', apikey: ANON, origin: evil },
+    body: JSON.stringify({ operation: 'noop' }),
+  });
+  await res.text().catch(() => '');
+  const acao = res.headers.get('access-control-allow-origin');
+  const leaked = acao === '*' || acao === evil;
+  lines.push(JSON.stringify({
+    id: 'NT-37', target: 'template-share',
+    input: `credentialed request with Origin: ${evil}`,
+    expected: 'ACAO is neither * nor the request origin',
+    observed: `ACAO: ${acao ?? '<absent>'}`,
+    result: leaked ? 'FAIL' : 'expected_denial',
+  }));
+  console.log(lines.at(-1));
+  ok = !leaked && ok;
+}
+
+// NT-38 — WP-16 / WP-20. A UUID belonging to nobody must not distinguish
+// "exists but forbidden" from "does not exist", and must never return the row.
+{
+  const foreign = '00000000-0000-4000-8000-0000000000ff';
+  const r = await call('get-client-data',
+    { authorization: `Bearer ${NON_SUPERADMIN_JWT}` },
+    { clientId: foreign });
+  ok = record('NT-38', 'get-client-data', 'UUID from another tenant', [401, 403, 404], r.status) && ok;
+}
+
+// NT-39 — WP-20. A privileged write naming a column no request may set must be
+// refused. Under an ordinary staff token the authorization gate refuses first,
+// which is the correct denial and the one this asserts; proving the field
+// allowlist itself needs an AML-write session, so that stays a unit concern
+// (scripts/security/check-mass-assignment.mjs).
+{
+  const r = await call('aml-monitoring',
+    { authorization: `Bearer ${NON_SUPERADMIN_JWT}` },
+    { operation: 'upsert_alert', alert: { title: 'negative test', resolved_by: '00000000-0000-4000-8000-00000000000a' } });
+  ok = record('NT-39', 'aml-monitoring', 'write naming a protected column', [401, 403], r.status) && ok;
+}
+
+// NT-40 — WP-18. Nothing in this run may have answered a 5xx that carries the
+// exception. Asserted over every response the harness saw rather than by
+// provoking a failure: deliberately breaking a production endpoint to watch it
+// break is not a test worth running against a live system, and this catches the
+// same regression whenever any row happens to trip one.
+{
+  const schemaish = /relation "|column "|constraint "|violates |permission denied for table|at [A-Za-z]+\.[a-z]+ \(/i;
+  const offenders = observed5xx.filter((o) => schemaish.test(o.body));
+  lines.push(JSON.stringify({
+    id: 'NT-40', target: 'any',
+    input: `${observed5xx.length} 5xx response(s) seen during this run`,
+    expected: 'no schema detail in any 5xx body',
+    observed: offenders.length ? offenders.map((o) => `${o.fn}: ${o.body.slice(0, 80)}`).join(' | ') : 'none',
+    result: offenders.length ? 'FAIL' : 'expected_denial',
+  }));
+  console.log(lines.at(-1));
+  ok = offenders.length === 0 && ok;
 }
 
 writeFileSync(OUT, lines.join('\n') + '\n');
