@@ -36,6 +36,13 @@ export { FINANCE_REFERRAL_CONTENT } from './contentFinanceReferral.pure.ts';
  */
 export * from './documentRevision.pure.ts';
 
+/**
+ * Whether the counterparty can actually open what we send them. Independent of
+ * the lifecycle: an agreement can be perfectly issued and still be unreachable
+ * because nobody has activated a login yet.
+ */
+export * from './partnerAccess.pure.ts';
+
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
 }

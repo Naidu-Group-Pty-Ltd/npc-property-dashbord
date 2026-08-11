@@ -4,6 +4,7 @@ import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.t
 import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
 import { parseJsonBody } from '../_shared/validate.ts';
 import { PortalLoginRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
+import { deliverPendingAgreementNotifications } from "../_shared/agreements/pendingDelivery.ts"
 
 const SESSION_HOURS = 12; // Finance portal sessions are shorter than client portal
 const MAX_FAILED_ATTEMPTS = 5;
@@ -177,6 +178,16 @@ Deno.serve(async (req) => {
         locked_until: null,
       })
       .eq('id', portalUser.id)
+
+    // Whatever was issued to this organisation before anybody could sign in.
+    // The invite-acceptance path covers the ordinary case; this covers the
+    // temp-password path, which never visits `accept-invite`, and any agreement
+    // issued between an invitation and the first login. Idempotent, so running
+    // on every login costs one indexed read and inserts nothing twice.
+    await deliverPendingAgreementNotifications(supabase, {
+      portalUserId: portalUser.id,
+      financeContactId: portalUser.finance_contact_id,
+    });
 
     // Activity log
     // Record the address only when the platform vouched for it. Reading

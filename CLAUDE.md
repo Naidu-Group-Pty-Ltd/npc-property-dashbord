@@ -212,6 +212,18 @@ under a signatory is the one thing this must never do. Bump
 `AGREEMENT_CENTRE_DOCUMENT_REVISION` when the composition changes; nothing needs
 backfilling.
 
+An agreement is addressed to the partner **organisation**
+(`finance_agent_contact_id`), which is how the Finance Portal resolves it too —
+so it can be issued before anybody has a login and be waiting when they
+activate. Read
+[`PARTNER_ACTIVATION.md`](./docs/agreements/PARTNER_ACTIVATION.md) before
+changing what may be issued or what notifies a partner. Two rules that bite:
+`finance_portal_users.is_active` is set when the **invitation is sent**, so it
+never meant "can sign in" — `partnerAccess.pure.ts` is the authority, and only a
+deliberate revocation blocks a digital issue. And a notification raised before
+the portal user exists has nowhere to live, so activation sweeps for whatever
+was issued in the meantime rather than the issue trying to queue it.
+
 Deployment is the other half of it, and it has bitten twice:
 [`DEPLOYMENT.md`](./docs/agreements/DEPLOYMENT.md).
 

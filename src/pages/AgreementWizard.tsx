@@ -26,7 +26,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2,
+  AlertTriangle, ArrowLeft, ArrowRight, Check, Download, FileText, Loader2, Mail,
   Palette, Save, Search, Send, Eye, UserPlus, Building2, Pencil, PenLine, RotateCcw,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,10 +60,15 @@ import {
   useAgreementPartnerOptions,
   useDuplicateCheck,
   useIssuerDefaults,
+  usePartnerPortalAccess,
+  partnerAccessOf,
   docxBrandFrom,
   downloadAgreementDocx,
   downloadAgreementPdf,
 } from '@/hooks/useAgreementCentre';
+import PartnerAccessPanel, {
+  PartnerAccessBadge,
+} from '@/components/agreement-centre/PartnerAccessPanel';
 import { loadDocxLogo } from '@/lib/agreements/docx';
 import { shouldLoadDraft } from '@/lib/agreements/wizardDraft.pure';
 import { useBrand } from '@/branding/BrandProvider';
@@ -341,6 +346,13 @@ export default function AgreementWizard() {
   );
 
   const selectedPartner = partners.find((partner) => partner.id === partnerId) ?? null;
+  const partnerAccess = partnerAccessOf(selectedPartner);
+  const { invite: invitePartner, reinstate: reinstatePartner } = usePartnerPortalAccess();
+  const partnerAccessBusy = invitePartner.isPending || reinstatePartner.isPending;
+  // Only a deliberate revocation blocks a digital issue. `none` and `invited`
+  // both send — the agreement waits in the partner's portal and is announced
+  // when they activate. See `_shared/agreements/partnerAccess.pure.ts`.
+  const digitalIssueBlocked = partnerAccess === 'revoked';
 
   /** Persist the current form onto the row. Creates the draft on first save. */
   const persist = async (): Promise<PartnerAgreement | null> => {
@@ -635,25 +647,26 @@ export default function AgreementWizard() {
                         </div>
                         {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
                       </div>
-                      <div className={cn(
-                        'mt-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
-                        partner.portal_connected
-                          ? 'bg-success/15 text-success'
-                          : 'bg-muted text-muted-foreground',
-                      )}>
-                        {partner.portal_connected ? 'Portal connected' : 'No portal login'}
-                      </div>
+                      <PartnerAccessBadge access={partnerAccessOf(partner)} className="mt-2" />
                     </button>
                   );
                 })}
               </div>
             )}
 
-            {selectedPartner && !selectedPartner.portal_connected ? (
-              <p className="text-xs text-warning">
-                This partner has no active Finance Portal login — digital issue will be unavailable
-                until they are invited, but the download options always work.
-              </p>
+            {selectedPartner && partnerAccess !== 'active' ? (
+              <PartnerAccessPanel
+                access={partnerAccess}
+                partnerLabel={selectedPartner.company_name || selectedPartner.contact_name || selectedPartner.email}
+                busy={partnerAccessBusy}
+                onInvite={selectedPartner.email
+                  ? () => invitePartner.mutate({
+                    financeContactId: selectedPartner.id,
+                    resend: partnerAccess === 'invited',
+                  })
+                  : undefined}
+                onReinstate={() => reinstatePartner.mutate(selectedPartner.id)}
+              />
             ) : null}
             {duplicates.length > 0 ? (
               <Alert>
@@ -885,21 +898,53 @@ export default function AgreementWizard() {
                   Send into the Finance Partner Portal for secure review, acceptance and electronic
                   execution. The executed copy returns to the Command Centre automatically.
                 </p>
+                {/* The agreement no longer waits for the partner's login. An
+                    issue is addressed to the partner ORGANISATION, which is how
+                    the portal resolves it too, so it can be sent first and be
+                    waiting when they activate. Saying exactly that beats a
+                    disabled button and a sentence about what is unavailable. */}
+                {partnerAccess !== 'active' && !digitalIssueBlocked ? (
+                  <p className="mt-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      {selectedPartner?.company_name || 'This partner'} cannot sign in yet.
+                    </span>{' '}
+                    You can still send it. The agreement is held in their portal and they are
+                    notified the moment they activate their account — they review, request changes
+                    or execute it after accepting the AML/CTF compliance agreement, exactly as any
+                    other partner does.
+                  </p>
+                ) : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => submitForReview(false)}
                     disabled={transition.isPending || recordReview.isPending || issueToPartner.isPending}>
                     Submit for internal review
                   </Button>
                   <Button size="sm" variant="outline"
-                    disabled={!validation.ok || !selectedPartner?.portal_connected
+                    disabled={!validation.ok || digitalIssueBlocked
                       || transition.isPending || recordReview.isPending || issueToPartner.isPending}
                     onClick={() => submitForReview(true)}>
                     {issueToPartner.isPending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-                    Approve & send now
+                    {partnerAccess === 'active' ? 'Approve & send now' : 'Approve & send — waits for them'}
                   </Button>
+                  {selectedPartner && partnerAccess !== 'active' && partnerAccess !== 'revoked'
+                    && selectedPartner.email ? (
+                      <Button size="sm" variant="ghost" disabled={partnerAccessBusy}
+                        onClick={() => invitePartner.mutate({
+                          financeContactId: selectedPartner.id,
+                          resend: partnerAccess === 'invited',
+                        })}>
+                        {partnerAccessBusy
+                          ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          : <Mail className="mr-1.5 h-3.5 w-3.5" />}
+                        {partnerAccess === 'invited' ? 'Resend portal invitation' : 'Invite to the portal'}
+                      </Button>
+                    ) : null}
                 </div>
-                {!selectedPartner?.portal_connected ? (
-                  <p className="mt-2 text-[11px] text-warning">Digital issue needs a partner portal login.</p>
+                {digitalIssueBlocked ? (
+                  <p className="mt-2 text-[11px] text-destructive">
+                    {selectedPartner?.company_name || 'This partner'} has had their portal access
+                    revoked. Reinstate it on the Finance Partner step, or use the download options.
+                  </p>
                 ) : null}
               </div>
               <div className="rounded-xl border border-border bg-card/50 p-4">
