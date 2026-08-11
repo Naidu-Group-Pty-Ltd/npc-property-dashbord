@@ -25,7 +25,7 @@ was never redeployed passes every static gate in this repository. See
 | 12 | CORS set to `*` | `createCorsHeaders` allowlist / `withRequestOrigin`; preview origins gated — **WP-19/24** | `check-cors-contract.mjs` (transport tracing **and** registry exposure class) | **NT-37**, **NT-41** |
 | 13 | No email verification | `*-verify` flows on all four portals | `check-baseline-invariants.mjs` — **WP-24** | — |
 | 14 | Predictable IDs, no ownership check | ~726 UUID PKs; ownership checked before the read | `check-client-portfolio-authz.mjs` | **NT-38** |
-| 15 | Saving the whole request body | `pickAllowed` + declared columns (`_shared/amlWritableColumns.ts`, `_shared/assetWritableColumns.ts`) — **WP-20/24** | `check-mass-assignment.mjs` (ratcheted at 15) | **NT-39** |
+| 15 | Saving the whole request body | `pickAllowed` + declared columns (`_shared/amlWritableColumns.ts`, `_shared/assetWritableColumns.ts`, `_shared/clientDataWritableColumns.ts`) — **WP-20/24/25** | `check-mass-assignment.mjs` — **0 sites, baseline 0** | **NT-39** |
 | 16 | Webhooks with no signature | HMAC or `clientState` on **every** webhook; each hardened away from "if configured" | `scan-auth-patterns.mjs`, `check-internal-call-signing.mjs` | NT-26, NT-27 *(unimplemented)* |
 | 17 | Stack traces in production | `_shared/errorResponse.ts` — opaque body, correlation id, detail to the log — **WP-18** | `check-error-disclosure.mjs` (zero tolerance at 5xx) | **NT-40** |
 | 18 | Outdated dependencies | Vendor-patched `xlsx` 0.20.3; Dependabot opens the PRs — **WP-21** | `dependency-audit.mjs` + `check-dependency-gate-level.mjs`, SBOM, osv-scanner | — |
