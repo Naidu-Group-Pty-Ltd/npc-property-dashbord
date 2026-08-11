@@ -213,9 +213,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    const requested: string[] | undefined = body?.states;
+    // `body` is parsed JSON, i.e. `unknown` — narrow it rather than assert it.
+    // The old `const requested: string[] = body?.states` was both a type error
+    // and a runtime hazard: a caller sending `{"states":[1]}` reached
+    // `r.toUpperCase()` on a number and took the sweep down with a 500.
+    const rawStates: unknown = (body as Record<string, unknown> | null)?.states;
+    const requested = Array.isArray(rawStates)
+      ? rawStates.filter((r): r is string => typeof r === 'string').map((r) => r.toUpperCase())
+      : undefined;
     const states = (requested?.length
-      ? AUSTRALIAN_STATES.filter((s) => requested.map((r) => r.toUpperCase()).includes(s))
+      ? AUSTRALIAN_STATES.filter((s) => requested.includes(s))
       : AUSTRALIAN_STATES) as readonly AustralianState[];
 
     const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');

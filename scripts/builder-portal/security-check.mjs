@@ -153,9 +153,17 @@ check(
   'Builder login evaluates account state before proving the password');
 check(login.includes('GENERIC_AUTH_ERROR'),
   'Builder login does not use a single generic credential error');
+// The invariant is the ORDER — throttle, then look the account up — so that
+// enumeration cannot outrun the limiter. This used to assert on the raw
+// `check_and_bump_rate_limit` RPC name, which the function stopped calling
+// directly when it moved onto the shared `enforceAuthRateLimit` helper
+// (_shared/authRateLimit.ts, which calls `security_consume_rate_limit` and
+// falls back to that RPC). Asserting the old literal made a security
+// improvement read as a regression, so assert the helper instead — the same
+// thing `scripts/security/check-auth-rate-limit-coverage.mjs` looks for.
 check(
-  login.indexOf('check_and_bump_rate_limit') > 0
-  && login.indexOf('check_and_bump_rate_limit') < login.indexOf("from('builder_portal_users')"),
+  login.indexOf('enforceAuthRateLimit(') > 0
+  && login.indexOf('enforceAuthRateLimit(') < login.indexOf("from('builder_portal_users')"),
   'Builder login looks an account up before throttling');
 check(
   migrationCode.includes('consume_builder_portal_reset_attempt')

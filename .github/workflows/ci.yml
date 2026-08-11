@@ -263,6 +263,32 @@ jobs:
           node scripts/security/check-dependency-gate-level.mjs
           node scripts/security/test-registry-launch-gates.mjs
 
+      # WP-16: these twelve gates existed but were named by nothing — not this
+      # workflow, not package.json. Running them for the first time found four
+      # failures, two of them live defects (credentialed wildcard CORS on the
+      # push endpoints; solicitor portfolio reads that skipped the per-client
+      # permission matrix). A gate nobody runs still reads as coverage, which is
+      # worse than no gate at all.
+      - name: CORS, portal and per-domain authorization gates (WP-16)
+        run: |
+          node scripts/security/check-cors-contract.mjs
+          node scripts/security/check-client-portfolio-authz.mjs
+          node scripts/security/check-solicitor-intelligence-authz.mjs
+          node scripts/security/check-commercial-bc-ai-abuse-controls.mjs
+          node scripts/security/check-finance-ghl-metadata-boundary.mjs
+          node scripts/security/check-finance-handoff-authz.mjs
+          node scripts/security/check-finance-leaderboard-authz.mjs
+          node scripts/security/check-feedback-campaign-authz.mjs
+          node scripts/security/check-mfa-recovery-code-lifecycle.mjs
+          node scripts/security/check-webauthn-lifecycle-step-up.mjs
+          node scripts/solicitor-portal/security-check.mjs
+          node scripts/builder-portal/security-check.mjs
+
+      # And the gate that keeps the list above honest: every check-*.mjs must be
+      # reachable from CI, or it is dead weight pretending to be a control.
+      - name: Every security gate is wired (WP-16)
+        run: node scripts/security/check-gates-wired.mjs
+
       # The gates above assert their properties by matching source literals, so
       # a legitimate refactor can make one stop matching and a careless repair
       # can loosen it until it passes. This removes each control from a

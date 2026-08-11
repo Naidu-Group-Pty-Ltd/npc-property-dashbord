@@ -630,7 +630,7 @@ function agreementCentreCss(palette: ResolvedReportPalette, options: ReportDesig
     margin: 0;
     font-family: ${PRINT_STACK.display};
     font-size: ${pt(type.body + 1)};
-    color: ${palette.ink};
+    color: ${palette.bodyInk};
   }
   .agc-cover-foot { margin-top: 34mm; }
   .agc-cover-version {

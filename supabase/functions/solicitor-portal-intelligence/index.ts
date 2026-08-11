@@ -22,7 +22,9 @@ import {
   solicitorGovernanceError,
   resolveSolicitorMatterAccess,
   resolveMatterPermissions,
+  resolveClientPermissions,
   listAccessibleMatterIds,
+  listAssignedClientIds,
   logSolicitorActivity,
   requestIp,
   can,
@@ -114,13 +116,39 @@ Deno.serve(async (req) => {
       return { ok: true, matter, perms };
     };
 
-    /** All matters this solicitor may see, with client display names attached. */
+    /**
+     * All matters this solicitor may see, with client display names attached.
+     *
+     * Two independent checks, deliberately, in this order:
+     *
+     *  1. the **client** assignment matrix must grant `matters.view`, resolved
+     *     per client via `resolveClientPermissions`;
+     *  2. the matter must be in `accessibleMatterIds`, i.e. matter-level access.
+     *
+     * The second alone is not enough. `listAccessibleMatterIds` only applies a
+     * permission filter on its `SOLICITOR_MATTER_ACCESS_V1` path; its legacy
+     * fallback (flag set to `false`) returns every matter of every assigned
+     * client with no permission check at all, so a solicitor assigned to a
+     * client but denied `matters.view` would read the whole portfolio. Resolving
+     * the client matrix here keeps that fallback closed, and matches the
+     * repo-wide rule that a single access source is never the sole gate.
+     */
     const loadVisibleMatters = async () => {
       if (!accessibleMatterIds.length) return [] as any[];
+
+      const assignedClientIds = await listAssignedClientIds(supabase, me.id);
+      const visibleClientIds: string[] = [];
+      for (const clientId of assignedClientIds) {
+        const permissions = await resolveClientPermissions(supabase, me.id, clientId);
+        if (permissions && can(permissions, 'matters', 'view')) visibleClientIds.push(clientId);
+      }
+      if (!visibleClientIds.length) return [] as any[];
+
       const { data, error } = await supabase
         .from('legal_matters')
         .select(MATTER_SELECT)
         .in('id', accessibleMatterIds)
+        .in('client_id', visibleClientIds)
         .eq('firm_id', me.firm_id)
         .limit(1000);
       if (error) throw error;

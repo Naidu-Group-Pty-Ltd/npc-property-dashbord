@@ -1381,8 +1381,14 @@ Deno.serve(async (req) => {
       return createUnauthorizedResponse(authError, corsHeaders);
     }
 
+    // Named once, as in get-client-data and manage-bc-scenarios. The authz gate
+    // (scripts/security/check-client-portfolio-authz.mjs) asserts on the exact
+    // `canAccessClient(supabase, actor, clientId)` call, so the shape is not
+    // inlined at the call site.
+    const actor = { userId, authMethod };
+
     // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
-    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'borrowing-capacity');
+    const entitlement = await requireWorkspaceCapability(supabase, actor, 'borrowing-capacity');
     if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log(`[calculate-borrowing-capacity] Authenticated user: ${userId}`);
 
@@ -1395,7 +1401,7 @@ Deno.serve(async (req) => {
 
     // The service-role client bypasses RLS, so bind this request to a client
     // the authenticated actor owns or is assigned to before reading any data.
-    if (!await canAccessClient(supabase, { userId, authMethod }, clientId)) {
+    if (!await canAccessClient(supabase, actor, clientId)) {
       return new Response(
         JSON.stringify({ success: false, error: "Client not found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
