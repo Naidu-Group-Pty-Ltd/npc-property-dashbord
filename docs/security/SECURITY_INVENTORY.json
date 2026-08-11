@@ -604,6 +604,7 @@
       "market-updates-voice-transcribe/index.ts",
       "migration-dispatcher/index.ts",
       "render-commercial-capacity-pdf/index.ts",
+      "report-api-usage/index.ts",
       "report-qa/index.ts",
       "request-lead-magnet/index.ts",
       "resume-bulk-generation/index.ts",
