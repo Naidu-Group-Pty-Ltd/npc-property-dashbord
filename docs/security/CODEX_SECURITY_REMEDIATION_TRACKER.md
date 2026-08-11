@@ -330,7 +330,7 @@
       "source_fixed": true,
       "deployed": false,
       "live_negative_test": false,
-      "residual_risk": "Runner is wired and extended to 10 rows (NT-37..NT-40 added) but HAS NEVER BEEN RUN: docs/security/wp15-evidence/ does not exist and every live_negative_test flag in this file is still false. Needs SUPABASE_URL, SUPABASE_ANON_KEY and a genuine non-superadmin NON_SUPERADMIN_JWT on a production-verification environment. 26 of the 36 original matrix rows still need a portal session, provider fixtures or a second tenant."
+      "residual_risk": "Superseded in part by WP-26: the runner is now 17 rows (NT-20/21/26/27/29/30 added) and items 5/10/16/20 have live coverage for the first time. STILL NEVER RUN — docs/security/wp15-evidence/ does not exist and every live_negative_test flag in this file is still false. Needs SUPABASE_URL, SUPABASE_ANON_KEY and a genuine non-superadmin NON_SUPERADMIN_JWT on a production-verification environment. The rows beyond those 17 still need a portal session, provider fixtures or a second tenant."
     },
     {
       "finding_id": "WP-24-CLOSING-THE-LIST",

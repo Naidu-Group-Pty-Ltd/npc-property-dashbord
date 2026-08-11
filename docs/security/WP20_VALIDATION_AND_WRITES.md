@@ -99,6 +99,12 @@ remaining 51 each need a per-table decision about which columns are legitimately
 writable, which is product knowledge and not one change. New sites fail
 immediately; the backlog is visible and capped.
 
+> **Superseded.** WP-20 took this to 15, and
+> [WP-25](./WP25_MASS_ASSIGNMENT_TO_ZERO.md) took it to **0** — the baseline now
+> reads zero, so the ratchet behaves as a zero-tolerance gate without having
+> been rewritten as one. The figures above are what this work package measured,
+> kept because the rest of this document explains them.
+
 It follows bare-identifier aliases before deciding a value is request-derived.
 The first version did not, and its own negative test —
 `const alertRow = a;` where `a = body.alert` — walked straight through it. That
