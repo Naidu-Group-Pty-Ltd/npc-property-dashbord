@@ -69,6 +69,22 @@ The 70 `portal-authenticated` functions remain per-function work. Those sit
 behind a session, a CSRF guard and in most cases a size bound already, so they
 are a different risk from an endpoint anyone on the internet can post to.
 
+## The one measurement that qualifies every row above
+
+**No edge-function change in this programme is deployed.** Measured on
+11 August 2026, not inferred: the most recent deploy of any function on the
+project is **05:48Z**, before this session's first merge landed at 06:26Z.
+
+The cause is single and fixable. `deploy-supabase-functions.yml` has no
+`SUPABASE_ACCESS_TOKEN`, so every run takes its report-and-stop path — which
+stays green by design. On the WP-28 merge commit its `Deploy` step is recorded
+as **skipped**.
+
+So items 12, 15, 17 and the edge-function half of item 7 read "closed" above
+because the control is in `main` and CI keeps it there. In production they are
+whatever was last deployed. Set the secret in Settings → Secrets → Actions and
+re-run the workflow; deploying every function is idempotent.
+
 ## Three things this table cannot show
 
 **Three deployed auth endpoints had no source in this repository — now they
