@@ -48,6 +48,29 @@ export default defineConfig({
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+
+      // Edge functions are Deno modules, and several of them are imported by
+      // tests under `src/` — the report design system is shared source, not a
+      // copy. Deno addresses packages as `npm:pkg@version` or
+      // `https://esm.sh/pkg@version`; Vite cannot resolve either, so a single
+      // module reached transitively fails the whole suite with
+      // "Failed to resolve import … Does the file exist?".
+      //
+      // That is what `src/lib/reportDesign/__tests__/{conformance,provenance}.spec.ts`
+      // hit through `_shared/meteredFetch.ts`, taking the `verify` job — and with
+      // it every step after it, including `npm run build` — red on main.
+      //
+      // Mapping the specifier onto the installed package is correct rather than
+      // a shim: `@supabase/supabase-js` is a real dependency here at a compatible
+      // version, and edge functions resolve the same library from the registry at
+      // deploy time. Scoped names are matched first so `@scope/name` keeps its
+      // slash.
+      { find: /^npm:(@[^/]+\/[^@]+)@.+$/, replacement: "$1" },
+      { find: /^npm:([^@][^@]*)@.+$/, replacement: "$1" },
+      { find: /^https:\/\/esm\.sh\/(@[^/]+\/[^@]+)@[^/]+$/, replacement: "$1" },
+      { find: /^https:\/\/esm\.sh\/([^@/][^@]*)@[^/]+$/, replacement: "$1" },
+    ],
   },
 });

@@ -576,6 +576,7 @@
       "regenerate-report-qualitative/index.ts"
     ],
     "requestSecurity.ts": [
+      "_shared/errorResponse.ts",
       "agent-planner/index.ts",
       "client-legal-workspace/index.ts",
       "commercial-bc-scenario-agent/index.ts",
@@ -588,6 +589,7 @@
       "finance-portal-batch9-10/index.ts",
       "finance-portal-briefing-runner/index.ts",
       "google-fonts-catalog/index.ts",
+      "google-places-autocomplete/index.ts",
       "market-news-archive-v2/index.ts",
       "market-qa-digest-runner/index.ts",
       "market-qa-quality-report/index.ts",
@@ -603,6 +605,7 @@
       "migration-dispatcher/index.ts",
       "render-commercial-capacity-pdf/index.ts",
       "report-qa/index.ts",
+      "request-lead-magnet/index.ts",
       "resume-bulk-generation/index.ts",
       "resume-investment-reports/index.ts",
       "security-step-up/index.ts",
