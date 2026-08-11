@@ -154,17 +154,30 @@ export default function MarketUpdates() {
   // Shadow counters live on the ingestion response rather than the run row, so the
   // last run's validation result is held alongside it.
   const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
-  // Held items live in the main feed behind a scope chip rather than a modal —
-  // the tiered publication policy leaves far fewer of them, and the ones that
-  // remain are managed in place.
+  // There is no Held tab any more: every classified item belongs in the one
+  // published feed. Anything the classifier held is (a) merged into the feed
+  // immediately so the reader never waits, and (b) promoted server-side through
+  // the existing audited publish path, so the database matches what is shown.
   const [heldUpdates, setHeldUpdates] = useState<MarketUpdate[]>([]);
-  const [feedScope, setFeedScope] = useState<'published' | 'held'>('published');
+  const [promotingHeld, setPromotingHeld] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
 
 
   const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
     ? error.issue
     : { stage:'database', code:'unknown', message:'Some Market News Feed data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
+
+  // Published rows plus anything still held, de-duplicated by id and ordered by
+  // recency — one list for counts, filters, KPIs and the feed itself.
+  const mergeFeed = (published: MarketUpdate[], held: MarketUpdate[]): MarketUpdate[] => {
+    const byId = new Map<string, MarketUpdate>();
+    for (const item of [...published, ...held]) if (!byId.has(item.id)) byId.set(item.id, item);
+    return [...byId.values()].sort((a, b) => {
+      const at = new Date(a.source_published_at ?? a.ingested_at).getTime();
+      const bt = new Date(b.source_published_at ?? b.ingested_at).getTime();
+      return bt - at;
+    });
+  };
 
   const loadUpdates = async () => {
     setLoading(true);
@@ -173,18 +186,21 @@ export default function MarketUpdates() {
       fetchMarketSourceHealth(),
       fetchMarketUpdates({ status:'candidate', limit:100 }),
     ]);
-    if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
-    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    const held = heldResult.status === 'fulfilled' ? heldResult.value : [];
     // Held items are supplementary: a failure there must not blank the feed.
-    if (heldResult.status === 'fulfilled') setHeldUpdates(heldResult.value);
+    setHeldUpdates(held);
+    if (updatesResult.status === 'fulfilled') setUpdates(mergeFeed(updatesResult.value, held));
+    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
     const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
     setDataIssue(failure ? issueFrom(failure.reason) : null);
     setLoading(false);
     return {
-      updates: updatesResult.status === 'fulfilled' ? updatesResult.value : null,
+      updates: updatesResult.status === 'fulfilled' ? mergeFeed(updatesResult.value, held) : null,
       health: healthResult.status === 'fulfilled' ? healthResult.value : null,
+      held,
     };
   };
+
 
   const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
     try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
