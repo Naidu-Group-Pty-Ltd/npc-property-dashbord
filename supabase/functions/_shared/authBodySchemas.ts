@@ -85,14 +85,14 @@ const actionField = z.string().max(64);
 export const PortalLoginRequest = z.object({
   email: optionalField(emailField),
   password: optionalField(passwordField),
-  turnstile_token: optionalField(tokenField),
+  turnstile_token: optionalField(turnstileTokenField),
 });
 
 /** `{ username, password, turnstile_token }` — the staff console login. */
 export const StaffLoginRequest = z.object({
   username: optionalField(z.string().max(256)),
   password: optionalField(passwordField),
-  turnstile_token: optionalField(tokenField),
+  turnstile_token: optionalField(turnstileTokenField),
 });
 
 /** `{ email }` — forgot-password, all four portals. */
