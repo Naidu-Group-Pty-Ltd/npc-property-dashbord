@@ -35,6 +35,7 @@ import {
   agreementDispositionFromRow,
   templateKeyForDirection,
   agreementTemplate,
+  type AgreementDelivery,
   type AgreementStatus,
   type AgreementTemplateKey,
 } from '@/lib/agreements';
@@ -339,6 +340,21 @@ export default function AgreementCentre() {
                           </TableCell>
                           <TableCell>
                             <AgreementStatusBadge status={agreement.status as AgreementStatus} />
+                            {/* "Partner Review" reads the same whether the
+                                partner is reading it or cannot sign in to
+                                reach it. Without this the register cannot
+                                distinguish a partner who is slow from one who
+                                was never able to open the document. */}
+                            {(agreement as { delivery?: AgreementDelivery }).delivery === 'awaiting_activation' ? (
+                              <span className="mt-1 block text-[10px] font-medium uppercase tracking-wider text-warning">
+                                Awaiting activation
+                              </span>
+                            ) : null}
+                            {(agreement as { delivery?: AgreementDelivery }).delivery === 'access_revoked' ? (
+                              <span className="mt-1 block text-[10px] font-medium uppercase tracking-wider text-destructive">
+                                Partner access revoked
+                              </span>
+                            ) : null}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {executionSummary(agreement)}

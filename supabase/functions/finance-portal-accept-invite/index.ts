@@ -4,6 +4,7 @@ import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.t
 import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
 import { parseJsonBody } from '../_shared/validate.ts';
 import { AcceptInviteRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
+import { deliverPendingAgreementNotifications } from "../_shared/agreements/pendingDelivery.ts"
 
 const SESSION_HOURS = 12;
 
@@ -135,6 +136,15 @@ Deno.serve(async (req) => {
       action: 'invite_accepted',
       entity_type: 'finance_portal_user',
       entity_id: portalUser.id,
+    });
+
+    // Anything issued to this organisation before it had a login. The
+    // notification could not be addressed at the time — there was no row to
+    // address it to — so this is the moment it becomes deliverable. Idempotent
+    // and best-effort: activation must succeed regardless.
+    await deliverPendingAgreementNotifications(supabase, {
+      portalUserId: portalUser.id,
+      financeContactId: portalUser.finance_contact_id,
     });
 
     // A Finance Portal session must be written into the Finance Portal cookie.

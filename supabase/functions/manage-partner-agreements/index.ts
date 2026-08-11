@@ -63,6 +63,10 @@ import {
   contentOverridesFromValues,
   listAgreementAmendments,
   AGREEMENT_CENTRE_DOCUMENT_REVISION,
+  agreementDelivery,
+  partnerIssueGate,
+  partnerNotificationsAddressable,
+  partnerPortalAccess,
 } from '../_shared/agreements/index.pure.ts';
 import {
   captureBrandSnapshot,
@@ -210,7 +214,22 @@ async function logEvent(
   });
 }
 
-/** In-app notification to the partner org's portal login, if it has one. */
+/** The `finance_portal_users` row for a partner organisation, or null. */
+async function loadPortalUserRow(supabase: any, financeContactId: string | null | undefined) {
+  if (!financeContactId) return null;
+  const { data } = await supabase
+    .from('finance_portal_users')
+    .select('id, email, is_active, revoked_at, password_hash, invite_accepted_at, invite_sent_at, invite_token_expires_at')
+    .eq('finance_contact_id', financeContactId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+/**
+ * In-app notification to the partner org's portal login, if there is a row to
+ * address. An invited partner counts; one with no row at all is picked up by
+ * the activation sweep instead.
+ */
 async function notifyPartner(
   supabase: any,
   financeContactId: string | null | undefined,
@@ -218,12 +237,14 @@ async function notifyPartner(
 ) {
   try {
     if (!financeContactId) return;
-    const { data: portalUser } = await supabase
-      .from('finance_portal_users')
-      .select('id')
-      .eq('finance_contact_id', financeContactId)
-      .eq('is_active', true)
-      .maybeSingle();
+    const row = await loadPortalUserRow(supabase, financeContactId);
+    // `invited` is addressable: the row exists, so the notification has
+    // somewhere to live and the partner meets it on first sign-in. It used to
+    // require `is_active`, which is set when the invitation is SENT — so this
+    // filtered on the wrong thing in both directions. When there is no row at
+    // all there is nothing to reference, and activation sweeps for whatever was
+    // issued in the meantime (`_shared/agreements/pendingDelivery.ts`).
+    const portalUser = partnerNotificationsAddressable(partnerPortalAccess({ row })) ? row : null;
     if (!portalUser?.id) return;
     await supabase.from('finance_portal_notifications').insert({
       portal_user_id: portalUser.id,
@@ -329,7 +350,31 @@ Deno.serve(async (req) => {
         .from(TABLE).select('id', { count: 'exact', head: true })
         .not('archived_at', 'is', null);
 
-      return json({ agreements: data ?? [], archived_count: archivedCount ?? 0 }, corsHeaders);
+      // Which of these the counterparty can actually reach. An agreement issued
+      // to a partner who cannot sign in yet reads as "Partner Review" like any
+      // other, and the register is the one place somebody would notice a whole
+      // set of them sitting undelivered — so the reach travels with the list
+      // rather than being one page-open away, each.
+      const contactIds = [...new Set((data ?? [])
+        .map((row: any) => row.finance_agent_contact_id).filter(Boolean))] as string[];
+      const accessByContact = new Map<string, ReturnType<typeof partnerPortalAccess>>();
+      if (contactIds.length > 0) {
+        const { data: portalUsers } = await supabase
+          .from('finance_portal_users')
+          .select('finance_contact_id, is_active, revoked_at, password_hash, invite_accepted_at, invite_sent_at')
+          .in('finance_contact_id', contactIds);
+        for (const row of portalUsers ?? []) {
+          accessByContact.set(row.finance_contact_id, partnerPortalAccess({ row }));
+        }
+      }
+
+      return json({
+        agreements: (data ?? []).map((row: any) => {
+          const access = accessByContact.get(row.finance_agent_contact_id) ?? 'none';
+          return { ...row, partner_portal_access: access, delivery: agreementDelivery(row.issued_at, access) };
+        }),
+        archived_count: archivedCount ?? 0,
+      }, corsHeaders);
     }
 
     // ─── GET (with events, versions, reviews, change requests, signatures) ──
@@ -360,7 +405,16 @@ Deno.serve(async (req) => {
           .eq('agreement_id', id).order('signed_at', { ascending: true }),
       ]);
 
+      // Can the counterparty reach this? Independent of the lifecycle status
+      // and derived on every read, because it changes when the partner
+      // activates rather than when the agreement moves.
+      const partnerAccess = partnerPortalAccess({
+        row: await loadPortalUserRow(supabase, agreement.finance_agent_contact_id),
+      });
+
       return json({
+        partner_portal_access: partnerAccess,
+        delivery: agreementDelivery(agreement.issued_at as string | null, partnerAccess),
         agreement,
         events: events.data ?? [],
         versions: rowChain.data ?? [],
@@ -387,13 +441,16 @@ Deno.serve(async (req) => {
         .order('company', { ascending: true, nullsFirst: false });
       if (error) throw error;
 
-      // Which partners can actually receive a digital issue — an active portal
-      // login. Surfaced up front so the wizard says so before step 8, not after.
+      // Where each partner stands with the portal, surfaced at step 2 rather
+      // than discovered at step 8. Four states, not a boolean: `is_active` is
+      // set the moment an invitation is SENT, so it said "connected" about
+      // somebody who had never opened the email and could not sign in.
       const { data: portalUsers } = await supabase
         .from('finance_portal_users')
-        .select('finance_contact_id')
-        .eq('is_active', true);
-      const connected = new Set((portalUsers ?? []).map((u: any) => u.finance_contact_id));
+        .select('finance_contact_id, is_active, revoked_at, password_hash, invite_accepted_at, invite_sent_at');
+      const accessByContact = new Map<string, ReturnType<typeof partnerPortalAccess>>(
+        (portalUsers ?? []).map((row: any) => [row.finance_contact_id, partnerPortalAccess({ row })]),
+      );
 
       return json({
         partners: (data ?? []).map((partner: any) => ({
@@ -406,7 +463,10 @@ Deno.serve(async (req) => {
           gst_registered: partner.gst_registered ?? null,
           default_commission_rate_pct: partner.default_commission_rate_pct ?? null,
           default_commission_basis: partner.default_commission_basis ?? null,
-          portal_connected: connected.has(partner.id),
+          portal_access: accessByContact.get(partner.id) ?? 'none',
+          // Kept for a bundle older than this deployment, and now honest: it
+          // means "can sign in", which is what every reader assumed it meant.
+          portal_connected: (accessByContact.get(partner.id) ?? 'none') === 'active',
         })),
       }, corsHeaders);
     }
@@ -447,6 +507,7 @@ Deno.serve(async (req) => {
           email: data.email ?? null,
           phone: null,
           abn: data.abn ?? null,
+          portal_access: 'none',
           portal_connected: false,
         },
       }, corsHeaders);
@@ -703,17 +764,16 @@ Deno.serve(async (req) => {
         return json({ error: 'partner_not_linked', message: 'Link a finance partner record before issuing.' }, corsHeaders, 422);
       }
 
-      const { data: portalUser } = await supabase
-        .from('finance_portal_users')
-        .select('id, email')
-        .eq('finance_contact_id', existing.finance_agent_contact_id)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (!portalUser?.id) {
-        return json({
-          error: 'partner_portal_not_connected',
-          message: 'This partner has no active Finance Portal login. Invite them to the portal first, or use the download options instead.',
-        }, corsHeaders, 422);
+      // An agreement is addressed to the partner ORGANISATION, and the portal
+      // resolves what a partner may see by that same id — so a document issued
+      // before anybody has a login is already addressed correctly, it is just
+      // unread. Issue proceeds for `none` and `invited`; only a deliberate
+      // revocation refuses, because issuing into it would quietly contradict a
+      // decision somebody made. See `_shared/agreements/partnerAccess.pure.ts`.
+      const access = partnerPortalAccess({ row: await loadPortalUserRow(supabase, existing.finance_agent_contact_id) });
+      const gate = partnerIssueGate(access);
+      if (!gate.ok) {
+        return json({ error: gate.reason, message: gate.message }, corsHeaders, 422);
       }
 
       // Server-side validation again at the boundary that matters most.
@@ -835,7 +895,17 @@ Deno.serve(async (req) => {
         console.warn('[partner-agreements] issued PDF deferred to first download:', e instanceof Error ? e.message : e);
       }
 
-      return json({ agreement: updated, version }, corsHeaders);
+      // Whether the partner can actually open what was just sent. The caller
+      // needs this to say "issued" or "issued and waiting for them to
+      // activate", which are different enough that guessing is not acceptable.
+      const delivery = agreementDelivery(updated.issued_at as string | null, access);
+
+      return json({
+        agreement: updated,
+        version,
+        partner_portal_access: access,
+        delivery,
+      }, corsHeaders);
     }
 
     // ─── WITHDRAW (before execution) ────────────────────────

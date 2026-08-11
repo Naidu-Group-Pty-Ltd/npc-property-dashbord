@@ -30,6 +30,7 @@ import {
 import { toast } from 'sonner';
 import {
   AGREEMENT_STATUS_LABELS,
+  agreementDeliveryNote,
   agreementDispositionFromRow,
   agreementTemplate,
   templateKeyForDirection,
@@ -43,6 +44,7 @@ import {
   downloadAgreementDocx,
   downloadAgreementPdf,
   useIssuerDefaults,
+  usePartnerPortalAccess,
 } from '@/hooks/useAgreementCentre';
 import { loadDocxLogo } from '@/lib/agreements/docx';
 import { useBrand } from '@/branding/BrandProvider';
@@ -111,6 +113,15 @@ export default function AgreementCentreDetail() {
   );
 
   const openRequests = (data?.change_requests ?? []).filter((request) => request.status === 'open');
+
+  // Whether the counterparty can actually reach this. Derived server-side and
+  // absent on an older deployment, in which case the banner simply does not
+  // appear — a missing field must not become a false alarm.
+  const partnerAccess = data?.partner_portal_access ?? 'active';
+  const delivery = data?.delivery ?? 'delivered';
+  const deliveryNote = data?.delivery ? agreementDeliveryNote(data.delivery) : '';
+  const { invite: invitePartner, reinstate: reinstatePartner } = usePartnerPortalAccess();
+  const partnerAccessBusy = invitePartner.isPending || reinstatePartner.isPending;
 
   /**
    * What the issued copy actually is, which depends on whether anybody has
@@ -420,6 +431,32 @@ export default function AgreementCentreDetail() {
             . It is of no effect and cannot be executed or reopened.
             {agreement.void_reason ? ` Reason: ${agreement.void_reason}` : ''}
           </p>
+        </div>
+      ) : null}
+
+      {/* "Awaiting partner" and "awaiting a partner who cannot open it" look
+          identical in the status badge and mean opposite things about whose
+          move it is. An agreement can sit here for a fortnight while somebody
+          waits for a reply that was never possible. */}
+      {deliveryNote ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-foreground">{deliveryNote}</p>
+          {agreement.finance_agent_contact_id ? (
+            <Button
+              variant="outline" size="sm" className="shrink-0" disabled={partnerAccessBusy}
+              onClick={() => (delivery === 'access_revoked'
+                ? reinstatePartner.mutate(agreement.finance_agent_contact_id as string)
+                : invitePartner.mutate({
+                  financeContactId: agreement.finance_agent_contact_id as string,
+                  resend: partnerAccess === 'invited',
+                }))}
+            >
+              {partnerAccessBusy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+              {delivery === 'access_revoked'
+                ? 'Reinstate access'
+                : partnerAccess === 'invited' ? 'Resend invitation' : 'Invite to portal'}
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

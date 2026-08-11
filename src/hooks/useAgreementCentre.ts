@@ -13,6 +13,8 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
 import {
   agreementRenderServiceState,
+  type AgreementDelivery,
+  type PartnerPortalAccess,
   projectFieldValues,
   rowPatchFromValues,
   templateKeyForDirection,
@@ -93,6 +95,9 @@ export interface AgreementDetailPayload {
   reviews: AgreementReview[];
   change_requests: AgreementChangeRequest[];
   signatures: AgreementSignatureRow[];
+  /** Whether the counterparty can reach this. Absent on an older deployment. */
+  partner_portal_access?: PartnerPortalAccess;
+  delivery?: AgreementDelivery;
 }
 
 export interface IssuerDefaults {
@@ -112,7 +117,19 @@ export interface PartnerOption {
   email: string | null;
   phone: string | null;
   abn: string | null;
+  /**
+   * Where this partner stands with the portal. Absent from a deployment older
+   * than this bundle, so callers fall back through `portal_connected` — which
+   * used to mean "invited or better" and now means "can sign in".
+   */
+  portal_access?: PartnerPortalAccess;
   portal_connected: boolean;
+}
+
+/** The four states, with the old boolean as the fallback. */
+export function partnerAccessOf(partner: PartnerOption | null | undefined): PartnerPortalAccess {
+  if (!partner) return 'none';
+  return partner.portal_access ?? (partner.portal_connected ? 'active' : 'none');
 }
 
 export interface ValidationItem {
@@ -218,6 +235,68 @@ export function useAgreementPartnerOptions() {
   });
 }
 
+/**
+ * Give a partner their portal access without leaving the agreement.
+ *
+ * The invite function already existed, behind the Finance Portal admin screen.
+ * Sending an agreement to a partner who has never logged in therefore meant
+ * abandoning a half-built agreement, finding them in another section, inviting
+ * them, and coming back — which is why the wizard's dead end was worth removing
+ * on both sides: the agreement no longer waits for the invitation, and the
+ * invitation no longer waits for a different page.
+ *
+ * `reinstate` is here for the one state that still blocks a digital issue.
+ */
+export function usePartnerPortalAccess() {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'partners'] });
+    queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'detail'] });
+  };
+
+  const invite = useMutation({
+    mutationFn: async (params: { financeContactId: string; resend?: boolean }) => {
+      const { data, error } = await invokeSecureFunction('finance-portal-invite', {
+        action: 'invite',
+        finance_contact_id: params.financeContactId,
+        resend_invite: params.resend === true,
+        invite_mode: 'set_password_link',
+      });
+      if (error) throw new Error(error.message);
+      if ((data as { error?: string } | null)?.error) {
+        throw new Error((data as { error: string }).error);
+      }
+      return data as { message?: string; invite_link?: string; email_sent?: boolean };
+    },
+    onSuccess: (result) => {
+      refresh();
+      toast.success(result?.email_sent === false
+        ? 'Invite created, but the email did not send — share the link from the Finance Portal admin screen.'
+        : result?.message || 'Portal invitation sent.');
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : 'The invitation could not be sent.');
+    },
+  });
+
+  const reinstate = useMutation({
+    mutationFn: async (financeContactId: string) => {
+      const { data, error } = await invokeSecureFunction('finance-portal-invite', {
+        action: 'reinstate',
+        finance_contact_id: financeContactId,
+      });
+      if (error) throw new Error(error.message);
+      return data as { message?: string };
+    },
+    onSuccess: () => { refresh(); toast.success('Portal access reinstated.'); },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : 'Access could not be reinstated.');
+    },
+  });
+
+  return { invite, reinstate };
+}
+
 export function useDuplicateCheck(financeContactId: string | null, direction: string | null) {
   return useQuery({
     queryKey: ['agreement-centre', 'duplicates', financeContactId, direction],
@@ -305,10 +384,24 @@ export function useAgreementCentreMutations() {
 
   const issueToPartner = useMutation({
     mutationFn: (id: string) =>
-      call<{ agreement: PartnerAgreement; version: AgreementIssuedVersion }>({ action: 'issue_to_partner', id }),
+      call<{
+        agreement: PartnerAgreement;
+        version: AgreementIssuedVersion;
+        delivery?: AgreementDelivery;
+      }>({ action: 'issue_to_partner', id }),
     onSuccess: (res) => {
       invalidate(res.agreement.id);
-      toast.success(`Version ${res.version.version_label} issued to the partner portal`);
+      // "Issued" and "issued to somebody who cannot open it yet" are different
+      // enough outcomes that one toast for both would be a small lie at the
+      // exact moment a person is deciding whether to chase the partner.
+      if (res.delivery === 'awaiting_activation') {
+        toast.success(
+          `Version ${res.version.version_label} issued — held for the partner until they activate `
+          + 'their portal account.',
+        );
+      } else {
+        toast.success(`Version ${res.version.version_label} issued to the partner portal`);
+      }
     },
     onError: showAgreementError,
   });
