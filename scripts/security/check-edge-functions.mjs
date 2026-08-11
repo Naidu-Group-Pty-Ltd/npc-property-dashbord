@@ -82,7 +82,8 @@ const plain = output.replace(/\[[0-9;]*m/g, '');
  * A resolution failure is not a type error and must never be baselined — it
  * means the check did not run, which is exactly the state this file was in.
  */
-const RESOLUTION_FAILURE = /^error: (Could not find|Failed resolving types|Relative import path|Module not found)/m;
+const RESOLUTION_FAILURE =
+  /^error: (Could not find|Failed resolving types|Relative import path|Module not found|Import '[^']*' failed)/m;
 if (RESOLUTION_FAILURE.test(plain)) {
   console.error('Edge Function check could not resolve its dependencies — it did not type-check anything:\n');
   console.error(plain.split('\n').filter((line) => line.startsWith('error:')).slice(0, 5).join('\n'));
@@ -102,6 +103,33 @@ for (const block of plain.split(/(?=^TS\d+ \[ERROR\])/m)) {
 
 const observed = Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
 const total = Object.values(observed).reduce((sum, n) => sum + n, 0);
+
+/**
+ * Deno failed, and produced no type errors while doing it. That is not a clean
+ * tree — it is a check that never ran.
+ *
+ * The named-pattern guard above has to predict how Deno phrases each failure,
+ * and it did not predict this one:
+ *
+ *     error: Import 'https://esm.sh/...' failed: 408 Request Timeout
+ *
+ * A transient registry blip therefore reported **0 errors across 421 entry
+ * points** and passed. Worse, `--update` would have banked that zero, freezing
+ * a gate that checks nothing into the repository as a perfect score. That was
+ * one command away from happening.
+ *
+ * This guard needs no such prediction. When there are real type errors Deno
+ * also exits non-zero, so the two cases are separated by whether anything was
+ * parsed out — not by the wording of the message.
+ */
+if (result.status !== 0 && total === 0) {
+  console.error(
+    `Edge Function check did not run: deno exited ${result.status} and reported no type errors.\n`
+    + 'That is a failure to type-check, not a clean tree — refusing to report (or bank) zero.\n',
+  );
+  console.error(plain.split('\n').filter((l) => l.startsWith('error:')).slice(0, 5).join('\n'));
+  process.exit(1);
+}
 
 if (update) {
   writeFileSync(BASELINE_PATH, `${JSON.stringify({

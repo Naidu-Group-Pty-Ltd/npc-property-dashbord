@@ -44,26 +44,16 @@
  * conflating them is how a schema ends up doubling as an access-control list.
  */
 import { enforceJsonBodyLimit, securityJsonError } from './requestSecurity.ts';
+import { DEFAULT_MAX_BODY_BYTES, SMALL_BODY_BYTES } from './bodyLimits.ts';
+
+
 
 /**
- * Default body ceiling when a call site does not name one. 256 KiB is well
- * above every JSON operation in this repo and well below anything that would
- * cost real memory in an isolate; a function with a genuinely larger payload
- * (a base64 upload, say) should pass its own and use `enforceBase64Limit`.
+ * Re-exported so existing call sites keep one import. The values live in
+ * `bodyLimits.ts`, which has no imports, so a schema module can reach them
+ * without dragging this file's `https://` dependencies into a unit test.
  */
-export const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-
-/**
- * The ceiling for a body that carries a handful of short strings — a session
- * token, an action name, a set of credentials. 16 KiB is three orders of
- * magnitude more than any real one.
- *
- * Kept here rather than imported from `authBodySchemas.ts` so this module has
- * no dependency on any particular domain; that file re-exports its own
- * `AUTH_MAX_BODY_BYTES` at the same value for call sites that read better
- * naming the class of endpoint they are on.
- */
-export const SMALL_BODY_BYTES = 16 * 1024;
+export { DEFAULT_MAX_BODY_BYTES, SMALL_BODY_BYTES };
 
 /** Minimal structural type so this module does not import zod itself. */
 export interface SchemaLike<T> {
@@ -123,6 +113,17 @@ export async function parseJsonBody<T>(
   const result = schema.safeParse(limited.value ?? {});
   if (!result.success) {
     const fields = issuePaths(result.error);
+    // Say so in the log, not only to the caller.
+    //
+    // A schema that is stricter than its clients rejects real traffic and looks
+    // from the outside like the endpoint being down. That happened: `.optional()`
+    // rejects a JSON `null`, four of the five logins send one, and every sign-in
+    // in the product answered 400 with nothing in the logs to say why. One line
+    // here names it in seconds.
+    //
+    // FIELDS only, never values — the same rule the response body follows, for
+    // the same reason: this runs on endpoints that take passwords.
+    console.warn('[validate.invalid_body]', JSON.stringify({ fields }));
     const body = {
       error: 'Invalid request',
       code: 'invalid_body',

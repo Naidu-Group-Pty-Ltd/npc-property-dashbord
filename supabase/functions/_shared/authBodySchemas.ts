@@ -29,19 +29,26 @@
  * out of the product. The blast radius of strictness is not the same in the two
  * places, so the setting is not either.
  *
- * Every field is `.optional()`. Presence is still the handler's business:
+ * Every field is `optionalField(...)`. Presence is still the handler's business:
  * `client-portal-login` answers `{ error: 'Email and password are required' }`
  * and four different clients read that string. Moving the presence check in here
  * would change that to `invalid_body` and break them for no security gain —
  * a missing password was never the risk. A password that arrives as
  * `{"$ne": null}` was, and that is what these reject.
  *
+ * `optionalField` rather than `.optional()`, and that distinction took four of
+ * the five logins down for real: `.optional()` accepts `undefined` and REJECTS
+ * `null`, while every login form here holds its CAPTCHA token as
+ * `useState<string | null>(null)` and sends it unconditionally. Read
+ * `_shared/schemaHelpers.ts` before adding a field.
+ *
  * Bounds are generous on purpose. 320 characters is the RFC 5321 maximum for an
  * address; bcrypt ignores everything past 72 bytes but rejecting a long
  * passphrase teaches people to pick shorter ones.
  */
 import { z } from 'npm:zod@3.25.76';
-import { SMALL_BODY_BYTES } from './validate.ts';
+import { SMALL_BODY_BYTES } from './bodyLimits.ts';
+import { optionalField } from './schemaHelpers.ts';
 
 /**
  * 16 KiB.
@@ -69,21 +76,21 @@ const actionField = z.string().max(64);
  * choice.
  */
 export const PortalLoginRequest = z.object({
-  email: emailField.optional(),
-  password: passwordField.optional(),
-  turnstile_token: tokenField.optional(),
+  email: optionalField(emailField),
+  password: optionalField(passwordField),
+  turnstile_token: optionalField(tokenField),
 });
 
 /** `{ username, password, turnstile_token }` — the staff console login. */
 export const StaffLoginRequest = z.object({
-  username: z.string().max(256).optional(),
-  password: passwordField.optional(),
-  turnstile_token: tokenField.optional(),
+  username: optionalField(z.string().max(256)),
+  password: optionalField(passwordField),
+  turnstile_token: optionalField(tokenField),
 });
 
 /** `{ email }` — forgot-password, all four portals. */
 export const ForgotPasswordRequest = z.object({
-  email: emailField.optional(),
+  email: optionalField(emailField),
 });
 
 /**
@@ -93,15 +100,15 @@ export const ForgotPasswordRequest = z.object({
  * value, and there is no length at which a longer one becomes meaningful.
  */
 export const ResetPasswordRequest = z.object({
-  action: actionField.optional(),
-  email: emailField.optional(),
-  otp: z.string().max(32).optional(),
-  new_password: passwordField.optional(),
+  action: optionalField(actionField),
+  email: optionalField(emailField),
+  otp: optionalField(z.string().max(32)),
+  new_password: optionalField(passwordField),
 });
 
 /** `{ action, token, password }` — accept-invite, all four portals. */
 export const AcceptInviteRequest = z.object({
-  action: actionField.optional(),
-  token: tokenField.optional(),
-  password: passwordField.optional(),
+  action: optionalField(actionField),
+  token: optionalField(tokenField),
+  password: optionalField(passwordField),
 });
