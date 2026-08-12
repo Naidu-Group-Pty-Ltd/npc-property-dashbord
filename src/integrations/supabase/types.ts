@@ -8127,6 +8127,7 @@ export type Database = {
       client_deals: {
         Row: {
           build_price: number | null
+          builder_invoice_current_payment_id: string | null
           cash_out_purpose: string | null
           cash_out_verified: boolean | null
           clawback_expiry_date: string | null
@@ -8174,6 +8175,7 @@ export type Database = {
         }
         Insert: {
           build_price?: number | null
+          builder_invoice_current_payment_id?: string | null
           cash_out_purpose?: string | null
           cash_out_verified?: boolean | null
           clawback_expiry_date?: string | null
@@ -8221,6 +8223,7 @@ export type Database = {
         }
         Update: {
           build_price?: number | null
+          builder_invoice_current_payment_id?: string | null
           cash_out_purpose?: string | null
           cash_out_verified?: boolean | null
           clawback_expiry_date?: string | null
@@ -8267,6 +8270,13 @@ export type Database = {
           valuation_date?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "client_deals_builder_invoice_current_payment_id_fkey"
+            columns: ["builder_invoice_current_payment_id"]
+            isOneToOne: false
+            referencedRelation: "build_progress_payments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "client_deals_client_id_fkey"
             columns: ["client_id"]
@@ -32642,6 +32652,7 @@ export type Database = {
           custom_css: string | null
           deprecated_at: string | null
           description: string | null
+          design_meta: Json
           engine: string
           family_id: string
           id: string
@@ -32685,6 +32696,7 @@ export type Database = {
           custom_css?: string | null
           deprecated_at?: string | null
           description?: string | null
+          design_meta?: Json
           engine?: string
           family_id?: string
           id?: string
@@ -32728,6 +32740,7 @@ export type Database = {
           custom_css?: string | null
           deprecated_at?: string | null
           description?: string | null
+          design_meta?: Json
           engine?: string
           family_id?: string
           id?: string
