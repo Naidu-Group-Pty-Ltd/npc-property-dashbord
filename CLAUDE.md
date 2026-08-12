@@ -224,6 +224,20 @@ deliberate revocation blocks a digital issue. And a notification raised before
 the portal user exists has nowhere to live, so activation sweeps for whatever
 was issued in the meantime rather than the issue trying to queue it.
 
+A partner asks for a change by **pinning it to the clause**, not by picking a
+section from a dropdown. Read
+[`ANNOTATIONS.md`](./docs/agreements/ANNOTATIONS.md) before touching
+`annotations.pure.ts` or the annotation layer. The anchor is the **same path an
+amendment writes to** (`contentOverrides.pure.ts`), so the request and the
+change answering it name the same node — and because both portals render one
+`DigitalAgreementView` and one `AnnotationRail`, the Command Centre seeing the
+partner's pins is structural rather than a second implementation. Two rules:
+**a stale anchor degrades to a list entry and is never dropped** (`anchor_label`
+is stored, never re-derived — re-pointing a commission comment at a termination
+clause is worse than no pin), and **the migration is optional** — the columns
+are probed, and without them the request still saves with its location in the
+comment.
+
 Getting the document *to* the partner is its own concern:
 [`SENDING.md`](./docs/agreements/SENDING.md). Two rules there. Issuing emails
 the partner as well as notifying the portal — it used to write one in-app
