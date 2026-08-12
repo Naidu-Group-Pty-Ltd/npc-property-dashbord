@@ -48,6 +48,35 @@ export type AgreementSkew = 'function_behind' | 'schema_behind' | null;
 
 const UNDEFINED_COLUMN = '42703';
 const UNDEFINED_TABLE = '42P01';
+/** Postgres: a NOT NULL column was sent an explicit null. */
+const NOT_NULL_VIOLATION = '23502';
+
+/**
+ * A required field was blanked, and Postgres rejected the whole statement.
+ *
+ * This is not deployment skew — both halves are current — but it reaches the
+ * user in the same useless shape, because the raw text has spaces in it and so
+ * survives the "a real sentence from the server" test below:
+ *
+ *   null value in column "principal_legal_name" of relation
+ *   "partner_agreements" violates not-null constraint
+ *
+ * Which names a column nobody has heard of, a table nobody has heard of, and
+ * gives no hint that the fix is to type something into a box. The two things
+ * worth saying are which field and that **nothing else saved either** — a
+ * constraint violation aborts the entire update, so every other edit in that
+ * step went with it, and a user who does not know that will not redo them.
+ */
+function notNullColumn(failure: AgreementApiFailure): string | null {
+  const message = String(failure.message ?? '');
+  if (failure.code !== NOT_NULL_VIOLATION
+    && !/violates not-null constraint/i.test(message)) return null;
+  const named = /null value in column "([^"]+)"/i.exec(message)?.[1] ?? null;
+  if (!named) return 'A required field';
+  // `principal_legal_name` → "Principal legal name". Enough to find the box.
+  const words = named.replace(/_/g, ' ').replace(/\babn\b/gi, 'ABN').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
 
 /** PostgREST reports a missing column by code, and sometimes only in prose. */
 function looksLikeMissingColumn(failure: AgreementApiFailure): boolean {
@@ -90,6 +119,13 @@ const SKEW_MESSAGES: Record<Exclude<AgreementSkew, null>, string> = {
 export function agreementErrorMessage(failure: AgreementApiFailure): string {
   const skew = detectSkew(failure);
   if (skew) return SKEW_MESSAGES[skew];
+
+  const required = notNullColumn(failure);
+  if (required) {
+    return `${required} cannot be left blank. Nothing on this step was saved — Postgres rejects `
+      + 'the whole update when a required field is cleared, so please re-check the other fields '
+      + 'before saving again.';
+  }
 
   const message = String(failure.message ?? '').trim();
   const code = String(failure.code ?? '').trim();

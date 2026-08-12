@@ -1,5 +1,21 @@
 # Agreement documents — white-label audit
 
+> **Follow-up, August 2026.** Dropping the `principal_legal_name` column
+> default did more than stop the wrong company appearing on other agencies'
+> contracts: it removed the thing that had been accidentally keeping a NOT NULL
+> column populated. The wizard's patch builder maps every empty field to
+> `null`, so from then on a blank issuer name failed the **entire** save with
+> `23502` — discarding every other edit in that step, and blocking the issue
+> that follows it. Three of them inside forty seconds in the production log,
+> reported as "agreements are not being issued to the finance portal".
+> Fixed by `NOT_NULL_COLUMNS` in `fields.pure.ts`, with the violation
+> translated into a readable sentence in `apiErrors.pure.ts`.
+>
+> The shape worth remembering: **a data-correctness fix exposed a latent write
+> bug that the wrong data had been masking.** Neither the migration nor the
+> patch builder was wrong on its own, and nothing in either diff hinted at the
+> other. When a column default goes, check what was relying on it.
+
 This product is sold to other agencies. Every name, ABN, email, phone and mark
 on a generated agreement must come from **that deployment's** settings. This
 records a line-by-line audit of the whole agreement path, what it found, and
