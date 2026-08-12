@@ -64,6 +64,7 @@ import {
   listAgreementAmendments,
   AGREEMENT_CENTRE_DOCUMENT_REVISION,
   agreementDelivery,
+  CHANGE_REQUEST_SECTIONS,
   partnerIssueGate,
   partnerNotificationsAddressable,
   partnerPortalAccess,
@@ -1139,6 +1140,11 @@ Deno.serve(async (req) => {
       if (!request) return json({ error: 'not_found' }, corsHeaders, 404);
       if (request.status !== 'open') return json({ error: 'already_resolved' }, corsHeaders, 409);
 
+      // Needed to address the partner: the notification is keyed to the
+      // organisation, not to whoever raised the request.
+      const { data: agreementRow } = await supabase.from(TABLE)
+        .select('finance_agent_contact_id').eq('id', id).maybeSingle();
+
       const { data, error } = await supabase.from(CHANGE_REQUESTS_TABLE).update({
         status: resolution,
         resolved_by: staffId(actorId),
@@ -1151,6 +1157,31 @@ Deno.serve(async (req) => {
       await logEvent(supabase, id, `change_request_${resolution}`, actorId, actorLabel,
         `Change request ${resolution}${resolution_note ? ` — ${resolution_note}` : ''}`,
         { request_id, section_key: request.section_key });
+
+      // Tell the partner. This was the one moment in the loop where somebody is
+      // explicitly blocked and waiting — they asked a question about a clause
+      // and cannot sensibly accept the agreement until it is answered — and it
+      // was the one moment that notified nobody. A resolved request was noticed
+      // only if a new version happened to follow it; a DECLINED one reached the
+      // partner never, because nothing else changes.
+      //
+      // The outcome is in the title rather than only the body: "answered" reads
+      // as agreement, and half of these are refusals.
+      const sectionLabel = CHANGE_REQUEST_SECTIONS
+        .find((section) => section.key === request.section_key)?.label ?? 'the agreement';
+      await notifyPartner(supabase, agreementRow?.finance_agent_contact_id, {
+        type: resolution === 'declined' ? 'change_request_declined' : 'change_request_resolved',
+        title: resolution === 'declined'
+          ? 'Your requested change was not accepted'
+          : 'Your requested change has been actioned',
+        body: `${sectionLabel}: ${resolution_note
+          ? String(resolution_note).slice(0, 300)
+          : (resolution === 'declined'
+            ? 'The issuer has responded without accepting the change.'
+            : 'The issuer has actioned your request.')}`,
+        link: `/finance/agreements/${id}`,
+        agreementId: id,
+      });
 
       return json({ change_request: data }, corsHeaders);
     }

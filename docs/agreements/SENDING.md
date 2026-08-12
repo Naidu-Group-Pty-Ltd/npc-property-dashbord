@@ -139,12 +139,72 @@ addressed to.
   that way, and sending a partner two copies is the worse error.
 - Ten extras, capped, with the overflow named rather than dropped silently.
 
+## The seams between the portals
+
+With the plumbing fixed, what remained were the joins — places where a message
+went out correctly and had nowhere useful to land, or where somebody was left
+waiting on an answer nobody told them had arrived. Three, all found by reading
+the production timeline of a live agreement rather than the code.
+
+### A change request was answered in silence
+
+`resolve_change_request` logged an event and returned. It notified nobody.
+
+That is the **one** state in the whole loop where a person is explicitly
+blocked: the partner has asked a question about a clause and cannot sensibly
+accept the agreement until it is answered. On the live agreement the resolution
+was noticed only because a new version happened to follow it 90 seconds later.
+A **declined** request changes nothing else at all, so it would have reached the
+partner never.
+
+It now notifies, and the outcome is in the title rather than buried in the body
+— "answered" reads as agreement, and half of these are refusals.
+
+### A deep link died at the front door
+
+`FinancePortalProtectedRoute` carefully threads `state.from` through the terms
+and onboarding gates so an interrupted partner is handed back to where they were
+going. It dropped it at sign-in — and sign-in is the gate that every link from
+*outside* the portal hits first.
+
+So every agreement email, which deep-links to `/finance/agreements/<id>`, put the
+partner on the dashboard to go looking. The one link most likely to be clicked
+was the one guaranteed not to work.
+
+The destination now travels the whole chain: guard → login → change-password →
+terms → onboarding → destination. Both entry points validate it against
+`/^\/finance(\/|$|\?)/` first; `from` is attacker-supplied in principle and an
+open redirect out of an authentication page is not worth the convenience.
+
+### The first screen did not mention agreements
+
+The Finance Portal dashboard showed settlement runways and document expiry and
+nothing about a document somebody was waiting on the partner to execute. The
+only signal was a number on the bell — and for three weeks even that was broken.
+
+`AgreementActionCard` puts the thing itself on the dashboard with its action
+attached. Two rules keep it from becoming furniture: it renders **nothing** when
+there is nothing to do, and what counts as "waiting on them" is
+`partnerAgreementAction().awaitingPartner` from the shared lifecycle module —
+which is deliberately **false** for `changes_requested`. Putting ACTION REQUIRED
+in front of somebody who is waiting on *our* answer is worse than saying nothing.
+
+That function is the partner-side counterpart to `AGREEMENT_PRIMARY_ACTIONS`,
+and lives beside it so the two are maintained together. A test asserts it
+answers for every status, and that it never marks a partner as owing an action
+on a status they cannot even see.
+
 ## Shipping
 
 Edge Functions, so [`DEPLOYMENT.md`](./DEPLOYMENT.md) applies. Three deploy
 together: `finance-portal-notifications` (the feed fix),
 `agreement-centre-render` (the send operation) and `manage-partner-agreements`
-(the issue email).
+(the issue email, and the change-request answer).
+
+Of the three seam fixes, only the change-request notification is server-side.
+The deep-link chain and the dashboard card ship on the site build, which deploys
+itself — so those work the moment they merge, whether or not the functions have
+gone out.
 
 **Also outstanding:** migration `20260717000000` has never been applied. Nothing
 here needs it — the code works either way — but until it is applied the strict
