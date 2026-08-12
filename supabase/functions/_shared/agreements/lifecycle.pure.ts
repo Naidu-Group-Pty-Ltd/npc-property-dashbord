@@ -92,6 +92,79 @@ export const AGREEMENT_PRIMARY_ACTIONS: Record<AgreementStatus, string> = {
   void: 'View Agreement',
 };
 
+/**
+ * The same question from the partner's side of the wall.
+ *
+ * `AGREEMENT_PRIMARY_ACTIONS` above answers "what does the issuer do next",
+ * and the Finance Portal had no equivalent — so a partner logging in met a
+ * list of documents with statuses on them and no indication which one was
+ * theirs to act on. `Partner Review` and `Partially Executed` look equally
+ * like something is happening; only one of them is waiting for them.
+ *
+ * `awaitingPartner` is the field that matters. It is what the dashboard counts
+ * to decide whether to interrupt somebody, and it is deliberately false for
+ * `changes_requested` — the partner asked for something and the ball is on our
+ * side, so chasing them for it would be both wrong and annoying.
+ */
+export type PartnerAgreementAction = 'review' | 'sign' | 'waiting_on_issuer' | 'none';
+
+export interface PartnerActionView {
+  action: PartnerAgreementAction;
+  /** What the button says. */
+  label: string;
+  /** One line on why this is in front of them. */
+  detail: string;
+  /** True when the partner is the one holding the agreement up. */
+  awaitingPartner: boolean;
+}
+
+export function partnerAgreementAction(status: AgreementStatus): PartnerActionView {
+  switch (status) {
+    case 'partner_review':
+      return {
+        action: 'review',
+        label: 'Review agreement',
+        detail: 'Read it, request changes, or accept it to move to signing.',
+        awaitingPartner: true,
+      };
+    case 'sent_for_signature':
+      return {
+        action: 'sign',
+        label: 'Sign agreement',
+        detail: 'You have accepted the terms — the agreement is ready for your signature.',
+        awaitingPartner: true,
+      };
+    case 'changes_requested':
+      return {
+        action: 'waiting_on_issuer',
+        label: 'View your request',
+        detail: 'Your requested changes are with the issuer. You will be notified when they respond.',
+        awaitingPartner: false,
+      };
+    case 'partially_signed':
+      return {
+        action: 'waiting_on_issuer',
+        label: 'View agreement',
+        detail: 'You have signed. Awaiting the counter-signature.',
+        awaitingPartner: false,
+      };
+    case 'active':
+      return {
+        action: 'none',
+        label: 'View executed agreement',
+        detail: 'Fully executed. Your copy is available to download.',
+        awaitingPartner: false,
+      };
+    default:
+      return {
+        action: 'none',
+        label: 'View agreement',
+        detail: 'No action is needed from you.',
+        awaitingPartner: false,
+      };
+  }
+}
+
 /** Statuses that count as "an agreement already in play" for duplicate alerts. */
 export const IN_FLIGHT_STATUSES: readonly AgreementStatus[] = [
   'pending_review', 'approved_for_issue', 'partner_review', 'changes_requested',

@@ -41,15 +41,36 @@ export function FinancePortalProtectedRoute({ children }: FinancePortalProtected
     );
   }
 
+  // The destination survives the login too, not only the gates below.
+  //
+  // Terms and onboarding have always handed the partner back to where they
+  // were going; sign-in threw it away, and sign-in is the gate that a link
+  // from OUTSIDE the portal always hits first. Every agreement email we send
+  // deep-links to `/finance/agreements/<id>`, so the one link the partner is
+  // most likely to click was the one guaranteed to drop them on the dashboard
+  // to go looking. Notifications are only as good as where they land.
   if (!user) {
-    return <Navigate to="/finance/login" replace />;
+    const intended = `${location.pathname}${location.search}`;
+    return (
+      <Navigate
+        to="/finance/login"
+        replace
+        state={GATE_PATHS.includes(location.pathname) ? undefined : { from: intended }}
+      />
+    );
   }
 
   // Force temp-password users to change password before accessing the portal
   if (user.must_change_password) {
     return location.pathname === '/finance/change-password'
       ? <>{children}</>
-      : <Navigate to="/finance/change-password" replace />;
+      : (
+        <Navigate
+          to="/finance/change-password"
+          replace
+          state={{ from: `${location.pathname}${location.search}` }}
+        />
+      );
   }
 
   // Version-aware where the server can be: a partner who accepted a superseded
