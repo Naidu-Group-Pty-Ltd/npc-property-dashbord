@@ -1,45 +1,48 @@
 /**
- * Investment Compass — design families.
+ * Investment Compass — the family model.
  *
- * ## What this module is
+ * ## Two halves, deliberately separated
  *
- * A transcription of the approved Claude Design catalogue's family model, in a
- * shape the seed builder can compile. The catalogue expresses a family as a
- * `base` manifest of ~21 keys plus, per variant, a sparse override object; the
- * resolved manifest for a template is `Object.assign({}, base, overrides)`.
- * That is reproduced exactly here, because it is what makes fifty masters
- * describable rather than fifty hand-drawn documents.
+ * **Transcribed** (in `families.generated.ts`, emitted from `source.json`):
+ * family key, name, note, faces, every manifest key and value, every variant's
+ * name, code, ground, density, architecture, recommended use, description and
+ * override set. Ten families × five variants is ~250 manifest entries, which is
+ * not a thing anyone transcribes by hand correctly — so it is mechanical, and a
+ * spec re-checks it against the source on every run.
  *
- * ## What is transcribed and what is interpreted
+ * **Measured** (this file): point sizes, margins and rhythm. The catalogue names
+ * typography as a preset (`cinzel_playfair_inter`) and spacing as a scale name
+ * (`generous`); the actual measurements exist only in the ten drawn archetype
+ * files. `TYPOGRAPHY` below records what each family's pages actually set, with
+ * the measurement beside each value.
  *
- * **Transcribed verbatim** from `Template Catalogue.dc.html`: family key, name,
- * note, faces, every manifest key and value, every variant's name, id, ground,
- * density, architecture, recommended use and description, and the exact
- * override sets. `assertManifestMatchesSource()` and the spec suite hold these
- * to the source.
+ * ## What a variant is
  *
- * **Interpreted**: the point sizes, margins and rhythm in `PRIVATE_BANKING_TYPE`
- * and `SPACING_SCALES`. The catalogue names typography as a preset
- * (`cinzel_playfair_inter`) and spacing as a scale name (`generous`); the actual
- * measurements come from the seven drawn A4 pages in
- * `Private Banking Archetypes.dc.html`, which is the only place they exist. Each
- * value below cites the archetype element it was measured from.
+ * A `base` manifest plus a sparse override object. `resolveManifest()` is the
+ * catalogue's own `Object.assign({}, base, overrides)`. That is what makes fifty
+ * masters describable rather than fifty hand-drawn documents — and it is why
+ * `templates.ts` holds ONE composition rather than fifty.
  *
- * ## Only one family is drawn
+ * ## Only the reference is drawn
  *
- * The catalogue marks archetype coverage `BUILT` for `axisIndex === 0` and
- * `MANIFEST` for the rest — so Chancery (`pb-01`) has seven composed pages and
- * `pb-02`…`pb-05` are specified as overrides on it. That is the source's stated
- * intent: "This is the family reference. The other four variants are expressed
- * as overrides on it." The builders in `privateBanking.ts` follow that: one
- * composition, parameterised by the resolved manifest.
+ * The catalogue computes archetype coverage as `BUILT` when `axisIndex === 0`
+ * and `MANIFEST` otherwise, and says so: "This is the family reference. The
+ * other four variants are expressed as overrides on it." Each family therefore
+ * has one drawn expression and four declarative ones.
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. The manifest vocabulary
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Resolved manifest for one master template. Keys mirror the approved source. */
+/**
+ * Resolved manifest for one master template.
+ *
+ * Keys mirror the approved source exactly. The optional ones are genuinely
+ * optional there — `image_slots` appears only on the two photographic families,
+ * `capital_framing` only on Wealth Management, `field_keys` only on Dark
+ * Executive — so making them required would invent values no designer set.
+ */
 export interface TemplateManifest {
   design_family: string;
   typography_preset: string;
@@ -61,6 +64,9 @@ export interface TemplateManifest {
   footer_style: string;
   density: string;
   print_density: string;
+  image_slots?: string;
+  capital_framing?: string;
+  field_keys?: string;
 }
 
 export type Density = 'compact' | 'balanced' | 'spacious';
@@ -80,7 +86,7 @@ export const AXES = [
   'E · presentation',
 ] as const;
 
-/** The seven report archetypes every family must cover. */
+/** The seven report archetypes every family covers. */
 export const ARCHETYPES = [
   'Cover',
   'Executive dashboard',
@@ -91,24 +97,6 @@ export const ARCHETYPES = [
   'Sources and appendix',
 ] as const;
 
-/**
- * The catalogue's five recommended-use buckets, and which templates fall in
- * each. Transcribed from `USE_MATCH`; only Private Banking ids are kept, since
- * the other nine families are not in this pilot.
- */
-export const USE_BUCKETS: Readonly<Record<string, readonly string[]>> = {
-  'Client-facing': ['pb-01', 'pb-03'],
-  'Portfolio review': ['pb-02'],
-  'Handover and audit': ['pb-04', 'pb-05'],
-};
-
-export function useBucketFor(templateCode: string): string | null {
-  for (const [bucket, ids] of Object.entries(USE_BUCKETS)) {
-    if (ids.includes(templateCode)) return bucket;
-  }
-  return null;
-}
-
 export interface VariantDefinition {
   /** Approved template name, e.g. "Sovereign Folio". */
   name: string;
@@ -116,7 +104,7 @@ export interface VariantDefinition {
   code: string;
   ground: Ground;
   density: Density;
-  /** Page architecture: band / grid / bleed / rail / stack. */
+  /** Page architecture: band / grid / bleed / rail / stack / split / frame / plate. */
   architecture: string;
   /** The approved one-line recommended use. */
   use: string;
@@ -142,141 +130,20 @@ export interface DesignFamily {
   variants: readonly VariantDefinition[];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 2. Private Banking
-// ─────────────────────────────────────────────────────────────────────────────
+export { DESIGN_FAMILIES } from './families.generated';
+import { DESIGN_FAMILIES as FAMILIES } from './families.generated';
 
-/**
- * Family 01 — Private Banking.
- *
- * Transcribed from `FAMILIES[0]` in the approved catalogue. Do not edit a value
- * here to fix a rendering problem: the manifest is the design decision and the
- * renderer is what implements it.
- */
-export const PRIVATE_BANKING: DesignFamily = {
-  key: 'private_banking',
-  code: 'pb',
-  ordinal: '01',
-  name: 'Private Banking',
-  note: 'Gold on obsidian, editorial ledger, restrained accent',
-  faces: 'Cinzel · Playfair · Inter · Plex Mono',
-  base: {
-    design_family: 'private_banking',
-    typography_preset: 'cinzel_playfair_inter',
-    numeric_typography: 'playfair_lining_tabular',
-    cover_overlay: 'obsidian_full',
-    section_header_style: 'eyebrow_rule_display',
-    kpi_layout: 'four_column_ruled',
-    callout_style: 'tinted_gold_bar',
-    table_style: 'ledger_hairline',
-    chart_style: 'line_editorial',
-    navigation_style: 'print_only',
-    risk_display: 'rated_table',
-    recommendation_style: 'obsidian_card',
-    radius: '0',
-    border_treatment: 'hairline',
-    spacing_scale: 'generous',
-    page_margin_preset: '20mm',
-    toc_style: 'none',
-    footer_style: 'rule_page_number',
-    density: 'balanced',
-    print_density: 'standard',
-  },
-  variants: [
-    {
-      name: 'Chancery',
-      code: 'pb-01',
-      ground: 'light',
-      density: 'balanced',
-      architecture: 'band',
-      use: 'Client-facing flagship for private clients',
-      description:
-        'The reference expression: obsidian cover, four ruled KPI columns, gold used once per page.',
-      overrides: {},
-    },
-    {
-      name: 'Chancery Compact',
-      code: 'pb-02',
-      ground: 'light',
-      density: 'compact',
-      architecture: 'grid',
-      use: 'Portfolio reviews covering several properties',
-      description:
-        'Six KPI columns and tight ledger rules fit two properties per spread without losing the hierarchy.',
-      overrides: {
-        density: 'compact',
-        page_margin_preset: '16mm',
-        kpi_layout: 'six_column_ruled',
-        spacing_scale: 'tight',
-        table_style: 'ledger_tight',
-        print_density: 'dense',
-      },
-    },
-    {
-      name: 'Sovereign Folio',
-      code: 'pb-03',
-      ground: 'light',
-      density: 'spacious',
-      architecture: 'bleed',
-      use: 'Single-asset pitch and presentation',
-      description:
-        'Full-bleed portrait cover, oversized section numerals, KPIs paired two by two at display size.',
-      overrides: {
-        density: 'spacious',
-        cover_overlay: 'obsidian_bleed_portrait',
-        section_header_style: 'full_bleed_numeral',
-        kpi_layout: 'two_by_two_display',
-        spacing_scale: 'luxurious',
-        page_margin_preset: '26mm',
-      },
-    },
-    {
-      name: 'Bullion Rail',
-      code: 'pb-04',
-      ground: 'light',
-      density: 'balanced',
-      architecture: 'rail',
-      use: 'Long reports where orientation matters',
-      description:
-        'A gold rail carries part number and section name down every page; KPIs stack against it.',
-      overrides: {
-        navigation_style: 'vertical_rail',
-        section_header_style: 'rail_marker',
-        kpi_layout: 'stacked_rail',
-        footer_style: 'rail_number',
-        cover_overlay: 'obsidian_rail',
-      },
-    },
-    {
-      name: 'Discretion Ledger',
-      code: 'pb-05',
-      ground: 'light',
-      density: 'balanced',
-      architecture: 'stack',
-      use: 'Clients who read the numbers first',
-      description:
-        'Statement rules with double-rule totals, severity bars for risk, and recommendations set as a ruled statement.',
-      overrides: {
-        table_style: 'double_rule_statement',
-        kpi_layout: 'ledger_rows',
-        risk_display: 'severity_bars',
-        callout_style: 'margin_note',
-        chart_style: 'stepped_area',
-        recommendation_style: 'ruled_statement',
-      },
-    },
-  ],
-};
+export function familyByKey(key: string): DesignFamily | null {
+  return FAMILIES.find((f) => f.key === key) ?? null;
+}
 
-/** Families in the pilot. The remaining nine land in later stages. */
-export const DESIGN_FAMILIES: readonly DesignFamily[] = [PRIVATE_BANKING];
-
+/** The catalogue's own manifest resolution. */
 export function resolveManifest(family: DesignFamily, variant: VariantDefinition): TemplateManifest {
-  // Mirrors the catalogue's own resolution, including its explicit re-assertion
-  // of `density` after the spread.
   return {
     ...family.base,
     ...variant.overrides,
+    // The catalogue re-asserts density after the spread; reproduced so a
+    // variant that omits it inherits the family's rather than undefined.
     density: variant.overrides.density ?? family.base.density,
   };
 }
@@ -287,172 +154,323 @@ export function axisFor(family: DesignFamily, variant: VariantDefinition): strin
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. Typography — measured from the drawn archetypes
+// 2. Recommended-use buckets
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The catalogue's five recommended-use buckets, transcribed from `USE_MATCH`.
+ *
+ * Kept as the source states it rather than derived from the variants, because
+ * the mapping is an editorial judgement — `pb-04` Bullion Rail is filed under
+ * "Handover and audit" despite being a Private Banking template, and no rule
+ * over the manifest would produce that.
+ */
+export const USE_BUCKETS: Readonly<Record<string, readonly string[]>> = {
+  'Client-facing': ['pb-01', 'pb-03', 'le-01', 'le-02', 'le-03', 'le-04', 'le-05', 'wm-01', 'wm-04', 'ca-05', 'ap-03'],
+  'Portfolio review': ['pb-02', 'wm-02', 'wm-03', 'ir-02', 'sm-02', 'ap-02'],
+  'Committee and board': ['ir-05', 'ca-01', 'ca-02', 'ca-03', 'ca-04', 'de-02', 'wm-05', 'ir-03'],
+  'Screen reading': ['mf-01', 'mf-02', 'mf-03', 'mf-04', 'mf-05', 'de-01', 'de-03', 'de-04', 'de-05', 'da-05'],
+  'Handover and audit': ['da-01', 'da-02', 'da-03', 'da-04', 'ap-01', 'ap-04', 'ap-05', 'sm-01', 'sm-03', 'sm-04', 'sm-05', 'ir-01', 'ir-04', 'pb-04', 'pb-05'],
+};
+
+export function useBucketFor(templateCode: string): string | null {
+  for (const [bucket, ids] of Object.entries(USE_BUCKETS)) {
+    if (ids.includes(templateCode)) return bucket;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Typography — measured from the ten drawn archetypes
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface FamilyTypography {
-  /** Cover title face. Cinzel: the wordmark and the cover line. */
+  /** Cover title face. */
   display: string;
-  displayGeneric: 'serif' | 'sans-serif';
-  /** Section headings, KPI values, evidence figures. */
+  displayGeneric: 'serif' | 'sans-serif' | 'monospace';
+  /** Section headings and figures. */
   heading: string;
-  headingGeneric: 'serif' | 'sans-serif';
-  /** Body copy, table cells, list items. */
+  headingGeneric: 'serif' | 'sans-serif' | 'monospace';
+  /** Body copy and table cells. */
   body: string;
-  bodyGeneric: 'serif' | 'sans-serif';
-  /** Eyebrows, running heads, reference codes, table column labels. */
+  bodyGeneric: 'serif' | 'sans-serif' | 'monospace';
+  /** Uppercase labels, eyebrows, running heads, column heads. */
   mono: string;
+  monoGeneric: 'monospace' | 'sans-serif' | 'serif';
+  /**
+   * Which face sets the figures.
+   *
+   * `numeric_typography` says so directly — `playfair_lining_tabular` sets them
+   * in the heading serif, `plex_mono_tabular` in the mono face, `inter_tabular`
+   * in the body face. Getting this wrong is the difference between a private
+   * bank's statement and a spreadsheet.
+   */
+  numericFace: 'heading' | 'body' | 'mono';
+  /** Google Fonts axis per face, so italics and weights actually load. */
+  axes: Partial<Record<'display' | 'heading' | 'body' | 'mono', string>>;
 }
 
 /**
- * `typography_preset: cinzel_playfair_inter`, resolved.
+ * The four type roles per family, resolved from `typography_preset`.
  *
- * Four faces, each with one job, all measured off the archetype pages:
- *
- *   - **Cinzel** — the wordmark (11pt / 0.26em) and the cover title
- *     (41pt / weight 400 / line-height 1.12). Nothing else. It is an
- *     inscriptional capital and wrong for anything that runs on.
- *   - **Playfair Display** — every heading and every figure: the verdict
- *     (29pt), section headings (22-26pt), KPI values (23pt), evidence figures
- *     (21pt), and the italic cover standfirst (15pt italic).
- *   - **Inter** — body copy (9-10pt) and table cells (8-8.6pt).
- *   - **IBM Plex Mono** — every uppercase label: eyebrows (6-7pt), the running
- *     head (6.2pt), table column heads (6pt), reference codes (9.5pt), footer
- *     (6pt).
- *
- * Playfair setting the FIGURES rather than a mono face is what
- * `numeric_typography: playfair_lining_tabular` means, and it is the family's
- * most distinctive decision — a private-banking statement sets its numbers in
- * the same serif as its prose, with lining tabular figures so columns align.
+ * A family that names one face uses it for every role — Luxury Editorial is
+ * `noto_serif_only` and Swiss Minimal is `inter_grotesk`, and both mean exactly
+ * that. Where the archetype's root `font-family` disagreed with the preset's
+ * name, the archetype won: it is the drawn document.
  */
-export const PRIVATE_BANKING_TYPE: FamilyTypography = {
-  display: 'Cinzel',
-  displayGeneric: 'serif',
-  heading: 'Playfair Display',
-  headingGeneric: 'serif',
-  body: 'Inter',
-  bodyGeneric: 'sans-serif',
-  mono: 'IBM Plex Mono',
+export const TYPOGRAPHY: Record<string, FamilyTypography> = {
+  // Cinzel wordmark + cover, Playfair headings and figures, Inter body,
+  // Plex Mono labels. Measured: h1 41pt, h2 22–29pt, body 8.8pt, table 8.2pt.
+  private_banking: {
+    display: 'Cinzel', displayGeneric: 'serif',
+    heading: 'Playfair Display', headingGeneric: 'serif',
+    body: 'Inter', bodyGeneric: 'sans-serif',
+    mono: 'IBM Plex Mono', monoGeneric: 'monospace',
+    numericFace: 'heading',
+    axes: {
+      display: 'wght@400;600',
+      heading: 'ital,wght@0,400;0,500;0,600;1,400',
+      body: 'wght@400;500;600;700',
+      mono: 'wght@400;500;700',
+    },
+  },
+  // `noto_serif_plex`. A research note has no display cover — its largest type
+  // is the 14pt masthead — and every figure is Plex Mono tabular.
+  institutional_research: {
+    display: 'Noto Serif', displayGeneric: 'serif',
+    heading: 'Noto Serif', headingGeneric: 'serif',
+    body: 'Inter', bodyGeneric: 'sans-serif',
+    mono: 'IBM Plex Mono', monoGeneric: 'monospace',
+    numericFace: 'mono',
+    axes: {
+      display: 'wght@400;600;700', heading: 'wght@400;600;700',
+      body: 'wght@400;500;600;700', mono: 'wght@400;500;600;700',
+    },
+  },
+  // `noto_serif_only` — one face, every role, including the labels. Measured:
+  // h1 40pt, h2 21–27pt, body 9.6pt. The most generous body size in the set.
+  luxury_editorial: {
+    display: 'Noto Serif', displayGeneric: 'serif',
+    heading: 'Noto Serif', headingGeneric: 'serif',
+    body: 'Noto Serif', bodyGeneric: 'serif',
+    mono: 'Noto Serif', monoGeneric: 'serif',
+    numericFace: 'heading',
+    axes: {
+      display: 'ital,wght@0,300;0,400;0,600;0,700;1,400',
+      heading: 'ital,wght@0,300;0,400;0,600;0,700;1,400',
+      body: 'ital,wght@0,300;0,400;0,600;0,700;1,400',
+      mono: 'ital,wght@0,300;0,400;0,600;0,700;1,400',
+    },
+  },
+  // `inter_only` with Plex Mono chips and labels. Measured: h1 37pt, h2 20pt.
+  modern_fintech: {
+    display: 'Inter', displayGeneric: 'sans-serif',
+    heading: 'Inter', headingGeneric: 'sans-serif',
+    body: 'Inter', bodyGeneric: 'sans-serif',
+    mono: 'IBM Plex Mono', monoGeneric: 'monospace',
+    numericFace: 'body',
+    axes: { display: 'wght@400;500;600;700', heading: 'wght@400;500;600;700', body: 'wght@400;500;600;700', mono: 'wght@400;500;600;700' },
+  },
+  // `lato_light`. Measured: h1 36pt, h2 22pt, body 9pt, labels 5.8pt Plex Mono
+  // — the smallest label in the set, because a drawing's captions are notes.
+  architectural_property: {
+    display: 'Lato', displayGeneric: 'sans-serif',
+    heading: 'Lato', headingGeneric: 'sans-serif',
+    body: 'Lato', bodyGeneric: 'sans-serif',
+    mono: 'IBM Plex Mono', monoGeneric: 'monospace',
+    numericFace: 'body',
+    axes: { display: 'wght@300;400;700', heading: 'wght@300;400;700', body: 'wght@300;400;700', mono: 'wght@400;500;600' },
+  },
+  // `inter_grotesk` — one face, no mono. Measured: h1 52pt, the largest cover
+  // in the catalogue, against 8.2pt body. That ratio is the Swiss argument.
+  swiss_minimal: {
+    display: 'Inter', displayGeneric: 'sans-serif',
+    heading: 'Inter', headingGeneric: 'sans-serif',
+    body: 'Inter', bodyGeneric: 'sans-serif',
+    mono: 'Inter', monoGeneric: 'sans-serif',
+    numericFace: 'body',
+    axes: { display: 'wght@400;500;600;700', heading: 'wght@400;500;600;700', body: 'wght@400;500;600;700', mono: 'wght@400;500;600;700' },
+  },
+  // `lato_sans`, but the archetype's root is Noto Serif and its letterhead is
+  // Lato 900 — a serif body under a sans letterhead, which is what a signed
+  // advisory letter looks like. Measured: h1 27pt, h2 16pt.
+  corporate_advisory: {
+    display: 'Lato', displayGeneric: 'sans-serif',
+    heading: 'Lato', headingGeneric: 'sans-serif',
+    body: 'Noto Serif', bodyGeneric: 'serif',
+    mono: 'Lato', monoGeneric: 'sans-serif',
+    numericFace: 'body',
+    axes: { display: 'wght@400;700;900', heading: 'wght@400;700;900', body: 'wght@400;600;700', mono: 'wght@400;700;900' },
+  },
+  // `roboto_only`. Measured: h1 34pt, h2 22pt, body 8.8pt, table 8.6pt.
+  wealth_management: {
+    display: 'Roboto', displayGeneric: 'sans-serif',
+    heading: 'Roboto', headingGeneric: 'sans-serif',
+    body: 'Roboto', bodyGeneric: 'sans-serif',
+    mono: 'Roboto', monoGeneric: 'sans-serif',
+    numericFace: 'body',
+    axes: { display: 'wght@300;400;500;700', heading: 'wght@300;400;500;700', body: 'wght@300;400;500;700', mono: 'wght@300;400;500;700' },
+  },
+  // `plex_mono_inter` — 361 mono declarations against 5 Inter. The model is the
+  // document, so the mono face carries it and Inter is the prose exception.
+  data_analyst: {
+    display: 'IBM Plex Mono', displayGeneric: 'monospace',
+    heading: 'IBM Plex Mono', headingGeneric: 'monospace',
+    body: 'Inter', bodyGeneric: 'sans-serif',
+    mono: 'IBM Plex Mono', monoGeneric: 'monospace',
+    numericFace: 'mono',
+    axes: { display: 'wght@400;500;600;700', heading: 'wght@400;500;600;700', body: 'wght@400;500;600;700', mono: 'wght@400;500;600;700' },
+  },
+  // `plex_mono_only`, and the only family whose archetype root font is mono.
+  // Measured: h1 33pt, h2 16–19pt, body 8.4pt. Every colourway is a dark
+  // ground bar four, which is the family's whole premise.
+  dark_executive: {
+    display: 'IBM Plex Mono', displayGeneric: 'monospace',
+    heading: 'IBM Plex Mono', headingGeneric: 'monospace',
+    body: 'Inter', bodyGeneric: 'sans-serif',
+    mono: 'IBM Plex Mono', monoGeneric: 'monospace',
+    numericFace: 'mono',
+    axes: { display: 'wght@400;500;600;700', heading: 'wght@400;500;600;700', body: 'wght@400;500;600', mono: 'wght@400;500;600;700' },
+  },
 };
 
-/** Point sizes, measured from the archetype pages. */
+export function typographyFor(familyKey: string): FamilyTypography {
+  const type = TYPOGRAPHY[familyKey];
+  // Throwing rather than defaulting: an unmapped family would silently compile
+  // in Private Banking's faces and be filed under its own name.
+  if (!type) throw new Error(`No typography for family "${familyKey}"`);
+  return type;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. Type scale
+// ─────────────────────────────────────────────────────────────────────────────
+
 export interface TypeScale {
-  /** Cover title. Archetype: 41pt Cinzel. */
+  /** Cover title. */
   coverTitle: number;
-  /** Cover eyebrow. Archetype: 7pt Plex Mono at 0.34em. */
+  /** Cover eyebrow. */
   coverEyebrow: number;
-  /** Cover standfirst. Archetype: 15pt Playfair italic. */
+  /** Cover standfirst. */
   coverStandfirst: number;
-  /** The verdict heading on the dashboard. Archetype: 29pt Playfair. */
+  /** The verdict heading on the dashboard. */
   verdict: number;
-  /** Ordinary section heading. Archetype: 22pt Playfair (26pt on narrative). */
+  /** Ordinary section heading. */
   heading: number;
-  /** Section eyebrow. Archetype: 6.6pt Plex Mono at 0.26em. */
+  /** Section eyebrow. */
   eyebrow: number;
-  /** Running head. Archetype: 6.2pt Plex Mono at 0.2em. */
+  /** Running head. */
   runningHead: number;
-  /** Body copy. Archetype: 10pt lead, 9pt narrative columns. */
+  /** Body copy. */
   body: number;
-  /** Table cells and list items. Archetype: 8.6pt dashboard, 8pt projections. */
+  /** Table cells and list items. */
   cell: number;
-  /** KPI value. Archetype: 23pt Playfair. */
+  /** KPI value. */
   kpiValue: number;
-  /** KPI label. Archetype: 6pt Plex Mono at 0.18em. */
+  /** KPI label. */
   kpiLabel: number;
-  /** KPI note under the value. Archetype: 7.4pt Inter. */
+  /** KPI note under the value. */
   kpiNote: number;
-  /** Table column head. Archetype: 6pt Plex Mono at 0.1em. */
+  /** Table column head. */
   columnHead: number;
-  /** Section numeral on narrative pages. Archetype: 38pt Playfair in rule. */
+  /** Section numeral on narrative pages. */
   numeral: number;
 }
 
 /**
- * The three density steps.
+ * Each family's measured `balanced` scale.
  *
- * `balanced` is measured directly from the archetype. `compact` and `spacious`
- * apply the catalogue's own margin presets (16mm / 26mm against 20mm) and its
- * spacing scale names, stepping the type with them — a 26mm margin at balanced
- * type is not a spacious document, it is a narrower one.
+ * Every number is read off that family's archetype pages — cover title from its
+ * `h1`, section heading from the median `h2`, body from its paragraphs, cells
+ * from its tables, labels from its tracked uppercase runs. Where a family draws
+ * no display cover (Institutional Research is a masthead, not a title page) the
+ * cover size is its masthead size, which is the honest answer rather than a
+ * borrowed one.
  */
-export const TYPE_SCALES: Record<Density, TypeScale> = {
-  compact: {
-    coverTitle: 34,
-    coverEyebrow: 6.5,
-    coverStandfirst: 12.5,
-    verdict: 23,
-    heading: 18,
-    eyebrow: 6.2,
-    runningHead: 6,
-    body: 8.6,
-    cell: 7.6,
-    kpiValue: 16,
-    kpiLabel: 5.6,
-    kpiNote: 6.6,
-    columnHead: 5.6,
-    numeral: 30,
-  },
-  balanced: {
-    coverTitle: 41,
-    coverEyebrow: 7,
-    coverStandfirst: 15,
-    verdict: 29,
-    heading: 22,
-    eyebrow: 6.6,
-    runningHead: 6.2,
-    body: 9.6,
-    cell: 8.4,
-    kpiValue: 23,
-    kpiLabel: 6,
-    kpiNote: 7.4,
-    columnHead: 6,
-    numeral: 38,
-  },
-  spacious: {
-    coverTitle: 48,
-    coverEyebrow: 7.6,
-    coverStandfirst: 17,
-    verdict: 33,
-    heading: 27,
-    eyebrow: 7,
-    runningHead: 6.4,
-    body: 10.4,
-    cell: 9,
-    kpiValue: 30,
-    kpiLabel: 6.4,
-    kpiNote: 8,
-    columnHead: 6.4,
-    numeral: 52,
-  },
+export const BASE_SCALES: Record<string, TypeScale> = {
+  private_banking:        { coverTitle: 41, coverEyebrow: 7,   coverStandfirst: 15,   verdict: 29, heading: 22, eyebrow: 6.6, runningHead: 6.2, body: 9.6,  cell: 8.4, kpiValue: 23, kpiLabel: 6,   kpiNote: 7.4, columnHead: 6,   numeral: 38 },
+  institutional_research: { coverTitle: 14, coverEyebrow: 6.4, coverStandfirst: 11.5, verdict: 14, heading: 12.5, eyebrow: 6.2, runningHead: 6,   body: 8.6,  cell: 8,   kpiValue: 12.5, kpiLabel: 6, kpiNote: 6.6, columnHead: 6,   numeral: 20 },
+  luxury_editorial:       { coverTitle: 40, coverEyebrow: 6.4, coverStandfirst: 16,   verdict: 27, heading: 23, eyebrow: 6.4, runningHead: 6.2, body: 9.6,  cell: 8.4, kpiValue: 21, kpiLabel: 6.2, kpiNote: 7.4, columnHead: 6.2, numeral: 36 },
+  modern_fintech:         { coverTitle: 37, coverEyebrow: 6.6, coverStandfirst: 14,   verdict: 23, heading: 20, eyebrow: 6,   runningHead: 5.9, body: 8.8,  cell: 8.4, kpiValue: 19, kpiLabel: 5.9, kpiNote: 7,   columnHead: 5.9, numeral: 32 },
+  architectural_property: { coverTitle: 36, coverEyebrow: 6.6, coverStandfirst: 13,   verdict: 25, heading: 22, eyebrow: 5.8, runningHead: 6,   body: 9,    cell: 8.4, kpiValue: 17, kpiLabel: 5.8, kpiNote: 7,   columnHead: 5.8, numeral: 34 },
+  swiss_minimal:          { coverTitle: 52, coverEyebrow: 6.6, coverStandfirst: 13,   verdict: 27, heading: 22, eyebrow: 6.4, runningHead: 6.2, body: 8.2,  cell: 8.2, kpiValue: 26, kpiLabel: 6.2, kpiNote: 7,   columnHead: 6.2, numeral: 40 },
+  corporate_advisory:     { coverTitle: 27, coverEyebrow: 6.6, coverStandfirst: 12,   verdict: 17, heading: 16, eyebrow: 6.4, runningHead: 6.2, body: 9,    cell: 8.2, kpiValue: 16, kpiLabel: 6.2, kpiNote: 7,   columnHead: 6.2, numeral: 26 },
+  wealth_management:      { coverTitle: 34, coverEyebrow: 6.8, coverStandfirst: 14,   verdict: 23, heading: 22, eyebrow: 6.2, runningHead: 6.2, body: 8.8,  cell: 8.6, kpiValue: 22, kpiLabel: 6.2, kpiNote: 7.2, columnHead: 6.2, numeral: 32 },
+  data_analyst:           { coverTitle: 25, coverEyebrow: 6.6, coverStandfirst: 11,   verdict: 16, heading: 15, eyebrow: 6.2, runningHead: 6,   body: 8.8,  cell: 7.8, kpiValue: 16, kpiLabel: 6,   kpiNote: 6.6, columnHead: 6,   numeral: 24 },
+  dark_executive:         { coverTitle: 33, coverEyebrow: 6.4, coverStandfirst: 13,   verdict: 19, heading: 17, eyebrow: 6,   runningHead: 5.9, body: 8.4,  cell: 7.8, kpiValue: 17, kpiLabel: 5.9, kpiNote: 6.8, columnHead: 5.9, numeral: 28 },
 };
+
+/**
+ * How the measured scale moves with density.
+ *
+ * `balanced` is what was measured. `compact` and `spacious` step the whole
+ * scale with the catalogue's own margin presets, because a 26mm margin at
+ * balanced type is not a spacious document — it is a narrower one.
+ *
+ * Display type moves further than body type: a cover title can afford to grow
+ * 20% where 9pt body copy at 11pt would stop being body copy.
+ */
+const DENSITY_FACTORS: Record<Density, { display: number; text: number }> = {
+  compact: { display: 0.82, text: 0.92 },
+  balanced: { display: 1, text: 1 },
+  spacious: { display: 1.18, text: 1.06 },
+};
+
+/** Round to a quarter point — finer than any renderer resolves. */
+function step(value: number): number {
+  return Math.round(value * 4) / 4;
+}
+
+export function scaleFor(familyKey: string, density: Density): TypeScale {
+  const base = BASE_SCALES[familyKey];
+  if (!base) throw new Error(`No type scale for family "${familyKey}"`);
+  const f = DENSITY_FACTORS[density];
+  return {
+    coverTitle: step(base.coverTitle * f.display),
+    coverEyebrow: step(base.coverEyebrow * f.text),
+    coverStandfirst: step(base.coverStandfirst * f.display),
+    verdict: step(base.verdict * f.display),
+    heading: step(base.heading * f.display),
+    eyebrow: step(base.eyebrow * f.text),
+    runningHead: step(base.runningHead * f.text),
+    body: step(base.body * f.text),
+    cell: step(base.cell * f.text),
+    kpiValue: step(base.kpiValue * f.display),
+    kpiLabel: step(base.kpiLabel * f.text),
+    kpiNote: step(base.kpiNote * f.text),
+    columnHead: step(base.columnHead * f.text),
+    numeral: step(base.numeral * f.display),
+  };
+}
 
 /** Tracking, in em. The brand signature is the wide uppercase eyebrow. */
 export const TRACKING = {
-  /** Archetype cover eyebrow: 0.34em. */
   coverEyebrow: 0.34,
-  /** Archetype wordmark: 0.26em. */
   wordmark: 0.26,
-  /** Archetype section eyebrow: 0.26em. */
   eyebrow: 0.26,
-  /** Archetype running head: 0.2em. */
   runningHead: 0.2,
-  /** Archetype KPI label: 0.18em. */
   label: 0.18,
-  /** Archetype table column head: 0.1em. */
   columnHead: 0.1,
 } as const;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Geometry
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Page margins, in points, from `page_margin_preset`.
+ * Page margins in points, from `page_margin_preset`.
  *
- * The catalogue states these in millimetres. 1mm = 72/25.4 pt, so 20mm is
- * 56.7pt — rounded to whole points because every other geometry value in a
- * `ReportTemplate` is a whole point and a fractional margin makes every
- * downstream `y` fractional too.
+ * The catalogue states these in millimetres. 1mm = 72/25.4pt, rounded to whole
+ * points because every other geometry value in a `ReportTemplate` is a whole
+ * point and a fractional margin makes every downstream `y` fractional too.
  */
 export const MARGIN_PRESETS: Record<string, number> = {
+  '12mm': 34,
+  '15mm': 43,
   '16mm': 45,
+  '18mm': 51,
   '20mm': 57,
+  '22mm': 62,
   '24mm': 68,
   '26mm': 74,
   '28mm': 79,
@@ -460,33 +478,37 @@ export const MARGIN_PRESETS: Record<string, number> = {
 
 export function marginFor(manifest: TemplateManifest): number {
   const margin = MARGIN_PRESETS[manifest.page_margin_preset];
-  // Throwing rather than defaulting: a preset this module does not know is a
-  // transcription error, and silently falling back to 20mm would ship a
-  // "spacious" template at reference margins with nothing to show for it.
-  if (!margin) {
-    throw new Error(`No margin for page_margin_preset "${manifest.page_margin_preset}"`);
-  }
+  // Throwing rather than defaulting: an unknown preset is a transcription
+  // error, and quietly falling back to 20mm would ship a "spacious" template
+  // at reference margins with nothing to show for it.
+  if (!margin) throw new Error(`No margin for page_margin_preset "${manifest.page_margin_preset}"`);
   return margin;
 }
 
 /** Vertical rhythm, in points, from `spacing_scale`. */
 export interface SpacingScale {
-  /** Space between flowed blocks. */
   gap: number;
-  /** Space between a section heading and its content. */
   headingGap: number;
-  /** Space above a new section. */
   sectionGap: number;
-  /** Table row height. */
   rowHeight: number;
-  /** Table cell padding. */
   cellPadding: number;
 }
 
+/**
+ * The seven spacing scales the catalogue names.
+ *
+ * `compressed` and `strict` are Swiss Minimal's; `open` is its spacious cut.
+ * They are distinct from `tight`/`regular`/`generous` because a strict grid
+ * spaces by module rather than by taste.
+ */
 export const SPACING_SCALES: Record<string, SpacingScale> = {
-  tight: { gap: 11, headingGap: 7, sectionGap: 16, rowHeight: 14, cellPadding: 3 },
-  generous: { gap: 16, headingGap: 10, sectionGap: 24, rowHeight: 18, cellPadding: 4.5 },
-  luxurious: { gap: 22, headingGap: 14, sectionGap: 34, rowHeight: 22, cellPadding: 6 },
+  compressed: { gap: 9,  headingGap: 6,  sectionGap: 13, rowHeight: 13, cellPadding: 2.5 },
+  strict:     { gap: 13, headingGap: 8,  sectionGap: 20, rowHeight: 16, cellPadding: 3.5 },
+  tight:      { gap: 11, headingGap: 7,  sectionGap: 16, rowHeight: 14, cellPadding: 3 },
+  regular:    { gap: 14, headingGap: 9,  sectionGap: 20, rowHeight: 16, cellPadding: 4 },
+  generous:   { gap: 16, headingGap: 10, sectionGap: 24, rowHeight: 18, cellPadding: 4.5 },
+  open:       { gap: 20, headingGap: 12, sectionGap: 30, rowHeight: 20, cellPadding: 5.5 },
+  luxurious:  { gap: 22, headingGap: 14, sectionGap: 34, rowHeight: 22, cellPadding: 6 },
 };
 
 export function spacingFor(manifest: TemplateManifest): SpacingScale {
@@ -495,22 +517,15 @@ export function spacingFor(manifest: TemplateManifest): SpacingScale {
   return scale;
 }
 
-/** Corner radius in points. Private Banking is `radius: '0'` throughout. */
+/** Corner radius in points. Only Modern Fintech is not `0`. */
 export function radiusFor(manifest: TemplateManifest): number {
-  const radius = Number(manifest.radius);
+  const radius = Number.parseFloat(manifest.radius);
   return Number.isFinite(radius) ? radius : 0;
 }
 
-/**
- * Hairline weight in points, from `border_treatment`.
- *
- * The archetype draws three weights and means something different by each:
- * 1px hairline for table rows and the running-head rule, 1.5px for the rule
- * over a KPI band and under a table's column heads, and a doubled 1.5+1 for a
- * statement total.
- */
+/** Rule weights, in points. */
 export const RULE_WEIGHTS = {
   hairline: 0.75,
   emphasis: 1.5,
-  total: 1.5,
+  heavy: 2,
 } as const;

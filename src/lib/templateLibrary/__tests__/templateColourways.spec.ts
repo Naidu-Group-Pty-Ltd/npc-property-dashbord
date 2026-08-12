@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   BODY_INK_LIFT,
+  COLOURWAYS_BY_FAMILY,
   PRIVATE_BANKING_COLOURWAYS,
   SEMANTIC_COLOURS,
   applyColourwayToSchema,
@@ -93,12 +94,20 @@ describe('colourway lookup is scoped to its family', () => {
     expect(findColourway('private_banking', 'pb-verde')?.name).toBe('Verde');
   });
 
-  it('refuses a colourway from a family that does not exist', () => {
+  it('refuses a colourway curated by a different family', () => {
     // A colourway id is only meaningful inside the family that curated it. A
     // global lookup would let a request paint a Private Banking master in a
-    // palette no designer ever paired it with.
+    // palette no designer ever paired it with — and now that all ten families
+    // ship, that is a hundred ids that must not be interchangeable.
+    expect(colourwaysForFamily('luxury_editorial')).toHaveLength(10);
     expect(findColourway('luxury_editorial', 'pb-verde')).toBeNull();
-    expect(colourwaysForFamily('luxury_editorial')).toHaveLength(0);
+    expect(findColourway('private_banking', 'le-ivory-and-gold')).toBeNull();
+    expect(findColourway('luxury_editorial', 'le-ivory-and-gold')?.name).toBe('Ivory and Gold');
+  });
+
+  it('refuses an unregistered family outright', () => {
+    expect(colourwaysForFamily('not_a_family')).toHaveLength(0);
+    expect(findColourway('not_a_family', 'pb-verde')).toBeNull();
   });
 
   it('returns null rather than a default for an unknown id', () => {
@@ -231,6 +240,63 @@ describe('resolved roles', () => {
       const colors = colourwayColors(c);
       for (const role of roles) {
         expect(colors[role], `${c.name}.${role}`).toMatch(/^#[0-9A-F]{6}$/i);
+      }
+    }
+  });
+});
+
+describe('the derivations hold for all one hundred approved colourways', () => {
+  const all = Object.entries(COLOURWAYS_BY_FAMILY)
+    .flatMap(([key, set]) => set.map((c) => [`${key} / ${c.name}`, c] as const));
+
+  it('covers ten families', () => {
+    expect(Object.keys(COLOURWAYS_BY_FAMILY)).toHaveLength(10);
+    expect(all).toHaveLength(100);
+  });
+
+  it.each(all)('%s', (_label, colourway) => {
+    const r = resolveColourway(colourway);
+
+    // Body copy on paper, at the WCAG AA floor. These are printed client
+    // documents, so this is a floor rather than a target — and it is the one
+    // derivation that would be invisible on a bright screen and unreadable in
+    // an office.
+    expect(contrastRatio(r.ink, r.surface)).toBeGreaterThanOrEqual(4.5);
+    // Type on the cover field.
+    expect(contrastRatio(r.text, r.bg)).toBeGreaterThanOrEqual(4.5);
+    // Type on an accent fill. The accents run from #22406E to #F5F5F5 across
+    // the catalogue, so a fixed black or white is illegible at one end.
+    expect(contrastRatio(r.onPrimary, r.primary)).toBeGreaterThanOrEqual(3);
+    // Muted labels stay readable rather than becoming decoration.
+    expect(contrastRatio(r.muted, r.surface)).toBeGreaterThanOrEqual(3);
+    // A panel is separated from the page but is not a block of colour.
+    expect(r.panel).not.toBe(r.surface);
+    expect(contrastRatio(r.panel, r.surface)).toBeLessThan(1.6);
+    // Negative figures must survive the ground they print on — this is the
+    // sign on a cash-flow line, the most-read thing on the page.
+    expect(contrastRatio(r.negative, r.surface)).toBeGreaterThanOrEqual(4);
+  });
+
+  it('keeps semantic colours off the palette in every family', () => {
+    for (const [, colourway] of all) {
+      const r = resolveColourway(colourway);
+      const fixed = colourway.ground === 'dark' ? SEMANTIC_COLOURS.dark : SEMANTIC_COLOURS.light;
+      expect(r.positive).toBe(fixed.positive);
+      expect(r.caution).toBe(fixed.caution);
+      expect(r.negative).toBe(fixed.negative);
+      expect(r.info).toBe(fixed.info);
+    }
+  });
+
+  it('inverts field and paper consistently across grounds', () => {
+    for (const [label, colourway] of all) {
+      const r = resolveColourway(colourway);
+      if (colourway.ground === 'light') {
+        expect(r.bg, label).toBe(colourway.ink);
+        expect(r.text, label).toBe(colourway.paper);
+      } else {
+        expect(r.bg, label).toBe(colourway.paper);
+        expect(r.text, label).toBe(colourway.ink);
       }
     }
   });

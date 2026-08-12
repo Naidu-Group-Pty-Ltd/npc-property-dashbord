@@ -354,25 +354,36 @@ come from `scripts/template-library/designSystem.ts` — five voices keyed to th
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
 tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
 
-The *family* templates come from the approved Claude Design **Investment Compass
-Template Catalogue**: ten design families × five structural variants × ten
-colourways. Read
+The 50 *family* templates come from the approved Claude Design **Investment
+Compass Template Catalogue**: ten design families × five structural variants ×
+ten colourways = 500 combinations. Read
 [`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
 before touching `scripts/template-library/investmentCompass/` or
-`_shared/templateColourways.pure.ts`. **Private Banking is the only family
-implemented**; the other nine are declared in the Design source and not here.
+`_shared/templateColourways.*`.
 
-Three rules there keep biting. **A colourway is tokens and nothing else** — the
+**The families and colourways are GENERATED, never hand-written.**
+`investmentCompass/source.json` is a verbatim evaluation of `FAMILIES` and
+`COLOURWAYS` from the Design file; `npm run templates:compass:generate` emits
+the two `.generated.ts` modules from it. ~250 manifest entries and 500 colour
+values are not something anyone transcribes correctly, and a mistyped hex is a
+design change nobody approved — so `investmentCompassSource.spec.ts` re-checks
+the generated files against the source every run. A design change goes to Claude
+Design and comes back through the generator.
+
+Four rules keep biting. **A colourway is tokens and nothing else** — the
 catalogue's own rule is "tokens carry no layout meaning", which is why this is 50
-masters × 10 palettes and not 500 templates; preview applies a `tokenOverrides`
-map and "Use template" bakes it into the copy's `tokens.colors`. **A colourway's
-`ink` is the cover FIELD, not body copy** — body ink is derived by lifting it 4
-points, the measured gap between `--aurixa-obsidian` and `--foreground`, and
-setting body copy to the field colour is invisible on screen and wrong on paper.
-And **`family_id` is version lineage, not a design family** — it is what the
-publish path deprecates siblings by, so overloading it would make publishing one
-master deprecate the other four; family metadata lives in the additive
-`design_meta` column instead.
+masters × 10 palettes and not 500 templates; a spec asserts every block's
+geometry is byte-identical across a family's ten palettes. **A colourway's `ink`
+is the cover FIELD, not body copy** — body ink is derived by lifting it 4 points,
+the measured gap between `--aurixa-obsidian` and `--foreground`, and setting body
+copy to the field colour is invisible on screen and wrong on paper. **The
+manifest vocabulary is resolved, never read directly** — 31 KPI layouts and 30
+chart styles map onto primitives in `resolvers.ts`, which **throws** on an
+unmapped value so a new family fails the build instead of silently rendering as
+somebody else's layout. And **`family_id` is version lineage, not a design
+family** — it is what the publish path deprecates siblings by, so overloading it
+would make publishing one master deprecate the other four; family metadata lives
+in the additive `design_meta` column instead.
 
 ## Mobile (Flutter) translation
 The four portals are being translated into one cross-platform Flutter app.

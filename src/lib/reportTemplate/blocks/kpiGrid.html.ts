@@ -88,20 +88,37 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   // ── ruled: a band of hairline-separated columns ──────────────────────────
   if (variant === 'ruled' || variant === 'display') {
     const perRow = variant === 'display' ? Math.min(cols, 2) : cols;
-    const shown = items.slice(0, variant === 'display' ? Math.min(items.length, 4) : perRow);
+    // Every item is shown, wrapping into as many rows as it takes. A console of
+    // twelve figures is six across and two deep; slicing to one row instead
+    // would silently drop half the dashboard.
+    const shown = items;
+    const rows = Math.ceil(shown.length / perRow);
+    // A full cell grid rather than column separators — the Swiss module and the
+    // analyst's field cells, where the boundary is the system made visible.
+    const cellBorders = p.cellBorders === true;
     const cells = shown.map((item, i) => {
-      const last = (i + 1) % perRow === 0;
-      const first = i % perRow === 0;
-      const pad = [
-        `padding:11pt ${last ? '0' : '12pt'} 12pt ${first ? '0' : '12pt'}`,
-      ].join('');
-      return `<div style="${pad};${last ? '' : `border-right:1pt solid ${ruleColor};`}">
+      const col = i % perRow;
+      const row = Math.floor(i / perRow);
+      const last = col === perRow - 1;
+      const first = col === 0;
+      const lastRow = row === rows - 1;
+      const pad = cellBorders
+        ? 'padding:10pt 10pt 11pt'
+        : `padding:11pt ${last ? '0' : '12pt'} 12pt ${first ? '0' : '12pt'}`;
+      const borders = cellBorders
+        ? `border:1pt solid ${ruleColor};margin:-0.5pt;`
+        : `${last ? '' : `border-right:1pt solid ${ruleColor};`}`
+          + `${lastRow ? '' : `border-bottom:1pt solid ${ruleColor};`}`;
+      return `<div style="${pad};${borders}">
         ${label(item)}
         ${figure(item, valueSize, item.accent ? resolveBindableColor(item.accent, ctx, valueColor) : valueColor)}
         ${note(item)}
       </div>`;
     }).join('');
-    return `<div style="${style}border-top:1.5pt solid ${emphasisColor};border-bottom:1pt solid ${ruleColor};display:grid;grid-template-columns:repeat(${perRow}, 1fr);">${cells}</div>`;
+    const frame = cellBorders
+      ? ''
+      : `border-top:1.5pt solid ${emphasisColor};border-bottom:1pt solid ${ruleColor};`;
+    return `<div style="${style}${frame}display:grid;grid-template-columns:repeat(${perRow}, 1fr);">${cells}</div>`;
   }
 
   // ── rows: a ledger. Label left, figure right, hairline between ───────────

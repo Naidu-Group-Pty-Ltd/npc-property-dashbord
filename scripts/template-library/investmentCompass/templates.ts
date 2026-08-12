@@ -1,19 +1,20 @@
 /**
- * Private Banking — the five approved Investment Compass masters.
+ * The fifty approved Investment Compass masters.
  *
- * ## One composition, five manifests
+ * ## One composition, fifty manifests
  *
- * The approved catalogue marks archetype coverage `BUILT` for the family
+ * The approved catalogue marks archetype coverage `BUILT` for each family's
  * reference and `MANIFEST` for the other four, and says so in as many words:
  * "This is the family reference. The other four variants are expressed as
  * overrides on it." So there is one composition here, parameterised by the
- * resolved manifest, rather than five hand-drawn documents. Chancery is that
- * composition with an empty override set; the other four are the same seven
- * archetypes re-expressed through their own manifest values.
+ * resolved manifest, rather than fifty hand-drawn documents.
  *
- * That is not a shortcut — it is the property the catalogue is built on. A
- * sixth variant is an override object, and a change to the family's section
- * treatment reaches all five.
+ * That is not a shortcut — it is the property the catalogue is built on. An
+ * eleventh family is a declaration in `source.json`; a sixth variant is an
+ * override object; and a change to how a section opener is drawn reaches all
+ * fifty at once. What makes the fifty *different* is the manifest: 31 KPI
+ * layouts, 30 chart styles, 29 cover overlays, 27 section headers and 26 table
+ * treatments, each resolved to a primitive by `resolvers.ts`.
  *
  * ## The seven archetypes
  *
@@ -26,13 +27,13 @@
  * ## Bindings
  *
  * Every value a report supplies is a `{{binding}}` against the production
- * Investment Report namespaces. Risk ratings are literal (`Medium` /
- * `Indicative`) following the convention the existing catalogue already sets:
- * the investment adapter emits no rating field, and binding one would print an
- * empty column on every real report.
+ * Investment Report namespaces. Risk ratings are literal, following the
+ * convention the existing catalogue already sets: the investment adapter emits
+ * no rating field, and binding one would print an empty column on every real
+ * report.
  */
 import {
-  PRIVATE_BANKING,
+  DESIGN_FAMILIES,
   axisFor,
   resolveManifest,
   useBucketFor,
@@ -41,30 +42,31 @@ import {
   type VariantDefinition,
 } from './family';
 import {
-  beginCompassTemplate,
   callout,
+  contents,
   contentTop,
   cover,
   definitions,
   disclaimerPage,
   flow,
+  furniture,
+  kpiCapacity,
   kpis,
-  navigationRail,
   page,
   prose,
   recommendation,
   risks,
   rule,
-  runningHead,
   scenarioChart,
   sectionHeading,
   strengthsWatch,
   table,
   verdict,
   withFurniture,
-  type BlockDef,
+  beginCompassTemplate,
   type PageDef,
 } from './blocks';
+import { hasContents, kpiPlan } from './resolvers';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 import {
   colourwayColors,
@@ -119,13 +121,6 @@ export interface CompassSeedTemplate {
   tags: string[];
   style: string;
   accessTier: string;
-  /**
-   * Design-system metadata; lands in `template_library_entries.design_meta`.
-   *
-   * Typed rather than `Record<string, unknown>` so a rename in the manifest
-   * vocabulary is a compile error here and in every test that reads it, rather
-   * than an `undefined` that reaches a card as a blank field.
-   */
   designMeta: CompassDesignMeta;
   schema: {
     version: 1;
@@ -136,62 +131,78 @@ export interface CompassSeedTemplate {
 }
 
 /**
- * Page furniture shared by every content page.
+ * The catalogue's `style` axis, per family.
  *
- * On `navigation_style: vertical_rail` the rail REPLACES the running head
- * rather than joining it. The catalogue's description — "a gold rail carries
- * part number and section name down every page" — is a statement about what
- * carries orientation on that variant, and drawing both put the rail marker
- * directly on top of the running head at the same `y`.
- *
- * The rail is emitted first so body content paints over it rather than under:
- * `sortBlocksForPaint` keeps document order for blocks with no explicit
- * z-index, and a 2pt rule under a table cell would show through its stripe.
+ * The library's existing Style filter predates the family system and has to
+ * keep returning something sensible for these entries. Each family is mapped to
+ * the voice whose subject matter it shares — not to a voice it is built in,
+ * which it is not.
  */
-function furniture(part: string, section: string, railed: boolean): BlockDef[] {
-  return railed
-    ? navigationRail(part, section)
-    : runningHead(DOCUMENT_LABEL, part);
+const FAMILY_STYLE: Record<string, string> = {
+  private_banking: 'luxury',
+  institutional_research: 'technical',
+  luxury_editorial: 'editorial',
+  modern_fintech: 'minimal',
+  architectural_property: 'minimal',
+  swiss_minimal: 'minimal',
+  corporate_advisory: 'corporate',
+  wealth_management: 'corporate',
+  data_analyst: 'technical',
+  dark_executive: 'technical',
+};
+
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Google Fonts stylesheet URL.
+ *
+ * Written here rather than taken from `fontCatalog` because that helper emits a
+ * fixed weight axis, and these ten families need different ones — Playfair
+ * needs its italic axis for the standfirst, Cinzel has none, Lato ships a 300
+ * and Noto Serif an italic.
+ */
+function googleFontsCss(family: string, axis: string): string {
+  return `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}:${axis}&display=swap`;
 }
 
 /**
  * Compile one master.
  *
- * The `density` branches are the catalogue's own meaning made structural: a
- * spacious template does not shrink its type to fit more on a page, it uses
- * another page. `flow()` records anything that still runs past the footer and
- * the seed build refuses to write a migration while that log is non-empty.
+ * The density and layout branches are the catalogue's own meaning made
+ * structural: a spacious template does not shrink its type to fit more on a
+ * page, it uses another page. `flow()` records anything that still runs past
+ * the footer and the seed build refuses to write a migration while that log is
+ * non-empty.
  */
 function buildTemplate(family: DesignFamily, variant: VariantDefinition): CompassSeedTemplate {
   const manifest = resolveManifest(family, variant);
   const c = beginCompassTemplate(family, variant, manifest);
-  const railed = manifest.navigation_style === 'vertical_rail';
   const spacious = manifest.density === 'spacious';
-  const compact = manifest.density === 'compact';
 
   /**
    * Does the KPI arrangement run down the page rather than across it?
    *
-   * `stacked_rail` and `ledger_rows` set one figure per row, so they consume
-   * roughly four times the height of a ruled band. On those variants the
-   * dashboard has room for the verdict, the figures and the callout and
-   * nothing else — so the property snapshot takes its own page, exactly as it
-   * does on the spacious cut. Trying to fit all four is what
-   * `takeCompassOverflows()` caught: 62pt past the footer on Bullion Rail.
+   * `rows` and `stacked` set one figure per row, so they consume roughly four
+   * times the height of a ruled band, and a `display` grid is taller again. On
+   * those variants the dashboard has room for the verdict, the figures and the
+   * callout and nothing else — so the property snapshot takes its own page.
+   * Trying to fit all four is what the overflow guard caught at 62pt past the
+   * footer on Bullion Rail.
    */
-  const verticalKpis = manifest.kpi_layout === 'stacked_rail'
-    || manifest.kpi_layout === 'ledger_rows';
-
-  /** Variants that give the property snapshot a page of its own. */
-  const splitSnapshot = spacious || verticalKpis;
+  const plan = kpiPlan(manifest.kpi_layout);
+  const tallKpis = plan.variant === 'rows' || plan.variant === 'stacked'
+    || plan.variant === 'display' || plan.items > 6;
+  const splitSnapshot = spacious || tallKpis;
 
   /**
    * Sequential part numbers.
    *
-   * A counter rather than a ternary per page. The five variants spend different
-   * numbers of pages on the same seven archetypes, and hand-computing
-   * `spacious ? '06' : '04'` at every call site is how a report ends up with
-   * two Part 04s — which a reader notices immediately and cannot unsee.
+   * A counter rather than a ternary per page. The fifty masters spend different
+   * numbers of pages on the same seven archetypes, and hand-computing them at
+   * every call site is how a report ends up with two Part 04s — which a reader
+   * notices immediately and cannot unsee.
    */
   let partNo = 0;
   const nextPart = (label: string): string =>
@@ -218,28 +229,54 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ],
   }));
 
+  // ── Contents, where the family declares one ──────────────────────────────
+  if (hasContents(manifest.toc_style)) {
+    pages.push(withFurniture(page('Contents', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Contents'), 'Contents'),
+      ...flow([
+        sectionHeading({ eyebrow: 'In this report', heading: 'Contents', numeral: nextNumeral() }),
+        contents([
+          'The verdict and the numbers that carry it',
+          'The property',
+          'Investment thesis',
+          'Financial position',
+          'Ten-year projection',
+          'Risk and recommendation',
+          'Sources and methodology',
+        ]),
+      ], contentTop()),
+    ]), FOOTER));
+  }
+
   // ── 02 Executive dashboard ───────────────────────────────────────────────
-  const headlineKpis = [
+  const allKpis = [
     { label: 'Purchase price', value: '{{financials.purchasePrice | currency}}', note: 'Contract, before costs' },
     { label: 'Weekly rent', value: '{{financials.weeklyRent | currency}}', note: '{{financials.annualRent | currency}} p.a.' },
     { label: 'Gross yield', value: '{{financials.grossYield | percent}}', note: 'On the purchase price' },
     { label: 'Weekly position', value: '{{financials.weeklyNet | currency}}', note: '{{financials.annualNet | currency}} p.a., before tax' },
-  ];
-  const sixUpKpis = [
-    ...headlineKpis,
     { label: 'Loan amount', value: '{{financials.loanAmount | currency}}', note: 'At settlement' },
     { label: 'Cash on cash', value: '{{financials.cashOnCash | percent}}', note: 'Year one' },
+    { label: 'Total cost', value: '{{financials.totalCost | currency}}', note: 'Including acquisition costs' },
+    { label: 'Annual repayment', value: '{{financials.annualRepayment | currency}}', note: 'P&I, modelled rate' },
+    { label: 'Break-even rent', value: '{{financials.breakEvenRent | currency}}', note: 'Weekly, to hold at nil' },
+    { label: 'Capital growth', value: '{{assumptions.capitalGrowth | percent}}', note: 'Base case, per annum' },
+    { label: 'Interest rate', value: '{{assumptions.interestRate | percent}}', note: 'Modelled' },
+    { label: 'Vacancy', value: '{{assumptions.vacancy | percent}}', note: 'Allowance' },
   ];
+  // The arrangement decides how many figures it wants — four for a ruled band,
+  // twelve for a console, five for a position strip. Supplying more than it
+  // asks for would silently drop them.
+  const dashboardKpis = allKpis.slice(0, kpiCapacity());
 
   pages.push(withFurniture(page('Executive dashboard', [
-    ...furniture(nextPart('Verdict'), 'Verdict and dashboard', railed),
+    ...furniture(DOCUMENT_LABEL, nextPart('Verdict'), 'Verdict and dashboard'),
     ...flow([
       verdict({
         eyebrow: 'The verdict',
         heading: '{{recommendation.headline}}',
         body: '{{recommendation.rationale}}',
       }),
-      kpis(manifest.kpi_layout === 'six_column_ruled' ? sixUpKpis : headlineKpis),
+      kpis(dashboardKpis),
       ...(splitSnapshot ? [] : [
         table({
           headers: ['Property', 'Detail'],
@@ -254,12 +291,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           ],
           columnWidths: [0.42, 0.58],
           numeric: [],
-          stripe: !compact,
         }),
-        // The archetype's dashboard carries strengths and considerations
-        // alongside the snapshot. Without it the page ends two thirds down,
-        // which on a flagship client document reads as unfinished rather than
-        // as restraint.
         strengthsWatch(
           ['{{summary.strength.0}}', '{{summary.strength.1}}'],
           ['{{summary.watch.0}}', '{{summary.watch.1}}'],
@@ -271,9 +303,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   if (splitSnapshot) {
     pages.push(withFurniture(page('The property', [
-      ...furniture(nextPart('The property'), 'The property', railed),
+      ...furniture(DOCUMENT_LABEL, nextPart('The property'), 'The property'),
       ...flow([
-        sectionHeading({ eyebrow: 'The asset', heading: 'What is being bought', numeral: nextNumeral() }),
+        sectionHeading({
+          eyebrow: 'The asset',
+          heading: 'What is being bought',
+          numeral: nextNumeral(),
+          standfirst: '{{property.rationale}}',
+        }),
         table({
           headers: ['Property', 'Detail'],
           rows: [
@@ -293,27 +330,23 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           ['{{summary.strength.0}}', '{{summary.strength.1}}'],
           ['{{summary.watch.0}}', '{{summary.watch.1}}'],
         ),
-        callout('Why this property', '{{property.rationale}}'),
       ], contentTop()),
     ]), FOOTER));
   }
 
   // ── 03 Narrative ─────────────────────────────────────────────────────────
   pages.push(withFurniture(page('Investment thesis', [
-    ...furniture(nextPart('Thesis'), 'Investment thesis', railed),
+    ...furniture(DOCUMENT_LABEL, nextPart('Thesis'), 'Investment thesis'),
     ...flow([
       sectionHeading({
         eyebrow: 'The case',
         heading: '{{market.conclusion.headline}}',
         numeral: nextNumeral(),
       }),
-      prose('{{market.narrative}}', compact ? 96 : 120),
+      prose('{{market.narrative}}', manifest.density === 'compact' ? 96 : 120),
       rule(),
-      strengthsWatch(
-        ['{{summary.strength.0}}', '{{summary.strength.1}}', '{{summary.strength.2}}'],
-        ['{{summary.watch.0}}', '{{summary.watch.1}}'],
-      ),
-      ...(spacious ? [] : [prose('{{market.conclusion.body}}', 84)]),
+      prose('{{market.conclusion.body}}', 92),
+      callout('Why this suburb', '{{property.rationale}}'),
     ], contentTop()),
   ]), FOOTER));
 
@@ -337,7 +370,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   ];
 
   pages.push(withFurniture(page('Financial position', [
-    ...furniture(nextPart('Financials'), 'Financial position', railed),
+    ...furniture(DOCUMENT_LABEL, nextPart('Financials'), 'Financial position'),
     ...flow([
       sectionHeading({
         eyebrow: 'Acquisition and holding',
@@ -366,9 +399,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   if (spacious) {
     pages.push(withFurniture(page('Cash flow', [
-      ...furniture(nextPart('Cash flow'), 'Cash flow', railed),
+      ...furniture(DOCUMENT_LABEL, nextPart('Cash flow'), 'Cash flow'),
       ...flow([
-        sectionHeading({ eyebrow: 'Holding position', heading: 'The weekly and annual position', numeral: nextNumeral() }),
+        sectionHeading({
+          eyebrow: 'Holding position',
+          heading: 'The weekly and annual position',
+          numeral: nextNumeral(),
+        }),
         table({
           headers: ['Cash flow', 'Weekly', 'Annual'],
           rows: cashflowRows,
@@ -382,7 +419,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   // ── 05 Chart and scenario ────────────────────────────────────────────────
   pages.push(withFurniture(page('Ten-year projection', [
-    ...furniture(nextPart('Projection'), 'Ten-year projection', railed),
+    ...furniture(DOCUMENT_LABEL, nextPart('Projection'), 'Ten-year projection'),
     ...flow([
       sectionHeading({
         eyebrow: 'Projections',
@@ -406,7 +443,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   // ── 06 Risk and recommendation ───────────────────────────────────────────
   pages.push(withFurniture(page('Risk and recommendation', [
-    ...furniture(nextPart('Risk'), 'Risk and recommendation', railed),
+    ...furniture(DOCUMENT_LABEL, nextPart('Risk'), 'Risk and recommendation'),
     ...flow([
       sectionHeading({
         eyebrow: 'Risk register',
@@ -433,7 +470,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   // ── 07 Sources and appendix ──────────────────────────────────────────────
   pages.push(withFurniture(page('Sources and methodology', [
-    ...furniture(nextPart('Sources'), 'Sources and methodology', railed),
+    ...furniture(DOCUMENT_LABEL, nextPart('Sources'), 'Sources and methodology'),
     ...flow([
       sectionHeading({
         eyebrow: 'Basis of assessment',
@@ -456,9 +493,18 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   // ── Tokens ───────────────────────────────────────────────────────────────
   const defaultColourway = defaultColourwayFor(family.key);
-  if (!defaultColourway) {
-    throw new Error(`Family "${family.key}" has no colourways`);
-  }
+  if (!defaultColourway) throw new Error(`Family "${family.key}" has no colourways`);
+
+  const faces = [
+    { role: 'display' as const, family: c.type.display },
+    { role: 'heading' as const, family: c.type.heading },
+    { role: 'body' as const, family: c.type.body },
+    { role: 'mono' as const, family: c.type.mono },
+  ];
+  // A family that sets one face for every role must not load it four times.
+  const uniqueFaces = faces.filter(
+    (f, i) => faces.findIndex((g) => g.family === f.family) === i,
+  );
 
   const schema = {
     version: 1 as const,
@@ -472,7 +518,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         display: `${c.type.display}, ${c.type.displayGeneric}`,
         heading: `${c.type.heading}, ${c.type.headingGeneric}`,
         body: `${c.type.body}, ${c.type.bodyGeneric}`,
-        mono: `${c.type.mono}, monospace`,
+        mono: `${c.type.mono}, ${c.type.monoGeneric}`,
       },
       spacing: {
         gutter: c.spacing.gap,
@@ -486,21 +532,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: c.scale.heading,
         cover: c.scale.coverTitle,
       },
-      // Without these the template names Cinzel and Playfair and WeasyPrint
-      // silently renders the engine default, which is a serif that is not
-      // either of them.
-      fontFaces: [
-        { family: c.type.display, cssUrl: googleFontsCss(c.type.display) },
-        { family: c.type.heading, cssUrl: googleFontsCss(c.type.heading, 'ital,wght@0,400;0,500;0,600;1,400') },
-        { family: c.type.body, cssUrl: googleFontsCss(c.type.body, 'wght@400;500;600;700') },
-        { family: c.type.mono, cssUrl: googleFontsCss(c.type.mono, 'wght@400;500;700') },
-      ],
+      // Without these the template names a face and WeasyPrint silently renders
+      // the engine default, which is a serif that is not it.
+      fontFaces: uniqueFaces.map((f) => ({
+        family: f.family,
+        cssUrl: googleFontsCss(f.family, c.type.axes[f.role] ?? 'wght@400;500;600;700'),
+      })),
     },
     pages,
   };
 
   const axis = axisFor(family, variant);
   const bucket = useBucketFor(variant.code);
+  const style = FAMILY_STYLE[family.key];
+  if (!style) throw new Error(`No style axis mapped for family "${family.key}"`);
 
   return {
     slug: `investment-compass-${variant.code}-${slugify(variant.name)}`,
@@ -509,7 +554,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     longDescription:
       `${variant.description} ${family.name} is ${family.note.toLowerCase()}. `
       + `Recommended use: ${variant.use.toLowerCase()}. `
-      + `Ten colourways compose with this layout — six light grounds and four dark.`,
+      + `Ten colourways compose with this layout.`,
     category: 'investment',
     // Normalised by the adapter registry to the production investment adapter,
     // which is what makes these templates report-ready rather than preview-only.
@@ -524,10 +569,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       axis.split(' ')[0].toLowerCase(),
       ...(bucket ? [bucket.toLowerCase().replace(/\s+/g, '-')] : []),
     ],
-    // The catalogue's own `style` axis. Private Banking is the luxury voice's
-    // subject matter — a private-client instrument — and the library's existing
-    // Style filter has to keep returning something sensible for these entries.
-    style: 'luxury',
+    style,
     accessTier: 'premium',
     designMeta: {
       familyKey: family.key,
@@ -548,36 +590,22 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       overrides: variant.overrides,
       isFamilyReference: Object.keys(variant.overrides).length === 0,
       defaultColourway: defaultColourway.id,
-      // The ids this entry offers, in the approved order. Stored on the row
-      // rather than only in the shared registry so the server can validate a
-      // requested colourway against *this template's* curated set — a colourway
-      // id is only meaningful inside the family that curated it.
+      // The ids this entry offers, in the approved order. Stored on the row so
+      // the server can validate a requested colourway against *this template's*
+      // curated set — an id is only meaningful inside its own family.
       colourways: colourwaysForFamily(family.key).map((cw) => cw.id),
-      archetypeCoverage: 'built',
+      archetypeCoverage: Object.keys(variant.overrides).length === 0 ? 'built' : 'manifest',
       source: 'claude-design/investment-compass-template-catalogue',
     },
     schema,
   };
 }
 
-function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-}
+/** Every Investment Compass master, by family, in catalogue order. */
+export const INVESTMENT_COMPASS_TEMPLATES: CompassSeedTemplate[] = DESIGN_FAMILIES.flatMap(
+  (family) => family.variants.map((variant) => buildTemplate(family, variant)),
+);
 
-/**
- * Google Fonts stylesheet URL.
- *
- * Written here rather than imported from `fontCatalog` because that module's
- * helper emits a fixed weight axis, and these four faces need different ones —
- * Playfair needs its italic axis for the standfirst, Cinzel does not have one.
- */
-function googleFontsCss(family: string, axis = 'wght@400;500;600;700'): string {
-  return `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}:${axis}&display=swap`;
-}
-
-/** The five Private Banking masters, in the approved order. */
+/** The five Private Banking masters, kept as a named export for the pilot specs. */
 export const PRIVATE_BANKING_TEMPLATES: CompassSeedTemplate[] =
-  PRIVATE_BANKING.variants.map((variant) => buildTemplate(PRIVATE_BANKING, variant));
-
-/** Every Investment Compass master in the pilot. */
-export const INVESTMENT_COMPASS_TEMPLATES: CompassSeedTemplate[] = [...PRIVATE_BANKING_TEMPLATES];
+  INVESTMENT_COMPASS_TEMPLATES.filter((t) => t.designMeta.familyKey === 'private_banking');

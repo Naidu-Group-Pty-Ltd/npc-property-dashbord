@@ -30,10 +30,11 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { renderTemplateToHtml } from '../../../src/lib/reportTemplate/htmlRenderer';
 import { SAMPLE_REPORT_DATA } from '../../../src/lib/templateLibrary/sampleReportData';
 import {
-  PRIVATE_BANKING_COLOURWAYS,
+  colourwaysForFamily,
   colourwayTokenOverride,
 } from '../../../supabase/functions/_shared/templateColourways.pure';
-import { INVESTMENT_COMPASS_TEMPLATES } from './privateBanking';
+import { INVESTMENT_COMPASS_TEMPLATES } from './templates';
+import { DESIGN_FAMILIES } from './family';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, '../../..');
@@ -154,60 +155,102 @@ async function main(): Promise<void> {
   const browser = await chromium.launch(executablePath ? { executablePath } : {});
   const report: Report = {
     templates: INVESTMENT_COMPASS_TEMPLATES.length,
-    colourways: PRIVATE_BANKING_COLOURWAYS.length,
-    combinations: INVESTMENT_COMPASS_TEMPLATES.length * PRIVATE_BANKING_COLOURWAYS.length,
+    colourways: 10,
+    combinations: INVESTMENT_COMPASS_TEMPLATES.length * 10,
     rendered: 0,
     overflows: [],
     pdf: [],
     screenshots: [],
   };
 
+  /**
+   * Overflow is measured once per template, in its default colourway.
+   *
+   * A colourway cannot change how tall a paragraph sets — and
+   * `investmentCompassCatalogue.spec.ts` proves it, asserting that every
+   * block's geometry is byte-identical across a family's ten palettes. So five
+   * hundred browser renders would measure the same fifty layouts ten times
+   * each, for about ninety minutes of wall clock and no additional coverage.
+   *
+   * The dark spot-check below is a different question — whether a reverse
+   * ground still reads — and is answered by eye, one per family.
+   */
   for (const template of INVESTMENT_COMPASS_TEMPLATES) {
     const pageNames = template.schema.pages.map((p) => p.name);
-    const code = template.designMeta.templateCode as string;
+    const code = template.designMeta.templateCode;
+    const family = template.designMeta.familyKey;
+    const colourways = colourwaysForFamily(family);
+    const dflt = colourways.find((c) => c.id === template.designMeta.defaultColourway)
+      ?? colourways[0];
 
-    for (const colourway of PRIVATE_BANKING_COLOURWAYS) {
-      const { html } = renderTemplateToHtml(template.schema, {
-        data: SAMPLE_REPORT_DATA,
-        tokenOverrides: colourwayTokenOverride(colourway),
-      });
-      const page = await open(browser, html);
-      report.rendered += 1;
-      report.overflows.push(
-        ...await measureOverflows(page, template.name, colourway.name, pageNames),
-      );
+    const { html } = renderTemplateToHtml(template.schema, {
+      data: SAMPLE_REPORT_DATA,
+      tokenOverrides: colourwayTokenOverride(dflt),
+    });
+    const page = await open(browser, html);
+    report.rendered += 1;
+    report.overflows.push(
+      ...await measureOverflows(page, template.name, dflt.name, pageNames),
+    );
 
-      // Screenshot and PDF only the default colourway; fifty PDFs is a lot of
-      // artefact for one reviewer, and the layout is identical across palettes.
-      if (colourway.id === template.designMeta.defaultColourway) {
-        const shot = resolve(OUT, `${code}-cover.png`);
-        await page.locator('.tpl-page').first().screenshot({ path: shot });
-        report.screenshots.push(shot.replace(`${REPO}/`, ''));
+    // A cover and a dashboard for every master — the cover is what the library
+    // card shows, and the dashboard is where the KPI arrangement lives, which
+    // is the axis the five masters in a family most visibly differ on.
+    const cover = resolve(OUT, `${code}-cover.png`);
+    await page.locator('.tpl-page').first().screenshot({ path: cover });
+    report.screenshots.push(cover.replace(`${REPO}/`, ''));
 
-        // The executive dashboard is where the KPI arrangement lives, which is
-        // the axis the five masters most visibly differ on.
-        const dashboard = resolve(OUT, `${code}-dashboard.png`);
-        await page.locator('.tpl-page').nth(1).screenshot({ path: dashboard });
-        report.screenshots.push(dashboard.replace(`${REPO}/`, ''));
-
-        const pdfPath = resolve(OUT, `${code}.pdf`);
-        const bytes = await page.pdf({
-          path: pdfPath,
-          format: 'A4',
-          printBackground: true,
-          // The template already carries its own page geometry; a browser
-          // margin on top would shrink every page and invalidate the measure.
-          margin: { top: '0', right: '0', bottom: '0', left: '0' },
-        });
-        report.pdf.push({
-          template: template.name,
-          pages: template.schema.pages.length,
-          bytes: bytes.length,
-        });
-      }
-
-      await page.close();
+    const dashboardIndex = template.schema.pages.findIndex((p) => p.name === 'Executive dashboard');
+    if (dashboardIndex >= 0) {
+      const dashboard = resolve(OUT, `${code}-dashboard.png`);
+      await page.locator('.tpl-page').nth(dashboardIndex).screenshot({ path: dashboard });
+      report.screenshots.push(dashboard.replace(`${REPO}/`, ''));
     }
+
+    // One PDF per family reference — fifty is a lot of artefact for a reviewer,
+    // and the reference is the variant the Design source actually drew.
+    if (template.designMeta.isFamilyReference) {
+      const pdfPath = resolve(OUT, `${code}.pdf`);
+      const bytes = await page.pdf({
+        path: pdfPath,
+        format: 'A4',
+        printBackground: true,
+        // The template already carries its own page geometry; a browser margin
+        // on top would shrink every page and invalidate the measure.
+        margin: { top: '0', right: '0', bottom: '0', left: '0' },
+      });
+      report.pdf.push({
+        template: `${template.designMeta.familyName} — ${template.name}`,
+        pages: template.schema.pages.length,
+        bytes: bytes.length,
+      });
+    }
+
+    await page.close();
+  }
+
+  // ── Dark-ground spot check, one per family ───────────────────────────────
+  for (const family of DESIGN_FAMILIES) {
+    const template = INVESTMENT_COMPASS_TEMPLATES.find(
+      (t) => t.designMeta.familyKey === family.key && t.designMeta.isFamilyReference,
+    );
+    const dark = colourwaysForFamily(family.key).find((c) => c.ground === 'dark');
+    if (!template || !dark) continue;
+
+    const { html } = renderTemplateToHtml(template.schema, {
+      data: SAMPLE_REPORT_DATA,
+      tokenOverrides: colourwayTokenOverride(dark),
+    });
+    const page = await open(browser, html);
+    report.rendered += 1;
+    report.overflows.push(
+      ...await measureOverflows(page, template.name, dark.name, template.schema.pages.map((p) => p.name)),
+    );
+    const shot = resolve(OUT, `${template.designMeta.templateCode}-dark.png`);
+    const dashboardIndex = template.schema.pages.findIndex((p) => p.name === 'Executive dashboard');
+    await page.locator('.tpl-page').nth(Math.max(0, dashboardIndex)).screenshot({ path: shot });
+    report.screenshots.push(shot.replace(`${REPO}/`, ''));
+    await page.close();
   }
 
   await browser.close();
@@ -215,7 +258,8 @@ async function main(): Promise<void> {
   writeFileSync(resolve(OUT, 'qa-report.json'), JSON.stringify(report, null, 2));
 
   console.log(`\nInvestment Compass — render QA`);
-  console.log(`  ${report.templates} templates × ${report.colourways} colourways = ${report.rendered} renders`);
+  console.log(`  ${report.templates} templates, ${report.combinations} declared combinations`);
+  console.log(`  ${report.rendered} browser renders (one per master + one dark per family)`);
   console.log(`  ${report.pdf.length} PDFs, ${report.screenshots.length} screenshots → audit-output/investment-compass/`);
   for (const p of report.pdf) {
     console.log(`    ${p.template}: ${p.pages} pages, ${(p.bytes / 1024).toFixed(0)} KB`);
@@ -223,7 +267,7 @@ async function main(): Promise<void> {
 
   if (report.overflows.length > 0) {
     console.error(`\n✖ ${report.overflows.length} block(s) run past their page:\n`);
-    for (const o of report.overflows.slice(0, 40)) {
+    for (const o of report.overflows.slice(0, 60)) {
       console.error(`  ${o.template} / ${o.colourway} / p${o.page} "${o.pageName}": ${o.overBy}pt — ${o.block}`);
     }
     process.exit(1);

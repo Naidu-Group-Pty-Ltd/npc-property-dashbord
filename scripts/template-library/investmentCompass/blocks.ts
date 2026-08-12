@@ -22,20 +22,22 @@
  *     re-entered. Overflow past the footer is recorded and fails the build.
  *  2. **No literal colours.** Every colour is `token:*`, which is what lets a
  *     colourway repaint the document and keeps `isBrandSafe()` true.
- *  3. **Type comes from the manifest.** A helper never takes a point size from
- *     its call site; it reads the family's scale at the template's density.
- *  4. **Every value a report supplies is a `{{binding}}`.** Nothing a customer
- *     would want to change is hard-coded.
+ *  3. **Type comes from the family, not the call site.** A helper never takes a
+ *     point size from its caller; it reads the family's measured scale at the
+ *     template's density.
+ *  4. **Every value a report supplies is a `{{binding}}`.**
+ *  5. **Nothing reads a manifest string directly.** Everything goes through
+ *     `resolvers.ts`, which throws on a value it has no mapping for. That is
+ *     what stops a new family silently rendering as somebody else's layout.
  */
 import {
-  MARGIN_PRESETS,
-  PRIVATE_BANKING_TYPE,
   RULE_WEIGHTS,
   TRACKING,
-  TYPE_SCALES,
   marginFor,
   radiusFor,
+  scaleFor,
   spacingFor,
+  typographyFor,
   type Density,
   type DesignFamily,
   type FamilyTypography,
@@ -44,17 +46,35 @@ import {
   type TypeScale,
   type VariantDefinition,
 } from './family';
+import {
+  calloutKind,
+  chartPlan,
+  coverPlan,
+  hasRail,
+  kpiPlan,
+  railFooter,
+  recommendationKind,
+  riskKind,
+  sectionHeaderKind,
+  tablePlan,
+  type CoverPlan,
+} from './resolvers';
 
 export const PAGE = { width: 595, height: 842 } as const;
 
+/** Height of the footer band. */
+export const FOOTER_HEIGHT = 22;
+
 /**
- * Height reserved at the foot of a content page.
+ * Space reserved at the foot of a content page.
  *
- * The archetype's footer is a hairline with the running foot under it, well
- * under this. The reserve is deliberately larger than the ink so a block that
- * ends exactly at the limit still has air beneath it.
+ * Deliberately larger than the footer's ink so a block that ends exactly at the
+ * limit still has air beneath it.
  */
 export const FOOTER_RESERVE = 30;
+
+/** Width of the lane a vertical navigation rail occupies, including its gutter. */
+export const RAIL_LANE = 30;
 
 export interface BlockDef {
   id: string;
@@ -98,7 +118,7 @@ const UNNAMED = '(unnamed)';
  *
  * The seed builder refuses to write a migration when this is non-empty. Without
  * it, a density or type-scale change pushes content under the footer on some
- * subset of the catalogue and the only symptom is a customer's report with a
+ * subset of fifty templates and the only symptom is a customer's report with a
  * truncated table.
  */
 export function takeCompassOverflows(): Overflow[] {
@@ -124,10 +144,11 @@ export interface Compass {
   contentLeft: number;
   contentBottom: number;
   radius: number;
+  railed: boolean;
+  cover: CoverPlan;
+  /** `token:heading` / `token:body` / `token:mono`, per `numeric_typography`. */
+  numericFont: string;
 }
-
-/** Width of the lane a vertical navigation rail occupies, including its gutter. */
-export const RAIL_LANE = 30;
 
 let counter = 0;
 let active: Compass | null = null;
@@ -145,13 +166,14 @@ export function beginCompassTemplate(
 ): Compass {
   counter = 0;
   const margin = marginFor(manifest);
-  const railed = manifest.navigation_style === 'vertical_rail';
+  const railed = hasRail(manifest.navigation_style);
+  const type = typographyFor(family.key);
   const compass: Compass = {
     family,
     variant,
     manifest,
-    type: PRIVATE_BANKING_TYPE,
-    scale: TYPE_SCALES[manifest.density as Density] ?? TYPE_SCALES.balanced,
+    type,
+    scale: scaleFor(family.key, manifest.density as Density),
     spacing: spacingFor(manifest),
     density: manifest.density as Density,
     margin,
@@ -159,6 +181,9 @@ export function beginCompassTemplate(
     contentWidth: PAGE.width - margin * 2 - (railed ? RAIL_LANE : 0),
     contentBottom: PAGE.height - margin - FOOTER_RESERVE,
     radius: radiusFor(manifest),
+    railed,
+    cover: coverPlan(manifest.cover_overlay),
+    numericFont: `token:${type.numericFace}`,
   };
   active = compass;
   return compass;
@@ -217,22 +242,27 @@ export function page(name: string, blocks: BlockDef[], background = 'token:surfa
 // Page furniture
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Where the running head's rule sits — below two lines of label. */
+function runningHeadBottom(): number {
+  const c = ctx();
+  return c.margin + Math.round(c.scale.runningHead * 1.35 * 2) + 5;
+}
+
 /**
  * The running head — the two-part rule across the top of every content page.
  *
- * Left names the document and the asset, right names the part. The archetype
- * sets both in IBM Plex Mono at 6.2pt / 0.2em over a hairline. It is emitted as
- * two text blocks plus a divider rather than one element because the two halves
- * align to opposite edges, and there is no primitive that sets a line with a
- * left and a right end.
+ * Left names the document and the asset, right names the part. It is emitted as
+ * two text blocks plus a divider rather than one element because the halves
+ * align to opposite edges, and no primitive sets a line with a left and a right
+ * end.
+ *
+ * The label takes two thirds of the measure and the rule reserves two lines
+ * either way: `{{property.address}}` is one line for "Lot 60448 Cloverton" and
+ * three for a strata address with a building name, and a rule struck through
+ * the running head is the kind of defect that only shows on a real address.
  */
 export function runningHead(documentLabel: string, part: string): BlockDef[] {
   const c = ctx();
-  // The document label carries `{{property.address}}`, which is one line for
-  // "Lot 60448 Cloverton" and two for a strata address with a building name.
-  // Two thirds of the measure keeps the common case on one line, and the rule
-  // below reserves the second either way — a rule struck through the running
-  // head is the kind of defect that only appears on somebody's real address.
   const labelWidth = Math.floor(c.contentWidth * 0.66);
   const y = c.margin;
   return [
@@ -255,89 +285,34 @@ export function runningHead(documentLabel: string, part: string): BlockDef[] {
     }, 'Part marker'),
     block('divider', {
       color: 'token:line',
-      thickness: RULE_WEIGHTS.hairline,
+      thickness: c.manifest.border_treatment === 'rule_2px' ? RULE_WEIGHTS.heavy : RULE_WEIGHTS.hairline,
       x: c.contentLeft, y: runningHeadBottom(), width: c.contentWidth,
     }),
   ];
 }
 
-/** Where the running head's rule sits — below two lines of label. */
-function runningHeadBottom(): number {
-  const c = ctx();
-  return c.margin + Math.round(c.scale.runningHead * 1.35 * 2) + 5;
-}
-
-/** First usable y below the running head. */
-export function contentTop(): number {
-  const c = ctx();
-  return runningHeadBottom() + c.spacing.sectionGap;
-}
-
 /**
- * The standing footer.
+ * The vertical navigation rail.
  *
- * `footer_style: rule_page_number` is a hairline with the foot under it.
- * `rail_number` moves the page number onto the rail, so the footer carries only
- * the reference and the number sits beside the rail marker.
- */
-export function footer(text: string): BlockDef {
-  const c = ctx();
-  return block('footer', {
-    text,
-    // Left, because the page number takes the right end of the same line. The
-    // archetype's foot is one rule with the reference at one end and the folio
-    // at the other, not two stacked centred lines.
-    align: 'left',
-    bg: 'token:surface',
-    color: 'token:muted',
-    ruleColor: 'token:line',
-    // Inset to the template's own margin so the footer rule spans exactly the
-    // measure the content above it does.
-    inset: c.margin,
-    fontSize: c.scale.runningHead,
-    height: FOOTER_HEIGHT,
-  });
-}
-
-/** Height of the footer band. */
-const FOOTER_HEIGHT = 22;
-
-export function pageNumber(): BlockDef {
-  const c = ctx();
-  return block('page-number', {
-    color: 'token:muted',
-    align: 'right',
-    inset: c.margin,
-    size: c.scale.runningHead,
-    // Vertically centred in the footer band, so it reads as the other end of
-    // the footer line rather than as a separate element floating above it.
-    y: PAGE.height - FOOTER_HEIGHT + (FOOTER_HEIGHT - c.scale.runningHead) / 2 - 1,
-  });
-}
-
-/**
- * The vertical navigation rail — Bullion Rail's defining element.
+ * `navigation_style: vertical_rail` (and the caption/narrow rails) put
+ * orientation on a rule down the binding edge. On those variants the rail
+ * REPLACES the running head rather than joining it — drawing both puts the rail
+ * marker on top of the running head at the same `y`.
  *
- * A gold rule down the full text block with the part number set against it at
- * the top. `navigation_style: vertical_rail` is the only manifest value that
- * produces it, and `RAIL_LANE` is already subtracted from `contentWidth`, so
- * body content never collides with it.
+ * The marker sits in the content column beside the rail, not in the 30pt lane:
+ * horizontal type does not fit a 30pt measure, and rotating it is not something
+ * the block vocabulary can express.
  */
 export function navigationRail(part: string, section: string): BlockDef[] {
   const c = ctx();
   const top = c.margin;
-  const height = c.contentBottom - top;
   return [
     block('divider', {
       orientation: 'vertical',
       color: 'token:primary',
       thickness: 2,
-      x: c.margin, y: top, height,
+      x: c.margin, y: top, height: c.contentBottom - top,
     }, 'Navigation rail'),
-    // The marker sits in the content column beside the rail, not in the 30pt
-    // lane — horizontal type does not fit a 30pt measure, and rotating it is
-    // not something the block vocabulary can express. It occupies the band a
-    // running head would, because on this variant it IS the running head.
     block('text-block', {
       eyebrow: part,
       eyebrowSize: c.scale.eyebrow,
@@ -354,13 +329,64 @@ export function navigationRail(part: string, section: string): BlockDef[] {
   ];
 }
 
-/** Attach the furniture a content page needs, given the manifest. */
+/** The furniture a content page needs, per the manifest. */
+export function furniture(documentLabel: string, part: string, section: string): BlockDef[] {
+  return ctx().railed ? navigationRail(part, section) : runningHead(documentLabel, part);
+}
+
+/** First usable y below the running head or rail marker. */
+export function contentTop(): number {
+  const c = ctx();
+  return runningHeadBottom() + c.spacing.sectionGap;
+}
+
+/**
+ * The standing footer.
+ *
+ * Inset to the template's own margin so its rule spans exactly the measure the
+ * content above it does — the block's 24pt default is a 33pt discrepancy on a
+ * 20mm page, which reads as a mistake on a document whose argument is precision.
+ */
+export function footer(text: string): BlockDef {
+  const c = ctx();
+  return block('footer', {
+    text,
+    // Left, because the page number takes the right end of the same line.
+    align: 'left',
+    bg: 'token:surface',
+    color: 'token:muted',
+    ruleColor: 'token:line',
+    inset: c.margin,
+    fontSize: c.scale.runningHead,
+    height: FOOTER_HEIGHT,
+  });
+}
+
+export function pageNumber(): BlockDef {
+  const c = ctx();
+  return block('page-number', {
+    color: 'token:muted',
+    align: 'right',
+    inset: c.margin,
+    size: c.scale.runningHead,
+    // Vertically centred in the footer band, so it reads as the other end of
+    // the footer line rather than as a separate element floating above it.
+    y: PAGE.height - FOOTER_HEIGHT + (FOOTER_HEIGHT - c.scale.runningHead) / 2 - 1,
+  });
+}
+
+/** Attach the furniture a content page needs. */
 export function withFurniture(p: PageDef, footerText: string): PageDef {
   const c = ctx();
-  const railNumber = c.manifest.footer_style === 'rail_number';
   return {
     ...p,
-    blocks: [...p.blocks, footer(footerText), ...(railNumber ? [] : [pageNumber()])],
+    blocks: [
+      ...p.blocks,
+      footer(footerText),
+      // `rail_number` / `rail_progress` put the folio on the rail, so the
+      // footer carries the reference alone.
+      ...(railFooter(c.manifest.footer_style) ? [] : [pageNumber()]),
+    ],
   };
 }
 
@@ -369,7 +395,6 @@ export function withFurniture(p: PageDef, footerText: string): PageDef {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CoverOptions {
-  /** The wordmark, set in the display face. Two lines. */
   wordmarkTop: string;
   wordmarkBottom: string;
   tagline: string;
@@ -378,7 +403,6 @@ export interface CoverOptions {
   eyebrow: string;
   title: string;
   standfirst: string;
-  /** The location line under the standfirst. */
   locations: string;
   /** The four facts across the foot of the cover. */
   facts: Array<{ label: string; value: string }>;
@@ -389,40 +413,44 @@ export interface CoverOptions {
  *
  * Composed from primitives rather than the `cover` block, on purpose. That
  * block anchors its title at 55% of the page, fixes the eyebrow at 10pt/0.08em
- * and draws a 60×3pt accent bar — a reasonable general cover, and not the one
- * this family approved. The approved composition is a wordmark and tagline at
- * the head, a tracked gold eyebrow over a Cinzel title at the optical centre, a
- * full-width hairline, an italic standfirst, and a ruled four-fact band at the
- * foot. Every one of those is an ordinary absolutely-positioned block, so the
- * page needs no renderer of its own.
+ * and draws a 60×3pt accent bar — a reasonable general cover, and not one of
+ * the twenty-nine the catalogue declares.
  *
- * `cover_overlay` chooses the geometry:
- *   - `obsidian_full` — the reference: margins as declared.
- *   - `obsidian_bleed_portrait` — the title block runs to a wider measure and
- *     sits lower, for a single-asset presentation.
- *   - `obsidian_rail` — a gold rail down the binding edge.
+ * `cover_overlay` resolves to one of three grounds plus three modifiers:
+ *
+ *   - `field`  — the whole page takes the field colour (Private Banking's
+ *     obsidian, Dark Executive's ground, the photographic scrims).
+ *   - `band`   — a field band at the head, paper below (letterheads, mastheads,
+ *     memo and contract headers, Wealth Management's obsidian band).
+ *   - `paper`  — no field at all; the cover works typographically (Swiss
+ *     Minimal's flat grid, the frontispieces, the framed drawing sets).
+ *
+ * plus `frame` (a rule around the page), `rail` (a rule down the binding edge)
+ * and `bleed` (the title runs to the full measure and sits lower).
+ *
+ * ## The geometry is computed upward from the foot
+ *
+ * The title is `{{property.address}}`, whose length is unknowable at build
+ * time. So the title gets a RESERVED area two lines deep and everything below
+ * it is placed against the fact band. Laying it out downward from a fixed title
+ * top is what put a gold hairline through the second line of a two-line address.
  */
 export function cover(opts: CoverOptions): PageDef {
   const c = ctx();
-  const overlay = c.manifest.cover_overlay;
-  const bleed = overlay === 'obsidian_bleed_portrait';
-  const railed = overlay === 'obsidian_rail';
+  const plan = c.cover;
+  const onField = plan.ground === 'field';
 
-  const left = c.margin + (railed ? RAIL_LANE : 0);
-  const width = PAGE.width - c.margin * 2 - (railed ? RAIL_LANE : 0);
+  const inset = plan.frame ? 16 : 0;
+  const left = c.margin + inset + (plan.rail ? RAIL_LANE : 0);
+  const width = PAGE.width - (c.margin + inset) * 2 - (plan.rail ? RAIL_LANE : 0);
 
-  // ── Geometry, computed upward from the foot ──────────────────────────────
-  //
-  // The title is `{{property.address}}`, whose length is unknowable at build
-  // time — "Lot 60448 Cloverton" is one line and "Unit 14B, Level 3, The
-  // Sebastopol Residences, 1188-1200 Wentworthville Parade" is three. So the
-  // title gets a RESERVED area two lines deep and everything below it is placed
-  // against the fact band rather than against the title.
-  //
-  // Laying this out downward from a fixed title top is what put the gold
-  // hairline through the second line of a two-line address.
+  // On a banded cover the head sits on the field and everything else on paper.
+  const headInk = onField || plan.ground === 'band' ? 'token:text' : 'token:ink';
+  const bodyInk = onField ? 'token:text' : 'token:ink';
+  const mutedInk = onField ? 'token:line' : 'token:muted';
+
   const factsHeight = c.density === 'spacious' ? 92 : c.density === 'compact' ? 68 : 78;
-  const factsTop = PAGE.height - c.margin - factsHeight;
+  const factsTop = PAGE.height - c.margin - inset - factsHeight;
 
   const locationsHeight = 12;
   const locationsTop = factsTop - c.spacing.sectionGap - locationsHeight;
@@ -434,55 +462,81 @@ export function cover(opts: CoverOptions): PageDef {
 
   const ruleY = standfirstTop - 16;
 
-  // Two lines of title, plus the eyebrow above it and the h2's own 8pt margin.
   const titleHeight = Math.round(c.scale.coverTitle * 1.12 * 2) + 8;
   const eyebrowHeight = Math.round(c.scale.coverEyebrow + 12);
   const titleTop = ruleY - 14 - titleHeight - eyebrowHeight;
 
   const blocks: BlockDef[] = [];
 
-  if (railed) {
+  // ── Ground ───────────────────────────────────────────────────────────────
+  if (plan.ground === 'band') {
+    // A field band behind the head only. Emitted as a full-width `hero` so the
+    // colour is a block rather than a page background, which is what lets the
+    // rest of the page stay on paper.
+    blocks.push(block('hero', {
+      title: '',
+      bg: 'token:bg',
+      color: 'token:text',
+      height: 176,
+      x: 0, y: 0, width: PAGE.width,
+    }, 'Cover band'));
+  }
+
+  if (plan.frame) {
+    // A hairline frame around the whole sheet — the drawing set's border.
+    const f = c.margin;
+    const w = PAGE.width - f * 2;
+    const h = PAGE.height - f * 2;
+    blocks.push(
+      block('divider', { color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f, y: f, width: w }, 'Frame'),
+      block('divider', { color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f, y: f + h, width: w }),
+      block('divider', { orientation: 'vertical', color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f, y: f, height: h }),
+      block('divider', { orientation: 'vertical', color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f + w, y: f, height: h }),
+    );
+  }
+
+  if (plan.rail) {
     blocks.push(block('divider', {
       orientation: 'vertical',
       color: 'token:primary',
       thickness: 2,
-      x: c.margin, y: c.margin, height: PAGE.height - c.margin * 2,
+      x: c.margin + inset, y: c.margin + inset, height: PAGE.height - (c.margin + inset) * 2,
     }, 'Cover rail'));
   }
 
   // ── Head: wordmark, rule, tagline, marker ────────────────────────────────
   blocks.push(block('text-block', {
     body: `${opts.wordmarkTop}\n${opts.wordmarkBottom}`,
-    bodySize: 11,
+    bodySize: Math.max(8, Math.round(c.scale.coverEyebrow * 1.6)),
     bodyFont: 'token:display',
     bodyTracking: TRACKING.wordmark,
     bodyLineHeight: 1.35,
-    color: 'token:text',
-    x: left, y: c.margin, width: width - 140,
+    color: headInk,
+    x: left, y: c.margin + inset, width: width - 140,
   }, 'Wordmark'));
 
   blocks.push(block('divider', {
     color: 'token:primary',
     thickness: 1,
-    x: left, y: c.margin + 38, width: 74,
+    x: left, y: c.margin + inset + 38, width: 74,
   }));
 
   blocks.push(block('text-block', {
     body: opts.tagline,
-    bodySize: 6.4,
+    bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyTracking: 0.24,
-    color: 'token:muted',
-    x: left, y: c.margin + 46, width: width - 140,
+    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    x: left, y: c.margin + inset + 46, width: width - 140,
   }, 'Tagline'));
 
   blocks.push(block('text-block', {
     body: opts.marker,
-    bodySize: 6.4,
+    bodySize: c.scale.coverEyebrow * 0.92,
     bodyFont: 'token:mono',
     bodyAlign: 'right',
-    color: 'token:muted',
-    x: left + width - 140, y: c.margin, width: 140,
+    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    x: left + width - 140, y: c.margin + inset, width: 140,
   }, 'Cover marker'));
 
   // ── Title block ──────────────────────────────────────────────────────────
@@ -497,8 +551,8 @@ export function cover(opts: CoverOptions): PageDef {
     headingFont: 'token:display',
     headingWeight: 400,
     headingLineHeight: 1.12,
-    headingColor: 'token:text',
-    x: left, y: titleTop, width: bleed ? width : Math.round(width * 0.86),
+    headingColor: bodyInk,
+    x: left, y: titleTop, width: plan.bleed ? width : Math.round(width * 0.86),
   }, 'Cover title'));
 
   blocks.push(block('divider', {
@@ -513,16 +567,16 @@ export function cover(opts: CoverOptions): PageDef {
     bodyFont: 'token:heading',
     bodyStyle: 'italic',
     bodyLineHeight: 1.4,
-    color: 'token:muted',
+    color: mutedInk,
     x: left, y: standfirstTop, width: Math.round(width * 0.86),
   }, 'Standfirst'));
 
   blocks.push(block('text-block', {
     body: opts.locations,
-    bodySize: 7,
+    bodySize: c.scale.runningHead * 1.12,
     bodyFont: 'token:mono',
     bodyTracking: 0.16,
-    color: 'token:muted',
+    color: mutedInk,
     x: left, y: locationsTop, width,
   }, 'Locations'));
 
@@ -533,17 +587,17 @@ export function cover(opts: CoverOptions): PageDef {
     columns: opts.facts.length,
     valueFont: 'token:heading',
     labelFont: 'token:mono',
-    labelSize: 6,
+    labelSize: c.scale.kpiLabel,
     labelTracking: TRACKING.label,
     valueSize: c.density === 'spacious' ? 14 : 11,
-    valueColor: 'token:text',
-    labelColor: 'token:muted',
-    ruleColor: 'token:line',
-    emphasisColor: 'token:line',
+    valueColor: bodyInk,
+    labelColor: mutedInk,
+    ruleColor: onField ? 'token:line' : 'token:line',
+    emphasisColor: onField ? 'token:line' : 'token:ink',
     x: left, y: factsTop, width, height: factsHeight,
   }, 'Cover facts'));
 
-  return page('Cover', blocks, 'token:bg');
+  return page('Cover', blocks, onField ? 'token:bg' : 'token:surface');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -551,33 +605,32 @@ export function cover(opts: CoverOptions): PageDef {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * A section opener.
+ * A section opener, in whichever shape `section_header_style` declares.
  *
- * `section_header_style` decides the shape:
- *   - `eyebrow_rule_display` — tracked gold eyebrow over a Playfair heading.
- *   - `full_bleed_numeral` — an oversized numeral in the rule colour beside the
- *     heading, for the expansive cut.
- *   - `rail_marker` — the eyebrow moves to the rail, so the opener is heading
- *     only and the page reads from the rail inwards.
+ * Six kinds across the catalogue: a tracked eyebrow over a display heading, an
+ * oversized numeral beside it, a heading alone (where the rail or masthead
+ * carries the label), a filled band behind it, a decimal clause number before
+ * it, and an italic standfirst under it.
  */
 export function sectionHeading(opts: {
   eyebrow: string;
   heading: string;
   numeral?: string;
+  standfirst?: string;
   height?: number;
 }): FlowItem {
   const c = ctx();
-  const style = c.manifest.section_header_style;
-  const height = opts.height ?? (style === 'full_bleed_numeral' ? 82 : 62);
+  const kind = sectionHeaderKind(c.manifest.section_header_style);
 
-  if (style === 'full_bleed_numeral' && opts.numeral) {
+  if (kind === 'numeral' && opts.numeral) {
+    const height = opts.height ?? Math.round(c.scale.heading * 2.6) + 20;
     return {
       height,
       block: (y) => block('two-column', {
         leftHeading: opts.numeral,
         leftBody: opts.eyebrow,
         rightHeading: opts.heading,
-        rightBody: '',
+        rightBody: opts.standfirst ?? '',
         ratio: 0.26,
         gap: 26,
         headingSize: c.scale.heading,
@@ -589,22 +642,51 @@ export function sectionHeading(opts: {
     };
   }
 
+  if (kind === 'band') {
+    const height = opts.height ?? Math.round(c.scale.heading * 2.4) + 24;
+    return {
+      height,
+      block: (y) => block('hero', {
+        eyebrow: opts.eyebrow,
+        title: opts.heading,
+        subtitle: opts.standfirst ?? '',
+        bg: 'token:bg',
+        color: 'token:text',
+        accent: 'token:primary',
+        titleSize: c.scale.heading,
+        x: c.contentLeft, y, width: c.contentWidth, height,
+      }, 'Section band'),
+    };
+  }
+
+  const height = opts.height ?? Math.round(c.scale.heading * 2.2) + 18;
+  const decimal = kind === 'decimal' && opts.numeral ? `${opts.numeral}  ` : '';
   return {
     height,
     block: (y) => block('text-block', {
-      ...(style === 'rail_marker' ? {} : {
+      // `bare` moves the label to the rail or masthead, so the opener is
+      // heading only and the page reads from the rail inwards.
+      ...(kind === 'bare' ? {} : {
         eyebrow: opts.eyebrow,
         eyebrowSize: c.scale.eyebrow,
         eyebrowFont: 'token:mono',
         eyebrowTracking: TRACKING.eyebrow,
         eyebrowColor: 'token:primary',
       }),
-      heading: opts.heading,
+      heading: `${decimal}${opts.heading}`,
       headingSize: c.scale.heading,
       headingFont: 'token:heading',
       headingWeight: 400,
       headingLineHeight: 1.14,
       headingColor: 'token:ink',
+      ...(kind === 'standfirst' && opts.standfirst ? {
+        body: opts.standfirst,
+        bodySize: c.scale.body,
+        bodyFont: 'token:body',
+        bodyStyle: 'italic',
+        bodyLineHeight: 1.5,
+        color: 'token:muted',
+      } : {}),
       x: c.contentLeft, y, width: c.contentWidth,
     }, 'Section opener'),
   };
@@ -613,8 +695,9 @@ export function sectionHeading(opts: {
 /** The verdict heading — the dashboard's oversized statement. */
 export function verdict(opts: { eyebrow: string; heading: string; body: string }): FlowItem {
   const c = ctx();
+  const height = Math.round(c.scale.verdict * 2.2 + c.scale.body * 4.6) + 18;
   return {
-    height: c.density === 'compact' ? 108 : c.density === 'spacious' ? 168 : 132,
+    height,
     block: (y) => block('text-block', {
       eyebrow: opts.eyebrow,
       eyebrowSize: c.scale.eyebrow,
@@ -646,7 +729,9 @@ export function prose(body: string, height?: number): FlowItem {
       bodySize: c.scale.body,
       bodyFont: 'token:body',
       bodyLineHeight: 1.62,
-      bodyAlign: 'justify',
+      // Justified for the editorial families; ragged right everywhere else,
+      // because justification without hyphenation opens rivers at this measure.
+      bodyAlign: c.type.body === 'Noto Serif' ? 'justify' : 'left',
       color: 'token:ink',
       x: c.contentLeft, y, width: c.contentWidth,
     }),
@@ -678,22 +763,26 @@ export interface KpiItem {
   accent?: string;
 }
 
+/** How many figures this template's KPI arrangement wants. */
+export function kpiCapacity(): number {
+  return kpiPlan(ctx().manifest.kpi_layout).items;
+}
+
 /**
  * The KPI band, in whichever arrangement the manifest declares.
  *
- * This is the family's principal structural variable, and the one place where
- * the five Private Banking masters most visibly diverge: the same four figures
- * are a ruled four-column band on Chancery, a six-column band on Chancery
- * Compact, a two-up display grid on Sovereign Folio, a stack against the rail
- * on Bullion Rail, and a ledger of label/figure rows on Discretion Ledger.
+ * This is the catalogue's principal structural variable — 31 declared layouts
+ * across ten families — and the axis on which masters within a family most
+ * visibly diverge. `resolvers.ts` maps each to a primitive and a column count.
  */
 export function kpis(items: KpiItem[]): FlowItem {
   const c = ctx();
-  const layout = c.manifest.kpi_layout;
+  const plan = kpiPlan(c.manifest.kpi_layout);
+  const shown = items.slice(0, plan.items);
 
   const shared = {
-    items,
-    valueFont: 'token:heading',
+    items: shown,
+    valueFont: c.numericFont,
     labelFont: 'token:mono',
     noteFont: 'token:body',
     labelSize: c.scale.kpiLabel,
@@ -708,19 +797,20 @@ export function kpis(items: KpiItem[]): FlowItem {
     width: c.contentWidth,
   };
 
-  if (layout === 'two_by_two_display') {
-    const height = 84 + Math.ceil(Math.min(items.length, 4) / 2) * 58;
+  if (plan.variant === 'display') {
+    const rows = Math.ceil(shown.length / plan.columns);
+    const height = 24 + rows * Math.round(c.scale.kpiValue * 2.4);
     return {
       height,
       block: (y) => block('kpi-grid', {
-        ...shared, variant: 'display', columns: 2,
+        ...shared, variant: 'display', columns: plan.columns,
         valueSize: c.scale.kpiValue, y, height,
       }, 'KPI display'),
     };
   }
 
-  if (layout === 'ledger_rows') {
-    const height = 12 + items.length * (c.scale.kpiValue + 16);
+  if (plan.variant === 'rows') {
+    const height = 12 + shown.length * Math.round(c.scale.kpiValue * 0.72 + 16);
     return {
       height,
       block: (y) => block('kpi-grid', {
@@ -730,8 +820,8 @@ export function kpis(items: KpiItem[]): FlowItem {
     };
   }
 
-  if (layout === 'stacked_rail') {
-    const height = items.length * (c.scale.kpiValue + 26);
+  if (plan.variant === 'stacked') {
+    const height = shown.length * Math.round(c.scale.kpiValue * 0.8 + 26);
     return {
       height,
       block: (y) => block('kpi-grid', {
@@ -742,17 +832,40 @@ export function kpis(items: KpiItem[]): FlowItem {
     };
   }
 
-  // four_column_ruled / six_column_ruled
-  const columns = layout === 'six_column_ruled' ? 6 : 4;
-  const height = c.density === 'compact' ? 66 : 82;
+  if (plan.variant === 'tile') {
+    const height = 82;
+    return {
+      height,
+      block: (y) => block('kpi-grid', {
+        items: shown,
+        columns: plan.columns,
+        gap: 10,
+        tileBg: 'token:panel',
+        accent: 'token:primary',
+        labelColor: 'token:muted',
+        radius: c.radius,
+        valueSize: Math.round(c.scale.kpiValue * 0.7),
+        x: c.contentLeft, y, width: c.contentWidth, height,
+      }, 'KPI cards'),
+    };
+  }
+
+  // ruled — one or more rows of hairline-separated columns.
+  const rows = Math.ceil(shown.length / plan.columns);
+  // Six columns give each figure ~78pt of measure; a formatted currency value
+  // overruns the four-column size there, so the band steps down.
+  const valueSize = plan.columns >= 6
+    ? Math.round(c.scale.kpiValue * 0.62)
+    : plan.columns === 5
+      ? Math.round(c.scale.kpiValue * 0.74)
+      : c.scale.kpiValue;
+  const height = rows * (c.density === 'compact' ? 62 : 78);
   return {
     height,
     block: (y) => block('kpi-grid', {
-      ...shared, variant: 'ruled', columns,
-      // Six columns give each figure ~78pt of measure; a formatted currency
-      // value overruns the four-column size there, so the band steps down.
-      valueSize: columns === 6 ? Math.round(c.scale.kpiValue * 0.66) : c.scale.kpiValue,
-      y, height,
+      ...shared, variant: 'ruled', columns: plan.columns,
+      ...(plan.cellBorders ? { cellBorders: true } : {}),
+      valueSize, y, height,
     }, 'KPI band'),
   };
 }
@@ -761,15 +874,7 @@ export function kpis(items: KpiItem[]): FlowItem {
 // Tables
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * A ledger table.
- *
- * `table_style` decides the treatment. All three Private Banking values are
- * unfilled statements — the difference is padding and how a total is closed:
- *   - `ledger_hairline` — hairline between rows, heavy rule under the heads.
- *   - `ledger_tight` — the same at compact padding.
- *   - `double_rule_statement` — totals closed by a doubled rule.
- */
+/** A table in whichever treatment `table_style` declares. */
 export function table(opts: {
   headers: string[];
   rows: string[][];
@@ -777,13 +882,12 @@ export function table(opts: {
   /** Indices of rows that close a total. */
   totals?: number[];
   numeric?: number[];
-  stripe?: boolean;
 }): FlowItem {
   const c = ctx();
-  const style = c.manifest.table_style;
-  const tight = style === 'ledger_tight';
-  const rowHeight = tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const plan = tablePlan(c.manifest.table_style);
+  const rowHeight = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
   const numericColumns = opts.numeric ?? opts.headers.map((_, i) => i).slice(1);
+  const cellPadding = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
 
   return {
     height: 24 + opts.rows.length * rowHeight,
@@ -791,23 +895,25 @@ export function table(opts: {
       headers: opts.headers,
       rows: opts.rows.map((cells) => ({ cells })),
       ...(opts.columnWidths ? { columnWidths: opts.columnWidths } : {}),
-      // A statement has no filled header band.
-      headerStyle: 'rule',
+      headerStyle: plan.headerStyle,
+      headerBg: 'token:primary',
+      headerFg: 'token:onPrimary',
       headerFont: 'token:mono',
       headerSize: c.scale.columnHead,
       headerTracking: TRACKING.columnHead,
-      numericFont: 'token:heading',
+      numericFont: c.numericFont,
       numericColumns,
-      ...(opts.totals?.length ? { totalRows: opts.totals } : {}),
-      rowRule: true,
-      outerBorder: false,
-      stripeBg: opts.stripe === false ? 'transparent' : 'token:panel',
+      ...(plan.doubleRuleTotals && opts.totals?.length ? { totalRows: opts.totals } : {}),
+      rowRule: plan.rowRule,
+      outerBorder: plan.outerBorder,
+      ...(plan.gridLines ? { gridLines: true } : {}),
+      stripeBg: plan.stripe ? 'token:panel' : 'transparent',
       cellFg: 'token:ink',
       borderColor: 'token:line',
       emphasisColor: 'token:ink',
       negativeColor: 'token:negative',
       fontSize: c.scale.cell,
-      cellPadding: tight ? c.spacing.cellPadding - 1.5 : c.spacing.cellPadding,
+      cellPadding,
       x: c.contentLeft, y, width: c.contentWidth,
     }),
   };
@@ -820,17 +926,20 @@ export function table(opts: {
 /** A callout in whichever treatment `callout_style` declares. */
 export function callout(title: string, body: string, height?: number): FlowItem {
   const c = ctx();
-  const margin = c.manifest.callout_style === 'margin_note';
+  const kind = calloutKind(c.manifest.callout_style);
+  const style = kind === 'badge' ? 'badge' : kind === 'margin' ? 'margin' : 'bar';
   return {
-    height: height ?? (margin ? 58 : 72),
+    height: height ?? (kind === 'margin' ? 58 : 72),
     block: (y) => block('callout', {
       title,
       body,
       variant: 'info',
-      style: margin ? 'margin' : 'bar',
+      style,
       accent: 'token:primary',
       titleColor: 'token:primary',
-      bg: margin ? 'transparent' : 'token:panel',
+      // A flat block fills without an accent edge; a bar keeps the edge.
+      bg: kind === 'margin' ? 'transparent' : 'token:panel',
+      ...(kind === 'block' ? { barWidth: 0 } : {}),
       ruleColor: 'token:primary',
       color: 'token:ink',
       titleFont: 'token:mono',
@@ -850,7 +959,7 @@ export function risks(
   items: Array<{ risk: string; rating: string; confidence: string; why: string; ddAction: string; note?: string }>,
 ): FlowItem {
   const c = ctx();
-  const bars = c.manifest.risk_display === 'severity_bars';
+  const bars = riskKind(c.manifest.risk_display) === 'bars';
   return {
     height: bars ? 26 + items.length * 24 : 44 + items.length * 46,
     block: (y) => block('risk-register', {
@@ -884,15 +993,15 @@ export function risks(
 /**
  * The recommendation.
  *
- * `obsidian_card` sets it on the field colour — the one place a content page
- * carries the cover's ground. `ruled_statement` sets it as ruled type on paper,
- * for the reader who wants the recommendation to read like the rest of the
- * statement rather than like a panel.
+ * Three kinds: a filled card on the field colour (the one place a content page
+ * carries the cover's ground), ruled type on paper set like the rest of the
+ * statement, and a bordered box.
  */
 export function recommendation(heading: string, body: string): FlowItem {
   const c = ctx();
-  const ruled = c.manifest.recommendation_style === 'ruled_statement';
-  if (ruled) {
+  const kind = recommendationKind(c.manifest.recommendation_style);
+
+  if (kind === 'statement') {
     return {
       height: 96,
       block: (y) => block('text-block', {
@@ -902,7 +1011,7 @@ export function recommendation(heading: string, body: string): FlowItem {
         eyebrowTracking: TRACKING.label,
         eyebrowColor: 'token:primary',
         heading,
-        headingSize: Math.round(c.scale.heading * 0.72),
+        headingSize: Math.round(c.scale.heading * 0.78),
         headingFont: 'token:heading',
         headingWeight: 400,
         headingLineHeight: 1.2,
@@ -916,19 +1025,20 @@ export function recommendation(heading: string, body: string): FlowItem {
       }, 'Recommendation'),
     };
   }
-  // `obsidian_card`: the recommendation on the cover's own ground. `maxWords` is
-  // lifted because the default 60-word cap silently truncates an adviser's
-  // recommendation, and a client-facing sentence ending in an ellipsis is worse
-  // than a longer card.
+
+  const onField = kind === 'card';
   return {
     height: 96,
     block: (y) => block('decision-box', {
       heading,
       body,
+      // The 60-word default silently truncates an adviser's recommendation, and
+      // a client-facing sentence ending in an ellipsis is worse than a longer
+      // card.
       maxWords: 90,
       accent: 'token:primary',
-      bg: 'token:bg',
-      color: 'token:text',
+      bg: onField ? 'token:bg' : 'token:surface',
+      color: onField ? 'token:text' : 'token:ink',
       headingColor: 'token:primary',
       headingFont: 'token:mono',
       headingSize: c.scale.kpiLabel,
@@ -936,7 +1046,7 @@ export function recommendation(heading: string, body: string): FlowItem {
       bodyFont: 'token:body',
       bodySize: c.scale.body,
       radius: c.radius,
-      barWidth: 2,
+      barWidth: onField ? 2 : 1,
       x: c.contentLeft, y, width: c.contentWidth,
     }, 'Recommendation'),
   };
@@ -974,16 +1084,34 @@ export function definitions(
   };
 }
 
+/** A contents page, for the families whose `toc_style` is not `none`. */
+export function contents(entries: string[]): FlowItem {
+  const c = ctx();
+  return {
+    height: 40 + entries.length * 20,
+    block: (y) => block('toc', {
+      title: entries.join('\n'),
+      titleSize: c.scale.heading,
+      titleColor: 'token:ink',
+      color: 'token:ink',
+      indexColor: 'token:primary',
+      size: c.scale.body,
+      lineHeight: 20,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }, 'Contents'),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Charts
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The scenario chart.
+ * The scenario chart, drawn by whichever block `chart_style` resolves to.
  *
- * `chart_style: line_editorial` is a plain line with an editorial caption;
- * `stepped_area` is the same series as a filled area, for the ledger cut that
- * wants the accumulation shown rather than the trajectory.
+ * `smallMultiples` families draw the series at panel size — the research
+ * exhibit and the analyst's small multiples — which here means a shorter block,
+ * since a panel is a fraction of a plate.
  */
 export function scenarioChart(opts: {
   title: string;
@@ -993,37 +1121,16 @@ export function scenarioChart(opts: {
   height?: number;
 }): FlowItem {
   const c = ctx();
-  const area = c.manifest.chart_style === 'stepped_area';
-  const height = opts.height ?? (c.density === 'compact' ? 158 : c.density === 'spacious' ? 224 : 186);
+  const plan = chartPlan(c.manifest.chart_style);
+  const base = c.density === 'compact' ? 158 : c.density === 'spacious' ? 224 : 186;
+  const height = opts.height
+    ?? (plan.block === 'sparkline' ? 92 : plan.smallMultiples ? Math.round(base * 0.72) : base);
+  // `sparkline` takes a bare series rather than a titled chart.
+  const isSparkline = plan.block === 'sparkline';
   return {
     height,
-    block: (y) => block(area ? 'chart-area' : 'chart-line', {
-      title: opts.title,
-      caption: opts.caption,
-      dataPath: opts.dataPath,
-      data: opts.data,
-      labelKey: 'label',
-      valueKey: 'value',
-      accent: 'token:primary',
-      x: c.contentLeft, y, width: c.contentWidth, height,
-    }),
-  };
-}
-
-export function barChart(opts: {
-  title: string;
-  caption: string;
-  dataPath: string;
-  data: Array<{ label: string; value: number }>;
-  height?: number;
-}): FlowItem {
-  const c = ctx();
-  const height = opts.height ?? (c.density === 'compact' ? 150 : 178);
-  return {
-    height,
-    block: (y) => block('chart-bar', {
-      title: opts.title,
-      caption: opts.caption,
+    block: (y) => block(plan.block, {
+      ...(isSparkline ? {} : { title: opts.title, caption: opts.caption }),
       dataPath: opts.dataPath,
       data: opts.data,
       labelKey: 'label',
@@ -1052,5 +1159,3 @@ export function disclaimerPage(text: string): PageDef {
     }),
   ]);
 }
-
-export { MARGIN_PRESETS };
