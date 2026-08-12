@@ -34,7 +34,19 @@ import {
   colourwayTokenOverride,
 } from '../../../supabase/functions/_shared/templateColourways.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from './templates';
+import { BORROWING_CAPACITY_TEMPLATES } from './borrowingCapacity';
+
 import { DESIGN_FAMILIES } from './family';
+
+/**
+ * Every family master, across every report format.
+ *
+ * The overflow measurement is the reason this exists, and it is format-blind:
+ * a Borrowing Capacity income table can run past the footer exactly as an
+ * investment cash-flow table can, and neither is visible from the schema.
+ */
+const ALL_MASTERS = [...INVESTMENT_COMPASS_TEMPLATES, ...BORROWING_CAPACITY_TEMPLATES];
+
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, '../../..');
@@ -154,7 +166,7 @@ async function main(): Promise<void> {
   if (executablePath) console.log(`  using ${executablePath}`);
   const browser = await chromium.launch(executablePath ? { executablePath } : {});
   const report: Report = {
-    templates: INVESTMENT_COMPASS_TEMPLATES.length,
+    templates: ALL_MASTERS.length,
     colourways: 10,
     combinations: INVESTMENT_COMPASS_TEMPLATES.length * 10,
     rendered: 0,
@@ -175,9 +187,13 @@ async function main(): Promise<void> {
    * The dark spot-check below is a different question — whether a reverse
    * ground still reads — and is answered by eye, one per family.
    */
-  for (const template of INVESTMENT_COMPASS_TEMPLATES) {
+  for (const template of ALL_MASTERS) {
     const pageNames = template.schema.pages.map((p) => p.name);
-    const code = template.designMeta.templateCode;
+    // Variant codes repeat across formats — `pb-01` exists in both catalogues —
+    // so an artifact named by code alone has one format silently overwrite the
+    // other's. The first run of this after Borrowing Capacity landed reported 20
+    // PDFs and left 10 on disk.
+    const code = `${template.designMeta.reportFormat}-${template.designMeta.templateCode}`;
     const family = template.designMeta.familyKey;
     const colourways = colourwaysForFamily(family);
     const dflt = colourways.find((c) => c.id === template.designMeta.defaultColourway)
@@ -220,7 +236,12 @@ async function main(): Promise<void> {
     await page.locator('.tpl-page').first().screenshot({ path: cover });
     report.screenshots.push(cover.replace(`${REPO}/`, ''));
 
-    const dashboardIndex = template.schema.pages.findIndex((p) => p.name === 'Executive dashboard');
+    // The densest page, whatever the format calls it. Hardcoding 'Executive
+    // dashboard' meant the Borrowing Capacity masters — whose equivalent is
+    // 'Capacity summary' — were screenshotted as covers only.
+    const dashboardIndex = template.schema.pages.findIndex(
+      (p) => p.name === 'Executive dashboard' || p.name === 'Capacity summary',
+    );
     if (dashboardIndex >= 0) {
       const dashboard = resolve(OUT, `${code}-dashboard.png`);
       await page.locator('.tpl-page').nth(dashboardIndex).screenshot({ path: dashboard });

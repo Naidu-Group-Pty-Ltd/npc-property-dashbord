@@ -975,6 +975,94 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       afterTaxSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Math.round(r.afterTax) })),
     };
   })(),
+
+  // ── Borrowing Capacity Snapshot ───────────────────────────────────────────
+  //
+  // The namespaces `borrowingCapacityProjection.pure.ts` publishes, so the 50
+  // Borrowing Capacity masters preview with figures rather than blanks.
+  //
+  // Shapes and units follow the live `borrowing_capacity_assessments` table
+  // rather than what reads nicely: rates are whole-number percent (the
+  // `percent` filter does not multiply), `capacity.dti` is a MULTIPLE of income
+  // and is set with `| fixed`, and `income.items` / `liabilities.items` are
+  // arrays with the element keys the table actually stores. A sample written in
+  // a convenient shape is how a catalogue passes preview and renders empty on
+  // real data — which is precisely what happened to the Investment Compass
+  // masters before the projection landed.
+  capacity: {
+    borrowing: 1180000,
+    stressTested: 1042000,
+    monthlySurplus: 1290,
+    annualSurplus: 15480,
+    band: 'amber',
+    bandLabel: 'Serviceable with limited headroom',
+    // Total debt over assessable income: (612,000 + 4,200 + 18,600 existing
+    // + 1,032,000 proposed) / 280,000 = 5.95. A MULTIPLE, not a percentage —
+    // the column is `dti_ratio` and reads like a rate, which is why the
+    // templates set it with `| fixed` and label it "x assessable income".
+    dti: 5.95,
+    depositAmount: 258000,
+    propertyValueEstimate: 1290000,
+    // `netPurchase` is deliberately absent: populated on 3 of 143 rows, so the
+    // sample shows what the common case looks like.
+  },
+  // The totals RECONCILE against the components, and that is not decoration:
+  // the income page prints the lines and the total on the same table, so a
+  // sample whose total does not equal its parts renders a visibly wrong
+  // financial document in every preview and every screenshot. The first draft
+  // of this had four lines summing to $280,000 under a $245,000 total, which
+  // the render showed immediately.
+  //   gross  118,000 + 82,000 + 46,800 + 33,200 = 280,000
+  //   shaded 118,000 + 82,000 + 35,100 + 28,220 = 263,320
+  income: {
+    gross: 280000,
+    shaded: 263320,
+    shadingApplied: 16680,
+    items: [
+      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 0 },
+      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 0 },
+      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25 },
+      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 15 },
+    ],
+  },
+  expenses: {
+    monthly: 6420,
+    annual: 77040,
+    method: 'hem',
+    methodLabel: 'HEM benchmark',
+    declared: 5900,
+    hemBenchmark: 6420,
+  },
+  liabilities: {
+    monthly: 1840,
+    annual: 22080,
+    items: [
+      { type: 'Owner-occupier home loan', balance: 612000, limit: 612000, monthlyServicing: 1540 },
+      { type: 'Credit card', balance: 4200, limit: 15000, monthlyServicing: 300 },
+      { type: 'Novated lease', balance: 18600, limit: 18600, monthlyServicing: 0 },
+    ],
+  },
+  loan: {
+    proposed: 1032000,
+    lvr: 80,
+    termYears: 30,
+    interestRate: 6.14,
+    bufferRate: 3,
+    assessmentRate: 9.14,
+    lender: 'Meridian Mutual',
+  },
+  // Empty on 140 of 143 assessments, so the LMI block stays conditional and the
+  // sample exercises the common path.
+  lmi: {},
+  recommendations: [
+    'Reducing the credit card limit from $15,000 to $5,000 lifts assessed capacity by roughly $46,000',
+    'Closing the novated lease at term removes $18,600 from assessed liabilities',
+    'A 30-year term at the current assessment rate is already the most favourable modelled',
+  ],
+  warnings: [
+    'Assessment rate includes a 3.00% serviceability buffer over the quoted rate',
+    'Rental income is shaded at 25%, which is this lender\'s policy rather than a market view',
+  ],
 };
 
 /**

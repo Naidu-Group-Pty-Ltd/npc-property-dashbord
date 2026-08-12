@@ -306,6 +306,58 @@ colour, so they passed `isBrandSafe()` — which only inspects the schema — wh
 being the one element on the page that ignored the template's palette. The third
 could not paint a background at all.
 
+## A second report format
+
+The ten designs are **format-agnostic by construction** — typography, density,
+margins, KPI arrangement, table treatment and colourway carry no subject matter
+— so they serve any report. The **Borrowing Capacity Snapshot** is the first
+format to take them up, at 50 more masters: the same ten families × five
+variants × ten colourways.
+
+| | Investment Compass | Borrowing Capacity |
+| --- | --- | --- |
+| Masters | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` |
+| `category` | `investment` | `finance` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` |
+| Composer | `investmentCompass/templates.ts` | `investmentCompass/borrowingCapacity.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` |
+| Production-ready | yes | yes |
+
+**What is shared and what is not.** `master.ts` holds the shell — tokens
+compiled from the family's colourway and measured type scale, the Google Fonts
+faces, the `design_meta`, the slug and the tags. What is *not* shared is the
+document: an Investment Compass report argues about a property and ends on a
+ten-year projection; a Snapshot argues about a household's income and ends on
+what a lender would advance against it. Bending one page sequence to cover both
+with conditionals would produce a template that is neither, so each format
+contributes its own composer and both compile through one shell.
+
+That shell was extracted when the second format arrived. The alternative was a
+second copy of sixty lines of token and `design_meta` assembly, which stays in
+step for exactly as long as nobody edits it — the first colourway or font-axis
+change would have repainted one catalogue and left the other on the old palette,
+with nothing to say so.
+
+### Two pages the Snapshot deliberately does not have
+
+`docs/reports/BORROWING_CAPACITY.md` describes an eight-page document. Two of
+those pages are absent here, and both absences are measured rather than lazy:
+
+- **"How this was calculated"** — `explanation` is **null on all 143** stored
+  assessments. The page would render empty on every report.
+- **Audit trail** — a raw-versus-assessed ledger whose row count is unbounded.
+  This page model is fixed-position with no reflow, so a twelve-entry trail runs
+  off the paper. It belongs in the format's own generator, which can paginate.
+
+### `design_meta.reportFormat`
+
+Every family master now records which format it documents. It is what the QA
+harness names artifacts by — both catalogues use the same variant codes, so
+`pb-01` exists twice, and an artifact named by code alone had one format
+silently overwrite the other's. The first run after Borrowing Capacity landed
+reported 20 PDFs and left 10 on disk.
+
 ## Image plates
 
 Two of the ten families carry photographs — **Luxury Editorial** and

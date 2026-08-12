@@ -69,105 +69,28 @@ import {
   type PageDef,
 } from './blocks';
 import { hasContents, imageSlotPlan, kpiPlan, type ImagePlate } from './resolvers';
-import { STANDARD_DISCLAIMER } from '../designSystem';
 import {
-  colourwayColors,
-  colourwaysForFamily,
-  defaultColourwayFor,
-} from '../../../supabase/functions/_shared/templateColourways.pure';
+  assembleMaster,
+  type CompassSeedTemplate,
+  type ReportFormat,
+} from './master';
+import { STANDARD_DISCLAIMER } from '../designSystem';
+
+/** Investment Compass: the format the ten families were drawn for. */
+const INVESTMENT_COMPASS_FORMAT: ReportFormat = {
+  key: 'investment-compass',
+  // Normalised by the adapter registry to the production investment adapter,
+  // which is what makes these templates report-ready rather than preview-only.
+  reportType: 'investment_compass',
+  category: 'investment',
+  tier: 'compass',
+  label: 'Investment Compass',
+};
 
 /** The running foot on every content page. */
 const FOOTER = '{{property.address}} · {{client.name}}';
 /** The left half of the running head. */
 const DOCUMENT_LABEL = 'Investment Compass · {{property.address}}';
-
-/**
- * What a family template records about its own design.
- *
- * Mirrors `TemplateDesignMeta` in `src/lib/templateLibrary/types.ts`, which is
- * the browser's view of the same jsonb column.
- */
-export interface CompassDesignMeta {
-  familyKey: string;
-  familyCode: string;
-  familyName: string;
-  familyNote: string;
-  familyOrdinal: string;
-  faces: string;
-  templateCode: string;
-  variantAxis: string;
-  architecture: string;
-  density: string;
-  printDensity: string;
-  ground: string;
-  recommendedUse: string;
-  useBucket: string | null;
-  manifest: TemplateManifest;
-  overrides: Partial<TemplateManifest>;
-  isFamilyReference: boolean;
-  defaultColourway: string;
-  colourways: string[];
-  archetypeCoverage: string;
-  source: string;
-}
-
-export interface CompassSeedTemplate {
-  slug: string;
-  name: string;
-  description: string;
-  longDescription: string;
-  category: string;
-  reportType: string | null;
-  tier?: string | null;
-  industry: string[];
-  tags: string[];
-  style: string;
-  accessTier: string;
-  designMeta: CompassDesignMeta;
-  schema: {
-    version: 1;
-    name: string;
-    tokens: Record<string, unknown>;
-    pages: PageDef[];
-  };
-}
-
-/**
- * The catalogue's `style` axis, per family.
- *
- * The library's existing Style filter predates the family system and has to
- * keep returning something sensible for these entries. Each family is mapped to
- * the voice whose subject matter it shares — not to a voice it is built in,
- * which it is not.
- */
-const FAMILY_STYLE: Record<string, string> = {
-  private_banking: 'luxury',
-  institutional_research: 'technical',
-  luxury_editorial: 'editorial',
-  modern_fintech: 'minimal',
-  architectural_property: 'minimal',
-  swiss_minimal: 'minimal',
-  corporate_advisory: 'corporate',
-  wealth_management: 'corporate',
-  data_analyst: 'technical',
-  dark_executive: 'technical',
-};
-
-function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-}
-
-/**
- * Google Fonts stylesheet URL.
- *
- * Written here rather than taken from `fontCatalog` because that helper emits a
- * fixed weight axis, and these ten families need different ones — Playfair
- * needs its italic axis for the standfirst, Cinzel has none, Lato ships a 300
- * and Noto Serif an italic.
- */
-function googleFontsCss(family: string, axis: string): string {
-  return `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}:${axis}&display=swap`;
-}
 
 /**
  * Compile one master.
@@ -558,114 +481,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
 
   pages.push(disclaimerPage(STANDARD_DISCLAIMER));
 
-  // ── Tokens ───────────────────────────────────────────────────────────────
-  const defaultColourway = defaultColourwayFor(family.key);
-  if (!defaultColourway) throw new Error(`Family "${family.key}" has no colourways`);
-
-  const faces = [
-    { role: 'display' as const, family: c.type.display },
-    { role: 'heading' as const, family: c.type.heading },
-    { role: 'body' as const, family: c.type.body },
-    { role: 'mono' as const, family: c.type.mono },
-  ];
-  // A family that sets one face for every role must not load it four times.
-  const uniqueFaces = faces.filter(
-    (f, i) => faces.findIndex((g) => g.family === f.family) === i,
-  );
-
-  const schema = {
-    version: 1 as const,
-    name: variant.name,
-    tokens: {
-      // The default colourway is compiled in. Selecting another is a token
-      // override at preview time and a bake at copy time — never a second
-      // template. See `templateColourways.pure.ts`.
-      colors: colourwayColors(defaultColourway),
-      fonts: {
-        display: `${c.type.display}, ${c.type.displayGeneric}`,
-        heading: `${c.type.heading}, ${c.type.headingGeneric}`,
-        body: `${c.type.body}, ${c.type.bodyGeneric}`,
-        mono: `${c.type.mono}, ${c.type.monoGeneric}`,
-      },
-      spacing: {
-        gutter: c.spacing.gap,
-        sectionGap: c.spacing.sectionGap,
-        padding: c.margin,
-      },
-      radii: { sm: c.radius, md: c.radius, lg: c.radius },
-      typeScale: {
-        eyebrow: c.scale.eyebrow,
-        body: c.scale.body,
-        heading: c.scale.heading,
-        cover: c.scale.coverTitle,
-      },
-      // Without these the template names a face and WeasyPrint silently renders
-      // the engine default, which is a serif that is not it.
-      fontFaces: uniqueFaces.map((f) => ({
-        family: f.family,
-        cssUrl: googleFontsCss(f.family, c.type.axes[f.role] ?? 'wght@400;500;600;700'),
-      })),
-    },
-    pages,
-  };
-
-  const axis = axisFor(family, variant);
-  const bucket = useBucketFor(variant.code);
-  const style = FAMILY_STYLE[family.key];
-  if (!style) throw new Error(`No style axis mapped for family "${family.key}"`);
-
-  return {
-    slug: `investment-compass-${variant.code}-${slugify(variant.name)}`,
-    name: variant.name,
-    description: variant.description,
-    longDescription:
-      `${variant.description} ${family.name} is ${family.note.toLowerCase()}. `
-      + `Recommended use: ${variant.use.toLowerCase()}. `
-      + `Ten colourways compose with this layout.`,
-    category: 'investment',
-    // Normalised by the adapter registry to the production investment adapter,
-    // which is what makes these templates report-ready rather than preview-only.
-    reportType: 'investment_compass',
-    tier: 'compass',
-    industry: ['property', 'finance'],
-    tags: [
-      'investment-compass',
-      family.key.replace(/_/g, '-'),
-      variant.code,
-      manifest.density,
-      axis.split(' ')[0].toLowerCase(),
-      ...(bucket ? [bucket.toLowerCase().replace(/\s+/g, '-')] : []),
-    ],
-    style,
-    accessTier: 'premium',
-    designMeta: {
-      familyKey: family.key,
-      familyCode: family.code,
-      familyName: family.name,
-      familyNote: family.note,
-      familyOrdinal: family.ordinal,
-      faces: family.faces,
-      templateCode: variant.code,
-      variantAxis: axis,
-      architecture: variant.architecture,
-      density: manifest.density,
-      printDensity: manifest.print_density,
-      ground: variant.ground,
-      recommendedUse: variant.use,
-      useBucket: bucket,
-      manifest,
-      overrides: variant.overrides,
-      isFamilyReference: Object.keys(variant.overrides).length === 0,
-      defaultColourway: defaultColourway.id,
-      // The ids this entry offers, in the approved order. Stored on the row so
-      // the server can validate a requested colourway against *this template's*
-      // curated set — an id is only meaningful inside its own family.
-      colourways: colourwaysForFamily(family.key).map((cw) => cw.id),
-      archetypeCoverage: Object.keys(variant.overrides).length === 0 ? 'built' : 'manifest',
-      source: 'claude-design/investment-compass-template-catalogue',
-    },
-    schema,
-  };
+  return assembleMaster({ family, variant, manifest, c, pages, format: INVESTMENT_COMPASS_FORMAT });
 }
 
 /** Every Investment Compass master, by family, in catalogue order. */

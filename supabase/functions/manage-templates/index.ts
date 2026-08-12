@@ -324,6 +324,12 @@ const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   'investment_compass',
   'investment_report',
   'property_investment',
+  // Borrowing Capacity gained a real adapter reading
+  // `borrowing_capacity_assessments` — a typed 35-column table with 143 rows.
+  // Both spellings are listed because this set matches the raw `report_type`
+  // and does not run it through the client registry's alias map.
+  'borrowing_capacity',
+  'borrowing',
 ]);
 
 function normaliseReportTemplateType(reportType: unknown): string {

@@ -40,10 +40,21 @@ import { takeOverflows } from './blocks';
 import { runningHeadFor, VOICES, type VoiceId } from './designSystem';
 import { SEED_TEMPLATES, type SeedTemplate } from './templates';
 import { takeCompassOverflows } from './investmentCompass/blocks';
-import {
-  INVESTMENT_COMPASS_TEMPLATES,
-  type CompassSeedTemplate,
-} from './investmentCompass/templates';
+import { INVESTMENT_COMPASS_TEMPLATES } from './investmentCompass/templates';
+import { BORROWING_CAPACITY_TEMPLATES } from './investmentCompass/borrowingCapacity';
+import type { CompassSeedTemplate } from './investmentCompass/master';
+
+/**
+ * Every family master, across every report format.
+ *
+ * The ten designs are format-agnostic, so each format contributes its own page
+ * sequence and shares the shell (`master.ts`). Adding a format here is what
+ * makes its masters validated, deduplicated and seeded with the rest.
+ */
+const FAMILY_TEMPLATES: CompassSeedTemplate[] = [
+  ...INVESTMENT_COMPASS_TEMPLATES,
+  ...BORROWING_CAPACITY_TEMPLATES,
+];
 import { typographyFor } from './investmentCompass/family';
 import {
   colourwaysForFamily,
@@ -315,7 +326,7 @@ function main(): void {
     });
   }
 
-  const all: CatalogueTemplate[] = [...SEED_TEMPLATES, ...INVESTMENT_COMPASS_TEMPLATES];
+  const all: CatalogueTemplate[] = [...SEED_TEMPLATES, ...FAMILY_TEMPLATES];
 
   for (const template of all) {
     if (slugs.has(template.slug)) {
@@ -353,7 +364,8 @@ function main(): void {
 -- but cannot be activated for live report generation — that limitation belongs
 -- to the adapter registry, not to the library, and is surfaced on each card.
 --
--- ${INVESTMENT_COMPASS_TEMPLATES.length} of them are Investment Compass family masters, which additionally carry
+-- ${FAMILY_TEMPLATES.length} of them are design-family masters (${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass,
+-- ${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity), which additionally carry
 -- \`design_meta\` (family, variant axis, density, resolved manifest, colourway
 -- set). Requires 20260811110000_template_library_design_meta.sql.
 --
@@ -411,7 +423,10 @@ WHERE version = 1
   writeFileSync(MIGRATION, sql);
 
   console.log(`✓ ${all.length} templates validated against the live schema`);
-  console.log(`  ${SEED_TEMPLATES.length} voice, ${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass family`);
+  console.log(
+    `  ${SEED_TEMPLATES.length} voice, ${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass, `
+    + `${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity`,
+  );
   console.log(`  ${readyCount} production-ready, ${all.length - readyCount} preview-only`);
   console.log(`  → ${MIGRATION.replace(REPO + '/', '')} (${(sql.length / 1024).toFixed(0)} KB)`);
 }
