@@ -15,6 +15,15 @@
  * re-running it updates the seeded entries and never duplicates them. It only
  * ever touches rows whose slug is in the seed set, so an operator's own
  * promoted entries are never disturbed.
+ *
+ * ## Two authoring systems, one catalogue
+ *
+ * `SEED_TEMPLATES` are the forty *voice* templates — built from the five studio
+ * voices keyed to the catalogue's `style` axis. `INVESTMENT_COMPASS_TEMPLATES`
+ * are the *family* templates, built from the approved Claude Design Investment
+ * Compass catalogue's manifest model. Both compile to the same
+ * `ReportTemplate` schema and pass the same gates; only their authoring
+ * vocabulary differs, and each gets the design-consistency check that suits it.
  */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -30,6 +39,15 @@ import {
 import { takeOverflows } from './blocks';
 import { runningHeadFor, VOICES, type VoiceId } from './designSystem';
 import { SEED_TEMPLATES, type SeedTemplate } from './templates';
+import { takeCompassOverflows } from './investmentCompass/blocks';
+import {
+  INVESTMENT_COMPASS_TEMPLATES,
+  type CompassSeedTemplate,
+} from './investmentCompass/privateBanking';
+import { PRIVATE_BANKING_TYPE } from './investmentCompass/family';
+import {
+  colourwaysForFamily,
+} from '../../supabase/functions/_shared/templateColourways.pure';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, '../..');
@@ -46,21 +64,23 @@ const REPO = resolve(__dirname, '../..');
  * Because the generated SQL upserts the *whole* catalogue on `(slug, version)`,
  * a new file is a complete replacement, not a delta: applying it brings a fresh
  * database and a long-running one to exactly the same state. Superseded files
- * stay on disk so an environment that has never been seeded still replays the
+ * stay on disk, so an environment that has never been seeded still replays the
  * full history in order.
  *
  * | Applied to production | File |
  * | --- | --- |
  * | yes — 12 templates | `20260801093000_seed_template_library.sql` |
  * | maybe — 40 templates, pre-design-system | `20260802093000_seed_template_library_v2.sql` |
- * | not yet — 40 templates in the NPC voices | the one below |
+ * | maybe — 40 templates in the NPC voices | `20260803090000_seed_template_library_v3.sql` |
+ * | not yet — v3 plus the 5 Private Banking masters | the one below |
  *
- * v3 is a new file rather than an edit of v2 because the design-system rebuild
- * changes every row, and v2's applied state is recorded in this comment rather
- * than anywhere authoritative. A new file costs one replayed upsert on a fresh
- * database and guarantees the redesign reaches one that already ran v2.
+ * v4 is a new file rather than an edit of v3 because it adds rows and writes a
+ * column (`design_meta`) that v3 did not know about.
  */
-const MIGRATION = resolve(REPO, 'supabase/migrations/20260803090000_seed_template_library_v3.sql');
+const MIGRATION = resolve(
+  REPO,
+  'supabase/migrations/20260811120000_seed_template_library_v4_investment_compass.sql',
+);
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
 function sqlJson(value: unknown): string {
@@ -85,7 +105,15 @@ function sqlTextArray(values: string[]): string {
 
 interface Problem { template: string; message: string }
 
-function validate(template: SeedTemplate): Problem[] {
+/** Anything the migration can emit a row for. */
+type CatalogueTemplate = SeedTemplate | CompassSeedTemplate;
+
+function isCompass(t: CatalogueTemplate): t is CompassSeedTemplate {
+  return 'designMeta' in t;
+}
+
+/** Checks every catalogue entry must pass, whichever system authored it. */
+function validateCommon(template: CatalogueTemplate): Problem[] {
   const problems: Problem[] = [];
   const label = template.slug;
 
@@ -126,6 +154,16 @@ function validate(template: SeedTemplate): Problem[] {
     }
   });
 
+  return problems;
+}
+
+/** Checks specific to the voice system. */
+function validateVoice(template: SeedTemplate): Problem[] {
+  const problems: Problem[] = [];
+  const label = template.slug;
+  const parsed = ReportTemplateSchema.safeParse(template.schema);
+  if (!parsed.success) return problems;
+
   // 5. The declared `style` must be the voice the template was actually built
   //    in. The two are set in different places — `beginTemplate()` at the top
   //    of the builder, `style` in the returned metadata — and if they drift the
@@ -135,8 +173,6 @@ function validate(template: SeedTemplate): Problem[] {
   if (!voice) {
     problems.push({ template: label, message: `unknown style "${template.style}"` });
   } else if (!template.schema.tokens.fonts.heading.startsWith(`${voice.display},`)) {
-    // Compares the leading family: the compiled value carries a generic
-    // fallback ("Playfair Display, serif").
     problems.push({
       template: label,
       message: `style "${template.style}" expects the ${voice.display} voice, but the `
@@ -146,13 +182,7 @@ function validate(template: SeedTemplate): Problem[] {
 
   // 6. Every running head must name this template's own category. The eyebrow
   //    is set from `beginTemplate()`'s third argument, several hundred lines
-  //    from the `category` it has to agree with — during the design-system
-  //    rebuild the shared market factories were briefly hard-coded to
-  //    'suburb', which would have printed "Suburb market study" across a
-  //    Statewide Snapshot.
-  //    Scoped to `text-block`: a `cover` also carries an `eyebrow`, but that one
-  //    names the specific report ("Feasibility", "Customer Due Diligence") and
-  //    is deliberately not the running head.
+  //    from the `category` it has to agree with.
   const expectedHead = runningHeadFor(template.category);
   for (const page of parsed.data.pages) {
     for (const block of page.blocks) {
@@ -171,12 +201,92 @@ function validate(template: SeedTemplate): Problem[] {
   return problems;
 }
 
+/**
+ * Checks specific to the family system.
+ *
+ * The voice system's running-head rule deliberately does NOT apply here. Under
+ * the approved Investment Compass catalogue a section eyebrow names the
+ * *section* ("The verdict", "Projections", "Risk register") and the document is
+ * named by the running head across the top of the page — `section_header_style:
+ * eyebrow_rule_display` is exactly that arrangement. Asserting the voice rule
+ * would reject every one of these templates for following its own spec.
+ *
+ * What replaces it is stricter in the way that matters: the compiled type must
+ * be the family's, the declared density must be the manifest's, and every
+ * colourway the entry offers must exist in that family's curated set.
+ */
+function validateCompass(template: CompassSeedTemplate): Problem[] {
+  const problems: Problem[] = [];
+  const label = template.slug;
+  const meta = template.designMeta as Record<string, any>;
+
+  const fonts = template.schema.tokens.fonts as Record<string, string> | undefined;
+  if (!fonts?.heading?.startsWith(`${PRIVATE_BANKING_TYPE.heading},`)) {
+    problems.push({
+      template: label,
+      message: `family typography expects ${PRIVATE_BANKING_TYPE.heading} for headings, `
+        + `but the template compiled ${fonts?.heading}`,
+    });
+  }
+  if (!fonts?.display?.startsWith(`${PRIVATE_BANKING_TYPE.display},`)) {
+    problems.push({
+      template: label,
+      message: `family typography expects ${PRIVATE_BANKING_TYPE.display} for the cover, `
+        + `but the template compiled ${fonts?.display}`,
+    });
+  }
+
+  // The manifest is the design decision; the metadata the library filters on
+  // has to agree with it, or a user filtering to "compact" gets a spacious page.
+  if (meta?.density !== meta?.manifest?.density) {
+    problems.push({
+      template: label,
+      message: `density "${meta?.density}" disagrees with the resolved manifest `
+        + `("${meta?.manifest?.density}")`,
+    });
+  }
+
+  const known = new Set(colourwaysForFamily(String(meta?.familyKey)).map((c) => c.id));
+  if (known.size === 0) {
+    problems.push({ template: label, message: `no colourways registered for family "${meta?.familyKey}"` });
+  }
+  for (const id of (meta?.colourways ?? []) as string[]) {
+    if (!known.has(id)) {
+      problems.push({ template: label, message: `unknown colourway "${id}"` });
+    }
+  }
+  if (!known.has(String(meta?.defaultColourway))) {
+    problems.push({
+      template: label,
+      message: `default colourway "${meta?.defaultColourway}" is not in the family's set`,
+    });
+  }
+
+  return problems;
+}
+
+/** The row values shared by both systems. */
+function rowFor(t: CatalogueTemplate): string {
+  const facts = deriveEntryFacts({ report_type: t.reportType, schema: t.schema });
+  const designMeta = isCompass(t) ? t.designMeta : {};
+  return `  (
+    ${sqlText(t.slug)}, 1, ${sqlText(t.name)}, ${sqlText(t.description)},
+    ${sqlText(t.longDescription)}, ${sqlText(t.category)}, ${sqlText(t.reportType)},
+    ${sqlText(t.tier ?? null)}, ${sqlTextArray(t.industry)}, ${sqlTextArray(t.tags)},
+    ${sqlText(t.style)}, ${sqlText(facts.orientation)}, 'A4', ${facts.page_count},
+    ${sqlJson(t.schema)}, ${sqlJson({})}, ${sqlText(t.accessTier)},
+    ${sqlTextArray(facts.supported_modules)}, ${sqlTextArray(facts.required_bindings)},
+    ${facts.brand_safe}, ${facts.production_ready}, ${facts.compatibility_version},
+    ${sqlJson(facts.preview_schema)}, ${sqlJson(designMeta)}
+  )`;
+}
+
 function main(): void {
   const problems: Problem[] = [];
   const slugs = new Set<string>();
 
-  // Drained before validation so the log holds only what building
-  // SEED_TEMPLATES produced. Importing the module is what runs the builders.
+  // Drained before validation so the log holds only what building the
+  // catalogues produced. Importing the modules is what runs the builders.
   for (const o of takeOverflows()) {
     problems.push({
       template: `page "${o.page}"`,
@@ -184,13 +294,25 @@ function main(): void {
         + 'limit 774pt) — shorten a block or move it to the next page',
     });
   }
+  for (const o of takeCompassOverflows()) {
+    problems.push({
+      template: `${o.template} page "${o.page}"`,
+      message: `content runs ${o.overBy}pt past the footer (ends at ${Math.round(o.bottom)}pt) `
+        + '— shorten a block or move it to the next page',
+    });
+  }
 
-  for (const template of SEED_TEMPLATES) {
+  const all: CatalogueTemplate[] = [...SEED_TEMPLATES, ...INVESTMENT_COMPASS_TEMPLATES];
+
+  for (const template of all) {
     if (slugs.has(template.slug)) {
       problems.push({ template: template.slug, message: 'duplicate slug' });
     }
     slugs.add(template.slug);
-    problems.push(...validate(template));
+    problems.push(...validateCommon(template));
+    problems.push(...(isCompass(template)
+      ? validateCompass(template)
+      : validateVoice(template)));
   }
 
   if (problems.length > 0) {
@@ -199,23 +321,9 @@ function main(): void {
     process.exit(1);
   }
 
-  const rows = SEED_TEMPLATES.map((t) => {
-    // Derived facts come from the same function the server uses, so a seeded
-    // entry is indistinguishable from a promoted-and-published one.
-    const facts = deriveEntryFacts({ report_type: t.reportType, schema: t.schema });
-    return `  (
-    ${sqlText(t.slug)}, 1, ${sqlText(t.name)}, ${sqlText(t.description)},
-    ${sqlText(t.longDescription)}, ${sqlText(t.category)}, ${sqlText(t.reportType)},
-    ${sqlText(t.tier ?? null)}, ${sqlTextArray(t.industry)}, ${sqlTextArray(t.tags)},
-    ${sqlText(t.style)}, ${sqlText(facts.orientation)}, 'A4', ${facts.page_count},
-    ${sqlJson(t.schema)}, ${sqlJson({})}, ${sqlText(t.accessTier)},
-    ${sqlTextArray(facts.supported_modules)}, ${sqlTextArray(facts.required_bindings)},
-    ${facts.brand_safe}, ${facts.production_ready}, ${facts.compatibility_version},
-    ${sqlJson(facts.preview_schema)}
-  )`;
-  }).join(',\n');
+  const rows = all.map(rowFor).join(',\n');
 
-  const readyCount = SEED_TEMPLATES.filter(
+  const readyCount = all.filter(
     (t) => deriveEntryFacts({ report_type: t.reportType, schema: t.schema }).production_ready,
   ).length;
 
@@ -227,10 +335,14 @@ function main(): void {
 -- which re-validates every schema against the live Zod contract and the
 -- production renderer allow-list before it writes anything.
 --
--- ${SEED_TEMPLATES.length} templates, of which ${readyCount} are production-ready (their report type has a
+-- ${all.length} templates, of which ${readyCount} are production-ready (their report type has a
 -- Template Builder adapter). The rest are browsable, previewable and copyable
 -- but cannot be activated for live report generation — that limitation belongs
 -- to the adapter registry, not to the library, and is surfaced on each card.
+--
+-- ${INVESTMENT_COMPASS_TEMPLATES.length} of them are Investment Compass family masters, which additionally carry
+-- \`design_meta\` (family, variant axis, density, resolved manifest, colourway
+-- set). Requires 20260811110000_template_library_design_meta.sql.
 --
 -- IDEMPOTENT: upserts on (slug, version). Re-running updates the seeded rows
 -- and never duplicates them. Rows an operator promoted themselves are matched
@@ -245,7 +357,7 @@ INSERT INTO public.template_library_entries (
   schema, config, access_tier,
   supported_modules, required_bindings,
   brand_safe, production_ready, compatibility_version,
-  preview_schema
+  preview_schema, design_meta
 )
 VALUES
 ${rows}
@@ -269,6 +381,7 @@ ON CONFLICT (slug, version) DO UPDATE SET
   production_ready = EXCLUDED.production_ready,
   compatibility_version = EXCLUDED.compatibility_version,
   preview_schema = EXCLUDED.preview_schema,
+  design_meta = EXCLUDED.design_meta,
   updated_at = now();
 
 -- Publish them. Done as a separate statement so a re-run republishes anything
@@ -278,14 +391,15 @@ SET status = 'published',
     published_at = COALESCE(published_at, now())
 WHERE version = 1
   AND status = 'draft'
-  AND slug IN (${SEED_TEMPLATES.map((t) => sqlText(t.slug)).join(', ')});
+  AND slug IN (${all.map((t) => sqlText(t.slug)).join(', ')});
 `;
 
   mkdirSync(dirname(MIGRATION), { recursive: true });
   writeFileSync(MIGRATION, sql);
 
-  console.log(`✓ ${SEED_TEMPLATES.length} templates validated against the live schema`);
-  console.log(`  ${readyCount} production-ready, ${SEED_TEMPLATES.length - readyCount} preview-only`);
+  console.log(`✓ ${all.length} templates validated against the live schema`);
+  console.log(`  ${SEED_TEMPLATES.length} voice, ${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass family`);
+  console.log(`  ${readyCount} production-ready, ${all.length - readyCount} preview-only`);
   console.log(`  → ${MIGRATION.replace(REPO + '/', '')} (${(sql.length / 1024).toFixed(0)} KB)`);
 }
 

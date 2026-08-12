@@ -163,7 +163,8 @@
     "security:error-disclosure": "node scripts/security/check-error-disclosure.mjs",
     "security:mass-assignment": "node scripts/security/check-mass-assignment.mjs",
     "security:baseline-invariants": "node scripts/security/check-baseline-invariants.mjs",
-    "security:public-validation": "node scripts/security/check-public-validation.mjs"
+    "security:public-validation": "node scripts/security/check-public-validation.mjs",
+    "templates:compass:qa": "tsx scripts/template-library/investmentCompass/qa.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -55,6 +55,7 @@ function makeCatalogue(count: number): TemplateLibraryListEntry[] {
       compatibilityVersion: 1,
       engine: 'weasyprint',
     },
+    designMeta: null,
     thumbnailPath: null,
     previewImagePaths: [],
     sourceTemplateId: null,
@@ -105,6 +106,10 @@ describe('catalogue scale', () => {
       styles: ['corporate', 'technical'],
       orientations: ['portrait'],
       productionReadyOnly: true,
+      families: [],
+      ground: 'all',
+      useBuckets: [],
+      densities: [],
     }));
     expect(ms).toBeLessThan(5);
   });
