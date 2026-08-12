@@ -368,13 +368,14 @@ come from `scripts/template-library/designSystem.ts` — five voices keyed to th
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
 tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
 
-The 100 *family* templates come from the approved Claude Design **Investment
+The 150 *family* templates come from the approved Claude Design **Investment
 Compass Template Catalogue**: ten design families × five structural variants ×
-ten colourways. The designs carry no subject matter, so they serve **two report
-formats** — 50 Investment Compass masters and 50 Borrowing Capacity Snapshot
-masters, sharing one shell (`investmentCompass/master.ts`) and contributing a
-page sequence each. Adding a third format is a composer plus a `ReportFormat`
-descriptor, not a second design system. Read
+ten colourways. The designs carry no subject matter, so they serve **three
+report formats** — 50 Investment Compass masters, 50 Borrowing Capacity
+Snapshot masters and 50 Portfolio Performance Review masters, sharing one shell
+(`investmentCompass/master.ts`) and contributing a page sequence each. Adding a
+format is a composer plus a `ReportFormat` descriptor — and the adapter and
+projection that make it production-ready — not a second design system. Read
 [`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
 before touching `scripts/template-library/investmentCompass/` or
 `_shared/templateColourways.*`.

@@ -376,3 +376,98 @@ button, which keeps working throughout.
 > Still outstanding from earlier work: `render-investment-report-pdf` is deployed
 > at v9 from 31 July, so the `ReferenceError` fix has not shipped. Investment
 > report PDFs keep failing until that function is redeployed.
+
+---
+
+## 9. The Template Library masters
+
+Separate from everything above. Sections 1–8 describe the format's *own*
+generator — `render-portfolio-review-pdf`, nine sections, its own normaliser.
+This section describes the same report drawn as **50 Template Library masters**
+in the ten Investment Compass design families, which is a different destination
+for the same data: an operator picks a design, previews it, and can activate it
+for live rendering. Both stay.
+
+| | The format's generator | The library masters |
+| --- | --- | --- |
+| Where | `supabase/functions/render-portfolio-review-pdf` | `template_library_entries`, `report_type: 'portfolio'` |
+| Sections | 9, paginating | 7 fixed pages, no reflow |
+| Data path | `normalise.pure.ts` | `portfolioProjection.pure.ts` → `portfolioAdapter` |
+| Second source | folds in `portfolio_reviews` | reads `portfolio_analysis_reports` only |
+| Design | one, the NPC design system | ten families × five variants × ten colourways |
+
+### The projection, and what it will not say
+
+`supabase/functions/_shared/portfolioProjection.pure.ts` restates a stored row
+in the vocabulary a template binds. It calculates nothing the analysis did not
+already compute; the only derivation is monthly × 12.
+
+Three rules it follows, each answering something the live table does that its
+column names do not advertise:
+
+- **A leaf is published only when it is genuinely a string, and the names do not
+  tell you which leaves those are.** `analysis.executiveSummary` is an *object*,
+  not a paragraph. Inside `riskAssessment`, `concentrationRisk`, `vacancyRisk`
+  and `interestRateSensitivity` are single sentences while `marketRisks` (2–4)
+  and `mitigationStrategies` (4–5) are **arrays** — and all four of
+  `strategicRecommendations`' fields are arrays, the three horizons included,
+  at 1–4 entries each. This was read off the table, and the first draft here got
+  it wrong in the safe direction: refusing the five arrays as non-strings would
+  have left two fields of the risk page and three of the actions page blank on
+  every report ever generated. The unsafe direction prints `[object Object]`.
+  Both are silent.
+- **Numbers are coerced, not read.** `propertyAnalyses[].lvr` and `.grossYield`
+  are numeric *strings* — `"83.7"`, `"6.74"` — on all 66 stored elements.
+  Meanwhile 11 of those 66 carry `netMonthlyCashflow`, `annualCashflow` and
+  `monthlyRentalIncome` as JSON null (owner-occupied holdings with no rental
+  data), and those stay absent: `$0` a month is a claim, and the wrong one.
+- **`health_score` is a score out of 100, not a percentage.** It runs 25–90
+  across the 21 stored reports. The `percent` filter does not multiply, so
+  setting it with `| percent` would print "68%" — wrong, and not wrong enough to
+  notice.
+- **The risk assessment keeps its stored key names.** `risk.vacancy` already
+  means "reaction to three months vacancy" to the voice catalogue — a client
+  tolerance, not a portfolio exposure — so the projection publishes
+  `vacancyRisk`, `marketRisks`, `concentrationRisk` and the rest verbatim. One
+  key cannot answer two questions.
+
+### F4, said out loud
+
+The masters draw a **fixed four-row inventory**, which is the observed maximum
+(`total_properties` runs 1–4 across all 21 reports), and a conditional block on
+the same page states the shortfall when a portfolio holds more:
+
+> The portfolio holds 6 properties and the table above draws 4.
+
+That is finding **F4** answered rather than reproduced. The complaint against
+the shipping generator is not that it truncates — a fixed-position page model
+has to stop somewhere — it is that it drops rows "with nothing on the page
+saying so". The block costs its height whether or not it renders, because a
+conditional in a layout that cannot reflow has to.
+
+### The two voice templates that came with the report type
+
+`portfolio-review` and `portfolio-comparison` are seeded voice templates
+carrying `report_type: 'portfolio'`. Registering the adapter flipped both to
+`production_ready` — `deriveEntryFacts` reads the report type, not the
+bindings — so the projection also publishes the older vocabulary
+`portfolio-review` binds: `portfolio.count`, `portfolio.lvr`,
+`portfolio.grossYield`, `portfolio.netCashFlow`, `portfolio.holdings[]`,
+`strength`, `watch`, `narrative`. Those are mechanical restatements —
+`lvr` and `grossYield` are ratios of two stored totals, and are deliberately
+*not* the mean-of-property `averageLvr` / `averageYield` beside them.
+
+Four of its leaves stay unresolved, because the analysis has no counterpart and
+a plausible guess on a client's page is worse than a gap: `growth12m`,
+`scores.*`, `recommendation.{headline,body}` and the owner/timing on each
+action. `portfolio-comparison` binds `drag.*`, `ranking.*` and `equity.*` —
+per-property growth, maintenance history and equity-release scenarios, none of
+which is in `portfolio_analysis_reports` at all — so it remains a preview
+document in practice whatever its card says.
+
+### Tests
+
+| File | Asserts |
+| --- | --- |
+| `portfolioProjection.spec.ts` | units and magnitudes, typed columns beating their jsonb copies, non-string leaves dropped, performers read in either case and omitted when null, an empty row publishing nothing rather than zeroes |
+| `portfolioCatalogue.spec.ts` | 50 masters across 10 families, slugs disjoint from the other two catalogues, every bound **leaf** published, the sample's totals summed from its own holdings, colourway changes nothing but colour, and the inventory notice appearing only when it should |

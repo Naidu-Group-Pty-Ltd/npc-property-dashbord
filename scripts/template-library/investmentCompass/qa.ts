@@ -35,6 +35,7 @@ import {
 } from '../../../supabase/functions/_shared/templateColourways.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from './templates';
 import { BORROWING_CAPACITY_TEMPLATES } from './borrowingCapacity';
+import { PORTFOLIO_TEMPLATES } from './portfolio';
 
 import { DESIGN_FAMILIES } from './family';
 
@@ -45,7 +46,11 @@ import { DESIGN_FAMILIES } from './family';
  * a Borrowing Capacity income table can run past the footer exactly as an
  * investment cash-flow table can, and neither is visible from the schema.
  */
-const ALL_MASTERS = [...INVESTMENT_COMPASS_TEMPLATES, ...BORROWING_CAPACITY_TEMPLATES];
+const ALL_MASTERS = [
+  ...INVESTMENT_COMPASS_TEMPLATES,
+  ...BORROWING_CAPACITY_TEMPLATES,
+  ...PORTFOLIO_TEMPLATES,
+];
 
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -240,7 +245,9 @@ async function main(): Promise<void> {
     // dashboard' meant the Borrowing Capacity masters — whose equivalent is
     // 'Capacity summary' — were screenshotted as covers only.
     const dashboardIndex = template.schema.pages.findIndex(
-      (p) => p.name === 'Executive dashboard' || p.name === 'Capacity summary',
+      (p) => p.name === 'Executive dashboard'
+        || p.name === 'Capacity summary'
+        || p.name === 'Portfolio at a glance',
     );
     if (dashboardIndex >= 0) {
       const dashboard = resolve(OUT, `${code}-dashboard.png`);

@@ -42,6 +42,7 @@ import { SEED_TEMPLATES, type SeedTemplate } from './templates';
 import { takeCompassOverflows } from './investmentCompass/blocks';
 import { INVESTMENT_COMPASS_TEMPLATES } from './investmentCompass/templates';
 import { BORROWING_CAPACITY_TEMPLATES } from './investmentCompass/borrowingCapacity';
+import { PORTFOLIO_TEMPLATES } from './investmentCompass/portfolio';
 import type { CompassSeedTemplate } from './investmentCompass/master';
 
 /**
@@ -54,6 +55,7 @@ import type { CompassSeedTemplate } from './investmentCompass/master';
 const FAMILY_TEMPLATES: CompassSeedTemplate[] = [
   ...INVESTMENT_COMPASS_TEMPLATES,
   ...BORROWING_CAPACITY_TEMPLATES,
+  ...PORTFOLIO_TEMPLATES,
 ];
 import { typographyFor } from './investmentCompass/family';
 import {
@@ -83,14 +85,24 @@ const REPO = resolve(__dirname, '../..');
  * | yes — 12 templates | `20260801093000_seed_template_library.sql` |
  * | maybe — 40 templates, pre-design-system | `20260802093000_seed_template_library_v2.sql` |
  * | maybe — 40 templates in the NPC voices | `20260803090000_seed_template_library_v3.sql` |
- * | not yet — v3 plus the 5 Private Banking masters | the one below |
+ * | yes — 93: the voices plus 50 Investment Compass masters | `20260811120000_seed_template_library_v4_investment_compass.sql` |
+ * | not yet — v4 plus 50 Borrowing Capacity and 50 Portfolio masters | the one below |
  *
- * v4 is a new file rather than an edit of v3 because it adds rows and writes a
+ * v4 was a new file rather than an edit of v3 because it added rows and wrote a
  * column (`design_meta`) that v3 did not know about.
+ *
+ * **v5 exists because v4 had already been applied.** The Borrowing Capacity
+ * masters were generated back into v4 after it ran in production, and Supabase
+ * records a migration as applied by its version prefix — so those fifty rows
+ * would have sat in the repository and never reached the database, with the
+ * only symptom being fifty templates missing from the library. Confirmed
+ * against the live project: `supabase_migrations.schema_migrations` carries
+ * `20260811120000`, and `template_library_entries` held 93 rows. This file
+ * carries both formats.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20260811120000_seed_template_library_v4_investment_compass.sql',
+  'supabase/migrations/20260812090000_seed_template_library_v5_borrowing_capacity_portfolio.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
@@ -365,7 +377,8 @@ function main(): void {
 -- to the adapter registry, not to the library, and is surfaced on each card.
 --
 -- ${FAMILY_TEMPLATES.length} of them are design-family masters (${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass,
--- ${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity), which additionally carry
+-- ${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity, ${PORTFOLIO_TEMPLATES.length} Portfolio Performance Review),
+-- which additionally carry
 -- \`design_meta\` (family, variant axis, density, resolved manifest, colourway
 -- set). Requires 20260811110000_template_library_design_meta.sql.
 --
@@ -425,7 +438,8 @@ WHERE version = 1
   console.log(`✓ ${all.length} templates validated against the live schema`);
   console.log(
     `  ${SEED_TEMPLATES.length} voice, ${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass, `
-    + `${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity`,
+    + `${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity, `
+    + `${PORTFOLIO_TEMPLATES.length} Portfolio Performance Review`,
   );
   console.log(`  ${readyCount} production-ready, ${all.length - readyCount} preview-only`);
   console.log(`  → ${MIGRATION.replace(REPO + '/', '')} (${(sql.length / 1024).toFixed(0)} KB)`);

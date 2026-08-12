@@ -306,23 +306,27 @@ colour, so they passed `isBrandSafe()` — which only inspects the schema — wh
 being the one element on the page that ignored the template's palette. The third
 could not paint a background at all.
 
-## A second report format
+## More than one report format
 
 The ten designs are **format-agnostic by construction** — typography, density,
 margins, KPI arrangement, table treatment and colourway carry no subject matter
-— so they serve any report. The **Borrowing Capacity Snapshot** is the first
-format to take them up, at 50 more masters: the same ten families × five
-variants × ten colourways.
+— so they serve any report. Three formats have taken them up, at 50 masters
+each: the same ten families × five variants × ten colourways.
 
-| | Investment Compass | Borrowing Capacity |
-| --- | --- | --- |
-| Masters | 50 | 50 |
-| `report_type` | `investment_compass` | `borrowing_capacity` |
-| `category` | `investment` | `finance` |
-| Slug prefix | `investment-compass-` | `borrowing-capacity-` |
-| Composer | `investmentCompass/templates.ts` | `investmentCompass/borrowingCapacity.ts` |
-| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` |
-| Production-ready | yes | yes |
+| | Investment Compass | Borrowing Capacity | Portfolio Review |
+| --- | --- | --- | --- |
+| Masters | 50 | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` |
+| `category` | `investment` | `finance` | `portfolio` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` |
+| Composer | `investmentCompass/templates.ts` | `investmentCompass/borrowingCapacity.ts` | `investmentCompass/portfolio.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` |
+| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` |
+| Production-ready | yes | yes | yes |
+
+Adding a fourth is a `ReportFormat` descriptor and a page sequence — plus the
+adapter and projection that make it production-ready — not a second design
+system.
 
 **What is shared and what is not.** `master.ts` holds the shell — tokens
 compiled from the family's colourway and measured type scale, the Google Fonts
@@ -349,6 +353,49 @@ those pages are absent here, and both absences are measured rather than lazy:
 - **Audit trail** — a raw-versus-assessed ledger whose row count is unbounded.
   This page model is fixed-position with no reflow, so a twelve-entry trail runs
   off the paper. It belongs in the format's own generator, which can paginate.
+
+### The Portfolio Review's bounded inventory
+
+`docs/reports/PORTFOLIO.md` opens on four findings against the shipping
+generator, and two of them are this page model failing to hold a portfolio: a
+contents page whose numbers go out of true the moment a table spills (**F1**),
+and an inventory that silently drops rows because the continuation index is
+computed at a row height of 20 while the table was drawn at 22 — "a portfolio
+needing a third page loses everything past the second, with nothing on the page
+saying so" (**F4**).
+
+These masters cannot paginate at all, so they must not pretend to. The
+inventory is a **fixed four rows** — the observed maximum, `total_properties`
+running 1–4 across all 21 stored reports — and a conditional block on the same
+page says so whenever the portfolio holds more:
+
+> The portfolio holds 6 properties and the table above draws 4.
+
+That block costs its height whether or not it renders, because a conditional in
+a layout that cannot reflow has to. It is worth paying: F4 is not that the
+generator truncates, it is that it truncates silently.
+
+### Prose whose name lies about its shape
+
+`analysis.executiveSummary` on a stored portfolio report is an **object**, not a
+paragraph. Within `riskAssessment`, three fields are single sentences and two —
+`marketRisks` and `mitigationStrategies` — are **arrays**; all four fields of
+`strategicRecommendations` are arrays, the three horizons included, despite
+reading like single statements. `portfolioProjection.pure.ts` publishes a leaf
+only where it is genuinely the shape claimed, so nothing can reach a page as
+`[object Object]`.
+
+The safe direction is not free either. The first draft of the projection took
+all five arrays for prose and refused them, which would have blanked two fields
+of the risk page and three of the actions page on **every** report — the same
+outcome as binding a namespace nothing publishes, arrived at from the opposite
+side. Both failures are silent; only reading the table distinguishes them.
+
+The same file keeps the portfolio's *risk assessment* under the stored key
+names rather than shortening them, because `risk.vacancy` already means
+"reaction to three months vacancy" to the voice catalogue — a client tolerance,
+not a portfolio exposure. One key cannot carry both senses, and the collision
+would only have shown up in whichever surface holds both vocabularies at once.
 
 ### `design_meta.reportFormat`
 

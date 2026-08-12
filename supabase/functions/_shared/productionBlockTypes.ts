@@ -100,4 +100,6 @@ export const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   // and does not run it through the client registry's alias map.
   'borrowing_capacity',
   'borrowing',
+  // Portfolio Performance Review reads `portfolio_analysis_reports`.
+  'portfolio',
 ]);

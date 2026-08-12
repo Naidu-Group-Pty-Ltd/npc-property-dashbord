@@ -1077,14 +1077,26 @@ export function recommendation(heading: string, body: string): FlowItem {
   };
 }
 
-export function strengthsWatch(strengths: string[], watch: string[]): FlowItem {
+/**
+ * Two marked columns — what is working against what to keep an eye on.
+ *
+ * The titles are overridable because the shape outlives the words: a portfolio's
+ * risk page pairs its mitigations against its exposures, which is the same
+ * positive/caution reading with different labels. Defaulting them keeps every
+ * existing call site unchanged.
+ */
+export function strengthsWatch(
+  strengths: string[],
+  watch: string[],
+  titles?: { strengths: string; watch: string },
+): FlowItem {
   const c = ctx();
   return {
     height: 36 + Math.max(strengths.length, watch.length) * 32,
     block: (y) => block('strengths-watch', {
-      strengthsTitle: 'Strengths',
+      strengthsTitle: titles?.strengths ?? 'Strengths',
       strengths,
-      watchTitle: 'Considerations',
+      watchTitle: titles?.watch ?? 'Considerations',
       watch,
       positiveColor: 'token:positive',
       cautionColor: 'token:negative',
