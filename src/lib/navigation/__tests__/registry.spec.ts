@@ -75,7 +75,7 @@ describe("navigation registry — one source, capability-filtered", () => {
     for (const item of [...NAVIGATION_ITEMS, ...ADMIN_NAVIGATION_ITEMS]) {
       if (item.moduleKey !== "__always__") continue;
       // Only genuinely universal surfaces may be always-visible.
-      expect(["Portal Messages", "Billing & Usage", "Feedback"]).toContain(item.title);
+      expect(["Portal Messages", "Billing & Usage", "Feedback", "Support"]).toContain(item.title);
     }
   });
 
