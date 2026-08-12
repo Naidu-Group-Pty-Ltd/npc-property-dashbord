@@ -75,6 +75,10 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
   );
   const rowRule = p.rowRule === true;
   const outerBorder = p.outerBorder !== false;
+  // Vertical rules between every cell. The analyst and Swiss families rule both
+  // axes — a worksheet and a module grid are both systems the reader is meant
+  // to see — where a statement rules only the rows.
+  const gridLines = p.gridLines === true;
   const emphasisColor = resolveBindableColor(p.emphasisColor ?? borderColor, ctx, '#1A1A1A');
 
   const colgroup = `<colgroup>${widths.map(w => `<col style="width:${w * 100}%;"/>`).join('')}</colgroup>`;
@@ -84,6 +88,7 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
       + `font-size:${headerSize}pt;font-weight:${ruledHeader ? 500 : 700};text-transform:uppercase;`
       + `letter-spacing:${headerTracking}em;`
       + (ruledHeader ? `border-bottom:1.5pt solid ${emphasisColor};` : '')
+      + (gridLines && i < headers.length - 1 ? `border-right:1pt solid ${borderColor};` : '')
       + (headerFont ? `font-family:${headerFont};` : '');
     return `<th style="${cellStyle}">${esc(h)}</th>`;
   }).join('')}
@@ -103,6 +108,7 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
       + (isNumeric ? `text-align:right;` : '')
       + (isNumeric && numericFont ? `font-family:${numericFont};` : '')
       + (rowRule && !isTotal ? `border-bottom:1pt solid ${borderColor};` : '')
+      + (gridLines && col < cells.length - 1 ? `border-right:1pt solid ${borderColor};` : '')
       // A total is closed by a doubled rule: the heavy line the figures sit on
       // and the hairline under it. `border-double` collapses at these weights
       // in WeasyPrint, so it is drawn as two borders on the same cell.

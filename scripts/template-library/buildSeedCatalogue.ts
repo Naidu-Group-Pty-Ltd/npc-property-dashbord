@@ -43,8 +43,8 @@ import { takeCompassOverflows } from './investmentCompass/blocks';
 import {
   INVESTMENT_COMPASS_TEMPLATES,
   type CompassSeedTemplate,
-} from './investmentCompass/privateBanking';
-import { PRIVATE_BANKING_TYPE } from './investmentCompass/family';
+} from './investmentCompass/templates';
+import { typographyFor } from './investmentCompass/family';
 import {
   colourwaysForFamily,
 } from '../../supabase/functions/_shared/templateColourways.pure';
@@ -218,47 +218,60 @@ function validateVoice(template: SeedTemplate): Problem[] {
 function validateCompass(template: CompassSeedTemplate): Problem[] {
   const problems: Problem[] = [];
   const label = template.slug;
-  const meta = template.designMeta as Record<string, any>;
+  const meta = template.designMeta;
 
+  const type = typographyFor(meta.familyKey);
   const fonts = template.schema.tokens.fonts as Record<string, string> | undefined;
-  if (!fonts?.heading?.startsWith(`${PRIVATE_BANKING_TYPE.heading},`)) {
-    problems.push({
-      template: label,
-      message: `family typography expects ${PRIVATE_BANKING_TYPE.heading} for headings, `
-        + `but the template compiled ${fonts?.heading}`,
-    });
+  const expected: Array<[string, string]> = [
+    ['display', type.display],
+    ['heading', type.heading],
+    ['body', type.body],
+    ['mono', type.mono],
+  ];
+  for (const [role, face] of expected) {
+    if (!fonts?.[role]?.startsWith(`${face},`)) {
+      problems.push({
+        template: label,
+        message: `family "${meta.familyKey}" sets ${face} for ${role}, `
+          + `but the template compiled ${fonts?.[role]}`,
+      });
+    }
   }
-  if (!fonts?.display?.startsWith(`${PRIVATE_BANKING_TYPE.display},`)) {
-    problems.push({
-      template: label,
-      message: `family typography expects ${PRIVATE_BANKING_TYPE.display} for the cover, `
-        + `but the template compiled ${fonts?.display}`,
-    });
+
+  // Every face the template NAMES must also be loadable, or WeasyPrint renders
+  // the engine default and nothing says so.
+  const faces = (template.schema.tokens as Record<string, unknown>).fontFaces as
+    Array<{ family: string; cssUrl: string }> | undefined;
+  const loaded = new Set((faces ?? []).map((f) => f.family));
+  for (const [, face] of expected) {
+    if (!loaded.has(face)) {
+      problems.push({ template: label, message: `names ${face} but does not load it` });
+    }
   }
 
   // The manifest is the design decision; the metadata the library filters on
   // has to agree with it, or a user filtering to "compact" gets a spacious page.
-  if (meta?.density !== meta?.manifest?.density) {
+  if (meta.density !== meta.manifest.density) {
     problems.push({
       template: label,
-      message: `density "${meta?.density}" disagrees with the resolved manifest `
-        + `("${meta?.manifest?.density}")`,
+      message: `density "${meta.density}" disagrees with the resolved manifest `
+        + `("${meta.manifest.density}")`,
     });
   }
 
-  const known = new Set(colourwaysForFamily(String(meta?.familyKey)).map((c) => c.id));
+  const known = new Set(colourwaysForFamily(meta.familyKey).map((c) => c.id));
   if (known.size === 0) {
-    problems.push({ template: label, message: `no colourways registered for family "${meta?.familyKey}"` });
+    problems.push({ template: label, message: `no colourways registered for family "${meta.familyKey}"` });
   }
-  for (const id of (meta?.colourways ?? []) as string[]) {
+  for (const id of meta.colourways) {
     if (!known.has(id)) {
       problems.push({ template: label, message: `unknown colourway "${id}"` });
     }
   }
-  if (!known.has(String(meta?.defaultColourway))) {
+  if (!known.has(meta.defaultColourway)) {
     problems.push({
       template: label,
-      message: `default colourway "${meta?.defaultColourway}" is not in the family's set`,
+      message: `default colourway "${meta.defaultColourway}" is not in the family's set`,
     });
   }
 

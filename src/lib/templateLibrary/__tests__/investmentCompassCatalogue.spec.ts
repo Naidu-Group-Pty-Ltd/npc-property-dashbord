@@ -1,18 +1,23 @@
 /**
- * The Private Banking pilot — five masters, ten colourways, fifty combinations.
+ * The Investment Compass catalogue — ten families, fifty masters, five hundred
+ * combinations.
  *
  * These tests do not stop at "the schema parses". A catalogue entry that parses
  * but renders an empty page is worse than no entry: a user spends time reading
  * it, copies it, opens the Builder and finds a blank document. So every
  * template is pushed through the **real** production HTML renderer — the same
- * `renderTemplateToHtml` that produces the customer's PDF — in every one of its
- * colourways, and the output is inspected.
+ * `renderTemplateToHtml` that produces the customer's PDF — and the output is
+ * inspected.
  *
- * Three questions they are built to answer:
+ * Four questions they are built to answer:
  *
  *  1. Is this the approved catalogue? (names, codes, order, manifests)
- *  2. Do the five templates actually DIFFER, or is the family five recolours?
+ *  2. Do the fifty actually DIFFER, or is a family five recolours?
  *  3. Does every colourway reach the page, in both light and dark?
+ *  4. Does a colourway change only the colour — never the layout?
+ *
+ * Transcription fidelity against the Design source is a separate concern and
+ * lives in `investmentCompassSource.spec.ts`.
  */
 import { describe, it, expect } from 'vitest';
 import { ReportTemplateSchema, parseTemplate } from '@/lib/reportTemplate/templateSchema';
@@ -22,22 +27,18 @@ import {
 } from '../../../../supabase/functions/_shared/templateLibraryCore.pure';
 import { PRODUCTION_SAFE_BLOCK_TYPES } from '../../../../supabase/functions/_shared/productionBlockTypes';
 import {
-  INVESTMENT_COMPASS_TEMPLATES,
-} from '../../../../scripts/template-library/investmentCompass/privateBanking';
+  INVESTMENT_COMPASS_TEMPLATES, PRIVATE_BANKING_TEMPLATES,
+} from '../../../../scripts/template-library/investmentCompass/templates';
 import {
-  PRIVATE_BANKING, resolveManifest,
+  DESIGN_FAMILIES, familyByKey, resolveManifest,
 } from '../../../../scripts/template-library/investmentCompass/family';
-import { PRIVATE_BANKING_COLOURWAYS, colourwayTokenOverride, resolveColourway } from '../colourways';
+import {
+  coverPlan, hasRail, imageSlotPlan,
+} from '../../../../scripts/template-library/investmentCompass/resolvers';
+import {
+  COLOURWAYS_BY_FAMILY, colourwayTokenOverride, colourwaysForFamily, resolveColourway,
+} from '../colourways';
 import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
-
-/** The five approved names, in the approved order. */
-const APPROVED_NAMES = [
-  'Chancery',
-  'Chancery Compact',
-  'Sovereign Folio',
-  'Bullion Rail',
-  'Discretion Ledger',
-];
 
 /** Visible text, with tags and whitespace collapsed. */
 function textOf(html: string): string {
@@ -51,26 +52,43 @@ function coloursIn(html: string): Set<string> {
   return out;
 }
 
-describe('Private Banking catalogue', () => {
-  it('ships the five approved masters, in the approved order', () => {
-    expect(INVESTMENT_COMPASS_TEMPLATES.map((t) => t.name)).toEqual(APPROVED_NAMES);
+describe('the catalogue', () => {
+  it('ships fifty masters across ten families', () => {
+    expect(INVESTMENT_COMPASS_TEMPLATES).toHaveLength(50);
+    expect(new Set(INVESTMENT_COMPASS_TEMPLATES.map((t) => t.designMeta.familyKey)).size).toBe(10);
   });
 
-  it('carries the approved catalogue codes', () => {
-    expect(INVESTMENT_COMPASS_TEMPLATES.map((t) => t.designMeta.templateCode))
-      .toEqual(['pb-01', 'pb-02', 'pb-03', 'pb-04', 'pb-05']);
+  it('ships five masters per family, in catalogue order', () => {
+    for (const family of DESIGN_FAMILIES) {
+      const templates = INVESTMENT_COMPASS_TEMPLATES.filter(
+        (t) => t.designMeta.familyKey === family.key,
+      );
+      expect(templates, family.name).toHaveLength(5);
+      expect(templates.map((t) => t.name)).toEqual(family.variants.map((v) => v.name));
+      expect(templates.map((t) => t.designMeta.templateCode))
+        .toEqual(family.variants.map((v) => v.code));
+    }
   });
 
-  it('has unique slugs', () => {
+  it('still ships the five approved Private Banking names', () => {
+    expect(PRIVATE_BANKING_TEMPLATES.map((t) => t.name)).toEqual([
+      'Chancery', 'Chancery Compact', 'Sovereign Folio', 'Bullion Rail', 'Discretion Ledger',
+    ]);
+  });
+
+  it('has unique slugs and unique template codes', () => {
     const slugs = INVESTMENT_COMPASS_TEMPLATES.map((t) => t.slug);
-    expect(new Set(slugs).size).toBe(slugs.length);
+    const codes = INVESTMENT_COMPASS_TEMPLATES.map((t) => t.designMeta.templateCode);
+    expect(new Set(slugs).size).toBe(50);
+    expect(new Set(codes).size).toBe(50);
   });
 
   it('scopes every master to the Investment Compass report type', () => {
-    // Phase 9: the pilot must not accidentally activate another report type.
+    // The pilot's rule, still holding at fifty: no other report type is
+    // accidentally activated.
     for (const t of INVESTMENT_COMPASS_TEMPLATES) {
-      expect(t.reportType).toBe('investment_compass');
-      expect(t.category).toBe('investment');
+      expect(t.reportType, t.name).toBe('investment_compass');
+      expect(t.category, t.name).toBe('investment');
     }
   });
 
@@ -81,115 +99,136 @@ describe('Private Banking catalogue', () => {
     }
   });
 
+  it('marks exactly one reference per family, and it is the first variant', () => {
+    for (const family of DESIGN_FAMILIES) {
+      const references = INVESTMENT_COMPASS_TEMPLATES.filter(
+        (t) => t.designMeta.familyKey === family.key && t.designMeta.isFamilyReference,
+      );
+      expect(references, family.name).toHaveLength(1);
+      expect(references[0].designMeta.templateCode).toBe(family.variants[0].code);
+      expect(references[0].designMeta.archetypeCoverage).toBe('built');
+    }
+  });
+
   it('covers all seven report archetypes on every master', () => {
     for (const t of INVESTMENT_COMPASS_TEMPLATES) {
-      // Cover, dashboard, narrative, dense data, chart, risk, sources —
-      // plus the disclaimer page, and more where density spends extra pages.
       expect(t.schema.pages.length, t.name).toBeGreaterThanOrEqual(8);
     }
   });
 });
 
-describe('the five are structurally distinct, not five recolours', () => {
-  it('gives each variant the approved override set', () => {
-    const byCode = new Map(
-      PRIVATE_BANKING.variants.map((v) => [v.code, v]),
-    );
+describe('the fifty are structurally distinct, not fifty recolours', () => {
+  it('gives every variant the approved override set and resolved manifest', () => {
     for (const t of INVESTMENT_COMPASS_TEMPLATES) {
-      const variant = byCode.get(t.designMeta.templateCode)!;
-      expect(t.designMeta.overrides).toEqual(variant.overrides);
-      expect(t.designMeta.manifest).toEqual(resolveManifest(PRIVATE_BANKING, variant));
+      const family = familyByKey(t.designMeta.familyKey)!;
+      const variant = family.variants.find((v) => v.code === t.designMeta.templateCode)!;
+      expect(t.designMeta.overrides, t.name).toEqual(variant.overrides);
+      expect(t.designMeta.manifest, t.name).toEqual(resolveManifest(family, variant));
     }
   });
 
-  it('marks exactly one master as the family reference', () => {
-    const references = INVESTMENT_COMPASS_TEMPLATES.filter((t) => t.designMeta.isFamilyReference);
-    expect(references).toHaveLength(1);
-    expect(references[0].name).toBe('Chancery');
+  it('produces fifty distinct resolved manifests', () => {
+    // If any two were equal, two templates would be the same document under two
+    // names — precisely the failure the family model exists to prevent.
+    const seen = new Set(
+      INVESTMENT_COMPASS_TEMPLATES.map((t) => JSON.stringify(t.designMeta.manifest)),
+    );
+    expect(seen.size).toBe(50);
   });
 
-  it('differs on the axes the catalogue says it differs on', () => {
-    const manifests = INVESTMENT_COMPASS_TEMPLATES.map((t) => t.designMeta.manifest);
-    // If any two resolved manifests were equal, two templates would be the same
-    // document under two names — which is precisely the failure the family
-    // model exists to prevent.
-    const seen = new Set(manifests.map((m) => JSON.stringify(m)));
-    expect(seen.size).toBe(5);
+  it('renders fifty distinct documents', () => {
+    // Stronger than comparing manifests: two different manifests could still
+    // resolve to identical output if a resolver flattened them.
+    const rendered = INVESTMENT_COMPASS_TEMPLATES.map(
+      (t) => renderTemplateToHtml(t.schema, { data: SAMPLE }).html,
+    );
+    expect(new Set(rendered).size).toBe(50);
   });
 
-  it('spends different geometry per density', () => {
-    const byName = new Map(INVESTMENT_COMPASS_TEMPLATES.map((t) => [t.name, t]));
-    const compact = byName.get('Chancery Compact')!;
-    const balanced = byName.get('Chancery')!;
-    const spacious = byName.get('Sovereign Folio')!;
-
-    expect(compact.designMeta.manifest.page_margin_preset).toBe('16mm');
-    expect(balanced.designMeta.manifest.page_margin_preset).toBe('20mm');
-    expect(spacious.designMeta.manifest.page_margin_preset).toBe('26mm');
-
-    // A spacious cut does not shrink its type to fit; it uses more pages.
-    expect(spacious.schema.pages.length).toBeGreaterThan(balanced.schema.pages.length);
+  it('differs within every family on more than colour', () => {
+    for (const family of DESIGN_FAMILIES) {
+      const templates = INVESTMENT_COMPASS_TEMPLATES.filter(
+        (t) => t.designMeta.familyKey === family.key,
+      );
+      // A family's five share a palette by construction, so if their documents
+      // differ it is structure that differs.
+      const rendered = templates.map((t) => renderTemplateToHtml(t.schema, { data: SAMPLE }).html);
+      expect(new Set(rendered).size, family.name).toBe(5);
+    }
   });
 
-  it('draws five different KPI arrangements', () => {
-    const layouts = INVESTMENT_COMPASS_TEMPLATES.map((t) => t.designMeta.manifest.kpi_layout);
-    expect(new Set(layouts).size).toBe(5);
-    expect(layouts).toEqual([
-      'four_column_ruled', 'six_column_ruled', 'two_by_two_display',
-      'stacked_rail', 'ledger_rows',
-    ]);
+  it('uses all three density steps across the catalogue', () => {
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      expect(t.designMeta.manifest.density, t.name).toBe(t.designMeta.density);
+    }
+    const densities = new Set(INVESTMENT_COMPASS_TEMPLATES.map((t) => t.designMeta.density));
+    expect([...densities].sort()).toEqual(['balanced', 'compact', 'spacious']);
   });
 
-  it('gives Bullion Rail a rail no other master has', () => {
+  it('draws a rail only where the manifest asks for one', () => {
     for (const t of INVESTMENT_COMPASS_TEMPLATES) {
       const railed = t.schema.pages.some((p) => p.blocks.some(
-        (b) => b.type === 'divider' && (b.props as any).orientation === 'vertical',
+        (b) => b.type === 'divider'
+          && (b.props as Record<string, unknown>).orientation === 'vertical',
       ));
-      expect(railed, t.name).toBe(t.name === 'Bullion Rail');
+      const m = t.designMeta.manifest;
+      // Asserted against the resolvers rather than a regex over the manifest
+      // string. `scroll_rail` reads like a rail and is not one: the source
+      // describes Signal Compact as "tab strip becomes a scroll rail. Print
+      // stays A4-correct" — a screen affordance, not a printed rule. A regex
+      // would have quietly demanded a rail on a page that must not have one.
+      //
+      // A framed cover also draws vertical dividers (two of its four edges),
+      // so it counts here without being a rail.
+      const cover = coverPlan(m.cover_overlay);
+      const wantsVertical = hasRail(m.navigation_style) || !!cover.rail || !!cover.frame;
+      expect(railed, `${t.name} (${m.navigation_style} / ${m.cover_overlay})`).toBe(wantsVertical);
     }
-  });
-
-  it('gives Discretion Ledger the double-rule totals', () => {
-    const ledger = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.name === 'Discretion Ledger')!;
-    expect(ledger.designMeta.manifest.table_style).toBe('double_rule_statement');
-    expect(ledger.designMeta.manifest.risk_display).toBe('severity_bars');
-    expect(ledger.designMeta.manifest.recommendation_style).toBe('ruled_statement');
   });
 });
 
-describe('the family typography reaches the page', () => {
-  it('compiles all four approved faces', () => {
-    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+describe('family typography reaches the page', () => {
+  it.each(DESIGN_FAMILIES.map((f) => [f.name, f] as const))('%s', (_name, family) => {
+    const templates = INVESTMENT_COMPASS_TEMPLATES.filter(
+      (t) => t.designMeta.familyKey === family.key,
+    );
+    for (const t of templates) {
       const fonts = t.schema.tokens.fonts as Record<string, string>;
-      expect(fonts.display, t.name).toMatch(/^Cinzel,/);
-      expect(fonts.heading, t.name).toMatch(/^Playfair Display,/);
-      expect(fonts.body, t.name).toMatch(/^Inter,/);
-      expect(fonts.mono, t.name).toMatch(/^IBM Plex Mono,/);
-    }
-  });
-
-  it('loads every face it names', () => {
-    // A template that names Cinzel without a loadable face renders in the
-    // engine default — a serif that is not Cinzel — and nothing says so.
-    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
-      const faces = (t.schema.tokens as any).fontFaces as Array<{ family: string; cssUrl: string }>;
-      const families = faces.map((f) => f.family);
-      expect(families, t.name).toEqual(
-        expect.arrayContaining(['Cinzel', 'Playfair Display', 'Inter', 'IBM Plex Mono']),
-      );
+      const faces = (t.schema.tokens as Record<string, unknown>).fontFaces as
+        Array<{ family: string; cssUrl: string }>;
+      const loaded = new Set(faces.map((f) => f.family));
+      for (const role of ['display', 'heading', 'body', 'mono']) {
+        expect(fonts[role], `${t.name}.${role}`).toBeTruthy();
+        // Every face named is loadable. A template that names a face without
+        // one renders in the engine default and nothing says so.
+        expect(loaded.has(fonts[role].split(',')[0]), `${t.name} loads ${fonts[role]}`).toBe(true);
+      }
       for (const face of faces) expect(face.cssUrl).toMatch(/^https:\/\/fonts\.googleapis\.com\//);
     }
   });
 
+  it('loads each face once, even when a family sets one face for every role', () => {
+    // Luxury Editorial is `noto_serif_only` and Swiss Minimal `inter_grotesk`.
+    // Four identical @font-face imports is four fetches for one file.
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      const faces = (t.schema.tokens as Record<string, unknown>).fontFaces as
+        Array<{ family: string }>;
+      expect(new Set(faces.map((f) => f.family)).size, t.name).toBe(faces.length);
+    }
+  });
+
   it('emits the @import that makes the face available to WeasyPrint', () => {
-    const { css } = renderTemplateToHtml(INVESTMENT_COMPASS_TEMPLATES[0].schema, { data: SAMPLE });
-    expect(css).toContain('@import');
-    expect(css).toContain('Cinzel');
-    expect(css).toContain('Playfair+Display');
+    for (const family of DESIGN_FAMILIES) {
+      const t = INVESTMENT_COMPASS_TEMPLATES.find((x) => x.designMeta.familyKey === family.key)!;
+      const { css } = renderTemplateToHtml(t.schema, { data: SAMPLE });
+      expect(css, family.name).toContain('@import');
+    }
   });
 });
 
-describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [t.name, t] as const))('%s', (_name, template) => {
+describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [
+  `${t.designMeta.templateCode} ${t.name}`, t,
+] as const))('%s', (_label, template) => {
   it('parses against the live Zod schema without salvage', () => {
     const result = ReportTemplateSchema.safeParse(template.schema);
     expect(
@@ -227,7 +266,6 @@ describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [t.name, t] as const))('%s
     const { html } = renderTemplateToHtml(template.schema, { data: SAMPLE });
     const text = textOf(html);
     expect(text.length).toBeGreaterThan(1200);
-    // The bindings actually resolved, rather than printing their own braces.
     expect(html).not.toContain('{{');
     expect(text).toContain('Leichhardt');
   });
@@ -245,8 +283,6 @@ describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [t.name, t] as const))('%s
   });
 
   it('survives a report with whole sections missing', () => {
-    // A real report populates only the namespaces its adapter emits. A template
-    // that throws on an absent one would be unusable on live data.
     const sparse = { property: { address: '1 Test Street' } };
     expect(() => renderTemplateToHtml(template.schema, { data: sparse })).not.toThrow();
     const { html } = renderTemplateToHtml(template.schema, { data: sparse });
@@ -286,13 +322,15 @@ describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [t.name, t] as const))('%s
 
 describe('every colourway reaches the page', () => {
   const combos = INVESTMENT_COMPASS_TEMPLATES.flatMap((t) =>
-    PRIVATE_BANKING_COLOURWAYS.map((c) => [t.name, c.name, t, c] as const));
+    colourwaysForFamily(t.designMeta.familyKey).map(
+      (c) => [`${t.designMeta.templateCode} in ${c.name}`, t, c] as const,
+    ));
 
-  it('covers the full fifty combinations', () => {
-    expect(combos).toHaveLength(50);
+  it('covers the full five hundred combinations', () => {
+    expect(combos).toHaveLength(500);
   });
 
-  it.each(combos)('%s in %s', (_t, _c, template, colourway) => {
+  it.each(combos)('%s', (_label, template, colourway) => {
     const { html } = renderTemplateToHtml(template.schema, {
       data: SAMPLE,
       tokenOverrides: colourwayTokenOverride(colourway),
@@ -310,24 +348,197 @@ describe('every colourway reaches the page', () => {
 
   it('paints a genuinely different document per colourway', () => {
     // Guards the failure where token overrides are accepted and then dropped:
-    // fifty identical renders would pass every other test in this file.
-    const chancery = INVESTMENT_COMPASS_TEMPLATES[0];
-    const rendered = PRIVATE_BANKING_COLOURWAYS.map((c) => renderTemplateToHtml(chancery.schema, {
-      data: SAMPLE,
-      tokenOverrides: colourwayTokenOverride(c),
-    }).html);
-    expect(new Set(rendered).size).toBe(PRIVATE_BANKING_COLOURWAYS.length);
+    // ten identical renders would pass every other test in this file.
+    for (const family of DESIGN_FAMILIES) {
+      const template = INVESTMENT_COMPASS_TEMPLATES.find(
+        (t) => t.designMeta.familyKey === family.key,
+      )!;
+      const rendered = colourwaysForFamily(family.key).map(
+        (c) => renderTemplateToHtml(template.schema, {
+          data: SAMPLE,
+          tokenOverrides: colourwayTokenOverride(c),
+        }).html,
+      );
+      expect(new Set(rendered).size, family.name).toBe(10);
+    }
+  });
+
+  it('changes the colour and never the layout', () => {
+    // The catalogue's own rule: "tokens carry no layout meaning". If a
+    // colourway moved a box, the 500 combinations would be 500 documents and
+    // the whole architecture would be wrong. Every block's geometry must be
+    // identical across a family's ten palettes.
+    const geometry = (html: string) =>
+      (html.match(/left:[\d.]+pt;top:[\d.]+pt/g) ?? []).join('|');
+    for (const template of INVESTMENT_COMPASS_TEMPLATES) {
+      const base = geometry(renderTemplateToHtml(template.schema, { data: SAMPLE }).html);
+      for (const c of colourwaysForFamily(template.designMeta.familyKey)) {
+        const other = geometry(renderTemplateToHtml(template.schema, {
+          data: SAMPLE,
+          tokenOverrides: colourwayTokenOverride(c),
+        }).html);
+        expect(other, `${template.name} / ${c.name}`).toBe(base);
+      }
+    }
   });
 
   it('inverts the page for a dark ground', () => {
-    const chancery = INVESTMENT_COMPASS_TEMPLATES[0];
-    const dark = PRIVATE_BANKING_COLOURWAYS.find((c) => c.id === 'pb-obsidian-reverse')!;
-    const { html } = renderTemplateToHtml(chancery.schema, {
-      data: SAMPLE,
-      tokenOverrides: colourwayTokenOverride(dark),
-    });
-    // The content pages take the dark paper, which is the whole point of a
-    // reverse colourway and the thing a token-only swap gets wrong.
-    expect(coloursIn(html)).toContain(resolveColourway(dark).surface.toUpperCase());
+    for (const [key, set] of Object.entries(COLOURWAYS_BY_FAMILY)) {
+      const dark = set.find((c) => c.ground === 'dark');
+      if (!dark) continue;
+      const template = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.familyKey === key)!;
+      const { html } = renderTemplateToHtml(template.schema, {
+        data: SAMPLE,
+        tokenOverrides: colourwayTokenOverride(dark),
+      });
+      expect(coloursIn(html), `${key} / ${dark.name}`)
+        .toContain(resolveColourway(dark).surface.toUpperCase());
+    }
+  });
+});
+
+/**
+ * Image plates.
+ *
+ * Two families in the approved catalogue carry photographs — Luxury Editorial
+ * and Architectural Property — and the catalogue itself names the failure mode
+ * every other family avoids by having no slots at all. Its Monograph variant is
+ * described as "editorial typography without image slots. Empty plates never
+ * print as holes because there are none."
+ *
+ * A slotted family cannot take that way out, so it needs the other half: a slot
+ * that prints *nothing* when it is empty. These tests assert that on the
+ * rendered page, both ways round — with photographs bound and without.
+ */
+describe('image plates', () => {
+  /**
+   * Templates that declare at least one plate.
+   *
+   * Not "templates whose manifest names `image_slots`" — Monograph names it and
+   * its value is `none`, which is the catalogue deliberately declaring the
+   * absence rather than omitting the key.
+   */
+  const plated = INVESTMENT_COMPASS_TEMPLATES.filter(
+    (t) => imageSlotPlan(t.designMeta.manifest.image_slots).plates.length > 0,
+  );
+
+  /** A report with everything the sample has EXCEPT photographs. */
+  const NO_PHOTOS = {
+    ...SAMPLE,
+    property: Object.fromEntries(
+      Object.entries(SAMPLE.property as Record<string, unknown>)
+        .filter(([k]) => k !== 'images'),
+    ),
+  };
+
+  it('is declared by the two photographic families and by nobody else', () => {
+    const families = new Set(plated.map((t) => t.designMeta.familyKey));
+    expect([...families].sort()).toEqual(['architectural_property', 'luxury_editorial']);
+  });
+
+  it('leaves Monograph without a single slot, exactly as the catalogue says', () => {
+    // "Editorial typography without image slots. Empty plates never print as
+    // holes because there are none."
+    const monograph = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.templateCode === 'le-05')!;
+    const json = JSON.stringify(monograph.schema);
+    expect(json).not.toContain('property.images');
+  });
+
+  it('gives every plate a page of its own, and every page a conditional', () => {
+    for (const template of plated) {
+      const platePages = template.schema.pages.filter(
+        (p) => JSON.stringify(p.blocks).includes('property.images'),
+      );
+      expect(platePages.length, template.name).toBeGreaterThan(0);
+      for (const p of platePages) {
+        // A cover is a plate BEHIND a composition, so it is the one page whose
+        // blocks are conditional rather than the page itself — losing the whole
+        // cover because a photograph is missing would be a defect, not a
+        // feature. Every other plate page vanishes entirely.
+        const isCover = template.schema.pages.indexOf(p) === 0;
+        if (isCover) {
+          const imageBlocks = p.blocks.filter(
+            (b) => JSON.stringify(b).includes('property.images'),
+          );
+          expect(imageBlocks.every((b) => typeof (b as { conditional?: string }).conditional === 'string'), template.name).toBe(true);
+        } else {
+          expect((p as { conditional?: string }).conditional, `${template.name} / ${p.name}`)
+            .toContain('property.images');
+        }
+      }
+    }
+  });
+
+  it('binds each plate to a distinct photograph', () => {
+    for (const template of plated) {
+      const bound = [...JSON.stringify(template.schema).matchAll(/property\.images\.(\d+)/g)]
+        .map((m) => Number(m[1]));
+      const distinct = new Set(bound);
+      // Contiguous from zero: an operator filling `images[0]` and `images[1]`
+      // fills the first two plates rather than the first and the fourth.
+      expect([...distinct].sort((a, b) => a - b), template.name)
+        .toEqual(Array.from({ length: distinct.size }, (_, i) => i));
+    }
+  });
+
+  it('prints the plates when photographs are bound', () => {
+    for (const template of plated) {
+      const { html } = renderTemplateToHtml(template.schema, { data: SAMPLE });
+      const images = (html.match(/<img /g) ?? []).length;
+      expect(images, template.name).toBeGreaterThan(0);
+    }
+  });
+
+  it('prints no hole, and costs no page, when they are not', () => {
+    for (const template of plated) {
+      const full = renderTemplateToHtml(template.schema, { data: SAMPLE }).html;
+      const bare = renderTemplateToHtml(template.schema, { data: NO_PHOTOS }).html;
+
+      // The `image` block's placeholder is the hole the catalogue warns about.
+      expect(bare, template.name).not.toContain('No image');
+      expect(bare, template.name).not.toContain('<img ');
+
+      // And the pages the plates occupied are gone rather than blank.
+      const pagesIn = (h: string) => (h.match(/class="tpl-page /g) ?? []).length;
+      expect(pagesIn(bare), template.name).toBeLessThan(pagesIn(full));
+    }
+  });
+
+  it('bleeds for the monograph and measures for the drawing set', () => {
+    // The family's difference, not a per-plate option.
+    const le = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.templateCode === 'le-01')!;
+    const ap = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.templateCode === 'ap-03')!;
+
+    const lePlate = le.schema.pages.find(
+      (p, i) => i > 0 && JSON.stringify(p.blocks).includes('property.images'),
+    )!;
+    const leImage = lePlate.blocks.find((b) => b.type === 'image')! as {
+      props: Record<string, number>;
+    };
+    expect([leImage.props.x, leImage.props.y]).toEqual([0, 0]);
+    expect([leImage.props.width, leImage.props.height]).toEqual([595, 842]);
+
+    const apPlate = ap.schema.pages.find(
+      (p) => JSON.stringify(p.blocks).includes('property.images'),
+    )!;
+    const apImage = apPlate.blocks.find((b) => b.type === 'image')! as {
+      props: Record<string, unknown>;
+    };
+    expect(apImage.props.x).toBeGreaterThan(0);
+    expect(String(apImage.props.caption)).toMatch(/^Figure \d+ · /);
+    expect(apImage.props.captionTransform).toBe('uppercase');
+  });
+
+  it('never lets a plate print a placeholder box', () => {
+    // Belt and braces on the prop itself: `placeholder` defaults to TRUE, so an
+    // omitted flag is a grey rectangle on a client's report rather than nothing.
+    for (const template of plated) {
+      for (const page of template.schema.pages) {
+        for (const block of page.blocks) {
+          if (block.type !== 'image') continue;
+          expect((block.props as { placeholder?: boolean }).placeholder, template.name).toBe(false);
+        }
+      }
+    }
   });
 });

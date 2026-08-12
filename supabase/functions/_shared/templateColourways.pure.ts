@@ -13,12 +13,18 @@
  * ## Where the numbers come from
  *
  * The six values per colourway — `paper`, `ink`, `accent`, `rule`, `muted` and
- * the `ground` classification — are transcribed **verbatim** from
- * `COLOURWAYS.pb` in the approved catalogue (`Template Catalogue.dc.html`),
- * whose own key order is declared there as
+ * the `ground` classification — live in `templateColourways.generated.ts`,
+ * emitted from `source.json`, itself a verbatim evaluation of `COLOURWAYS` in
+ * the approved catalogue (`Template Catalogue.dc.html`). Its key order is
+ * declared there as
  * `CW_KEYS = ['colourway','paper','ink','accent','rule','muted','ground']`.
- * They are not derived, rounded or re-picked. `assertApprovedColourwaySource()`
- * and the spec suite exist to keep it that way.
+ * One hundred colourways across ten families is not something anyone
+ * transcribes correctly by hand, so the transcription is mechanical and
+ * `investmentCompassSource.spec.ts` re-checks it against the source every run.
+ *
+ * This module owns the DERIVATIONS instead. That split is deliberate: what a
+ * designer decided is data, what this code decides is code, and the two stay
+ * separable in review.
  *
  * ## Where the rest comes from
  *
@@ -198,36 +204,35 @@ export interface ApprovedColourway {
 }
 
 /**
- * Private Banking — the ten approved colourways, in the approved order.
+ * The approved colourways, by family.
  *
- * Index 0 is the family default. The catalogue derives that rather than storing
- * it (`cwDefault` is 0 unless the first entry's ground disagrees with the
- * variant's declared mode); every Private Banking variant declares `light` and
- * `COLOURWAYS.pb[0]` is light, so all five masters default here.
+ * The values themselves live in `templateColourways.generated.ts`, emitted
+ * from `source.json` — a verbatim evaluation of `COLOURWAYS` in the approved
+ * catalogue. One hundred colourways across ten families is not a thing anyone
+ * transcribes correctly by hand, and a single mistyped hex is a design change
+ * nobody approved and nobody can see in review.
  *
- * "Gold on Obsidian" is classified LIGHT. The name describes the cover field;
- * the body ground is ivory. `Obsidian Reverse` is its dark counterpart.
+ * This module owns the DERIVATIONS: the roles the six approved values do not
+ * cover. That split is the point — what a designer decided is data, what this
+ * code decides is code, and the two are separable in review.
  */
-export const PRIVATE_BANKING_COLOURWAYS: readonly ApprovedColourway[] = [
-  { id: 'pb-gold-on-obsidian', name: 'Gold on Obsidian', paper: '#FAF7EF', ink: '#251F18', accent: '#8E6C15', rule: '#DDD1C0', muted: '#6E6253', ground: 'light' },
-  { id: 'pb-oxblood', name: 'Oxblood', paper: '#FAF7EF', ink: '#241819', accent: '#7B2230', rule: '#DED0CE', muted: '#6E5A5C', ground: 'light' },
-  { id: 'pb-verde', name: 'Verde', paper: '#F7F6EF', ink: '#1C241D', accent: '#2F5D45', rule: '#D5DCD3', muted: '#64705F', ground: 'light' },
-  { id: 'pb-navy-signet', name: 'Navy Signet', paper: '#F8F8F4', ink: '#1B2130', accent: '#22406E', rule: '#D8DCE2', muted: '#636A76', ground: 'light' },
-  { id: 'pb-slate-bronze', name: 'Slate Bronze', paper: '#F6F5F2', ink: '#23211E', accent: '#8A6A3A', rule: '#DBD8D1', muted: '#6B675F', ground: 'light' },
-  { id: 'pb-platinum', name: 'Platinum', paper: '#F7F7F5', ink: '#1E1E1C', accent: '#4A4A46', rule: '#DCDCD8', muted: '#6A6A66', ground: 'light' },
-  { id: 'pb-obsidian-reverse', name: 'Obsidian Reverse', paper: '#1E1A15', ink: '#F2EBDE', accent: '#D9A520', rule: '#3A332A', muted: '#A2957F', ground: 'dark' },
-  { id: 'pb-oxblood-night', name: 'Oxblood Night', paper: '#1C1416', ink: '#F0E6E4', accent: '#C0565F', rule: '#332628', muted: '#A2908E', ground: 'dark' },
-  { id: 'pb-deep-verde', name: 'Deep Verde', paper: '#141A16', ink: '#E8EFE8', accent: '#6FA98A', rule: '#26302A', muted: '#92A196', ground: 'dark' },
-  { id: 'pb-midnight-navy', name: 'Midnight Navy', paper: '#131720', ink: '#E9EDF4', accent: '#7FA3D8', rule: '#262C38', muted: '#93A0B2', ground: 'dark' },
-];
-
-/** Every colourway the pilot ships, by family key. */
-export const COLOURWAYS_BY_FAMILY: Readonly<Record<string, readonly ApprovedColourway[]>> = {
-  private_banking: PRIVATE_BANKING_COLOURWAYS,
-};
+export { COLOURWAYS_BY_FAMILY } from './templateColourways.generated.ts';
+import { COLOURWAYS_BY_FAMILY as REGISTRY } from './templateColourways.generated.ts';
+export {
+  PRIVATE_BANKING_COLOURWAYS,
+  INSTITUTIONAL_RESEARCH_COLOURWAYS,
+  LUXURY_EDITORIAL_COLOURWAYS,
+  MODERN_FINTECH_COLOURWAYS,
+  ARCHITECTURAL_PROPERTY_COLOURWAYS,
+  SWISS_MINIMAL_COLOURWAYS,
+  CORPORATE_ADVISORY_COLOURWAYS,
+  WEALTH_MANAGEMENT_COLOURWAYS,
+  DATA_ANALYST_COLOURWAYS,
+  DARK_EXECUTIVE_COLOURWAYS,
+} from './templateColourways.generated.ts';
 
 export function colourwaysForFamily(familyKey: string): readonly ApprovedColourway[] {
-  return COLOURWAYS_BY_FAMILY[familyKey] ?? [];
+  return REGISTRY[familyKey] ?? [];
 }
 
 /**

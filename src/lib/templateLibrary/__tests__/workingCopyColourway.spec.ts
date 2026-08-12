@@ -22,7 +22,7 @@ import {
 import {
   PRIVATE_BANKING_COLOURWAYS, colourwayColors, findColourway,
 } from '../colourways';
-import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/privateBanking';
+import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
 
 const CHANCERY = INVESTMENT_COMPASS_TEMPLATES[0];
 
