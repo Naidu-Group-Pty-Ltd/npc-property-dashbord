@@ -48,6 +48,7 @@ import {
 } from './family';
 import {
   calloutKind,
+  strengthsWatchStyle,
   chartPlan,
   coverPlan,
   hasRail,
@@ -803,6 +804,15 @@ export function kpis(items: KpiItem[]): FlowItem {
     labelSize: c.scale.kpiLabel,
     noteSize: c.scale.kpiNote,
     labelTracking: TRACKING.label,
+    // A KPI band is read across, so the figures have to sit on one baseline.
+    // From four-up the cells are narrow enough that a two-word label wraps —
+    // "WEEKLY POSITION" beside "WEEKLY RENT" — and that column's value drops a
+    // line below its neighbours. Reserving the second line costs a little white
+    // above the short labels and keeps the row aligned. `rows` and `stacked`
+    // set the label beside the value, so they need no reservation.
+    labelLines: plan.variant === 'rows' || plan.variant === 'stacked'
+      ? 1
+      : (plan.columns >= 4 ? 2 : 1),
     valueColor: 'token:ink',
     labelColor: 'token:muted',
     ruleColor: 'token:line',
@@ -1080,6 +1090,15 @@ export function strengthsWatch(strengths: string[], watch: string[]): FlowItem {
       cautionColor: 'token:negative',
       onFillColor: 'token:surface',
       color: 'token:ink',
+      // Marked the way this family marks a callout, rather than a solid band on
+      // all fifty masters. See `strengthsWatchStyle`.
+      style: strengthsWatchStyle(c.manifest.callout_style),
+      titleFont: 'token:heading',
+      titleSize: c.scale.columnHead,
+      titleTracking: TRACKING.label,
+      bodyFont: 'token:body',
+      bodySize: c.scale.cell,
+      ruleWeight: c.manifest.border_treatment === 'rule_2px' ? RULE_WEIGHTS.heavy : RULE_WEIGHTS.hairline,
       radius: c.radius,
       x: c.contentLeft, y, width: c.contentWidth,
     }),

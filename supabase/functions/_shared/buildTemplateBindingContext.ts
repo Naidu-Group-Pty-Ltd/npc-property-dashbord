@@ -7,6 +7,7 @@
  */
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import { chunkReportContent, extractStructureHeadings, selectStructureTemplate } from './reportSections.ts';
+import { applyInvestmentProjection } from './reportBindingProjection.pure.ts';
 
 export interface TemplateBindingContext {
   data: Record<string, any>;
@@ -81,6 +82,11 @@ export async function buildTemplateBindingContext(
       logo: brand?.logoUrl ?? null,
     },
   };
+
+  // Mirrors the client adapter. The raw namespaces above are the database's
+  // vocabulary; the seeded catalogue binds a different one, so without this a
+  // live render resolves almost nothing. See `reportBindingProjection.pure.ts`.
+  applyInvestmentProjection(data, row as Record<string, unknown>);
 
   return { data, meta: { reportId, reportType, variant, tier } };
 }

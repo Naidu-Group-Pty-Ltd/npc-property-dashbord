@@ -2,6 +2,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportTemplate/cascadeMap';
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
+import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 
 function flatten(obj: any): Record<string, any> {
@@ -117,6 +118,12 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
         logo: brand?.logoUrl ?? null,
       },
     };
+
+    // The raw namespaces above are the database's vocabulary; the seeded
+    // catalogue binds a different one. Without this, 79 of the 50 Compass
+    // masters' 80 bindings resolve to nothing on a real report — see
+    // `reportBindingProjection.pure.ts`. Additive: nothing above is replaced.
+    applyInvestmentProjection(data, row as Record<string, unknown>);
 
     return {
       data,

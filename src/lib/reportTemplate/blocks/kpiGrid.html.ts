@@ -75,8 +75,26 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   // to align. `numeric_typography: playfair_lining_tabular` is exactly this.
   const figures = 'font-variant-numeric:tabular-nums lining-nums;';
 
+  /**
+   * Reserve a fixed number of label lines so the values sit on one baseline.
+   *
+   * A KPI band is read across, and it only reads across if the figures line up.
+   * They stop lining up as soon as one label wraps: at five-up, "WEEKLY
+   * POSITION" takes two lines where "WEEKLY RENT" takes one, and that column's
+   * value — and its note — drop by a line while the other four stay put. It
+   * looks like a mistake because it is one.
+   *
+   * `labelLines` reserves the space whether or not it is used, which costs a few
+   * points of white above the shorter labels and buys alignment across the band.
+   * Unset by default, so an existing template is unchanged.
+   */
+  const labelLines = Number(p.labelLines ?? 0);
+  const labelLineHeight = 1.25;
+  const labelReserve = labelLines > 0
+    ? `min-height:${(labelSize * labelLineHeight * labelLines).toFixed(2)}pt;`
+    : '';
   const label = (item: KpiItem) =>
-    `<div style="color:${labelColor};font-size:${labelSize}pt;text-transform:uppercase;${labelTracking}${labelFont}">${esc(String(item.label || ''))}</div>`;
+    `<div style="color:${labelColor};font-size:${labelSize}pt;line-height:${labelLineHeight};text-transform:uppercase;${labelReserve}${labelTracking}${labelFont}">${esc(String(item.label || ''))}</div>`;
 
   const note = (item: KpiItem) => (item.note
     ? `<div style="color:${labelColor};font-size:${noteSize}pt;margin-top:5pt;line-height:1.35;${noteFont}">${esc(resolveBindable(item.note, ctx))}</div>`
