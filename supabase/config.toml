@@ -1226,3 +1226,16 @@ request_timeout = 120
 [functions.agreement-centre-render]
 verify_jwt = true
 request_timeout = 300
+
+# MCP server (@lovable.dev/mcp-js). `verify_jwt = false` because MCP clients
+# authenticate to this endpoint with an OAuth bearer token the function issues
+# and verifies itself (via `jose`), not with a Supabase JWT — the gateway would
+# reject every MCP client before the handler ran.
+#
+# This section is not decoration: the function had NO entry here, and the CLI
+# defaults `verify_jwt` to true. The deploy has been failing since 31 July on an
+# unrelated 413 (see supabase/functions/mcp/deno.json), so the default had never
+# been applied. The first successful deploy would otherwise have silently
+# flipped a working endpoint to true and broken every MCP client.
+[functions.mcp]
+verify_jwt = false
