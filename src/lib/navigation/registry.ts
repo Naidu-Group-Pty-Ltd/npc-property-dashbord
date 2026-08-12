@@ -37,6 +37,7 @@ import {
   Home,
   Inbox,
   Layers,
+  LifeBuoy,
   Mail,
   Map as MapIcon,
   MessageSquare,
@@ -125,6 +126,7 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'User Guide', url: '/user-guide', icon: BookOpen, moduleKey: 'user_guide', group: 'Help & Usage' },
   { title: 'Billing & Usage', url: '/billing', icon: Coins, moduleKey: '__always__', group: 'Help & Usage' },
   { title: 'Feedback', url: '/feedback', icon: MessageSquareQuote, moduleKey: '__always__', group: 'Help & Usage' },
+  { title: 'Support', url: '/support', icon: LifeBuoy, moduleKey: '__always__', group: 'Help & Usage', keywords: ['help', 'ticket', 'issue', 'incident', 'support portal'] },
 ];
 
 export const ADMIN_NAVIGATION_ITEMS: readonly NavItemDef[] = [

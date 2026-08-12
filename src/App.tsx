@@ -43,6 +43,7 @@ const ReportViewer = lazyWithRetry(() => import("./pages/ReportViewer"));
 const Settings = lazyWithRetry(() => import("./pages/Settings"));
 const UserGuide = lazyWithRetry(() => import("./pages/UserGuide"));
 const Feedback = lazyWithRetry(() => import("./pages/Feedback"));
+const Support = lazyWithRetry(() => import("./pages/Support"));
 import DataImport from './pages/DataImport';
 import Monitoring from './pages/Monitoring';
 import QualityAssurance from './pages/QualityAssurance';
@@ -591,6 +592,7 @@ const App = () => (
                 <Route path="generated-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
                 <Route path="user-guide" element={<UserGuide />} />
                 <Route path="feedback" element={<Feedback />} />
+                <Route path="support" element={<Support />} />
                 <Route path="monitoring" element={<ModuleGuard moduleKey="monitoring"><Monitoring /></ModuleGuard>} />
                 <Route path="quality-assurance" element={<ModuleGuard moduleKey="quality_assurance"><QualityAssurance /></ModuleGuard>} />
                 <Route path="data-import" element={<ModuleGuard moduleKey="data_import"><DataImport /></ModuleGuard>} />
