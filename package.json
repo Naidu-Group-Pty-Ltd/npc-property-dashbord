@@ -27,6 +27,7 @@
     "templates:command-center:verify": "python3 scripts/aurixa-templates/verify_library.py",
     "preview": "vite preview",
     "test": "vitest run",
+    "support:kb": "tsx scripts/support/extractUserGuideKb.ts",
     "test:market-source-reconciliation": "node scripts/validate-market-source-reconciliation.mjs",
     "test:market-updates-read-contract": "node scripts/validate-market-updates-read-contract.mjs",
     "test:market-updates-llm-router": "node scripts/validate-market-updates-llm-router.mjs",

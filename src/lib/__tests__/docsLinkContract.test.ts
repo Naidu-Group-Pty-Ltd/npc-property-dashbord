@@ -14,7 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ADDITIONAL_GUIDE_SECTIONS } from '../userGuideSections';
+import { GUIDE_SECTIONS } from '../userGuideContent';
 import { SECTION_MODULE_SLUGS, SECTION_PROXY_MODULES } from '../userGuideEntitlements';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -51,11 +51,13 @@ function docsGuideAnchors(): Set<string> | null {
   }
 }
 
-/** Every section id the guide page can render. */
+/**
+ * Every section id the guide page can render. The page renders
+ * `GUIDE_SECTIONS` (from `userGuideContent.ts`) verbatim, filtered only by
+ * entitlement, so the content module is the authoritative section list.
+ */
 function guideSectionIds(): string[] {
-  const page = read('src/pages/UserGuide.tsx');
-  const inline = [...page.matchAll(/^ {6}id: '([a-z0-9-]+)',$/gm)].map((m) => m[1]);
-  return [...inline, ...ADDITIONAL_GUIDE_SECTIONS.map((s) => s.id)];
+  return GUIDE_SECTIONS.map((s) => s.id);
 }
 
 describe('the guide offers a documentation link', () => {
