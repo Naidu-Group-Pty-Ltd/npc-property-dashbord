@@ -32,6 +32,10 @@ export default function Support() {
       ['user_id', user?.id ?? ''],
       ['user_name', user?.username ?? ''],
       ['source', 'npc-dashboard'],
+      // The exact deployment the user came from, so portal deep links (e.g.
+      // knowledge-base answers pointing at /user-guide#section-…) return to
+      // this workspace's own dashboard rather than a hardcoded default.
+      ['dashboard_url', window.location.origin],
     ];
     for (const [key, value] of entries) {
       if (value) params.set(key, value);
