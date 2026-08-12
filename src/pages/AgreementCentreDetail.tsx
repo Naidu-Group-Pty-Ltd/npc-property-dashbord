@@ -48,13 +48,14 @@ import {
   useSendAgreement,
 } from '@/hooks/useAgreementCentre';
 import SendAgreementDialog from '@/components/agreement-centre/SendAgreementDialog';
+import AnnotationRail from '@/components/agreement-centre/AnnotationRail';
+import { useAgreementAnnotations } from '@/hooks/useAgreementAnnotations';
 import { loadDocxLogo } from '@/lib/agreements/docx';
 import { useBrand } from '@/branding/BrandProvider';
 import DigitalAgreementView, { agreementSectionNav } from '@/components/agreement-centre/DigitalAgreementView';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
 import AgreementTimeline from '@/components/agreement-centre/AgreementTimeline';
 import VersionHistory from '@/components/agreement-centre/VersionHistory';
-import ChangeRequestsPanel from '@/components/agreement-centre/ChangeRequestsPanel';
 import SignatureDialog from '@/components/agreement-centre/SignatureDialog';
 import PdfPreviewDialog from '@/components/agreement-centre/PdfPreviewDialog';
 import AgreementDispositionDialog, {
@@ -126,6 +127,19 @@ export default function AgreementCentreDetail() {
   const { invite: invitePartner, reinstate: reinstatePartner } = usePartnerPortalAccess();
   const partnerAccessBusy = invitePartner.isPending || reinstatePartner.isPending;
   const sendAgreement = useSendAgreement();
+
+  // The partner's pins, on the issuer's own live preview. The same layer object
+  // the Finance Portal builds, over the same document component — which is what
+  // makes "the Command Centre sees the same pins" structural rather than a
+  // second implementation to keep in step. The issuer never adds a pin: a
+  // change request is the counterparty's instrument for asking, and the issuer
+  // answers it or amends the clause.
+  const annotations = useAgreementAnnotations({
+    templateKey,
+    values,
+    rows: data?.change_requests ?? [],
+    canAdd: false,
+  });
   // Once there is an issued version there is something to send. The action has
   // to outlive the moment of issue: the address was wrong, the broker's admin
   // needs a copy, the first email went to spam.
@@ -498,6 +512,7 @@ export default function AgreementCentreDetail() {
               values={values}
               signatures={versionSignatures}
               versionLabel={currentVersion?.version_label ?? `${agreement.version}.0 draft`}
+              annotations={annotations.layer}
             />
           </CardContent>
         </Card>
@@ -512,7 +527,8 @@ export default function AgreementCentreDetail() {
               {primaryAction()}
               {openRequests.length > 0 ? (
                 <p className="text-xs text-warning">
-                  {openRequests.length} open change request{openRequests.length === 1 ? '' : 's'} — see the Requests tab.
+                  {openRequests.length} open change request{openRequests.length === 1 ? '' : 's'} —
+                  pinned on the document, and answerable from the Requests tab.
                 </p>
               ) : null}
             </CardContent>
@@ -535,12 +551,21 @@ export default function AgreementCentreDetail() {
                 <TabsContent value="versions" className="mt-4 max-h-[50vh] overflow-y-auto">
                   <VersionHistory versions={data?.issued_versions ?? []} />
                 </TabsContent>
+                {/* The same rail the partner writes in, answered from here.
+                    Selecting a thread highlights its pin on the document to the
+                    left, so "which clause did they mean" stops being a
+                    question anybody has to ask. */}
                 <TabsContent value="requests" className="mt-4 max-h-[50vh] overflow-y-auto">
-                  <ChangeRequestsPanel
-                    requests={data?.change_requests ?? []}
-                    resolving={resolveChangeRequest.isPending}
+                  <AnnotationRail
+                    annotations={annotations.placed}
+                    activeId={annotations.activeId}
+                    onSelect={annotations.select}
+                    resolvingId={resolveChangeRequest.isPending ? annotations.activeId : null}
+                    emptyHint="The partner has not requested any changes."
                     onResolve={(requestId, resolution, note) =>
-                      resolveChangeRequest.mutate({ id: agreement.id, request_id: requestId, resolution, resolution_note: note })}
+                      resolveChangeRequest.mutate({
+                        id: agreement.id, request_id: requestId, resolution, resolution_note: note,
+                      })}
                   />
                 </TabsContent>
                 <TabsContent value="execution" className="mt-4 space-y-2">

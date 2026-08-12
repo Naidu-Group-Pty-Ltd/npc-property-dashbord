@@ -29,6 +29,13 @@
  */
 import { createContext, Fragment, useContext, useMemo, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import {
+  AnnotationAddButton,
+  AnnotationContext,
+  AnnotationMarker,
+  useAnnotationLayer,
+  type AnnotationLayer,
+} from './annotationContext';
 import InlineFieldEditor from './InlineFieldEditor';
 import ContentTextEditor from './ContentTextEditor';
 import {
@@ -89,6 +96,14 @@ interface Props {
   versionLabel?: string;
   /** When set, every configurable value on the page is editable in place. */
   edit?: DigitalEditContext | null;
+  /**
+   * Change requests pinned to clauses, and whether this reader may add one.
+   *
+   * Both portals render this component, so passing the same layer to each is
+   * what makes the partner's pins appear on the Command Centre's live preview
+   * — not a second implementation that has to be kept in step.
+   */
+  annotations?: AnnotationLayer | null;
   className?: string;
 }
 
@@ -133,8 +148,41 @@ function Amendable({
 }) {
   const content = useContext(ContentEditContext);
   const slot = content?.slots.get(path) ?? null;
+
+  // The annotation layer hangs off the same path. Every text node already
+  // passes through here carrying its address, so pinning a change request to a
+  // clause needs no second traversal and cannot drift out of step with the
+  // amendment paths — a request and the amendment answering it name the same
+  // node. See `annotationContext.tsx`.
+  const annotations = useAnnotationLayer();
+  const pins = annotations?.byPath.get(path) ?? null;
+  const canAdd = annotations?.canAdd === true;
+  const marker = pins && annotations ? (
+    <AnnotationMarker
+      annotations={pins}
+      active={pins.some((pin) => pin.id === annotations.activeId)}
+      onSelect={annotations.onSelect}
+    />
+  ) : null;
+  const adder = canAdd && annotations?.onAdd ? (
+    <AnnotationAddButton
+      path={path}
+      onAdd={annotations.onAdd}
+      composing={annotations.composingPath === path}
+    />
+  ) : null;
+
   if (!content || !slot) {
-    return className ? <span className={className}>{children}</span> : <>{children}</>;
+    if (!marker && !adder) {
+      return className ? <span className={className}>{children}</span> : <>{children}</>;
+    }
+    return (
+      <span className={cn('group/doctext', className)}>
+        {children}
+        {marker}
+        {adder}
+      </span>
+    );
   }
   return (
     <span className={cn('group/doctext', className)}>
@@ -149,6 +197,8 @@ function Amendable({
         multiline={slot.multiline}
         onChange={content.onContentChange}
       />
+      {marker}
+      {adder}
     </span>
   );
 }
@@ -770,6 +820,7 @@ export default function DigitalAgreementView({
   logoUrl,
   versionLabel,
   edit = null,
+  annotations = null,
   className,
 }: Props) {
   // The wording of THIS agreement: the supplied template plus its own amendments.
@@ -835,7 +886,10 @@ export default function DigitalAgreementView({
   );
 
   const withValues = lookup ? <EditContext.Provider value={lookup}>{body}</EditContext.Provider> : body;
-  return contentLookup
+  const withContent = contentLookup
     ? <ContentEditContext.Provider value={contentLookup}>{withValues}</ContentEditContext.Provider>
     : withValues;
+  return annotations
+    ? <AnnotationContext.Provider value={annotations}>{withContent}</AnnotationContext.Provider>
+    : withContent;
 }

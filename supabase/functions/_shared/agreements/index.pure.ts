@@ -49,6 +49,13 @@ export * from './partnerAccess.pure.ts';
  */
 export * from './recipients.pure.ts';
 
+/**
+ * A change request pinned to the clause it is about — anchored on the same
+ * path an amendment writes to, so the request and the change it produces name
+ * the same address.
+ */
+export * from './annotations.pure.ts';
+
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
 }

@@ -24,11 +24,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  ArrowLeft, CheckCircle2, Download, FileSignature, Loader2, MessageSquareWarning, ShieldCheck,
+  ArrowLeft, CheckCircle2, Download, FileSignature, Loader2, MessageSquareWarning, MessageSquarePlus, ShieldCheck,
 } from 'lucide-react';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { CHANGE_REQUEST_SECTIONS, type AgreementTemplateKey } from '@/lib/agreements';
 import DigitalAgreementView, { agreementSectionNav } from '@/components/agreement-centre/DigitalAgreementView';
+import AnnotationRail from '@/components/agreement-centre/AnnotationRail';
+import { useAgreementAnnotations } from '@/hooks/useAgreementAnnotations';
 import AgreementTimeline from '@/components/agreement-centre/AgreementTimeline';
 import SignatureDialog from '@/components/agreement-centre/SignatureDialog';
 import { PARTNER_STATUS_LABELS, partnerStatusBadge } from './FinancePortalAgreements';
@@ -140,6 +142,17 @@ export default function FinancePortalAgreementDetail() {
   const sections = agreementSectionNav(agreement.template_key, false, values);
   const changedFields = data?.current_version?.changed_fields ?? [];
 
+  // Pinning is only meaningful while the agreement is actually open to change.
+  // Once signed there is nothing to request, and a "+" on every clause of an
+  // executed instrument invites a conversation that cannot go anywhere.
+  const canAnnotate = status === 'partner_review' || status === 'sent_for_signature';
+  const annotations = useAgreementAnnotations({
+    templateKey: agreement.template_key,
+    values,
+    rows: data?.change_requests ?? [],
+    canAdd: canAnnotate,
+  });
+
   const actionBar = () => {
     switch (status) {
       case 'partner_review':
@@ -151,7 +164,7 @@ export default function FinancePortalAgreementDetail() {
               Accept & Continue to Sign
             </Button>
             <Button variant="outline" className="flex-1" disabled={act.isPending}
-              onClick={() => { setRequestComment(''); setRequestOpen(true); }}>
+              onClick={() => setRequestOpen(true)}>
               <MessageSquareWarning className="mr-2 h-4 w-4" /> Request Changes
             </Button>
           </div>
@@ -167,7 +180,7 @@ export default function FinancePortalAgreementDetail() {
                 <FileSignature className="mr-2 h-4 w-4" /> Sign Agreement
               </Button>
               <Button variant="outline" disabled={act.isPending}
-                onClick={() => { setRequestComment(''); setRequestOpen(true); }}>
+                onClick={() => setRequestOpen(true)}>
                 Request Changes
               </Button>
             </div>
@@ -278,16 +291,56 @@ export default function FinancePortalAgreementDetail() {
         </aside>
 
         <div className="min-w-0 space-y-4">
-          <Card>
-            <CardContent className="p-4 sm:p-6">
-              <DigitalAgreementView
-                templateKey={agreement.template_key}
-                values={values}
-                signatures={versionSignatures}
-                versionLabel={data?.current_version?.version_label}
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+            <Card>
+              <CardContent className="p-4 sm:p-6">
+                {canAnnotate ? (
+                  <p className="mb-4 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                    <span className="font-medium text-foreground">Need something changed?</span>{' '}
+                    Hover any clause and use the <MessageSquarePlus className="inline h-3 w-3" />{' '}
+                    to pin your request to it. The issuing organisation sees your note against that
+                    exact clause.
+                  </p>
+                ) : null}
+                <DigitalAgreementView
+                  templateKey={agreement.template_key}
+                  values={values}
+                  signatures={versionSignatures}
+                  versionLabel={data?.current_version?.version_label}
+                  annotations={annotations.layer}
+                />
+              </CardContent>
+            </Card>
+
+            <div className="xl:sticky xl:top-4 xl:self-start">
+              <AnnotationRail
+                annotations={annotations.placed}
+                activeId={annotations.activeId}
+                onSelect={annotations.select}
+                composing={annotations.composing}
+                onCancelCompose={annotations.cancelCompose}
+                submitting={act.isPending}
+                emptyHint={canAnnotate
+                  ? 'Hover a clause in the document and pin a request to it.'
+                  : 'No change requests were raised on this agreement.'}
+                onSubmit={(comment) => act.mutate(
+                  {
+                    operation: 'request_changes',
+                    id,
+                    section_key: 'other',
+                    comment,
+                    anchor_path: annotations.composing?.path,
+                  },
+                  {
+                    onSuccess: () => {
+                      annotations.cancelCompose();
+                      toast.success('Change request sent');
+                    },
+                  },
+                )}
               />
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           <Card>
             <CardContent className="p-4">
@@ -342,10 +395,11 @@ export default function FinancePortalAgreementDetail() {
       <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Request changes</DialogTitle>
+            <DialogTitle>Request a general change</DialogTitle>
             <DialogDescription>
-              Describe what you need changed. The issuing organisation will respond or issue an
-              updated version — the current document stays on record unchanged.
+              For a request about one clause, close this and pin it to that clause in the
+              document instead — the issuer sees it against the exact wording. Use this when the
+              request spans a whole section.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

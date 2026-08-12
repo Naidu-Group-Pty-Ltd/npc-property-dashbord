@@ -14,7 +14,7 @@
  *   get { id }                 full review payload; records first view
  *   download { id, kind }      signed URL — 'issued' or 'executed' PDF
  *   accept { id }              partner accepts → awaiting signature
- *   request_changes { id, section_key, comment }
+ *   request_changes { id, section_key, comment, anchor_path? }
  *   sign { id, signatory_name, signatory_title?, legal_entity?, signature_typed }
  *
  * Auth: the finance portal session header (hash-first resolution via
@@ -42,7 +42,12 @@ import {
   agreementTemplate,
   templateKeyForDirection,
   CHANGE_REQUEST_SECTIONS,
+  agreementContentForValues,
+  anchorForPath,
+  commentWithAnchorPrefix,
+  projectFieldValues,
 } from '../_shared/agreements/index.pure.ts';
+import { agreementAnchorsSupported } from '../_shared/agreements/anchorColumns.ts';
 import { agreementDownloadFileName } from '../_shared/agreements/documentHtml.pure.ts';
 import {
   AGREEMENTS_BUCKET,
@@ -285,6 +290,11 @@ Deno.serve(async (req) => {
       }
 
       const versionId = agreement.issued_version_id as string | null;
+      // Naming a column PostgREST does not know about fails the whole read, so
+      // the anchor fields are only asked for when the migration has landed.
+      // Without them the partner still sees every request, just unpinned.
+      const anchorCols = (await agreementAnchorsSupported(supabase))
+        ? ', anchor_path, anchor_label, anchor_quote' : '';
       const [versionRes, versionsRes, requestsRes, signaturesRes, eventsRes] = await Promise.all([
         versionId
           ? supabase.from(VERSIONS_TABLE)
@@ -295,7 +305,8 @@ Deno.serve(async (req) => {
           .select('id, version_label, issue_sequence, status, issued_at, changed_fields, executed_at')
           .eq('agreement_id', id).order('issue_sequence', { ascending: false }),
         supabase.from(CHANGE_REQUESTS_TABLE)
-          .select('id, section_key, comment, status, resolution_note, resolved_at, created_at')
+          .select('id, section_key, comment, status, resolution_note, resolved_at, created_at, '
+            + `requested_by_label, resolved_by_label${anchorCols}`)
           .eq('agreement_id', id).order('created_at', { ascending: false }),
         supabase.from(SIGNATURES_TABLE)
           .select('id, version_id, party_role, legal_entity, signatory_name, signatory_title, signature_method, signed_at')
@@ -416,13 +427,44 @@ Deno.serve(async (req) => {
       if (!comment) return json({ error: 'Please describe the change you are requesting' }, 422);
       if (comment.length > 4000) return json({ error: 'Please keep the request under 4000 characters' }, 422);
 
+      // Where on the page this was raised. Resolved against the agreement's
+      // OWN wording — template plus its amendments — so the quote captured is
+      // what the partner actually read, and the path is the same key an
+      // amendment writes to. See `annotations.pure.ts`.
+      let anchor = null as ReturnType<typeof anchorForPath>;
+      const anchorPath = typeof body.anchor_path === 'string' ? body.anchor_path.trim() : '';
+      if (anchorPath) {
+        const templateKey = templateKeyForDirection(agreement.direction as never);
+        anchor = anchorForPath(
+          agreementContentForValues(templateKey, projectFieldValues(templateKey, agreement as never)),
+          anchorPath,
+        );
+        // A path the current wording does not contain is not stored. Pinning a
+        // request to a clause that is not there would put the marker on
+        // whatever later occupies that path, and a comment about a commission
+        // rate on a termination clause is worse than no pin.
+        if (!anchor) {
+          return json({ error: 'That clause is no longer part of this version of the agreement.' }, 409);
+        }
+      }
+
+      const anchorsStorable = anchor ? await agreementAnchorsSupported(supabase) : true;
       const { data: request, error } = await supabase.from(CHANGE_REQUESTS_TABLE).insert({
         agreement_id: id,
         version_id: agreement.issued_version_id ?? null,
         section_key: sectionKey,
-        comment,
+        // With nowhere to store the anchor, its location goes in the comment
+        // rather than being dropped — see `commentWithAnchorPrefix`.
+        comment: anchorsStorable ? comment : commentWithAnchorPrefix(comment, anchor),
         requested_by_portal_user_id: portalUser.id,
         requested_by_label: actorLabel,
+        ...(anchor && anchorsStorable
+          ? {
+            anchor_path: anchor.path,
+            anchor_label: anchor.label,
+            anchor_quote: anchor.quote,
+          }
+          : {}),
       }).select().single();
       if (error) throw error;
 
@@ -431,11 +473,16 @@ Deno.serve(async (req) => {
           .eq('id', id).eq('status', 'partner_review');
       }
 
+      // The clause beats the section in every message: "Clause 11.2" tells
+      // somebody where to look, "Commercial Schedule" tells them where to start
+      // looking.
       const sectionLabel = CHANGE_REQUEST_SECTIONS.find((s) => s.key === sectionKey)?.label ?? 'Other';
+      const whereLabel = anchor?.label ?? sectionLabel;
       await logEvent(supabase, id, 'changes_requested', actorLabel,
-        `Changes requested — ${sectionLabel}`, { request_id: request.id, section_key: sectionKey });
+        `Changes requested — ${whereLabel}`,
+        { request_id: request.id, section_key: sectionKey, anchor_path: anchor?.path ?? null });
       await notifyAgreementsTeam(supabase, 'Changes requested',
-        `${agreement.partner_legal_name} has requested changes to the ${sectionLabel}.`, id);
+        `${agreement.partner_legal_name} has requested changes to ${whereLabel}.`, id);
 
       return json({ change_request: request });
     }
