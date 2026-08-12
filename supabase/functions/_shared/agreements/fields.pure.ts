@@ -420,6 +420,38 @@ function parsePercent(value: unknown): number | null {
 }
 
 /**
+ * Register columns that `partner_agreements` declares NOT NULL.
+ *
+ * An empty field becomes `null` a few lines below, which is right for almost
+ * every column and fatal for these: Postgres rejects the **entire** statement
+ * with `23502`, so one blank issuer name discards every other edit in the same
+ * step and the save fails with a message nobody can act on.
+ *
+ * It used to be invisible. `principal_legal_name` carried a column DEFAULT of
+ * the founding tenant's own name, so a freshly created agreement was never
+ * empty, the wizard read that value back, and the patch never sent null. The
+ * white-label audit removed that default — correctly; it was printing one
+ * agency's name on another agency's contract — and in doing so removed the
+ * thing that had been accidentally keeping the column populated. Three
+ * consecutive `23502`s in the production log, on a draft nobody could save,
+ * are what that cost.
+ *
+ * The value is therefore **omitted rather than nulled**: the column keeps what
+ * it has, which on a new row is its own default. Blanking a NOT NULL column is
+ * not a thing the register supports in any case, and `validateForIssue` — not
+ * a constraint violation — is what should stop an agreement going out with a
+ * party missing.
+ */
+const NOT_NULL_COLUMNS: ReadonlySet<string> = new Set([
+  'principal_legal_name',
+  'partner_legal_name',
+  'governing_state',
+  'termination_notice_days',
+  'dispute_window_days',
+  'cleared_funds_required',
+]);
+
+/**
  * Turn edited field values into a `partner_agreements` update.
  *
  * Two rules with reasons:
@@ -452,6 +484,11 @@ export function rowPatchFromValues(
     if ('column' in def.db) {
       if (def.db.column === 'cleared_funds_required') {
         columns[def.db.column] = value === 'yes' || value === true;
+      } else if (value === null && NOT_NULL_COLUMNS.has(def.db.column)) {
+        // Leave it alone rather than fail the whole statement. See the note on
+        // NOT_NULL_COLUMNS — a null here costs the user every other edit in
+        // the step, not just this one.
+        continue;
       } else {
         columns[def.db.column] = value;
       }
