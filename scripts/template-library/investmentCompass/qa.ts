@@ -189,6 +189,26 @@ async function main(): Promise<void> {
     });
     const page = await open(browser, html);
     report.rendered += 1;
+
+    /**
+     * Every index below is a schema index used against a rendered page.
+     *
+     * Those are the same list only while nothing is filtered out, and image
+     * plates are conditional pages — so a template whose plates went unbound
+     * would silently shift the dashboard screenshot and mislabel every overflow
+     * after the first plate. `SAMPLE_REPORT_DATA` carries a photograph for
+     * every slot in the catalogue, so they should match; if they ever stop
+     * matching, that is the QA lying rather than a template failing, and it
+     * should stop rather than report.
+     */
+    const renderedPages = await page.locator('.tpl-page').count();
+    if (renderedPages !== pageNames.length) {
+      throw new Error(
+        `${template.name}: rendered ${renderedPages} pages against ${pageNames.length} in the schema — `
+        + 'a conditional page was filtered out and the sample data no longer covers every slot',
+      );
+    }
+
     report.overflows.push(
       ...await measureOverflows(page, template.name, dflt.name, pageNames),
     );
@@ -205,6 +225,20 @@ async function main(): Promise<void> {
       const dashboard = resolve(OUT, `${code}-dashboard.png`);
       await page.locator('.tpl-page').nth(dashboardIndex).screenshot({ path: dashboard });
       report.screenshots.push(dashboard.replace(`${REPO}/`, ''));
+    }
+
+    // A plate, for the two families that carry photographs. It is the page a
+    // reviewer most needs to see, because it is the only one whose content an
+    // operator supplies — and the one that has to disappear cleanly when they
+    // do not. Index 0 is skipped: the cover's plate is a ground behind a
+    // composition rather than a plate page.
+    const plateIndex = template.schema.pages.findIndex(
+      (p, i) => i > 0 && JSON.stringify(p.blocks).includes('property.images'),
+    );
+    if (plateIndex >= 0) {
+      const plate = resolve(OUT, `${code}-plate.png`);
+      await page.locator('.tpl-page').nth(plateIndex).screenshot({ path: plate });
+      report.screenshots.push(plate.replace(`${REPO}/`, ''));
     }
 
     // One PDF per family reference — fifty is a lot of artefact for a reviewer,

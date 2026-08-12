@@ -294,7 +294,8 @@ renders exactly as before, which the existing report-template suite asserts.
 | `data-table` | `headerStyle: 'rule'`, `gridLines`, `headerFont`, `headerSize`, `headerTracking`, `totalRows`, `rowRule`, `outerBorder`, `emphasisColor` | 26 table treatments — statements, worksheets, module grids, and one doubled-rule total |
 | `callout` | `style` (`bar`/`margin`), `titleFont`, `titleColor`, `titleSize`, `titleTracking`, `bodyFont`, `bodySize`, `barWidth`, `ruleColor` | 21 callout styles across three genuinely different objects |
 | `divider` | `orientation: 'vertical'`, `height`/`length` | The vertical rail and the drawing-set frame had no primitive |
-| `hero` | `bg`, `eyebrow`, `eyebrowSize/Font/Tracking/Color`, `titleFont`, `subtitleFont`, `padding` | It drew an image and nothing else, so a hero with no image rendered transparent — and a *band* is what eleven cover overlays and every Wealth Management page opens on |
+| `hero` | `bg`, `eyebrow`, `eyebrowSize/Font/Tracking/Color`, `titleFont`, `subtitleFont`, `padding`, `tintFade` | It drew an image and nothing else, so a hero with no image rendered transparent — and a *band* is what eleven cover overlays and every Wealth Management page opens on. `tintFade` ramps the tint in, because a flat scrim across the foot of a photograph draws a hard edge through the picture |
+| `image` | `placeholder`, `captionSize`, `captionFont`, `captionTracking`, `captionStyle`, `captionTransform`, `radius` | An unresolved `src` drew a bordered "No image" box — right in the editor, wrong on a client's PDF. See **Image plates** below |
 | `risk-register` | `display: 'bars'`, plus every colour as a prop | `severity_bars` vs `rated_table`; and the block hardcoded its whole palette |
 | `decision-box` | `bg`, `color`, `headingColor`, `radius`, `barWidth`, `headingFont`, `bodyFont`, `headingSize`, `bodySize`, `headingTracking`, `maxWords` | `obsidian_card` needs the field colour; the block hardcoded `#FCFAF6` and silently truncated at 60 words |
 | `footer`, `page-number` | `inset`, `fontSize`/`size` | The footer rule was full-bleed while the content rule spanned the margins |
@@ -304,6 +305,97 @@ Three of these fixed **latent defects** rather than adding features:
 colour, so they passed `isBrandSafe()` — which only inspects the schema — while
 being the one element on the page that ignored the template's palette. The third
 could not paint a background at all.
+
+## Image plates
+
+Two of the ten families carry photographs — **Luxury Editorial** and
+**Architectural Property**. Nine of their fifty templates declare plates; the
+tenth declares that it has none, which is the more interesting half.
+
+| Template | `image_slots` | Plates | Cover |
+| --- | --- | --- | --- |
+| `le-01` Atelier | `four_briefed` | 3 interior | photographic |
+| `le-02` Atelier Plate | `six_with_bleed` | 3 interior + 2 standalone | photographic |
+| `le-03` Grand Folio | `four_briefed` | 3 interior | photographic |
+| `le-04` Frontispiece | `three_interior` | 3 interior | typographic |
+| `le-05` Monograph | `none` | — | typographic |
+| `ap-03` Elevation | `four_measured` | 4 figures | typographic |
+
+### A plate is a page
+
+Every plate is a whole page of its own, and that is the design decision worth
+knowing before changing anything here. The archetype runs its narrative plate
+across the top of a content page with the heading reversed out of it. That is
+the better picture and it does not survive contact with a fixed-position
+renderer:
+
+- **The pages are already full.** Inline plates were built first and cost eight
+  of the ten plated variants their page — "Investment thesis" ran **123pt** past
+  the content bottom on `le-03`, which is a page and a half of prose pushed off
+  the paper. The seed build refuses to write a migration while the overflow log
+  is non-empty, so this was caught rather than shipped.
+- **Most reports have no photographs.** An inline slot reserves its height
+  whether or not anything fills it, so the common case would be a hole in the
+  middle of the argument.
+
+A page solves both: it is measured against nothing, so it always fits, and it
+carries its `conditional` on the *page*. `visiblePages` filters it out before
+anything is laid out, so an unfilled plate costs **no page** rather than an
+empty one.
+
+The archetype's stated plate heights (74mm, 90mm, 60mm) are therefore recorded
+in `resolvers.ts` comments and carried nowhere — a plate that fills the page has
+no height to declare.
+
+### Empty plates never print as holes
+
+That phrase is the catalogue's own. Monograph is described as *"editorial
+typography without image slots. Empty plates never print as holes because there
+are none."* The design's answer to the failure mode was to remove the slots.
+
+A family that keeps its slots needs the other half of that answer, and it is two
+things working together:
+
+1. `image` gained a `placeholder` prop. It **defaults to true**, so every
+   pre-existing template is unchanged; the plates set it false, and an
+   unresolved `src` then draws nothing at all rather than a grey bordered box
+   announcing a missing photograph on a document somebody is paying for.
+2. Every plate carries `conditional: property && property.images && property.images[n]`.
+   Three failure modes collapse into one expression — `property` absent
+   entirely (`evalConditional` rejects an expression naming an unbound
+   identifier), `property.images` absent, and `images[n]` present but empty.
+
+The cover is the one exception to "the page vanishes": there the plate is a
+ground *behind* a composition, so the conditional sits on the two blocks rather
+than the page. Losing an entire cover because a photograph is missing would be a
+defect. Absent, the cover falls back to its field colour — which is exactly the
+typographic cover `three_interior` and `none` use, so the two are one
+composition rather than two.
+
+### Bleed or measure
+
+`bleed` is a property of the **family**, not of a plate:
+
+- **Luxury Editorial** is a monograph. Plates run to the trim, with the asset's
+  name reversed out of a scrim at the foot and the page ground set to the field
+  colour so an unfilled edge is never white.
+- **Architectural Property** measures. The plate is inset to the page margin and
+  captioned `FIGURE N ·` in tracked mono, which is what a plate in a drawing set
+  is. Symmetric on `margin` rather than the content measure: a plate page draws
+  no running head and no rail, so there is no lane to align to.
+
+### Nothing emits `property.images` yet
+
+No report adapter emits that path today. That is forward-looking rather than
+broken: a plate is a designed hole an operator fills in the Builder for a
+specific report — the archetype's briefs say "Drop the hero photograph" — and
+binding it now means the day an adapter carries photographs, every plate in two
+families fills itself with no template change. Until then the binding resolves
+empty and the plate prints nothing, which is the behaviour above.
+
+`SAMPLE_REPORT_DATA` carries six base64 SVG **tonal studies** so previews, the
+catalogue spec and the QA harness exercise the filled path. They are studies,
+not photographs, and they are not stand-ins for stock imagery.
 
 ### jsPDF divergence
 

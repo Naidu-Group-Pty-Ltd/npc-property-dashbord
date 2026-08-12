@@ -46,6 +46,7 @@ import {
   contents,
   contentTop,
   cover,
+  coverHero,
   definitions,
   disclaimerPage,
   flow,
@@ -53,6 +54,7 @@ import {
   kpiCapacity,
   kpis,
   page,
+  platePage,
   prose,
   recommendation,
   risks,
@@ -66,7 +68,7 @@ import {
   beginCompassTemplate,
   type PageDef,
 } from './blocks';
-import { hasContents, kpiPlan } from './resolvers';
+import { hasContents, imageSlotPlan, kpiPlan, type ImagePlate } from './resolvers';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 import {
   colourwayColors,
@@ -209,6 +211,44 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     `Part ${String((partNo += 1)).padStart(2, '0')} · ${label}`;
   const nextNumeral = (): string => String(partNo).padStart(2, '0');
 
+  /**
+   * The briefed image plates this template declares.
+   *
+   * Only the two photographic families carry `image_slots`; for every other
+   * family this is empty and nothing below emits a thing.
+   */
+  const slots = imageSlotPlan(manifest.image_slots);
+  // Each plate binds a distinct `property.images[n]`, so an operator filling
+  // one does not fill them all.
+  const plateIndex = new Map<string, number>(
+    slots.plates.map((p, i) => [p.id, i]),
+  );
+  /**
+   * The plates that follow a given content page, as pages of their own.
+   *
+   * Every plate is a page. Inline plates were tried first and cost eight of the
+   * ten plated variants their page — "Investment thesis" ran 123pt past the
+   * content bottom on `le-03` — because these pages are already full and a slot
+   * reserves its height whether or not anything fills it. `platePage` carries
+   * the full reasoning.
+   */
+  let plateNo = 0;
+  const platesFor = (placement: ImagePlate['placement']): PageDef[] =>
+    slots.plates
+      .filter((p) => p.placement === placement)
+      .map((p) => {
+        plateNo += 1;
+        return platePage({
+          index: plateIndex.get(p.id)!,
+          brief: p.brief,
+          // A page name has to distinguish one plate from the next: it is what
+          // the reader's page list shows and what the overflow log names.
+          name: p.caption ?? `Plate ${String(plateNo).padStart(2, '0')}`,
+          caption: p.caption,
+          bleed: slots.bleed,
+        });
+      });
+
   const pages: PageDef[] = [];
 
   // ── 01 Cover ─────────────────────────────────────────────────────────────
@@ -228,6 +268,21 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       { label: 'Adviser', value: '{{author.name}}' },
     ],
   }));
+
+  // A photographic cover is the plate BEHIND the cover composition, so the
+  // wordmark, title and fact band paint over it. Absent, the cover falls back
+  // to its field colour — which is exactly the typographic cover the
+  // `three_interior` and `none` variants use, so the two are one composition.
+  if (slots.coverHero) {
+    const hero = slots.plates.find((p) => p.placement === 'cover');
+    if (hero) {
+      const cv = pages[0];
+      pages[0] = {
+        ...cv,
+        blocks: [...coverHero(plateIndex.get(hero.id)!, hero.brief), ...cv.blocks],
+      };
+    }
+  }
 
   // ── Contents, where the family declares one ──────────────────────────────
   if (hasContents(manifest.toc_style)) {
@@ -334,6 +389,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ]), FOOTER));
   }
 
+  // Outside the `splitSnapshot` branch on purpose: not every variant gives the
+  // property its own page, and a plate that exists only when it does would be
+  // dropped from four of the ten plated masters without anything saying so.
+  pages.push(...platesFor('property'));
+
   // ── 03 Narrative ─────────────────────────────────────────────────────────
   pages.push(withFurniture(page('Investment thesis', [
     ...furniture(DOCUMENT_LABEL, nextPart('Thesis'), 'Investment thesis'),
@@ -349,6 +409,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       callout('Why this suburb', '{{property.rationale}}'),
     ], contentTop()),
   ]), FOOTER));
+  pages.push(...platesFor('thesis'));
 
   // ── 04 Dense data ────────────────────────────────────────────────────────
   const acquisitionRows = [
@@ -440,6 +501,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ]),
     ], contentTop()),
   ]), FOOTER));
+  pages.push(...platesFor('projection'));
 
   // ── 06 Risk and recommendation ───────────────────────────────────────────
   pages.push(withFurniture(page('Risk and recommendation', [
@@ -488,6 +550,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       callout('Scope', '{{financials.fundingNote}}'),
     ], contentTop()),
   ]), FOOTER));
+  pages.push(...platesFor('sources'));
+
+  // The plates that belong to no section — `six_with_bleed`'s two extras. They
+  // close the narrative rather than following one of its pages.
+  pages.push(...platesFor('page'));
 
   pages.push(disclaimerPage(STANDARD_DISCLAIMER));
 

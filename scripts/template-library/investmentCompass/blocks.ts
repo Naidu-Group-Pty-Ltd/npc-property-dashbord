@@ -82,6 +82,8 @@ export interface BlockDef {
   props: Record<string, unknown>;
   overlays: never[];
   name?: string;
+  /** Skip the block entirely when this evaluates falsy. */
+  conditional?: string;
 }
 
 export interface PageDef {
@@ -90,6 +92,8 @@ export interface PageDef {
   size: { width: number; height: number };
   background: { color: string };
   blocks: BlockDef[];
+  /** Drop the page entirely when this evaluates falsy. */
+  conditional?: string;
 }
 
 export interface FlowItem {
@@ -97,6 +101,16 @@ export interface FlowItem {
   height: number;
   /** Extra space after this block. Defaults to the manifest's spacing scale. */
   gap?: number;
+  /**
+   * Render the block only when this evaluates truthy.
+   *
+   * The item still occupies its height in the flow. That is deliberate: blocks
+   * are absolutely positioned and nothing reflows, so a conditional item that
+   * collapsed would have to move every block below it — which it cannot. An
+   * absent item leaves space, and the placements are chosen so that space falls
+   * at the foot of a page rather than above its heading.
+   */
+  conditional?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,7 +222,8 @@ export function flow(items: FlowItem[], startY?: number): BlockDef[] {
   let y = startY ?? c.margin;
   const out: BlockDef[] = [];
   for (const item of items) {
-    out.push(item.block(y));
+    const emitted = item.block(y);
+    out.push(item.conditional ? { ...emitted, conditional: item.conditional } : emitted);
     y += item.height + (item.gap ?? c.spacing.gap);
   }
   const last = items[items.length - 1];
@@ -1139,6 +1154,201 @@ export function scenarioChart(opts: {
       x: c.contentLeft, y, width: c.contentWidth, height,
     }),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image plates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Where a plate's photograph comes from.
+ *
+ * `property.images` is a forward-looking path: **no adapter emits it today**.
+ * That is deliberate rather than an oversight. A plate is a designed hole an
+ * operator fills in the Builder for a specific report — the archetype's own
+ * briefs say "Drop the hero photograph" — and binding it means the day an
+ * adapter does carry photographs, every plate in two families fills itself with
+ * no template change.
+ *
+ * Until then the binding resolves empty, and the plate prints nothing.
+ */
+function plateSrc(index: number): string {
+  return `{{property.images.${index}}}`;
+}
+
+/**
+ * The condition under which a plate renders at all.
+ *
+ * This is the whole answer to the catalogue's own warning — Monograph exists
+ * because "empty plates never print as holes". Three failure modes are covered
+ * by one expression:
+ *
+ *   - `property` absent entirely (a sparse report): `evalConditional` rejects an
+ *     expression naming an unbound identifier and returns false. No render.
+ *   - `property.images` absent: the guard is falsy. No render.
+ *   - `property.images[n]` present but an empty string: also falsy, which is why
+ *     the index is tested rather than the array's length.
+ */
+function plateConditional(index: number): string {
+  return `property && property.images && property.images[${index}]`;
+}
+
+/**
+ * A plate on its own page.
+ *
+ * ## Why a plate is a page and never a slot in the flow
+ *
+ * The archetype runs its narrative plate across the top of a content page with
+ * the heading reversed out of it. That is the better picture and the wrong
+ * shape for a fixed-position renderer with no reflow, for two reasons that
+ * pull in the same direction:
+ *
+ *   - The pages the plates belong to are already full. Dropping 90mm of
+ *     photograph into "The property" or "Investment thesis" overflowed eight of
+ *     the ten plated variants — up to 123pt past the content bottom on
+ *     `le-03`, which is a page and a half of prose pushed off the paper.
+ *   - Most reports carry no photographs at all. An inline plate reserves its
+ *     height whether or not it is filled, so the common case would be a hole in
+ *     the middle of the argument, or (worse) type set over blank space where a
+ *     picture was supposed to be.
+ *
+ * A page solves both. It always fits, because it is measured against nothing;
+ * and it carries the plate's `conditional` on the PAGE, so an unfilled plate
+ * costs no page rather than an empty one. `visiblePages` filters it out before
+ * anything is laid out, which is why this is the only placement that vanishes
+ * completely.
+ *
+ * ## The two treatments
+ *
+ * `bleed` is the family's difference, not a per-plate option. Luxury Editorial
+ * is a monograph — its plates run to the trim with the asset's name reversed
+ * out of a scrim at the foot, and the page ground is the field colour so an
+ * unfilled edge is never white. Architectural Property measures instead of
+ * bleeds: the plate is inset to the page margin and captioned "FIGURE N ·" in
+ * tracked mono, which is what its `four_measured` slot plan names.
+ */
+export function platePage(opts: {
+  index: number;
+  brief: string;
+  name: string;
+  caption?: string;
+  bleed: boolean;
+}): PageDef {
+  const blocks = opts.bleed ? bleedPlateBlocks(opts) : measuredPlateBlocks(opts);
+  const p = page(opts.name, blocks, opts.bleed ? 'token:bg' : 'token:surface');
+  return { ...p, conditional: plateConditional(opts.index) };
+}
+
+/** Luxury Editorial: to the trim, with a reversed caption band at the foot. */
+function bleedPlateBlocks(opts: {
+  index: number; brief: string; caption?: string;
+}): BlockDef[] {
+  const c = ctx();
+  // Deep enough for a tracked label over two lines of address at heading size,
+  // plus the run-up the fade needs: the scrim reaches full strength over the
+  // bottom two fifths, so a band sized to the type alone would ramp under it.
+  const band = c.margin * 2 + Math.round(c.scale.heading * 2.4) + 90;
+  return [
+    block('image', {
+      src: plateSrc(opts.index),
+      fit: 'cover',
+      // Never a grey "No image" rectangle on a client's report.
+      placeholder: false,
+      x: 0, y: 0, width: PAGE.width, height: PAGE.height,
+    }, opts.brief),
+    // `tint` rather than `bg`: the hero paints its tint at 0.55 opacity, which
+    // is what makes reversed type legible over an unknown photograph. `bg` is
+    // opaque and would hide the foot of the plate entirely — and `tintFade`
+    // ramps it in, because a flat band draws a hard edge across the picture.
+    block('hero', {
+      tintFade: true,
+      title: '{{property.address}}',
+      titleSize: c.scale.heading,
+      titleFont: 'token:heading',
+      titleColor: 'token:text',
+      ...(opts.caption
+        ? {
+          eyebrow: opts.caption,
+          eyebrowSize: c.scale.eyebrow,
+          eyebrowFont: 'token:mono',
+          eyebrowTracking: TRACKING.label,
+          eyebrowColor: 'token:primary',
+        }
+        : {}),
+      tint: 'token:bg',
+      padding: c.margin,
+      x: 0, y: PAGE.height - band, width: PAGE.width, height: band,
+    }, 'Plate caption'),
+  ];
+}
+
+/**
+ * Architectural Property: inset to the page margin and captioned.
+ *
+ * Symmetric on `margin` rather than the content measure: a plate page carries
+ * no running head and no rail, so there is no lane for it to align to, and a
+ * plate pushed 30pt right of centre to clear a rail that is not drawn reads as
+ * a mistake.
+ *
+ * The caption is the `image` block's own — it reserves its height inside the
+ * box, so the picture shortens to make room rather than the caption falling off
+ * the page.
+ */
+function measuredPlateBlocks(opts: {
+  index: number; brief: string; caption?: string;
+}): BlockDef[] {
+  const c = ctx();
+  return [
+    block('image', {
+      src: plateSrc(opts.index),
+      ...(opts.caption ? { caption: opts.caption } : {}),
+      captionColor: 'token:muted',
+      captionSize: c.scale.kpiNote,
+      captionFont: 'token:mono',
+      captionStyle: 'normal',
+      captionTransform: 'uppercase',
+      captionTracking: TRACKING.label,
+      fit: 'cover',
+      radius: c.radius,
+      placeholder: false,
+      x: c.margin,
+      y: c.margin,
+      width: PAGE.width - c.margin * 2,
+      height: PAGE.height - c.margin * 2,
+    }, opts.brief),
+  ];
+}
+
+/**
+ * The cover's photographic ground.
+ *
+ * Emitted as the first block on the cover so the wordmark, title and fact band
+ * paint over it. When it is absent the cover falls back to its field colour,
+ * which is exactly the typographic cover the `three_interior` and `none`
+ * variants use — so the two are one composition rather than two.
+ *
+ * The scrim is what makes reversed type legible over an unknown photograph. The
+ * archetype uses two gradients; this uses one flat tint at the same intent,
+ * because a `hero`'s `tint` is a solid and a gradient stop would have to be a
+ * literal colour, which `isBrandSafe()` would fail.
+ */
+export function coverHero(index: number, brief: string): BlockDef[] {
+  return [
+    block('image', {
+      src: plateSrc(index),
+      fit: 'cover',
+      placeholder: false,
+      x: 0, y: 0, width: PAGE.width, height: PAGE.height,
+    }, brief),
+    // `tint` rather than `bg`: the hero paints a tint at 0.55 opacity, which is
+    // what makes reversed type legible over an unknown photograph. `bg` is
+    // opaque and would hide the plate entirely.
+    block('hero', {
+      title: '',
+      tint: 'token:bg',
+      x: 0, y: 0, width: PAGE.width, height: PAGE.height,
+    }, 'Cover scrim'),
+  ].map((b) => ({ ...b, conditional: plateConditional(index) }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,19 @@ import {
  * `eyebrow` and the `*Font` props follow the same pattern as `text-block`: a
  * band in a design family carries a tracked label, and before this it could
  * carry only a title and a subtitle in the default faces.
+ *
+ * ## `tintFade`
+ *
+ * The tint is a flat wash, which is right over a whole page and wrong over part
+ * of one: a band tinted across the foot of a photograph draws a hard horizontal
+ * edge through the picture, and the eye reads that edge as damage rather than
+ * as design. The Luxury Editorial archetype scrims its plates with gradients
+ * for exactly this reason.
+ *
+ * `tintFade` ramps the same tint from transparent at the top of the band to
+ * full strength across the bottom two fifths, where the type sits. Both ends
+ * are the one resolved token colour, so this stays a token and never becomes a
+ * colour literal. It defaults off, so every existing hero is unchanged.
  */
 export function renderHeroHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
@@ -54,8 +67,11 @@ export function renderHeroHtml(block: Block, ctx: HtmlBlockContext): string {
   const bgImg = imageUrl
     ? `<div style="position:absolute;inset:0;background:url('${esc(imageUrl)}') center/cover no-repeat;"></div>`
     : '';
+  const tintPaint = tint && p.tintFade
+    ? `linear-gradient(to bottom, transparent 0%, ${tint} 60%, ${tint} 100%)`
+    : tint;
   const tintLayer = tint
-    ? `<div style="position:absolute;inset:0;background:${tint};opacity:0.55;"></div>`
+    ? `<div style="position:absolute;inset:0;background:${tintPaint};opacity:0.55;"></div>`
     : '';
   return `<div style="position:absolute;left:${x}pt;top:${y}pt;width:${w}pt;height:${h}pt;overflow:hidden;">
     ${bgLayer}${bgImg}${tintLayer}

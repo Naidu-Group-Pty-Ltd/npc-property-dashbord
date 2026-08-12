@@ -472,6 +472,181 @@ export function chartPlan(value: string): ChartPlan {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Image slots
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One briefed plate.
+ *
+ * The brief is the point. Every slot in the approved Luxury Editorial archetype
+ * carries a `placeholder` telling the operator what photograph belongs there —
+ * "Drop a landscape plate — estate streetscape, parkland, or the corridor from
+ * height". A generic image box is not what `four_briefed` means, so the brief
+ * travels to the Builder as the block's name.
+ */
+export interface ImagePlate {
+  /** Slot id, from the archetype where one exists. */
+  id: string;
+  /**
+   * Where the plate falls in the document.
+   *
+   * Every value but `cover` names the content page the plate follows; `page` is
+   * a plate that stands on its own at the end of the narrative, belonging to no
+   * section. A plate is always a whole page (see `platePage` in `blocks.ts` for
+   * why), so this orders the document rather than positioning anything within a
+   * page — which is also why the archetype's stated plate heights (74mm, 90mm,
+   * 60mm) are recorded in the comments below and carried nowhere: a plate that
+   * fills the page has no height to declare.
+   */
+  placement: 'cover' | 'property' | 'thesis' | 'projection' | 'sources' | 'page';
+  /** The operator's brief, verbatim from the archetype where one exists. */
+  brief: string;
+  /** Print a measured caption under the plate. */
+  caption?: string;
+}
+
+export interface ImageSlotPlan {
+  /** Every plate this template declares, in document order. */
+  plates: readonly ImagePlate[];
+  /** A full-bleed photographic cover. */
+  coverHero: boolean;
+  /**
+   * Whether plates run to the trim.
+   *
+   * This is the family's difference and never a per-plate option. Luxury
+   * Editorial is a monograph: its plates bleed, with the asset's name reversed
+   * out of a scrim at the foot. Architectural Property measures instead — the
+   * plate is inset to the page margin and captioned as a figure, which is what
+   * a plate in a drawing set is.
+   */
+  bleed: boolean;
+}
+
+const NO_PLATES: ImageSlotPlan = { plates: [], coverHero: false, bleed: false };
+
+/**
+ * The four plates the Luxury Editorial archetype actually draws.
+ *
+ * The archetype sizes them — the narrative plate is 90mm, the dashboard
+ * portrait 74mm and the detail plate 60mm — which is the right call in a
+ * reflowing document and unbuildable in this one, where a slot reserves its
+ * height whether or not anything fills it. Each of these is a full page
+ * instead; `platePage` records why.
+ */
+const LUX_COVER: ImagePlate = {
+  id: 'lux-cover',
+  placement: 'cover',
+  brief: 'Drop the hero photograph — the dwelling, the streetscape, or the estate at dusk',
+};
+const LUX_PORTRAIT: ImagePlate = {
+  id: 'lux-portrait',
+  placement: 'property',
+  brief: 'Drop a portrait plate — the dwelling frontage',
+};
+const LUX_PLATE: ImagePlate = {
+  id: 'lux-plate',
+  placement: 'thesis',
+  brief: 'Drop a landscape plate — estate streetscape, parkland, or the corridor from height',
+};
+const LUX_DETAIL: ImagePlate = {
+  id: 'lux-detail',
+  placement: 'sources',
+  brief: 'Drop a detail plate — interior, façade detail, or the estate parkland',
+};
+
+const IMAGE_SLOTS: Record<string, ImageSlotPlan> = {
+  // The Luxury Editorial base: a hero cover and three interior plates.
+  four_briefed: {
+    coverHero: true,
+    bleed: true,
+    plates: [LUX_COVER, LUX_PORTRAIT, LUX_PLATE, LUX_DETAIL],
+  },
+
+  // "Six slots including two full-bleed plates; text yields to imagery on
+  // narrative pages." The two extra belong to no section, so they fall at the
+  // end of the narrative rather than after one of its pages.
+  six_with_bleed: {
+    coverHero: true,
+    bleed: true,
+    plates: [
+      LUX_COVER, LUX_PORTRAIT, LUX_PLATE, LUX_DETAIL,
+      {
+        id: 'lux-bleed-1',
+        placement: 'page',
+        brief: 'Drop a full-bleed plate — the estate at scale, or the approach',
+      },
+      {
+        id: 'lux-bleed-2',
+        placement: 'page',
+        brief: 'Drop a full-bleed plate — the interior, or the outlook from the dwelling',
+      },
+    ],
+  },
+
+  // "A typographic title page carries the verdict; imagery starts on the
+  // narrative pages." So: no cover hero, and the three interior plates only.
+  three_interior: {
+    coverHero: false,
+    bleed: true,
+    plates: [LUX_PORTRAIT, LUX_PLATE, LUX_DETAIL],
+  },
+
+  // Architectural Property's Elevation: "Full-width plates with measured
+  // captions and one schedule per page." Measured captions are the family's
+  // caption rail made explicit — a plate in a drawing set is a figure, and a
+  // figure carries a reference.
+  four_measured: {
+    coverHero: false,
+    bleed: false,
+    plates: [
+      {
+        id: 'ap-elevation-1',
+        placement: 'property',
+        brief: 'Drop the frontage elevation — square on, full width of the lot',
+        caption: 'Figure 1 · Frontage elevation',
+      },
+      {
+        id: 'ap-elevation-2',
+        placement: 'thesis',
+        brief: 'Drop the streetscape — the dwelling in its row',
+        caption: 'Figure 2 · Streetscape context',
+      },
+      {
+        id: 'ap-elevation-3',
+        placement: 'projection',
+        brief: 'Drop the site or context plan — dimensioned where possible',
+        caption: 'Figure 3 · Site and context',
+      },
+      {
+        id: 'ap-elevation-4',
+        placement: 'sources',
+        brief: 'Drop a detail — materials, junction, or the rear aspect',
+        caption: 'Figure 4 · Detail',
+      },
+    ],
+  },
+
+  // "Editorial typography without image slots. Empty plates never print as
+  // holes because there are none." The catalogue naming the failure mode is
+  // why every plate above is conditional.
+  none: NO_PLATES,
+};
+
+/**
+ * The plates a manifest declares.
+ *
+ * `image_slots` is optional in the source — only the two photographic families
+ * carry it — so an absent value is "no plates" rather than an error. A value
+ * that IS present and unmapped throws, like every other resolver here.
+ */
+export function imageSlotPlan(value: string | undefined): ImageSlotPlan {
+  if (!value) return NO_PLATES;
+  const plan = IMAGE_SLOTS[value];
+  if (!plan) throw new Error(`Unmapped image_slots: "${value}"`);
+  return plan;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Navigation and footer
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -33,7 +33,7 @@ import {
   DESIGN_FAMILIES, familyByKey, resolveManifest,
 } from '../../../../scripts/template-library/investmentCompass/family';
 import {
-  coverPlan, hasRail,
+  coverPlan, hasRail, imageSlotPlan,
 } from '../../../../scripts/template-library/investmentCompass/resolvers';
 import {
   COLOURWAYS_BY_FAMILY, colourwayTokenOverride, colourwaysForFamily, resolveColourway,
@@ -393,6 +393,152 @@ describe('every colourway reaches the page', () => {
       });
       expect(coloursIn(html), `${key} / ${dark.name}`)
         .toContain(resolveColourway(dark).surface.toUpperCase());
+    }
+  });
+});
+
+/**
+ * Image plates.
+ *
+ * Two families in the approved catalogue carry photographs — Luxury Editorial
+ * and Architectural Property — and the catalogue itself names the failure mode
+ * every other family avoids by having no slots at all. Its Monograph variant is
+ * described as "editorial typography without image slots. Empty plates never
+ * print as holes because there are none."
+ *
+ * A slotted family cannot take that way out, so it needs the other half: a slot
+ * that prints *nothing* when it is empty. These tests assert that on the
+ * rendered page, both ways round — with photographs bound and without.
+ */
+describe('image plates', () => {
+  /**
+   * Templates that declare at least one plate.
+   *
+   * Not "templates whose manifest names `image_slots`" — Monograph names it and
+   * its value is `none`, which is the catalogue deliberately declaring the
+   * absence rather than omitting the key.
+   */
+  const plated = INVESTMENT_COMPASS_TEMPLATES.filter(
+    (t) => imageSlotPlan(t.designMeta.manifest.image_slots).plates.length > 0,
+  );
+
+  /** A report with everything the sample has EXCEPT photographs. */
+  const NO_PHOTOS = {
+    ...SAMPLE,
+    property: Object.fromEntries(
+      Object.entries(SAMPLE.property as Record<string, unknown>)
+        .filter(([k]) => k !== 'images'),
+    ),
+  };
+
+  it('is declared by the two photographic families and by nobody else', () => {
+    const families = new Set(plated.map((t) => t.designMeta.familyKey));
+    expect([...families].sort()).toEqual(['architectural_property', 'luxury_editorial']);
+  });
+
+  it('leaves Monograph without a single slot, exactly as the catalogue says', () => {
+    // "Editorial typography without image slots. Empty plates never print as
+    // holes because there are none."
+    const monograph = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.templateCode === 'le-05')!;
+    const json = JSON.stringify(monograph.schema);
+    expect(json).not.toContain('property.images');
+  });
+
+  it('gives every plate a page of its own, and every page a conditional', () => {
+    for (const template of plated) {
+      const platePages = template.schema.pages.filter(
+        (p) => JSON.stringify(p.blocks).includes('property.images'),
+      );
+      expect(platePages.length, template.name).toBeGreaterThan(0);
+      for (const p of platePages) {
+        // A cover is a plate BEHIND a composition, so it is the one page whose
+        // blocks are conditional rather than the page itself — losing the whole
+        // cover because a photograph is missing would be a defect, not a
+        // feature. Every other plate page vanishes entirely.
+        const isCover = template.schema.pages.indexOf(p) === 0;
+        if (isCover) {
+          const imageBlocks = p.blocks.filter(
+            (b) => JSON.stringify(b).includes('property.images'),
+          );
+          expect(imageBlocks.every((b) => typeof (b as { conditional?: string }).conditional === 'string'), template.name).toBe(true);
+        } else {
+          expect((p as { conditional?: string }).conditional, `${template.name} / ${p.name}`)
+            .toContain('property.images');
+        }
+      }
+    }
+  });
+
+  it('binds each plate to a distinct photograph', () => {
+    for (const template of plated) {
+      const bound = [...JSON.stringify(template.schema).matchAll(/property\.images\.(\d+)/g)]
+        .map((m) => Number(m[1]));
+      const distinct = new Set(bound);
+      // Contiguous from zero: an operator filling `images[0]` and `images[1]`
+      // fills the first two plates rather than the first and the fourth.
+      expect([...distinct].sort((a, b) => a - b), template.name)
+        .toEqual(Array.from({ length: distinct.size }, (_, i) => i));
+    }
+  });
+
+  it('prints the plates when photographs are bound', () => {
+    for (const template of plated) {
+      const { html } = renderTemplateToHtml(template.schema, { data: SAMPLE });
+      const images = (html.match(/<img /g) ?? []).length;
+      expect(images, template.name).toBeGreaterThan(0);
+    }
+  });
+
+  it('prints no hole, and costs no page, when they are not', () => {
+    for (const template of plated) {
+      const full = renderTemplateToHtml(template.schema, { data: SAMPLE }).html;
+      const bare = renderTemplateToHtml(template.schema, { data: NO_PHOTOS }).html;
+
+      // The `image` block's placeholder is the hole the catalogue warns about.
+      expect(bare, template.name).not.toContain('No image');
+      expect(bare, template.name).not.toContain('<img ');
+
+      // And the pages the plates occupied are gone rather than blank.
+      const pagesIn = (h: string) => (h.match(/class="tpl-page /g) ?? []).length;
+      expect(pagesIn(bare), template.name).toBeLessThan(pagesIn(full));
+    }
+  });
+
+  it('bleeds for the monograph and measures for the drawing set', () => {
+    // The family's difference, not a per-plate option.
+    const le = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.templateCode === 'le-01')!;
+    const ap = INVESTMENT_COMPASS_TEMPLATES.find((t) => t.designMeta.templateCode === 'ap-03')!;
+
+    const lePlate = le.schema.pages.find(
+      (p, i) => i > 0 && JSON.stringify(p.blocks).includes('property.images'),
+    )!;
+    const leImage = lePlate.blocks.find((b) => b.type === 'image')! as {
+      props: Record<string, number>;
+    };
+    expect([leImage.props.x, leImage.props.y]).toEqual([0, 0]);
+    expect([leImage.props.width, leImage.props.height]).toEqual([595, 842]);
+
+    const apPlate = ap.schema.pages.find(
+      (p) => JSON.stringify(p.blocks).includes('property.images'),
+    )!;
+    const apImage = apPlate.blocks.find((b) => b.type === 'image')! as {
+      props: Record<string, unknown>;
+    };
+    expect(apImage.props.x).toBeGreaterThan(0);
+    expect(String(apImage.props.caption)).toMatch(/^Figure \d+ · /);
+    expect(apImage.props.captionTransform).toBe('uppercase');
+  });
+
+  it('never lets a plate print a placeholder box', () => {
+    // Belt and braces on the prop itself: `placeholder` defaults to TRUE, so an
+    // omitted flag is a grey rectangle on a client's report rather than nothing.
+    for (const template of plated) {
+      for (const page of template.schema.pages) {
+        for (const block of page.blocks) {
+          if (block.type !== 'image') continue;
+          expect((block.props as { placeholder?: boolean }).placeholder, template.name).toBe(false);
+        }
+      }
     }
   });
 });
