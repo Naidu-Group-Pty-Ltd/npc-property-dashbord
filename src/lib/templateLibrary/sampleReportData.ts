@@ -378,11 +378,22 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     // label it, and setting it with `| percent` would print "68%" of nothing.
     healthScore: 68,
     overallHealth: 'Moderate',
+    // 147-459 characters across the stored reports, so a sentence rather than a
+    // headline — which is why the overview sets it as a callout at body size
+    // instead of a display-scale verdict.
     primaryRecommendation:
-      'Diversify the next acquisition outside the inner west before adding further debt.',
+      'Diversify the next acquisition outside the inner west and into a higher-yielding price '
+      + 'band, funded from the usable equity rather than new savings. That addresses the two '
+      + 'weaknesses at once — geographic concentration and a negative monthly position — '
+      + 'without increasing the portfolio LVR.',
+    // Three and two: the observed minimums across the 21 stored reports (3-6
+    // strengths, 2-5 concerns). A sample shorter than the minimum previews a
+    // column the real data always fills, which is how the first render of these
+    // masters came to show a bullet with nothing beside it.
     strengths: [
       'Weighted growth of 5.4% is ahead of the metro average',
       'Portfolio LVR of 61% leaves headroom for one further purchase',
+      'Two of the four holdings are income-positive without depreciation',
     ],
     concerns: [
       'All four assets sit within 6km — concentrated by geography',
@@ -418,15 +429,22 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     // projection refuses a non-string leaf rather than printing `[object
     // Object]`.
     overallRiskLevel: 'Moderate',
+    // 131-456 characters each across the stored reports — paragraphs, not the
+    // one-liners the four `financialHealth` statuses are.
     concentrationRisk:
-      'Four assets inside a 6km radius of the inner west. A single-market correction '
-      + 'moves the whole portfolio together, and no other capital city is represented.',
+      'Four assets inside a 6km radius of the inner west, sharing one council area and one '
+      + 'tenant catchment. A single-market correction moves the whole portfolio together, no '
+      + 'other capital city is represented, and three of the four are exposed to the same '
+      + 'rental demand drivers.',
     vacancyRisk:
-      'Three of the four are single-dwelling and let individually, so income is stepped '
-      + 'rather than smooth. Suburb vacancy of 1.4% keeps the expected exposure short.',
+      'Three of the four are single-dwelling and let individually, so income is stepped rather '
+      + 'than smooth: one vacancy removes a quarter of the rent rather than a fraction of it. '
+      + 'Suburb vacancy of 1.4% and a 12-day average letting time keep the expected exposure '
+      + 'short, but the shape of the risk is binary.',
     interestRateSensitivity:
-      'A 100bp rise adds roughly $1,740 a month across the four facilities, which is more '
-      + 'than the current shortfall again. Two facilities roll off fixed rates inside a year.',
+      'A 100bp rise adds roughly $1,740 a month across the four facilities, which is more than '
+      + 'the current shortfall again. Two facilities roll off fixed rates inside a year, and '
+      + 'both would reprice at the top of the cycle on current forward curves.',
     marketRisks: [
       'Inner-west median prices have run ahead of rents for six years',
       'The portfolio is positioned for growth and is exposed if the market turns income-led',
@@ -1221,14 +1239,19 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   // Empty on 140 of 143 assessments, so the LMI block stays conditional and the
   // sample exercises the common path.
   lmi: {},
+  // Kept inside the lengths production actually writes: 43-70 characters a
+  // recommendation across 270 stored ones, 35-59 a warning across 63. The
+  // templates reserve height for those maxima, and a sample longer than
+  // production overlaps the block below it in every preview — which is what the
+  // first draft of these strings did.
   recommendations: [
-    'Reducing the credit card limit from $15,000 to $5,000 lifts assessed capacity by roughly $46,000',
-    'Closing the novated lease at term removes $18,600 from assessed liabilities',
-    'A 30-year term at the current assessment rate is already the most favourable modelled',
+    'Cutting the credit card limit to $5,000 adds about $46,000',
+    'Closing the novated lease removes $18,600 of liabilities',
+    'A 30-year term is already the most favourable modelled',
   ],
   warnings: [
-    'Assessment rate includes a 3.00% serviceability buffer over the quoted rate',
-    'Rental income is shaded at 25%, which is this lender\'s policy rather than a market view',
+    'Includes a 3.00% buffer over the quoted rate',
+    'Rental income shaded at 25% by lender policy',
   ],
 
   // ── Portfolio Performance Review ──────────────────────────────────────────
@@ -1242,17 +1265,32 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   // observed maximum across all 21 stored reports.
   properties: PORTFOLIO_HOLDINGS,
 
-  // `analysis.financialHealth` — five strings, no figures. The stored shape has
-  // no numeric field at all, so nothing here is a calculation restated in prose.
+  // `analysis.financialHealth` — five strings, no figures, and their lengths
+  // are not what the names suggest. Measured across the 21 stored reports:
+  // `cashflowStatus` is 7-8 characters, `debtServiceability` 8-11,
+  // `equityPosition` 6-8 and `lvrRisk` 3-6 — single words — while `analysis`,
+  // in the same object, is 458-1620.
+  //
+  // The first draft here wrote a sentence into each of the four, and every page
+  // that printed them overlapped the block below: a definition list reserves
+  // one line per row, which is right for the data and wrong for the sample. A
+  // sample longer than production is the same defect as a sample shorter than
+  // it, and it is caught by the same measure.
   health: {
     analysis:
       'The portfolio is performing on growth and under-performing on income, which is the '
-      + 'expected shape for four inner-ring assets bought inside six years. The shortfall is '
-      + 'covered comfortably from surplus income and is narrowing each year.',
-    cashflowStatus: 'Negative — $1,183 a month, funded from surplus income rather than reserves',
-    debtServiceability: 'Comfortable. Assessed servicing covers the four facilities with headroom for one more',
-    equityPosition: 'Strong — $1.32m of paper equity, of which about $640k is usable at an 80% ceiling',
-    lvrRisk: 'Moderate. Portfolio LVR of 61% sits well below the 80% ceiling, but one holding is at it',
+      + 'expected shape for four inner-ring assets bought inside six years. The shortfall of '
+      + '$1,183 a month is covered comfortably from surplus income rather than from reserves, '
+      + 'and it has narrowed in each of the last three years as rents have moved faster than '
+      + 'holding costs. Equity of $1.32m against $3.41m of value leaves the portfolio at a '
+      + '61% loan-to-value ratio, with roughly $640k usable at an 80% ceiling — enough to fund '
+      + 'a further acquisition without new savings. The binding constraint is not equity or '
+      + 'serviceability but concentration: all four holdings sit inside one council area and '
+      + 'one tenant catchment, so the portfolio moves as a single asset would.',
+    cashflowStatus: 'Negative',
+    debtServiceability: 'Comfortable',
+    equityPosition: 'Strong',
+    lvrRisk: 'Low',
   },
 
   // `analysis.strategicRecommendations` — four LISTS, not a list and three
@@ -1263,15 +1301,22 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       'Obtain a depreciation schedule for the Leichhardt purchase and amend the prior return',
       'Place the next acquisition outside the inner west, in a higher-yielding price band',
     ],
+    // 74-345 characters an item across the stored reports — longer than the
+    // priority actions above them, which is why the horizons get their own page.
     shortTerm: [
-      'Refinance the two facilities rolling off fixed rates',
-      'Rebuild the offset balance to six months of holding costs',
+      'Refinance the two facilities rolling off fixed rates in the next twelve months and rebuild '
+      + 'the offset balance to six months of holding costs before adding any further debt.',
+      'Order a depreciation schedule for the Leichhardt purchase',
     ],
     mediumTerm: [
-      'Add one income-positive holding in a different capital city, funded from the usable equity',
+      'Add one income-positive holding in a different capital city, funded from the usable equity '
+      + 'rather than new savings, to bring the portfolio to a neutral monthly position without '
+      + 'lifting the portfolio LVR above 65%.',
     ],
     longTerm: [
-      'Hold to the ten-year horizon and review each holding against its original thesis annually',
+      'Hold to the ten-year horizon and review each holding against its original thesis at the '
+      + 'annual review. The Lewisham apartment is the smallest contributor and the first '
+      + 'candidate to recycle if the concentration is to be reduced by sale rather than purchase.',
     ],
   },
 };

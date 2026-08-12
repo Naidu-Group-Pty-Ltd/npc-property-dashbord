@@ -72,12 +72,22 @@ interface Overflow {
   overBy: number;
 }
 
+interface Collision {
+  template: string;
+  page: number;
+  pageName: string;
+  over: string;
+  under: string;
+  overlap: number;
+}
+
 interface Report {
   templates: number;
   colourways: number;
   combinations: number;
   rendered: number;
   overflows: Overflow[];
+  collisions: Collision[];
   pdf: Array<{ template: string; pages: number; bytes: number }>;
   screenshots: string[];
 }
@@ -130,6 +140,88 @@ async function measureOverflows(
   }));
 }
 
+/**
+ * Find blocks printed on top of each other.
+ *
+ * ## The defect the overflow measure cannot see
+ *
+ * `flow()` stacks the next block at `y + height`, where `height` is what the
+ * authoring helper *declared*. Blocks are absolutely positioned and are not
+ * clipped, so a block whose text sets taller than its declaration does not push
+ * the page down and does not cross the page's bottom edge — it simply prints
+ * over whatever comes next. Every arithmetic check passes and two paragraphs
+ * are laid on top of each other on a client's page.
+ *
+ * That is not hypothetical. The first run of this measure found 463 overlapping
+ * pairs across the 50 Portfolio masters, 24 across the Investment Compass ones
+ * and 15 across Borrowing Capacity — all shipped, all invisible to the overflow
+ * guard.
+ *
+ * Two things make the measure honest rather than noisy. It compares the **ink**
+ * — the union of each block's own text-node rects — because a footer text block
+ * spans the full measure while its page number sits at the right end of the
+ * same band, and their boxes overlap where no reader would ever see it. And it
+ * skips the **cover**, which composes deliberately overlapping layers: a
+ * wordmark over a photographic plate is the design, not a fault.
+ */
+async function measureCollisions(
+  page: Page,
+  templateName: string,
+  pageNames: string[],
+): Promise<Collision[]> {
+  const raw = await page.evaluate(`(() => {
+    const out = [];
+    const pages = Array.from(document.querySelectorAll('.tpl-page'));
+    pages.forEach((pageEl, pi) => {
+      if (pi === 0) return;
+      const kids = [];
+      Array.from(pageEl.children).forEach((el) => {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let box = null;
+        let node = walker.nextNode();
+        while (node) {
+          if ((node.textContent || '').trim() !== '') {
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            Array.from(range.getClientRects()).forEach((r) => {
+              if (r.width === 0 || r.height === 0) return;
+              box = box === null
+                ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+                : {
+                  top: Math.min(box.top, r.top), bottom: Math.max(box.bottom, r.bottom),
+                  left: Math.min(box.left, r.left), right: Math.max(box.right, r.right),
+                };
+            });
+          }
+          node = walker.nextNode();
+        }
+        if (box === null) return;
+        kids.push({ box, label: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 44) });
+      });
+      for (let i = 0; i < kids.length; i += 1) {
+        for (let j = i + 1; j < kids.length; j += 1) {
+          const a = kids[i].box; const b = kids[j].box;
+          const vy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+          const vx = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+          if (vy > 2 && vx > 2) {
+            out.push({ page: pi, a: kids[i].label, b: kids[j].label, overlap: (vy * 72) / 96 });
+          }
+        }
+      }
+    });
+    return out;
+  })()`) as Array<{ page: number; a: string; b: string; overlap: number }>;
+
+  return raw.map((r) => ({
+    template: templateName,
+    page: r.page + 1,
+    pageName: pageNames[r.page] ?? `Page ${r.page + 1}`,
+    over: r.a,
+    under: r.b,
+    overlap: Math.round(r.overlap),
+  }));
+}
+
 async function open(browser: Browser, html: string): Promise<Page> {
   const page = await browser.newPage({ viewport: A4_PX });
   await page.setContent(html, { waitUntil: 'networkidle' });
@@ -176,6 +268,7 @@ async function main(): Promise<void> {
     combinations: INVESTMENT_COMPASS_TEMPLATES.length * 10,
     rendered: 0,
     overflows: [],
+    collisions: [],
     pdf: [],
     screenshots: [],
   };
@@ -233,6 +326,7 @@ async function main(): Promise<void> {
     report.overflows.push(
       ...await measureOverflows(page, template.name, dflt.name, pageNames),
     );
+    report.collisions.push(...await measureCollisions(page, template.name, pageNames));
 
     // A cover and a dashboard for every master — the cover is what the library
     // card shows, and the dashboard is where the KPI arrangement lives, which
@@ -327,6 +421,12 @@ async function main(): Promise<void> {
     console.log(`    ${p.template}: ${p.pages} pages, ${(p.bytes / 1024).toFixed(0)} KB`);
   }
 
+  if (report.collisions.length > 0) {
+    console.error(`\n✖ ${report.collisions.length} block(s) print over another:\n`);
+    for (const col of report.collisions.slice(0, 60)) {
+      console.error(`  ${col.template} / p${col.page} "${col.pageName}": ${col.overlap}pt — "${col.over}" over "${col.under}"`);
+    }
+  }
   if (report.overflows.length > 0) {
     console.error(`\n✖ ${report.overflows.length} block(s) run past their page:\n`);
     for (const o of report.overflows.slice(0, 60)) {
@@ -334,7 +434,11 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
-  console.log(`\n✓ no block overflows its page in any of the ${report.rendered} renders`);
+  if (report.collisions.length > 0) process.exit(1);
+  console.log(
+    `\n✓ no block overflows its page, and none prints over another, `
+    + `in any of the ${report.rendered} renders`,
+  );
 }
 
 main().catch((error) => {

@@ -99,7 +99,10 @@ describe('every bound figure has a source', () => {
       analysis: {
         executiveSummary: {
           healthScore: 68, overallHealth: 'Moderate', primaryRecommendation: 'x',
-          keyStrengths: ['s1', 's2'], keyConcerns: ['c1', 'c2'],
+          // The observed minimums: 3 strengths, 2 concerns. The masters draw
+          // exactly that many, so a shorter fixture here would pass while the
+          // page printed a marker with nothing beside it.
+          keyStrengths: ['s1', 's2', 's3'], keyConcerns: ['c1', 'c2'],
         },
         financialHealth: {
           analysis: 'x', cashflowStatus: 'x', debtServiceability: 'x',

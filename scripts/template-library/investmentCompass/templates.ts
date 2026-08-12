@@ -448,7 +448,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           risk: '{{risks.2.risk}}', rating: 'Moderate', confidence: 'Indicative',
           why: '{{risks.2.why}}', ddAction: '{{risks.2.action}}',
         },
-      ]),
+      ], 118),
       recommendation('{{recommendation.headline}}', '{{recommendation.rationale}}'),
     ], contentTop()),
   ]), FOOTER));
@@ -469,7 +469,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Market data', definition: '{{market.postcode}} {{market.state}}, {{market.suburbCount}} suburbs surveyed' },
         { term: 'Tax rate assumed', definition: '{{assumptions.taxRate | percent}}' },
         { term: 'Selling costs assumed', definition: '{{assumptions.sellingCosts | percent}}' },
-      ]),
+        // "Alexandra Whitfield, Senior Investment Adviser" is the longest of
+        // these, at 45 characters — two lines on the narrowest family's measure.
+      ], 96),
       callout('Scope', '{{financials.fundingNote}}'),
     ], contentTop()),
   ]), FOOTER));

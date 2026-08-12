@@ -71,13 +71,17 @@ export function renderStrengthsWatchHtml(block: Block, ctx: HtmlBlockContext): s
   };
 
   const column = (title: string, items: string[], color: string, glyph: string) => {
-    const li = items.map((it) => {
-      const text = resolveBindable(it, ctx);
-      return `<div style="display:flex;gap:8pt;align-items:flex-start;margin-bottom:8pt;">
+    const li = items.map((it) => resolveBindable(it, ctx))
+      // A template declares a fixed number of rows and the data decides how many
+      // it fills — a portfolio's analysis writes three to six strengths, a
+      // property's two. An item that resolved to nothing must not leave its
+      // marker behind: a lone coloured bullet with no text beside it reads as a
+      // rendering fault, which is worse than the shorter column it replaces.
+      .filter((text) => String(text).trim() !== '')
+      .map((text) => `<div style="display:flex;gap:8pt;align-items:flex-start;margin-bottom:8pt;">
         <span style="background:${color};color:${onFill};border-radius:50%;width:14pt;height:14pt;display:inline-flex;align-items:center;justify-content:center;font-size:8pt;font-weight:700;flex-shrink:0;">${esc(glyph)}</span>
         <span style="color:${textColor};font-size:${bodySize}pt;line-height:${bodyLineHeight};${bodyFont}">${esc(text)}</span>
-      </div>`;
-    }).join('');
+      </div>`).join('');
     return `<div>
       ${heading(title, color)}
       ${li}

@@ -81,6 +81,21 @@ const FOOTER = '{{client.name}} · Borrowing capacity snapshot';
 /** The left half of the running head. */
 const DOCUMENT_LABEL = 'Borrowing Capacity Snapshot';
 
+/**
+ * The longest each bound prose field runs across the 143 stored assessments.
+ *
+ * Measured, because a height that is too small does not overflow the page — it
+ * lays one block over the next, and the arithmetic guard in `flow()` cannot see
+ * that. See `textHeight` in `blocks.ts`. Everything else this format binds is a
+ * figure, a date or a lender name, and fits the one-line default.
+ */
+const LENGTHS = {
+  /** 270 stored recommendations, 43-70 characters. */
+  recommendation: 70,
+  /** 63 stored warnings, 35-59. */
+  warning: 59,
+} as const;
+
 const BORROWING_CAPACITY_FORMAT: ReportFormat = {
   key: 'borrowing-capacity',
   // Resolved by the adapter registry to `borrowingCapacityAdapter`, which reads
@@ -279,6 +294,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: 'The rate, the buffer and the term',
         numeral: nextNumeral(),
       }),
+      // Every definition here is a figure or a lender name — one line, which is
+      // the default reserve. Measured, not assumed: `assumptions
+      // .selectedLenderName` is at most 30 characters.
       definitions('Assessment basis', [
         { term: 'Lender', definition: '{{loan.lender}}' },
         { term: 'Interest rate used', definition: '{{loan.interestRate | percent}}' },
@@ -316,17 +334,22 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: 'Recommendations',
         numeral: nextNumeral(),
       }),
+      // 43-70 characters an item across the 270 stored recommendations, which
+      // is one to two lines at this measure — not the single line a definition
+      // list reserves by default. See `textHeight` in `blocks.ts`: a height
+      // that is too small does not overflow the page, it lays this block over
+      // the one below it, and the arithmetic guard cannot see that.
       definitions('Actions', [
         { term: 'First', definition: '{{recommendations.0}}' },
         { term: 'Second', definition: '{{recommendations.1}}' },
         { term: 'Third', definition: '{{recommendations.2}}' },
-      ]),
+      ], LENGTHS.recommendation),
       // Warnings are present on 41 of 143 assessments.
       {
         ...definitions('Warnings', [
           { term: 'Note', definition: '{{warnings.0}}' },
           { term: 'Note', definition: '{{warnings.1}}' },
-        ]),
+        ], LENGTHS.warning),
         conditional: 'warnings && warnings[0]',
       },
       recommendation(

@@ -41,6 +41,7 @@ import {
   callout,
   contents,
   contentTop,
+  ifItFits,
   cover,
   definitions,
   disclaimerPage,
@@ -55,7 +56,7 @@ import {
   sectionHeading,
   strengthsWatch,
   table,
-  verdict,
+  textHeight,
   withFurniture,
   type KpiItem,
   type PageDef,
@@ -69,6 +70,34 @@ const DOCUMENT_LABEL = 'Portfolio Performance Review';
 
 /** The observed maximum across all 21 stored reports. See the header. */
 const INVENTORY_ROWS = 4;
+
+/**
+ * The longest each bound field runs across the 21 stored reports.
+ *
+ * These are measurements, not estimates, and they are what every height on
+ * these pages is built from — see `textHeight` in `blocks.ts` for why a height
+ * that is too small does not overflow the page but lays one block over the
+ * next, invisibly to the arithmetic guard.
+ *
+ * The numbers are also the argument against reading a field's shape from its
+ * name: `financialHealth.lvrRisk` is 3-6 characters ("Low") while
+ * `financialHealth.analysis`, two keys away in the same object, is 458-1620.
+ * The first draft of this format reserved one line for each of them.
+ */
+const LENGTHS = {
+  primaryRecommendation: 459,
+  strength: 143,
+  concern: 196,
+  /** The long one. 458 at its shortest. */
+  healthAnalysis: 1620,
+  /** "Positive", "Comfortable", "Strong", "Low" — one word each. */
+  healthStatus: 11,
+  exposure: 456,
+  marketRisk: 164,
+  mitigation: 188,
+  priorityAction: 187,
+  horizonAction: 345,
+} as const;
 
 const PORTFOLIO_FORMAT: ReportFormat = {
   key: 'portfolio-review',
@@ -146,8 +175,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           'The portfolio at a glance',
           'Holdings',
           'Financial health',
+          'The analysis',
           'Risk assessment',
+          'Managing the risk',
           'Recommended actions',
+          'By horizon',
           'Important information',
         ]),
       ], contentTop()),
@@ -157,29 +189,47 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // ── 02 At a glance ───────────────────────────────────────────────────────
   pages.push(withFurniture(page('Portfolio at a glance', [
     ...furniture(DOCUMENT_LABEL, nextPart('Overview'), 'Portfolio at a glance'),
-    ...flow([
+    ...flow(ifItFits([
       sectionHeading({
         eyebrow: 'The position',
         heading: '{{summary.overallHealth}}',
         numeral: nextNumeral(),
       }),
-      verdict({
-        eyebrow: 'Primary recommendation',
-        heading: '{{summary.primaryRecommendation}}',
-        body: '{{health.analysis}}',
-      }),
-      kpis(SUMMARY_KPIS.slice(0, kpiCapacity())),
-      strengthsWatch(
-        ['{{summary.strengths.0}}', '{{summary.strengths.1}}'],
-        ['{{summary.concerns.0}}', '{{summary.concerns.1}}'],
+      // NOT a `verdict()`. That block sets its heading at display size and
+      // reserves about two lines for it, which is right for "Proceed to offer
+      // at or below $1.29m" and wrong for this: `primaryRecommendation` runs
+      // 147-459 characters across the 21 stored reports. A callout sized from
+      // the longest of them prints the whole sentence at body size.
+      callout(
+        'Primary recommendation',
+        '{{summary.primaryRecommendation}}',
+        textHeight(LENGTHS.primaryRecommendation, { size: c.scale.cell, extra: 34 }),
       ),
-    ], contentTop()),
+      kpis(SUMMARY_KPIS.slice(0, kpiCapacity())),
+    ], [
+      // Context rather than argument, so it appears on the variants with room
+      // and is dropped on the tight ones rather than pushing them past the
+      // footer. Its first rows are whatever the family's KPI arrangement could
+      // not hold — `kpi_layout` runs 4-6 across the ten families — so no figure
+      // is ever stated twice on one page.
+      table({
+        headers: ['Composition', 'Amount'],
+        rows: [
+          ...SUMMARY_KPIS.slice(kpiCapacity()).map((k) => [k.label, k.value]),
+          ['Investment properties', '{{portfolio.investmentCount}}'],
+          ['Owner-occupied', '{{portfolio.ownerOccupiedCount}}'],
+          ['Monthly rental income', '{{portfolio.monthlyRentalIncome | currency}}'],
+          ['Monthly expenses', '{{portfolio.monthlyExpenses | currency}}'],
+        ],
+        columnWidths: [0.62, 0.38],
+      }),
+    ], contentTop()), contentTop()),
   ]), FOOTER));
 
   // ── 03 Holdings ──────────────────────────────────────────────────────────
   pages.push(withFurniture(page('Holdings', [
     ...furniture(DOCUMENT_LABEL, nextPart('Holdings'), 'Holdings'),
-    ...flow([
+    ...flow(ifItFits([
       sectionHeading({
         eyebrow: 'The inventory',
         heading: 'Every property, and what it contributes',
@@ -192,18 +242,19 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         rows: Array.from({ length: INVENTORY_ROWS }, (_, i) => propertyRow(i)),
         columnWidths: [0.31, 0.15, 0.15, 0.11, 0.12, 0.16],
       }),
+      // The last row totals the Monthly column of the table above it. Rent and
+      // expenses are stated once, on the overview — repeating them here would
+      // put the same three figures on two facing pages.
       table({
         headers: ['Portfolio totals', 'Amount'],
         rows: [
           ['Total value', '{{portfolio.value | currency}}'],
           ['Total debt', '{{portfolio.debt | currency}}'],
           ['Total equity', '{{portfolio.equity | currency}}'],
-          ['Monthly rental income', '{{portfolio.monthlyRentalIncome | currency}}'],
-          ['Monthly expenses', '{{portfolio.monthlyExpenses | currency}}'],
           ['Net monthly position', '{{portfolio.monthlyCashflow | currency}}'],
         ],
         columnWidths: [0.62, 0.38],
-        totals: [5],
+        totals: [3],
       }),
       // F4, said out loud. The finding against the shipping generator is not
       // that it truncates — a fixed-position page model has to stop somewhere —
@@ -219,10 +270,21 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ),
         conditional: `portfolio && portfolio.propertyCount > ${INVENTORY_ROWS}`,
       },
-    ], contentTop()),
+    ], [
+      // The two standouts, where the variant has room. Addresses, so short.
+      callout('Best performer', '{{portfolio.bestPerformer.address}} — '
+        + '{{portfolio.bestPerformer.netMonthlyCashflow | currency}} a month on a '
+        + '{{portfolio.bestPerformer.value | currency}} holding.'),
+      callout('Needs attention', '{{portfolio.worstPerformer.address}} — '
+        + '{{portfolio.worstPerformer.netMonthlyCashflow | currency}} a month on a '
+        + '{{portfolio.worstPerformer.value | currency}} holding.'),
+    ], contentTop()), contentTop()),
   ]), FOOTER));
 
   // ── 04 Financial health ──────────────────────────────────────────────────
+  //
+  // Four one-word statuses and one long paragraph, which is not what the field
+  // names suggest and is what the table holds.
   pages.push(withFurniture(page('Financial health', [
     ...furniture(DOCUMENT_LABEL, nextPart('Health'), 'Financial health'),
     ...flow([
@@ -236,20 +298,40 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Debt serviceability', definition: '{{health.debtServiceability}}' },
         { term: 'Equity position', definition: '{{health.equityPosition}}' },
         { term: 'LVR risk', definition: '{{health.lvrRisk}}' },
-      ]),
-      callout('Best performer', '{{portfolio.bestPerformer.address}} — '
-        + '{{portfolio.bestPerformer.netMonthlyCashflow | currency}} a month on a '
-        + '{{portfolio.bestPerformer.value | currency}} holding.'),
-      callout('Needs attention', '{{portfolio.worstPerformer.address}} — '
-        + '{{portfolio.worstPerformer.netMonthlyCashflow | currency}} a month on a '
-        + '{{portfolio.worstPerformer.value | currency}} holding.'),
+      ], LENGTHS.healthStatus),
+      // Three and two: the observed minimums across the 21 stored reports are
+      // 3 strengths and 2 concerns, so neither column draws a row the analysis
+      // did not write.
+      strengthsWatch(
+        ['{{summary.strengths.0}}', '{{summary.strengths.1}}', '{{summary.strengths.2}}'],
+        ['{{summary.concerns.0}}', '{{summary.concerns.1}}'],
+        undefined,
+        LENGTHS.concern,
+      ),
+    ], contentTop()),
+  ]), FOOTER));
+
+  // ── 05 The analysis ──────────────────────────────────────────────────────
+  //
+  // Its own page because of its size: `financialHealth.analysis` runs 458-1620
+  // characters, which is up to 262pt of set text — more than any other block in
+  // the format and more than fits under the assessment above.
+  pages.push(withFurniture(page('The analysis', [
+    ...furniture(DOCUMENT_LABEL, nextPart('Analysis'), 'The analysis'),
+    ...flow([
+      sectionHeading({
+        eyebrow: 'In full',
+        heading: 'What the numbers add up to',
+        numeral: nextNumeral(),
+      }),
+      prose('{{health.analysis}}', textHeight(LENGTHS.healthAnalysis, { lineHeight: 1.62 })),
     ], contentTop()),
   ]), FOOTER));
 
   // ── 05 Risk ──────────────────────────────────────────────────────────────
   pages.push(withFurniture(page('Risk assessment', [
     ...furniture(DOCUMENT_LABEL, nextPart('Risk'), 'Risk assessment'),
-    ...flow([
+    ...flow(ifItFits([
       sectionHeading({
         eyebrow: 'Exposure',
         heading: '{{risk.overallRiskLevel}}',
@@ -260,15 +342,26 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       // one namespace cannot carry both senses — see the note in
       // `portfolioProjection.pure.ts`.
       //
-      // These three are single sentences on all 21 stored reports. The other
-      // two fields of the same object are LISTS, which is why they are drawn
-      // below rather than as two more rows here.
+      // These three are paragraphs of 131-456 characters, not the one-liners a
+      // definition list reserves by default. The other two fields of the same
+      // object are LISTS, and are drawn on the page that follows.
       definitions('Where the exposure sits', [
         { term: 'Concentration', definition: '{{risk.concentrationRisk}}' },
         { term: 'Vacancy', definition: '{{risk.vacancyRisk}}' },
         { term: 'Interest rate', definition: '{{risk.interestRateSensitivity}}' },
-      ]),
-      rule(),
+      ], LENGTHS.exposure),
+    ], [rule()], contentTop()), contentTop()),
+  ]), FOOTER));
+
+  // ── 06 Mitigation ────────────────────────────────────────────────────────
+  pages.push(withFurniture(page('Managing the risk', [
+    ...furniture(DOCUMENT_LABEL, nextPart('Mitigation'), 'Managing the risk'),
+    ...flow([
+      sectionHeading({
+        eyebrow: 'What is being done about it',
+        heading: 'Managing the risk',
+        numeral: nextNumeral(),
+      }),
       // The exposures against what is being done about them: the same
       // positive/caution reading the summary page uses, relabelled. Counts are
       // the observed minimums — 4 mitigations and 2 market risks — so neither
@@ -282,11 +375,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ],
         ['{{risk.marketRisks.0}}', '{{risk.marketRisks.1}}'],
         { strengths: 'Mitigation', watch: 'Market risks' },
+        Math.max(LENGTHS.mitigation, LENGTHS.marketRisk),
       ),
     ], contentTop()),
   ]), FOOTER));
 
-  // ── 06 Actions ───────────────────────────────────────────────────────────
+  // ── 08 Priority actions ──────────────────────────────────────────────────
   pages.push(withFurniture(page('Recommended actions', [
     ...furniture(DOCUMENT_LABEL, nextPart('Actions'), 'Recommended actions'),
     ...flow([
@@ -299,7 +393,23 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'First', definition: '{{actions.priority.0}}' },
         { term: 'Second', definition: '{{actions.priority.1}}' },
         { term: 'Third', definition: '{{actions.priority.2}}' },
-      ]),
+      ], LENGTHS.priorityAction),
+    ], contentTop()),
+  ]), FOOTER));
+
+  // ── 09 By horizon ────────────────────────────────────────────────────────
+  //
+  // A page of its own because a horizon action runs to 345 characters and there
+  // are three of them: 258pt of definition list, which does not fit under the
+  // priority list on the spacious variants.
+  pages.push(withFurniture(page('By horizon', [
+    ...furniture(DOCUMENT_LABEL, nextPart('Horizon'), 'By horizon'),
+    ...flow([
+      sectionHeading({
+        eyebrow: 'Sequencing',
+        heading: 'Short, medium and long term',
+        numeral: nextNumeral(),
+      }),
       // Each horizon is a LIST of 1-4 actions, not the single statement its
       // name suggests. One row each is what every stored report can fill; the
       // notice below covers the reports that carry more.
@@ -307,19 +417,23 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Short term', definition: '{{actions.shortTerm.0}}' },
         { term: 'Medium term', definition: '{{actions.mediumTerm.0}}' },
         { term: 'Long term', definition: '{{actions.longTerm.0}}' },
-      ]),
+      ], LENGTHS.horizonAction),
       {
         ...callout(
           'The analysis lists more than this page shows',
           'Where a horizon carries several actions, the first is printed here. '
             + 'The full list is in the analysis this review was drawn from.',
+          textHeight(140, { extra: 34 }),
         ),
         conditional: 'actions && (actions.priority.length > 3'
           + ' || actions.shortTerm.length > 1'
           + ' || actions.mediumTerm.length > 1'
           + ' || actions.longTerm.length > 1)',
       },
-      recommendation('{{summary.overallHealth}}', '{{summary.primaryRecommendation}}'),
+      // No closing `recommendation()` block. It would restate the primary
+      // recommendation the overview already carries in full, and that block
+      // reserves height for a short verdict rather than for the 459-character
+      // sentence this format's model writes.
     ], contentTop()),
   ]), FOOTER));
 
