@@ -188,15 +188,50 @@ export default function Calendar() {
           height: 0;
           display: none;
         }
+
+        /* Tooltip, context-menu and drag decorations sit above the grid; the wheel
+           must reach the scroll container underneath them rather than stopping on
+           the icon the cursor happens to be over. */
+        body.${bodyClass} [data-radix-popper-content-wrapper],
+        body.${bodyClass} .calendar-scroll-transparent {
+          overscroll-behavior: contain;
+        }
+
+        body.${bodyClass} .dashboard-main,
+        body.${bodyClass} .dashboard-content,
+        body.${bodyClass} .dashboard-page-shell {
+          touch-action: pan-y;
+        }
       `;
       document.head.appendChild(styleEl);
     }
 
+    // Radix locks `pointer-events: none` on <body> while an overlay is open and
+    // occasionally fails to release it when several overlays (tooltip + context
+    // menu + select) close in the same frame. A stuck lock reads to the operator
+    // as "the page will not scroll when the cursor is over that icon", so the
+    // lock is released here whenever no overlay is actually open.
+    const releaseStuckPointerLock = () => {
+      if (document.body.style.pointerEvents !== 'none') return;
+      const overlayOpen = document.querySelector(
+        '[data-radix-popper-content-wrapper], [role="dialog"][data-state="open"], [data-state="open"][data-radix-menu-content], [data-vaul-drawer]',
+      );
+      if (!overlayOpen) document.body.style.removeProperty('pointer-events');
+    };
+
+    const observer = new MutationObserver(releaseStuckPointerLock);
+    observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
+    const lockInterval = window.setInterval(releaseStuckPointerLock, 700);
+
     return () => {
+      observer.disconnect();
+      window.clearInterval(lockInterval);
+      document.body.style.removeProperty('pointer-events');
       document.body.classList.remove(bodyClass);
       document.getElementById(styleId)?.remove();
     };
   }, []);
+
 
   // Keyboard navigation hook
   const { TAB_SHORTCUTS } = useCalendarKeyboard({
