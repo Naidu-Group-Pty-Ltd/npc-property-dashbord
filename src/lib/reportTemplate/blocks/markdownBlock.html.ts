@@ -3,10 +3,12 @@ import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import {
   absBoxStyle, fontFamilyDecl, type HtmlBlockContext,
 } from './_shared.html';
+import { renderMarkdown } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import {
-  renderMarkdown,
-  type MarkdownBlock,
-} from '../../../../supabase/functions/_shared/reports/markdown.pure';
+  packMarkdownPages, DEFAULT_LINES_PER_PAGE,
+} from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
+
+export { packMarkdownPages, DEFAULT_LINES_PER_PAGE };
 
 /**
  * Model-authored Markdown, set as structure.
@@ -51,40 +53,6 @@ import {
  * which is the lesser of the two wrongs: a split table loses its header and
  * reads as two different tables.
  */
-
-/** Sensible for 174mm of measure at 10pt. Overridable per master. */
-export const DEFAULT_LINES_PER_PAGE = 34;
-
-/**
- * Pack rendered blocks into page buckets.
- *
- * Exported because the projection has to publish how many pages an answer needs
- * before the master can make page N conditional, and it must use exactly this
- * arithmetic — a projection that disagreed with the block would either print a
- * blank page or silently drop the tail.
- */
-export function packMarkdownPages(
-  blocks: readonly MarkdownBlock[],
-  linesPerPage: number,
-): MarkdownBlock[][] {
-  const budget = Math.max(1, linesPerPage);
-  const pages: MarkdownBlock[][] = [];
-  let current: MarkdownBlock[] = [];
-  let used = 0;
-
-  for (const block of blocks) {
-    // A block taller than a whole page gets its own, rather than being split.
-    if (current.length && used + block.lines > budget) {
-      pages.push(current);
-      current = [];
-      used = 0;
-    }
-    current.push(block);
-    used += block.lines;
-  }
-  if (current.length) pages.push(current);
-  return pages;
-}
 
 /**
  * Inline styles onto the tags the renderer emits.
