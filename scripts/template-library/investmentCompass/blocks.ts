@@ -881,6 +881,53 @@ export function prose(body: string, height?: number): FlowItem {
   };
 }
 
+/**
+ * A page's worth of model-authored Markdown, set as structure.
+ *
+ * Unlike every other body helper this takes **source** rather than resolved
+ * text, because `markdown-block` renders it. That is what makes the content
+ * safe — the renderer escapes before it parses — and it is why the block is in
+ * `PRODUCTION_SAFE_BLOCK_TYPES` at all.
+ *
+ * `linesPerPage` has to be the same number the projection used to compute
+ * `qa.answerPages`, or a master will make a page conditional on a count that
+ * disagrees with what the block draws. Both default to
+ * `DEFAULT_LINES_PER_PAGE`, and neither should be overridden alone.
+ */
+export function markdown(
+  source: string,
+  pageIndex: number,
+  height: number,
+  linesPerPage: number = MARKDOWN_LINES_PER_PAGE,
+): FlowItem {
+  const c = ctx();
+  return {
+    height,
+    block: (y) => block('markdown-block', {
+      source,
+      pageIndex,
+      linesPerPage,
+      bodySize: c.scale.body,
+      bodyFont: 'token:body',
+      headingFont: 'token:heading',
+      lineHeight: 1.55,
+      color: 'token:ink',
+      headingColor: 'token:primary',
+      ruleColor: 'token:line',
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/**
+ * Lines per Markdown page, shared by the masters and the projection.
+ *
+ * Mirrors `DEFAULT_LINES_PER_PAGE` in `reports/markdownPaging.pure.ts`. It is
+ * restated rather than imported because this build script must stay free of
+ * runtime imports from the edge tree, and a spec asserts the two agree.
+ */
+export const MARKDOWN_LINES_PER_PAGE = 34;
+
 export function rule(weight: number = RULE_WEIGHTS.hairline): FlowItem {
   const c = ctx();
   return {

@@ -41,12 +41,16 @@ describe('report template adapter registry', () => {
   });
 
   it('marks the remaining report types preview-only until adapters are implemented', () => {
-    const previewOnlyTypes = ['qa', 'suburb', 'postcode', 'statewide'];
+    // `qa` left this list when `markdown-block` gave the vocabulary a way to
+    // set model-authored Markdown as structure. `cash_flow_comparison` is
+    // preview-only for a different reason — nothing about a comparison is
+    // persisted anywhere a template can read.
+    const previewOnlyTypes = ['suburb', 'postcode', 'statewide'];
 
     expect(listAdapters().map((adapter) => adapter.reportType))
       .toEqual(expect.arrayContaining([
         'investment', 'borrowing_capacity', 'portfolio', 'comparison', 'cashflow',
-        'client_details', ...previewOnlyTypes,
+        'client_details', 'qa', ...previewOnlyTypes,
       ]));
     for (const reportType of previewOnlyTypes) {
       const adapter = getAdapter(reportType);

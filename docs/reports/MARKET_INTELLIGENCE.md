@@ -411,3 +411,84 @@ passed while their subject was broken and were rewritten:
 
 Still outstanding from the previous migration: apply
 `20260820000000_report_qa_render_path.sql` and deploy `render-report-qa-pdf`.
+
+---
+
+## 14 · On the Investment Compass families
+
+Fifty masters, plus the projection and adapter that make them production-ready.
+This was the last of the ten migrated formats to get them.
+
+### It goes through the normaliser, not the row
+
+Not a preference. `cleanLayerContent` applies three editorial strips before a
+word reaches a page — the model's data-limitations hedging, its empty regulatory
+sections, and the brand tagline it repeats under the letterhead already carrying
+one. An adapter reading `report_data` directly would put all three back on a
+client's page, which is the single strongest reason
+`marketIntelligenceAdapter` calls `buildMarketIntelligenceReport`.
+
+The brand name is an **input** to that strip rather than decoration, so the
+adapter loads the organisation *before* building the report instead of merging it
+in afterwards as the other adapters do. Passing an empty name silently disables
+one of the three strips.
+
+### The page budget is fitted to what the record holds
+
+Measured across the six stored reports — 48 layer bodies:
+
+| | |
+| --- | --- |
+| absent entirely | **8** |
+| `layer1_rba`, median | 2,291 chars |
+| `layer8_competitive_edge`, median | **15,055** chars |
+| largest single layer | **244,332** chars — about ninety-nine pages |
+
+No fixed page sequence carries that range. Each layer therefore gets one page
+plus two conditional continuations under `marketIntel.layers.N.pages > i`, drawn
+by `markdown-block` — the same block Report Q&A uses, which renders Markdown
+**source** through the escape-first renderer and so cannot emit markup the model
+chose.
+
+Where the allocation bites, the projection publishes a whole sentence naming the
+pages not shown and the master gives it a page. That is this format's own
+contract rather than an invention: §1 already describes it as the one that clips
+a section and says so.
+
+### Empty layers are dropped, and still named
+
+The payload carries empty layers so a document can say it asked. Publishing them
+in place would leave holes in the index a template binds by — `layers.3` empty
+while `layers.4` has content — so a master would need a conditional per position
+*and* per layer.
+
+Instead the projection drops them, leaving `layers.0…n` contiguous, and names
+them in `layersOmitted`: *"2 sections were requested and returned no content:
+…"*. The document still says what it asked for and did not get.
+
+### Two things deliberately not published
+
+`prose.ctaContent` — the generator's copy for the email the legacy attached this
+PDF to. A "book a call" panel in the middle of a market report reads as an
+advertisement.
+
+An absent `relevanceScore` stays absent rather than becoming `0`, which would
+sort and print as a real judgement of "no relevance".
+
+### One divergence this surfaced
+
+The first build failed on all fifty masters: **`market` is in the TypeScript
+`TemplateLibraryCategory` union but not in
+`template_library_entries_category_check`**, which accepts `suburb`, `postcode`
+and `statewide` instead. The two vocabularies have diverged and the column is the
+one that decides.
+
+The masters use `statewide` — of what the column accepts, the only
+market-analysis category at a broad geographic scope. Adding `market` to the
+constraint would be the better fix and is a migration rather than a template
+change.
+
+Worth noting how it was caught: by the seed builder's category guard, at build
+time. That guard exists because the Client Details masters shipped the same class
+of mistake and were rejected by Postgres **mid-apply, after 290 rows had already
+been written**.

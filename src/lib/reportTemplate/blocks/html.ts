@@ -7,6 +7,7 @@ import type { HtmlBlockContext, HtmlBlockRenderer } from './_shared.html';
 import { registerChartOverlayRenderers } from './_shared.html';
 import { renderCoverHtml } from './cover.html';
 import { renderTextBlockHtml } from './textBlock.html';
+import { renderMarkdownBlockHtml } from './markdownBlock.html';
 import { renderKpiGridHtml } from './kpiGrid.html';
 import { renderDataTableHtml } from './dataTable.html';
 import { renderDividerHtml } from './divider.html';
@@ -78,6 +79,7 @@ const HTML_RENDERERS: Record<string, HtmlBlockRenderer> = {
   cover: renderCoverHtml,
   'text-block': renderTextBlockHtml,
   text: renderTextBlockHtml,
+  'markdown-block': renderMarkdownBlockHtml,
   'kpi-grid': renderKpiGridHtml,
   'data-table': renderDataTableHtml,
   divider: renderDividerHtml,

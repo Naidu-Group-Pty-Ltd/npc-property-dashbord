@@ -368,27 +368,42 @@ come from `scripts/template-library/designSystem.ts` — five voices keyed to th
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
 tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
 
-The 350 *family* templates come from the approved Claude Design **Investment
+The 500 *family* templates come from the approved Claude Design **Investment
 Compass Template Catalogue**: ten design families × five structural variants ×
-ten colourways. The designs carry no subject matter, so they serve **seven
-report formats** — 50 masters each of Investment Compass, the Borrowing
+ten colourways. The designs carry no subject matter, so they serve **all ten
+migrated report formats** — 50 masters each of Investment Compass, the Borrowing
 Capacity Snapshot, the Portfolio Performance Review, the Property Comparison
-Analysis, the 10 Year Cash Flow, the Client Details Form and the Cash Flow
-Comparison, sharing one shell (`investmentCompass/master.ts`) and contributing a
-page sequence each. Six are production-ready; the Cash Flow Comparison is
+Analysis, the 10 Year Cash Flow, the Client Details Form, the Cash Flow
+Comparison, Report Q&A, Commercial & Industrial Capacity and Market
+Intelligence, sharing one shell (`investmentCompass/master.ts`) and contributing
+a page sequence each. Nine are production-ready; the Cash Flow Comparison is
 **preview-only because nothing about a comparison is persisted anywhere a
 template can read** — not the projections, not the analysis, not the ledger.
 
-**Report Q&A is not on the families and cannot be**, which is a renderer fact
-rather than a gap: the block vocabulary has no Markdown renderer and no block
-that accepts HTML — `text-block` escapes, which is what keeps model-authored
-content from injecting markup — so an answer bound to one prints `**bold**` and
-`| pipe | tables |` as body copy, on 70% and 23% of the corpus. Its structure is
-discovered at render time too, against heights a master declares at build time.
-`reportQaNotOnTheFamilies.spec.ts` enforces it; `docs/reports/QA.md` §12 has the
-measurements. Adding a
-format is a composer plus a `ReportFormat` descriptor — and the adapter and
-projection that make it production-ready — not a second design system.
+**Model-authored Markdown is drawn by `markdown-block`, which takes source
+rather than HTML.** Report Q&A and Market Intelligence both carry prose a model
+wrote — 70% of Q&A answers use inline bold, and Market Intelligence is eight
+Markdown layers — and neither could be drawn until that block existed. It renders
+through `_shared/reports/markdown.pure.ts`, the programme's only Markdown
+implementation and **escape-first**, so safety is a property of the renderer
+rather than of the caller: no input to it produces markup the model chose. That
+is what admits it to `PRODUCTION_SAFE_BLOCK_TYPES` without opening a hole in a
+security allow-list, and a block accepting rendered HTML must never be added.
+
+**A body of unknown length is carried by conditional pages, not by a bigger
+block.** `packMarkdownPages` (`reports/markdownPaging.pure.ts`) is shared by the
+block and the projections precisely so they cannot disagree — a master makes
+page N conditional on a published page count while the block decides what page N
+holds, and one line of drift prints a blank page or loses the end of a section.
+Adding a format is a composer plus a `ReportFormat` descriptor — and the adapter
+and projection that make it production-ready — not a second design system.
+
+**A `category` must be one the column accepts.** `template_library_entries_category_check`
+and the TypeScript `TemplateLibraryCategory` union have diverged: the union has
+`market`, the column has `suburb`/`postcode`/`statewide`. The column decides, the
+seed builder refuses to write when a category is outside it, and that guard
+exists because 50 Client Details masters were rejected by Postgres **mid-apply,
+after 290 rows had been written**.
 
 Two rules are worth knowing before you bind anything. **A declared block height
 is a promise the renderer keeps only if the text is as short as the author

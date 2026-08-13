@@ -100,7 +100,12 @@ describe('the cash flow adapter is real, not a stub', () => {
   });
 
   it('leaves the still-stubbed formats honestly marked', () => {
-    for (const t of ['qa', 'suburb', 'postcode', 'statewide']) {
+    // `qa` left this list when `markdown-block` gave the vocabulary a way to
+    // set model-authored Markdown as structure; it has an adapter and 50
+    // masters now. The three below have no render route and no contract, so
+    // they are catalogue templates without a backing format rather than
+    // formats awaiting an adapter.
+    for (const t of ['suburb', 'postcode', 'statewide']) {
       expect(supportsProduction(t), t).toBe(false);
     }
   });

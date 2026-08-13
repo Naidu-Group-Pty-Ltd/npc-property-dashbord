@@ -41,6 +41,9 @@ import { COMPARISON_TEMPLATES } from './comparison';
 import { CASH_FLOW_COMPASS_TEMPLATES } from './cashFlow';
 import { CLIENT_DETAILS_TEMPLATES } from './clientDetails';
 import { CASH_FLOW_COMPARISON_TEMPLATES } from './cashFlowComparison';
+import { REPORT_QA_TEMPLATES } from './reportQa';
+import { COMMERCIAL_CAPACITY_TEMPLATES } from './commercialCapacity';
+import { MARKET_INTELLIGENCE_TEMPLATES } from './marketIntelligence';
 
 import { DESIGN_FAMILIES } from './family';
 
@@ -59,6 +62,9 @@ const ALL_MASTERS = [
   ...CASH_FLOW_COMPASS_TEMPLATES,
   ...CLIENT_DETAILS_TEMPLATES,
   ...CASH_FLOW_COMPARISON_TEMPLATES,
+  ...REPORT_QA_TEMPLATES,
+  ...COMMERCIAL_CAPACITY_TEMPLATES,
+  ...MARKET_INTELLIGENCE_TEMPLATES,
 ];
 
 

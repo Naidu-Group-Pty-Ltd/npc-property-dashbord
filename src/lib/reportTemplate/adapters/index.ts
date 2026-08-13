@@ -3,6 +3,9 @@ import { borrowingCapacityAdapter } from './borrowingCapacityAdapter';
 import { portfolioAdapter } from './portfolioAdapter';
 import { comparisonAdapter } from './comparisonAdapter';
 import { cashFlowAdapter } from './cashFlowAdapter';
+import { qaAdapter } from './qaAdapter';
+import { commercialCapacityAdapter } from './commercialCapacityAdapter';
+import { marketIntelligenceAdapter } from './marketIntelligenceAdapter';
 import { clientDetailsAdapter } from './clientDetailsAdapter';
 import type { ReportTemplateAdapter } from './types';
 
@@ -56,11 +59,32 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
     'No comparison is persisted anywhere a template can read: the projections are the '
     + 'browser’s, the analysis table refuses every write, and the render ledger stores neither.',
   ),
-  previewOnlyAdapter('qa', 'Q&A Export'),
+  /**
+   * Seventh production adapter. Reads `report_qa_conversations` and
+   * `report_qa_messages` through the normaliser the format's own render route
+   * uses. This was preview-only until `markdown-block` existed: the vocabulary
+   * had no way to set model-authored Markdown as structure, so an answer bound
+   * to a `text-block` printed its own source.
+   */
+  qaAdapter,
+  /**
+   * Eighth. Reads the stored calculation run through the normaliser the
+   * format's own render route uses, and declines the thirteen of sixteen
+   * assessments that have no run — there are no figures for a document to
+   * carry, and this format's first rule is that every figure comes from the
+   * stored run rather than a recomputation.
+   */
+  commercialCapacityAdapter,
+  /**
+   * Ninth, and the last of the migrated formats to get one. Goes through the
+   * normaliser rather than the row because three editorial strips live there —
+   * the model's data-limitations hedging, its empty regulatory sections and the
+   * brand tagline it repeats under the letterhead.
+   */
+  marketIntelligenceAdapter,
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
-  previewOnlyAdapter('market_intelligence', 'Market Intelligence'),
 ];
 
 const ALIASES: Record<string, string> = {

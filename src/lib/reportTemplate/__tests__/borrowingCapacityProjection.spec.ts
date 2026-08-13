@@ -87,7 +87,11 @@ describe('the borrowing capacity adapter is real, not a stub', () => {
     // `portfolio_analysis_reports`, `comparison` when it gained one against
     // `property_comparisons`, and `cashflow` when it gained one against the
     // projection stored on `investment_reports` — see their projection specs.
-    for (const t of ['qa', 'suburb', 'postcode']) {
+    // `qa` left it when `markdown-block` gave the vocabulary a way to set
+    // model-authored Markdown as structure; the two below have no render route
+    // and no contract, so they are catalogue templates rather than formats
+    // awaiting an adapter.
+    for (const t of ['suburb', 'postcode']) {
       expect(supportsProduction(t), t).toBe(false);
     }
   });
