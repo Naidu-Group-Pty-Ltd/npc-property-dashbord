@@ -208,7 +208,7 @@ export default function Calendar() {
     const releaseStuckPointerLock = () => {
       if (document.body.style.pointerEvents !== 'none') return;
       const blockingOverlayOpen = document.querySelector(
-        '[role="dialog"][data-state="open"], [data-vaul-drawer][data-state="open"], [data-radix-alert-dialog-content][data-state="open"]',
+        '[role="dialog"][data-state="open"], [role="listbox"][data-state="open"], [data-vaul-drawer][data-state="open"], [data-radix-alert-dialog-content][data-state="open"]',
       );
       if (!blockingOverlayOpen) document.body.style.removeProperty('pointer-events');
     };
