@@ -24553,6 +24553,9 @@ export type Database = {
       partner_agreement_change_requests: {
         Row: {
           agreement_id: string
+          anchor_label: string | null
+          anchor_path: string | null
+          anchor_quote: string | null
           comment: string
           created_at: string
           id: string
@@ -24569,6 +24572,9 @@ export type Database = {
         }
         Insert: {
           agreement_id: string
+          anchor_label?: string | null
+          anchor_path?: string | null
+          anchor_quote?: string | null
           comment: string
           created_at?: string
           id?: string
@@ -24585,6 +24591,9 @@ export type Database = {
         }
         Update: {
           agreement_id?: string
+          anchor_label?: string | null
+          anchor_path?: string | null
+          anchor_quote?: string | null
           comment?: string
           created_at?: string
           id?: string
@@ -32050,37 +32059,52 @@ export type Database = {
       }
       stamp_duty_rates_cache: {
         Row: {
-          brackets: Json
+          brackets: Json | null
           created_at: string
           data_quality: string
           expires_at: string
           fetched_at: string
           id: string
+          last_verified_at: string | null
+          schedule: Json | null
           source_url: string | null
           state: string
           updated_at: string
+          verification_flagged: boolean
+          verification_note: string | null
+          verified_on: string | null
         }
         Insert: {
-          brackets: Json
+          brackets?: Json | null
           created_at?: string
           data_quality?: string
           expires_at?: string
           fetched_at?: string
           id?: string
+          last_verified_at?: string | null
+          schedule?: Json | null
           source_url?: string | null
           state: string
           updated_at?: string
+          verification_flagged?: boolean
+          verification_note?: string | null
+          verified_on?: string | null
         }
         Update: {
-          brackets?: Json
+          brackets?: Json | null
           created_at?: string
           data_quality?: string
           expires_at?: string
           fetched_at?: string
           id?: string
+          last_verified_at?: string | null
+          schedule?: Json | null
           source_url?: string | null
           state?: string
           updated_at?: string
+          verification_flagged?: boolean
+          verification_note?: string | null
+          verified_on?: string | null
         }
         Relationships: []
       }
