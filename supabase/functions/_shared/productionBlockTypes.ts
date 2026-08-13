@@ -123,4 +123,10 @@ export const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   // template being activatable for the type does not make every report render.
   'cashflow',
   'cash_flow',
+  // Report Q&A reads `report_qa_conversations` / `report_qa_messages` through
+  // the normaliser its own render route uses. Activatable since `markdown-block`
+  // gave the vocabulary a way to set model-authored Markdown as structure; the
+  // flowing route stays the default for a long transcript, because a template is
+  // a fixed page sequence and carries the first exchanges.
+  'qa',
 ]);

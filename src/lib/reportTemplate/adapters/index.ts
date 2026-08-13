@@ -3,6 +3,7 @@ import { borrowingCapacityAdapter } from './borrowingCapacityAdapter';
 import { portfolioAdapter } from './portfolioAdapter';
 import { comparisonAdapter } from './comparisonAdapter';
 import { cashFlowAdapter } from './cashFlowAdapter';
+import { qaAdapter } from './qaAdapter';
 import { clientDetailsAdapter } from './clientDetailsAdapter';
 import type { ReportTemplateAdapter } from './types';
 
@@ -56,7 +57,14 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
     'No comparison is persisted anywhere a template can read: the projections are the '
     + 'browser’s, the analysis table refuses every write, and the render ledger stores neither.',
   ),
-  previewOnlyAdapter('qa', 'Q&A Export'),
+  /**
+   * Seventh production adapter. Reads `report_qa_conversations` and
+   * `report_qa_messages` through the normaliser the format's own render route
+   * uses. This was preview-only until `markdown-block` existed: the vocabulary
+   * had no way to set model-authored Markdown as structure, so an answer bound
+   * to a `text-block` printed its own source.
+   */
+  qaAdapter,
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
