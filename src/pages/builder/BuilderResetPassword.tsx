@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { KeyRound, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { OtpInput } from '@/components/finance-portal/OtpInput';
@@ -127,9 +128,8 @@ export default function BuilderResetPassword() {
         <form onSubmit={handleReset} className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="builder-new-password">New password</Label>
-            <Input
+            <PasswordInput
               id="builder-new-password"
-              type="password"
               autoComplete="new-password"
               required
               value={newPassword}
@@ -143,9 +143,8 @@ export default function BuilderResetPassword() {
 
           <div className="space-y-2">
             <Label htmlFor="builder-confirm-password">Confirm new password</Label>
-            <Input
+            <PasswordInput
               id="builder-confirm-password"
-              type="password"
               autoComplete="new-password"
               required
               value={confirmPassword}

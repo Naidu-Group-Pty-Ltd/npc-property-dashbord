@@ -33,6 +33,10 @@
  * fragments. That consistency is most of what makes a preview feel considered.
  */
 
+import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
+import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
+import { projectCashFlowComparison } from '../../../supabase/functions/_shared/cashFlowComparisonProjection.pure';
+
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
 
@@ -81,6 +85,579 @@ const NEXT_STEPS = [
   action('Exchange with a 10% deposit and 42-day settlement', 'Conveyancer', 'Within 14 days'),
 ];
 
+/**
+ * The same four holdings the voice templates print, in the vocabulary
+ * `portfolioProjection.pure.ts` publishes for a Portfolio Performance Review.
+ *
+ * ## Derived, not transcribed
+ *
+ * `portfolio.holdings` below already states each property's value, debt, yield
+ * and **annual** net position, and the Compass masters need the same portfolio
+ * expressed **monthly**, per-property and totalled. Writing that out twice is
+ * how two pages of one preview come to disagree, so everything monthly here is
+ * computed from the annual figures rather than typed beside them.
+ *
+ * The annuals are the anchors because they are anchored elsewhere: the
+ * Leichhardt holding's −$21,476 is −$413 a week × 52, which `cashflow` states
+ * and several templates print. A 52-week year does not divide into twelfths, so
+ * the monthly figures carry cents; every template sets them with `| currency`,
+ * which rounds to whole dollars, and the rounded rows total the rounded total.
+ *
+ * `monthlyExpenses` is the residual — rent less the net position — and so
+ * includes debt servicing. At $2.088m of debt that is about $10.4k a month of
+ * interest plus roughly $2.4k of holding costs, which is the shape a real
+ * portfolio of this gearing has.
+ */
+const PORTFOLIO_HOLDINGS = [
+  {
+    address: '9/44 Regent Street, Newtown', propertyType: 'Apartment',
+    value: 1125000, loan: 612000, grossYield: 3.9, annualCashflow: 2100,
+    lenderName: 'Westpac', interestRate: 5.89, isOwnerOccupied: true,
+  },
+  {
+    address: ADDRESS, propertyType: 'House',
+    value: 1285000, loan: 1028000, grossYield: 3.84, annualCashflow: -21476,
+    lenderName: 'Meridian Mutual', interestRate: 6.14, isOwnerOccupied: false,
+  },
+  {
+    address: '7 Wardell Road, Dulwich Hill', propertyType: 'House',
+    value: 640000, loan: 288000, grossYield: 4.6, annualCashflow: 3400,
+    lenderName: 'CommBank', interestRate: 6.02, isOwnerOccupied: false,
+  },
+  {
+    address: '12/3 Denison Road, Lewisham', propertyType: 'Apartment',
+    value: 360000, loan: 160000, grossYield: 4.9, annualCashflow: 1776,
+    lenderName: 'CommBank', interestRate: 6.02, isOwnerOccupied: false,
+  },
+].map((h) => {
+  const monthlyRentalIncome = (h.value * h.grossYield) / 100 / 12;
+  const netMonthlyCashflow = h.annualCashflow / 12;
+  return {
+    ...h,
+    equity: h.value - h.loan,
+    lvr: (h.loan / h.value) * 100,
+    monthlyRentalIncome,
+    netMonthlyCashflow,
+    monthlyExpenses: monthlyRentalIncome - netMonthlyCashflow,
+    cashOnCashReturn: (h.annualCashflow / (h.value - h.loan)) * 100,
+    ownershipPercentage: 100,
+    portfolioContribution: 0, // replaced below, once the total is known
+  };
+});
+
+/** Portfolio totals, summed from the holdings so they cannot drift from them. */
+const PORTFOLIO_TOTALS = (() => {
+  const sum = (pick: (h: typeof PORTFOLIO_HOLDINGS[number]) => number) =>
+    PORTFOLIO_HOLDINGS.reduce((t, h) => t + pick(h), 0);
+  const mean = (pick: (h: typeof PORTFOLIO_HOLDINGS[number]) => number) =>
+    sum(pick) / PORTFOLIO_HOLDINGS.length;
+  const value = sum((h) => h.value);
+  for (const h of PORTFOLIO_HOLDINGS) h.portfolioContribution = (h.equity / sum((x) => x.equity)) * 100;
+  return {
+    value,
+    debt: sum((h) => h.loan),
+    equity: sum((h) => h.equity),
+    monthlyRentalIncome: sum((h) => h.monthlyRentalIncome),
+    monthlyExpenses: sum((h) => h.monthlyExpenses),
+    monthlyCashflow: sum((h) => h.netMonthlyCashflow),
+    annualCashflow: sum((h) => h.annualCashflow),
+    // The mean of the per-property figures, which is what
+    // `portfolio_analysis_reports.average_lvr` / `average_yield` store — NOT
+    // the portfolio-weighted ratios `portfolio.lvr` and `portfolio.grossYield`
+    // carry for the voice templates. Both are correct and they are not equal
+    // (55.96% against 61.2%), so they keep separate names.
+    averageLvr: mean((h) => h.lvr),
+    averageYield: mean((h) => h.grossYield),
+  };
+})();
+
+/**
+ * The 10 Year Cash Flow sample, built the way production builds it.
+ *
+ * ## Run through the projection rather than written out
+ *
+ * Every other namespace in this file is typed by hand, and for most of them
+ * that is right. This one is not: the Compass masters bind
+ * `cashflow.outcome.equityGrowthLessShortfall`,
+ * `cashflow.outcome.valueGrowthPercent` and eight fields across ten years in
+ * three scenarios — 240 numbers plus a dozen derivations. Typing them means the
+ * preview can disagree with what the adapter would produce, and the disagreement
+ * would be invisible: every figure would still look like a figure.
+ *
+ * So this states a **`financial_calculations` blob shaped exactly as
+ * `investment_reports` stores one** and runs `projectCashFlow` over it, which is
+ * the same call `cashFlowAdapter` makes. The preview is then the adapter's
+ * output by construction, and a change to the projection moves the preview with
+ * it rather than leaving it stale.
+ *
+ * ## The figures are the same engagement, at production's magnitudes
+ *
+ * The Leichhardt holding the rest of this file describes: $1.285m, an $1.028m
+ * loan at 6.14%. Growth rates differ per scenario and nothing else does, which
+ * is what the stored projections do — the loan amortises identically in all
+ * three. The resulting series sit inside every range measured across the 162
+ * stored projections: cash flow negative in every year, cumulative cash flow
+ * reaching −$333k by year ten, and return running from 9% to 24%.
+ */
+const CASH_FLOW_FINANCIALS = (() => {
+  const VALUE = 1285000;
+  const LOAN = 1028000;
+  const RATE = 6.14;
+  const MONTHLY_PAYMENT = 6280;
+  /** Year-one costs, grown at CPI. Their sum is deliberately never published. */
+  const COSTS = {
+    councilRates: 2184, waterRates: 780, landlordInsurance: 1612,
+    maintenance: 2496, propertyManagement: 3224, strataFees: 0, landTax: 0,
+    lettingFees: 920,
+  };
+  const COSTS_YEAR_ONE = Object.values(COSTS).reduce((t, v) => t + v, 0);
+  const UPFRONT = 257000 + 56890 + 1500 + 500;
+  const RENT_YEAR_ONE = 920 * 52;
+  const CPI = 1.028;
+  /**
+   * The rates the stored projections are actually built at.
+   *
+   * Not a choice: `(value10/value1)^(1/9)` is 2.000, 4.000 and 6.000 on all 162
+   * stored reports and `(rent10/rent1)^(1/9)` is 2.000, 3.000 and 4.000, to
+   * three decimal places, without exception. The recorded
+   * `assumptions.capitalGrowth` says something else on 66 of the 69 reports
+   * that carry one, which is why neither the projection nor these masters
+   * publish it — see `cashFlowProjection.pure.ts`.
+   */
+  const GROWTH: Record<string, { value: number; rent: number }> = {
+    conservative: { value: 1.02, rent: 1.02 },
+    moderate: { value: 1.04, rent: 1.03 },
+    optimistic: { value: 1.06, rent: 1.04 },
+  };
+
+  /** Monthly amortisation, so the balance falls the way the stored series does. */
+  const balanceAfterYears = (years: number): number => {
+    const r = RATE / 100 / 12;
+    let b = LOAN;
+    for (let m = 0; m < years * 12; m += 1) b = b * (1 + r) - MONTHLY_PAYMENT;
+    return Math.round(b);
+  };
+
+  const seriesFor = (scenario: string) => {
+    const g = GROWTH[scenario];
+    let cumulative = 0;
+    return Array.from({ length: 10 }, (_, i) => {
+      const year = i + 1;
+      const propertyValue = Math.round(VALUE * g.value ** year);
+      const previousValue = Math.round(VALUE * g.value ** (year - 1));
+      const loanBalance = balanceAfterYears(year);
+      const annualRent = Math.round(RENT_YEAR_ONE * g.rent ** i);
+      const annualCosts = Math.round(COSTS_YEAR_ONE * CPI ** i);
+      const cashFlow = Math.round(annualRent - annualCosts - MONTHLY_PAYMENT * 12);
+      cumulative += cashFlow;
+      return {
+        year,
+        propertyValue,
+        loanBalance,
+        equity: propertyValue - loanBalance,
+        annualRent,
+        cashFlow,
+        cumulativeCashFlow: cumulative,
+        // The year's own return: the value it gained plus the cash it took,
+        // over what was put in. Whole-number percent, as the table stores it.
+        roi: Number(
+          (((propertyValue - previousValue + cashFlow) / UPFRONT) * 100).toFixed(2),
+        ),
+      };
+    });
+  };
+
+  return {
+    projections: {
+      conservative: seriesFor('conservative'),
+      moderate: seriesFor('moderate'),
+      optimistic: seriesFor('optimistic'),
+    },
+    initialCosts: {
+      propertyValue: VALUE, deposit: 257000, stampDuty: 56890,
+      legalFees: 1500, inspectionFees: 500, lmi: 0,
+      loanAmount: LOAN,
+      // Present, production-shaped, and never published — the stored totals do
+      // not equal the components beside them. See `cashFlowProjection.pure.ts`.
+      totalUpfront: UPFRONT,
+    },
+    loanDetails: {
+      interestRate: RATE,
+      monthlyPayment: MONTHLY_PAYMENT,
+      weeklyPayment: Number(((MONTHLY_PAYMENT * 12) / 52).toFixed(2)),
+      totalInterest: 1230480,
+      loanType: 'interest_only',
+      rateSource: 'User specified',
+      interestOnlyPeriod: 2,
+      lvr: 80,
+    },
+    annualCosts: { ...COSTS, totalAnnual: COSTS_YEAR_ONE },
+    // Recorded, production-shaped, and deliberately never published: 5.2% is
+    // not the 4% the moderate series above is built at, which is exactly the
+    // disagreement measured on 66 of the 69 stored reports that record one.
+    assumptions: { capitalGrowth: 5.2, cpiGrowth: 2.8, occupancyWeeks: 52 },
+    keyMetrics: { lvr: 80, annualNet: -21476, weeklyNet: -413 },
+  };
+})();
+
+/** Exactly what `cashFlowAdapter` would hand the renderer for that report. */
+const CASH_FLOW_SAMPLE = projectCashFlow({
+  id: 'sample-cash-flow',
+  property_address: ADDRESS,
+  financial_calculations: CASH_FLOW_FINANCIALS,
+  updated_at: '2026-08-02T00:00:00.000Z',
+}).cashflow;
+
+/**
+ * The Client Details Form's own vocabulary, built the way production builds it.
+ *
+ * Run through `projectClientDetails` over a `ClientDetails` payload rather than
+ * typed out, for the same reason the cash-flow sample is: the masters bind
+ * grouped expense categories, capped collections and a derived position, and a
+ * hand-written version can disagree with what the adapter produces without
+ * anything looking wrong.
+ *
+ * The figures are the same Nguyen household the rest of this file describes,
+ * shaped at the record's own magnitudes — and it is deliberately a client who
+ * **has** something recorded, because the 742 clients who have nothing are
+ * exercised by `clientDetailsCatalogue.spec.ts` instead. A preview showing the
+ * empty case would be a preview of a five-page document.
+ */
+const CLIENT_DETAILS_SAMPLE = (() => {
+  const aud = (value: number) => ({ value, unit: 'aud' as const });
+  const perMonth = (value: number) => ({ value, unit: 'aud/month' as const });
+  const perYear = (value: number) => ({ value, unit: 'aud/year' as const });
+  const pct = (value: number) => ({ value, unit: 'percent' as const });
+
+  const expense = (category: string, name: string, monthly: number, isEssential = true) =>
+    ({ category, name, monthly: perMonth(monthly), isEssential });
+
+  const property = (
+    kind: 'investment' | 'smsf', kindLabel: string, address: string, shortAddr: string,
+    value: number, loan: number, rent: number, outgoings: number, lender: string,
+  ) => ({
+    kind, kindLabel, address, shortAddress: shortAddr,
+    value: aud(value), loanRemaining: aud(loan), equity: aud(value - loan),
+    lvr: pct((loan / value) * 100), interestRate: pct(6.02), ownershipPercentage: pct(100),
+    lender, repaymentType: 'Principal and interest',
+    rentMonthly: perMonth(rent), rentWeekly: { value: (rent * 12) / 52, unit: 'aud/week' as const },
+    expensesMonthly: perMonth(outgoings), netMonthly: perMonth(rent - outgoings),
+    smsf: null,
+  });
+
+  const details = {
+    meta: {
+      clientId: 'sample-client',
+      clientName: CLIENT,
+      preparedOn: '2026-08-02T00:00:00.000Z',
+      propertyCount: 2,
+      hasSecondaryContact: true,
+    },
+    narrative:
+      'The record describes a two-person household with two investment holdings, three '
+      + 'employment rows and forty-one recorded expense lines. Every figure below is summed '
+      + 'from the rows this document also prints.',
+    household: {
+      contacts: [
+        { role: 'primary' as const, name: 'Jordan Nguyen', email: 'jordan@example.test', mobile: '0400 000 000', gender: 'Male', dateOfBirth: '1986-04-12' },
+        { role: 'secondary' as const, name: 'Sarah Nguyen', email: 'sarah@example.test', mobile: '0400 000 001', gender: 'Female', dateOfBirth: '1988-09-30' },
+      ],
+      residences: [{
+        contact: 'primary' as const,
+        residence: {
+          address: '9/44 Regent Street', suburb: 'Newtown', state: 'NSW', postcode: '2042',
+          country: 'Australia', livingSituation: 'Owner occupied',
+          residentialStatus: 'Australian citizen',
+        },
+        sharedWithPrimary: false,
+      }],
+      maritalStatus: 'Married',
+      dependents: { value: 2, unit: 'rate' as const },
+      history: [
+        { contact: 'primary' as const, address: '12/3 Denison Road, Lewisham', isCurrent: false, startDate: '2019-02-01', endDate: '2023-06-30', months: 53, livingSituation: 'Renting' },
+        { contact: 'primary' as const, address: '9/44 Regent Street, Newtown', isCurrent: true, startDate: '2023-07-01', endDate: '', months: 37, livingSituation: 'Owner occupied' },
+      ],
+    },
+    ownerOccupied: {
+      ...property('investment', 'Owner occupied', '9/44 Regent Street, Newtown NSW 2042', 'Regent Street, Newtown', 1125000, 612000, 0, 1840, 'Westpac'),
+      kind: 'owner-occupied' as const,
+    },
+    employment: [
+      { contact: 'primary' as const, employer: 'Meridian Systems Australia', employmentType: 'Full time', role: 'Engineering manager', startDate: '2021-03-01', isCurrent: true, workplace: 'Sydney NSW', workArrangement: 'Hybrid', grossAnnual: perYear(198000), extrasAnnual: perYear(24000) },
+      { contact: 'secondary' as const, employer: 'Inner West Health District', employmentType: 'Part time', role: 'Clinical nurse', startDate: '2018-08-13', isCurrent: true, workplace: 'Camperdown NSW', workArrangement: 'On site', grossAnnual: perYear(86000), extrasAnnual: perYear(9200) },
+    ],
+    income: {
+      primaryEmploymentMonthly: perMonth(18500), secondaryEmploymentMonthly: perMonth(7933),
+      totalEmploymentMonthly: perMonth(26433),
+      otherIncome: [{ label: 'Managed fund distributions', monthly: perMonth(410), contact: 'primary' as const }],
+      totalOtherMonthly: perMonth(410), rentalMonthly: perMonth(4290),
+      totalMonthly: perMonth(31133), totalGrossAnnual: perYear(373596),
+    },
+    assets: [
+      { type: 'Savings', description: 'Offset account', value: aud(84000) },
+      { type: 'Superfund', description: 'Australian Retirement Trust', value: aud(412000) },
+      { type: 'Superfund', description: 'Aware Super', value: aud(196000) },
+      { type: 'Vehicle', description: '2022 Subaru Outback', value: aud(38000) },
+      { type: 'Alternative', description: 'Listed shares', value: aud(61000) },
+      { type: 'Other', description: 'Term deposit', value: aud(25000) },
+    ],
+    liabilities: [
+      { type: 'Credit card', provider: 'CommBank', balance: aud(4200), creditLimit: aud(15000), interestRate: pct(20.99), captured: perMonth(300), monthlyServicing: perMonth(300), isEstimated: false, basis: 'As recorded' },
+      { type: 'Vehicle loan', provider: 'Pepper Money', balance: aud(28400), creditLimit: null, interestRate: pct(8.4), captured: perMonth(612), monthlyServicing: perMonth(612), isEstimated: false, basis: 'As recorded' },
+      { type: 'Student loan', provider: 'ATO', balance: aud(19800), creditLimit: null, interestRate: null, captured: perMonth(430), monthlyServicing: perMonth(430), isEstimated: false, basis: 'As recorded' },
+    ],
+    liabilitiesIncludeEstimates: false,
+    expenses: [
+      expense('Groceries', 'Supermarket', 1650),
+      expense('Groceries', 'Butcher and greengrocer', 340),
+      expense('Housing', 'Council rates', 210),
+      expense('Housing', 'Water', 85),
+      expense('Transport', 'Fuel', 380),
+      expense('Transport', 'Tolls and parking', 120),
+      expense('Insurance', 'Health cover', 460),
+      expense('Insurance', 'Car and contents', 180),
+      expense('Childcare & Support', 'Before and after school care', 720),
+      expense('Utilities', 'Electricity and gas', 290),
+      expense('Communications', 'Internet and mobile', 165),
+      expense('Recreation', 'Dining and entertainment', 540, false),
+      expense('Personal Care', 'Health and grooming', 210, false),
+      expense('Education', 'School fees', 1250),
+      expense('Medical', 'Out of pocket', 140),
+    ],
+    properties: [
+      property('investment', 'Investment', '7 Wardell Road, Dulwich Hill NSW 2203', 'Wardell Road, Dulwich Hill', 640000, 288000, 2450, 1180, 'CommBank'),
+      property('smsf', 'SMSF', '12/3 Denison Road, Lewisham NSW 2049', 'Denison Road, Lewisham', 360000, 160000, 1840, 900, 'Macquarie'),
+    ],
+    position: {
+      propertyValue: aud(2125000), propertyDebt: aud(1060000), propertyEquity: aud(1065000),
+      otherAssets: aud(816000), otherLiabilities: aud(52400),
+      netWorth: aud(1828600),
+      incomeMonthly: perMonth(31133), commitmentsMonthly: perMonth(14962),
+      surplusMonthly: perMonth(16171), commitmentRatio: pct(48.05),
+    },
+  };
+
+  return projectClientDetails(details as never).clientDetails;
+})();
+
+/**
+ * The Cash Flow Comparison's own vocabulary, run through its projection.
+ *
+ * ## Its magnitudes come from the payload's caps, not from production
+ *
+ * Every other sample in this file is shaped from measured production rows. This
+ * one cannot be: the format's ledger holds **0 rows**, its analysis table holds
+ * 0 rows and structurally cannot hold any, and the projections it compares are
+ * the browser's and are never persisted. See
+ * `cashFlowComparisonProjection.pure.ts` — that is also why the 50 masters are
+ * preview-only.
+ *
+ * So the figures below are the same Leichhardt-area properties the rest of this
+ * file describes, at the same magnitudes, with three properties — the middle of
+ * the 2-to-5 range the normaliser enforces, so the preview exercises the
+ * property-count variants rather than either end of them.
+ *
+ * The analysis half is present, because a preview of the pages that only exist
+ * when a model wrote something is worth more than a preview without them. The
+ * catalogue spec exercises the other direction.
+ */
+const CASH_FLOW_COMPARISON_SAMPLE = (() => {
+  const aud = (value: number) => ({ value, unit: 'aud' as const });
+  const perYear = (value: number) => ({ value, unit: 'aud/year' as const });
+  const pct = (value: number) => ({ value, unit: 'percent' as const });
+  const ratio = (value: number) => ({ value, unit: 'rate' as const });
+
+  /** Ten years of one property, compounding from its own inputs. */
+  const projectionFor = (
+    value: number, loan: number, rent: number, growth: number, afterTaxYearOne: number,
+  ) => {
+    const years = Array.from({ length: 10 }, (_, i) => {
+      const y = i + 1;
+      const propertyValue = Math.round(value * growth ** y);
+      const loanBalance = Math.round(loan * (1 - 0.0114 * y));
+      const afterTaxAnnual = Math.round(afterTaxYearOne + i * 1450);
+      return {
+        year: y, calendarYear: 2026 + i,
+        propertyValue: aud(propertyValue),
+        loanBalance: aud(loanBalance),
+        equity: aud(propertyValue - loanBalance),
+        lvr: pct((loanBalance / propertyValue) * 100),
+        rentalIncome: perYear(Math.round(rent * 1.031 ** i)),
+        grossYield: pct((rent / value) * 100),
+        netYield: pct(((rent * 0.72) / value) * 100),
+        expenses: perYear(Math.round(rent * 0.28)),
+        interestRate: pct(6.14),
+        interest: perYear(Math.round(loanBalance * 0.0614)),
+        principal: perYear(Math.round(loan * 0.0114)),
+        preTaxAnnual: perYear(afterTaxAnnual - 5200),
+        preTaxWeekly: { value: (afterTaxAnnual - 5200) / 52, unit: 'aud/week' as const },
+        afterTaxAnnual: perYear(afterTaxAnnual),
+        afterTaxWeekly: { value: afterTaxAnnual / 52, unit: 'aud/week' as const },
+        depreciation: perYear(8200), taxRefund: perYear(5200), landTax: perYear(0),
+        capitalGrowth: pct((growth - 1) * 100), cpiGrowth: pct(2.8),
+      };
+    });
+    return { years };
+  };
+
+  const outcomeFor = (
+    proj: ReturnType<typeof projectionFor>, initial: number,
+  ) => {
+    const first = proj.years[0];
+    const last = proj.years[9];
+    const cumulative = proj.years.reduce((t, y) => t + y.afterTaxAnnual.value, 0);
+    const gain = last.propertyValue.value - first.propertyValue.value;
+    const total = gain + cumulative;
+    const firstPositive = proj.years.find((y) => y.afterTaxAnnual.value >= 0)?.year ?? null;
+    let running = 0;
+    let payback: number | null = null;
+    for (const y of proj.years) {
+      running += y.afterTaxAnnual.value;
+      if (running >= 0 && payback === null) payback = y.year;
+    }
+    return {
+      cumulativeAfterTax: aud(cumulative),
+      capitalGain: aud(gain),
+      endingValue: aud(last.propertyValue.value),
+      endingEquity: aud(last.equity.value),
+      totalReturn: aud(total),
+      initialInvestment: aud(initial),
+      roi: pct((total / initial) * 100),
+      annualisedRoi: pct((((1 + total / initial) ** 0.1) - 1) * 100),
+      cashOnCash: pct((first.afterTaxAnnual.value / initial) * 100),
+      equityMultiple: ratio((last.equity.value + cumulative) / initial),
+      firstPositiveYear: firstPositive,
+      paybackYear: payback,
+      grossYield: first.grossYield,
+      netYield: first.netYield,
+      capitalGrowthRate: first.capitalGrowth,
+    };
+  };
+
+  const spec = [
+    { address: ADDRESS, short: 'Marlborough Street, Leichhardt', value: 1285000, loan: 1028000, rent: 47840, growth: 1.052, atax: -31600, initial: 315890, primary: true },
+    { address: '7 Wardell Road, Dulwich Hill NSW 2203', short: 'Wardell Road, Dulwich Hill', value: 640000, loan: 288000, rent: 29400, growth: 1.048, atax: -9800, initial: 168400, primary: false },
+    { address: '12/3 Denison Road, Lewisham NSW 2049', short: 'Denison Road, Lewisham', value: 360000, loan: 160000, rent: 17640, growth: 1.044, atax: -4200, initial: 96200, primary: false },
+  ];
+
+  const properties = spec.map((p, i) => {
+    const projection = projectionFor(p.value, p.loan, p.rent, p.growth, p.atax);
+    return {
+      reportId: `report-${i + 1}`, number: i + 1,
+      address: p.address, shortAddress: p.short, isPrimary: p.primary,
+      projection, outcome: outcomeFor(projection, p.initial),
+    };
+  });
+
+  const ranked = [...properties].sort(
+    (a, b) => b.outcome.totalReturn.value - a.outcome.totalReturn.value,
+  );
+  const [first, second] = ranked;
+  const lead = ((first.outcome.totalReturn.value - second.outcome.totalReturn.value)
+    / Math.abs(first.outcome.totalReturn.value)) * 100;
+
+  const winner = (key: string, label: string, pick: (p: typeof properties[number]) => number, lowerIsBetter = false) => {
+    const sorted = [...properties].sort((a, b) => (lowerIsBetter ? pick(a) - pick(b) : pick(b) - pick(a)));
+    return {
+      key, label, property: sorted[0].number,
+      value: aud(pick(sorted[0])), margin: aud(Math.abs(pick(sorted[0]) - pick(sorted[1]))),
+      lowerIsBetter,
+    };
+  };
+
+  const note = (reason: string, detail = '') => ({ reason, detail });
+
+  const comparison = {
+    meta: {
+      primaryReportId: 'a41f8c92-0000-4000-8000-000000000000',
+      clientName: CLIENT,
+      preparedOn: '2026-08-02T00:00:00.000Z',
+      investorProfile: 'balanced',
+      investorProfileLabel: 'Balanced investor',
+      termYears: 10,
+      propertyCount: properties.length,
+    },
+    narrative:
+      'Three properties compared over ten years for a balanced investor. The ranking is on '
+      + 'capital gain plus cumulative cash flow, and the leader is ahead of second place by a '
+      + 'margin stated as a share of its own return.',
+    properties,
+    scoreboard: {
+      order: ranked.map((p) => p.number),
+      leadMargin: pct(lead),
+      winners: [
+        winner('totalReturn', 'Best total return', (p) => p.outcome.totalReturn.value),
+        winner('capitalGain', 'Most capital growth', (p) => p.outcome.capitalGain.value),
+        winner('cumulativeAfterTax', 'Least cash required', (p) => p.outcome.cumulativeAfterTax.value),
+        winner('endingEquity', 'Most ending equity', (p) => p.outcome.endingEquity.value),
+        winner('initialInvestment', 'Cheapest to enter', (p) => p.outcome.initialInvestment.value, true),
+      ],
+    },
+    analysis: {
+      summary:
+        'All three properties run negative in the early years and the smallest carries the '
+        + 'lowest holding cost in absolute terms. Over the full term the largest holding '
+        + 'produces the greatest capital gain, and that gain outweighs the additional cash it '
+        + 'requires to hold.',
+      rankings: [
+        {
+          rank: 1, property: 1, statedAddress: ADDRESS, score: 84,
+          strengths: ['Largest capital gain over the term', 'Land-led inner-west holding'],
+          weaknesses: ['Highest cash requirement in the early years'],
+          verdict: 'The strongest total return of the three, driven by capital growth rather than by cash flow.',
+        },
+        {
+          rank: 2, property: 3, statedAddress: '12/3 Denison Road, Lewisham NSW 2049', score: 71,
+          strengths: ['Cheapest to enter', 'Smallest annual shortfall'],
+          weaknesses: ['Least capital gain in dollar terms'],
+          verdict: 'The easiest of the three to hold, and the least it returns.',
+        },
+        {
+          rank: 3, property: null, statedAddress: '7 Wardell Rd, Dulwich Hill', score: 68,
+          strengths: ['Balanced between growth and holding cost'],
+          weaknesses: ['Leads on nothing'],
+          verdict: 'Sits between the other two on every measure.',
+        },
+      ],
+      trajectory: {
+        fastestPositive: note('The smallest holding turns positive first, in year seven.'),
+        strongestGrowth: note('The largest holding compounds from the highest base.'),
+        concerns: [note('None of the three is cash-flow positive before year six.')],
+      },
+      capitalGrowth: {
+        strongestEquity: note('Ending equity is greatest on the largest holding.'),
+        wealthBuilder: note('Capital gain accounts for most of the total return in all three cases.'),
+        endingValues: [],
+      },
+      yields: {
+        bestGross: note('The smallest holding has the highest gross yield on its purchase price.'),
+        bestNet: note('Net yields are within half a point of each other across the three.'),
+        bestRoi: note('Return on capital favours the smallest holding, on the smallest base.'),
+      },
+      risk: {
+        mostStable: note('The smallest holding requires the least cash in any single year.'),
+        highestRisk: note('The largest holding carries the greatest absolute exposure to a rate move.'),
+        risks: ['Rate sensitivity at the modelled LVR', 'Vacancy on a single-dwelling holding'],
+        breakEven: [],
+      },
+      investorMatches: [
+        { key: 'growthFocused', label: 'Growth focused', note: note('Favours the largest holding, on capital gain.') },
+        { key: 'incomeFocused', label: 'Income focused', note: note('Favours the smallest holding, on the lowest shortfall.') },
+        { key: 'balanced', label: 'Balanced', note: note('The middle holding sits between the two on every measure.') },
+        { key: 'riskAverse', label: 'Risk averse', note: note('The lowest absolute exposure is the smallest holding.') },
+      ],
+      recommendation: {
+        best: note('The largest holding, on total return over the full term.'),
+        avoid: [note('None of the three should be ruled out on these figures alone.')],
+        scenarios: ['If the holding period shortened to five years, the ranking would reverse.'],
+      },
+      missing: [],
+    },
+  };
+
+  return projectCashFlowComparison(comparison as never).cashFlowComparison;
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -93,6 +670,26 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     generatedDate: '2 August 2026',
   },
 
+  /**
+   * The letterhead.
+   *
+   * Fully populated here and, until August 2026, populated **nowhere else**:
+   * no adapter published `org`, so every seeded template's disclaimer page
+   * printed its labels with nothing beside them and every family cover had a
+   * blank wordmark — while this preview showed a complete contact block.
+   *
+   * That is the trap `reportBindingProjection.pure.ts` was written for, in a
+   * second place: a fixture written in the catalogue's vocabulary passes while
+   * production is empty. `organisationProjection.pure.ts` is the producer now,
+   * reading `whitelabel_settings`; `abn` and `address` below have no column
+   * behind them and are sample-only.
+   */
+  /** The Client Details Form's namespace. See `CLIENT_DETAILS_SAMPLE`. */
+  clientDetails: CLIENT_DETAILS_SAMPLE,
+
+  /** The Cash Flow Comparison's namespace. See `CASH_FLOW_COMPARISON_SAMPLE`. */
+  cashFlowComparison: CASH_FLOW_COMPARISON_SAMPLE,
+
   org: {
     name: 'Meridian Property Advisory',
     abn: '42 618 305 774',
@@ -102,6 +699,36 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     website: 'meridianproperty.example',
   },
   author: { name: 'Alexandra Whitfield', title: 'Senior Investment Adviser' },
+  /**
+   * The five weighted dimensions `investment_score.breakdown` holds.
+   *
+   * Shaped from the record: `growthScore` is weighted 40 and `demandScore` 15,
+   * and both are scored a flat 50 with **no details** on 919 of the 985 scored
+   * reports — so the grade is 55% placeholder, and the sample says so rather
+   * than inventing prose for them. The three that do carry details are sized
+   * from their measured maxima: risk 228 characters, location 94, yield 51.
+   */
+  assessment: [
+    { label: 'Growth', score: 50, weight: 40 },
+    {
+      label: 'Location', score: 85, weight: 25,
+      details: 'Excellent walkability (90+). Excellent CBD access (<15 min). Exceptional school access (8+)',
+    },
+    {
+      label: 'Yield', score: 62, weight: 15,
+      details: 'Moderate yield (3-4%) - Negative cash flow likely',
+    },
+    { label: 'Demand', score: 50, weight: 15 },
+    {
+      label: 'Risk', score: 53, weight: 5,
+      details: 'High LVR (80%) increases leverage risk with LMI required. Moderate negative cash flow '
+        + '($100-200/week) requires contribution. Heritage overlay constrains external change',
+    },
+  ],
+
+  /** Empty on all but 19 of the 985 scored reports; the block is conditional. */
+  opportunities: ['Approved secondary-dwelling footprint not yet built out'],
+
   recommendation: {
     headline: 'Proceed to offer at or below $1.29m',
     rationale:
@@ -137,6 +764,37 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     rationale:
       'Land-rich holding inside the 8km ring with a compliant secondary-dwelling '
       + 'footprint and a level rear yard.',
+  /**
+   * Sample plates for the two photographic families.
+   *
+   * Luxury Editorial and Architectural Property declare `image_slots`, and a
+   * catalogue preview that showed those plates as absent would make both
+   * families look broken — the exact trap `docs/reports/COVERAGE.md` warns
+   * about, where a measure passes because the thing it measures is unused.
+   *
+   * These are deliberately TONAL STUDIES rather than photographs. A sample
+   * that looked like a real house would misrepresent what the preview shows,
+   * and the reader is told this is sample data. Base64 SVG because
+   * `renderResourcePolicy` skips a base64 payload and holds a
+   * percent-encoded one under the SSRF scanner.
+   *
+   * No adapter emits `property.images` today. A real report therefore has
+   * none, every plate is conditional, and an unfilled plate prints nothing.
+   */
+  images: [
+    // Frontage
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgMzAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNDOUI4OTYiLz48c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiM2RTYyNTMiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyQTI0MUMiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0idiIgY3g9IjAuNSIgY3k9IjAuNDIiIHI9IjAuNzUiPjxzdG9wIG9mZnNldD0iMC41NSIgc3RvcC1jb2xvcj0iIzAwMCIgc3RvcC1vcGFjaXR5PSIwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAwIiBzdG9wLW9wYWNpdHk9IjAuMzgiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNnKSIvPjxlbGxpcHNlIGN4PSIxMjgiIGN5PSIxOTYiIHJ4PSIxOTAiIHJ5PSIxMjAiIGZpbGw9IiMyQTI0MUMiIG9wYWNpdHk9IjAuMjIiLz48cmVjdCB4PSIwIiB5PSIyMzIiIHdpZHRoPSI0MDAiIGhlaWdodD0iNjgiIGZpbGw9IiMyQTI0MUMiIG9wYWNpdHk9IjAuMzAiLz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCN2KSIvPjwvc3ZnPg==',
+    // Streetscape
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgMzAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNEOEM5QUMiLz48c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiM3QzcyNjQiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyNDFGMTkiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0idiIgY3g9IjAuNSIgY3k9IjAuNDIiIHI9IjAuNzUiPjxzdG9wIG9mZnNldD0iMC41NSIgc3RvcC1jb2xvcj0iIzAwMCIgc3RvcC1vcGFjaXR5PSIwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAwIiBzdG9wLW9wYWNpdHk9IjAuMzgiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNnKSIvPjxlbGxpcHNlIGN4PSIxMjgiIGN5PSIxOTYiIHJ4PSIxOTAiIHJ5PSIxMjAiIGZpbGw9IiMyNDFGMTkiIG9wYWNpdHk9IjAuMjIiLz48cmVjdCB4PSIwIiB5PSIyMzIiIHdpZHRoPSI0MDAiIGhlaWdodD0iNjgiIGZpbGw9IiMyNDFGMTkiIG9wYWNpdHk9IjAuMzAiLz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCN2KSIvPjwvc3ZnPg==',
+    // Parkland
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgMzAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNCOUM3QTQiLz48c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiM1RjZBNTUiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxRTI0MUIiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0idiIgY3g9IjAuNSIgY3k9IjAuNDIiIHI9IjAuNzUiPjxzdG9wIG9mZnNldD0iMC41NSIgc3RvcC1jb2xvcj0iIzAwMCIgc3RvcC1vcGFjaXR5PSIwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAwIiBzdG9wLW9wYWNpdHk9IjAuMzgiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNnKSIvPjxlbGxpcHNlIGN4PSIxMjgiIGN5PSIxOTYiIHJ4PSIxOTAiIHJ5PSIxMjAiIGZpbGw9IiMxRTI0MUIiIG9wYWNpdHk9IjAuMjIiLz48cmVjdCB4PSIwIiB5PSIyMzIiIHdpZHRoPSI0MDAiIGhlaWdodD0iNjgiIGZpbGw9IiMxRTI0MUIiIG9wYWNpdHk9IjAuMzAiLz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCN2KSIvPjwvc3ZnPg==',
+    // Interior
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgMzAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNFMENGQjAiLz48c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiM4QTdBNjYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyQzI0MTkiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0idiIgY3g9IjAuNSIgY3k9IjAuNDIiIHI9IjAuNzUiPjxzdG9wIG9mZnNldD0iMC41NSIgc3RvcC1jb2xvcj0iIzAwMCIgc3RvcC1vcGFjaXR5PSIwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAwIiBzdG9wLW9wYWNpdHk9IjAuMzgiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNnKSIvPjxlbGxpcHNlIGN4PSIxMjgiIGN5PSIxOTYiIHJ4PSIxOTAiIHJ5PSIxMjAiIGZpbGw9IiMyQzI0MTkiIG9wYWNpdHk9IjAuMjIiLz48cmVjdCB4PSIwIiB5PSIyMzIiIHdpZHRoPSI0MDAiIGhlaWdodD0iNjgiIGZpbGw9IiMyQzI0MTkiIG9wYWNpdHk9IjAuMzAiLz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCN2KSIvPjwvc3ZnPg==',
+    // Aspect
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgMzAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNCNkJEQzgiLz48c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiM2QjZFNzYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMxRDIwMjYiLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0idiIgY3g9IjAuNSIgY3k9IjAuNDIiIHI9IjAuNzUiPjxzdG9wIG9mZnNldD0iMC41NSIgc3RvcC1jb2xvcj0iIzAwMCIgc3RvcC1vcGFjaXR5PSIwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAwIiBzdG9wLW9wYWNpdHk9IjAuMzgiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNnKSIvPjxlbGxpcHNlIGN4PSIxMjgiIGN5PSIxOTYiIHJ4PSIxOTAiIHJ5PSIxMjAiIGZpbGw9IiMxRDIwMjYiIG9wYWNpdHk9IjAuMjIiLz48cmVjdCB4PSIwIiB5PSIyMzIiIHdpZHRoPSI0MDAiIGhlaWdodD0iNjgiIGZpbGw9IiMxRDIwMjYiIG9wYWNpdHk9IjAuMzAiLz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCN2KSIvPjwvc3ZnPg==',
+    // Detail
+    'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MDAgMzAwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNDQkI1QTIiLz48c3RvcCBvZmZzZXQ9IjAuNTUiIHN0b3AtY29sb3I9IiM3QTY1NTgiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyNTFDMTciLz48L2xpbmVhckdyYWRpZW50PjxyYWRpYWxHcmFkaWVudCBpZD0idiIgY3g9IjAuNSIgY3k9IjAuNDIiIHI9IjAuNzUiPjxzdG9wIG9mZnNldD0iMC41NSIgc3RvcC1jb2xvcj0iIzAwMCIgc3RvcC1vcGFjaXR5PSIwIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMDAwIiBzdG9wLW9wYWNpdHk9IjAuMzgiLz48L3JhZGlhbEdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCNnKSIvPjxlbGxpcHNlIGN4PSIxMjgiIGN5PSIxOTYiIHJ4PSIxOTAiIHJ5PSIxMjAiIGZpbGw9IiMyNTFDMTciIG9wYWNpdHk9IjAuMjIiLz48cmVjdCB4PSIwIiB5PSIyMzIiIHdpZHRoPSI0MDAiIGhlaWdodD0iNjgiIGZpbGw9IiMyNTFDMTciIG9wYWNpdHk9IjAuMzAiLz48cmVjdCB3aWR0aD0iNDAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0idXJsKCN2KSIvPjwvc3ZnPg==',
+  ],
   },
 
   financials: {
@@ -252,6 +910,36 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     ],
     for: 'Land value, catchment, and a second dwelling the numbers already support.',
     against: 'Thin entry yield and near-term capital works.',
+
+    // ── Portfolio Performance Review ───────────────────────────────────────
+    //
+    // `analysis.executiveSummary` on a stored `portfolio_analysis_reports` row.
+    // `healthScore` is a score **out of 100** (25–90 across the 21 stored
+    // reports), not a percentage — the masters set it with `| fixed:0` and
+    // label it, and setting it with `| percent` would print "68%" of nothing.
+    healthScore: 68,
+    overallHealth: 'Moderate',
+    // 147-459 characters across the stored reports, so a sentence rather than a
+    // headline — which is why the overview sets it as a callout at body size
+    // instead of a display-scale verdict.
+    primaryRecommendation:
+      'Diversify the next acquisition outside the inner west and into a higher-yielding price '
+      + 'band, funded from the usable equity rather than new savings. That addresses the two '
+      + 'weaknesses at once — geographic concentration and a negative monthly position — '
+      + 'without increasing the portfolio LVR.',
+    // Three and two: the observed minimums across the 21 stored reports (3-6
+    // strengths, 2-5 concerns). A sample shorter than the minimum previews a
+    // column the real data always fills, which is how the first render of these
+    // masters came to show a bullet with nothing beside it.
+    strengths: [
+      'Weighted growth of 5.4% is ahead of the metro average',
+      'Portfolio LVR of 61% leaves headroom for one further purchase',
+      'Two of the four holdings are income-positive without depreciation',
+    ],
+    concerns: [
+      'All four assets sit within 6km — concentrated by geography',
+      'Net position is negative and funded from surplus income',
+    ],
   },
 
   risk: {
@@ -267,6 +955,48 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     capacityNote:
       'Surplus covers the modelled shortfall 9x over, and reserves cover eight months '
       + 'of holding costs with the property vacant.',
+
+    // ── Portfolio Performance Review ───────────────────────────────────────
+    //
+    // `analysis.riskAssessment`, under the stored leaf names. The shortened
+    // names would have collided: `risk.vacancy` above already means "reaction
+    // to three months vacancy" — a client tolerance, not a portfolio exposure —
+    // and one key cannot carry both senses. See `portfolioProjection.pure.ts`.
+    // Three sentences and two LISTS, which is what the live table holds — read
+    // across all 21 stored reports, not inferred from the names. The two that
+    // pluralise are arrays (2-4 market risks, 4-5 mitigations); the three that
+    // read like they would are not. A sample that flattened them to prose would
+    // preview cleanly and render blank on every real report, because the
+    // projection refuses a non-string leaf rather than printing `[object
+    // Object]`.
+    overallRiskLevel: 'Moderate',
+    // 131-456 characters each across the stored reports — paragraphs, not the
+    // one-liners the four `financialHealth` statuses are.
+    concentrationRisk:
+      'Four assets inside a 6km radius of the inner west, sharing one council area and one '
+      + 'tenant catchment. A single-market correction moves the whole portfolio together, no '
+      + 'other capital city is represented, and three of the four are exposed to the same '
+      + 'rental demand drivers.',
+    vacancyRisk:
+      'Three of the four are single-dwelling and let individually, so income is stepped rather '
+      + 'than smooth: one vacancy removes a quarter of the rent rather than a fraction of it. '
+      + 'Suburb vacancy of 1.4% and a 12-day average letting time keep the expected exposure '
+      + 'short, but the shape of the risk is binary.',
+    interestRateSensitivity:
+      'A 100bp rise adds roughly $1,740 a month across the four facilities, which is more than '
+      + 'the current shortfall again. Two facilities roll off fixed rates inside a year, and '
+      + 'both would reprice at the top of the cycle on current forward curves.',
+    marketRisks: [
+      'Inner-west median prices have run ahead of rents for six years',
+      'The portfolio is positioned for growth and is exposed if the market turns income-led',
+      'All four assets share one council area and one tenant catchment',
+    ],
+    mitigationStrategies: [
+      'Fix the majority of the debt before the next roll-off',
+      'Hold six months of holding costs in offset rather than in equity',
+      'Place the next acquisition in a different capital city',
+      'Buy the next holding in a higher-yielding price band',
+    ],
   },
 
   risks: RISKS,
@@ -370,6 +1100,14 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     acc[String(i)] = row;
     return acc;
   }, {
+    // ── The 10 Year Cash Flow format's own vocabulary ──────────────────────
+    //
+    // `years`, `scenarios`, `outcome`, `firstYear`, `purchase`, `loan`,
+    // `costs`, `assumptions` and `property`, straight off the projection. The
+    // keys above are the voice templates' indexed rows and `breakEvenNote` /
+    // `narrative` / `conclusion`; the two sets are disjoint, which is why this
+    // format nests here rather than claiming a namespace of its own.
+    ...CASH_FLOW_SAMPLE,
     breakEvenNote: 'Pre-tax cash flow turns positive in year seven on the modelled assumptions.',
     narrative:
       'Rent compounds faster than costs from year four, and the position crosses into '
@@ -413,6 +1151,33 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     count: 4, value: 3410000, debt: 2088000, equity: 1322000, lvr: 61.2,
     grossYield: 4.12, growth12m: 5.4, netCashFlow: -14200,
     avgYield: 4.12, avgGrowth: 5.4, avgNet: -3550, avgMaintenance: 2180,
+
+    // ── The Portfolio Performance Review's own vocabulary ──────────────────
+    //
+    // The 50 Compass masters bind what `portfolioProjection.pure.ts` publishes,
+    // which describes this same portfolio in monthly terms and mean-of-property
+    // averages. Summed from `PORTFOLIO_HOLDINGS` rather than typed, so the
+    // holdings table and the totals table on the facing page cannot disagree.
+    propertyCount: PORTFOLIO_HOLDINGS.length,
+    investmentCount: PORTFOLIO_HOLDINGS.filter((h) => !h.isOwnerOccupied).length,
+    ownerOccupiedCount: PORTFOLIO_HOLDINGS.filter((h) => h.isOwnerOccupied).length,
+    averageLvr: PORTFOLIO_TOTALS.averageLvr,
+    averageYield: PORTFOLIO_TOTALS.averageYield,
+    monthlyCashflow: PORTFOLIO_TOTALS.monthlyCashflow,
+    annualCashflow: PORTFOLIO_TOTALS.annualCashflow,
+    monthlyRentalIncome: PORTFOLIO_TOTALS.monthlyRentalIncome,
+    monthlyExpenses: PORTFOLIO_TOTALS.monthlyExpenses,
+    // Whole property rows on the stored report, projected down to what the
+    // callout prints. Best and worst by monthly position, which is the axis the
+    // format's own generator ranks on.
+    bestPerformer: {
+      address: '7 Wardell Road, Dulwich Hill', propertyType: 'House',
+      value: 640000, netMonthlyCashflow: 3400 / 12, lender: 'CommBank',
+    },
+    worstPerformer: {
+      address: ADDRESS, propertyType: 'House',
+      value: 1285000, netMonthlyCashflow: -21476 / 12, lender: 'Meridian Mutual',
+    },
     holdings: [
       { address: '9/44 Regent Street, Newtown', value: 1125000, debt: 612000, equity: 513000, yield: 3.9, net: 2100 },
       { address: ADDRESS, value: 1285000, debt: 1028000, equity: 257000, yield: 3.84, net: -21476 },
@@ -452,6 +1217,164 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   ],
 
   comparison: {
+    // ── Property Comparison Analysis ──────────────────────────────────────
+    //
+    // Everything the 50 Comparison masters bind, nested here rather than at the
+    // top level: `risks`, `recommendations` and `properties` already mean three
+    // other things to the voice and Portfolio templates, and in this one shared
+    // preview object whichever loaded last would win. See
+    // `comparisonProjection.pure.ts`.
+    //
+    // The shapes and magnitudes are the stored table's. A comparison compares
+    // 2-5 properties (this one, 3), scores them out of 10 or out of 100 — never
+    // a bare figure — and names nobody on about one axis in six.
+    title: 'COMPARISON ANALYSIS - 3 PROPERTIES, NSW',
+    analysedOn: '2 August 2026',
+    propertyCount: 3,
+    statesLine: 'NSW',
+    states: ['NSW'],
+    scaleOutOf: 100,
+    scaleConfident: true,
+    shape: 'columns',
+    // Built by the format, never by the model — see `describeComparison`.
+    narrative: '3 properties compared in NSW. 22 Chapel Street, Marrickville ranks first. '
+      + 'It scores 88.5 out of 100.',
+    summary:
+      'Three inner-west properties were compared against a five-to-seven year horizon and a '
+      + 'moderate risk tolerance. Marrickville ranks first on the strength of its growth record '
+      + 'and the smallest gap between asking price and the suburb median, and it is the only one '
+      + 'of the three whose rental demand is supported by two separate employment catchments. '
+      + 'Leichhardt is the land play: the largest lot, the clearest secondary-dwelling path, and '
+      + 'the thinnest entry yield of the three, which is a position that needs income to service '
+      + 'it for the first four years. Dulwich Hill is the cheapest entry and the weakest growth '
+      + 'thesis; it would suit a buyer who needs the holding to pay for itself from settlement '
+      + 'rather than one building a ten-year position. No property in this comparison is clearly '
+      + 'under the market, so none of the three offers a discount to compensate for its own '
+      + 'weakness.',
+    properties: [
+      { number: 1, address: ADDRESS, shortAddress: '14 Marlborough Street', state: 'NSW' },
+      { number: 2, address: '22 Chapel Street, Marrickville NSW 2204', shortAddress: '22 Chapel Street', state: 'NSW' },
+      { number: 3, address: '7 Wardell Road, Dulwich Hill NSW 2203', shortAddress: '7 Wardell Road', state: 'NSW' },
+    ],
+    ranked: [
+      {
+        number: 2, address: '22 Chapel Street, Marrickville NSW 2204', shortAddress: '22 Chapel Street',
+        rank: 1, score: 88.5, outOf: 100, scaleConfident: true,
+        bestSuitedFor: 'A growth-weighted buyer with a seven-year horizon and income to service a small shortfall.',
+        strengths: [
+          'Growth of 7.2% a year over the last five years, ahead of both comparisons',
+          'Two employment catchments support rental demand independently',
+          'Renovated in 2021, so no capital works are due inside three years',
+        ],
+        concerns: [
+          'Smallest land component of the three at 328m²',
+          'Entry price is closest to the suburb median, so the discount is thin',
+          'Body corporate sinking fund is below the recommended balance',
+        ],
+        riskLevel: 'Moderate', riskBand: 'moderate',
+      },
+      {
+        number: 1, address: ADDRESS, shortAddress: '14 Marlborough Street',
+        rank: 2, score: 74, outOf: 100, scaleConfident: true,
+        bestSuitedFor: 'A land-led buyer prepared to hold through four years of shortfall for a second income stream.',
+        strengths: [
+          '412m² of R2 land, 18% above the suburb average lot size',
+          'Compliant secondary-dwelling footprint confirmed at concept level',
+          'Vacancy at 1.4% with a 12-day average letting time',
+        ],
+        concerns: [
+          'Entry yield of 3.84% needs the shortfall serviced from income',
+          'Kitchen and bathroom will need $60–80k inside three years',
+          'Heritage conservation area limits external change without consent',
+        ],
+        riskLevel: 'Moderate', riskBand: 'moderate',
+      },
+      {
+        number: 3, address: '7 Wardell Road, Dulwich Hill NSW 2203', shortAddress: '7 Wardell Road',
+        rank: 3, score: 61.5, outOf: 100, scaleConfident: true,
+        bestSuitedFor: 'An income-first buyer who needs the holding to pay for itself from settlement.',
+        strengths: [
+          'Cheapest entry of the three at $640,000',
+          'Only one of the three that is cash-flow positive from year one',
+        ],
+        concerns: [
+          'Weakest growth thesis of the three',
+          'Single access road into the pocket',
+          'Smallest catchment of the three suburbs compared',
+        ],
+        riskLevel: 'Low', riskBand: 'low',
+      },
+    ],
+    axes: {
+      money: {
+        title: 'Money',
+        winners: [
+          { key: 'bestROI', label: 'Best return on investment', winner: '22 Chapel Street', value: '6.4%', reason: 'Highest modelled return on the entry price once the 2021 renovation is taken into account, and the only one of the three that does not need capital works inside three years to hold its rent.' },
+          { key: 'bestYield', label: 'Best gross yield', winner: '7 Wardell Road', value: '4.60%', reason: 'The cheapest entry of the three against a rent that is within $30 a week of the most expensive, which is what puts it ahead on yield despite ranking last overall.' },
+          { key: 'bestCashFlow', label: 'Best cash flow', winner: '7 Wardell Road', value: '$283/mo', reason: 'The only property of the three that is positive from year one without assuming rental growth or a rate cut.' },
+          // 43 of the 253 stored pointers name nobody. It is an answer.
+          { key: 'bestValue', label: 'Best value against the market', winner: 'No clear winner', value: '', reason: 'No property in this comparison sits far enough below its suburb median to be called under the market. The closest is Dulwich Hill at 4% below, which is inside the ordinary spread for the stock type.' },
+        ],
+      },
+      place: {
+        title: 'Location and lifestyle',
+        winners: [
+          { key: 'bestSchools', label: 'Best school catchment', winner: '14 Marlborough Street', value: '', reason: 'Two state schools inside the catchment, one of them selective, and both within a fifteen-minute walk.' },
+          { key: 'bestGrowthCorridor', label: 'Best growth corridor', winner: '22 Chapel Street', value: '', reason: 'Sits inside the declared corridor with a funded transport upgrade, which is the difference between a growth thesis and a hope.' },
+          { key: 'bestInfrastructure', label: 'Best infrastructure', winner: '22 Chapel Street', value: '', reason: 'Metro upgrade committed and funded, with construction already under way at the nearest station.' },
+          { key: 'bestLifestyle', label: 'Best lifestyle', winner: 'No clear winner', value: '', reason: 'All three sit within 6km of the CBD on comparable amenity, and the analysis could not separate them on anything a buyer would notice.' },
+        ],
+      },
+      risk: {
+        title: 'Risk',
+        winners: [
+          { key: 'lowestRisk', label: 'Lowest risk', winner: '7 Wardell Road', value: '', reason: 'Established street, long tenancy history, and the only one of the three whose income covers its own holding costs from settlement.' },
+          { key: 'highestRisk', label: 'Highest risk', winner: '14 Marlborough Street', value: '', reason: 'The thinnest entry yield of the three against the largest near-term capital works bill, so the position depends on income outside the property for its first four years.' },
+          { key: 'bestRiskReward', label: 'Best risk-adjusted return', winner: '22 Chapel Street', value: '', reason: 'Growth exposure without the capital-works overhang, and the only one of the three where the rental demand does not depend on a single employment catchment.' },
+        ],
+      },
+    },
+    risks: [
+      { number: 1, shortAddress: '14 Marlborough Street', level: 'Moderate', band: 'moderate', specificRisks: ['Kitchen and bathroom due inside three years', 'Heritage conservation area limits external change'] },
+      { number: 2, shortAddress: '22 Chapel Street', level: 'Moderate', band: 'moderate', specificRisks: ['Body corporate sinking fund below the recommended balance', 'Smallest land component of the three'] },
+      { number: 3, shortAddress: '7 Wardell Road', level: 'Low', band: 'low', specificRisks: ['Single access road into the pocket', 'Weakest growth thesis of the three'] },
+    ],
+    redFlags: [
+      { winner: '14 Marlborough Street', severity: 'Moderate', band: 'moderate', concerns: ['Capital works are not funded from the current rent'] },
+      { winner: '22 Chapel Street', severity: 'Low', band: 'low', concerns: ['Sinking fund would need a special levy to reach the recommended balance'] },
+    ],
+    matches: [
+      { winner: '22 Chapel Street', investorTypes: ['Growth', 'Long hold'], investorTypesLine: 'Growth · Long hold', reasoning: 'Suits a buyer with a seven-year horizon and enough surplus income to carry a small shortfall for the first two years. The growth record and the funded transport upgrade are what this property is bought for; the yield is not.' },
+      { winner: '14 Marlborough Street', investorTypes: ['Development', 'Land banking'], investorTypesLine: 'Development · Land banking', reasoning: 'Suits a buyer who wants the land and the second dwelling rather than the current improvements, and who can service the shortfall while the secondary dwelling is approved and built.' },
+      { winner: '7 Wardell Road', investorTypes: ['Income'], investorTypesLine: 'Income', reasoning: 'Suits a buyer who needs the holding to pay for itself from settlement and is not relying on it for capital growth.' },
+    ],
+    recommendations: {
+      bestOverall: {
+        winner: '22 Chapel Street, Marrickville NSW 2204',
+        reason: 'It wins on four of the eleven axes and loses none of them badly. The growth record is the strongest of the three and is supported by a funded transport upgrade rather than by a forecast, the 2021 renovation removes the near-term capital works that weigh on the Leichhardt holding, and the rental demand does not depend on a single employment catchment. The thin land component is the trade, and it is the right one at this horizon.',
+      },
+      runners: [
+        { winner: '14 Marlborough Street, Leichhardt NSW 2040', reason: 'The land play, and the better property on a fifteen-year view. It is second here because the first four years need income from outside the property to service the shortfall and fund the capital works, which is a position not every buyer can hold.' },
+      ],
+      avoid: [
+        { winner: '7 Wardell Road, Dulwich Hill NSW 2203', reason: 'Not a bad property, but the wrong one against this brief: it is bought for income and the brief is growth-weighted over five to seven years. The single access road and the smallest catchment of the three are what keep its growth thesis behind the other two.' },
+      ],
+      alternativeScenarios: [
+        {
+          scenario: 'If the horizon shortened to three years',
+          reason: 'Dulwich Hill becomes the pick. Over three years the growth advantage at Marrickville does not have time to compound past the transaction costs, and the only one of the three that funds its own holding costs from settlement is the one that survives a short hold intact.',
+          winner: '7 Wardell Road',
+        },
+      ],
+    },
+    basis: {
+      timeHorizon: '5-7 years',
+      riskTolerance: 'moderate',
+      depth: 'comprehensive',
+      investorProfile: 'growth',
+      model: 'sonar-pro',
+    },
+
     a: {
       address: ADDRESS, price: 1285000, rent: 950, yield: 3.84, net: -413, land: '412 m²',
       built: '1928', config: '3 bed · 2 bath · 1 car', condition: 'Original', growth: 6.1,
@@ -944,6 +1867,165 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       afterTaxSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Math.round(r.afterTax) })),
     };
   })(),
+
+  // ── Borrowing Capacity Snapshot ───────────────────────────────────────────
+  //
+  // The namespaces `borrowingCapacityProjection.pure.ts` publishes, so the 50
+  // Borrowing Capacity masters preview with figures rather than blanks.
+  //
+  // Shapes and units follow the live `borrowing_capacity_assessments` table
+  // rather than what reads nicely: rates are whole-number percent (the
+  // `percent` filter does not multiply), `capacity.dti` is a MULTIPLE of income
+  // and is set with `| fixed`, and `income.items` / `liabilities.items` are
+  // arrays with the element keys the table actually stores. A sample written in
+  // a convenient shape is how a catalogue passes preview and renders empty on
+  // real data — which is precisely what happened to the Investment Compass
+  // masters before the projection landed.
+  capacity: {
+    borrowing: 1180000,
+    stressTested: 1042000,
+    monthlySurplus: 1290,
+    annualSurplus: 15480,
+    band: 'amber',
+    bandLabel: 'Serviceable with limited headroom',
+    // Total debt over assessable income: (612,000 + 4,200 + 18,600 existing
+    // + 1,032,000 proposed) / 280,000 = 5.95. A MULTIPLE, not a percentage —
+    // the column is `dti_ratio` and reads like a rate, which is why the
+    // templates set it with `| fixed` and label it "x assessable income".
+    dti: 5.95,
+    depositAmount: 258000,
+    propertyValueEstimate: 1290000,
+    // `netPurchase` is deliberately absent: populated on 3 of 143 rows, so the
+    // sample shows what the common case looks like.
+  },
+  // The totals RECONCILE against the components, and that is not decoration:
+  // the income page prints the lines and the total on the same table, so a
+  // sample whose total does not equal its parts renders a visibly wrong
+  // financial document in every preview and every screenshot. The first draft
+  // of this had four lines summing to $280,000 under a $245,000 total, which
+  // the render showed immediately.
+  //   gross  118,000 + 82,000 + 46,800 + 33,200 = 280,000
+  //   shaded 118,000 + 82,000 + 35,100 + 28,220 = 263,320
+  income: {
+    gross: 280000,
+    shaded: 263320,
+    shadingApplied: 16680,
+    items: [
+      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 0 },
+      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 0 },
+      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25 },
+      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 15 },
+    ],
+  },
+  expenses: {
+    monthly: 6420,
+    annual: 77040,
+    method: 'hem',
+    methodLabel: 'HEM benchmark',
+    declared: 5900,
+    hemBenchmark: 6420,
+  },
+  liabilities: {
+    monthly: 1840,
+    annual: 22080,
+    items: [
+      { type: 'Owner-occupier home loan', balance: 612000, limit: 612000, monthlyServicing: 1540 },
+      { type: 'Credit card', balance: 4200, limit: 15000, monthlyServicing: 300 },
+      { type: 'Novated lease', balance: 18600, limit: 18600, monthlyServicing: 0 },
+    ],
+  },
+  loan: {
+    proposed: 1032000,
+    lvr: 80,
+    termYears: 30,
+    interestRate: 6.14,
+    bufferRate: 3,
+    assessmentRate: 9.14,
+    lender: 'Meridian Mutual',
+  },
+  // Empty on 140 of 143 assessments, so the LMI block stays conditional and the
+  // sample exercises the common path.
+  lmi: {},
+  // Kept inside the lengths production actually writes: 43-70 characters a
+  // recommendation across 270 stored ones, 35-59 a warning across 63. The
+  // templates reserve height for those maxima, and a sample longer than
+  // production overlaps the block below it in every preview — which is what the
+  // first draft of these strings did.
+  recommendations: [
+    'Cutting the credit card limit to $5,000 adds about $46,000',
+    'Closing the novated lease removes $18,600 of liabilities',
+    'A 30-year term is already the most favourable modelled',
+  ],
+  warnings: [
+    'Includes a 3.00% buffer over the quoted rate',
+    'Rental income shaded at 25% by lender policy',
+  ],
+
+  // ── Portfolio Performance Review ──────────────────────────────────────────
+  //
+  // The remaining namespaces `portfolioProjection.pure.ts` publishes. The rest
+  // of the format's figures extend `portfolio`, `summary` and `risk` in place,
+  // because those namespaces already exist and a second key of the same name in
+  // one object literal silently discards the first.
+  //
+  // The inventory is exactly four rows, which is what the masters draw and the
+  // observed maximum across all 21 stored reports.
+  properties: PORTFOLIO_HOLDINGS,
+
+  // `analysis.financialHealth` — five strings, no figures, and their lengths
+  // are not what the names suggest. Measured across the 21 stored reports:
+  // `cashflowStatus` is 7-8 characters, `debtServiceability` 8-11,
+  // `equityPosition` 6-8 and `lvrRisk` 3-6 — single words — while `analysis`,
+  // in the same object, is 458-1620.
+  //
+  // The first draft here wrote a sentence into each of the four, and every page
+  // that printed them overlapped the block below: a definition list reserves
+  // one line per row, which is right for the data and wrong for the sample. A
+  // sample longer than production is the same defect as a sample shorter than
+  // it, and it is caught by the same measure.
+  health: {
+    analysis:
+      'The portfolio is performing on growth and under-performing on income, which is the '
+      + 'expected shape for four inner-ring assets bought inside six years. The shortfall of '
+      + '$1,183 a month is covered comfortably from surplus income rather than from reserves, '
+      + 'and it has narrowed in each of the last three years as rents have moved faster than '
+      + 'holding costs. Equity of $1.32m against $3.41m of value leaves the portfolio at a '
+      + '61% loan-to-value ratio, with roughly $640k usable at an 80% ceiling — enough to fund '
+      + 'a further acquisition without new savings. The binding constraint is not equity or '
+      + 'serviceability but concentration: all four holdings sit inside one council area and '
+      + 'one tenant catchment, so the portfolio moves as a single asset would.',
+    cashflowStatus: 'Negative',
+    debtServiceability: 'Comfortable',
+    equityPosition: 'Strong',
+    lvrRisk: 'Low',
+  },
+
+  // `analysis.strategicRecommendations` — four LISTS, not a list and three
+  // statements. The horizons carry 1-4 actions each across the stored reports.
+  actions: {
+    priority: [
+      'Refinance the Newtown facility before its fixed rate expires in March',
+      'Obtain a depreciation schedule for the Leichhardt purchase and amend the prior return',
+      'Place the next acquisition outside the inner west, in a higher-yielding price band',
+    ],
+    // 74-345 characters an item across the stored reports — longer than the
+    // priority actions above them, which is why the horizons get their own page.
+    shortTerm: [
+      'Refinance the two facilities rolling off fixed rates in the next twelve months and rebuild '
+      + 'the offset balance to six months of holding costs before adding any further debt.',
+      'Order a depreciation schedule for the Leichhardt purchase',
+    ],
+    mediumTerm: [
+      'Add one income-positive holding in a different capital city, funded from the usable equity '
+      + 'rather than new savings, to bring the portfolio to a neutral monthly position without '
+      + 'lifting the portfolio LVR above 65%.',
+    ],
+    longTerm: [
+      'Hold to the ten-year horizon and review each holding against its original thesis at the '
+      + 'annual review. The Lewisham apartment is the smallest contributor and the first '
+      + 'candidate to recycle if the concentration is to be reduced by sale rather than purchase.',
+    ],
+  },
 };
 
 /**

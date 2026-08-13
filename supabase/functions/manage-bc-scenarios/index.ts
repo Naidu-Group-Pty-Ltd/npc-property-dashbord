@@ -7,6 +7,7 @@ import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { canAccessClient } from "../_shared/clientAccess.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 type Operation = 'list' | 'create' | 'delete';
 
 interface RequestBody {
@@ -184,7 +185,7 @@ Deno.serve(async (req) => {
   } catch (err: any) {
     console.error('[manage-bc-scenarios] Unexpected error:', err);
     return new Response(
-      JSON.stringify({ success: false, error: err?.message || 'Internal error' }),
+      JSON.stringify({ ...internalError(err, 'manage-bc-scenarios'), success: false }),
       { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
     );
   }

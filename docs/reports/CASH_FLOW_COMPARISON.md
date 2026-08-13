@@ -475,3 +475,83 @@ service-role write.
 
 Until then the new control fails with a message naming the existing buttons,
 which keep working throughout.
+
+---
+
+## 12. The Template Builder path — fifty masters, and no adapter
+
+`/admin/template-builder` now carries **50 design templates** for
+`report_type = 'cash_flow_comparison'`, drawn in the ten Investment Compass
+families. They are **preview-only**, and that is a finding rather than an
+omission.
+
+### There is nothing an adapter could read
+
+Every other format on the family system reads a stored artefact. This one has
+none, and each of the three candidates fails for a different reason:
+
+| Candidate | Why it cannot serve a template |
+| --- | --- |
+| The projections | The browser's, computed by the ~100-line cascade in `CashFlowAnalysisModal`, and never persisted. §1 explains why a second server-side implementation would be worse than none |
+| `cash_flow_analyses` | **0 rows**, and structurally cannot hold any — F1. Its INSERT check requires `auth.role() = 'authenticated'` while this application signs in through `custom_users`, and its SELECT policy would hide the row from its own author even if one succeeded |
+| `cash_flow_comparison_renders` | **0 rows**; records `primary_report_id` and `compared_report_ids` but stores neither the projections nor the analysis (§9); and its only SELECT policy is `has_role(auth.uid(), 'superadmin')`, which the browser cannot satisfy for the same `custom_users` reason |
+
+The obvious substitute is the one the 10 Year Cash Flow format uses —
+`investment_reports.financial_calculations.projections`, on 162 reports — and it
+fails for a reason that is not about scope. That series carries eight fields a
+year and **every headline measure in this document is built on
+`afterTaxAnnual`**: total return, ROI, cash-on-cash, the equity multiple and both
+break-even years. The stored series models no tax at all. Filling those fields to
+make the shape fit would put an invented after-tax position on a client's page.
+
+So `cashFlowComparisonProjection.pure.ts` is written and tested, the masters bind
+what it publishes, and the registry entry says *why* it is preview-only rather
+than the default "not configured yet". The day a comparison is persisted
+somewhere a template can reach, an adapter calling that projection is the whole
+of the work.
+
+### What the masters do with a document whose shape changes
+
+A comparison holds 2 to 5 properties and the central tables put one column per
+property. Every property-wide table is drawn **four times, once per count, under
+mutually exclusive conditionals at one position** — the pattern
+`COMPARISON.md` introduced for its ranking, generalised into `byPropertyCount()`
+because this format needs it on five tables rather than one.
+
+The archetype route's landscape matrices have no equivalent here: these families
+are portrait and cannot reflow, so cash flow and equity get a page each with
+years down the side and properties across — the same split-by-measure decision
+§6 made, reached from the other direction.
+
+### The editorial rules, asserted rather than described
+
+`cashFlowComparisonCatalogue.spec.ts` holds each of §5's decisions to the page
+sequence, because every one would be silently undone by an ordinary refactor:
+
+- model prose names no property, and the spec walks every bound path under
+  `analysis.*` to prove none ends in an address or a number;
+- `avoid` appears on the risk page and nowhere near the ranking;
+- `highestRisk` is prose and never a scoreboard row;
+- no score is printed with a denominator;
+- the verdict's KPI band leads with the **gap**, not the winner's figure;
+- both break-evens print, named apart;
+- each analysis page is gated on its own block, so a partial analysis loses only
+  the sections that are actually missing.
+
+### One defect this found in the renderer
+
+**`data-table` never resolved bindings in its column headers.** Every body cell
+went through `resolveBindable` and the headers did not, so a bound header printed
+a literal `{{cashFlowComparison.properties.0.shortAddress}}` across the top of
+the table. It survived because no format bound a header until this one — the
+other six all name their columns statically, and a comparison is the first
+document whose headings are data. Fixed in both renderers, with
+`dataTableHeaderBindings.spec.ts` covering it.
+
+It is also the only binding defect in this programme that is *visible* rather
+than silent: an unresolved binding elsewhere renders as the empty string, and
+this one rendered as its own source.
+
+See [`../template-library/07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)
+for the design system these 50 masters are drawn in.
+

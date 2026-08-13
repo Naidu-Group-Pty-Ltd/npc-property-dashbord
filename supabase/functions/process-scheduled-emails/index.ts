@@ -1,5 +1,6 @@
 // Cron worker: drains email_copilot_scheduled_sends pending rows that are due.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
     });
   } catch (e: any) {
     console.error('[process-scheduled-emails] Error:', e);
-    return new Response(JSON.stringify({ error: e?.message || 'Server error' }), {
+    return new Response(JSON.stringify(internalError(e, 'process-scheduled-emails')), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

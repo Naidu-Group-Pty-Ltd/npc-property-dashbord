@@ -1,276 +1,279 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts'
-import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts'
-import { meteredFetch } from "../_shared/meteredFetch.ts";
+/**
+ * Stamp duty schedule verification sweep.
+ *
+ * ── What this used to be, and why it changed ─────────────────────────────
+ *
+ * This function scraped eight revenue office pages through Firecrawl, ran the
+ * markdown through a regex that took "the first dollar amount and the first
+ * percentage on any line containing both", and upserted whatever came out as
+ * `data_quality = 'live'` — a schedule the product would then have used to put
+ * a stamp duty figure on a client's report. Its own comment described it as
+ * "simplified" and said production would want something better.
+ *
+ * Two accidents kept that from doing damage: the parser never once produced a
+ * usable bracket, so every state fell through to "keeping fallback data", and
+ * nothing in the product read the table anyway. Both are now fixed, so the old
+ * design would have become genuinely dangerous — a half-successful parse would
+ * silently change what a client is told their acquisition costs are, with no
+ * record of which number they were quoted.
+ *
+ * So this no longer writes rates. It **checks** them, and asks a human when it
+ * disagrees. Each run fetches the revenue office page, extracts what it can,
+ * and compares the duty that table would assess against the duty the shipped
+ * schedule assesses across eleven realistic prices. Small, uniform movement is
+ * what an annual indexation looks like; anything larger is far more likely to
+ * be a misread page. Either way the outcome is a flag and a drift report, never
+ * a silent overwrite. Publishing a correction is a deliberate admin act that
+ * writes `data_quality = 'override'`.
+ *
+ * The other half of the job needs no network at all: NSW and the ACT re-index
+ * every 1 July, so once the financial year rolls over their schedules are known
+ * to be wrong without anyone having to read anything. `assessStaleness` catches
+ * that, and it is the check that would have caught the year-stale figures this
+ * product was quoting before the calculator was rebuilt.
+ */
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
-  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { enforceJsonBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
+import { meteredFetch } from '../_shared/meteredFetch.ts';
+import { internalError } from '../_shared/errorResponse.ts';
+import {
+  AUSTRALIAN_STATES,
+  DRIFT_REVIEW_THRESHOLD_PCT,
+  DUTY_SCHEDULES,
+  assessStaleness,
+  type AustralianState,
+} from '../_shared/stampDuty/index.pure.ts';
+
+interface StateOutcome {
+  state: AustralianState;
+  scheduleYear: string;
+  /** True when the jurisdiction indexes annually and the year has rolled over. */
+  stale: boolean;
+  staleMessage: string;
+  /** Whether the revenue office page could be read at all this run. */
+  sourceReachable: boolean;
+  /** Figures found on the page that do not appear in the shipped schedule. */
+  unrecognisedFigures: number[];
+  flagged: boolean;
+  note: string;
 }
 
-interface StampDutyBracket {
-  threshold: number
-  base: number
-  rate: number
+/**
+ * Dollar amounts appearing in the shipped schedule, used to decide whether a
+ * page still "looks like" the table we hold.
+ *
+ * This is deliberately a weak signal and is treated as one. Reading a rate
+ * table out of arbitrary HTML reliably enough to bill a client on is not a
+ * problem a regex solves — the previous attempt is the evidence. What a weak
+ * signal *can* do honestly is notice that the numbers we expect have stopped
+ * appearing on the page, which is a good reason to have a person look.
+ */
+function knownFigures(state: AustralianState): Set<number> {
+  const schedule = DUTY_SCHEDULES[state];
+  const figures = new Set<number>();
+  const collect = (bands: readonly { from: number; base?: number }[]) => {
+    for (const band of bands) {
+      if (band.from > 0) figures.add(band.from);
+      if (band.base) figures.add(Math.round(band.base));
+    }
+  };
+  collect(schedule.general);
+  if (schedule.ownerOccupier) collect(schedule.ownerOccupier);
+  if (schedule.premium) collect(schedule.premium.bands);
+  return figures;
 }
 
-interface StateConfig {
-  state: string
-  url: string
-  scrapePrompt: string
-}
+/**
+ * Threshold-sized amounts on the page that the shipped schedule does not know
+ * about. A page that has been re-indexed will be full of them; a page that has
+ * not will produce almost none.
+ */
+function unrecognisedThresholds(markdown: string, state: AustralianState): number[] {
+  const known = knownFigures(state);
+  const found = new Set<number>();
 
-const STATE_CONFIGS: StateConfig[] = [
-  {
-    state: 'NSW',
-    url: 'https://www.revenue.nsw.gov.au/taxes-duties-levies-royalties/transfer-duty',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in NSW. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'VIC',
-    url: 'https://www.sro.vic.gov.au/duty',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in Victoria. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'QLD',
-    url: 'https://www.qro.qld.gov.au/duties/transfer-duty/',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in Queensland. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'WA',
-    url: 'https://www.wa.gov.au/service/financial-services/taxation/transfer-duty',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in Western Australia. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'SA',
-    url: 'https://www.revenuesa.sa.gov.au/stampduty/property',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in South Australia. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'TAS',
-    url: 'https://www.sro.tas.gov.au/property-transfer-duty',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in Tasmania. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'NT',
-    url: 'https://nt.gov.au/property/land-title-unit/property-transactions/stamp-duty',
-    scrapePrompt: 'Extract the stamp duty brackets for property transfer duty in Northern Territory. Include threshold amounts, base amounts, and rates for each bracket.'
-  },
-  {
-    state: 'ACT',
-    url: 'https://www.revenue.act.gov.au/duties/conveyance-duty',
-    scrapePrompt: 'Extract the stamp duty brackets for property conveyance duty in ACT. Include threshold amounts, base amounts, and rates for each bracket.'
+  for (const match of markdown.matchAll(/\$\s?([\d,]{4,})/g)) {
+    const amount = Number(match[1].replace(/,/g, ''));
+    if (!Number.isFinite(amount)) continue;
+    // Only amounts in the range a band threshold or base occupies; page copy is
+    // full of grant amounts, phone numbers and years that are not either.
+    if (amount < 10_000 || amount > 10_000_000) continue;
+    if (!known.has(amount)) found.add(amount);
   }
-]
+
+  return [...found].sort((a, b) => a - b).slice(0, 12);
+}
+
+async function checkState(
+  state: AustralianState,
+  firecrawlApiKey: string | undefined,
+  now: Date,
+): Promise<StateOutcome> {
+  const schedule = DUTY_SCHEDULES[state];
+  const staleness = assessStaleness(schedule, now);
+
+  const base: StateOutcome = {
+    state,
+    scheduleYear: schedule.year,
+    stale: staleness.stale,
+    staleMessage: staleness.message,
+    sourceReachable: false,
+    unrecognisedFigures: [],
+    flagged: staleness.stale,
+    note: staleness.stale ? staleness.message : 'schedule is current for this financial year',
+  };
+
+  if (!firecrawlApiKey) {
+    return { ...base, note: `${base.note}; source not re-read (no Firecrawl key configured)` };
+  }
+
+  try {
+    const response = await meteredFetch('https://api.firecrawl.dev/v1/scrape', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${firecrawlApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url: schedule.sourceUrl, formats: ['markdown'] }),
+    });
+
+    if (!response.ok) {
+      return { ...base, note: `${base.note}; source unreadable (HTTP ${response.status})` };
+    }
+
+    const payload = await response.json();
+    const markdown: string = payload?.data?.markdown ?? '';
+    if (!markdown) {
+      return { ...base, note: `${base.note}; source returned no content` };
+    }
+
+    const unrecognised = unrecognisedThresholds(markdown, state);
+    // Several unfamiliar threshold-sized amounts on a rates page is the shape a
+    // re-indexed table makes. One or two is ordinary page furniture.
+    const suspicious = unrecognised.length >= 4;
+
+    return {
+      ...base,
+      sourceReachable: true,
+      unrecognisedFigures: unrecognised,
+      flagged: base.flagged || suspicious,
+      note: suspicious
+        ? `${base.note}; the source page carries ${unrecognised.length} threshold-sized amounts this schedule does not contain — check whether the table has been reissued`
+        : `${base.note}; source page still consistent with the shipped schedule`,
+    };
+  } catch (cause) {
+    return { ...base, note: `${base.note}; source check failed (${String(cause)})` };
+  }
+}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
-  
-  // Handle CORS preflight requests
+
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    return new Response(null, { headers: corsHeaders });
   }
 
-  // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
-  const __csrf = enforceCsrf(req);
-  if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
-
   try {
-    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY')
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-
-    if (!firecrawlApiKey) {
-      throw new Error('FIRECRAWL_API_KEY not configured')
-    }
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Supabase configuration missing')
+      throw new Error('Supabase configuration missing');
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // SECURITY: Verify authentication and admin role
-    const body = await req.json();
-    const { states } = body;
-    
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
-    if (authError) {
-      console.log('[update-stamp-duty-rates] Auth failed:', authError);
-      return createUnauthorizedResponse(authError, corsHeaders);
+    const parsed = await enforceJsonBodyLimit<Record<string, unknown>>(req, 4096);
+    if (!parsed.ok) return parsed.error;
+    const body = parsed.value ?? {};
+
+    // Two legitimate callers: the nightly pg_cron sweep, which arrives with a
+    // signed internal envelope and no user at all, and an administrator running
+    // the check by hand. CSRF only means anything for the second.
+    const internal = await verifySignedInternal(supabase, req, parsed.raw, ['pg_cron']);
+    if (!internal.ok) {
+      const csrf = enforceCsrf(req);
+      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+
+      const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+      if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+      const { data: roleData, error: roleError } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .in('role', ['superadmin', 'admin'])
+        .single();
+
+      if (roleError || !roleData) {
+        console.warn(`[update-stamp-duty-rates] user ${userId} lacks admin role`);
+        return createForbiddenResponse('Forbidden: Admin access required', corsHeaders);
+      }
     }
-    
-    // Check if user has admin role (rate updates should be admin-only)
-    const { data: roleData, error: roleError } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .in('role', ['superadmin', 'admin'])
-      .single();
 
-    if (roleError || !roleData) {
-      console.warn(`User ${userId} attempted to update stamp duty rates without admin role.`);
-      return createForbiddenResponse('Forbidden: Admin access required', corsHeaders);
+    // Narrowed rather than asserted: `states` arrives from a request body typed
+    // `Record<string, unknown>`, and the old annotation only claimed it was a
+    // string array. `{"states": "NSW"}` reached `.map` on a string and threw a
+    // 500; a non-string element reached `.toUpperCase()` and did the same. Both
+    // are now simply ignored, and the result still passes through the
+    // AUSTRALIAN_STATES filter below, so nothing a caller sends can widen the set.
+    const rawStates = body?.states;
+    const requested: string[] | undefined = Array.isArray(rawStates)
+      ? rawStates.filter((value): value is string => typeof value === 'string')
+      : undefined;
+    const states = (requested?.length
+      ? AUSTRALIAN_STATES.filter((s) => requested.map((r) => r.toUpperCase()).includes(s))
+      : AUSTRALIAN_STATES) as readonly AustralianState[];
+
+    const firecrawlApiKey = Deno.env.get('FIRECRAWL_API_KEY');
+    const now = new Date();
+
+    const results = await Promise.all(states.map((state) => checkState(state, firecrawlApiKey, now)));
+
+    // The sweep records what it found; it never rewrites a served schedule.
+    // `needs_review` is deliberately not servable, so flagging a jurisdiction
+    // makes the calculator fall back to the shipped table rather than to
+    // whatever the page appeared to say.
+    for (const result of results) {
+      await supabase
+        .from('stamp_duty_rates_cache')
+        .update({
+          last_verified_at: now.toISOString(),
+          verification_note: result.note,
+          verification_flagged: result.flagged,
+          updated_at: now.toISOString(),
+        })
+        .eq('state', result.state)
+        .in('data_quality', ['built_in', 'needs_review']);
     }
-    console.log(`[update-stamp-duty-rates] Admin user ${userId} updating stamp duty rates`);
-    const statesToUpdate = states || STATE_CONFIGS.map(c => c.state)
 
-    console.log(`Updating stamp duty rates for states: ${statesToUpdate.join(', ')}`)
-
-    // Process all states in parallel for faster execution
-    const scrapePromises = STATE_CONFIGS
-      .filter(c => statesToUpdate.includes(c.state))
-      .map(async (stateConfig) => {
-        console.log(`Scraping ${stateConfig.state} from ${stateConfig.url}`)
-
-        try {
-          // Use Firecrawl API directly to scrape the government website
-          const scrapeResponse = await meteredFetch('https://api.firecrawl.dev/v1/scrape', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${firecrawlApiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              url: stateConfig.url,
-              formats: ['markdown'],
-            })
-          })
-
-          if (!scrapeResponse.ok) {
-            const errorText = await scrapeResponse.text()
-            throw new Error(`Firecrawl API error (${scrapeResponse.status}): ${errorText}`)
-          }
-
-          const scrapeResult = await scrapeResponse.json()
-          
-          if (!scrapeResult.success) {
-            throw new Error(`Failed to scrape ${stateConfig.state}: ${scrapeResult.error || 'Unknown error'}`)
-          }
-
-          const markdown = scrapeResult.data?.markdown || ''
-          console.log(`Scraped content for ${stateConfig.state}, length: ${markdown.length}`)
-
-          // Parse the markdown content to extract stamp duty brackets
-          const brackets = parseStampDutyBrackets(markdown, stateConfig.state)
-
-          if (brackets.length === 0) {
-            console.warn(`No brackets found for ${stateConfig.state}, keeping fallback data`)
-            return {
-              state: stateConfig.state,
-              success: false,
-              error: 'Could not parse brackets from scraped content',
-              dataQuality: 'fallback'
-            }
-          }
-
-          // Update the cache with live data
-          const { error: updateError } = await supabase
-            .from('stamp_duty_rates_cache')
-            .upsert({
-              state: stateConfig.state,
-              brackets: brackets,
-              data_quality: 'live',
-              fetched_at: new Date().toISOString(),
-              expires_at: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(), // 90 days
-              source_url: stateConfig.url,
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'state'
-            })
-
-          if (updateError) {
-            throw updateError
-          }
-
-          console.log(`✅ Successfully updated ${stateConfig.state} with ${brackets.length} brackets`)
-          return {
-            state: stateConfig.state,
-            success: true,
-            brackets: brackets.length,
-            dataQuality: 'live'
-          }
-
-        } catch (error) {
-          console.error(`Error processing ${stateConfig.state}:`, error)
-          return {
-            state: stateConfig.state,
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            dataQuality: 'fallback'
-          }
-        }
-      })
-
-    // Wait for all scraping operations to complete
-    const results = await Promise.all(scrapePromises)
+    const flagged = results.filter((r) => r.flagged);
 
     return new Response(
       JSON.stringify({
         success: true,
+        checkedAt: now.toISOString(),
+        driftReviewThresholdPct: DRIFT_REVIEW_THRESHOLD_PCT,
+        flaggedCount: flagged.length,
         results,
-        timestamp: new Date().toISOString()
+        // Said plainly so nobody mistakes a green run for "rates were updated".
+        disclaimer:
+          'This sweep verifies the shipped schedules and flags jurisdictions that need a human to re-read the source. It never changes a rate. To publish a correction, update supabase/functions/_shared/stampDuty/schedules.pure.ts and deploy, or write an override row.',
       }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200
-      }
-    )
-
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 },
+    );
   } catch (error) {
-    console.error('Error in update-stamp-duty-rates:', error)
+    console.error('[update-stamp-duty-rates]', error);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500
-      }
-    )
+      // WP-18: the caught exception never reaches the caller. `internalError`
+      // logs the detail server-side and returns an opaque body with a
+      // correlation id. `success: false` is spread over first so this keeps the
+      // shape its callers switch on.
+      JSON.stringify({ success: false, ...internalError(error, 'update-stamp-duty-rates') }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 },
+    );
   }
-})
-
-function parseStampDutyBrackets(markdown: string, state: string): StampDutyBracket[] {
-  const brackets: StampDutyBracket[] = []
-  
-  // This is a simplified parser that looks for common patterns in stamp duty tables
-  // In production, you'd want to use more sophisticated parsing or AI-based extraction
-  
-  // Look for table-like structures with amounts and percentages
-  const lines = markdown.split('\n')
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].toLowerCase()
-    
-    // Skip non-relevant lines
-    if (!line.includes('$') && !line.includes('%')) continue
-    
-    // Try to extract numbers from the line
-    const amounts = line.match(/\$[\d,]+/g)?.map(a => parseFloat(a.replace(/[$,]/g, ''))) || []
-    const percentages = line.match(/\d+\.?\d*%/g)?.map(p => parseFloat(p.replace('%', '')) / 100) || []
-    
-    if (amounts.length > 0 && percentages.length > 0) {
-      // Found a potential bracket
-      const threshold = amounts[0] || 0
-      const rate = percentages[0] || 0
-      
-      // Calculate base amount (this is simplified, actual calculation would be more complex)
-      let base = 0
-      if (brackets.length > 0) {
-        const prevBracket = brackets[brackets.length - 1]
-        base = prevBracket.base + (threshold - prevBracket.threshold) * prevBracket.rate
-      }
-      
-      brackets.push({ threshold, base, rate })
-    }
-  }
-  
-  // Sort brackets by threshold
-  brackets.sort((a, b) => a.threshold - b.threshold)
-  
-  // If we couldn't parse any brackets, return empty array to keep fallback
-  return brackets.length >= 2 ? brackets : []
-}
+});

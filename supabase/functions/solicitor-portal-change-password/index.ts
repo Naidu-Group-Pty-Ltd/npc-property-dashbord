@@ -4,6 +4,7 @@ import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth
 import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts"
 import { auditSolicitorIdentity, issueSolicitorSession, revokeAllSolicitorSessions } from "../_shared/solicitorSessions.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -37,6 +38,14 @@ Deno.serve(async (req) => {
 
     if (!new_password || typeof new_password !== 'string' || new_password.length < 10) {
       return json({ error: 'New password must be at least 10 characters' }, 400)
+    }
+    // This portal's 10-character floor stays (stricter than the shared policy's
+    // 8); the shared checks — common-password list, character classes and the
+    // HIBP k-anonymity breach lookup — run on top. Fail-open if HIBP is
+    // unreachable so an outage cannot block a password change.
+    const strength = await validatePasswordStrength(new_password)
+    if (!strength.isValid) {
+      return json({ error: strength.error }, 400)
     }
 
     const { data: record } = await supabase

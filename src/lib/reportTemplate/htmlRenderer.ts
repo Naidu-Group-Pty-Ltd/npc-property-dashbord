@@ -13,7 +13,7 @@ import {
   type Tokens,
   parseTemplate,
 } from './templateSchema';
-import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
+import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks, pageContainedRegions } from './rendering/pdfImportPagePolicy';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -65,6 +65,15 @@ export interface HtmlRenderOptions {
    * underlay would duplicate all source content behind the reconstruction.
    */
   showReferenceUnderlay?: boolean;
+  /**
+   * Editor opt-in: render the reconstructed native layers on a RASTER-ONLY
+   * page (`outputStrategy: 'raster-only'`), which final output suppresses in
+   * favour of the source raster. The editor canvas needs them — they are what
+   * the person edits — and without this flag a raster-only page whose raster
+   * URL is resolved at request time renders as nothing at all. Maps to the
+   * page-policy option of the same name (`resolvePageRenderPlan`).
+   */
+  showReconstructedLayers?: boolean;
   /**
    * E7 (runtime-only): map an E6 final-crop region id → an ephemeral image src
    * (signed/object/data URL) to hydrate final source-crop elements at paint
@@ -136,6 +145,13 @@ function themeOverrideCss(pageIndex: number, base: Tokens, merged: Tokens): stri
 function baseCss(): string {
   return `
 *, *::before, *::after { box-sizing: border-box; }
+/* A rendered document must be CLOSED OVER ITS ENVIRONMENT: the same template
+   must paint identically in the editor iframe (whose host is dark-themed), in
+   WeasyPrint, and in any PDF viewer. color-scheme pins the browser's default
+   canvas to light — without it, Chrome gives an iframe inside a dark host a
+   BLACK default canvas, which is exactly how "white" imported pages were
+   rendering black. WeasyPrint ignores the property, so print is unaffected. */
+html { color-scheme: only light; }
 html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { font-family: var(--font-body, 'Helvetica', sans-serif); color: var(--color-text, #111); }
 .tpl-page {
@@ -144,6 +160,14 @@ body { font-family: var(--font-body, 'Helvetica', sans-serif); color: var(--colo
   overflow: hidden;
   page-break-after: always;
   break-after: page;
+  /* A page is PAPER: white unless the template says otherwise, exactly as a
+     PDF viewer treats a page. This is a stylesheet default, so a page that
+     sets its own colour still wins — that lands as an inline style, which
+     always beats this rule. Backgrounds are dropped by more than one template
+     transformation (the CDIR round-trip is a documented one), and a page with
+     no colour used to render TRANSPARENT, showing whatever the host painted
+     behind it. Paper does not inherit its colour from the desk it lies on. */
+  background-color: #ffffff;
 }
 .tpl-page:last-child { page-break-after: auto; break-after: auto; }
 img { max-width: 100%; }
@@ -480,9 +504,11 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // PDF-import reference underlays are editor-canvas-only alignment aids; in
   // preview/print/export the reconstructed overlays ARE the page, and painting
   // the source raster behind them would double-render every element.
+  let sourceRasterPainted = false;
   if (page.background?.imageUrl && shouldRenderPageBackgroundImage(page, pageRenderPlan)) {
     const url = resolveBindable(page.background.imageUrl, ctxBase);
     if (url) {
+      sourceRasterPainted = true;
       // Full-page source rasters set imageFit:'fill' so the reference exactly
       // covers the page box (no aspect-ratio crop/stretch). Decorative images
       // keep the historical 'cover' default.
@@ -522,19 +548,60 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // overlays and paint its final crops; absent a plan this is a no-op (identical
   // legacy output). Editor references are never painted in final output.
   const regionPlan = resolveRegionRenderPlanProjection(page as unknown as Page);
+  // A1 — region-scoped containment. An unverified table used to rasterize its
+  // whole page, taking every heading and paragraph on it into the pixels. The
+  // window below shows the SAME source pixels over the table's own box, so
+  // nothing about the table is trusted any further, while the rest of the page
+  // keeps a text layer. See tableRegionContainment.pure.ts.
+  //
+  // The raster is resolved FIRST, and the whole mechanism stands down without
+  // it. Suppressing an overlay whose window never paints would delete the table
+  // outright — the one outcome worse than the page-wide raster this replaces.
+  // Same principle as `shouldFallBackToNativeBlocks`: degraded beats absent.
+  //
+  // The editor's `showReconstructedLayers` opt-in reveals what is underneath,
+  // exactly as it does on a raster-only page: same affordance, same meaning,
+  // so a reviewer can inspect and correct the table the window is covering.
+  const containedRasterUrl = resolveBindable(page.background?.imageUrl, ctxBase);
+  const containedRegions = containedRasterUrl
+    && !(ctxBase as { _showReconstructedLayers?: boolean })._showReconstructedLayers
+    ? pageContainedRegions(pagePolicy, page.size)
+    : [];
   const suppressedOverlays = suppressedOverlayIdSet(regionPlan);
+  for (const region of containedRegions) {
+    for (const id of region.overlayIds ?? []) suppressedOverlays.add(id);
+  }
   const blockCtxBase = suppressedOverlays.size
     ? ({ ...ctxBase, _pdfSuppressedOverlayIds: suppressedOverlays } as ResolveContext)
     : ctxBase;
   const blocks: string[] = [];
-  if (pageRenderPlan.renderNativeBlocks) {
+  // …and if the raster that was supposed to BE this page never resolved, the
+  // reconstruction renders after all rather than shipping a blank sheet. The
+  // raster URL is signed at render time and is simply absent whenever that
+  // signing fails, so this is the difference between a degraded page and an
+  // empty one. See `shouldFallBackToNativeBlocks`.
+  const renderNativeBlocks = pageRenderPlan.renderNativeBlocks
+    || shouldFallBackToNativeBlocks(pageRenderPlan, sourceRasterPainted);
+  if (renderNativeBlocks) {
     for (const block of sortBlocksForPaint(page.blocks)) {
       if (!shouldRenderBlock(block, ctxBase)) continue;
       blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));
     }
   }
-  // Final source-crop elements from the E6 plan (final-output only).
-  const regionCropsHtml = (!regionPlan || regionPlan.pageOutputStrategy === 'raster-only')
+  // Final source-crop elements from the E6 plan.
+  //
+  // These crops are rendered at SOURCE_SCENE_CROP_DPI (300), and chart regions
+  // at CHART_CROP_MIN_DPI (300) — materially sharper than the page raster
+  // underneath them. They used to be suppressed on raster-only pages, which
+  // meant the pages that had ALREADY lost their native layers, and so had the
+  // least fidelity left, were also denied the highest-resolution assets in the
+  // system. That is backwards: a raster-only page is exactly where a crisp
+  // chart or table crop earns the most.
+  //
+  // Painting them over the page raster is safe because both come from the same
+  // source page at the same geometry — the crop lands exactly on top of the
+  // region it was cut from, replacing a blurrier copy of itself.
+  const regionCropsHtml = !regionPlan
     ? '' : buildFinalCropElementsHtml(regionPlan, {
       escapeHtml,
       resolveSrc: (crop) => {
@@ -542,6 +609,24 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
         return resolver ? resolver(crop.regionId) : null;
       },
     });
+
+  // The contained windows themselves. Painted AFTER the native blocks so the
+  // source pixels are what a reader sees in that box — the suppression above
+  // handles ownership, this handles paint order, and neither alone is enough.
+  //
+  // The image is the full page raster, sized to the page and offset so that
+  // exactly the window's own area shows through. That is the same picture the
+  // page-wide raster would have put there, cut to the region rather than
+  // re-cut as a new artifact: no second asset, no second signing path, and no
+  // possibility of the crop and the page disagreeing about geometry.
+  const containedHtml = containedRegions.map((r) => (
+    `<div aria-hidden="true" data-pdf-contained-region="1" style="position:absolute;`
+    + `left:${r.x}pt;top:${r.y}pt;width:${r.width}pt;height:${r.height}pt;overflow:hidden;">`
+    + `<img alt="" src="${escapeHtml(String(containedRasterUrl))}" style="position:absolute;`
+    + `left:${-r.x}pt;top:${-r.y}pt;width:${page.size.width}pt;height:${page.size.height}pt;`
+    + `max-width:none;" />`
+    + `</div>`
+  )).join('');
 
   // Phase 5 — baseline grid (printed when page.baselineGrid.show is true).
   let baselineEl = '';
@@ -560,7 +645,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const editorAttrs = editorMode ? ` data-page-id="${escapeHtml(String(page.id))}" data-page-index="${pageIndex}"` : '';
   const compositionAttrs = ` ${pageCompositionDataAttrs(page as unknown as Page, regionPlan, escapeHtml)}`;
   const dataAttrs = editorAttrs + compositionAttrs;
-  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle)}">${baselineEl}${blocks.join('\n')}${regionCropsHtml}</section>`;
+  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle)}">${baselineEl}${blocks.join('\n')}${containedHtml}${regionCropsHtml}</section>`;
 }
 interface CascadeIndexEntry {
   pageIndex: number;
@@ -734,6 +819,7 @@ export function renderTemplateToHtml(
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;
     (pageCtx as any)._showReferenceUnderlay = !!options.showReferenceUnderlay;
+    (pageCtx as any)._showReconstructedLayers = !!options.showReconstructedLayers;
     // pageCtx is built fresh rather than spread from ctxBase, so every private
     // flag has to be re-set here. Missing this one meant `includeBookmarks:
     // false` was read as `undefined` at paint time and the PDF outline metadata

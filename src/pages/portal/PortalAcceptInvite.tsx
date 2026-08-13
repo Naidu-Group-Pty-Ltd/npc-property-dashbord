@@ -10,11 +10,11 @@ import { AlertCircle, Building2, CheckCircle, Eye, EyeOff, Loader2 } from 'lucid
 import { validatePassword } from '@/utils/passwordValidation';
 import { PasswordStrengthMeter } from '@/components/ui/password-strength-meter';
 import { BrandLogo } from '@/components/branding/BrandAssets';
+import { setPortalSessionToken } from '@/lib/portalSession';
 
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
 
-const PORTAL_SESSION_KEY = 'portal_session_token';
 
 async function invokeFunction(functionName: string, body: Record<string, any>) {
   const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
@@ -24,7 +24,10 @@ async function invokeFunction(functionName: string, body: Record<string, any>) {
       'apikey': SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
     },
-    credentials: 'omit',
+    // `client-portal-accept-invite` answers with exact-origin CORS and sets the
+    // HttpOnly `__Host-client_session_token` cookie, so the browser must be
+    // allowed to keep it.
+    credentials: 'include',
     body: JSON.stringify(body),
   });
   const data = await response.json();
@@ -105,10 +108,12 @@ export default function PortalAcceptInvite() {
       return;
     }
 
-    // Store session
+    // The session lives in the HttpOnly cookie the response set; this in-memory
+    // copy only backs the legacy header/body carriers and dies with the tab. It
+    // used to be written to localStorage, which left a working client session on
+    // the machine indefinitely. See src/lib/portalSession.ts.
     if (data.session_token) {
-      try { sessionStorage.setItem(PORTAL_SESSION_KEY, data.session_token); } catch {}
-      try { localStorage.setItem(PORTAL_SESSION_KEY, data.session_token); } catch {}
+      setPortalSessionToken(data.session_token);
     }
 
     setSuccess(true);

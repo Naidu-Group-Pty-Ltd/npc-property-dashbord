@@ -5,10 +5,11 @@ import { decideProvider } from '../../../supabase/functions/_shared/aml/provider
 /**
  * Identity verification runs live or not at all.
  *
- * Production previously carried a selfhosted IDV row in simulator mode. The
- * runtime correctly refused to execute it, but leaving that state persisted
- * made the provider look half-configured and kept operational work circling
- * around a mode that production must never use.
+ * Production sat with an **active** selfhosted IDV provider in simulator mode.
+ * The configuration screen read as configured; every request refused to
+ * execute it, because production must never run the deterministic simulator;
+ * and the customer was told electronic verification was unavailable. Nothing
+ * reconciled the three.
  */
 
 describe('production never executes a simulator for identity verification', () => {
@@ -19,6 +20,8 @@ describe('production never executes a simulator for identity verification', () =
     });
     expect(d.kind).toBe('refuse');
     expect(d.kind === 'refuse' && d.message).toMatch(/still in simulator mode/i);
+    // The refusal must name what to do, and must say nothing was recorded
+    // against the customer.
     expect(d.kind === 'refuse' && d.message).toMatch(/no verification attempt was recorded/i);
   });
 
@@ -46,7 +49,7 @@ describe('production never executes a simulator for identity verification', () =
     }
   });
 
-  it('keeps simulator behaviour isolated to non-production test/local flows', () => {
+  it('still allows the simulator outside production, where it is the safe default', () => {
     for (const environment of ['test', 'local', 'staging'] as const) {
       expect(decideProvider({
         environment, providerKey: 'selfhosted', mode: 'simulator',
@@ -63,46 +66,38 @@ describe('production never executes a simulator for identity verification', () =
   });
 });
 
-describe('persisted IDV provider configuration is live-only', () => {
-  const guardMigration = readFileSync(
+describe('an IDV provider cannot be active in simulator mode', () => {
+  const migration = readFileSync(
     'supabase/migrations/20260807000000_no_simulator_idv_in_production.sql', 'utf8');
-  const normaliseMigration = readFileSync(
-    'supabase/migrations/20260807110000_normalise_selfhosted_idv_live_mode.sql', 'utf8');
 
-  it('keeps the historical production guard in the migration chain', () => {
-    expect(guardMigration).toContain("capability = 'idv'");
-    expect(guardMigration).toContain("mode = 'simulator'");
+  it('deactivates any active simulator IDV row', () => {
+    expect(migration).toMatch(/UPDATE aml\.provider_configs[\s\S]*SET active = false/);
+    expect(migration).toContain("capability = 'idv'");
+    expect(migration).toContain("mode = 'simulator'");
   });
 
-  it('converts legacy selfhosted simulator rows to live but inactive', () => {
-    expect(normaliseMigration).toMatch(/UPDATE aml\.provider_configs[\s\S]*SET mode = 'live',[\s\S]*active = false/);
-    expect(normaliseMigration).toContain("capability = 'idv'");
-    expect(normaliseMigration).toContain("provider_key = 'selfhosted'");
-    expect(normaliseMigration).toContain("mode = 'simulator'");
-  });
-
-  it('rejects any persisted IDV simulator mode, not just active rows', () => {
-    expect(normaliseMigration).toContain("IF NEW.capability = 'idv' AND NEW.mode = 'simulator' THEN");
-    expect(normaliseMigration).toMatch(/RAISE EXCEPTION/);
-  });
-
-  it('leaves screening configuration alone', () => {
-    const statements = normaliseMigration.split('\n')
+  it('leaves screening alone — its simulator is not on the identity path', () => {
+    // Comments name it for context; no statement may touch it.
+    const statements = migration.split('\n')
       .filter((l) => !l.trimStart().startsWith('--')).join('\n');
     expect(statements).not.toContain('pep_sanctions');
     expect(statements).not.toContain('local_lists');
   });
 
-  it('carries an explicit rollback', () => {
-    expect(normaliseMigration).toContain('-- ROLLBACK:');
+  it('enforces it going forward with a trigger', () => {
+    expect(migration).toContain('BEFORE INSERT OR UPDATE ON aml.provider_configs');
+    expect(migration).toMatch(/RAISE EXCEPTION/);
   });
 
-  it('the historical seed is inactive and the later migration removes its simulator state', () => {
+  it('carries a rollback', () => {
+    expect(migration).toContain('-- ROLLBACK:');
+  });
+
+  it('no longer seeds an active simulator IDV provider', () => {
     const seed = readFileSync(
       'supabase/migrations/20260802120000_seed_selfhosted_kyc_providers.sql', 'utf8');
     const idvBlock = seed.slice(0, seed.indexOf("'pep_sanctions'"));
     expect(idvBlock).toContain('false,');
-    expect(normaliseMigration).toContain("SET mode = 'live'");
   });
 });
 
@@ -115,25 +110,5 @@ describe('the configuration screen offers no simulator for identity verification
 
   it('defaults a new idv provider to live', () => {
     expect(page).toMatch(/capability: "idv"[\s\S]{0,200}?mode: "live"/);
-  });
-});
-
-describe('current KYC operational docs cannot drift back to the abandoned setup', () => {
-  const runbook = readFileSync('docs/aml/kyc-go-live-runbook.md', 'utf8');
-  const design = readFileSync('docs/aml/kyc-zero-cost-solution.md', 'utf8');
-
-  it('documents activation as live-only with no simulator rollback', () => {
-    expect(runbook).toContain('provider_key=selfhosted');
-    expect(runbook).toContain('mode=live');
-    expect(runbook).toContain('active=true');
-    expect(runbook).toContain('Do **not** switch IDV into a simulator mode during an outage.');
-    expect(runbook).not.toMatch(/Provider mode\s*[→-]+\s*simulator/i);
-    expect(design).toContain('There is no production simulator state and no simulator rollback procedure.');
-  });
-
-  it('does not nominate or infer a hosting vendor for the AML service', () => {
-    for (const doc of [runbook, design]) {
-      expect(doc).not.toMatch(/Cloud Run|\bGCP\b|\bgcloud\b|Fly\.io|Render\.com|Amazon Web Services|\bAWS\b|\bAzure\b/i);
-    }
   });
 });

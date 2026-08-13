@@ -17,23 +17,17 @@
 
 import type { CatalogNode } from '../types';
 import type { Perform, PerformInput, PerformOutcome } from './engine';
+import { CLIENT_CAPABLE_STEP_TYPES } from '@/lib/workflow/liveCapability';
 import { sampleOutput } from './sampleData';
 
 /**
- * Steps live mode can genuinely execute. Everything here is either a generic
- * protocol the user pointed at a target themselves, or internal to this
- * platform — nothing that needs a vendor SDK we do not have.
+ * Steps live mode can genuinely execute.
+ *
+ * Derived from the catalog, in `liveCapability.pure.ts`, which the executor and
+ * the dispatcher read too — so the three cannot hold different opinions about
+ * what runs.
  */
-export const LIVE_CAPABLE = new Set([
-  'core.http',
-  'core.graphql',
-  'core.webhook_respond',
-  'core.notify_team',
-  'mcp.list_tools',
-  'mcp.call_tool',
-  'mcp.read_resource',
-  'mcp.get_prompt',
-]);
+export const LIVE_CAPABLE = CLIENT_CAPABLE_STEP_TYPES;
 
 /** A short, plain-language account of what a step was about to do. */
 export function describeIntent(definition: CatalogNode, config: Record<string, unknown>): string {

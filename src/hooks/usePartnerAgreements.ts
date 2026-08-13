@@ -7,9 +7,13 @@ export type PartnerAgreementDirection = 'inbound_property_referral' | 'outbound_
 export type PartnerAgreementStatus =
   | 'draft'
   | 'pending_review'
+  | 'approved_for_issue'
+  | 'partner_review'
+  | 'changes_requested'
   | 'sent_for_signature'
   | 'partially_signed'
   | 'active'
+  | 'withdrawn'
   | 'terminated'
   | 'superseded'
   | 'void';
@@ -91,6 +95,25 @@ export interface PartnerAgreement {
   terminated_at: string | null;
   termination_reason: string | null;
   notes: string | null;
+
+  agreement_owner_id?: string | null;
+  agreement_owner_label?: string | null;
+  issued_at?: string | null;
+  issued_version_id?: string | null;
+  first_viewed_at?: string | null;
+  accepted_at?: string | null;
+  executed_at?: string | null;
+  withdrawn_at?: string | null;
+  executed_pdf_storage_path?: string | null;
+
+  // Disposition. `archived_at` is filing state and deliberately not a status:
+  // an archived agreement keeps every consequence of the one it has.
+  voided_at?: string | null;
+  void_reason?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
+  archived_by_label?: string | null;
+  archive_reason?: string | null;
 
   created_by: string | null;
   updated_by: string | null;
@@ -252,9 +275,13 @@ export const DIRECTION_LABELS: Record<PartnerAgreementDirection, string> = {
 export const STATUS_LABELS: Record<PartnerAgreementStatus, string> = {
   draft: 'Draft',
   pending_review: 'Pending review',
+  approved_for_issue: 'Ready to issue',
+  partner_review: 'Partner review',
+  changes_requested: 'Changes requested',
   sent_for_signature: 'Sent for signature',
   partially_signed: 'Partially signed',
   active: 'Active',
+  withdrawn: 'Withdrawn',
   terminated: 'Terminated',
   superseded: 'Superseded',
   void: 'Void',

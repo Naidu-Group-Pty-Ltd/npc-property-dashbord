@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
+import { useAgreementDownload } from '@/components/admin/useAgreementDownload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,7 @@ const STATUS_META: Record<SolicitorUserRow['status'], { label: string; variant: 
 };
 
 export default function SolicitorPortalAdmin() {
+  const { downloadForUser, downloadingUserId } = useAgreementDownload();
   const [loading, setLoading] = useState(true);
   const [firms, setFirms] = useState<SolicitorFirm[]>([]);
   const [aiPolicyFirm,setAiPolicyFirm]=useState<{id:string;name:string}|null>(null);
@@ -366,6 +368,16 @@ export default function SolicitorPortalAdmin() {
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => setActivityDialog({ open: true, user: u })}>
                                     <History className="mr-2 h-4 w-4" /> Activity
+                                  </DropdownMenuItem>
+                                  {/* Where the question is asked: a partner rings
+                                      up wanting their agreement and the staff
+                                      user is looking at this row. */}
+                                  <DropdownMenuItem
+                                    disabled={downloadingUserId === u.id}
+                                    onClick={() => void downloadForUser('solicitor', u.id, u.name)}
+                                  >
+                                    <FileSignature className="mr-2 h-4 w-4" />
+                                    {downloadingUserId === u.id ? 'Preparing agreement…' : 'Download agreement'}
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   {u.status !== 'revoked' && (

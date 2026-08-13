@@ -11,10 +11,16 @@
  *   - save_questionnaire           { case_id, section, payload, submit? }
  *   - get_consents                 { case_id }          → current AUSTRAC-referenced catalogue + acceptance state
  *   - record_consent               { case_id, kind, version?, payload? }
+ *   - verification_status          { case_id }          → per-party state + which flow to render
+ *   - start_hosted_verification    { case_id, party_id?, party_label? }
+ *                                                      → provider-hosted session URL (never stored)
+ *   - submit_verification          { case_id, ... }     → self-hosted capture path only
  *   - list_requirements            { case_id }
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
  *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
  *   - list_documents               { case_id }
+ *   - get_document_url             { case_id, document_id }
+ *                                                      → 120s signed read URL (never stored)
  *   - list_client_requests         { case_id }
  *   - respond_client_request       { request_id, response_payload }
  *   - submit_for_review            { case_id }         → creates submission_versions row
@@ -26,11 +32,40 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
 import {
   getIdvProvider,
+  getHostedIdvProvider,
+  getStandaloneIdvProvider,
+  isStandaloneIdvProvider,
+  idvFlowFor,
+  diditWorkflowId,
+  workflowRevisedAt,
   resolveTenantProvider,
   cachedSelfHostedIdvHealth,
+  currentEnvironment,
   ProviderResolutionError,
+  type IdvFlow,
 } from "../_shared/aml/providers/index.ts";
+import { callInternalFunction } from "../_shared/internalCall.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+import { buildPassportView } from "../_shared/aml/passport/passportView.pure.ts";
+import { buildClientStampInput } from "../_shared/aml/passport/passportStamps.pure.ts";
+// The journey is the one canonical statement of where a client is, and four
+// portal surfaces render it. It lives in a pure module so it is testable
+// without a database — see the header there for the documents defect that
+// hiding it in this file concealed.
+import { buildJourney } from "../_shared/aml/portalJourney.pure.ts";
+import {
+  buildVendorData, isStaleHostedSession,
+} from "../_shared/aml/providers/didit.pure.ts";
+import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
+import {
+  applyDiditDecision, appendDiditCaseEvent, DiditCorrelationError,
+} from "../_shared/aml/diditOutcome.ts";
+import {
+  parseDocumentChoice, identityReturnUrl, identityDocumentCapturePlan,
+  type IdentityDocumentChoice, type IdentityCaptureKind,
+} from "../_shared/aml/identityDocuments.pure.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -201,7 +236,10 @@ async function loadConsentState(admin: any, caseId: string): Promise<ConsentStat
   const { data: rows, error } = await admin.schema('aml').from('consents')
     .select('kind, version, accepted_at').eq('case_id', caseId);
   if (error) throw error;
-  const accepted = (rows ?? []).map((r: any) => ({
+  // Annotated because `admin` is `any`, so `rows` is too — leaving `accepted`
+  // inferred made it `any` and the callbacks below implicitly-any, which
+  // `deno check` rejects. The shape is already declared on ConsentState.
+  const accepted: ConsentState['accepted'] = (rows ?? []).map((r: any) => ({
     code: String(r.kind), version: String(r.version), accepted_at: r.accepted_at,
   }));
   // Acceptance is version-specific: republishing the catalogue re-asks.
@@ -237,80 +275,6 @@ const CLIENT_ACTION_CODES = [
   'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
   'review_consent', 'provide_clarification', 'review_and_submit',
 ];
-
-/**
- * Stage 22 — server-derived journey. The portal renders exactly what this
- * returns; no completion claim is computed client-side. "Verified" appears
- * only when every applicable party holds an authoritative electronic result
- * or an accepted staff sighting — never from case status alone. Completion
- * wording stays restrained: reuse claims belong to the passport/consent
- * machinery, not this journey.
- */
-function buildJourney(args: {
-  consentSatisfied: boolean;
-  activeSections: string[];
-  sectionMap: Map<string, any>;
-  requirements: any[];
-  parties: Array<{ status: string; can_attempt: boolean }>;
-  submissions: any[];
-  openRequestCount: number;
-  portalStatus: string;
-}) {
-  const sectionsDone = args.activeSections.every((sec) =>
-    ['submitted', 'accepted', 'complete'].includes(args.sectionMap.get(sec)?.status ?? ''));
-  const requiredReqs = args.requirements.filter((r: any) => r.required);
-  const docsDone = requiredReqs.length > 0 &&
-    requiredReqs.every((r: any) => ['uploaded', 'accepted'].includes(r.status));
-  const partiesResolved = args.parties.length > 0 &&
-    args.parties.every((pt) => pt.status === 'verified');
-  const verificationInFlight = args.parties.some((pt) => pt.status === 'in_review');
-  const submitted = (args.submissions ?? []).length > 0;
-  const complete = args.portalStatus === 'complete';
-
-  const step = (
-    key: string, status: 'complete' | 'in_progress' | 'action_required' | 'not_started' | 'blocked',
-    label: string, description: string, target: string, completedAt: string | null = null,
-  ) => ({
-    step: key, status, action_required: status === 'action_required',
-    safe_label: label, safe_description: description, target_step: target,
-    completed_at: completedAt,
-  });
-
-  return [
-    step('consent', args.consentSatisfied ? 'complete' : 'action_required',
-      'Consents', args.consentSatisfied
-        ? 'You have accepted the current consents.'
-        : 'Please review and accept the consents to continue.', 'consent'),
-    step('questionnaire', sectionsDone ? 'complete' : args.consentSatisfied ? 'action_required' : 'blocked',
-      'Your information', sectionsDone
-        ? 'All required sections are submitted.'
-        : 'Some sections still need to be completed.', 'questionnaire'),
-    step('documents', docsDone ? 'complete' : requiredReqs.length === 0 ? 'not_started' : 'action_required',
-      'Documents', docsDone
-        ? 'All requested documents are uploaded.'
-        : 'Some requested documents are outstanding.', 'documents'),
-    step('verification',
-      partiesResolved ? 'complete' : verificationInFlight ? 'in_progress' : 'action_required',
-      'Identity verification',
-      partiesResolved
-        ? 'You are verified.'
-        : verificationInFlight
-          ? 'We are checking your identity documents.'
-          : 'Identity verification is still to be completed.', 'verify'),
-    step('submission', submitted ? 'complete' : 'not_started',
-      'Review and submit', submitted
-        ? 'Your information has been submitted for review.'
-        : 'Submit your onboarding once everything above is complete.', 'review'),
-    step('review',
-      complete ? 'complete' : args.openRequestCount > 0 ? 'action_required' : submitted ? 'in_progress' : 'not_started',
-      complete ? 'Complete' : 'Adviser review',
-      complete
-        ? 'Your onboarding is complete.'
-        : args.openRequestCount > 0
-          ? 'Your adviser has asked for something — see your requests.'
-          : 'Your adviser is reviewing your information.', 'review'),
-  ];
-}
 
 /**
  * Attempts already CONSUMED by this party on the electronic path.
@@ -373,6 +337,105 @@ async function nextCaptureSequence(
   return Number((data ?? [])[0]?.attempt_number ?? 0) + 1;
 }
 
+/* ────────────────── NPC-captured (Standalone) attempts ──────────────────── */
+
+/**
+ * Which bucket each capture belongs in.
+ *
+ * The selfie is separated from the document deliberately and always has been:
+ * `aml-biometrics` carries the tighter access policy and the read log, because
+ * a facial image is sensitive information under the Privacy Act and the two
+ * documents are not the same thing. Both buckets are private; neither has ever
+ * been public.
+ */
+const CAPTURE_BUCKET: Record<IdentityCaptureKind, string> = {
+  document_front: 'aml-documents',
+  document_back: 'aml-documents',
+  selfie: 'aml-biometrics',
+};
+
+/**
+ * The object paths for one prepared attempt.
+ *
+ * Generated by the server, from the attempt id, and stored on the row. The
+ * browser is never asked for one and never sends one — which is what removes
+ * the whole class of "name somebody else's object" from the submission. The old
+ * `submit_verification` took two paths from the request body and checked they
+ * began with the case id; this design has nothing to check because there is
+ * nothing to supply.
+ */
+function capturePaths(caseId: string, attemptId: string) {
+  const prefix = `${caseId}/verification/${attemptId}`;
+  return {
+    document_front: { bucket: CAPTURE_BUCKET.document_front, path: `${prefix}/document-front.jpg` },
+    document_back: { bucket: CAPTURE_BUCKET.document_back, path: `${prefix}/document-back.jpg` },
+    selfie: { bucket: CAPTURE_BUCKET.selfie, path: `${prefix}/selfie.jpg` },
+  };
+}
+
+/** MIME types a capture may be stored under. Everything is re-encoded to JPEG. */
+const ACCEPTED_CAPTURE_MIME = ['image/jpeg', 'image/jpg'];
+/** Below this an object is not a photograph — an empty or truncated upload. */
+const MIN_CAPTURE_BYTES = 2_048;
+/**
+ * Above this the provider refuses it anyway: the ID endpoint caps at 10 MB and
+ * the face endpoints at 5 MB. The browser downscales to 2000px before upload,
+ * so anything near this is a client that did not.
+ */
+const MAX_CAPTURE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * The prepared-but-unsubmitted attempt for this party, if there is one.
+ *
+ * At most one exists — `uq_aml_verification_draft_capture` enforces it — so a
+ * refresh, a second tab and a double tap all resume the same attempt and the
+ * same three storage paths rather than accumulating drafts.
+ */
+async function draftCaptureAttempt(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<any | null> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('id, case_id, party_id, party_label, outcome_detail, capture_sequence, '
+      + 'processing_status, biometric_consent_id')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv')
+    .eq('processing_status', 'draft')
+    .is('superseded_at', null);
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+  if (error) {
+    // Pre-migration database: no `draft` state exists, so no draft can.
+    if (/processing_status|draft/i.test(error.message ?? '')) return null;
+    throw error;
+  }
+  return (data ?? [])[0] ?? null;
+}
+
+/**
+ * Confirm an object the server told the browser to write actually exists, and
+ * is plausibly the photograph it was supposed to be.
+ *
+ * Reads size and content type from storage metadata rather than trusting
+ * anything the client said about them — the client says nothing about them.
+ */
+async function inspectCapture(
+  admin: any, bucket: string, path: string,
+): Promise<{ present: boolean; size: number; mime: string | null }> {
+  const slash = path.lastIndexOf('/');
+  const dir = slash > -1 ? path.slice(0, slash) : '';
+  const name = slash > -1 ? path.slice(slash + 1) : path;
+  const { data, error } = await admin.storage.from(bucket)
+    .list(dir, { search: name, limit: 100 });
+  if (error) return { present: false, size: 0, mime: null };
+  const found = (data ?? []).find((entry: any) => entry?.name === name);
+  if (!found) return { present: false, size: 0, mime: null };
+  return {
+    present: true,
+    size: Number(found?.metadata?.size ?? 0),
+    mime: typeof found?.metadata?.mimetype === 'string' ? found.metadata.mimetype : null,
+  };
+}
+
 /**
  * An in-flight electronic check for this party (submitted/queued/processing/
  * retry_scheduled). A second submission while one is processing would burn
@@ -407,9 +470,148 @@ async function activeProcessingCheck(
  * environment classification, secret presence) NEVER crosses this boundary —
  * the portal learns only whether capture may proceed.
  */
-async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'temporarily_unavailable' | 'manual_verification_required'> {
+/**
+ * The in-flight hosted-session check for this party, if any.
+ *
+ * Deliberately has NO staleness bound, unlike `activeProcessingCheck`. A
+ * hosted session lives for days, so timing one out would offer a second
+ * (chargeable) session to a customer who still has one open. Release is by
+ * reconciliation instead: the caller asks the provider what actually happened
+ * to the session and retires it only on a real expiry or abandonment.
+ */
+async function activeHostedCheck(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<any | null> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('id, case_id, party_id, party_label, provider, provider_reference, '
+      + 'outcome_detail, processing_status, status, attempt_consumed, '
+      // `capture_sequence` is the attempt encoded in vendor_data, and
+      // `created_at` is what the stale-workflow guard compares.
+      + 'capture_sequence, created_at')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv')
+    .eq('provider', 'didit')
+    .in('processing_status', ['submitted', 'queued', 'processing'])
+    .is('superseded_at', null);
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+  if (error) throw error;
+  const row = (data ?? [])[0] ?? null;
+  // A row whose session creation never completed holds no session to resume.
+  return row?.provider_reference ? row : null;
+}
+
+/**
+ * Retire a hosted check without touching identity state.
+ *
+ * `status` and `attempt_consumed` are left alone on purpose: releasing a
+ * session the customer never finished is housekeeping, not a finding against
+ * them. The guard on `attempt_consumed` makes it impossible to retire a check
+ * that already produced an outcome.
+ */
+async function releaseHostedCheck(
+  admin: any, checkId: string, reason: string,
+): Promise<void> {
+  await admin.schema('aml').from('verification_checks').update({
+    processing_status: 'cancelled',
+    superseded_at: new Date().toISOString(),
+    superseded_reason: reason.slice(0, 200),
+    updated_at: new Date().toISOString(),
+  })
+    .eq('id', checkId)
+    .eq('attempt_consumed', false)
+    .in('processing_status', ['submitted', 'queued', 'processing']);
+}
+
+/**
+ * The origin the customer is returned to when the hosted flow finishes.
+ *
+ * Compiled in, with `PUBLIC_APP_URL` as the deployment override — the same
+ * pair `consentLinkFor` uses. Deliberately NOT the request's `Origin` header:
+ * this string is handed to the provider as a redirect target, so accepting one
+ * from the caller would let any origin that can reach this function have NPC
+ * mint a redirect to it and hand it to a customer mid-verification.
+ */
+const RETURN_ORIGIN_FALLBACK = 'https://command-centre.npcservices.com.au';
+
+function hostedReturnUrl(): string {
+  return identityReturnUrl(Deno.env.get('PUBLIC_APP_URL'), RETURN_ORIGIN_FALLBACK);
+}
+
+/**
+ * The document choice a hosted session was minted under, if it recorded one.
+ *
+ * Sessions created before document selection existed have none, and are
+ * reusable for any choice — they were minted with no document restriction at
+ * all, so the provider still offers the customer every supported document.
+ */
+function sessionDocumentChoice(check: any): IdentityDocumentChoice | null {
+  return parseDocumentChoice(check?.outcome_detail?.didit_session?.document_choice);
+}
+
+type IdvAvailability = 'available' | 'temporarily_unavailable' | 'manual_verification_required';
+
+/**
+ * Availability AND which of the two experiences to render, resolved together.
+ *
+ * The flow is server-decided and the browser is told only `capture` or
+ * `hosted` — never the provider key, never the workflow id, never whether a
+ * secret is present. A client that could name the provider could reason about
+ * NPC's configuration; one that could choose it would be selecting its own
+ * authority.
+ */
+async function clientSafeIdvState(
+  admin: any,
+): Promise<{ availability: IdvAvailability; flow: IdvFlow; standalone: boolean }> {
+  let flow: IdvFlow = 'capture';
+  let standalone = false;
   try {
     const resolved = await resolveTenantProvider(admin, 'default', 'idv');
+    flow = idvFlowFor(resolved?.providerKey);
+    standalone = isStandaloneIdvProvider(resolved?.providerKey);
+
+    if (standalone) {
+      /**
+       * Construction is the readiness check, and it is the whole check.
+       *
+       * `getStandaloneIdvProvider` throws unless the credential AND both
+       * decline thresholds are present and in range, so a deployment that has
+       * not stated its liveness and face-match policy reads as unavailable
+       * rather than quietly inheriting the provider's own permissive default.
+       *
+       * Deliberately no network probe. The Standalone endpoints are billed per
+       * call and have no free health route — probing one on every portal page
+       * load would charge NPC for the privilege of drawing a page. Nothing is
+       * collected from the customer until this has already passed.
+       */
+      getStandaloneIdvProvider({ resolved, admin });
+      return { availability: 'available', flow, standalone };
+    }
+
+    /**
+     * The hosted capture experience is RETIRED, and a tenant still configured
+     * for it has no electronic path — not a popup.
+     *
+     * This used to answer `available` + `hosted_session`, which the portal
+     * rendered as a window opening on the provider's own page. That is the
+     * defect this hotfix exists to remove, and removing it only from the
+     * browser would leave the server still asking for it: an older bundle, a
+     * cached page or a second client would all still obey.
+     *
+     * So the refusal is here as well. `manual_verification_required` is the
+     * honest answer — the adviser arranges verification from documents, which
+     * is a real route the portal already renders and which disadvantages
+     * nobody. The flow word is `capture`, because that is the only capture
+     * experience that exists now; `availability` is what actually gates the
+     * customer.
+     *
+     * Nothing about hosted RESULTS changes. The webhook, the decision parsing
+     * and every historical row stay exactly as they were.
+     */
+    if (flow === 'hosted_session') {
+      return { availability: 'manual_verification_required', flow, standalone };
+    }
+
     const provider = getIdvProvider({ resolved, admin });
 
     // Resolution only proves the provider is *configured*. Two secrets can
@@ -418,19 +620,30 @@ async function clientSafeIdvAvailability(admin: any): Promise<'available' | 'tem
     // also probed — cached, because this runs on every portal page load.
     if (provider.name === 'selfhosted') {
       const health = await cachedSelfHostedIdvHealth();
-      if (!health.reachable || health.status !== 'ok') return 'temporarily_unavailable';
+      if (!health.reachable || health.status !== 'ok') {
+        return { availability: 'temporarily_unavailable', flow, standalone };
+      }
     }
-    return 'available';
+    return { availability: 'available', flow, standalone };
   } catch (err: any) {
     if (err instanceof ProviderResolutionError) {
       // Not configured / simulator blocked → the adviser will arrange manual
       // sighting; transient misconfiguration reads as temporary.
-      return err.code === 'provider_misconfigured'
-        ? 'temporarily_unavailable'
-        : 'manual_verification_required';
+      return {
+        availability: err.code === 'provider_misconfigured'
+          ? 'temporarily_unavailable'
+          : 'manual_verification_required',
+        flow,
+        standalone,
+      };
     }
-    return 'temporarily_unavailable';
+    return { availability: 'temporarily_unavailable', flow, standalone };
   }
+}
+
+/** Back-compat shim for the call sites that only need the availability word. */
+async function clientSafeIdvAvailability(admin: any): Promise<IdvAvailability> {
+  return (await clientSafeIdvState(admin)).availability;
 }
 
 
@@ -518,7 +731,7 @@ function consentRequiredResponse(state: ConsentState) {
   }, 403);
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -593,11 +806,24 @@ Deno.serve(async (req) => {
               + 'You’ll be notified when it’s ready — there is nothing for you to do now.',
           });
         }
-        const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
+        const [
+          { data: sections }, { data: requirements }, { data: documentFacts },
+          { data: openRequests }, { data: submissions },
+        ] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
             .select('section,status,updated_at,payload').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements')
             .select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
+          // The two columns the journey needs and nothing else. A requirement
+          // is a REQUEST for a document; this is the record of what arrived,
+          // and without it a case with no formal requirements could never
+          // complete its documents step however much the client uploaded.
+          //
+          // No filename, no storage path, no checksum, no uploader: none of
+          // that reaches the wire, and this projection is not shipped to the
+          // client at all — it is consumed here to derive one status.
+          admin.schema('aml').from('documents')
+            .select('requirement_id,status').eq('case_id', c.id).neq('status', 'deleted'),
           admin.schema('aml').from('client_requests')
             .select('*').eq('case_id', c.id).in('status', ['open','responded'])
             .order('created_at', { ascending: false }),
@@ -663,12 +889,167 @@ Deno.serve(async (req) => {
             activeSections: active,
             sectionMap,
             requirements: reqs,
+            documents: documentFacts ?? [],
             parties: await verificationParties(admin, c.id),
             submissions: submissions ?? [],
-            openRequestCount: (openRequests ?? []).length,
+            // Only requests still waiting on the CLIENT. `responded` is waiting
+            // on the adviser: counting it kept the journey saying "your adviser
+            // has asked for something" after the client had answered.
+            openRequestCount: (openRequests ?? [])
+              .filter((r: any) => r.status === 'open').length,
             portalStatus,
           }),
         });
+      }
+
+      case 'get_passport': {
+        // The client's own Compliance Passport — a DEDICATED server-side
+        // sanitised projection built by the shared pure assembler. It is
+        // never the Command payload with fields hidden client-side: the
+        // restricted case families are not read by this function at all
+        // (a pinned source contract enforces that), and post-issuance
+        // milestone facts come from the ISSUED, SANITISED attestation
+        // payload — what the MLRO attested outward is exactly what the
+        // client may see. The assembler's fail-closed tripwire re-checks
+        // the finished view before it ships.
+        {
+          const { data: flagRow } = await admin.from('feature_flags')
+            .select('value').eq('key', 'aml_passport_client_view').maybeSingle();
+          const fv = flagRow?.value;
+          const flagOn = fv === true || fv === 'true' ||
+            (fv && typeof fv === 'object' && (fv as any).enabled === true);
+          if (!flagOn) {
+            return jsonResponse({ error: 'The Compliance Passport is not available yet.', code: 'passport_disabled' }, 404);
+          }
+        }
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ passport: null });
+
+        const [
+          { data: attRows }, { data: consents }, { data: checks }, { data: docs },
+          { data: reqs }, { data: txns }, { data: grants },
+          { data: assessments }, { data: refreshObs }, { data: requests },
+          { data: personal }, { data: entity }, { data: tenant },
+        ] = await Promise.all([
+          admin.schema('aml').from('compliance_attestations')
+            .select('id, version, issued_at, superseded_at, payload_sha256, schema_version, refresh_required_at, payload')
+            .eq('case_id', c.id).order('version', { ascending: true }),
+          admin.schema('aml').from('consents')
+            .select('id, kind, accepted_at').eq('case_id', c.id),
+          admin.schema('aml').from('verification_checks')
+            .select('id, party_label, check_type, status, completed_at').eq('case_id', c.id),
+          admin.schema('aml').from('documents')
+            .select('id, requirement_id, status, created_at, reviewed_at, version_number')
+            .eq('case_id', c.id).neq('status', 'deleted'),
+          admin.schema('aml').from('document_requirements')
+            .select('id, code, label, required').eq('case_id', c.id),
+          admin.schema('aml').from('transactions')
+            .select('id, kind, status, property_address, contract_date, settlement_date, purchase_price')
+            .eq('case_id', c.id).is('archived_at', null),
+          admin.schema('aml').from('reliance_grants')
+            .select('id, granted_at, revoked_at, attestation_id, reliance_agreements:agreement_id(partner_org_name, partner_org_type)')
+            .eq('case_id', c.id),
+          admin.schema('aml').from('independent_assessments')
+            .select('id, status, decided_at, assessor_name, reliance_agreements:agreement_id(partner_org_name, partner_org_type)')
+            .eq('case_id', c.id),
+          admin.schema('aml').from('partner_refresh_obligations')
+            .select('id, created_at, status').eq('case_id', c.id),
+          admin.schema('aml').from('client_requests')
+            .select('id, kind, subject, status, created_at').eq('case_id', c.id)
+            .order('created_at', { ascending: false }),
+          admin.schema('aml').from('questionnaire_responses')
+            .select('payload').eq('case_id', c.id).eq('section', 'personal_details').maybeSingle(),
+          admin.schema('aml').from('questionnaire_responses')
+            .select('payload').eq('case_id', c.id).eq('section', 'entity_details').maybeSingle(),
+          admin.schema('aml').from('tenant_settings')
+            .select('display_name').eq('tenant_id', 'default').maybeSingle(),
+        ]);
+
+        const attFacts = (attRows ?? []).map((a: any) => ({
+          version: a.version,
+          issued_at: a.issued_at,
+          superseded_at: a.superseded_at,
+          payload_sha256: a.payload_sha256,
+          schema_version: a.schema_version ?? 1,
+        }));
+        const currentAtt = (attRows ?? []).filter((a: any) => !a.superseded_at)
+          .sort((a: any, b: any) => b.version - a.version)[0] ?? null;
+        const versionByAttId = new Map<string, number>((attRows ?? []).map((a: any) => [a.id, a.version]));
+        const reqById = new Map<string, any>((reqs ?? []).map((r: any) => [r.id, r]));
+        const issuerOrg = tenant?.display_name ?? 'Your adviser';
+        // Derivation inputs only — the raw case enum and gate token feed the
+        // shared state derivation server-side and are never shipped; the
+        // client receives the derived passport state (label + tone). The
+        // local rename makes that boundary visible in the source.
+        const internalCaseStatus: string | null = c.status ?? null;
+        const caseFactsForDerivation = {
+          id: c.id,
+          case_reference: c.case_reference,
+          subject_display_name: c.subject_display_name,
+          subject_type: c.subject_type,
+          status: internalCaseStatus,
+          case_stage: c.case_stage ?? null,
+          service_gate_status: c.service_gate_status ?? null,
+          opened_at: c.opened_at,
+          closed_at: c.closed_at ?? null,
+        };
+
+        const view = buildPassportView('client', {
+          issuer_org: issuerOrg,
+          officer_label: null,
+          case: caseFactsForDerivation,
+          attestations: attFacts,
+          material_inputs_current: currentAtt
+            ? (currentAtt.refresh_required_at ? false : ((currentAtt.schema_version ?? 1) === 2 ? true : null))
+            : null,
+          open_refresh_obligations: (refreshObs ?? []).filter((r: any) => r.status === 'open').length,
+          personal_details: (personal?.payload && typeof personal.payload === 'object') ? personal.payload : null,
+          entity_details: (entity?.payload && typeof entity.payload === 'object') ? entity.payload : null,
+          documents: (docs ?? []).map((d: any) => ({
+            id: d.id,
+            requirement_label: reqById.get(d.requirement_id)?.label ?? null,
+            requirement_code: reqById.get(d.requirement_id)?.code ?? null,
+            required: reqById.get(d.requirement_id)?.required ?? null,
+            status: d.status,
+            created_at: d.created_at,
+            version_number: d.version_number,
+          })),
+          transactions: txns ?? [],
+          client_requests: requests ?? [],
+          stamp_input: buildClientStampInput({
+            issuer_org: issuerOrg,
+            attestations: attFacts.map((a: any) => ({
+              version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
+            })),
+            consents: consents ?? [],
+            verification_checks: checks ?? [],
+            documents: (docs ?? []).map((d: any) => ({
+              status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
+            })),
+            grants: (grants ?? []).map((g: any) => ({
+              id: g.id,
+              created_at: g.granted_at,
+              revoked_at: g.revoked_at,
+              partner_org_name: g.reliance_agreements?.partner_org_name ?? null,
+              partner_org_type: g.reliance_agreements?.partner_org_type ?? null,
+              attestation_version: versionByAttId.get(g.attestation_id) ?? null,
+            })),
+            assessments: (assessments ?? []).map((a: any) => ({
+              id: a.id, status: a.status, decided_at: a.decided_at, assessor_name: a.assessor_name,
+              partner_org_name: a.reliance_agreements?.partner_org_name ?? null,
+              partner_org_type: a.reliance_agreements?.partner_org_type ?? null,
+            })),
+            refresh_obligations: (refreshObs ?? []).map((r: any) => ({
+              id: r.id, created_at: r.created_at, status: r.status,
+            })),
+            transactions: (txns ?? []).map((t: any) => ({
+              id: t.id, status: t.status, settlement_date: t.settlement_date,
+              property_address: t.property_address,
+            })),
+            attestation_payload: currentAtt?.payload ?? null,
+          }),
+        });
+        return jsonResponse({ passport: view });
       }
 
       case 'get_questionnaire': {
@@ -817,10 +1198,69 @@ Deno.serve(async (req) => {
         const parties = await verificationParties(admin, c.id);
         // Client-safe availability only — never provider names, environment
         // classification, secret presence or internal health detail.
-        const availability = await clientSafeIdvAvailability(admin);
+        // `standalone` stays server-side too: the portal is told `capture`,
+        // which is the experience to render, and never which integration is
+        // behind it.
+        const { availability, flow, standalone } = await clientSafeIdvState(admin);
+
+        /**
+         * Whether this party already has a secure check open.
+         *
+         * One boolean, and it is what lets the portal survive a refresh: the
+         * window handle, the session URL and every scrap of local state are
+         * gone after one, so without asking the server the client is shown
+         * "Start" while their verification window is still sitting open behind
+         * the browser. They then start again — which the backend correctly
+         * de-duplicates, but only after telling them nothing about why.
+         *
+         * Deliberately a boolean and not the session. It carries no URL, no
+         * session id, no provider and no token, so the strongest thing it can
+         * do is change which sentence the client reads.
+         */
+        /*
+         * The hosted branch is gone from here too.
+         *
+         * `activeHostedCheck` is what produced "Continue verification" — the
+         * button that reopened the provider's window. There is no window to
+         * continue into any more, so reporting an old hosted session as
+         * in-progress could only offer the customer a door that no longer
+         * exists. Those rows are retired by `20260911000300`; a late signed
+         * outcome for one still settles, server-side, exactly as before.
+         */
+        if (standalone) {
+          /**
+           * The same boolean, for the capture journey.
+           *
+           * It answers the question a refreshed page cannot: "are my photos
+           * already being checked?" Without it, somebody who submitted and then
+           * reloaded is offered "Start" and takes their photographs a second
+           * time while the first set is mid-provider — which is a wasted
+           * capture for them and a second attempt they did not intend.
+           *
+           * Still a boolean and nothing more. No attempt id, no provider, no
+           * step, no score: the strongest thing it can do is change which
+           * sentence is on the screen, and it can never mark anybody verified.
+           */
+          for (const party of parties) {
+            party.verification_in_progress = Boolean(
+              await activeProcessingCheck(admin, c.id, party.party_id));
+          }
+        }
+
         return jsonResponse({
           enabled: true,
           availability,
+          /*
+           * Always `capture`. There is one customer capture experience and it
+           * is NPC's own.
+           *
+           * This used to be `hosted` whenever the tenant resolved a
+           * hosted-session provider, and that single word is what the portal
+           * turned into a window on the provider's page. `availability` is now
+           * what carries a retired-provider tenant — to the documentary route
+           * — so no value of this field can send anybody off NPC.
+           */
+          provider_flow: 'capture',
           max_attempts: MAX_VERIFICATION_ATTEMPTS,
           // The biometric consent is separate (APP 3.3) and is what unlocks
           // the facial check specifically.
@@ -830,12 +1270,477 @@ Deno.serve(async (req) => {
         });
       }
 
+      /**
+       * Start (or recover) a provider-hosted verification session.
+       *
+       * Everything the self-hosted path gates on is gated here too — portal
+       * session, case ownership, party, the consent catalogue, the separate
+       * biometric consent, the attempt ceiling, one-in-flight, and provider
+       * readiness. What is deliberately absent is any capture: when a hosted
+       * provider is active NPC never asks the customer to upload an identity
+       * document or a selfie into its own storage, because the provider does
+       * that itself and a second copy would be collection without purpose.
+       *
+       * Returns the hosted URL and nothing else. The URL embeds the customer's
+       * session token, so it is handed to their browser and never persisted,
+       * logged, or written to the timeline.
+       */
+      case 'start_hosted_verification': {
+        /**
+         * RETIRED. This operation can no longer mint or resume a session.
+         *
+         * It is kept, rather than deleted, for one reason: a browser running a
+         * cached build from before the cutover will still call it, and a typed
+         * 409 is a far better answer for that customer than a 400 on an unknown
+         * op. The portal treats `hosted_flow_retired` as an availability
+         * refusal, re-reads, and lands them on the documentary route.
+         *
+         * The refusal is UNCONDITIONAL and comes before every other check —
+         * before the case lookup, before consent, before provider resolution.
+         * There is deliberately no tenant, provider or configuration under
+         * which this returns a URL, because "never creates a hosted session
+         * after cutover" is only true if no branch can reach the creation.
+         *
+         * Server-side settlement of sessions that ALREADY exist is untouched:
+         * `didit-webhook` still verifies a signed outcome, still re-fetches the
+         * decision over an authenticated call, and still settles the canonical
+         * row. This closes the door to new sessions, not to old results.
+         */
+        return jsonResponse({
+          error: 'Please continue with the verification step shown on your screen.',
+          code: 'hosted_flow_retired',
+        }, 409);
+      }
+
+      /*
+       * Everything from here to the end of this block is the former body of
+       * `start_hosted_verification`, now unreachable. It is retained for one
+       * release so the reconciliation logic it contains — stale-session
+       * detection, decision re-fetch, correlation — can be lifted into the
+       * webhook path if a late outcome ever needs it, rather than being
+       * rewritten from memory. It is deleted in the follow-up that removes the
+       * hosted adapter; see docs/aml/DIDIT_STANDALONE_IDV.md for the drain
+       * condition that gates that.
+       */
+      case '__retired_start_hosted_verification': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        const partyId = body.party_id ? String(body.party_id) : null;
+        const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
+
+        /**
+         * The document the customer says they will present.
+         *
+         * The ONLY thing the browser is permitted to declare about the
+         * session, and it is matched against a closed list rather than
+         * forwarded. What it cannot say — and what this handler reads from
+         * server state alone — is the provider, the workflow, the environment,
+         * the country, the callback, or anything about the outcome.
+         *
+         * Absent is allowed and means "not declared": an older portal build,
+         * or a caller resuming a session. Present-but-unrecognised is refused,
+         * because a typo that silently became an unrestricted session would
+         * put the country and document pickers back in front of the customer
+         * with nothing to show that it had happened.
+         */
+        const documentChoice = parseDocumentChoice(body.document_type);
+        if (body.document_type !== undefined && body.document_type !== null && !documentChoice) {
+          return jsonResponse({
+            error: 'That is not a document we can verify. Please choose one of the options shown.',
+            code: 'unsupported_document_type',
+          }, 400);
+        }
+
+        // The biometric consent must exist BEFORE a face is captured, and the
+        // hosted flow captures one. Consent after collection is not consent
+        // (APP 3.3) — and the provider's UI opens the camera immediately, so
+        // this gate has to sit in front of the session, not the result.
+        const { data: bioConsent } = await admin.schema('aml').from('consents')
+          .select('id, version').eq('case_id', c.id).eq('kind', 'biometric_collection')
+          .order('accepted_at', { ascending: false }).limit(1).maybeSingle();
+        if (!bioConsent) {
+          return jsonResponse({
+            error: 'Please accept the facial verification consent before continuing.',
+            code: 'biometric_consent_required',
+          }, 403);
+        }
+
+        const { availability, flow } = await clientSafeIdvState(admin);
+        if (flow !== 'hosted_session') {
+          // The tenant is not on a hosted provider. Never fall back to one on
+          // a client's say-so: provider selection is server-side.
+          return jsonResponse({
+            error: 'Verification is temporarily unavailable. Please try again shortly.',
+            code: 'temporarily_unavailable',
+          }, 409);
+        }
+        if (availability !== 'available') {
+          return jsonResponse({
+            error: availability === 'manual_verification_required'
+              ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+              : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: availability,
+          }, 409);
+        }
+
+        const used = await verificationAttemptsUsed(admin, c.id, partyId);
+        if (used >= MAX_VERIFICATION_ATTEMPTS) {
+          return jsonResponse({
+            error: 'You have used all available attempts. A member of our team will contact you to complete verification another way.',
+            code: 'attempts_exhausted',
+            attempts_used: used,
+            max_attempts: MAX_VERIFICATION_ATTEMPTS,
+          }, 409);
+        }
+
+        const resolved = await resolveTenantProvider(admin, 'default', 'idv');
+        const provider = getHostedIdvProvider({ resolved, admin });
+        const workflowId = diditWorkflowId(resolved) ?? '';
+        const environment = currentEnvironment();
+
+        /**
+         * An existing in-flight session for this party.
+         *
+         * This is what makes a double-click, a refresh, a second tab and a
+         * backend timeout-after-creation all safe: the customer is returned to
+         * the session they already have rather than being given a second
+         * (chargeable) one. The URL is re-read from the provider, because NPC
+         * never stored it.
+         */
+        let existing = await activeHostedCheck(admin, c.id, partyId);
+
+        /**
+         * ...unless it was minted under a configuration the operator has since
+         * replaced.
+         *
+         * `POST /v3/session/` upserts on `workflow_id + vendor_data`, and a
+         * session lives for seven days, so a customer who pressed Start before
+         * a workflow change was pinned to the old one until it expired — a
+         * reconfiguration simply never reached them. That is what put a
+         * cross-device QR screen in front of customers after the workflow had
+         * already been corrected to allow desktop capture.
+         *
+         * The provider's version number cannot detect it. Measured on this
+         * account: changing a SETTING (`is_desktop_allowed`) left the published
+         * workflow at version 1, while editing the GRAPH created version 2. So
+         * a session and the live workflow can report the same version across a
+         * change that matters, and a different version across one that does
+         * not. The marker is therefore ours —
+         * `config.workflow_revised_at`, set by whoever changes the workflow.
+         * Any session created before it is stale by definition.
+         *
+         * Releasing is a technical supersede: `status` and `attempt_consumed`
+         * are untouched, so this costs the customer nothing and is not a
+         * verification failure.
+         */
+        if (existing) {
+          if (isStaleHostedSession(existing.created_at, workflowRevisedAt(resolved))) {
+            await releaseHostedCheck(admin, String(existing.id), 'workflow_revised');
+            await appendDiditCaseEvent(admin, c.id,
+              `Identity verification session superseded for ${partyLabel}: the verification `
+              + `workflow was reconfigured after it was created`,
+              {
+                verification_check_id: existing.id,
+                provider: 'didit',
+                provider_reference: existing.provider_reference,
+                reason: 'workflow_revised',
+                category: 'technical',
+                attempt_consumed: false,
+                scope: 'identity_verification_only',
+              });
+            existing = null;
+          }
+        }
+
+        if (existing) {
+          try {
+            const decision = await provider.fetchDecision(String(existing.provider_reference));
+            const result = await applyDiditDecision({
+              db: admin, check: existing as any, decision,
+              expectedWorkflowId: workflowId, source: 'portal_reconcile', environment,
+            });
+            if (result.kind === 'in_flight') {
+              const url = typeof decision['session_url'] === 'string' ? decision['session_url'] : '';
+              /**
+               * A session minted for a different document cannot serve this
+               * request — its `expected_document_types` restricts the provider
+               * to the document the customer chose last time, so handing it
+               * back to somebody who has since picked their passport dead-ends
+               * them on a picker that will not offer it.
+               *
+               * Only replaced while the customer has not begun. `Not Started`
+               * is the provider's word for a session whose link has never been
+               * opened, so nothing is lost and no work is discarded; once they
+               * are `In Progress` or `Awaiting User` the session in their hands
+               * is the one that matters and they are returned to it, whatever
+               * they picked on this screen.
+               *
+               * The replacement is a technical supersede — `status` and
+               * `attempt_consumed` untouched — for the same reason a workflow
+               * revision is: changing your mind about which card to hold up is
+               * not a failed identity check.
+               */
+              const startedAlready = String(decision['status'] ?? '') !== 'Not Started';
+              if (documentChoice && !startedAlready
+                && sessionDocumentChoice(existing) !== documentChoice) {
+                await releaseHostedCheck(admin, String(existing.id), 'document_choice_changed');
+                await appendDiditCaseEvent(admin, c.id,
+                  `Identity verification session superseded for ${partyLabel}: a different `
+                  + `identity document was chosen before the check was started`,
+                  {
+                    verification_check_id: existing.id,
+                    provider: 'didit',
+                    provider_reference: existing.provider_reference,
+                    reason: 'document_choice_changed',
+                    category: 'technical',
+                    attempt_consumed: false,
+                    scope: 'identity_verification_only',
+                  });
+                existing = null;
+              } else if (url) {
+                return jsonResponse({
+                  started: true, resumed: true, verification_url: url,
+                  message: 'Your verification is already open. Continue where you left off.',
+                });
+              }
+              // No URL to return them to; treat the session as unusable and
+              // fall through to creating a fresh one below.
+            }
+            if (result.kind === 'applied' || result.kind === 'already_applied') {
+              // It finished while nobody was looking. Report the settled state
+              // rather than starting another session.
+              return jsonResponse({
+                started: false, code: 'already_processing',
+                message: 'Your verification has been received. We will update you shortly.',
+              });
+            }
+            // 'released' — expired/abandoned. The slot is free; carry on.
+            existing = null;
+          } catch (e) {
+            if (e instanceof DiditCorrelationError) {
+              // The stored session does not correlate. Do not reuse it and do
+              // not settle anything from it; retire it and start cleanly.
+              await releaseHostedCheck(admin, String(existing.id), `correlation_failed:${e.code}`);
+              existing = null;
+            } else if (e instanceof DiditApiError) {
+              // Cannot tell whether the old session is still usable. Refusing
+              // is the safe answer: creating another would risk two live
+              // sessions for one party. Nothing is consumed.
+              return jsonResponse({
+                error: 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+                code: 'temporarily_unavailable',
+              }, 409);
+            } else {
+              throw e;
+            }
+          }
+        }
+
+        // Row first, session second. The canonical check is what the webhook
+        // correlates against, so it has to exist before a session can arrive
+        // — the reverse order loses any decision that beats the insert.
+        const captureSequence = await nextCaptureSequence(admin, c.id, partyId);
+        const idempotencyKey = 'portal-didit-' + await sha256Hex(
+          `${c.id}|${partyId ?? 'subject'}|${captureSequence}`);
+
+        let created: any;
+        const { data: inserted, error: insErr } = await admin.schema('aml')
+          .from('verification_checks').insert({
+            case_id: c.id,
+            party_id: partyId,
+            party_label: partyLabel,
+            check_type: 'electronic_idv',
+            attempt_number: captureSequence,
+            capture_sequence: captureSequence,
+            status: 'pending',
+            provider: 'didit',
+            processing_status: 'queued',
+            attempt_consumed: false,
+            execution_mode: 'live',
+            environment,
+            idempotency_key: idempotencyKey,
+            // No document_reference and no biometric_storage_path: the
+            // provider owns the capture, so NPC holds no copy. The outbox
+            // trigger keys on document_reference being NULL to keep this row
+            // out of the self-hosted image worker.
+            biometric_consent_id: bioConsent.id,
+            outcome_detail: { submitted_from: 'client_portal', flow: 'hosted_session' },
+          }).select('*').single();
+
+        if (insErr) {
+          // 23505 on the active-session index: a concurrent request won.
+          // Idempotent success — the customer has a session, they just did not
+          // create this one.
+          if (insErr.code === '23505') {
+            return jsonResponse({
+              started: false, code: 'already_processing',
+              message: 'Your verification is already open. Please continue in the window that opened.',
+            });
+          }
+          if (insErr.code === '23514') {
+            return jsonResponse({
+              error: 'You have used all available attempts.', code: 'attempts_exhausted',
+            }, 409);
+          }
+          throw insErr;
+        }
+        created = inserted;
+
+        try {
+          const session = await provider.createSession({
+            /*
+             * Opaque, and scoped to THIS attempt. Never a name, email,
+             * document number or DOB.
+             *
+             * The attempt is what makes this a create rather than a lookup:
+             * `POST /v3/session/` upserts on `workflow_id + vendor_data`, so
+             * without it a second request returns the first session — which is
+             * how a customer stayed pinned to a session minted before the
+             * workflow was reconfigured.
+             */
+            vendorData: buildVendorData(c.id, partyId, captureSequence),
+            // Internal identifiers only — echoed back on every webhook.
+            metadata: {
+              verification_check_id: created.id,
+              capture_sequence: captureSequence,
+            },
+            /**
+             * Where the customer lands when the hosted flow finishes.
+             *
+             * Server-built from a compiled-in origin, never from the request.
+             * The page it names is a receipt and nothing more — it reads no
+             * status out of the redirect and settles nothing; the identity
+             * outcome still arrives only on the signed webhook. Its job is to
+             * stop the journey ending on a page NPC does not own.
+             */
+            callbackUrl: hostedReturnUrl(),
+            // Narrows the provider's own document picker to the one the
+            // customer said they would present, and pins the country to
+            // Australia. Translated to provider vocabulary inside the adapter.
+            documentChoice,
+          });
+
+          await admin.schema('aml').from('verification_checks').update({
+            provider_reference: session.sessionId,
+            provider_attempt_reference: session.sessionId,
+            processing_status: 'processing',
+            processing_started_at: new Date().toISOString(),
+            outcome_detail: {
+              ...(created.outcome_detail ?? {}),
+              didit_session: {
+                // Identifiers only. The hosted URL and the session token are
+                // NOT stored: the URL embeds the token, so persisting it would
+                // put a live credential in the case record.
+                session_id: session.sessionId,
+                workflow_id: session.workflowId,
+                workflow_version: session.workflowVersion,
+                // Which NPC attempt this session belongs to, and the workflow
+                // revision it was minted under. Together they are what lets a
+                // later request tell a current session from a superseded one
+                // — Didit's own `workflow_version` does not move when a
+                // published workflow is edited.
+                attempt: captureSequence,
+                workflow_revised_at: resolved?.config?.['workflow_revised_at'] ?? null,
+                // What the customer said they would present. NPC's own
+                // vocabulary, not the provider's code — it is read back by the
+                // reuse check above, and it is the audit record of what the
+                // session was restricted to. Not a verification finding: the
+                // document actually presented is whatever the decision says.
+                document_choice: documentChoice,
+                status: session.status,
+                expires_at: session.expiresAt,
+              },
+            },
+            updated_at: new Date().toISOString(),
+          }).eq('id', created.id);
+
+          await appendDiditCaseEvent(admin, c.id,
+            `Identity verification session created for ${partyLabel}`,
+            {
+              verification_check_id: created.id,
+              provider: 'didit',
+              provider_reference: session.sessionId,
+              capture_sequence: captureSequence,
+              attempt_consumed: false,
+              scope: 'identity_verification_only',
+            });
+
+          return jsonResponse({
+            started: true,
+            resumed: false,
+            // The one thing the browser gets. Not stored anywhere on our side.
+            verification_url: session.url,
+            message: 'Follow the steps to verify your identity.',
+          });
+        } catch (e) {
+          /**
+           * Session creation failed. This is OUR failure and it must cost the
+           * customer nothing: the row is retired rather than left in flight
+           * (which would block their next attempt behind the active-session
+           * index), `status` stays `pending`, and no attempt is consumed.
+           */
+          const category = e instanceof DiditApiError
+            ? (e.category === 'timeout' ? 'timeout'
+              : e.category === 'provider_not_configured' ? 'provider_not_configured'
+                : e.category === 'provider_rejected_request' ? 'provider_misconfigured'
+                  : 'provider_unavailable')
+            : 'provider_unavailable';
+          await admin.schema('aml').from('verification_checks').update({
+            processing_status: 'cancelled',
+            provider_error_category: category,
+            superseded_at: new Date().toISOString(),
+            superseded_reason: 'session_creation_failed',
+            failure_reason: String((e as Error)?.message ?? 'session_creation_failed').slice(0, 300),
+            updated_at: new Date().toISOString(),
+          }).eq('id', created.id).eq('attempt_consumed', false);
+
+          console.error('[aml-client-portal] didit session creation failed', category);
+          return jsonResponse({
+            error: 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: 'temporarily_unavailable',
+          }, 409);
+        }
+      }
+
       case 'submit_verification': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
 
         const consentState = await loadConsentState(admin, c.id);
         if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        // A hosted provider owns the capture. Accepting NPC-stored images here
+        // would create the duplicate collection this integration exists to
+        // avoid, and would queue a check the self-hosted worker would then try
+        // to process.
+        const legacySubmitState = await clientSafeIdvState(admin);
+        if (legacySubmitState.flow === 'hosted_session') {
+          return jsonResponse({
+            error: 'Please complete verification in the window provided.',
+            code: 'hosted_verification_required',
+          }, 409);
+        }
+        /**
+         * This operation writes `provider: 'selfhosted'` and hands two
+         * browser-supplied paths to the image worker. Under the Standalone
+         * provider both are wrong: the worker would resolve a provider with no
+         * `runIdv()` and stamp a technical failure on a customer who did
+         * everything right, and the paths would not be ones the server named.
+         *
+         * Kept rather than deleted because the self-hosted adapter is still
+         * wired and still selectable; refused here so that only one capture
+         * path can be live at a time.
+         */
+        if (legacySubmitState.standalone) {
+          return jsonResponse({
+            error: 'Please start the identity check again from the verification step.',
+            code: 'capture_flow_superseded',
+          }, 409);
+        }
 
         const partyId = body.party_id ? String(body.party_id) : null;
         const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
@@ -994,6 +1899,408 @@ Deno.serve(async (req) => {
         });
       }
 
+      /**
+       * Prepare an NPC-captured identity attempt.
+       *
+       * Everything that could refuse the customer is checked HERE, before a
+       * camera opens and before a single byte of their identity document or
+       * their face exists anywhere: the portal session, the case, the party,
+       * the consent catalogue, the separate biometric consent, provider
+       * readiness, the attempt ceiling and one-in-flight.
+       *
+       * That ordering is the lesson this operation exists to hold. The old flow
+       * asked for one upload grant, wrote the document, and only then hit the
+       * gate on the second grant — so a case with no live provider uploaded a
+       * customer's identity document and abandoned the submission. Production
+       * accumulated nine orphaned documents and not one verification row.
+       *
+       * ## Preparing consumes NOTHING
+       *
+       * The row it creates is a `draft`: `attempt_consumed` is false, the
+       * outbox trigger declines to emit for it, and
+       * `aml.verification_attempts_used()` — which counts consumed attempts —
+       * cannot see it. A customer may prepare, open the camera, change their
+       * mind, close the tab and come back, as many times as they like, at no
+       * cost to their allowance. `uq_aml_verification_draft_capture` makes the
+       * operation idempotent: a second tab resumes the same attempt and the
+       * same three paths rather than minting a second set.
+       *
+       * ## What comes back
+       *
+       * An attempt id, which sides to photograph, and three short-lived signed
+       * upload permissions for objects the SERVER named. No provider name, no
+       * endpoint, no workflow, no threshold, no key — nothing the browser could
+       * use to reach a verification vendor, because it never does.
+       */
+      case 'prepare_verification_attempt': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        const documentChoice = parseDocumentChoice(body.document_type);
+        if (!documentChoice) {
+          return jsonResponse({
+            error: 'Please choose one of the identity documents listed.',
+            code: 'unsupported_document_type',
+          }, 400);
+        }
+
+        const { availability, standalone } = await clientSafeIdvState(admin);
+        if (!standalone) {
+          // The tenant is on the hosted session or the self-hosted service.
+          // Neither is prepared this way, and answering with upload grants
+          // would collect captures nothing would ever examine.
+          return jsonResponse({
+            error: 'Please continue with the verification step shown on your screen.',
+            code: 'capture_flow_unavailable',
+          }, 409);
+        }
+        if (availability !== 'available') {
+          return jsonResponse({
+            error: availability === 'manual_verification_required'
+              ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+              : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: availability,
+          }, 409);
+        }
+
+        const partyId = body.party_id ? String(body.party_id) : null;
+        const partyLabel = String(
+          body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
+
+        const used = await verificationAttemptsUsed(admin, c.id, partyId);
+        if (used >= MAX_VERIFICATION_ATTEMPTS) {
+          return jsonResponse({
+            error: 'You have used all available attempts. A member of our team will contact you to complete verification another way.',
+            code: 'attempts_exhausted',
+            attempts_used: used, max_attempts: MAX_VERIFICATION_ATTEMPTS,
+          }, 409);
+        }
+
+        const active = await activeProcessingCheck(admin, c.id, partyId);
+        if (active) {
+          return jsonResponse({
+            error: 'Your previous submission is still being checked.',
+            code: 'already_processing',
+          }, 409);
+        }
+
+        // Consent to collect a facial image must exist BEFORE the camera opens.
+        // Consent after collection is not consent (APP 3.3).
+        const { data: bioConsent } = await admin.schema('aml').from('consents')
+          .select('id, version').eq('case_id', c.id).eq('kind', 'biometric_collection')
+          .order('accepted_at', { ascending: false }).limit(1).maybeSingle();
+        if (!bioConsent) {
+          return jsonResponse({
+            error: 'Please accept the facial verification consent before continuing.',
+            code: 'biometric_consent_required',
+          }, 403);
+        }
+
+        const required = identityDocumentCapturePlan(documentChoice);
+
+        // Resume rather than create. The customer may have prepared already —
+        // in this tab, in another one, or before a refresh — and a second draft
+        // would mean a second set of storage paths for one attempt.
+        let draft = await draftCaptureAttempt(admin, c.id, partyId);
+
+        if (!draft) {
+          const captureSequence = await nextCaptureSequence(admin, c.id, partyId);
+          const attemptId = crypto.randomUUID();
+          const objects = capturePaths(c.id, attemptId);
+          const insert = await admin.schema('aml').from('verification_checks').insert({
+            id: attemptId,
+            case_id: c.id,
+            party_id: partyId,
+            party_label: partyLabel,
+            check_type: 'electronic_idv',
+            attempt_number: captureSequence,
+            capture_sequence: captureSequence,
+            status: 'pending',
+            processing_status: 'draft',
+            attempt_consumed: false,
+            execution_mode: 'live',
+            provider: 'didit_standalone',
+            biometric_consent_id: bioConsent.id,
+            outcome_detail: {
+              submitted_from: 'client_portal',
+              // The plan the processor will read. Paths are recorded at
+              // preparation so the objects downloaded later are exactly the
+              // ones the server named, with nothing from the browser in
+              // between.
+              standalone_capture: {
+                document_choice: documentChoice,
+                required,
+                objects: {
+                  document_front: objects.document_front,
+                  document_back: required.document_back ? objects.document_back : null,
+                  selfie: objects.selfie,
+                },
+              },
+            },
+          }).select('*').single();
+
+          if (insert.error) {
+            // 23505 on the draft index: another tab prepared between our read
+            // and our insert. That is the index doing its job — adopt theirs.
+            if (insert.error.code === '23505') {
+              draft = await draftCaptureAttempt(admin, c.id, partyId);
+              if (!draft) throw insert.error;
+            } else {
+              throw insert.error;
+            }
+          } else {
+            draft = insert.data;
+          }
+        } else {
+          /**
+           * A resumed draft may be for a different document.
+           *
+           * Someone who chose "driver licence", saw that it wants both sides,
+           * and went back to pick their passport must not keep a plan that
+           * still requires a back. The plan is rewritten in place, on the same
+           * row and the same paths — so the change costs nothing and cannot
+           * strand an already-uploaded front.
+           */
+          const existingChoice = parseDocumentChoice(
+            draft.outcome_detail?.standalone_capture?.document_choice);
+          if (existingChoice !== documentChoice) {
+            const objects = capturePaths(c.id, String(draft.id));
+            const updated = await admin.schema('aml').from('verification_checks').update({
+              party_label: partyLabel,
+              biometric_consent_id: bioConsent.id,
+              outcome_detail: {
+                ...(draft.outcome_detail ?? {}),
+                standalone_capture: {
+                  document_choice: documentChoice,
+                  required,
+                  objects: {
+                    document_front: objects.document_front,
+                    document_back: required.document_back ? objects.document_back : null,
+                    selfie: objects.selfie,
+                  },
+                },
+              },
+              updated_at: new Date().toISOString(),
+            }).eq('id', draft.id).eq('processing_status', 'draft').select('*').maybeSingle();
+            if (updated.data) draft = updated.data;
+          }
+        }
+
+        const objects = capturePaths(c.id, String(draft.id));
+        const uploads: Record<string, { upload_url: string; token: string }> = {};
+        for (const kind of ['document_front', 'document_back', 'selfie'] as const) {
+          if (!required[kind]) continue;
+          const target = objects[kind];
+          /**
+           * `upsert: true` so a retake after a failed submission can overwrite.
+           *
+           * Without it the second grant for a path that already holds an object
+           * is refused at PUT time, and a customer whose first submission hit a
+           * network error could never re-upload — they would be stuck on an
+           * attempt they could not complete and could not restart.
+           */
+          const { data, error } = await admin.storage.from(target.bucket)
+            .createSignedUploadUrl(target.path, { upsert: true });
+          if (error) throw error;
+          uploads[kind] = { upload_url: data.signedUrl, token: data.token };
+        }
+
+        return jsonResponse({
+          attempt_id: draft.id,
+          required,
+          uploads,
+          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - used,
+          max_attempts: MAX_VERIFICATION_ATTEMPTS,
+        });
+      }
+
+      /**
+       * Submit a prepared attempt for checking.
+       *
+       * The browser sends a case and an attempt id. It does not send a storage
+       * path, a provider, a status, a score or a threshold, and there is no
+       * field in which it could: everything this operation acts on comes from
+       * the draft row the server wrote when it prepared the attempt.
+       *
+       * The transition itself is the concurrency control. `draft → queued` is a
+       * conditional UPDATE, so a double tap, a second tab and a retried request
+       * all attempt it and exactly one succeeds; the losers are answered with
+       * the submission that already exists. The outbox trigger fires on that
+       * one update, writing the durable `aml.verification.requested` event.
+       *
+       * Processing then happens behind the response. The customer is told their
+       * photographs were received and may close the page.
+       */
+      case 'submit_verification_attempt': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        const attemptId = String(body.attempt_id ?? '').trim();
+        if (!/^[0-9a-f-]{36}$/i.test(attemptId)) {
+          return jsonResponse({ error: 'attempt_id is required' }, 400);
+        }
+
+        /**
+         * The attempt must belong to THIS case.
+         *
+         * `resolveCase` has already proved the case belongs to this portal
+         * session, so scoping the lookup by `case_id` is what makes an attempt
+         * id from another customer's case unreachable — it simply does not
+         * match, and the answer is the same 404 an invented id would get.
+         */
+        const { data: attempt, error: attemptErr } = await admin.schema('aml')
+          .from('verification_checks')
+          .select('*')
+          .eq('id', attemptId)
+          .eq('case_id', c.id)
+          .eq('check_type', 'electronic_idv')
+          .maybeSingle();
+        if (attemptErr) throw attemptErr;
+        if (!attempt) return jsonResponse({ error: 'No such verification attempt' }, 404);
+
+        // Already submitted, already processing, already settled. Answer with
+        // what is true rather than creating a second one.
+        if (attempt.processing_status !== 'draft') {
+          return jsonResponse({
+            submitted: true, status: 'processing', code: 'already_processing',
+            message: 'Your verification is already being checked. We will update you shortly.',
+          });
+        }
+
+        const plan = attempt.outcome_detail?.standalone_capture;
+        const documentChoice = parseDocumentChoice(plan?.document_choice);
+        if (!documentChoice || !plan?.objects) {
+          return jsonResponse({
+            error: 'Please start the identity check again.', code: 'attempt_incomplete',
+          }, 409);
+        }
+        const required = identityDocumentCapturePlan(documentChoice);
+
+        // Readiness is re-checked at submission, not just at preparation: a
+        // provider can go away while somebody is taking photographs, and
+        // queueing a capture nothing can examine strands them on "checking".
+        const { availability, standalone } = await clientSafeIdvState(admin);
+        if (!standalone || availability !== 'available') {
+          return jsonResponse({
+            error: availability === 'manual_verification_required'
+              ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
+              : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
+            code: standalone ? availability : 'capture_flow_unavailable',
+          }, 409);
+        }
+
+        const used = await verificationAttemptsUsed(admin, c.id, attempt.party_id ?? null);
+        if (used >= MAX_VERIFICATION_ATTEMPTS) {
+          return jsonResponse({
+            error: 'You have used all available attempts. A member of our team will contact you.',
+            code: 'attempts_exhausted',
+          }, 409);
+        }
+
+        /**
+         * Every required object must exist, and be a photograph.
+         *
+         * Checked against storage rather than against anything the browser
+         * claimed. A missing back on a two-sided document is the case this
+         * catches most often, and it is worth catching: half a driver licence
+         * is a document the provider would judge on evidence NPC chose not to
+         * give it.
+         */
+        const missing: string[] = [];
+        const rejected: string[] = [];
+        for (const kind of ['document_front', 'document_back', 'selfie'] as const) {
+          if (!required[kind]) continue;
+          const target = plan.objects?.[kind];
+          if (!target?.bucket || !target?.path) { missing.push(kind); continue; }
+          const info = await inspectCapture(admin, String(target.bucket), String(target.path));
+          if (!info.present || info.size < MIN_CAPTURE_BYTES) { missing.push(kind); continue; }
+          if (info.size > MAX_CAPTURE_BYTES) { rejected.push(kind); continue; }
+          if (info.mime && !ACCEPTED_CAPTURE_MIME.includes(info.mime.toLowerCase())) {
+            rejected.push(kind);
+          }
+        }
+        if (missing.length > 0 || rejected.length > 0) {
+          return jsonResponse({
+            error: 'Some of your photos did not upload properly. Please take them again.',
+            code: 'capture_incomplete',
+            // Which photograph to redo. A capture kind is not internal
+            // information — the customer took it and has to take it again.
+            retake: [...missing, ...rejected],
+          }, 409);
+        }
+
+        /**
+         * draft → queued, conditionally.
+         *
+         * `document_reference` and `biometric_storage_path` are promoted here
+         * and not at preparation, for two reasons. The row constraint
+         * `biometric_requires_consent` demands a real `biometric_captured_at`
+         * alongside the path, and stamping one before the photograph existed
+         * would be a false record. And the outbox trigger keys on
+         * `document_reference IS NOT NULL`, which is exactly the condition that
+         * separates "a capture is waiting to be processed" from everything
+         * else.
+         */
+        const { data: queued } = await admin.schema('aml').from('verification_checks')
+          .update({
+            processing_status: 'queued',
+            document_reference: String(plan.objects.document_front.path),
+            biometric_kind: 'face_image',
+            biometric_storage_path: String(plan.objects.selfie.path),
+            biometric_captured_at: new Date().toISOString(),
+            idempotency_key: `portal-idv-${attemptId}`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', attemptId)
+          .eq('processing_status', 'draft')
+          .select('id, capture_sequence').maybeSingle();
+
+        if (!queued) {
+          // Lost the transition to a concurrent submit. That submission is the
+          // real one; this is not a second attempt and creates nothing.
+          return jsonResponse({
+            submitted: true, status: 'processing', code: 'already_processing',
+            message: 'Your verification is already being checked. We will update you shortly.',
+          });
+        }
+
+        /**
+         * Start the processing behind the response.
+         *
+         * Not awaited: three provider calls against three images take seconds,
+         * and holding the customer's request open for them is what makes a
+         * portal look broken. The durable record already exists — the row is
+         * `queued` and the outbox event is written — so if this dispatch never
+         * lands, never returns, or dies with the isolate, the one-minute
+         * `aml-verification-processor` sweep picks the attempt up instead.
+         * Losing this call costs a minute, never a submission.
+         */
+        const dispatch = callInternalFunction(
+          'aml-verification-processor', { check_id: attemptId }, 'aml-client-portal',
+          { timeoutMs: 120_000 },
+        ).catch((e) => {
+          console.warn('[aml-client-portal] processor dispatch failed', (e as Error)?.message);
+        });
+        try {
+          (globalThis as any).EdgeRuntime?.waitUntil?.(dispatch);
+        } catch { /* not on the edge runtime; the sweep is the fallback */ }
+
+        return jsonResponse({
+          submitted: true,
+          attempt_id: attemptId,
+          attempt_number: queued.capture_sequence,
+          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - used,
+          status: 'processing',
+          message: 'Thank you. Your photos were received securely and we are checking them now.',
+        });
+      }
+
       case 'request_verification_upload_url': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
@@ -1009,7 +2316,28 @@ Deno.serve(async (req) => {
         // a face against a dead provider would be collection without purpose
         // (APP 3) — the gate sits on the upload URL, before any capture UI.
         if (kind === 'selfie') {
-          const availability = await clientSafeIdvAvailability(admin);
+          const { availability, flow, standalone } = await clientSafeIdvState(admin);
+          // When the provider owns the capture, NPC has no purpose for a
+          // selfie of its own — collecting one anyway would be collection
+          // without a purpose that can be served (APP 3), and would put a
+          // second copy of the customer's face in our storage for nothing.
+          if (flow === 'hosted_session') {
+            return jsonResponse({
+              error: 'Please complete verification in the window provided.',
+              code: 'hosted_verification_required',
+            }, 409);
+          }
+          // Under the Standalone provider the capture paths are minted by
+          // `prepare_verification_attempt` and bound to an attempt row. A
+          // free-floating grant from here would write an object no attempt
+          // references and nothing would ever read — collection with no
+          // purpose, in the bucket whose whole point is that it has one.
+          if (standalone) {
+            return jsonResponse({
+              error: 'Please start the identity check again from the verification step.',
+              code: 'capture_flow_superseded',
+            }, 409);
+          }
           if (availability !== 'available') {
             return jsonResponse({
               error: availability === 'manual_verification_required'
@@ -1124,6 +2452,58 @@ Deno.serve(async (req) => {
         return jsonResponse({ documents: data ?? [] });
       }
 
+      /**
+       * A short-lived link to one of this case's own documents.
+       *
+       * Two ownership checks, and both are needed. `resolveCase` proves the
+       * case belongs to the portal session; `.eq('case_id', c.id)` proves the
+       * document belongs to that case. Without the second, a document id — a
+       * value the client legitimately holds for its OWN files, and could guess
+       * for others — would be enough to open any document in the system.
+       *
+       * The bucket is written here and the path is read from the row. Neither
+       * comes from the request: a caller-supplied path is a directory
+       * traversal waiting to happen, and a caller-supplied bucket turns this
+       * into a general-purpose read of the project's storage.
+       *
+       * `download` sets `Content-Disposition: attachment`, matching the staff
+       * path. `request_upload_url` does not constrain the stored content type,
+       * so an HTML file could be served inline from the storage origin — which
+       * is the same host as this API. An attachment disposition costs the
+       * customer nothing and removes that entirely.
+       *
+       * 120 seconds: long enough for the browser to follow it, short enough
+       * that a URL captured from history or a proxy log is already dead.
+       */
+      case 'get_document_url': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+        if (!body.document_id) return jsonResponse({ error: 'document_id required' }, 400);
+
+        const { data: doc } = await admin.schema('aml').from('documents')
+          .select('id, filename, storage_path, status')
+          .eq('id', String(body.document_id))
+          .eq('case_id', c.id)
+          .neq('status', 'deleted')
+          .maybeSingle();
+        // One answer for "not yours", "not there" and "deleted". Telling them
+        // apart would confirm that a document id exists on another case.
+        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+
+        const { data: signed, error: signErr } = await admin.storage
+          .from('aml-documents')
+          .createSignedUrl(doc.storage_path, 120, { download: doc.filename });
+        if (signErr || !signed?.signedUrl) {
+          // Never echo the storage error: it carries the path and the bucket.
+          console.error('[aml-client-portal] document url signing failed');
+          return jsonResponse({
+            error: 'We could not open that document just now. Please try again shortly.',
+            code: 'document_unavailable',
+          }, 502);
+        }
+        return jsonResponse({ url: signed.signedUrl, filename: doc.filename });
+      }
+
       case 'list_client_requests': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ requests: [] });
@@ -1165,6 +2545,26 @@ Deno.serve(async (req) => {
         return jsonResponse({ request: data });
       }
 
+      /**
+       * Submission eligibility — the rule, written down.
+       *
+       * Three gates and exactly three: the current consent catalogue accepted,
+       * every APPLICABLE questionnaire section submitted and valid, and every
+       * REQUIRED document requirement met. Identity verification is
+       * deliberately NOT a gate, and never has been.
+       *
+       * That asymmetry is intentional rather than an oversight. Everything
+       * above is work only the client can do; an identity outcome is produced
+       * by a provider and a reviewer on our side, on their own clock, and
+       * holding the client's pack hostage to it would leave them staring at a
+       * disabled button waiting on us. The pack is what they owe us. The
+       * verification is what we owe them.
+       *
+       * The journey states this rule the same way (`readyToSubmit` in
+       * portalJourney.pure.ts), and the review screen says so in words rather
+       * than implying an all-clear it cannot give. Changing it means changing
+       * all three, plus the tests that pin them.
+       */
       case 'submit_for_review': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
@@ -1241,6 +2641,14 @@ Deno.serve(async (req) => {
     }
   } catch (err: any) {
     console.error('aml-client-portal error', err);
-    return jsonResponse({ error: err?.message ?? String(err) }, 500);
+    return jsonResponse({ ...internalError(err, 'aml-client-portal') }, 500);
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

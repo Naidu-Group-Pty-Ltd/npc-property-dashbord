@@ -27,6 +27,7 @@ import {
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getGhlCredentials, validateGhlCredentials, buildGhlHeaders, type GhlAccount } from '../_shared/ghl-account.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 const FIRECRAWL_BASE = 'https://api.firecrawl.dev/v2';
@@ -536,7 +537,7 @@ Deno.serve(async (req) => {
     });
   } catch (e: any) {
     console.error('[ghl-marketing-raw-dump] error:', e);
-    return new Response(JSON.stringify({ success: false, error: e.message || 'Internal error' }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'ghl-marketing-raw-dump'), success: false }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

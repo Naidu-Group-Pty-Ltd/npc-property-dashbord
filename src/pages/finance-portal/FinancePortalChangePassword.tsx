@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ export default function FinancePortalChangePassword() {
   const { user, changePassword, signOut } = useFinancePortalAuth();
   const { settings } = useWhiteLabel();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -41,7 +42,14 @@ export default function FinancePortalChangePassword() {
     setSubmitting(false);
     if (error || !success) { setErr(error || 'Failed to change password'); return; }
     toast.success('Password changed successfully');
-    navigate('/finance', { replace: true });
+    // The last gate in the chain that can still hand the partner back to the
+    // link they arrived on. `state.from` is set by the route guard and by the
+    // login page; both have already checked it is an in-portal path.
+    const onward = (location.state as { from?: string } | null)?.from;
+    navigate(
+      typeof onward === 'string' && /^\/finance(\/|$|\?)/.test(onward) ? onward : '/finance',
+      { replace: true },
+    );
   };
 
   return (

@@ -4,6 +4,7 @@ import { verifyAuth, createCorsHeaders as createAuthCorsHeaders, createUnauthori
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -117,7 +118,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[Email Copilot] Error:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify(internalError(error, 'email-copilot')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -157,6 +158,9 @@ ${email.body}`;
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'email_copilot',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -270,6 +274,9 @@ Please draft a suitable reply that addresses the sender's concerns or questions.
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'email_copilot',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -477,6 +484,9 @@ ${email.body}`;
     const calls = Array.from({ length: n }, (_, i) =>
       callLLMRaw({
         agentKey: 'email_copilot',
+        // This function already writes its own api_usage_log row for this call;
+        // letting the router log it too would bill the tenant twice.
+        meterUsage: false,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt + (n > 1 ? `\n\n(Variant ${i + 1} of ${n} — make this distinct from the others.)` : '') },
@@ -549,6 +559,9 @@ Output ONLY the rewritten text. No preamble, no quotes, no markdown fences.${ton
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const r = await callLLMRaw({
       agentKey: 'email_copilot',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -651,6 +664,9 @@ Rules:
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const r = await callLLMRaw({
       agentKey: 'email_copilot',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -718,6 +734,9 @@ async function handleTranslate(args: any, supabase: any, corsHeaders: Record<str
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const r = await callLLMRaw({
       agentKey: 'email_copilot',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: text.slice(0, 8000) },
@@ -779,6 +798,9 @@ Be specific. If a section has nothing, return an empty array (or empty string fo
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const r = await callLLMRaw({
       agentKey: 'email_copilot',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },

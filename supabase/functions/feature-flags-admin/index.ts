@@ -21,6 +21,7 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -97,7 +98,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     return json({ error: `unknown operation: ${operation}` }, 400);
   } catch (e) {
     console.error('[feature-flags-admin] unhandled', e);
-    return json({ error: String((e as Error)?.message ?? e) }, 500);
+    return json({ ...internalError(e, 'feature-flags-admin') }, 500);
   }
 });
 

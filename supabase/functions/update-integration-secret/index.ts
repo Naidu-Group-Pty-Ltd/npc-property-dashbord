@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireStepUp } from '../_shared/stepUp.ts';
 import { ALLOWED_INTEGRATION_SECRETS } from '../_shared/integrationSecrets.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -232,7 +233,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('Error updating secrets:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'update-integration-secret'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

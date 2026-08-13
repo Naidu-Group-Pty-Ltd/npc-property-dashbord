@@ -143,7 +143,13 @@ export default function TemplateBuilder() {
       return ((data as any)?.records ?? []) as any[];
     },
   });
-  const importReview = usePersistedImportReviewController({ onDecisionSaved: () => { void refetchRecentImports(); } });
+  // Stage 3 — the per-page visual critique is on. Unlike AI repair it cannot
+  // change the document (it returns findings, and its endpoint has no path to a
+  // template), so the gate it needs is an explicit click rather than an opt-in.
+  const importReview = usePersistedImportReviewController({
+    onDecisionSaved: () => { void refetchRecentImports(); },
+    enableAiCritique: true,
+  });
 
   const runPersistedPdfReconciliation = async () => {
     if (!importReview.reviewDraft || !importReview.reviewRecord?.created_template_id || !importReview.reviewImportAsset) {

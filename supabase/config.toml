@@ -15,6 +15,14 @@ verify_jwt = false
 [functions.aml-provider-webhook]
 verify_jwt = false
 
+# Didit calls this from their own servers and cannot carry a Supabase JWT.
+# The HMAC signature over the raw body (X-Signature + X-Timestamp, verified in
+# _shared/aml/providers/diditClient.ts) IS the authentication boundary: it is
+# checked before any service-role database access, and no unsigned or stale
+# request can change AML state.
+[functions.didit-webhook]
+verify_jwt = false
+
 [functions.aml-risk]
 verify_jwt = false
 
@@ -379,6 +387,11 @@ request_timeout = 120
 [functions.estimate-property-expenses]
 verify_jwt = true
 
+[functions.dispatch-workflow-triggers]
+# pg_cron presents the anon key at the gateway; authority is the HMAC envelope
+# the function verifies itself (verifySignedInternal, caller "pg_cron").
+verify_jwt = false
+
 [functions.execute-workflow-step]
 verify_jwt = true
 
@@ -592,6 +605,9 @@ request_timeout = 120
 [functions.backfill-notes-to-ghl]
 verify_jwt = false
 request_timeout = 300
+
+[functions.google-fonts-catalog]
+verify_jwt = false
 
 [functions.google-places-autocomplete]
 verify_jwt = false
@@ -1195,4 +1211,31 @@ verify_jwt = false
 # metering. Auth is enforced in-function (INTERNAL_EDGE_SECRET or the cron
 # secret, constant-time compared) because pg_cron carries no user JWT.
 [functions.report-api-usage]
+verify_jwt = false
+
+# Agreement Centre — partner-side agreement room. Portal session token
+# (x-finance-session-token) is the credential; same posture as the other
+# finance-portal-* functions.
+[functions.finance-portal-agreements]
+verify_jwt = false
+request_timeout = 120
+
+# Agreement Centre — staff-side document preview/download. Staff cookie session
+# + agreements module, like partner-agreement-records; long timeout because it
+# calls the PDF service.
+[functions.agreement-centre-render]
+verify_jwt = true
+request_timeout = 300
+
+# MCP server (@lovable.dev/mcp-js). `verify_jwt = false` because MCP clients
+# authenticate to this endpoint with an OAuth bearer token the function issues
+# and verifies itself (via `jose`), not with a Supabase JWT — the gateway would
+# reject every MCP client before the handler ran.
+#
+# This section is not decoration: the function had NO entry here, and the CLI
+# defaults `verify_jwt` to true. The deploy has been failing since 31 July on an
+# unrelated 413 (see supabase/functions/mcp/deno.json), so the default had never
+# been applied. The first successful deploy would otherwise have silently
+# flipped a working endpoint to true and broken every MCP client.
+[functions.mcp]
 verify_jwt = false

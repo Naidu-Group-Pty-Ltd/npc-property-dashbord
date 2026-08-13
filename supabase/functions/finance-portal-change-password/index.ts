@@ -1,12 +1,18 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword, verifyPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createFinanceSessionCookie, parseCookies } from "../_shared/auth.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
 
 const SESSION_HOURS = 12;
 
 function extractSessionToken(req: Request, body: any): string | null {
   const cookies = parseCookies(req.headers.get('cookie'));
-  const financeCookie = cookies['__Host-finance_session'] || cookies.finance_session;
+  // `__Host-finance_session_token` is the name `createFinanceSessionCookie`
+  // actually writes. This read asked for `__Host-finance_session`, which
+  // nothing has ever set, so the cookie branch was dead and every change of
+  // password fell through to the header carrier below — logging a
+  // `[wp11c.legacy_fallback]` warning for a client that was behaving correctly.
+  const financeCookie = cookies['__Host-finance_session_token'] || cookies.finance_session;
   if (financeCookie) return decodeURIComponent(financeCookie);
 
   const header = req.headers.get('x-finance-session-token') || req.headers.get('x-session-token');
@@ -55,6 +61,17 @@ Deno.serve(async (req) => {
     if (typeof new_password !== 'string' || new_password.length < 10) {
       return new Response(
         JSON.stringify({ error: 'New password must be at least 10 characters' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    // This portal's 10-character floor stays (stricter than the shared policy's
+    // 8); the shared checks — common-password list, character classes and the
+    // HIBP k-anonymity breach lookup — run on top. Fail-open if HIBP is
+    // unreachable so an outage cannot block a password change.
+    const strength = await validatePasswordStrength(new_password)
+    if (!strength.isValid) {
+      return new Response(
+        JSON.stringify({ error: strength.error }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }

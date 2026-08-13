@@ -55,6 +55,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shared/auth.ts";
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MODULE_KEY = 'builder_portal_admin';
 
@@ -919,7 +920,7 @@ Deno.serve(async (req) => {
     }
   } catch (error: any) {
     console.error('[builder-portal-admin] operation failed', { operation, message: error?.message });
-    return json({ error: error?.message || 'Operation failed' }, 500, cors);
+    return json({ ...internalError(error, 'builder-portal-admin') }, 500, cors);
   } finally {
     // Best-effort operational event, for observability only. Access-control
     // mutations already wrote a trusted, fail-closed record to

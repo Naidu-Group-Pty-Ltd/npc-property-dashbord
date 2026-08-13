@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface ActivityLogRequest {
   user_id: string;
   username: string;
@@ -117,7 +118,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[log-activity] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify(internalError(error, 'log-activity')),
       { 
         status: 500, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 

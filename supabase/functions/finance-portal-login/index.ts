@@ -1,10 +1,19 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.ts"
+import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { PortalLoginRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
+import { deliverPendingAgreementNotifications } from "../_shared/agreements/pendingDelivery.ts"
 
 const SESSION_HOURS = 12; // Finance portal sessions are shorter than client portal
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+
+// The per-account lockout below cannot see a spray across many accounts; these
+// source-keyed ceilings are what bound that shape. See _shared/authRateLimit.ts.
+const LOGIN_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const LOGIN_IDENTIFIER_BUDGET = { max: 12, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -19,13 +28,31 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { email, password, turnstile_token } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, PortalLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { email, password, turnstile_token } = __body.data
 
     if (!email || !password) {
       return new Response(
         JSON.stringify({ error: 'Email and password are required' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // Throttle before Turnstile so an unauthenticated flood cannot drive one
+    // outbound siteverify request per attempt.
+    const rateLimit = await enforceAuthRateLimit(supabase, req, {
+      scope: 'fpl',
+      ip: LOGIN_IP_BUDGET,
+      identifier: String(email),
+      identifierBudget: LOGIN_IDENTIFIER_BUDGET,
+    });
+    if (!rateLimit.allowed) {
+      console.warn('[finance-portal-login] rate limited', { ipTrusted: rateLimit.ipTrusted, degraded: rateLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, rateLimit.retryAfterSeconds, 'Too many sign-in attempts. Please try again later.');
     }
 
     // Turnstile verification.
@@ -152,8 +179,21 @@ Deno.serve(async (req) => {
       })
       .eq('id', portalUser.id)
 
+    // Whatever was issued to this organisation before anybody could sign in.
+    // The invite-acceptance path covers the ordinary case; this covers the
+    // temp-password path, which never visits `accept-invite`, and any agreement
+    // issued between an invitation and the first login. Idempotent, so running
+    // on every login costs one indexed read and inserts nothing twice.
+    await deliverPendingAgreementNotifications(supabase, {
+      portalUserId: portalUser.id,
+      financeContactId: portalUser.finance_contact_id,
+    });
+
     // Activity log
-    const ipAddress = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
+    // Record the address only when the platform vouched for it. Reading
+    // `x-forwarded-for[0]` meant a caller could write any address they liked
+    // into the partner's audit trail.
+    const ipAddress = rateLimit.ipTrusted ? rateLimit.ip : null;
     const userAgent = req.headers.get('user-agent') || null;
     await supabase.from('finance_portal_activity_log').insert({
       finance_user_id: portalUser.id,

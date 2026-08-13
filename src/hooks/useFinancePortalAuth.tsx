@@ -19,7 +19,7 @@ interface FinancePortalUser {
    * three separate tracks in this repo, so the app can be running against a
    * `finance-portal-verify` that predates version-aware acceptance and does not
    * send this field. Absent is not the same as false, and treating it as false
-   * locks every finance partner out — see `FinancePortalOnboardingGate`.
+   * locks every finance partner out — see `FinancePortalProtectedRoute`.
    */
   has_accepted_current_terms?: boolean;
   current_terms_version?: string | null;

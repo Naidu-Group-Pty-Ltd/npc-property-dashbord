@@ -11,6 +11,8 @@ import {
   resolveTokenReference,
 } from '../bindingResolver';
 import { shouldRenderOverlay } from '../renderVisibility';
+import { buildTextOverlayCssDecls } from '../rendering/textOverlayStyle.pure';
+import { headingTagFor, type SemanticAnnotation } from '../pdfImport/semanticRole.pure';
 
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
@@ -21,6 +23,26 @@ export interface HtmlBlockContext extends ResolveContext {
 
 export type HtmlBlockRenderer = (block: Block, ctx: HtmlBlockContext) => string;
 
+/**
+ * Late-bound lookup for the chart renderers, registered by `blocks/index.ts`.
+ *
+ * `charts.html.ts` imports this module, so this module cannot import it back.
+ * Rather than duplicate chart drawing code to dodge the cycle — which would put
+ * imported charts and authored charts on separate renderers that drift — the
+ * chart overlay case resolves its renderer at call time from a registry that
+ * `blocks/index.ts` populates, since that module already imports both sides.
+ */
+type ChartOverlayRendererLookup = (kind: string) => HtmlBlockRenderer | null;
+let chartOverlayRendererLookup: ChartOverlayRendererLookup | null = null;
+
+export function registerChartOverlayRenderers(lookup: ChartOverlayRendererLookup): void {
+  chartOverlayRendererLookup = lookup;
+}
+
+function getChartOverlayRenderer(kind: string): HtmlBlockRenderer | null {
+  return chartOverlayRendererLookup ? chartOverlayRendererLookup(kind) : null;
+}
+
 export function esc(s: unknown): string {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
@@ -28,6 +50,65 @@ export function esc(s: unknown): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * Resolve a `*Font` block prop to a CSS `font-family` value.
+ *
+ * ## Why this returns a variable rather than the font name
+ *
+ * A `token:heading` prop could be resolved through `resolveBindable` and
+ * emitted verbatim — and that would put a template-controlled string inside a
+ * quoted style attribute, which is a new injection surface for a value that
+ * already has a safe representation. `tokensToCssVariables` emits every font
+ * token as `--font-<key>` and runs it through `safeTokenValue` first, so
+ * pointing at the variable reuses that guarantee instead of re-earning it.
+ *
+ * A literal (`"Inter, sans-serif"`) is still accepted for templates that name a
+ * face directly, but only through a conservative allow-list: letters, digits,
+ * spaces, commas, hyphens, dots and quotes. Anything else — a semicolon, a
+ * `url(`, a brace — drops the whole declaration rather than emitting a
+ * sanitised guess at what the author meant.
+ *
+ * Returns `null` when the prop is absent, so callers keep whatever default
+ * they had before this existed. That is what makes every `*Font` prop additive.
+ */
+export function fontFamilyValue(value: unknown, fallback?: string): string | null {
+  if (value == null || value === '') return fallback ?? null;
+  const raw = String(value).trim();
+  if (raw.startsWith('token:')) {
+    const key = raw.slice(6).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!key) return fallback ?? null;
+    return fallback ? `var(--font-${key}, ${fallback})` : `var(--font-${key})`;
+  }
+  if (!/^[a-zA-Z0-9\s,'"._-]+$/.test(raw)) return fallback ?? null;
+  return raw;
+}
+
+/**
+ * A `font-family:` declaration, or an empty string when there is no font to set.
+ *
+ * Blocks compose this into their inline styles so an unset prop emits nothing
+ * at all and the element keeps inheriting, exactly as it did before.
+ */
+export function fontFamilyDecl(value: unknown, fallback?: string): string {
+  const family = fontFamilyValue(value, fallback);
+  return family ? `font-family:${family};` : '';
+}
+
+/**
+ * A `letter-spacing:` declaration in em, clamped to a sane typographic range.
+ *
+ * The brand's signature is the wide uppercase eyebrow — `--tracking-eyebrow` is
+ * 0.18em and the Private Banking cover goes to 0.34em — so tracking has to be
+ * settable per element rather than baked at 0.18em in the renderer. Clamped
+ * because a value outside this range is a mistake rather than a design, and an
+ * unbounded one can push a label off the page.
+ */
+export function trackingDecl(value: unknown, fallback?: number): string {
+  const n = value == null || value === '' ? fallback : Number(value);
+  if (n == null || !Number.isFinite(n)) return '';
+  return `letter-spacing:${Math.max(-0.1, Math.min(1, n))}em;`;
 }
 
 /** Render the absolute-positioning wrapper for blocks that use x/y/width/height. */
@@ -160,6 +241,19 @@ function withCascadeWrapper(html: string, node: { anchors?: any[]; id?: string }
 
 /** Render an overlay (text / image / shape / textOnPath / table) as an absolute-positioned HTML element. */
 export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
+  const html = renderOverlayContent(overlay, ctx);
+  if (!html) return '';
+  // R3 + W0 — stamp the overlay id on the rendered root. The editorial canvas
+  // uses it to mirror live drag geometry straight onto the iframe DOM (no
+  // srcDoc rebuild per pointermove), and the V2 DOM-evidence walker queries
+  // exactly this selector ([data-overlay-id]) — until now nothing emitted it.
+  // Non-visual: WeasyPrint ignores data attributes.
+  const id = String((overlay as { id?: unknown }).id ?? '');
+  if (!id) return html;
+  return html.replace(/^<([a-zA-Z][a-zA-Z0-9-]*)/, `<$1 data-overlay-id="${esc(id)}"`);
+}
+
+function renderOverlayContent(overlay: Overlay, ctx: ResolveContext): string {
   if (!shouldRenderOverlay(overlay, ctx)) return '';
   // Effects originate in saved template JSON and are embedded in quoted style
   // attributes below. buildEffectStyle encodes each value as it composes them,
@@ -189,46 +283,36 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       const pr = Number(o.paddingRight ?? 0);
       const pb = Number(o.paddingBottom ?? 0);
       const pl = Number(o.paddingLeft ?? 0);
-      const valign = o.verticalAlign === 'middle' ? 'center'
-        : o.verticalAlign === 'bottom' ? 'flex-end' : 'flex-start';
       const features = buildFontFeatures(o);
-      const decls: string[] = [
-        `color:${color}`,
-        `font-family:${esc(family)}`,
-        `font-size:${size}pt`,
-        `font-weight:${o.fontWeightNumeric ?? o.fontWeight ?? 'normal'}`,
-        `font-style:${o.fontStyle ?? 'normal'}`,
-        `text-align:${o.align ?? 'left'}`,
-        `line-height:${o.lineHeight ?? 1.3}`,
-        `letter-spacing:${o.letterSpacing ?? 0}pt`,
-        `padding:${pt}pt ${pr}pt ${pb}pt ${pl}pt`,
-        `display:flex`,
-        `flex-direction:column`,
-        `justify-content:${valign}`,
-      ];
-      if (o.textDecoration) decls.push(`text-decoration:${o.textDecoration}`);
-      if (o.textTransform === 'small-caps') decls.push(`font-variant-caps:small-caps`);
-      else if (o.textTransform) decls.push(`text-transform:${o.textTransform}`);
-      if (o.textShadow) decls.push(`text-shadow:${o.textShadow}`);
-      if (o.whiteSpace) decls.push(`white-space:${o.whiteSpace}`);
-      if (o.hyphens) decls.push(`hyphens:${o.hyphens}`, `-webkit-hyphens:${o.hyphens}`);
-      if (o.columns && o.columns > 1) {
-        decls.push(`columns:${o.columns}`);
-        if (o.columnGap != null) decls.push(`column-gap:${o.columnGap}pt`);
-      }
-      if (o.kerning === false) decls.push(`font-kerning:none`);
-      else if (o.kerning === true) decls.push(`font-kerning:normal`);
-      if (o.fontVariantNumeric && o.fontVariantNumeric !== 'normal') decls.push(`font-variant-numeric:${o.fontVariantNumeric}`);
-      if (features) decls.push(`font-feature-settings:${features}`);
-      if (o.fontVariationSettings) decls.push(`font-variation-settings:${o.fontVariationSettings}`);
-      if (o.maxLines && !o.columns) {
-        decls.push(
-          `display:-webkit-box`,
-          `-webkit-line-clamp:${o.maxLines}`,
-          `-webkit-box-orient:vertical`,
-          `overflow:hidden`,
-        );
-      }
+      // Shared with the editor canvas — see rendering/textOverlayStyle.pure.ts.
+      // The two surfaces used to build this list independently and disagreed on
+      // white-space, overflow, numeric weight, vertical align and padding.
+      const decls = buildTextOverlayCssDecls({
+        fontFamily: family,
+        fontSizePt: Number(size),
+        color,
+        fontWeightNumeric: o.fontWeightNumeric,
+        fontWeight: o.fontWeight,
+        fontStyle: o.fontStyle,
+        align: o.align,
+        lineHeight: o.lineHeight,
+        letterSpacingPt: o.letterSpacing,
+        paddingPt: { top: pt, right: pr, bottom: pb, left: pl },
+        verticalAlign: o.verticalAlign,
+        whiteSpace: o.whiteSpace,
+        textDecoration: o.textDecoration,
+        textTransform: o.textTransform,
+        textShadow: o.textShadow,
+        hyphens: o.hyphens,
+        columns: o.columns,
+        columnGapPt: o.columnGap,
+        kerning: o.kerning,
+        fontVariantNumeric: o.fontVariantNumeric,
+        fontFeatureSettings: features || null,
+        fontVariationSettings: o.fontVariationSettings,
+        maxLines: o.maxLines,
+        overflowPolicy: o.overflowPolicy,
+      }, { unit: 'pt', escapeFamily: esc });
       const style = `${base}${decls.join(';')};`;
       // Drop cap — render the first non-whitespace character as a floated span.
       const dc = o.dropCap;
@@ -279,13 +363,47 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
           inner = renderWithDropCap(String(text));
         }
       }
-      return withCascadeWrapper(`<div style="${style}">${inner}</div>`, overlay as any, ctx);
+      // A heading is emitted as a heading. WeasyPrint builds the tagged PDF's
+      // structure tree from the ELEMENT NAME, so a `<div>` tags as `/Div` and an
+      // `<h2>` tags as `/H2` — measured, and the only reason an imported page
+      // rendered at `pdf/ua-1` had a flat structure tree with no headings in it.
+      //
+      // Purely a tag change. The inline declarations already set every property
+      // the UA stylesheet would otherwise apply to h1–h6 (font-size always,
+      // font-weight always — see textOverlayStyle.pure.ts) EXCEPT margin, and an
+      // absolutely-positioned box with a margin does move. Hence the reset.
+      //
+      // Never when the body was split into paragraphs: `<p>` inside a heading is
+      // invalid, and a parser recovering from it would close the heading early
+      // and leave the rest of the copy outside the structure element.
+      const headingTag = headingTagFor((o as { semantics?: SemanticAnnotation }).semantics);
+      const tag = headingTag && !inner.includes('<p') ? headingTag : 'div';
+      const reset = tag === 'div' ? '' : 'margin:0;';
+      // The span is not decoration. Vertical alignment makes this box a flex
+      // container, and WeasyPrint emits a structure element for the anonymous
+      // flex item it then has to create — which inherits the tag and yields a
+      // heading nested inside an identical heading. Giving the flex container a
+      // real child costs nothing (verified pixel-identical at 300 DPI) and
+      // produces one `/H2` over a `/Span` instead of `/H2` over `/H2`.
+      const body = tag === 'div' ? inner : `<span>${inner}</span>`;
+      return withCascadeWrapper(`<${tag} style="${style}${reset}">${body}</${tag}>`, overlay as any, ctx);
     }
     case 'image': {
       const src = resolveBindable(overlay.src, ctx);
       if (!src) return '';
       const fit = overlay.fit === 'fill' ? 'fill' : overlay.fit;
-      return withCascadeWrapper(`<img src="${esc(src)}" style="${base}object-fit:${fit};"/>`, overlay as any, ctx);
+      // Alternative text. WeasyPrint writes it straight into the tagged PDF as
+      // the figure's `/Alt`, and a `/Figure` without one is a hard PDF/UA
+      // failure — which every imported picture was, while the source's own
+      // description sat unused in the Layers-panel name.
+      const alt = typeof (overlay as { alt?: unknown }).alt === 'string'
+        ? (overlay as { alt?: string }).alt!.trim()
+        : '';
+      return withCascadeWrapper(
+        `<img src="${esc(src)}"${alt ? ` alt="${esc(alt)}"` : ''} style="${base}object-fit:${fit};"/>`,
+        overlay as any,
+        ctx,
+      );
     }
     case 'shape': {
       // Gradient fills (captured from PDF shading ops / DOM computed styles)
@@ -301,6 +419,47 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
         return withCascadeWrapper(`<div style="${base}border-top:${sw}pt solid ${stroke};"></div>`, overlay as any, ctx);
       }
       return withCascadeWrapper(`<div style="${base}background:${esc(fill)};border:${sw}pt solid ${stroke};border-radius:${radius};"></div>`, overlay as any, ctx);
+    }
+    case 'chart': {
+      // W3 — a reconstructed chart, rendered by DELEGATING to the eleven
+      // data-bound chart renderers that already exist as blocks. They take
+      // `(block, ctx)` and read `block.props`, and `readSeries` falls back to
+      // `props.data` with `label`/`value` keys — exactly the shape a chart
+      // overlay carries — so no chart drawing code is duplicated here.
+      //
+      // Rendering the SAME function the block path uses is the point: an
+      // imported chart and an authored chart are the same pixels, and a fix to
+      // either reaches both.
+      const o: any = overlay;
+      const renderer = getChartOverlayRenderer(String(o.chartKind ?? 'bar'));
+      if (!renderer) return '';
+      const synthetic = {
+        id: overlay.id,
+        type: `chart-${o.chartKind ?? 'bar'}`,
+        props: {
+          // Inline series from the source document. `dataPath` wins when
+          // present, for a chart someone has since rebound to report data.
+          data: Array.isArray(o.series) ? o.series : [],
+          ...(o.dataPath ? { dataPath: o.dataPath } : {}),
+          ...(o.labelKey ? { labelKey: o.labelKey } : {}),
+          ...(o.valueKey ? { valueKey: o.valueKey } : {}),
+          ...(o.title ? { title: o.title } : {}),
+          ...(o.caption ? { caption: o.caption } : {}),
+          ...(o.accent ? { accent: o.accent } : {}),
+          ...(o.palette ? { palette: o.palette } : {}),
+          ...(o.orientation ? { orientation: o.orientation } : {}),
+          x: overlay.x, y: overlay.y, width: overlay.width, height: overlay.height,
+        },
+      } as unknown as Block;
+      const svg = renderer(synthetic, ctx as HtmlBlockContext);
+      // The block renderers position themselves absolutely from props.x/y, so
+      // the overlay wrapper carries only transform/opacity/effects — width and
+      // height are already expressed inside.
+      return withCascadeWrapper(
+        `<div style="position:absolute;left:0;top:0;opacity:${opacity};transform:rotate(${rotation}deg);transform-origin:top left;${z}${fx}">${svg}</div>`,
+        overlay as any,
+        ctx,
+      );
     }
     case 'vector': {
       // R0 — editable vector geometry (icons/logos captured as SVG paths).

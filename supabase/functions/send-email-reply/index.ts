@@ -5,6 +5,7 @@ import { logSecurityEvent } from '../_shared/auth_v2.ts';
 import { checkPermission } from '../_shared/permissions.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const clientId = Deno.env.get('MICROSOFT_CLIENT_ID');
 const clientSecret = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -681,7 +682,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[Send Email] Error:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify(internalError(error, 'send-email-reply')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

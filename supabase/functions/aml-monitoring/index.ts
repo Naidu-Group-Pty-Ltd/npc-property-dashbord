@@ -19,6 +19,15 @@ import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import {
+  ALERT_WRITABLE,
+  CUSTOMER_REVIEW_WRITABLE,
+  MONITORING_RULE_WRITABLE,
+  SOURCE_OF_FUNDS_WRITABLE,
+  SOURCE_OF_WEALTH_WRITABLE,
+} from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-token, x-session-token, x-command-centre-session-token",
@@ -109,7 +118,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       requireWrite();
       const rule = body.rule ?? {};
       if (!rule.name || !rule.trigger_kind) return jr({ error: "name and trigger_kind required" }, 400);
-      const row = { ...rule, created_by: rule.id ? rule.created_by : userId };
+      // WP-20: only declared columns. `rule` is the caller's object, so an
+      // unfiltered spread wrote whatever it named.
+      const row = { ...pickAllowed(rule, MONITORING_RULE_WRITABLE), created_by: rule.id ? rule.created_by : userId };
       const q = rule.id
         ? aml.from("monitoring_rules").update(row).eq("id", rule.id).select("*").single()
         : aml.from("monitoring_rules").insert(row).select("*").single();
@@ -166,9 +177,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       requireWrite();
       const a = body.alert ?? {};
       if (!a.title) return jr({ error: "title required" }, 400);
+      // WP-20: `a` is the caller's object and was written unfiltered, which
+      // reached `resolved_by`/`resolved_at` — the record of who closed the alert
+      // and when. Those belong to `resolve_alert`, which stamps them from the
+      // verified session, so they are absent from ALERT_WRITABLE.
+      const alertRow = pickAllowed(a, ALERT_WRITABLE);
       const q = a.id
-        ? aml.from("alerts").update(a).eq("id", a.id).select("*").single()
-        : aml.from("alerts").insert(a).select("*").single();
+        ? aml.from("alerts").update(alertRow).eq("id", a.id).select("*").single()
+        : aml.from("alerts").insert(alertRow).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       if (data?.case_id) await appendCaseEvent(admin, data.case_id, "system", `Alert ${a.id ? "updated" : "opened"}: ${data.title}`, { alert_id: data.id, severity: data.severity }, userId, userLabel);
@@ -275,10 +291,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const table = op === "upsert_sof" ? "source_of_funds" : "source_of_wealth";
       const item = body.item ?? {};
       if (!item.case_id) return jr({ error: "case_id required" }, 400);
-      if (item.verified && !item.id) { item.verified_by = userId; item.verified_at = new Date().toISOString(); }
+      // The two tables differ by a column each, so pick the matching set rather
+      // than a union — see the note in `_shared/amlWritableColumns.ts`.
+      const row: Record<string, unknown> = pickAllowed(
+        item,
+        op === "upsert_sof" ? SOURCE_OF_FUNDS_WRITABLE : SOURCE_OF_WEALTH_WRITABLE,
+      );
+      // Stamp the verifier from the session, on BOTH paths. This used to run
+      // only when there was no `item.id`, i.e. only on insert — so marking an
+      // existing item verified went through the update path with whatever
+      // `verified_by` the caller sent. The allowlist above already drops that
+      // field; stamping here is what puts the right name in it.
+      if (row.verified) {
+        row.verified_by = userId;
+        row.verified_at = new Date().toISOString();
+      }
       const q = item.id
-        ? aml.from(table).update(item).eq("id", item.id).select("*").single()
-        : aml.from(table).insert(item).select("*").single();
+        ? aml.from(table).update(row).eq("id", item.id).select("*").single()
+        : aml.from(table).insert(row).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ item: data });
@@ -303,9 +333,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_review") {
       requireWrite();
       const r = body.review ?? {};
+      // The closure record (`outcome*`) and the extension ledger belong to
+      // `complete_review` and `extend_review`; this op may not reach either.
+      const reviewRow = pickAllowed(r, CUSTOMER_REVIEW_WRITABLE);
       const q = r.id
-        ? aml.from("existing_customer_reviews").update(r).eq("id", r.id).select("*").single()
-        : aml.from("existing_customer_reviews").insert(r).select("*").single();
+        ? aml.from("existing_customer_reviews").update(reviewRow).eq("id", r.id).select("*").single()
+        : aml.from("existing_customer_reviews").insert(reviewRow).select("*").single();
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ review: data });
@@ -643,7 +676,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const caseRow = caseRes.data;
       if (!caseRow) return jr({ error: "Case not found" }, 404);
       if (!await hasTenantAccess(caseRow.tenant_id)) return jr({ error: "AML role required for case tenant" }, 403);
-      const [reviewsRes, alertsRes, eddRes, screenRes] = await Promise.all([
+      const [reviewsRes, alertsRes, eddRes, screenRes, partyScrRes, pepRes] = await Promise.all([
         aml.from("existing_customer_reviews").select("*").eq("case_id", caseId)
           .order("due_at", { ascending: true, nullsFirst: false }).limit(50),
         aml.from("alerts").select("id, title, severity, status, created_at, assigned_to")
@@ -652,6 +685,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq("case_id", caseId).in("status", ["open", "in_progress", "awaiting_client", "awaiting_mlro"]).limit(20),
         aml.from("screening_checks").select("completed_at").eq("case_id", caseId)
           .not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(1).maybeSingle(),
+        aml.from("party_screening_subjects")
+          .select("id, screened_name, party_type, required, state, last_screened_at, refresh_due_at, error_category")
+          .eq("case_id", caseId),
+        aml.from("pep_determinations")
+          .select("id, subject_name, result, review_due_at")
+          .eq("case_id", caseId).is("superseded_at", null),
       ]);
 
       const reviews = reviewsRes.data ?? [];
@@ -668,6 +707,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         ? new Date(new Date(lastScreened).getTime() + rescreenDays * 24 * 3600 * 1000).toISOString()
         : null;
 
+      // Per-party rollup: the case summary reflects the most urgent required
+      // screening state across parties, not just the latest case-level check.
+      const partySubjects = (partyScrRes.data ?? []).filter((s: any) => s.required && s.state !== "not_required");
+      const URGENCY: string[] = ["confirmed_match", "possible_match", "error", "processing", "queued", "not_started"];
+      let mostUrgent: string | null = null;
+      for (const stateName of URGENCY) {
+        if (partySubjects.some((s: any) => s.state === stateName)) { mostUrgent = stateName; break; }
+      }
+      const overdueParties = partySubjects.filter((s: any) =>
+        ["completed", "false_positive"].includes(String(s.state)) &&
+        s.refresh_due_at && s.refresh_due_at < nowIso);
+      if (!mostUrgent && overdueParties.length > 0) mostUrgent = "refresh_overdue";
+      const nextPartyRefresh = partySubjects
+        .map((s: any) => s.refresh_due_at).filter(Boolean).sort()[0] ?? null;
+      const pepReviewDue = (pepRes.data ?? [])
+        .filter((d: any) => d.review_due_at && d.review_due_at < nowIso);
+
       return jr({
         monitoring: {
           monitoring_status: caseRow.monitoring_status ?? "active",
@@ -681,6 +737,22 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           last_screened_at: lastScreened,
           rescreen_due_at: rescreenDueAt,
           rescreen_overdue: Boolean(rescreenDueAt && rescreenDueAt < nowIso),
+          party_screening: {
+            required_count: partySubjects.length,
+            most_urgent_state: mostUrgent,
+            outstanding_count: partySubjects.filter((s: any) =>
+              ["not_started", "queued", "processing", "error"].includes(String(s.state))).length,
+            unresolved_count: partySubjects.filter((s: any) => s.state === "possible_match").length,
+            confirmed_count: partySubjects.filter((s: any) => s.state === "confirmed_match").length,
+            refresh_overdue_count: overdueParties.length,
+            next_refresh_due_at: nextPartyRefresh,
+          },
+          pep: {
+            current_determinations: (pepRes.data ?? []).length,
+            review_due_count: pepReviewDue.length,
+            next_review_due_at: (pepRes.data ?? [])
+              .map((d: any) => d.review_due_at).filter(Boolean).sort()[0] ?? null,
+          },
           open_reviews: openReviews,
           overdue_review_count: overdueReviews.length,
           recent_reviews: reviews.slice(0, 10),
@@ -714,7 +786,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   } catch (e) {
     if (e instanceof Response) return e;
     console.error("aml-monitoring error", e);
-    return jr({ error: (e as Error).message ?? "internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-monitoring') }, 500);
   }
 });
 
@@ -816,6 +888,62 @@ async function runScheduledScans(admin: any) {
     }
   }
 
+  // Party-aware screening currency. The per-party work list carries its own
+  // last_screened_at / refresh_due_at; the case-level pass above cannot see
+  // it. Rescreens go through the SAME canonical execution path as a staff
+  // queue action — the transition to 'queued' emits aml.screening.requested
+  // transactionally and the cross-portal worker runs the screening engine.
+  let partiesRequeued = 0;
+  let partiesNeverScreened = 0;
+  const nowIso2 = new Date().toISOString();
+  // A required party that has never completed screening — including a party
+  // reconciled after the case was screened — is queued for real work, not
+  // just flagged. Candidates awaiting adjudication are never auto-requeued.
+  const { data: neverScreened } = await aml.from("party_screening_subjects")
+    .select("id, case_id, state")
+    .eq("required", true).eq("state", "not_started").limit(200);
+  for (const s of neverScreened ?? []) {
+    if (isEnded(s.case_id)) continue;
+    const { error } = await aml.from("party_screening_subjects")
+      .update({ state: "queued", updated_at: nowIso2 })
+      .eq("id", s.id).eq("state", "not_started");
+    if (!error) partiesNeverScreened++;
+  }
+  // A satisfied screening past its refresh date is due again.
+  const { data: partyOverdue } = await aml.from("party_screening_subjects")
+    .select("id, case_id, state, refresh_due_at")
+    .eq("required", true).in("state", ["completed", "false_positive"])
+    .not("refresh_due_at", "is", null).lt("refresh_due_at", nowIso2).limit(200);
+  for (const s of partyOverdue ?? []) {
+    if (isEnded(s.case_id)) continue;
+    const { error } = await aml.from("party_screening_subjects")
+      .update({ state: "queued", error_category: null, updated_at: nowIso2 })
+      .eq("id", s.id).in("state", ["completed", "false_positive"]);
+    if (!error) partiesRequeued++;
+  }
+
+  // PEP determinations due for review: raised as alerts for a human — a
+  // lapsed determination needs reconsideration, which no scan can do.
+  let pepReviewAlerts = 0;
+  const { data: pepDue } = await aml.from("pep_determinations")
+    .select("id, case_id, subject_name, review_due_at")
+    .is("superseded_at", null).not("review_due_at", "is", null)
+    .lt("review_due_at", nowIso2).limit(200);
+  for (const d of pepDue ?? []) {
+    if (isEnded(d.case_id)) continue;
+    const { count } = await aml.from("alerts").select("id", { count: "exact", head: true })
+      .eq("case_id", d.case_id).eq("status", "open")
+      .eq("title", "PEP determination review due");
+    if ((count ?? 0) > 0) continue;
+    const { data: alert } = await aml.from("alerts").insert({
+      case_id: d.case_id, severity: "high", status: "open",
+      title: "PEP determination review due",
+      summary: `PEP determination for ${d.subject_name} passed its review date ${String(d.review_due_at).slice(0, 10)} — reconsider it under ongoing CDD`,
+      metadata: { pep_determination_id: d.id, review_due_at: d.review_due_at },
+    }).select("*").single();
+    if (alert) { created.push(alert); pepReviewAlerts++; }
+  }
+
   // Escalate overdue existing-customer reviews to remediation_required.
   const { data: overdue } = await aml.from("existing_customer_reviews")
     .select("id, case_id, due_at, status, priority")
@@ -856,6 +984,9 @@ async function runScheduledScans(admin: any) {
     alerts_created: created.length,
     reviews_escalated: (overdue ?? []).length,
     periodic_reviews_raised: periodicRaised,
+    party_screenings_requeued: partiesRequeued,
+    party_screenings_started: partiesNeverScreened,
+    pep_review_alerts: pepReviewAlerts,
   };
 }
 

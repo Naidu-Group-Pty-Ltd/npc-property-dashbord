@@ -4,6 +4,7 @@ import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
 import { ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, readAcknowledgements } from '../_shared/portalAgreement.ts'
 import { hashSessionToken } from '../_shared/sessionHash.ts'
+import { readBoundedJson } from '../_shared/validate.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -22,7 +23,7 @@ Deno.serve(async (req) => {
     let action: string | null = null;
     let body: Record<string, unknown> = {};
     try {
-      body = await req.json();
+      body = await readBoundedJson(req);
       sessionToken = extractFinanceSessionToken(req.headers, body);
       action = typeof body?.action === 'string' ? body.action : null;
     } catch {

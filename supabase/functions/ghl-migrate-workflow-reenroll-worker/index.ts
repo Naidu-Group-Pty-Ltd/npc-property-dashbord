@@ -20,6 +20,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyInternal } from '../_shared/auth_v2.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   getGhlCredentials, validateGhlCredentials, buildGhlHeaders,
   resolveGhlAccessTokenForLocation,
@@ -232,6 +233,6 @@ Deno.serve(async (req) => {
   } catch (err: any) {
     console.error('[wf-reenroll] error:', err);
     if (jobId && supabase) await finishJob(supabase, jobId, 'failed', err.message?.substring(0, 500));
-    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
+    return new Response(JSON.stringify(internalError(err, 'ghl-migrate-workflow-reenroll-worker')), { status: 500 });
   }
 });

@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { decode as base64Decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 import { verifyInternal, logSecurityEvent } from "../_shared/auth_v2.ts";
 import { insertTargetedNotification } from "../_shared/notify.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 /**
  * Background email sync cron function.
@@ -358,7 +359,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[Email Sync Cron] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'email-sync-cron'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

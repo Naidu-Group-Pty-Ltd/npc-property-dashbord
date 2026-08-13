@@ -23,8 +23,12 @@ def policy(lane, mode="semantic", overrides=None, caps=CAPS):
 
 
 class LaneMatrixTests(unittest.TestCase):
-    def test_version_is_v2(self):
-        self.assertEqual(LANE_ENFORCEMENT_VERSION, "extractor-lane-policy-v2")
+    def test_version_is_v3(self):
+        # Bumped with the app-level decoupling of force_full_page_ocr_default
+        # from OCR availability. The dispatcher's LANE_POLICY_VERSION mirror in
+        # supabase/functions/pdf-parse-dispatch/index.ts must match this exactly
+        # or the cache fingerprint will serve v2-semantics artifacts.
+        self.assertEqual(LANE_ENFORCEMENT_VERSION, "extractor-lane-policy-v3")
 
     def test_fast_native_disables_heavy_work(self):  # required #1
         p = policy("fast_native")
@@ -228,6 +232,101 @@ class CapabilitiesDescribeTests(unittest.TestCase):
             self.assertEqual(data["version"], LANE_ENFORCEMENT_VERSION)
             self.assertIn("do_ocr", data)
             self.assertIn("memory_profile", data)
+
+
+class OcrForcingDecouplingTests(unittest.TestCase):
+    """v3 — OCR *availability* and OCR *forcing* are independent.
+
+    Before v3, app.py derived both `ocr` and `force_full_page_ocr_default` from
+    the same expression `(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK)`. That made
+    "OCR is available" and "OCR every page of every document" one switch, so the
+    `unplanned` lane — the largest slice of production traffic — force-OCR'd
+    native-text PDFs whose measured ocr_page_ratio was 0.0.
+
+    Turning the fallback off was not a workaround: `ocr` is a hard ceiling, so it
+    would have disabled OCR for genuinely scanned documents too. These tests pin
+    the configuration that has no v2 equivalent: OCR available, not forced.
+    """
+
+    AVAILABLE_NOT_FORCED = GlobalCapabilities(
+        ocr=True,
+        force_full_page_ocr_default=False,
+    )
+
+    def test_unplanned_no_longer_forces_full_page_ocr(self):
+        p = policy("unplanned", caps=self.AVAILABLE_NOT_FORCED)
+        self.assertTrue(p.do_ocr, "OCR must remain available as a fallback")
+        self.assertFalse(p.force_full_page_ocr, "must not OCR every page by default")
+
+    def test_ocr_scanned_still_forces_full_page_ocr(self):
+        """The whole point of the decoupling: scanned documents keep full OCR."""
+        p = policy("ocr_scanned", caps=self.AVAILABLE_NOT_FORCED)
+        self.assertTrue(p.do_ocr)
+        self.assertTrue(
+            p.force_full_page_ocr,
+            "ocr_scanned forces full-page OCR authoritatively, independent of the "
+            "global forcing default",
+        )
+
+    def test_ocr_scanned_forces_under_every_mode(self):
+        for mode in ("semantic", "hybrid", "pixel_perfect"):
+            with self.subTest(mode=mode):
+                p = policy("ocr_scanned", mode=mode, caps=self.AVAILABLE_NOT_FORCED)
+                self.assertTrue(p.force_full_page_ocr)
+
+    def test_ocr_ceiling_still_beats_lane_forcing(self):
+        """Rule 4 is unaffected: no OCR globally means no forced OCR anywhere."""
+        no_ocr = GlobalCapabilities(ocr=False, force_full_page_ocr_default=True)
+        p = policy("ocr_scanned", caps=no_ocr)
+        self.assertFalse(p.do_ocr)
+        self.assertFalse(p.force_full_page_ocr)
+
+    def test_forcing_default_still_reaches_unplanned_when_enabled(self):
+        """Decoupling must not make the forcing flag inert — an operator who sets
+        DOCLING_FORCE_FULL_PAGE_OCR=true still gets forced OCR on unplanned."""
+        forced = GlobalCapabilities(ocr=True, force_full_page_ocr_default=True)
+        self.assertTrue(policy("unplanned", caps=forced).force_full_page_ocr)
+
+    def test_lanes_that_opt_out_are_unaffected_either_way(self):
+        for caps in (self.AVAILABLE_NOT_FORCED,
+                     GlobalCapabilities(ocr=True, force_full_page_ocr_default=True)):
+            for lane in ("fast_native", "pixel_raster_only"):
+                with self.subTest(lane=lane, forced=caps.force_full_page_ocr_default):
+                    self.assertFalse(policy(lane, caps=caps).force_full_page_ocr)
+
+    def test_forcing_change_partitions_the_converter_cache(self):
+        """Two policies differing only in forcing must not share a converter."""
+        forced = GlobalCapabilities(ocr=True, force_full_page_ocr_default=True)
+        a = policy("unplanned", caps=self.AVAILABLE_NOT_FORCED).converter_profile()
+        b = policy("unplanned", caps=forced).converter_profile()
+        self.assertNotEqual(a, b)
+
+
+class EnrichmentDefaultTests(unittest.TestCase):
+    """v3 — formula/code enrichment default off at the process level."""
+
+    ENRICHMENT_OFF = GlobalCapabilities(formula=False, code=False)
+
+    def test_unplanned_inherits_enrichment_off(self):
+        p = policy("unplanned", caps=self.ENRICHMENT_OFF)
+        self.assertFalse(p.formula_enrichment)
+        self.assertFalse(p.code_enrichment)
+
+    def test_lane_cannot_re_enable_globally_disabled_enrichment(self):
+        # accurate_table and design_heavy both *intend* formula enrichment; the
+        # global ceiling must still win (rule 4).
+        for lane in ("accurate_table", "design_heavy"):
+            with self.subTest(lane=lane):
+                self.assertFalse(policy(lane, caps=self.ENRICHMENT_OFF).formula_enrichment)
+
+    def test_enrichment_still_available_when_explicitly_enabled(self):
+        on = GlobalCapabilities(formula=True, code=True)
+        self.assertTrue(policy("accurate_table", caps=on).formula_enrichment)
+
+    def test_enrichment_change_partitions_the_converter_cache(self):
+        a = policy("accurate_table", caps=self.ENRICHMENT_OFF).converter_profile()
+        b = policy("accurate_table", caps=GlobalCapabilities(formula=True, code=True)).converter_profile()
+        self.assertNotEqual(a, b)
 
 
 if __name__ == "__main__":

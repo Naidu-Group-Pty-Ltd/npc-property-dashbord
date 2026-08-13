@@ -17,6 +17,7 @@ import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -106,7 +107,7 @@ Deno.serve(async (req) => {
     }
   } catch (err) {
     console.error('[finance-portal-client-comms] error', err);
-    return json({ error: 'internal_error', message: (err as Error).message }, 500);
+    return json({ ...internalError(err, 'finance-portal-client-comms'), error: 'internal_error' }, 500);
   }
 });
 

@@ -1,31 +1,38 @@
 /**
  * Full-page AML case workspace (directive §11, tri-portal Phase 3).
  *
- * The authoritative processing surface for a single case, replacing the
- * narrow side sheet: persistent case header, grouped section navigation,
- * progress rail, right action panel and a complete operational Overview.
+ * The authoritative processing surface for a single case: a persistent
+ * header, a five-phase macro rail, five operator areas, the section the
+ * operator chose, and a right rail contextual to that area.
+ *
+ * ── What the redesign changed, and what it did not ────────────────────
+ * The eleven sections are unchanged. Each still lives at the same
+ * `?section=` key, still mounts the same component, and still calls the
+ * same server operations with the same server-side authorisation. What
+ * changed is how much an operator has to read before they can act: the
+ * eleven-item rail became five areas, the fourteen-pill progress strip
+ * became five phases (the fourteen-step rail is untouched and still
+ * canonical — it renders in Records → Timeline), and the Overview became
+ * an operational summary instead of a wall of label/value cards.
+ *
+ * Everything the Overview shows is derived, per render, by the pure
+ * helpers in `src/lib/aml/workspaceViewModel.ts`. None of it is stored,
+ * and none of it is an authority: the service gate is still moved only by
+ * an explicit human decision recorded server-side.
  *
  * Rendered at /admin/aml/cases/:caseId behind `aml_v3_case_workspace`;
  * while the flag is off the route redirects to the legacy side-sheet deep
- * link so nothing breaks mid-rollout. Section content reuses the existing
- * case tab components — no duplicate data model.
+ * link so nothing breaks mid-rollout.
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardCheck, ClipboardList,
-  FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, Radar,
-  ScanSearch, Scale, User, Wallet, History,
+  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, Loader2, Lock, Minus,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,7 +43,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { displayDate, displayDateTime } from "@/lib/aml/displayDate";
-import { amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
+import { amlCasesApi, type AmlCase, type AmlCaseEvent } from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import {
   amlTransactionsApi, type AmlTransaction, type AmlCounterpartyCase,
@@ -52,102 +59,46 @@ import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificat
 import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
+import { CommandPassportSection } from "@/components/aml/passport/CommandPassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
-import {
-  CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
-  serviceGateStatus, progressRail, type ProgressRailState,
-} from "@/lib/aml/caseDimensions";
+import { progressRail, type ProgressRailState } from "@/lib/aml/caseDimensions";
 import {
   ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
 } from "@/components/aml/CaseWorkspaceTabs";
+import { AmlLoadingState } from "@/components/aml/primitives";
 import {
-  AmlGateBadge, AmlLoadingState, AmlRiskBadge, AmlStageBadge,
-} from "@/components/aml/primitives";
+  AmlComplianceSummary, AmlConnectedPortals, AmlContextActionPanel, AmlNextActionCard,
+  AmlOutstandingItems, AmlRecentActivity, AmlServiceReadinessCard, AmlWorkspaceHeader,
+  AmlWorkspaceNavigation, SECTION_LABELS,
+} from "@/components/aml/workspace";
+import { useAmlCaseSummary } from "@/lib/aml/useAmlCaseSummary";
+import {
+  areaForSection, AREA_SECTIONS, deriveAmlConnectedPortals, isWorkspaceSection,
+  WORKSPACE_SECTIONS, type AmlAttentionLevel, type AmlWorkspaceArea,
+  type AmlWorkspaceSection as SectionKey,
+} from "@/lib/aml/workspaceViewModel";
 
-const STATUS_LABELS: Record<AmlCaseStatus, string> = {
-  draft: "Draft", kyc_in_progress: "Onboarding in progress", kyc_complete: "Submission received",
-  edd_required: "Additional information required", under_review: "Under review",
-  escalated_mlro: "Awaiting decision", cleared: "Cleared", blocked: "Blocked", closed: "Closed",
+/**
+ * Which sections a role may open. Unchanged from the previous rail:
+ * Purchase & counterparty, Funding & finance and Monitoring stay behind
+ * `canInvestigate`. This is a rendering decision only — the server still
+ * authorises every operation those sections perform.
+ */
+const SECTION_VISIBILITY: Record<SectionKey, (a: { canInvestigate: boolean }) => boolean> = {
+  overview: () => true,
+  identity: () => true,
+  ownership: () => true,
+  counterparty: (a) => a.canInvestigate,
+  finance: (a) => a.canInvestigate,
+  documents: () => true,
+  "submission-review": () => true,
+  risk: () => true,
+  requests: () => true,
+  passport: () => true,
+  monitoring: (a) => a.canInvestigate,
+  timeline: () => true,
 };
-
-const NEXT_STATUSES: Record<AmlCaseStatus, AmlCaseStatus[]> = {
-  draft: ["kyc_in_progress", "closed"],
-  kyc_in_progress: ["kyc_complete", "edd_required", "blocked", "closed"],
-  kyc_complete: ["under_review", "edd_required", "cleared", "closed"],
-  edd_required: ["under_review", "escalated_mlro", "blocked", "closed"],
-  under_review: ["cleared", "escalated_mlro", "edd_required", "blocked", "closed"],
-  escalated_mlro: ["cleared", "blocked", "closed"],
-  cleared: ["under_review", "closed"],
-  blocked: ["under_review", "closed"],
-  closed: [],
-};
-
-const GATE_LABELS: Record<string, string> = {
-  not_activated: "Not activated",
-  cdd_incomplete: "CDD incomplete",
-  information_outstanding: "Information outstanding",
-  under_review: "Under review",
-  conditions_outstanding: "Conditions outstanding",
-  approved_with_controls: "Approved with controls",
-  approved: "Approved",
-  locked: "Locked",
-  terminated: "Terminated",
-};
-
-type SectionKey =
-  | "overview" | "identity" | "ownership"
-  | "counterparty" | "finance" | "documents" | "submission-review"
-  | "risk" | "monitoring" | "requests" | "timeline";
-
-interface SectionDef {
-  key: SectionKey;
-  label: string;
-  icon: typeof ClipboardList;
-  visible: (a: { canInvestigate: boolean }) => boolean;
-}
-
-const SECTION_GROUPS: Array<{ group: string; sections: SectionDef[] }> = [
-  {
-    group: "Customer",
-    sections: [
-      { key: "overview", label: "Overview", icon: ClipboardList, visible: () => true },
-      { key: "identity", label: "Identity & Screening", icon: ScanSearch, visible: () => true },
-      { key: "ownership", label: "Ownership & Control", icon: Network, visible: () => true },
-    ],
-  },
-  {
-    group: "Matter",
-    sections: [
-      { key: "counterparty", label: "Purchase & Counterparty", icon: Handshake, visible: (a) => a.canInvestigate },
-      { key: "finance", label: "Funding & Finance", icon: Wallet, visible: (a) => a.canInvestigate },
-      { key: "documents", label: "Documents & Evidence", icon: FileText, visible: () => true },
-      { key: "submission-review", label: "Submission Review", icon: ClipboardCheck, visible: () => true },
-    ],
-  },
-  {
-    group: "Decision & oversight",
-    sections: [
-      { key: "risk", label: "Risk & Decision", icon: Scale, visible: () => true },
-      { key: "monitoring", label: "Monitoring & Reviews", icon: Radar, visible: (a) => a.canInvestigate },
-      { key: "requests", label: "Requests", icon: MailQuestion, visible: () => true },
-      { key: "timeline", label: "Timeline & Audit", icon: History, visible: () => true },
-    ],
-  },
-];
-
-const RAIL_STATE_META: Record<ProgressRailState, { icon: typeof Circle; className: string }> = {
-  complete: { icon: CheckCircle2, className: "text-success" },
-  in_progress: { icon: CircleDot, className: "text-primary" },
-  not_started: { icon: Circle, className: "text-muted-foreground/50" },
-  attention_required: { icon: AlertTriangle, className: "text-warning" },
-  blocked: { icon: Lock, className: "text-destructive" },
-  not_applicable: { icon: Minus, className: "text-muted-foreground/40" },
-};
-
-const isKnownSection = (value: string | null): value is SectionKey =>
-  !!value &&
-  SECTION_GROUPS.some((g) => g.sections.some((s) => s.key === value));
 
 
 export default function AmlCaseWorkspace() {
@@ -166,7 +117,7 @@ export default function AmlCaseWorkspace() {
   // work, a refresh keeps the section, and browser back/forward walks the
   // sections the user visited. Overview is the unparameterised default.
   const requestedSection = searchParams.get("section");
-  const section: SectionKey = isKnownSection(requestedSection) ? requestedSection : "overview";
+  const section: SectionKey = isWorkspaceSection(requestedSection) ? requestedSection : "overview";
   const setSection = (next: SectionKey) => {
     if (next === section) return;
     const params = new URLSearchParams(searchParams);
@@ -201,6 +152,61 @@ export default function AmlCaseWorkspace() {
     if (access.hasAnyRole && access.flagEnabled) void load();
   }, [access.hasAnyRole, access.flagEnabled, load]);
 
+  const openRequests = useMemo(
+    () => requests.filter((r) => r.status === "open" || r.status === "responded"),
+    [requests],
+  );
+
+  /**
+   * One batched wave of existing reads, fired once per case and shared by
+   * every Overview component. It replaces five self-fetching cards; the
+   * passport section and the full journey map now load only when somebody
+   * opens Records.
+   */
+  const { loading: summaryLoading, evidence, summary } = useAmlCaseSummary(
+    caseRow,
+    caseRow ? openRequests.length : undefined,
+    {
+      enabled: access.hasAnyRole && access.flagEnabled && Boolean(caseRow),
+      canReadMatter: canInvestigate,
+    },
+  );
+
+  const visibleSections = useMemo(
+    () =>
+      new Set<SectionKey>(
+        WORKSPACE_SECTIONS.filter((s) => SECTION_VISIBILITY[s]({ canInvestigate })),
+      ),
+    [canInvestigate],
+  );
+
+  /** Advisory dots on the area rail — the ranked reading, grouped by area. */
+  const areaAttention = useMemo(() => {
+    const out: Partial<Record<AmlWorkspaceArea, AmlAttentionLevel>> = {};
+    const rank: Record<AmlAttentionLevel, number> = {
+      critical: 0, attention: 1, waiting: 2, steady: 3, none: 4,
+    };
+    const mark = (sectionKey: SectionKey, level: AmlAttentionLevel) => {
+      const area = areaForSection(sectionKey);
+      const current = out[area];
+      if (!current || rank[level] < rank[current]) out[area] = level;
+    };
+    mark(summary.nextAction.section, summary.nextAction.attention);
+    for (const item of summary.outstanding) mark(item.section, item.attention);
+    return out;
+  }, [summary]);
+
+  const connectedPortals = useMemo(
+    () =>
+      caseRow
+        ? deriveAmlConnectedPortals(caseRow, {
+            grants: evidence.grants,
+            assessments: evidence.assessments,
+          })
+        : [],
+    [caseRow, evidence.grants, evidence.assessments],
+  );
+
   // Staged rollout: while the workspace flag is off, fall back to the legacy
   // side-sheet deep link so bookmarks and shared links keep working.
   if (!flagsLoading && !workspaceEnabled) {
@@ -233,177 +239,110 @@ export default function AmlCaseWorkspace() {
     );
   }
 
-  const stage = caseStage(caseRow);
-  const gate = serviceGateStatus(caseRow);
-  const rail = progressRail(caseRow);
-  const openRequests = requests.filter((r) => r.status === "open" || r.status === "responded");
-  const completedSteps = rail.filter((s) => s.state === "complete").length;
-  const progressPercent = Math.round((completedSteps / rail.length) * 100);
-  const visibleGroups = SECTION_GROUPS.map((g) => ({
-    ...g,
-    sections: g.sections.filter((s) => s.visible({ canInvestigate })),
-  })).filter((g) => g.sections.length > 0);
-
   const activation = (caseRow.metadata as any)?.activation;
+  const area = areaForSection(section);
+  // A section the current role may not open (a stale deep link, or a role
+  // change) falls back to the Overview rather than rendering nothing.
+  const resolvedSection: SectionKey = visibleSections.has(section) ? section : "overview";
 
   return (
-    <div className="space-y-4">
-      {/* ---- Persistent case header ---- */}
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Button asChild variant="ghost" size="sm" className="-ml-2 h-8 px-2">
-                <Link to="/admin/aml/cases" aria-label="Back to case register">
-                  <ArrowLeft className="h-4 w-4" />
-                </Link>
-              </Button>
-              <h1 className="truncate text-xl font-semibold sm:text-2xl">
-                {caseRow.subject_display_name}
-              </h1>
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-              <span>{caseRow.case_reference}</span>
-              {caseRow.client_id && (
-                <Link
-                  className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
-                  to={`/clients?clientId=${caseRow.client_id}`}
-                >
-                  <User className="h-3.5 w-3.5" /> Client record
-                </Link>
-              )}
-              <span>Updated {displayDate(caseRow.updated_at)}</span>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2" aria-label="Case status">
-            <AmlStageBadge stage={stage} />
-            <AmlGateBadge gate={gate} prefix />
-            <AmlRiskBadge risk={caseRow.risk_rating} prefix />
-          </div>
-        </div>
+    <div className="space-y-5">
+      {/* ── Persistent case header + five-phase macro rail ───────────── */}
+      <AmlWorkspaceHeader
+        caseRow={caseRow}
+        macro={summary.macro}
+        matterLabel={evidence.matterLabel}
+      />
 
-        {/* ---- Progress rail ---- */}
-        <Card>
-          <CardContent className="py-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <span className="font-medium">Case progress</span>
-              <span aria-live="polite">{progressPercent}% of stages complete</span>
-            </div>
-            <ol className="flex flex-wrap gap-x-3 gap-y-1.5" aria-label="Case progress stages">
-              {rail.map((step) => {
-                const meta = RAIL_STATE_META[step.state];
-                const Icon = meta.icon;
-                const current =
-                  step.state === "in_progress" ||
-                  step.state === "attention_required" ||
-                  step.state === "blocked";
-                return (
-                  <li
-                    key={step.key}
-                    className={`flex items-center gap-1.5 rounded-full px-2 py-1 text-xs ${
-                      current ? "bg-muted/60 font-medium" : ""
-                    }`}
-                  >
-                    <Icon className={`h-4 w-4 shrink-0 ${meta.className}`} aria-hidden />
-                    <span className={step.state === "not_started" ? "text-muted-foreground/70" : ""}>
-                      {step.label}
-                    </span>
-                    <span className="sr-only">— {step.state.replace(/_/g, " ")}</span>
-                  </li>
-                );
-              })}
-            </ol>
-          </CardContent>
-        </Card>
-      </div>
+      {/* ── Body: area rail · section content · contextual rail ───────
+          At lg (1024px laptops) the rail and the content share the row so
+          the main column keeps a workable measure; the contextual rail
+          joins as a sticky third column from xl and drops to a full-width
+          row beneath the content below that. */}
+      <div className="grid gap-5 lg:grid-cols-[212px_minmax(0,1fr)] xl:grid-cols-[212px_minmax(0,1fr)_296px]">
+        <AmlWorkspaceNavigation
+          section={resolvedSection}
+          onSelectSection={setSection}
+          visibleSections={visibleSections}
+          sectionBadges={{ requests: openRequests.length }}
+          areaAttention={areaAttention}
+          className="lg:self-start"
+        />
 
-      {/* ---- Body: grouped nav · content · action panel ----
-          At lg (1024 px laptops) only nav + content share the row, so the
-          main column keeps a workable width; the action panel joins as a
-          sticky third column from xl up. */}
-      <div className="grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)_270px]">
-        {/* Grouped section navigation — vertical on desktop, select on mobile */}
-        <nav aria-label="Case sections" className="lg:sticky lg:top-4 lg:self-start">
-          <div className="lg:hidden">
-            <Select value={section} onValueChange={(v) => setSection(v as SectionKey)}>
-              <SelectTrigger aria-label="Case section">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {visibleGroups.flatMap((g) =>
-                  g.sections.map((s) => (
-                    <SelectItem key={s.key} value={s.key}>{g.group} — {s.label}</SelectItem>
-                  )),
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="hidden space-y-4 lg:block">
-            {visibleGroups.map((g) => (
-              <div key={g.group}>
-                <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {g.group}
-                </div>
-                <ul className="space-y-0.5">
-                  {g.sections.map((s) => {
-                    const Icon = s.icon;
-                    const active = section === s.key;
-                    return (
-                      <li key={s.key}>
-                        <button
-                          type="button"
-                          onClick={() => setSection(s.key)}
-                          aria-current={active ? "page" : undefined}
-                          className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
-                            active ? "border border-primary/30 bg-primary/10 font-medium text-primary shadow-sm" : "border border-transparent hover:bg-accent"
-                          }`}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          {s.label}
-                          {s.key === "requests" && openRequests.length > 0 && (
-                            <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-[10px]">
-                              {openRequests.length}
-                            </Badge>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+        <main className="min-w-0 space-y-4" aria-label={`${SECTION_LABELS[resolvedSection]} section`}>
+          {resolvedSection === "overview" && (
+            <>
+              {/* 1 — the one dominant thing to do next. */}
+              <AmlNextActionCard action={summary.nextAction} onOpenSection={setSection} />
+
+              {/* 2 & 4 — may the service proceed, and what else is open. */}
+              <div className="grid items-start gap-4 md:grid-cols-2">
+                <AmlServiceReadinessCard readiness={summary.readiness} />
+                <AmlOutstandingItems items={summary.outstanding} onOpenSection={setSection} />
               </div>
-            ))}
-          </div>
-        </nav>
 
-        {/* Section content */}
-        <main className="min-w-0 space-y-4">
-          {section === "overview" && (
-            <div className="space-y-4">
-            <ComplianceJourneyMap caseRow={caseRow} />
-            <CaseOverviewSection
-              caseRow={caseRow}
-              openRequests={openRequests}
-              onOpenSection={setSection}
-            />
-          
-            <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
-            </div>
+              {/* 3 — the evidence behind the position. */}
+              <AmlComplianceSummary
+                summary={summary.compliance}
+                loading={summaryLoading}
+                onOpenSection={setSection}
+              />
+
+              {/* 5 & 6 — recent activity, then the sharing position. */}
+              <div className="grid items-start gap-4 md:grid-cols-2">
+                <AmlRecentActivity events={events} onOpenTimeline={() => setSection("timeline")} />
+                <AmlConnectedPortals
+                  portals={connectedPortals}
+                  loading={summaryLoading}
+                  onOpenSharing={() => setSection("passport")}
+                />
+              </div>
+
+              {activation && (
+                <p className="text-xs text-muted-foreground">
+                  Activated {activation.activated_at ? displayDate(activation.activated_at) : ""} —{" "}
+                  {caseRow.activation_timing === "conditional_agreement"
+                    ? "compliance runs under a conditional agreement; the service unlocks when the gate is approved."
+                    : "the designated service trigger had occurred at activation."}
+                </p>
+              )}
+            </>
           )}
-          {section === "identity" && (
+
+          {resolvedSection === "identity" && (
             <div className="space-y-4">
               {/* ONE canonical identity-verification surface: per-party
                   attempts, processing state, document sightings and audited
                   biometric access. The legacy identity_checks history lives
                   in its own collapsed read-only panel below — there are no
-                  two competing primary actions. */}
+                  two competing primary actions.
+
+                  Identity and screening share this surface but never share a
+                  meaning: they are separate panels, separate evidence and
+                  separate adjudication. */}
               <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
               <PartyVerificationPanel caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
               <PartyScreeningPanel caseId={caseRow.id} canWrite={canWrite} canAdjudicate={access.isMlro || access.roles.has("reviewer")} onChanged={load} />
               <LegacyVerificationHistoryPanel caseId={caseRow.id} />
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
+              {/* Consent evidence belongs with the customer, not on the
+                  Overview where it competed with the next action. */}
+              <ConsentEvidenceCard caseId={caseRow.id} />
             </div>
           )}
-          {section === "submission-review" && (
+
+          {resolvedSection === "ownership" && (
+            <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+          )}
+
+          {resolvedSection === "counterparty" && canInvestigate && (
+            <PurchaseCounterpartySection caseRow={caseRow} canWrite={canWrite} />
+          )}
+          {resolvedSection === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
+          {resolvedSection === "documents" && (
+            <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+          )}
+          {resolvedSection === "submission-review" && (
             <SubmissionReviewPanel
               caseId={caseRow.id}
               canWrite={canWrite}
@@ -411,24 +350,12 @@ export default function AmlCaseWorkspace() {
               onChanged={load}
             />
           )}
-          {section === "ownership" && <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />}
-          {section === "counterparty" && canInvestigate && (
-            <PurchaseCounterpartySection caseRow={caseRow} canWrite={canWrite} />
+
+          {resolvedSection === "risk" && (
+            <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
           )}
-          {section === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
-          {section === "documents" && (
-            <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
-          )}
-          {section === "risk" && <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />}
-          {section === "monitoring" && canInvestigate && (
-            <MonitoringReviewsSection
-              caseId={caseRow.id}
-              canWrite={canWrite}
-              isReviewer={access.roles.has("reviewer") || access.isMlro}
-              onChanged={load}
-            />
-          )}
-          {section === "requests" && (
+
+          {resolvedSection === "requests" && (
             <RequestsSection
               caseId={caseRow.id}
               requests={requests}
@@ -436,24 +363,50 @@ export default function AmlCaseWorkspace() {
               onChanged={load}
             />
           )}
-          {section === "timeline" && (
+          {resolvedSection === "passport" && (
             <div className="space-y-4">
+              {/* The Compliance Passport — the RESULTING RECORD of the
+                  journey, projected server-side. Renders nothing while
+                  aml_passport_command_view is off, so the section behaves
+                  exactly as before the Passport existed. */}
+              <CommandPassportSection caseId={caseRow.id} />
+              {/* The full journey map keeps its place in the product — it
+                  now sits where sharing is worked on rather than at the top
+                  of every case. */}
+              <ComplianceJourneyMap caseRow={caseRow} />
+              <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
+            </div>
+          )}
+          {resolvedSection === "monitoring" && canInvestigate && (
+            <MonitoringReviewsSection
+              caseId={caseRow.id}
+              canWrite={canWrite}
+              isReviewer={access.roles.has("reviewer") || access.isMlro}
+              onChanged={load}
+            />
+          )}
+          {resolvedSection === "timeline" && (
+            <div className="space-y-4">
+              {/* The canonical fourteen-step rail, in full. The five-phase
+                  header rail is a map over this; this is the territory. */}
+              <DetailedProcessRail caseRow={caseRow} />
               <TimelineTab caseId={caseRow.id} events={events} canInvestigate={canInvestigate} />
               <AuditTab events={events} />
             </div>
           )}
         </main>
 
-        {/* Right action panel — full-width row under the content at lg,
-            sticky right rail from xl. */}
         <aside
           className="space-y-4 lg:col-span-2 xl:col-span-1 xl:sticky xl:top-4 xl:self-start"
           aria-label="Case actions"
         >
-          <ActionPanel
+          <AmlContextActionPanel
             caseRow={caseRow}
-            openRequests={openRequests}
-            events={events}
+            section={resolvedSection}
+            nextAction={summary.nextAction}
+            readiness={summary.readiness}
+            outstanding={summary.outstanding}
+            visibleSections={visibleSections}
             canWrite={canWrite}
             isMlro={access.isMlro}
             onChanged={load}
@@ -461,119 +414,62 @@ export default function AmlCaseWorkspace() {
           />
         </aside>
       </div>
-
-      {/* Activation provenance footnote for context, kept out of the header */}
-      {activation && (
-        <p className="text-xs text-muted-foreground">
-          Activated {activation.activated_at ? displayDate(activation.activated_at) : ""} —{" "}
-          {caseRow.activation_timing === "conditional_agreement"
-            ? "compliance runs under a conditional agreement; the service unlocks when the gate is approved."
-            : "the designated service trigger had occurred at activation."}
-        </p>
-      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Overview — complete operational summary (directive §12.1)           */
+/* The canonical fourteen-step process rail (Records → Timeline)       */
 /* ------------------------------------------------------------------ */
 
-function CaseOverviewSection({
-  caseRow, openRequests, onOpenSection,
-}: {
-  caseRow: AmlCase;
-  openRequests: any[];
-  onOpenSection: (s: SectionKey) => void;
-}) {
-  const stage = caseStage(caseRow);
-  const gate = serviceGateStatus(caseRow);
-  const portalStatus = clientPortalStatus(caseRow);
-  const activation = (caseRow.metadata as any)?.activation;
+const RAIL_STATE_META: Record<ProgressRailState, { icon: typeof Circle; className: string; label: string }> = {
+  complete: { icon: CheckCircle2, className: "text-success", label: "complete" },
+  in_progress: { icon: CircleDot, className: "text-primary", label: "in progress" },
+  not_started: { icon: Circle, className: "text-muted-foreground/50", label: "not started" },
+  attention_required: { icon: AlertTriangle, className: "text-warning", label: "needs attention" },
+  blocked: { icon: Lock, className: "text-destructive", label: "blocked" },
+  not_applicable: { icon: Minus, className: "text-muted-foreground/40", label: "not applicable" },
+};
 
+/**
+ * The detailed rail the header used to carry. Nothing was removed from it:
+ * it moved to where an operator goes for the full history, and the header
+ * now carries the five-phase reading derived from the same canonical state.
+ */
+function DetailedProcessRail({ caseRow }: { caseRow: AmlCase }) {
+  const rail = progressRail(caseRow);
+  const complete = rail.filter((s) => s.state === "complete").length;
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Customer</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <Row k="Subject" v={caseRow.subject_display_name} />
-            <Row k="Customer type" v={{ individual: "Individual", entity: "Entity / company", trust: "Trust" }[caseRow.subject_type] ?? caseRow.subject_type} />
-            <Row
-              k="Client record"
-              v={caseRow.client_id ? (
-                <Link className="underline underline-offset-2" to={`/clients?clientId=${caseRow.client_id}`}>
-                  Open client
-                </Link>
-              ) : (
-                <span className="text-muted-foreground">Not linked</span>
-              )}
-            />
-            <Row k="Opened" v={displayDate(caseRow.opened_at)} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Activation</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <Row
-              k="Timing"
-              v={
-                caseRow.activation_timing === "conditional_agreement" ? "Before service (conditional agreement)"
-                : caseRow.activation_timing === "post_agreement_trigger" ? "At service trigger"
-                : caseRow.activation_timing === "pre_agreement" ? "Before agreement"
-                : "Not classified"
-              }
-            />
-            <Row
-              k="Agreement"
-              v={
-                caseRow.agreement_state === "operative" ? "Operative"
-                : caseRow.agreement_state === "conditional_executed" ? "Conditional — executed"
-                : caseRow.agreement_state === "terminated" ? "Terminated"
-                : caseRow.agreement_state === "not_executed" ? "Not executed"
-                : "—"
-              }
-            />
-            <Row k="Trigger event" v={activation?.event ?? "—"} />
-            {activation?.program_version && <Row k="Program version" v={activation.program_version} />}
-            <Row k="Confirmed by" v={activation?.activated_by_email ?? "—"} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Where things stand</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <Row k="Stage" v={CASE_STAGE_LABELS[stage]} />
-            <Row k="Client portal" v={CLIENT_PORTAL_STATUS_LABELS[portalStatus]} />
-            <Row k="Service gate" v={GATE_LABELS[gate] ?? gate} />
-            <Row k="Risk rating" v={caseRow.risk_rating ? caseRow.risk_rating : "Unrated"} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Outstanding</CardTitle></CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {openRequests.length === 0 ? (
-              <p className="text-muted-foreground">No open client requests.</p>
-            ) : (
-              <>
-                <p>
-                  {openRequests.length} open request{openRequests.length === 1 ? "" : "s"} with the client.
-                </p>
-                <Button size="sm" variant="outline" onClick={() => onOpenSection("requests")}>
-                  Review requests
-                </Button>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <ConsentEvidenceCard caseId={caseRow.id} />
-    </div>
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <CardTitle className="text-sm">Detailed process</CardTitle>
+          <span className="text-xs text-muted-foreground" aria-live="polite">
+            {complete} of {rail.length} steps complete
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <ol className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3" aria-label="Case process steps">
+          {rail.map((step) => {
+            const meta = RAIL_STATE_META[step.state];
+            const Icon = meta.icon;
+            return (
+              <li key={step.key} className="flex items-center gap-2 text-xs">
+                <Icon aria-hidden className={`h-3.5 w-3.5 shrink-0 ${meta.className}`} />
+                <span className={step.state === "not_started" ? "text-muted-foreground/70" : ""}>
+                  {step.label}
+                </span>
+                <span className="sr-only">— {meta.label}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </CardContent>
+    </Card>
   );
 }
+
 
 /**
  * Confirmation, in the command centre, that the client accepted the
@@ -1698,239 +1594,5 @@ function RequestsSection({
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Right action panel (directive §11.4)                                */
-/* ------------------------------------------------------------------ */
-
-/**
- * Grouping is presentation only — every option still comes from
- * NEXT_STATUSES (mirrored by the server). Attention-raising and destructive
- * transitions get distinct treatments so "Blocked" never sits camouflaged
- * beside "Cleared"; Blocked/Closed additionally require a confirmed reason,
- * matching the legacy workspace dialog.
- */
-const PANEL_ATTENTION_TRANSITIONS = new Set<AmlCaseStatus>(["edd_required"]);
-const PANEL_DESTRUCTIVE_TRANSITIONS = new Set<AmlCaseStatus>(["blocked", "closed"]);
-
-const PANEL_DESTRUCTIVE_COPY: Partial<Record<AmlCaseStatus, { title: string; body: string; action: string }>> = {
-  blocked: {
-    title: "Block this case?",
-    body: "Blocking locks the service gate and stops the client's onboarding until the case is re-reviewed. Record why this case is being blocked — the reason is written to the tamper-evident audit trail.",
-    action: "Block case",
-  },
-  closed: {
-    title: "Close this case?",
-    body: "Closing ends this AML/CTF case. A closed case cannot be advanced further. Record why this case is being closed — the reason is written to the tamper-evident audit trail.",
-    action: "Close case",
-  },
-};
-
-function ActionPanel({
-  caseRow, openRequests, events, canWrite, isMlro, onChanged, onOpenSection,
-}: {
-  caseRow: AmlCase;
-  openRequests: any[];
-  events: AmlCaseEvent[];
-  canWrite: boolean;
-  isMlro: boolean;
-  onChanged: () => void;
-  onOpenSection: (s: SectionKey) => void;
-}) {
-  const [reason, setReason] = useState("");
-  const [transitioning, setTransitioning] = useState(false);
-  const [pendingDestructive, setPendingDestructive] = useState<AmlCaseStatus | null>(null);
-  const [destructiveReason, setDestructiveReason] = useState("");
-  const nextOptions = NEXT_STATUSES[caseRow.status] ?? [];
-  const progressOptions = nextOptions.filter(
-    (s) => !PANEL_ATTENTION_TRANSITIONS.has(s) && !PANEL_DESTRUCTIVE_TRANSITIONS.has(s));
-  const attentionOptions = nextOptions.filter((s) => PANEL_ATTENTION_TRANSITIONS.has(s));
-  const destructiveOptions = nextOptions.filter((s) => PANEL_DESTRUCTIVE_TRANSITIONS.has(s));
-  const stage = caseStage(caseRow);
-
-  const transition = async (to: AmlCaseStatus, reasonText?: string) => {
-    setTransitioning(true);
-    try {
-      await amlCasesApi.transition(caseRow.id, to, reasonText || undefined);
-      toast({
-        title: "Status updated",
-        description: `${STATUS_LABELS[caseRow.status]} → ${STATUS_LABELS[to]}`,
-      });
-      setReason("");
-      setPendingDestructive(null);
-      setDestructiveReason("");
-      onChanged();
-    } catch (e: any) {
-      toast({ title: "Transition failed", description: e.message, variant: "destructive" });
-    } finally {
-      setTransitioning(false);
-    }
-  };
-
-  const blockers: string[] = [];
-  if (stage === "blocked") blockers.push("Case is blocked — resolve before proceeding.");
-  if (stage === "enhanced_cdd") blockers.push("Enhanced due diligence is outstanding.");
-  if (openRequests.length > 0) blockers.push(`${openRequests.length} client request${openRequests.length === 1 ? "" : "s"} awaiting a response.`);
-
-  const nextAction =
-    stage === "client_submitted" ? { label: "Review the client submission", section: "submission-review" as SectionKey }
-    : stage === "decision_pending" ? { label: "Record the decision", section: "risk" as SectionKey }
-    : stage === "enhanced_cdd" ? { label: "Work the additional-information items", section: "requests" as SectionKey }
-    : stage === "client_in_progress" ? { label: "Check portal progress and chase requirements", section: "documents" as SectionKey }
-    : { label: "Review the case overview", section: "overview" as SectionKey };
-
-  const destructiveCopy = pendingDestructive ? PANEL_DESTRUCTIVE_COPY[pendingDestructive] : null;
-
-  return (
-    <>
-      <Card className="border-primary/20 bg-primary/5">
-        <CardHeader className="pb-2"><CardTitle className="text-sm">Next best action</CardTitle></CardHeader>
-        <CardContent className="space-y-2 text-sm">
-          <p>{nextAction.label}</p>
-          <Button size="sm" onClick={() => onOpenSection(nextAction.section)}>
-            {nextAction.label === "Review the case overview" ? "Open overview" : "Go to it"}
-          </Button>
-        </CardContent>
-      </Card>
-
-      {blockers.length > 0 && (
-        <Card className="border-warning/40">
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Waiting on</CardTitle></CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-              {blockers.map((b, i) => <li key={i}>{b}</li>)}
-            </ul>
-          </CardContent>
-        </Card>
-      )}
-
-      {canWrite && nextOptions.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm">Advance status</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            <Input
-              aria-label="Reason for the status change"
-              placeholder="Reason (optional)…"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              disabled={transitioning}
-            />
-            <div className="flex flex-wrap gap-2">
-              {progressOptions.map((s) => (
-                <Button
-                  key={s}
-                  size="sm"
-                  variant="outline"
-                  disabled={transitioning}
-                  onClick={() => transition(s, reason)}
-                >
-                  {STATUS_LABELS[s]}
-                </Button>
-              ))}
-              {attentionOptions.map((s) => (
-                <Button
-                  key={s}
-                  size="sm"
-                  variant="outline"
-                  className="border-warning/40 text-warning hover:bg-warning/10 hover:text-warning"
-                  disabled={transitioning}
-                  onClick={() => transition(s, reason)}
-                >
-                  {STATUS_LABELS[s]}
-                </Button>
-              ))}
-            </div>
-            {destructiveOptions.length > 0 && (
-              <div className="flex flex-wrap gap-2 border-t border-border/60 pt-2">
-                {destructiveOptions.map((s) => (
-                  <Button
-                    key={s}
-                    size="sm"
-                    variant="outline"
-                    className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    disabled={transitioning}
-                    onClick={() => { setDestructiveReason(reason); setPendingDestructive(s); }}
-                  >
-                    {STATUS_LABELS[s]}
-                  </Button>
-                ))}
-              </div>
-            )}
-            {caseRow.status === "escalated_mlro" && !isMlro && (
-              <p className="text-xs text-muted-foreground">
-                Escalated decisions can only be recorded by authorised decision-makers.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm">Recent activity</CardTitle></CardHeader>
-        <CardContent>
-          {events.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No activity recorded yet.</p>
-          ) : (
-            <ul className="space-y-2 text-xs">
-              {events.slice(0, 5).map((e) => (
-                <li key={e.id}>
-                  <div className="line-clamp-2">{e.summary}</div>
-                  <div className="text-muted-foreground">{displayDateTime(e.created_at)}</div>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="mt-2 px-0"
-            onClick={() => onOpenSection("timeline")}
-          >
-            View full timeline
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Destructive transitions are confirmed with a required reason,
-          exactly like the legacy workspace dialog. */}
-      <AlertDialog
-        open={!!pendingDestructive}
-        onOpenChange={(o) => { if (!o) { setPendingDestructive(null); setDestructiveReason(""); } }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <AlertTriangle aria-hidden="true" className="h-5 w-5 text-destructive" />
-              {destructiveCopy?.title ?? "Confirm action"}
-            </AlertDialogTitle>
-            <AlertDialogDescription>{destructiveCopy?.body}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="aml-workspace-destructive-reason">Reason (required)</Label>
-            <Textarea
-              id="aml-workspace-destructive-reason"
-              value={destructiveReason}
-              onChange={(e) => setDestructiveReason(e.target.value)}
-              rows={3}
-              placeholder="Why is this case being blocked or closed?"
-              disabled={transitioning}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={transitioning}>Cancel</AlertDialogCancel>
-            <Button
-              variant="destructive"
-              disabled={transitioning || !destructiveReason.trim()}
-              onClick={() => pendingDestructive && transition(pendingDestructive, destructiveReason.trim())}
-            >
-              {transitioning && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {destructiveCopy?.action ?? "Confirm"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
   );
 }

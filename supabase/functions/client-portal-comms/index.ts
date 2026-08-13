@@ -14,6 +14,7 @@
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders } from '../_shared/auth.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const CLIENT_VISIBLE_GHL_CHANNELS = ['sms', 'whatsapp', 'email'];
 
@@ -371,6 +372,6 @@ Deno.serve(async (req) => {
 
     return json({ error: `Unknown operation: ${operation}`, success: false }, 400);
   } catch (err: any) {
-    return json({ error: err?.message || 'Unhandled error', success: false }, 500);
+    return json({ ...internalError(err, 'client-portal-comms'), success: false }, 500);
   }
 });

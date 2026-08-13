@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { verifyInternal } from '../_shared/auth_v2.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const META_API_VERSION = 'v21.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
@@ -178,7 +179,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[enrich] Error:', error);
-    return new Response(JSON.stringify({ success: false, error: error.message }), {
+    return new Response(JSON.stringify({ ...internalError(error, 'enrich-lead-attributions'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

@@ -22,6 +22,13 @@ export type ProviderReadinessState =
   | "misconfigured" | "unavailable" | "unknown";
 
 export interface CapabilityReadiness {
+  /**
+   * Which IDV experience the client will actually get, as the server resolves
+   * it. Absent for screening. `hosted_session` means the provider runs the
+   * capture on its own UI and the client completes it in the portal — which is
+   * different advice from "upload a document".
+   */
+  idv_flow?: 'capture' | 'hosted_session' | null;
   capability: string;
   configured_provider: string | null;
   mode: "simulator" | "live";

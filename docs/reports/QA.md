@@ -504,3 +504,83 @@ this project"* and names the exports that do work.
 
 The deploy is a CLI job rather than an MCP one: the route pulls in 32 shared
 modules through `../_shared/**`, and the CLI is what resolves them.
+
+---
+
+## 12 · How this format got onto the Investment Compass families
+
+This section used to explain why it could not be. The argument was sound about
+the vocabulary it was written against, and it named the two things that would
+have to change. Both changed, so the section now records what they were and what
+holds the result in place.
+
+### What blocked it
+
+The Template Builder's blocks had **no Markdown renderer and no block that
+accepted HTML**. `text-block` escapes its body, which is correct — it is the
+reason a model-authored string cannot inject markup into a client's document —
+and the consequence was that an answer bound to one printed its own source:
+`## Yield analysis`, `**gross yield**` and `| Gross yield | 3.71% |` all set as
+body copy. Against the corpus that was not an edge case: **394 of the 565
+answers (70%) carry inline bold**, 271 (48%) an ATX heading, 315 (56%) a bullet
+list and 106 (19%) a pipe table.
+
+And the structure is discovered at render time against heights a master declares
+at build time:
+
+| | p50 | p90 | max |
+| --- | --- | --- | --- |
+| answer, characters | 2,193 | 10,591 | **33,377** |
+| sections discovered in an answer | 1 | 16 | **63** |
+
+### 1 · `markdown-block` takes source, not HTML
+
+The half of the argument that had to stay true is the escaping. A block that
+accepted rendered HTML would be a hole in `PRODUCTION_SAFE_BLOCK_TYPES` — a
+security allow-list — for exactly the content least able to be trusted.
+
+So the block takes Markdown **source** and renders it itself, through
+`_shared/reports/markdown.pure.ts`: the programme's only Markdown
+implementation, already shared with this route, and **escape-first** —
+`escapeHtml` runs at one auditable call before any parsing. That makes safety a
+property of the renderer rather than of the caller: there is no input to the
+block that produces markup the model chose, whatever is bound to it. A second
+implementation would have been a second set of escaping decisions.
+
+`markdownBlock.spec.ts` asserts it on the **tag set** the output contains rather
+than on substrings — a fully-escaped `href=&quot;javascript:…&quot;` still
+contains the text `javascript:` and is inert, and a substring assertion there
+fails for the wrong reason and teaches you to loosen it.
+
+### 2 · Conditional pages, sized by the same function the block uses
+
+The block renders the whole source, packs the resulting blocks into buckets of
+`linesPerPage` and emits bucket `pageIndex`. A master declares one answer page
+plus seven continuations, each conditional on `qa.answerPages > N`, and a
+conditional page that does not render costs nothing because `visiblePages`
+filters before layout. A median answer therefore produces a five-page document
+and the longest produces twelve, from one set of masters — the Client Details
+Form pattern.
+
+`packMarkdownPages` lives in `reports/markdownPaging.pure.ts` because the
+projection and the block both need it and **must not disagree**: the master makes
+page N conditional while the block decides what page N holds, and a drift of one
+line prints a blank page or loses the end of an answer. `reportQaOnTheFamilies.spec.ts`
+asserts the composer's lines-per-page equals the module's.
+
+Packing never splits a Markdown block, so a table taller than a page keeps its
+header instead of reading as two unlabelled tables.
+
+### What the masters draw, and what stays here
+
+**One exchange in depth** — the question, its answer, the sources it was grounded
+in, and a list of what else was asked. That is the document a fixed page sequence
+suits.
+
+A whole transcript is not: conversations reach 70 turns, and
+`render-report-qa-pdf` paginates one properly. It remains the default, and the
+adapter's `legacyFallback` says so rather than implying the template replaces it.
+
+`reportQaOnTheFamilies.spec.ts` replaces `reportQaNotOnTheFamilies.spec.ts` and
+keeps its central assertion — that **`text-block` still escapes**. The fix was to
+add a block that renders safely, not to relax the one that escapes.

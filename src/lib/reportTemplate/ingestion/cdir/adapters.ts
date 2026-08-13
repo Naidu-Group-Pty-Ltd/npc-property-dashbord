@@ -6,8 +6,13 @@ import type { Block, Overlay, Page, ReportTemplate } from '../../templateSchema'
 import type { CdirDocument, CdirLayer, CdirPage, CdirSourceKind } from './schema';
 import { parseCdirDocument } from './validate';
 import { DEFAULT_IMPORT_FONT_STACK } from '../../rendering/fontNormalization';
+import { resolveTokenLiteral } from '../../pdfImport/designSystemBinding.pure';
+
+/** The slice of a template's tokens a CDIR conversion resolves against. */
+type TemplateTokens = ReportTemplate['tokens'];
 
 /** Parse a computed CSS box-shadow (colour-first form) into the CDIR shape shadow. */
+
 export function parseBoxShadow(raw: string | undefined, scale = 1): { x: number; y: number; blur: number; spread: number; color: string } | undefined {
   const s = String(raw ?? '').trim();
   if (!s || s === 'none') return undefined;
@@ -260,7 +265,7 @@ export function domBoxTreesToCdir(
   });
 }
 
-function overlayToLayer(overlay: Overlay): CdirLayer {
+function overlayToLayer(overlay: Overlay, tokens?: TemplateTokens): CdirLayer {
   const bounds = {
     x: overlay.x,
     y: overlay.y,
@@ -283,11 +288,14 @@ function overlayToLayer(overlay: Overlay): CdirLayer {
       kind: 'text',
       text: overlay.content,
       runs: overlay.runs,
-      fontFamily: String(overlay.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
+      fontFamily: String(resolveTokenLiteral(overlay.fontFamily, tokens) ?? DEFAULT_IMPORT_FONT_STACK),
       fontSize: Number(overlay.fontSize ?? 12),
       fontWeight: overlay.fontWeightNumeric ?? overlay.fontWeight,
       fontStyle: overlay.fontStyle,
-      color: String(overlay.color ?? '#000000'),
+      // Resolved, not symbolic. An imported overlay now carries `token:text`
+      // where it used to carry a hex, and CDIR exists to be DIFFED against a
+      // source — a token name in a colour field measures nothing.
+      color: String(resolveTokenLiteral(overlay.color, tokens) ?? '#000000'),
       align: overlay.align,
       lineHeight: overlay.lineHeight,
       letterSpacing: overlay.letterSpacing,
@@ -319,18 +327,20 @@ function overlayToLayer(overlay: Overlay): CdirLayer {
       borderWidth: overlay.borderWidth,
     };
   }
+  const fallback = overlay as unknown as Record<string, unknown>;
   return {
     ...common,
     kind: 'text',
-    text: overlay.content,
-    fontFamily: String(overlay.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
-    fontSize: Number(overlay.fontSize ?? 12),
-    color: String(overlay.color ?? '#000000'),
+    text: typeof fallback.content === 'string' ? fallback.content : '',
+    fontFamily: String(fallback.fontFamily ?? DEFAULT_IMPORT_FONT_STACK),
+    fontSize: Number(fallback.fontSize ?? 12),
+    color: String(fallback.color ?? '#000000'),
   };
+
 }
 
-function blockToLayers(block: Block): CdirLayer[] {
-  const layers = block.overlays.map(overlayToLayer);
+function blockToLayers(block: Block, tokens?: TemplateTokens): CdirLayer[] {
+  const layers = block.overlays.map((overlay) => overlayToLayer(overlay, tokens));
   if (layers.length <= 1) return layers;
   const minX = Math.min(...layers.map((layer) => layer.bounds.x));
   const minY = Math.min(...layers.map((layer) => layer.bounds.y));
@@ -348,7 +358,7 @@ function blockToLayers(block: Block): CdirLayer[] {
   }];
 }
 
-function pageToCdir(page: Page, index: number): CdirPage {
+function pageToCdir(page: Page, index: number, tokens?: TemplateTokens): CdirPage {
   const traceAssetId = page.background?.imageUrl ? `page_${index + 1}_background` : undefined;
   const fallbackLayer: CdirLayer[] = traceAssetId ? [{
     id: `${traceAssetId}_fallback`,
@@ -371,7 +381,7 @@ function pageToCdir(page: Page, index: number): CdirPage {
       ? { color: page.background.color, opacity: page.background.opacity, gradient: page.background.gradient }
       : undefined,
     traceRasterAssetId: traceAssetId,
-    layers: [...fallbackLayer, ...page.blocks.flatMap(blockToLayers)],
+    layers: [...fallbackLayer, ...page.blocks.flatMap((block) => blockToLayers(block, tokens))],
   };
 }
 
@@ -383,7 +393,7 @@ export function reportTemplateToCdir(template: ReportTemplate, source: Partial<A
       checksum: source.checksum ?? DEFAULT_CHECKSUM,
       filename: source.filename,
     },
-    pages: template.pages.map(pageToCdir),
+    pages: template.pages.map((page, index) => pageToCdir(page, index, template.tokens)),
     assets: template.pages.flatMap((page, index) => page.background?.imageUrl ? [{
       id: `page_${index + 1}_background`,
       kind: 'trace-raster' as const,

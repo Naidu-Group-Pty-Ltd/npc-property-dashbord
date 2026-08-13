@@ -7,6 +7,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 type AssetClass = 'residential' | 'commercial' | 'industrial';
 
@@ -166,6 +167,6 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({ ok: true, newId: inserted.id }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(internalError(e, 'reclassify-property')), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

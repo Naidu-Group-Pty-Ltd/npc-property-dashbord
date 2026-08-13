@@ -1,0 +1,137 @@
+/**
+ * Compliance Passport — scoped presentation tokens.
+ *
+ * The Passport's seal/stamp faces carry a deliberate "ink on paper" palette
+ * taken from the approved Claude Design (gold foil, registry navy, verified
+ * green, partner blue, restriction red). They exist ONLY inside a
+ * `.passport-scope` wrapper: nothing here restyles shared UI, and no
+ * component may hard-code these colours inline — the audit:style ratchet
+ * stays untouched because every value lives in this one token file.
+ *
+ * Values are HSL triples in the repo's token convention. Both themes read
+ * acceptably because seals sit on card surfaces that already adapt; the
+ * ink tones are mid-saturation by design (print ink, not neon).
+ */
+
+.passport-scope {
+  --passport-seal-gold: 43 59% 34%;
+  --passport-seal-green: 146 40% 30%;
+  --passport-seal-navy: 221 40% 28%;
+  --passport-seal-blue: 215 57% 32%;
+  --passport-seal-red: 0 55% 40%;
+
+  /* Booklet world — a deliberate single-look print metaphor. The cover is
+     navy leather with gold foil; pages are cream paper with registry-navy
+     ink. These do NOT flip with the app theme: a passport's paper is paper
+     in the dark. Every colour is painted explicitly for that reason. */
+  --passport-cover: 221 47% 16%;
+  --passport-cover-deep: 222 52% 10%;
+  --passport-foil: 42 55% 62%;
+  --passport-foil-dim: 42 35% 45%;
+  --passport-paper: 42 45% 96%;
+  --passport-paper-edge: 42 35% 88%;
+  --passport-ink: 222 42% 17%;
+  --passport-ink-soft: 221 20% 42%;
+}
+
+/* Journey progress inside the booklet — colour lives here, only the
+   dynamic width stays inline. */
+.passport-progress {
+  background: hsl(var(--passport-ink) / 0.12);
+}
+.passport-progress__bar {
+  background: hsl(var(--passport-foil-dim));
+}
+
+/* ── booklet ───────────────────────────────────────────────────────────── */
+
+.passport-cover {
+  color: hsl(var(--passport-foil));
+  background:
+    radial-gradient(120% 85% at 50% 8%, hsl(var(--passport-foil) / 0.10), transparent 58%),
+    linear-gradient(152deg, hsl(var(--passport-cover)) 0%, hsl(var(--passport-cover-deep)) 100%);
+  border: 1px solid hsl(var(--passport-foil) / 0.35);
+  box-shadow: inset 0 1px 0 hsl(var(--passport-foil) / 0.15);
+}
+.passport-cover__rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, hsl(var(--passport-foil) / 0.8), transparent);
+}
+.passport-cover__frame {
+  position: absolute;
+  inset: 10px;
+  border: 1px solid hsl(var(--passport-foil) / 0.45);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.passport-page {
+  color: hsl(var(--passport-ink));
+  background:
+    repeating-linear-gradient(56deg, hsl(var(--passport-ink) / 0.02) 0 1px, transparent 1px 7px),
+    linear-gradient(152deg, hsl(var(--passport-paper)) 0%, hsl(var(--passport-paper-edge)) 100%);
+  border: 1px solid hsl(var(--passport-foil-dim) / 0.45);
+}
+.passport-page__kicker {
+  color: hsl(var(--passport-foil-dim));
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.passport-page__muted { color: hsl(var(--passport-ink-soft)); }
+.passport-page__rule {
+  height: 1px;
+  background: hsl(var(--passport-ink) / 0.12);
+}
+
+.passport-seal {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-width: 2px;
+  border-style: solid;
+  border-color: hsl(var(--passport-seal-ink) / 0.55);
+  color: hsl(var(--passport-seal-ink));
+  background: hsl(var(--passport-seal-ink) / 0.06);
+}
+
+.passport-seal--gold { --passport-seal-ink: var(--passport-seal-gold); }
+.passport-seal--green { --passport-seal-ink: var(--passport-seal-green); }
+.passport-seal--navy { --passport-seal-ink: var(--passport-seal-navy); }
+.passport-seal--blue { --passport-seal-ink: var(--passport-seal-blue); }
+.passport-seal--red { --passport-seal-ink: var(--passport-seal-red); }
+
+.passport-seal--circle {
+  border-radius: 9999px;
+  border-style: double;
+  border-width: 3px;
+  transform: rotate(-6deg);
+}
+.passport-seal--rect {
+  border-radius: 3px;
+  transform: rotate(-2deg);
+}
+.passport-seal--seal {
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+  transform: rotate(3deg);
+}
+
+.passport-seal__ring {
+  position: absolute;
+  inset: 5px;
+  border: 1px dashed hsl(var(--passport-seal-ink) / 0.5);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .passport-seal {
+    transition: transform 180ms ease-out;
+  }
+  button:hover > .passport-seal,
+  button:focus-visible > .passport-seal {
+    transform: rotate(0deg) scale(1.02);
+  }
+}

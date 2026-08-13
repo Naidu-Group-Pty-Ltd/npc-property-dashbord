@@ -29,6 +29,7 @@ import {
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { requireModulePermission, requireSuperadmin } from '../_shared/authz.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   TemplateSchemaVersionError,
   validateAndMigrateTemplateSchemaVersion,
@@ -41,6 +42,7 @@ import {
   editRequiresNewVersion,
   pickEditable,
   requiredAuthzFor,
+  resolveRequestedColourway,
   slugify,
   statusForLifecycleOperation,
   validateForPublish,
@@ -60,6 +62,12 @@ interface RequestBody {
   };
   name?: string;
   description?: string;
+  /**
+   * Colourway to bake into the working copy. Validated server-side against the
+   * entry's own curated list — never trusted, and never used to select a
+   * palette from another family.
+   */
+  colourwayId?: string;
   entry?: Record<string, unknown>;
   session_token?: string;
 }
@@ -196,12 +204,23 @@ Deno.serve(async (req) => {
         throw e;
       }
 
+      // Resolved from the entry's own curated list. A rejected id fails the
+      // request rather than falling back to the default: a user who chose
+      // Oxblood Night and silently received Gold on Obsidian would only find
+      // out after opening the copy in the Builder.
+      const { colourway, problem: colourwayProblem } =
+        resolveRequestedColourway(entry, body.colourwayId);
+      if (colourwayProblem) {
+        return fail(colourwayProblem.code, colourwayProblem.message, 422, corsHeaders);
+      }
+
       const insertPayload = buildWorkingCopyPayload({
         userId: userId!,
         name: String(body.name).trim(),
         description: body.description ? String(body.description).slice(0, 2000) : null,
         entry,
         schema,
+        colourway,
       });
 
       const { data: created, error: insertErr } = await supabase
@@ -241,18 +260,26 @@ Deno.serve(async (req) => {
         template_id: created.id,
         actor_id: null,
         action: 'library_instantiated',
-        summary: `Created from library template "${entry.name}" v${entry.version}`,
-        metadata: { entry_id: entry.id, entry_version: entry.version, entry_slug: entry.slug },
+        summary: `Created from library template "${entry.name}" v${entry.version}`
+          + (colourway ? ` in ${colourway.name}` : ''),
+        metadata: {
+          entry_id: entry.id,
+          entry_version: entry.version,
+          entry_slug: entry.slug,
+          ...(colourway ? { colourway_id: colourway.id, colourway_name: colourway.name } : {}),
+        },
       }).then(() => {}, () => {});
 
       await recordEvent(supabase, entry.id, 'instantiated', userId, `Copied as "${body.name}"`, {
         template_id: created.id,
+        ...(colourway ? { colourway_id: colourway.id } : {}),
       });
 
       return json({
         success: true,
         templateId: created.id,
         instantiationId: lineage?.id ?? null,
+        colourwayId: colourway?.id ?? null,
       }, 200, corsHeaders);
     }
 
@@ -452,7 +479,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[manage-template-library] Error:', error);
     return json(
-      { error: 'Internal server error', details: (error as Error).message },
+      { ...internalError(error, 'manage-template-library'), error: 'Internal server error' },
       500,
       corsHeaders,
     );

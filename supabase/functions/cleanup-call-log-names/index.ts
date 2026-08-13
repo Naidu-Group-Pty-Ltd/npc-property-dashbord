@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 /**
  * Smart capitalization for names - handles edge cases like:
  * - All uppercase or all lowercase names
@@ -444,7 +445,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[cleanup-call-log-names] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'cleanup-call-log-names'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

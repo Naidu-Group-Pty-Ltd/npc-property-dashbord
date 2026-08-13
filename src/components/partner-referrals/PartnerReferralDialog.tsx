@@ -280,8 +280,8 @@ export default function PartnerReferralDialog({ open, onOpenChange, referral, de
                       <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
                       {financeUsers.map((u) => (
                         <SelectItem key={u.id} value={u.id}>
-                          {u.finance_agent_contacts?.contact_name || u.email}
-                          {u.finance_agent_contacts?.company_name ? ` · ${u.finance_agent_contacts.company_name}` : ''}
+                          {u.finance_agent_contacts?.name || u.email}
+                          {u.finance_agent_contacts?.company ? ` · ${u.finance_agent_contacts.company}` : ''}
                         </SelectItem>
                       ))}
                     </SelectContent>

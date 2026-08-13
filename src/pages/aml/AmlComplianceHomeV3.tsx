@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Settings2,
   Users,
+  BookMarked,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -76,6 +77,15 @@ const ACTION_CATALOG: ActionEntry[] = [
     to: "/admin/aml/cases",
     cta: "Open case register",
     icon: Users,
+    capability: "aml.view",
+  },
+  {
+    key: "passport",
+    label: "Compliance Passports",
+    description: "Open a customer's verified Compliance Passport — versions, evidence and partner reliance.",
+    to: "/admin/aml/passport",
+    cta: "Open passports",
+    icon: BookMarked,
     capability: "aml.view",
   },
   {

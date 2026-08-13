@@ -15,9 +15,18 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+import {
+  partyScreeningOutstanding,
+  pepControlsRequired,
+  pepDeterminationCurrent,
+  pepEvidenceSatisfied,
+} from "../_shared/aml/partyScreening.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import { MANDATORY_TRIGGER_WRITABLE, RISK_FACTOR_WRITABLE } from '../_shared/amlWritableColumns.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -158,7 +167,8 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
       .eq("status", "failed")
       .limit(1);
   }
-  const [{ data: failedIdv }, { data: failedCanonical }, { data: confirmedSanctions }] = await Promise.all([
+  const [{ data: failedIdv }, { data: failedCanonical }, { data: confirmedSanctions },
+         { data: pepDets }, { data: caseRow }] = await Promise.all([
     failedAuthoritativeIdv(),
     failedCanonicalIdv(),
     admin.schema("aml").from("screening_matches")
@@ -167,16 +177,162 @@ async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise
       .eq("match_type", "sanctions")
       .eq("status", "confirmed")
       .limit(1),
+    admin.schema("aml").from("pep_determinations")
+      .select("id, result, pep_type, pep_relationship, superseded_at, review_due_at, determined_at")
+      .eq("case_id", caseId).is("superseded_at", null),
+    admin.schema("aml").from("cases").select("id, risk_rating").eq("id", caseId).maybeSingle(),
   ]);
 
   const inputs: Record<string, any> = {};
   if ((failedIdv ?? []).length > 0 || (failedCanonical ?? []).length > 0) inputs.idv = "failed";
   if ((confirmedSanctions ?? []).length > 0) inputs.screening = { confirmed_match: true };
+
+  // PEP feeds risk from the recorded determination, never from a caller.
+  // A PEP is not a sanctions finding and not criminality — it selects the
+  // AUSTRAC-mandated controls (EDD incl. source of funds/wealth, senior
+  // manager approval) and the existing pep risk factor / hold triggers.
+  const pepFindings = (pepDets ?? []).filter((d: any) => d.result === "pep");
+  if (pepFindings.length > 0) {
+    inputs.pep = pepFindings.some((d: any) => d.pep_relationship === "self") ? "direct" : "associate";
+    const controls = pepFindings
+      .map((d: any) => pepControlsRequired(d, caseRow?.risk_rating ?? null))
+      .reduce(
+        (acc: { eddRequired: boolean; seniorManagerApprovalRequired: boolean },
+         c: { eddRequired: boolean; seniorManagerApprovalRequired: boolean }) => ({
+          eddRequired: acc.eddRequired || c.eddRequired,
+          seniorManagerApprovalRequired: acc.seniorManagerApprovalRequired || c.seniorManagerApprovalRequired,
+        }),
+        { eddRequired: false, seniorManagerApprovalRequired: false });
+
+    // Evidence must be LINKED to the current determination as one chain:
+    // a qualifying EDD case completed AFTER the determination, with verified
+    // source-of-funds AND source-of-wealth rows BELONGING to that EDD case
+    // (source_of_funds.edd_case_id / source_of_wealth.edd_case_id — the
+    // existing relationship). A verified SoF/SoW from an older or unrelated
+    // EDD establishes nothing about this finding, and a superseding
+    // determination invalidates the previous finding's evidence by moving
+    // the reference timestamp forward. Approvals postdate the determination.
+    const latestPepDeterminedAt = pepFindings
+      .map((d: any) => String(d.determined_at ?? ""))
+      .sort()
+      .at(-1) ?? "";
+    if (controls.eddRequired || controls.seniorManagerApprovalRequired) {
+      const [{ data: doneEdd }, { data: sofRows }, { data: sowRows }, { data: granted }] =
+        await Promise.all([
+          admin.schema("aml").from("edd_cases")
+            .select("id, completed_at").eq("case_id", caseId)
+            .eq("status", "completed").eq("mlro_decision", "approved")
+            .order("completed_at", { ascending: false }).limit(20),
+          admin.schema("aml").from("source_of_funds")
+            .select("edd_case_id").eq("case_id", caseId).eq("verified", true).limit(200),
+          admin.schema("aml").from("source_of_wealth")
+            .select("edd_case_id").eq("case_id", caseId).eq("verified", true).limit(200),
+          admin.schema("aml").from("approvals")
+            .select("id, resolved_at").eq("case_id", caseId)
+            .eq("kind", "pep_service_approval").eq("status", "approved")
+            .order("resolved_at", { ascending: false }).limit(1),
+        ]);
+      const evidence = pepEvidenceSatisfied({
+        latestPepDeterminedAt,
+        completedEddCases: (doneEdd ?? []).map((e: any) => ({
+          id: String(e.id), completed_at: e.completed_at ?? null,
+        })),
+        verifiedSofEddCaseIds: (sofRows ?? []).map((r: any) => r.edd_case_id ?? null),
+        verifiedSowEddCaseIds: (sowRows ?? []).map((r: any) => r.edd_case_id ?? null),
+        approvalResolvedAt: (granted ?? [])[0]?.resolved_at ?? null,
+      });
+      if (controls.eddRequired) {
+        inputs.pep_edd_required = true;
+        inputs.edd_complete = evidence.eddComplete;
+      }
+      if (controls.seniorManagerApprovalRequired) {
+        inputs.pep_approval_required = true;
+        inputs.pep_approval_granted = evidence.approvalGranted;
+      }
+    }
+  }
   return inputs;
 }
 
 function blockingHolds(assessment: any): any[] {
   return ((assessment?.triggered_holds ?? []) as any[]).filter((h) => h?.severity === "block");
+}
+
+/**
+ * Screening completeness reasons: required screening work that has not
+ * produced a current, adjudicated outcome stands between the case and
+ * clearance. Server-side — the UI list in get_submission_review is advisory;
+ * this is what `decide`, `gate_status` and `set_service_gate` enforce.
+ */
+async function screeningCompletenessReasons(admin: any, caseId: string): Promise<string[]> {
+  const nowIso = new Date().toISOString();
+  const reasons: string[] = [];
+
+  const [{ data: subjects }, { data: openMatches }, { data: caseChecks }, { data: pepDets },
+         { data: gateCase }] = await Promise.all([
+      admin.schema("aml").from("party_screening_subjects")
+        .select("id, required, state, refresh_due_at, party_type")
+        .eq("case_id", caseId),
+      admin.schema("aml").from("screening_matches")
+        .select("id, status").eq("case_id", caseId).in("status", ["open", "escalated"]).limit(1),
+      admin.schema("aml").from("screening_checks")
+        .select("id, status, completed_at, authoritative")
+        .eq("case_id", caseId).not("completed_at", "is", null)
+        .order("completed_at", { ascending: false }).limit(5),
+      admin.schema("aml").from("pep_determinations")
+        .select("id, party_screening_subject_id, result, superseded_at, review_due_at")
+        .eq("case_id", caseId).is("superseded_at", null),
+      admin.schema("aml").from("cases").select("id, subject_type").eq("id", caseId).maybeSingle(),
+    ]);
+
+  // Required party screening: every non-terminal state blocks — queued and
+  // processing are work not done, and a technical error is outstanding and
+  // retryable, never clear. Stale satisfied screening blocks until refreshed.
+  let incomplete = 0, unresolved = 0, stale = 0;
+  for (const s of subjects ?? []) {
+    const why = partyScreeningOutstanding(s, nowIso);
+    if (why === "incomplete") incomplete++;
+    else if (why === "unresolved") unresolved++;
+    else if (why === "stale") stale++;
+    // confirmed_match feeds the sanctions_hit mandatory trigger through the
+    // canonical screening_matches rows — no duplicate reason here.
+  }
+  if (incomplete > 0) reasons.push(`${incomplete}_party_screening_incomplete`);
+  if (unresolved > 0) reasons.push(`${unresolved}_party_screening_unresolved`);
+  if (stale > 0) reasons.push(`${stale}_party_screening_stale`);
+
+  // Unresolved canonical candidates (case subject or party) must be
+  // adjudicated by a human before clearance — a candidate is neither clear
+  // nor a finding until someone decides.
+  if ((openMatches ?? []).length > 0) reasons.push("unadjudicated_screening_matches");
+
+  // Case-subject screening must exist and be authoritative. Simulator runs
+  // (authoritative=false) are not compliance evidence.
+  const authoritativeCheck = (caseChecks ?? []).find((c: any) =>
+    c.authoritative !== false && ["clear", "review", "matched"].includes(String(c.status)));
+  if (!authoritativeCheck) reasons.push("case_screening_missing");
+
+  // Required PEP determinations: the case subject when the customer is an
+  // individual; reconciled parties in the program's identification roles
+  // always (those roles are individuals by construction — an entity customer
+  // is assessed through its beneficial owners and representatives). A lapsed
+  // review date makes a determination non-current — it must be reconsidered,
+  // not assumed.
+  const { pepDeterminationRequiredForRole } = await import("../_shared/aml/partyScreening.pure.ts");
+  const current = (pepDets ?? []).filter((d: any) => pepDeterminationCurrent(d, nowIso));
+  const subjectIsIndividual = !gateCase?.subject_type || gateCase.subject_type === "individual";
+  const caseLevelCurrent = current.some((d: any) => !d.party_screening_subject_id);
+  if (subjectIsIndividual && !caseLevelCurrent) reasons.push("pep_determination_outstanding");
+  const coveredSubjects = new Set(current
+    .filter((d: any) => d.party_screening_subject_id)
+    .map((d: any) => String(d.party_screening_subject_id)));
+  const missingPartyPep = (subjects ?? []).filter((s: any) =>
+    s.required && s.state !== "not_required" &&
+    pepDeterminationRequiredForRole(String(s.party_type)) &&
+    !coveredSubjects.has(String(s.id))).length;
+  if (missingPartyPep > 0) reasons.push(`${missingPartyPep}_party_pep_determination_outstanding`);
+
+  return reasons;
 }
 
 async function clearanceBlockReasons(admin: any, caseId: string, assessment: any, openConditions: any[] = []): Promise<string[]> {
@@ -193,6 +349,20 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
 
   const authoritativeBlocks = authoritativeHolds.filter((h) => h.severity === "block");
   for (const hold of authoritativeBlocks) reasons.push(`authoritative_${hold.key}`);
+
+  // AUSTRAC's PEP controls gate the SERVICE, not just the score: a foreign
+  // PEP (or high-risk domestic/international organisation PEP) cannot be
+  // cleared or approved until EDD is complete and a designated senior
+  // manager has approved. These are hold-severity in the assessment (a PEP
+  // is never an automatic rejection) but explicit blockers here.
+  if (authoritativeInputs.pep_edd_required === true && authoritativeInputs.edd_complete !== true) {
+    reasons.push("pep_edd_outstanding");
+  }
+  if (authoritativeInputs.pep_approval_required === true && authoritativeInputs.pep_approval_granted !== true) {
+    reasons.push("pep_senior_manager_approval_outstanding");
+  }
+
+  reasons.push(...await screeningCompletenessReasons(admin, caseId));
 
   return Array.from(new Set(reasons));
 }
@@ -268,8 +438,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_factor") {
       if (!isMlro) return jr({ error: "MLRO required" }, 403);
       const patch = body.factor ?? {};
+      // WP-20: only declared columns — an unfiltered spread wrote whatever the
+      // caller named onto the risk model MLRO decisions are scored against.
       const { data, error } = await admin.schema("aml").from("risk_factors")
-        .upsert({ ...patch, created_by: patch.id ? undefined : userId }, { onConflict: "key" })
+        .upsert({ ...pickAllowed(patch, RISK_FACTOR_WRITABLE), created_by: patch.id ? undefined : userId }, { onConflict: "key" })
         .select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       return jr({ factor: data });
@@ -277,8 +449,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "upsert_trigger") {
       if (!isMlro) return jr({ error: "MLRO required" }, 403);
       const patch = body.trigger ?? {};
+      // WP-20: as above, for the mandatory-trigger table.
       const { data, error } = await admin.schema("aml").from("mandatory_triggers")
-        .upsert({ ...patch, created_by: patch.id ? undefined : userId }, { onConflict: "key" })
+        .upsert({ ...pickAllowed(patch, MANDATORY_TRIGGER_WRITABLE), created_by: patch.id ? undefined : userId }, { onConflict: "key" })
         .select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       return jr({ trigger: data });
@@ -367,9 +540,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         { assessment_id: ass?.id, holds, scores: scored, program_version: programVersion, policy_snapshot_hash: policySnapshotHash },
         userId, userLabel);
 
-      // Straight-through auto-decision (low risk, clean, tenant-enabled)
+      // Straight-through auto-decision (low risk, clean, tenant-enabled).
+      // The same completeness gate as a human decision: outstanding required
+      // screening or PEP work disqualifies auto-clearance rather than being
+      // skipped past.
       let auto_decision: any = null;
-      if (stEligible) {
+      const stBlockers = stEligible
+        ? (await clearanceBlockReasons(admin, caseId, ass, [])).filter((r) => r !== "no_assessment")
+        : [];
+      if (stEligible && stBlockers.length === 0) {
         const snapshot = {
           version: 1, decided_at: new Date().toISOString(), decided_by: userId,
           outcome: "cleared", rationale: `Straight-through auto-clearance under policy ${programVersion}`,
@@ -390,7 +569,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           { decision_id: dec?.id, snapshot_hash, straight_through: true }, userId, userLabel);
       }
 
-      return jr({ assessment: ass, auto_decision, program_version: programVersion, straight_through: stEligible });
+      return jr({
+        assessment: ass, auto_decision, program_version: programVersion,
+        straight_through: stEligible && stBlockers.length === 0,
+        ...(stEligible && stBlockers.length > 0 ? { straight_through_blocked_by: stBlockers } : {}),
+      });
     }
 
 
@@ -593,16 +776,121 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const { data } = await q;
       return jr({ approvals: data ?? [] });
     }
+    if (op === "request_approval") {
+      if (!canWrite) return jr({ error: "Insufficient permissions" }, 403);
+      const caseId = String(body.case_id ?? "");
+      const kind = String(body.kind ?? "");
+      const note = String(body.note ?? "").trim();
+      // pep_service_approval is the AUSTRAC senior-manager approval to
+      // provide (or continue providing) the designated service to a PEP.
+      if (!caseId || !["pep_service_approval"].includes(kind)) {
+        return jr({ error: "case_id and kind (pep_service_approval) required" }, 400);
+      }
+      const { data: pending } = await admin.schema("aml").from("approvals")
+        .select("id").eq("case_id", caseId).eq("kind", kind).eq("status", "pending").limit(1);
+      if ((pending ?? []).length > 0) {
+        return jr({ approval: null, skipped: true, code: "already_pending" });
+      }
+      const { data, error } = await admin.schema("aml").from("approvals").insert({
+        case_id: caseId, kind, status: "pending", requested_by: userId, note: note || null,
+      }).select("*").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCaseEvent(admin, caseId, "edd_note",
+        `Senior manager approval requested (${kind.replace(/_/g, " ")})`,
+        { approval_id: data?.id, kind }, userId, userLabel);
+      return jr({ approval: data });
+    }
     if (op === "resolve_approval") {
       if (!canReview) return jr({ error: "Reviewer/MLRO required" }, 403);
       const { approval_id, status, note } = body;
       if (!approval_id || !["approved", "rejected"].includes(status)) return jr({ error: "invalid" }, 400);
+      const { data: approval } = await admin.schema("aml").from("approvals")
+        .select("id, case_id, kind, status").eq("id", approval_id).maybeSingle();
+      if (!approval) return jr({ error: "Approval not found" }, 404);
+      // AUSTRAC's senior-manager requirements name a defined role that is NOT
+      // automatically the MLRO. A PEP service approval may only be resolved
+      // by someone the organisation has explicitly designated a senior
+      // manager — holding the mlro or reviewer role is not, on its own, that
+      // designation. The approval is also LINKED: it approves the current
+      // PEP determinations as they stand, and those ids are recorded so the
+      // evidence says exactly what was approved. A later determination
+      // postdates the approval and re-opens the requirement (the risk inputs
+      // compare resolved_at against determined_at).
+      let approvedDeterminationIds: string[] = [];
+      if (approval.kind === "pep_service_approval") {
+        const { data: caseTenant } = await admin.schema("aml").from("cases")
+          .select("tenant_id").eq("id", approval.case_id).maybeSingle();
+        const { data: designation } = await admin.schema("aml").from("senior_manager_designations")
+          .select("id").eq("user_id", userId)
+          .eq("tenant_id", (caseTenant?.tenant_id as string) || "default")
+          .is("revoked_at", null).limit(1).maybeSingle();
+        if (!designation) {
+          return jr({
+            error: "PEP service approval requires a recorded senior-manager designation. Your account is not designated — an MLRO can record designations under AML Configuration.",
+            code: "senior_manager_designation_required",
+          }, 403);
+        }
+        const { data: currentDets } = await admin.schema("aml").from("pep_determinations")
+          .select("id, result").eq("case_id", approval.case_id).is("superseded_at", null);
+        approvedDeterminationIds = (currentDets ?? [])
+          .filter((d: any) => d.result === "pep").map((d: any) => String(d.id));
+        if (status === "approved" && approvedDeterminationIds.length === 0) {
+          return jr({
+            error: "There is no current PEP determination on this case to approve — record the determination first",
+            code: "no_current_pep_determination",
+          }, 409);
+        }
+      }
       const { data, error } = await admin.schema("aml").from("approvals").update({
         status, approver_id: userId, note: note ?? null, resolved_at: new Date().toISOString(),
       }).eq("id", approval_id).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
-      if (data) await appendCaseEvent(admin, data.case_id, "mlro_decision", `Approval ${status}`, { approval_id, note }, userId, userLabel);
+      if (data) await appendCaseEvent(admin, data.case_id, "mlro_decision", `Approval ${status} (${data.kind})`, {
+        approval_id, note, kind: data.kind,
+        ...(approvedDeterminationIds.length > 0 ? { pep_determination_ids: approvedDeterminationIds } : {}),
+      }, userId, userLabel);
       return jr({ approval: data });
+    }
+
+    // ─── Senior manager designations (governance record) ───────────
+    // MLRO-recorded register of who counts as a senior manager for the
+    // approvals current AUSTRAC guidance assigns to that role. Recording a
+    // designation grants nothing else.
+    if (op === "list_senior_managers") {
+      const tenantId = String(body.tenant_id ?? "default");
+      const { data } = await admin.schema("aml").from("senior_manager_designations")
+        .select("*").eq("tenant_id", tenantId).order("designated_at", { ascending: false }).limit(200);
+      return jr({ designations: data ?? [] });
+    }
+    if (op === "designate_senior_manager") {
+      if (!isMlro) return jr({ error: "MLRO required" }, 403);
+      const targetUserId = String(body.user_id ?? "");
+      const note = String(body.note ?? "").trim();
+      if (!targetUserId) return jr({ error: "user_id required" }, 400);
+      if (note.length < 10) {
+        return jr({ error: "A note of at least 10 characters is required — record who this person is and why they qualify as a senior manager" }, 400);
+      }
+      const tenantId = String(body.tenant_id ?? "default");
+      const { data, error } = await admin.schema("aml").from("senior_manager_designations").insert({
+        tenant_id: tenantId, user_id: targetUserId,
+        designated_by: userId, designated_by_label: userLabel, note,
+      }).select("*").maybeSingle();
+      if (error) {
+        if (String(error.code) === "23505") return jr({ error: "That user already holds an active designation" }, 409);
+        return jr({ error: error.message }, 400);
+      }
+      return jr({ designation: data });
+    }
+    if (op === "revoke_senior_manager") {
+      if (!isMlro) return jr({ error: "MLRO required" }, 403);
+      const designationId = String(body.designation_id ?? "");
+      if (!designationId) return jr({ error: "designation_id required" }, 400);
+      const { data, error } = await admin.schema("aml").from("senior_manager_designations")
+        .update({ revoked_at: new Date().toISOString(), revoked_by: userId })
+        .eq("id", designationId).is("revoked_at", null).select("*").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+      if (!data) return jr({ error: "Designation not found or already revoked" }, 404);
+      return jr({ designation: data });
     }
 
     // ─── Conditions ────────────────────────────────────────────────
@@ -848,7 +1136,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!latestAss) return jr({ recalc: { stale: true, reasons: ["no_assessment"], latest_assessment_at: null } });
 
       const since = latestAss.created_at;
-      const [scr, idv, canonicalIdv, fin, quest, cp] = await Promise.all([
+      const [scr, idv, canonicalIdv, fin, quest, cp, partyScr, pepDet] = await Promise.all([
         admin.schema("aml").from("screening_checks").select("id", { count: "exact", head: true })
           .eq("case_id", caseId).gt("updated_at", since),
         admin.schema("aml").from("identity_checks").select("id", { count: "exact", head: true })
@@ -864,20 +1152,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq("case_id", caseId).gt("updated_at", since),
         admin.schema("aml").from("counterparty_cases").select("id", { count: "exact", head: true })
           .eq("case_id", caseId).gt("updated_at", since),
+        admin.schema("aml").from("party_screening_subjects").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("updated_at", since),
+        admin.schema("aml").from("pep_determinations").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("determined_at", since),
       ]);
       const reasons: string[] = [];
-      if ((scr.count ?? 0) > 0) reasons.push("screening_changed");
+      if ((scr.count ?? 0) > 0 || (partyScr.count ?? 0) > 0) reasons.push("screening_changed");
       if ((idv.count ?? 0) > 0 || (canonicalIdv.count ?? 0) > 0) reasons.push("verification_changed");
       if ((fin.count ?? 0) > 0) reasons.push("funding_changed");
       if ((quest.count ?? 0) > 0) reasons.push("questionnaire_changed");
       if ((cp.count ?? 0) > 0) reasons.push("counterparty_changed");
+      // A PEP finding makes the assessment stale so it is re-run with the
+      // authoritative pep inputs — never silently, never moving the gate.
+      if ((pepDet.count ?? 0) > 0) reasons.push("pep_changed");
       return jr({ recalc: { stale: reasons.length > 0, reasons, latest_assessment_at: since } });
     }
 
     return jr({ error: `Unknown op: ${op}` }, 400);
   } catch (e) {
     console.error("aml-risk error", e);
-    return jr({ error: String((e as Error)?.message ?? e) }, 500);
+    return jr({ ...internalError(e, 'aml-risk') }, 500);
   }
 });
 

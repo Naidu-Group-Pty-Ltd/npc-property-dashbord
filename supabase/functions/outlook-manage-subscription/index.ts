@@ -4,6 +4,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireSuperadmin } from '../_shared/authz.ts';
 import { logSecurityEvent } from '../_shared/auth_v2.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -255,7 +256,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'outlook-manage-subscription')), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });

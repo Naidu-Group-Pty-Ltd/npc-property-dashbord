@@ -39,6 +39,13 @@ import type { CriticalContainmentPolicy } from './criticalVisualContainment.pure
 import { buildEmbeddedFontFace, type FontFaceEntry } from './fontFaceBuilder';
 import { fontLookupKey, resolveSourceFontFamily, lookupEmbeddedFamily } from './fontResolver';
 import { recommendFidelityMode } from './recommendFidelityMode';
+import { createCanvasMeasurer } from './fontMetricCompatibility';
+import type { FontVerticalMetrics } from './firstBaseline.pure';
+import {
+  bridgePageCharts,
+  readSceneChartRegions,
+  type BridgedChart,
+} from './sourceChartBridge.pure';
 import { stripTransientRasterUrls } from './stripTransientRasterUrls';
 import type {
   DoclingDocument,
@@ -381,6 +388,52 @@ async function manifestToRastersByPage(payload: unknown): Promise<DoclingRasterB
 }
 
 
+/**
+ * Load the charts the sidecar read, keyed by page number.
+ *
+ * `pages-manifest.json` carries a `regions_path` per page plus a
+ * `chart_region_count`, so only pages that actually contain a chart are
+ * fetched — most imports download nothing extra at all.
+ *
+ * Fail-open throughout. Every failure path returns fewer charts, never an
+ * error: a chart that does not arrive here stays a source crop, which is the
+ * behaviour that shipped for a year and is always a correct outcome. An import
+ * must never fail because a chart could not be reconstructed.
+ */
+async function loadSourceChartsByPage(
+  manifestPath: string | null,
+): Promise<Record<number, BridgedChart[]>> {
+  if (!manifestPath) return {};
+  try {
+    const manifest = await downloadJson<{
+      pages?: Array<{ page_no?: number; regions_path?: string; chart_region_count?: number }>;
+    }>(manifestPath);
+    const pages = manifest?.pages;
+    if (!Array.isArray(pages)) return {};
+
+    const withCharts = pages.filter(
+      (p) => Number(p?.chart_region_count ?? 0) > 0 && typeof p?.regions_path === 'string',
+    );
+    if (!withCharts.length) return {};
+
+    const out: Record<number, BridgedChart[]> = {};
+    await Promise.all(withCharts.map(async (page) => {
+      const pageNo = Number(page.page_no ?? 0);
+      if (!Number.isFinite(pageNo) || pageNo <= 0) return;
+      try {
+        const payload = await downloadJson<unknown>(page.regions_path as string);
+        const bridged = bridgePageCharts(readSceneChartRegions(payload));
+        if (bridged.length) out[pageNo] = bridged;
+      } catch {
+        // One unreadable page must not cost the others their charts.
+      }
+    }));
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 interface ConsumerGuardrailReport {
   version: string;
   ok: boolean;
@@ -678,14 +731,28 @@ export async function extractPdfViaDocling(
         ? 'Mapping Docling → template (Pixel-Perfect selected for OCR-heavy PDF)…'
         : 'Mapping Docling → template…',
     });
-    // Phase 3: build @font-face entries for fully-embeddable source fonts (non-
-    // subset, real cmap) and a name→family map so matching overlays use the
-    // embedded face. Subset/CID fonts (the common case) carry no `base64` and are
-    // resolved to web fonts by name in the mapper instead.
+    // Build @font-face entries for every embeddable source font program —
+    // INCLUDING subsets, which are the common case. A subset carries exactly the
+    // glyphs the source text drew with it, and the mapper places the
+    // name-resolved web font after the embedded family in the stack, so
+    // per-glyph fallback covers anything the subset lacks (edited text, mostly).
+    // Text therefore renders in the source's own outlines, not a substitute.
     const embeddedFaces: FontFaceEntry[] = [];
     const embeddedFontFamilies: Record<string, string> = {};
+    // D1 — the vertical metrics of the program that will actually draw the
+    // text. CSS puts a line's first baseline at
+    // `(lineHeight - (ascent + descent))/2 + ascent` below the box, so without
+    // these the mapper cannot know where its text lands and has to place every
+    // block by its ink top — which sits ~0.36em high of the baseline.
+    const fontMetrics: Record<string, FontVerticalMetrics> = {};
     for (const f of doclingDoc.fonts ?? []) {
       if (!f?.base64) continue;
+      if (typeof f.ascender === 'number' && typeof f.descender === 'number') {
+        fontMetrics[fontLookupKey(f.basename)] = {
+          ascender: f.ascender,
+          descender: f.descender,
+        };
+      }
       const built = buildEmbeddedFontFace({
         loadedName: f.basename,
         postscriptName: f.psName ?? f.basename,
@@ -693,10 +760,22 @@ export async function extractPdfViaDocling(
         mimetype: f.mimetype,
         bold: f.bold,
         italic: f.italic,
+        // R2 — scope the face to the cmap's real coverage so a subset can
+        // never claim codepoints it lacks; absent for pre-R2 sidecar payloads.
+        coverageRanges: f.coverage_ranges,
       });
       embeddedFaces.push(built.face);
       embeddedFontFamilies[fontLookupKey(f.basename)] = built.family;
     }
+
+    // W3 — collect any charts the sidecar managed to read. The scene graph is
+    // published on `pages-manifest.json`, which the job payload already exposes;
+    // nothing downloaded it before, so extracted chart series were written and
+    // never read. Fail-open by design: any problem here leaves every chart as a
+    // source crop, which is the existing behaviour and always correct.
+    const sourceChartsByPage = await loadSourceChartsByPage(
+      job.result_payload?.per_page_docling_manifest_path ?? null,
+    );
 
     const plan = mapDoclingToPagePlan(doclingDoc, {
       importId,
@@ -704,6 +783,11 @@ export async function extractPdfViaDocling(
       rastersByPage: rasters,
       engineVersion: job.engine_version ?? 'docling',
       embeddedFontFamilies,
+      fontMetrics,
+      sourceChartsByPage,
+      // R1 — real canvas metrics for tracked-text spacing derivation; degrades
+      // to the documented estimate when no canvas exists.
+      measureTextWidth: createCanvasMeasurer(),
     });
 
     const template = applyTemplateImportPlan(plan, {

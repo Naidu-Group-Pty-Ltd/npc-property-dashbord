@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { buildPartnerNotification, partnerEventDeliveryDecision } from '../_shared/aml/partnerEvents.ts';
 import { processVerificationEvent } from './verificationConsumer.ts';
+import { processScreeningEvent } from './screeningConsumer.ts';
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
 
@@ -156,10 +157,10 @@ Deno.serve(async req=>{
   const id=workerId(); const {data:events,error}=await db.rpc('claim_integration_outbox',{_worker_id:id,_limit:25}); if(error)return json({error:'claim_failed'},500);
   let succeeded=0,failed=0;
   for(const event of events||[]){
-    const consumer=event.event_type==='aml.verification.requested'||event.event_type==='aml.client_request.created'?'aml_verification':String(event.event_type).startsWith('aml.')?'aml_partner_events':event.event_type==='legal.message.created'?'cross_portal_delivery':event.event_type==='conversation.message.created'?'canonical_conversations':'case_projections';
+    const consumer=event.event_type==='aml.screening.requested'?'aml_screening':event.event_type==='aml.verification.requested'||event.event_type==='aml.client_request.created'?'aml_verification':String(event.event_type).startsWith('aml.')?'aml_partner_events':event.event_type==='legal.message.created'?'cross_portal_delivery':event.event_type==='conversation.message.created'?'canonical_conversations':'case_projections';
     await db.from('integration_delivery_attempts').insert({outbox_id:event.id,consumer_name:consumer,attempt_number:event.attempts,status:'started'});
     try{
-      if(event.event_type==='aml.verification.requested')await processVerificationEvent(db,event);else if(event.event_type==='aml.client_request.created'){/* notification written transactionally by the trigger; the event is checkpoint evidence */}else if(String(event.event_type).startsWith('aml.'))await deliverAmlPartnerEvent(db,event);else if(event.event_type==='legal.message.created')await deliverLegalMessage(db,event);else if(event.event_type==='conversation.message.created'){/* participant reads are immediate; channel delivery is claimed below */}else if(event.aggregate_type==='transaction_case')await projectCase(db,event);else if(event.event_type==='legal.audit_chain.failed')throw new Error('audit_chain_failure_requires_operator');
+      if(event.event_type==='aml.screening.requested')await processScreeningEvent(db,event);else if(event.event_type==='aml.verification.requested')await processVerificationEvent(db,event);else if(event.event_type==='aml.client_request.created'){/* notification written transactionally by the trigger; the event is checkpoint evidence */}else if(String(event.event_type).startsWith('aml.'))await deliverAmlPartnerEvent(db,event);else if(event.event_type==='legal.message.created')await deliverLegalMessage(db,event);else if(event.event_type==='conversation.message.created'){/* participant reads are immediate; channel delivery is claimed below */}else if(event.aggregate_type==='transaction_case')await projectCase(db,event);else if(event.event_type==='legal.audit_chain.failed')throw new Error('audit_chain_failure_requires_operator');
       await db.from('integration_delivery_attempts').update({status:'succeeded',completed_at:new Date().toISOString()}).eq('outbox_id',event.id).eq('consumer_name',consumer).eq('attempt_number',event.attempts);
       await db.from('integration_outbox').update({processed_at:new Date().toISOString(),locked_at:null,locked_by:null,last_error:null}).eq('id',event.id).eq('locked_by',id);
       await db.from('projection_checkpoints').upsert({consumer_name:consumer,last_event_id:event.id,last_occurred_at:event.occurred_at,updated_at:new Date().toISOString()},{onConflict:'consumer_name'});

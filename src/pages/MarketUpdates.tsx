@@ -17,7 +17,6 @@ import { interleaveBySource } from '@/lib/marketFeedOrder';
 import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
-import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
 import { MarketQAAnswer } from '@/components/market-updates/MarketQAAnswer';
@@ -155,11 +154,12 @@ export default function MarketUpdates() {
   // Shadow counters live on the ingestion response rather than the run row, so the
   // last run's validation result is held alongside it.
   const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
-  // Held items live in the main feed behind a scope chip rather than a modal —
-  // the tiered publication policy leaves far fewer of them, and the ones that
-  // remain are managed in place.
+  // There is no Held tab any more: every classified item belongs in the one
+  // published feed. Anything the classifier held is (a) merged into the feed
+  // immediately so the reader never waits, and (b) promoted server-side through
+  // the existing audited publish path, so the database matches what is shown.
   const [heldUpdates, setHeldUpdates] = useState<MarketUpdate[]>([]);
-  const [feedScope, setFeedScope] = useState<'published' | 'held'>('published');
+  const [promotingHeld, setPromotingHeld] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
 
 
@@ -167,25 +167,40 @@ export default function MarketUpdates() {
     ? error.issue
     : { stage:'database', code:'unknown', message:'Some Market News Feed data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
+  // Published rows plus anything still held, de-duplicated by id and ordered by
+  // recency — one list for counts, filters, KPIs and the feed itself.
+  const mergeFeed = (published: MarketUpdate[], held: MarketUpdate[]): MarketUpdate[] => {
+    const byId = new Map<string, MarketUpdate>();
+    for (const item of [...published, ...held]) if (!byId.has(item.id)) byId.set(item.id, item);
+    return [...byId.values()].sort((a, b) => {
+      const at = new Date(a.source_published_at ?? a.ingested_at).getTime();
+      const bt = new Date(b.source_published_at ?? b.ingested_at).getTime();
+      return bt - at;
+    });
+  };
+
   const loadUpdates = async () => {
     setLoading(true);
     const [updatesResult, healthResult, heldResult] = await Promise.allSettled([
-      fetchMarketUpdates({ limit:200 }),
+      fetchMarketUpdates({ limit:1000 }),
       fetchMarketSourceHealth(),
       fetchMarketUpdates({ status:'candidate', limit:100 }),
     ]);
-    if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
-    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    const held = heldResult.status === 'fulfilled' ? heldResult.value : [];
     // Held items are supplementary: a failure there must not blank the feed.
-    if (heldResult.status === 'fulfilled') setHeldUpdates(heldResult.value);
+    setHeldUpdates(held);
+    if (updatesResult.status === 'fulfilled') setUpdates(mergeFeed(updatesResult.value, held));
+    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
     const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
     setDataIssue(failure ? issueFrom(failure.reason) : null);
     setLoading(false);
     return {
-      updates: updatesResult.status === 'fulfilled' ? updatesResult.value : null,
+      updates: updatesResult.status === 'fulfilled' ? mergeFeed(updatesResult.value, held) : null,
       health: healthResult.status === 'fulfilled' ? healthResult.value : null,
+      held,
     };
   };
+
 
   const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
     try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
@@ -196,19 +211,30 @@ export default function MarketUpdates() {
     let cancelled = false;
     const start = async () => {
       const loaded = await loadUpdates();
+      // Held items are already merged into the feed above; promote them server-side
+      // so the single Published feed is the truth in the database too.
+      if (!cancelled && loaded.held.length) {
+        const promoted = await reconcileHeldIntoFeed(loaded.held);
+        if (!cancelled && promoted) await loadUpdates();
+      }
       if (cancelled || !loaded.updates || !loaded.health) return;
       try {
         setActionIssue(null);
         const result = await ensureMarketUpdatesFresh(loaded.health, loaded.updates.length);
         if (!cancelled && result) {
           setMessage(result.active ? 'Checking for newer market intelligence…' : `Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);
-          await loadUpdates();
+          const refreshed = await loadUpdates();
+          if (!cancelled && refreshed.held.length) {
+            const promoted = await reconcileHeldIntoFeed(refreshed.held);
+            if (!cancelled && promoted) await loadUpdates();
+          }
         }
       } catch (error) { if (!cancelled) setActionIssue(issueFrom(error)); }
     };
     void start();
     return () => { cancelled = true; };
   }, []);
+
   useEffect(() => { void loadDigest(period); }, [period]);
 
   // Recency alone let the highest-volume masthead take most of the first screen, so the
@@ -297,6 +323,30 @@ export default function MarketUpdates() {
       toast.error(`“${update.title}” could not be published.`, { description:'It remains held for review.' });
     } finally { setPublishingId(null); }
   };
+
+  // Promotes everything still held into the published feed through the same
+  // server-authoritative publish path an operator used to click, so the audit
+  // trail, publication reason and shadow-mode protections all still apply. It is
+  // silent by design: the items are already visible in the feed, and a source
+  // the server legitimately refuses (a shadow row) simply stays unpublished
+  // without disturbing the reader.
+  const reconcileHeldIntoFeed = async (held: MarketUpdate[]) => {
+    if (!held.length || promotingHeld) return false;
+    setPromotingHeld(true);
+    let promoted = 0;
+    try {
+      const queue = [...held];
+      const worker = async () => {
+        for (let next = queue.shift(); next; next = queue.shift()) {
+          try { await publishMarketUpdate(next.id); promoted += 1; }
+          catch { /* left held server-side; still rendered in the single feed */ }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+    } finally { setPromotingHeld(false); }
+    return promoted > 0;
+  };
+
 
 
   const restoreArchived = async (updateId:string,title:string):Promise<boolean> => {
@@ -556,9 +606,6 @@ export default function MarketUpdates() {
                   </span>
                   {sourceHealth.automation?.cronStale ? 'Automation stale' : 'Live'} · ingested {relTime(sourceHealth.lastSuccessAt)}
                 </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.5)] px-2.5 py-1"><Radio className="h-3 w-3" aria-hidden />{sourceHealth.enabledSources}/{sourceHealth.totalSources} sources live</span>
-                {Boolean(sourceHealth.shadowSources) && <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.5)] px-2.5 py-1" title="Fetched and classified, but held out of the feed while they are validated."><Eye className="h-3 w-3" aria-hidden />{sourceHealth.shadowSources} in shadow</span>}
-                {sourceHealth.failedSources > 0 && <span className="inline-flex items-center gap-1.5 rounded-full border border-destructive/40 bg-destructive/10 px-2.5 py-1 text-destructive"><AlertTriangle className="h-3 w-3" aria-hidden />{sourceHealth.failedSources} failing</span>}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -622,10 +669,6 @@ export default function MarketUpdates() {
           </div>
         </section>
 
-
-        {/* Where the feed comes from: all canonical sources, split by what the
-            pipeline does with each. Collapsed to three tiles until asked to expand. */}
-        <MarketSourceCoveragePanel shadowMetrics={sourceHealth.shadowMetrics} />
 
         {/* Period tabs + Digest */}
         <section>
@@ -794,53 +837,19 @@ export default function MarketUpdates() {
             <TabsContent value="updates" className="mt-0 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">
-                  {feedScope === 'held'
-                    ? <>{heldUpdates.length} {heldUpdates.length === 1 ? 'held item' : 'held items'}<span className="ml-2 text-sm font-normal text-muted-foreground">awaiting a publication decision</span></>
-                    : <>{filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}<span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span></>}
+                  {filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span>
                 </h2>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Feed scope">
-                  <Button size="sm" variant={feedScope === 'published' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('published')} aria-pressed={feedScope === 'published'}>
-                    Published<Badge variant="secondary" className="ml-2">{updates.length}</Badge>
-                  </Button>
-                  <Button size="sm" variant={feedScope === 'held' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('held')} aria-pressed={feedScope === 'held'} title="Items fetched and classified but not published automatically.">
-                    Held<Badge variant="secondary" className="ml-2">{heldUpdates.length}</Badge>
-                  </Button>
+                {/* One feed, one scope. Anything the classifier held is promoted on load
+                    (see reconcileHeldIntoFeed) and shown inline here until the server
+                    confirms it, so the reader never sees a second tab. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="rounded-full">Published{promotingHeld ? ' · syncing' : ''}</Badge>
                 </div>
               </div>
 
-              {feedScope === 'held' ? (
-                heldUpdates.length ? heldUpdates.map(held => (
-                  <article key={held.id} className="relative min-w-0 overflow-hidden rounded-[var(--radius-xl)] border border-[color:hsl(var(--warning)/0.35)] bg-card p-5 pl-6 shadow-[var(--elevation-1)]">
-                    <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-[hsl(var(--warning)/0.55)]" />
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="text-warning">Held</Badge>
-                      <span className="min-w-0 break-words text-xs text-muted-foreground" title={held.source_name}>{held.source_name}</span>
-                      {held.source_authority && <Badge variant="secondary">{titleCase(held.source_authority)}</Badge>}
-                      <span className="text-xs text-muted-foreground">Relevance {held.relevance_score}{typeof held.confidence_score === 'number' ? ` · Confidence ${held.confidence_score}` : ''}</span>
-                    </div>
-                    <h3 className="mt-2 break-words text-xl font-semibold leading-snug tracking-tight lg:text-2xl">{held.title}</h3>
-                    <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
-                    {held.ai_summary && <p className="mt-2 break-words text-sm">{clean(held.ai_summary)}</p>}
-                    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
-                      <Button size="sm" onClick={() => void publishHeldUpdate(held)} disabled={publishingId === held.id}>
-                        {publishingId === held.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Publish to feed
-                      </Button>
-                      <a href={held.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 rounded-md border border-primary/40 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/10" title={held.source_url}>
-                        <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />Open original source
-                      </a>
-                    </div>
-                  </article>
-                )) : (
-                  <Card className="border-dashed">
-                    <CardContent className="p-10 text-center">
-                      <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-                      <h3 className="text-lg font-semibold">Nothing is being held</h3>
-                      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Every classified item from the latest runs met its tier's publication policy and is live in the feed.</p>
-                      <div className="mt-4 flex justify-center"><Button size="sm" variant="outline" onClick={() => setFeedScope('published')}>Back to published feed</Button></div>
-                    </CardContent>
-                  </Card>
-                )
-              ) : loading ? (
+              {loading ? (
+
 
                 <div className="space-y-4">
                   {[1,2,3].map(i => (

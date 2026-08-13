@@ -22,6 +22,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyInternal } from '../_shared/auth_v2.ts';
 import { callInternalFunction } from '../_shared/internalCall.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const WORKER_MAP: Record<string, string> = {
   contacts: 'ghl-migrate-contacts-worker',
@@ -188,7 +189,7 @@ Deno.serve(async (req) => {
   } catch (err: any) {
     console.error('[dispatcher] FATAL:', err);
     return new Response(
-      JSON.stringify({ success: false, error: err.message || 'dispatcher crashed' }),
+      JSON.stringify({ ...internalError(err, 'migration-dispatcher'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

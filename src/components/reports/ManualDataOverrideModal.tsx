@@ -26,6 +26,15 @@ import { OVERRIDE_FIELD_PATHS, resolveOriginalFieldValue } from './overrideOrigi
 import { AlertCircle, RotateCcw, Save, Calculator, ExternalLink, ChevronDown, ChevronRight, ArrowRight, Check, Table, Copy, Banknote, Info, FileText, TrendingUp, Sparkles, Loader2 } from 'lucide-react';
 import { Table as UITable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { STATE_MAPPING } from '@/lib/states';
+import { StampDutyCalculatorPanel } from './StampDutyCalculatorPanel';
+import { defaultDutiableValue, dutiableValueBases } from './dutiableValueBasis';
+import type { BuildType } from '@/types/overrideFields';
+import {
+  AUSTRALIAN_STATES,
+  type AustralianState,
+  type PropertyCategory,
+  type PurchaseIntent,
+} from '@/utils/stampDutyCalculator';
 import { MortgageRepaymentCalculator } from './MortgageRepaymentCalculator';
 import { DepreciationValueCalculator } from './DepreciationValueCalculator';
 import { LandTaxCalculator } from './LandTaxCalculator';
@@ -77,10 +86,12 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
   const [showMortgageCalculator, setShowMortgageCalculator] = useState(false);
   const [estimatingExpenses, setEstimatingExpenses] = useState(false);
   const [expenseCitations, setExpenseCitations] = useState<string[]>([]);
-  const stampDutyIframeRef = useRef<HTMLIFrameElement | null>(null);
-  const stampDutyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const [capturedStampDutyValue, setCapturedStampDutyValue] = useState<string>('');
-  const [isCapturingStampDuty, setIsCapturingStampDuty] = useState(false);
+  const [stampDutyStateOverride, setStampDutyStateOverride] = useState<AustralianState | null>(null);
+  const [stampDutyIntent, setStampDutyIntent] = useState<PurchaseIntent>('investor');
+  const [stampDutyCategory, setStampDutyCategory] = useState<PropertyCategory>('established');
+  const [dutiableValueOverride, setDutiableValueOverride] = useState<number | null>(null);
+  const [stampDutyFirstHomeBuyer, setStampDutyFirstHomeBuyer] = useState(false);
+  const [stampDutyForeignBuyer, setStampDutyForeignBuyer] = useState(false);
   
   // Active tab state
   const [activeTab, setActiveTab] = useState<'investment' | 'cashflow'>('investment');
@@ -142,115 +153,69 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
     }
   }, [report?.property_address, detectStateFromAddress]);
 
-  const stampDutyIframeSrc = useMemo(() => {
-    if (typeof window === 'undefined' || !showStampDutyCalculator) return '';
+  /**
+   * The jurisdiction the calculator assesses against. Detected from the
+   * property address unless the user picks another; `detectedState` is a
+   * free-form string that can be 'All', so it is narrowed rather than trusted.
+   *
+   * The detected value used to be passed to a third-party iframe as a query
+   * parameter that the vendor's script never read, so every assessment silently
+   * defaulted to New South Wales regardless of where the property was.
+   */
+  const stampDutyState: AustralianState = useMemo(() => {
+    if (stampDutyStateOverride) return stampDutyStateOverride;
+    const candidate = (detectedState || '').toUpperCase();
+    return (AUSTRALIAN_STATES as readonly string[]).includes(candidate)
+      ? (candidate as AustralianState)
+      : 'NSW';
+  }, [stampDutyStateOverride, detectedState]);
 
-    const url = new URL('/stamp-duty-embed.html', window.location.origin);
-    url.searchParams.set('state', detectedState || 'All');
-    url.searchParams.set('t', Date.now().toString());
-    return url.toString();
-  }, [detectedState, showStampDutyCalculator]);
+  // Hoisted above the stamp duty derivations, which need to know whether this is
+  // a house-and-land package before they can pick a default dutiable value.
+  const currentBuildType = overrides.buildType || report?.manual_overrides?.buildType || 'existing_property';
+  const isNewBuild = currentBuildType === 'new_build';
 
-  useEffect(() => {
-    if (!showStampDutyCalculator) return;
+  const stampDutyPurchasePrice = useMemo(() => {
+    const price = overrides.purchasePrice
+      ?? report?.financial_calculations?.purchasePrice
+      ?? report?.financial_calculations?.propertyValue
+      ?? 0;
+    return Number(price) || 0;
+  }, [overrides.purchasePrice, report?.financial_calculations]);
 
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'STAMP_DUTY_VALUE') {
-        setIsCapturingStampDuty(false);
-        
-        if (stampDutyTimeoutRef.current) {
-          clearTimeout(stampDutyTimeoutRef.current);
-          stampDutyTimeoutRef.current = null;
-        }
+  const stampDutyLandPrice = useMemo(() => {
+    const land = overrides.landPrice
+      ?? report?.manual_overrides?.landPrice
+      ?? report?.financial_calculations?.landPrice
+      ?? 0;
+    return Number(land) || 0;
+  }, [overrides.landPrice, report?.manual_overrides, report?.financial_calculations]);
 
-        if (event.data.success && event.data.value) {
-          const value = Math.round(event.data.value).toString();
-          setCapturedStampDutyValue(value);
-          toast({
-            title: "Value Captured",
-            description: `$${formatNumberWithCommas(value)} has been captured from the calculator.`,
-          });
-        } else {
-          toast({
-            title: "Could not capture value",
-            description: "Please calculate stamp duty first, then try again or enter manually.",
-            variant: "destructive"
-          });
-        }
-      } else if (event.data?.type === 'STAMP_DUTY_VALUE_AVAILABLE') {
-        // Auto-update the display when calculator shows a new result
-        if (event.data.value) {
-          const value = Math.round(event.data.value).toString();
-          setCapturedStampDutyValue(value);
-        }
-      }
-    };
+  /**
+   * What duty is assessed on. A new build defaults to the land price because
+   * duty on a house-and-land package falls on the land contract — see
+   * `dutiableValueBasis.ts`. An explicit edit wins from then on.
+   */
+  const dutiableInputs = useMemo(
+    () => ({
+      buildType: currentBuildType as BuildType,
+      purchasePrice: stampDutyPurchasePrice,
+      landPrice: stampDutyLandPrice,
+    }),
+    [currentBuildType, stampDutyPurchasePrice, stampDutyLandPrice],
+  );
+  const stampDutyDutiableValue = dutiableValueOverride ?? defaultDutiableValue(dutiableInputs);
+  const stampDutyBases = useMemo(() => dutiableValueBases(dutiableInputs), [dutiableInputs]);
 
-    window.addEventListener('message', handleMessage);
-    return () => {
-      window.removeEventListener('message', handleMessage);
-      if (stampDutyTimeoutRef.current) {
-        clearTimeout(stampDutyTimeoutRef.current);
-        stampDutyTimeoutRef.current = null;
-      }
-    };
-  }, [showStampDutyCalculator, toast]);
-
-  useEffect(() => {
-    if (!showStampDutyCalculator && stampDutyTimeoutRef.current) {
-      clearTimeout(stampDutyTimeoutRef.current);
-      stampDutyTimeoutRef.current = null;
-    }
-  }, [showStampDutyCalculator]);
-
-  // Function to capture stamp duty from calculator (Step 1)
-  const captureStampDutyFromCalculator = useCallback(() => {
-    const frameWindow = stampDutyIframeRef.current?.contentWindow;
-    if (!frameWindow) {
-      toast({
-        title: "Calculator not loaded",
-        description: "Please wait for the calculator to load first.",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setIsCapturingStampDuty(true);
-    frameWindow.postMessage({ type: 'CAPTURE_STAMP_DUTY' }, '*');
-
-    if (stampDutyTimeoutRef.current) clearTimeout(stampDutyTimeoutRef.current);
-    stampDutyTimeoutRef.current = setTimeout(() => {
-      setIsCapturingStampDuty(false);
-      toast({
-        title: "Could not capture value",
-        description: "Please calculate stamp duty first, then try again or enter manually.",
-        variant: "destructive"
-      });
-      stampDutyTimeoutRef.current = null;
-    }, 3000);
+  const useStampDutyValue = useCallback((totalDuty: number) => {
+    const value = Math.round(totalDuty);
+    setOverrides(prev => ({ ...prev, stampDuty: value }));
+    setHasChanges(true);
+    toast({
+      title: 'Stamp duty applied',
+      description: `$${formatNumberWithCommas(String(value))} has been applied to your analysis.`,
+    });
   }, [toast]);
-
-  // Function to use the captured stamp duty value (Step 2)
-  const useStampDutyValue = useCallback(() => {
-    const valueToUse = parseFloat(capturedStampDutyValue);
-    if (valueToUse && valueToUse > 0) {
-      setOverrides(prev => ({
-        ...prev,
-        stampDuty: valueToUse
-      }));
-      setHasChanges(true);
-      toast({
-        title: "Stamp Duty Applied",
-        description: `$${formatNumberWithCommas(capturedStampDutyValue)} has been applied to your analysis.`,
-      });
-    } else {
-      toast({
-        title: "No value to apply",
-        description: "Please capture or enter a stamp duty value first.",
-        variant: "destructive"
-      });
-    }
-  }, [capturedStampDutyValue, toast]);
 
   // AI-powered expense estimation function
   const handleEstimateExpenses = useCallback(async () => {
@@ -319,8 +284,6 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
 
   // Define the confirmed input fields for manual overrides
   // Get current build type from overrides (default to 'existing_property')
-  const currentBuildType = overrides.buildType || report?.manual_overrides?.buildType || 'existing_property';
-  const isNewBuild = currentBuildType === 'new_build';
 
   // ========== INVESTMENT REPORT TAB FIELDS ==========
   
@@ -1523,122 +1486,32 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                     <CollapsibleContent>
                       <div className="px-4 pb-4 space-y-4">
                         <Separator />
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <ExternalLink className="h-4 w-4" />
-                            <span>Powered by calculatorsonline.com.au</span>
-                          </div>
-                          {detectedState !== 'All' && (
-                            <Badge variant="outline" className="text-xs">
-                              Pre-selected: {STATE_MAPPING[detectedState] || detectedState}
-                            </Badge>
-                          )}
-                        </div>
-                        
-                        {/* Stamp Duty Calculator Container */}
-                        <div className="relative rounded-lg overflow-hidden border bg-white shadow-inner">
-                          <iframe
-                            ref={stampDutyIframeRef}
-                            src={stampDutyIframeSrc}
-                            title="Stamp Duty Calculator"
-                            className="w-full"
-                            style={{ minHeight: '620px' }}
-                            sandbox="allow-scripts allow-forms"
-                          />
-                          <div className="p-4 border-t bg-muted/40 text-sm text-muted-foreground flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <ExternalLink className="h-4 w-4" />
-                              <span>Stamp Duty Calculator from</span>
-                              <a
-                                href="https://calculatorsonline.com.au"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-primary hover:underline"
-                              >
-                                calculatorsonline.com.au
-                              </a>
-                            </div>
-                            {detectedState !== 'All' && (
-                              <Badge variant="outline" className="text-xs">
-                                Pre-selected: {STATE_MAPPING[detectedState] || detectedState}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
 
-                        {/* Step 1: Capture Calculated Value Button */}
-                        <Button 
-                          onClick={captureStampDutyFromCalculator}
-                          disabled={isCapturingStampDuty}
-                          className="w-full gap-2"
-                          variant="outline"
-                        >
-                          {isCapturingStampDuty ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              Capturing...
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-4 w-4" />
-                              Capture Calculated Value
-                            </>
-                          )}
-                        </Button>
+                        <StampDutyCalculatorPanel
+                          dutiableValue={stampDutyDutiableValue}
+                          onDutiableValueChange={setDutiableValueOverride}
+                          purchasePrice={stampDutyPurchasePrice}
+                          bases={stampDutyBases}
+                          state={stampDutyState}
+                          onStateChange={setStampDutyStateOverride}
+                          intent={stampDutyIntent}
+                          onIntentChange={setStampDutyIntent}
+                          category={stampDutyCategory}
+                          onCategoryChange={setStampDutyCategory}
+                          isFirstHomeBuyer={stampDutyFirstHomeBuyer}
+                          onFirstHomeBuyerChange={setStampDutyFirstHomeBuyer}
+                          isForeignBuyer={stampDutyForeignBuyer}
+                          onForeignBuyerChange={setStampDutyForeignBuyer}
+                          onUseValue={useStampDutyValue}
+                          useValueLabel="Apply to analysis"
+                        />
 
-                        {/* Captured/Manual input for review */}
-                        <div className="space-y-2 p-3 rounded-lg bg-muted/50 border">
-                          <Label className="text-sm font-medium">Captured Value (editable for review):</Label>
-                          <div className="relative">
-                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                            <Input
-                              type="text"
-                              inputMode="numeric"
-                              value={formatNumberWithCommas(capturedStampDutyValue)}
-                              onChange={(e) => {
-                                const rawValue = removeCommas(e.target.value);
-                                if (rawValue === '' || /^\d*\.?\d*$/.test(rawValue)) {
-                                  setCapturedStampDutyValue(rawValue);
-                                }
-                              }}
-                              placeholder="Capture value or enter manually"
-                              className="pl-7"
-                            />
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            Review or adjust the value before applying
-                          </p>
-                        </div>
-
-                        {/* Step 2: Use Value Button */}
-                        <Button 
-                          onClick={useStampDutyValue}
-                          disabled={!capturedStampDutyValue || parseFloat(capturedStampDutyValue) <= 0}
-                          className="w-full gap-2"
-                        >
-                          <Check className="h-4 w-4" />
-                          Use Value
-                        </Button>
-
-                        {/* Show currently applied value */}
                         {overrides.stampDuty && overrides.stampDuty > 0 && (
-                          <div className="flex items-center gap-2 text-success text-sm p-2 rounded-lg bg-success/10 border border-success/20">
+                          <div className="flex items-center gap-2 rounded-lg border border-success/20 bg-success/10 p-2 text-sm text-success">
                             <Check className="h-4 w-4" />
-                            <span>Stamp Duty: ${overrides.stampDuty.toLocaleString()} applied to analysis</span>
+                            <span>Stamp duty of ${overrides.stampDuty.toLocaleString()} applied to this analysis</span>
                           </div>
                         )}
-
-                        {/* Instructions */}
-                        <div className="p-3 rounded-lg bg-muted/50 border space-y-2">
-                          <p className="text-sm font-medium text-foreground">How to use:</p>
-                          <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                            <li>State is auto-detected from property address{detectedState !== 'All' && ` (${detectedState})`}</li>
-                            <li>Enter property details and click "Calculate" in the calculator above</li>
-                            <li>Click "Capture Calculated Value" to extract the total</li>
-                            <li>Review the captured value (edit if needed)</li>
-                            <li>Click "Use Value" to apply it to your analysis</li>
-                          </ol>
-                        </div>
                       </div>
                     </CollapsibleContent>
                   </Collapsible>

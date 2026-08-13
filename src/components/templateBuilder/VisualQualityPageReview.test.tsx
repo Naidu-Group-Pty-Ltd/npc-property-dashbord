@@ -122,3 +122,82 @@ describe('VisualQualityPageReviewGrid', () => {
     expect(screen.getByText(/No per-page review data/i)).toBeInTheDocument();
   });
 });
+
+describe('the visual critique on a page card', () => {
+  const critique = {
+    'docling-page-1': {
+      findings: [
+        {
+          kind: 'text_clipped' as const, severity: 'critical' as const, overlayId: 'title',
+          note: 'The title is cut off on the right.', verdict: 'confirmed' as const,
+          basis: 'set on one line, needs 270.0pt in a 200.0pt box',
+        },
+        {
+          kind: 'wrong_colour' as const, severity: 'minor' as const, overlayId: 'rule',
+          note: 'The divider looks lighter than the source.', verdict: 'unverifiable' as const,
+          basis: 'only the source pixels can settle this',
+        },
+        {
+          kind: 'occluded' as const, severity: 'major' as const, overlayId: 'logo',
+          note: 'The logo looks buried.', verdict: 'refuted' as const,
+          basis: 'logo and backdrop do not overlap at all',
+        },
+      ],
+      summary: {
+        version: 'visual-critique-v1' as const,
+        total: 3, confirmed: 1, refuted: 1, unverifiable: 1, confirmedCritical: 1,
+      },
+    },
+  };
+
+  it('offers the critique action only when the operator enabled it', () => {
+    const { unmount } = render(<VisualQualityPageReviewGrid collection={collection()} onAction={vi.fn()} />);
+    expect(within(cardFor('Cover 1')).getByRole('button', { name: /Explain the difference/i }))
+      .toBeDisabled();
+    unmount();
+    render(<VisualQualityPageReviewGrid collection={collection()} aiCritiqueEnabled onAction={vi.fn()} />);
+    expect(within(cardFor('Cover 1')).getByRole('button', { name: /Explain the difference/i }))
+      .not.toBeDisabled();
+  });
+
+  it('fires without a confirmation step, because it cannot change the document', () => {
+    const onAction = vi.fn();
+    render(<VisualQualityPageReviewGrid collection={collection()} aiCritiqueEnabled onAction={onAction} />);
+    fireEvent.click(within(cardFor('Cover 1')).getByRole('button', { name: /Explain the difference/i }));
+    expect(onAction).toHaveBeenCalledWith('docling-page-1', 'ai_critique');
+  });
+
+  it('stays disabled on a page with no rasters to compare', () => {
+    render(<VisualQualityPageReviewGrid collection={collection()} aiCritiqueEnabled onAction={vi.fn()} />);
+    expect(within(cardFor('Cover 2')).getByRole('button', { name: /Explain the difference/i }))
+      .toBeDisabled();
+  });
+
+  it('shows each finding with what measurement made of it', () => {
+    render(
+      <VisualQualityPageReviewGrid
+        collection={collection()} aiCritiqueEnabled pageCritiques={critique} onAction={vi.fn()}
+      />,
+    );
+    const card = within(cardFor('Cover 1'));
+    expect(card.getByText('The title is cut off on the right.')).toBeTruthy();
+    expect(card.getByText('set on one line, needs 270.0pt in a 200.0pt box')).toBeTruthy();
+    // A finding measurement contradicted is shown as contradicted, never
+    // silently as a defect — that separation is the point of the stage.
+    expect(card.getByText('measured')).toBeTruthy();
+    expect(card.getByText('unchecked')).toBeTruthy();
+    expect(card.getByText('contradicted')).toBeTruthy();
+    expect(card.getByText('1 measured · 1 unchecked · 1 contradicted')).toBeTruthy();
+  });
+
+  it('says a clean page is clean rather than showing nothing', () => {
+    render(
+      <VisualQualityPageReviewGrid
+        collection={collection()} aiCritiqueEnabled onAction={vi.fn()}
+        pageCritiques={{ 'docling-page-1': { findings: [], summary: { ...critique['docling-page-1'].summary, total: 0, confirmed: 0, refuted: 0, unverifiable: 0, confirmedCritical: 0 } } }}
+      />,
+    );
+    expect(within(cardFor('Cover 1')).getByText('No differences reported')).toBeTruthy();
+  });
+});
+

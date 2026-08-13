@@ -13,10 +13,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { getPortalSessionToken } from '@/lib/portalSession';
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
-const PORTAL_SESSION_KEY = 'portal_session_token';
 
 const TYPE_META: Record<string, { label: string; icon: any; tone: string }> = {
   document_upload:         { label: 'Document upload',         icon: FileText,    tone: 'bg-info/15 text-info-foreground0' },
@@ -45,9 +45,9 @@ type Task = {
 
 function getSessionToken(): string | null {
   try {
-    return sessionStorage.getItem(PORTAL_SESSION_KEY) || localStorage.getItem(PORTAL_SESSION_KEY);
+    return getPortalSessionToken();
   } catch {
-    try { return localStorage.getItem(PORTAL_SESSION_KEY); } catch { return null; }
+    return getPortalSessionToken();
   }
 }
 

@@ -149,9 +149,15 @@ describe("client-safe readiness", () => {
   });
   it("the selfie upload URL is gated on availability, attempts and no active processing", () => {
     const uploadBlock = portalFn.slice(portalFn.indexOf("case 'request_verification_upload_url'"), portalFn.indexOf("case 'list_requirements'"));
-    expect(uploadBlock).toContain("clientSafeIdvAvailability");
+    // `clientSafeIdvState` resolves availability AND which flow is active; the
+    // gate is the same one, now also answering "does NPC capture at all?".
+    expect(uploadBlock).toContain("clientSafeIdvState");
+    expect(uploadBlock).toContain("availability !== 'available'");
     expect(uploadBlock).toContain("attempts_exhausted");
     expect(uploadBlock).toContain("already_processing");
+    // A hosted provider owns the capture, so NPC must not collect a second
+    // copy of the customer's face (APP 3).
+    expect(uploadBlock).toContain("hosted_verification_required");
   });
   it("submission itself re-checks availability server-side", () => {
     expect(idvBlock).toContain("clientSafeIdvAvailability");
@@ -204,15 +210,43 @@ describe("staff technical retry", () => {
 });
 
 describe("server-derived journey", () => {
+  // The journey moved to `_shared/aml/portalJourney.pure.ts` so it could be
+  // tested as behaviour rather than as source text (see portalJourney.test.ts)
+  // — the same move `projectParty` made, and for the same reason: a defect
+  // here is a defect the client sees in four places at once.
+  const journeyModule = readFileSync(
+    "supabase/functions/_shared/aml/portalJourney.pure.ts", "utf8");
+
   it("verified wording requires actual party verification state", () => {
-    const journey = portalFn.slice(portalFn.indexOf("function buildJourney"), portalFn.indexOf("const MAX_UPLOAD_BYTES") > 0 ? portalFn.length : portalFn.length);
-    expect(journey).toContain("partiesResolved");
-    expect(journey).toContain("'You are verified.'");
-    expect(journey).toContain("Your adviser is reviewing your information.");
-    expect(journey).not.toContain("reuses it");
+    expect(journeyModule).toContain("verificationJourneyStatus");
+    expect(journeyModule).toContain("'You are verified.'");
+    expect(journeyModule).toContain("Your adviser is reviewing your information.");
+    expect(journeyModule).not.toContain("reuses it");
   });
   it("overview returns the journey computed server-side", () => {
     expect(portalFn).toContain("journey: buildJourney({");
+    expect(portalFn).toContain('from "../_shared/aml/portalJourney.pure.ts"');
+  });
+  it("documents completion reads what arrived, not only what was asked for", () => {
+    // `docsDone` used to require `requiredReqs.length > 0`, so a case with no
+    // formal requirements could never complete its documents step however
+    // much the client uploaded.
+    expect(portalFn).toContain("documents: documentFacts ?? []");
+    expect(portalFn).toMatch(/from\('documents'\)\s*\n?\s*\.select\('requirement_id,status'\)/);
+    expect(journeyModule).toContain("documentsJourneyStatus");
+  });
+  it("only unanswered requests count as a client action", () => {
+    // A `responded` request is waiting on the adviser. Counting it kept the
+    // journey telling the client their adviser had asked for something after
+    // they had already answered.
+    expect(portalFn).toMatch(/openRequestCount:[\s\S]{0,200}filter\(\(r: any\) => r\.status === 'open'\)/);
+  });
+  it("the journey never learns a score, a provider or a reviewer", () => {
+    // Code only — the header explains what it is forbidden to see, and would
+    // otherwise trip its own rule.
+    const codeOnly = journeyModule.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(codeOnly).not.toMatch(/risk_|score|threshold|mlro|didit|provider_/i);
   });
 });
 
@@ -225,6 +259,8 @@ const legacyPanel = readFileSync("src/components/aml/LegacyVerificationHistoryPa
 const partyPanel = readFileSync("src/components/aml/PartyVerificationPanel.tsx", "utf8");
 const screeningPanel = readFileSync("src/components/aml/PartyScreeningPanel.tsx", "utf8");
 const workspace = readFileSync("src/pages/aml/AmlCaseWorkspace.tsx", "utf8");
+const workspaceLabels = readFileSync("src/components/aml/workspace/workspaceLabels.ts", "utf8");
+const workspaceViewModel = readFileSync("src/lib/aml/workspaceViewModel.ts", "utf8");
 const portalPage2 = readFileSync("src/pages/portal/PortalAml.tsx", "utf8");
 
 describe("submission review", () => {
@@ -254,9 +290,16 @@ describe("submission review", () => {
     expect(reviewPure).toMatch(/'personal_details', 'entity_details', 'related_parties', 'funding'/);
   });
   it("the UI is its own workspace section and shows the gate read-only", () => {
+    // Submission review is still a first-class section with its own key, its
+    // own label and its own place in the information architecture. The
+    // workspace redesign moved where the label and the area mapping are
+    // declared — the guarantee is unchanged, so the assertions follow it.
     expect(workspace).toContain('"submission-review"');
-    expect(workspace).toContain('label: "Submission Review"');
-    expect(workspace).toContain('section: "submission-review" as SectionKey');
+    expect(workspaceLabels).toContain('"submission-review": "Submission review"');
+    expect(workspaceViewModel).toContain('"submission-review",');
+    expect(workspaceViewModel).toMatch(
+      /transaction: \[[^\]]*"submission-review"[^\]]*\]/,
+    );
     expect(reviewPanel).toContain("Service gate (read-only)");
     expect(reviewPanel).toContain("does not approve the service gate");
   });

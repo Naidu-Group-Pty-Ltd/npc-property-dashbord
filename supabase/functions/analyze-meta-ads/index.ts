@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callLLMRaw } from '../_shared/llmRouter.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -585,7 +586,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[analyze-meta-ads] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'analyze-meta-ads'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -19,6 +19,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -312,7 +313,7 @@ Deno.serve(async (req) => {
     return ok(corsHeaders, overview);
   } catch (err) {
     console.error('[finance-portal-tri-portal-health]', err);
-    return new Response(JSON.stringify({ error: (err as Error).message }),
+    return new Response(JSON.stringify(internalError(err, 'finance-portal-tri-portal-health')),
       { status: 500, headers: { ...createCorsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' } });
   }
 });

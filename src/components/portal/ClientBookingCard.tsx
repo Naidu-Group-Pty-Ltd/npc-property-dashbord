@@ -10,28 +10,28 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { CalendarPlus, Clock, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
-const PORTAL_SESSION_KEY = 'portal_session_token';
 
 type Slot = { start_at: string; end_at: string };
 type Booking = { id: string; start_at: string; end_at: string; status: string; topic: string | null };
 
-function getToken() {
-  try { return sessionStorage.getItem(PORTAL_SESSION_KEY) || localStorage.getItem(PORTAL_SESSION_KEY); } catch { return null; }
-}
-
 async function call(operation: string, body: any = {}) {
-  const token = getToken();
   const res = await fetch(`${SUPABASE_URL}/functions/v1/client-portal-batch6`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      ...(token ? { 'x-portal-session-token': token } : {}),
+      ...portalSessionHeaders(),
     },
-    body: JSON.stringify({ operation, ...body }),
+    // NOT `credentials: 'include'`: this endpoint answers with a wildcard
+    // `Access-Control-Allow-Origin`, and a wildcard origin is invalid for a
+    // credentialed request — the browser would block the response outright.
+    // The session therefore rides the `x-portal-session-token` header, whose
+    // in-memory token `client-portal-verify` repopulates on every load.
+    body: JSON.stringify({ operation, ...body, ...portalSessionBodyFields() }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);

@@ -19,6 +19,7 @@ import {
 } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const TABLE = 'pdf_import_client_reports';
@@ -272,6 +273,6 @@ Deno.serve(async (req) => {
 
     return json({ error: `unknown operation: ${operation}` }, 400);
   } catch (err) {
-    return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    return json({ ...internalError(err, 'pdf-import-client-report') }, 500);
   }
 });

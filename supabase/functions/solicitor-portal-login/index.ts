@@ -3,9 +3,15 @@ import { verifyPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth.ts"
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
 import { auditSolicitorIdentity, GENERIC_AUTH_ERROR, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
+import { authRateLimitedResponse, enforceAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { PortalLoginRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+
+const LOGIN_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const LOGIN_IDENTIFIER_BUDGET = { max: 12, windowSeconds: 900 };
 // A fixed bcrypt hash keeps missing and passwordless accounts on the same
 // expensive verification path as accounts with a stored bcrypt password.
 const DUMMY_PASSWORD_HASH = '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
@@ -25,7 +31,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const { email, password, turnstile_token } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, PortalLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { email, password, turnstile_token } = __body.data
 
     if (!email || !password) {
       return new Response(
@@ -65,10 +76,19 @@ Deno.serve(async (req) => {
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    for (const key of [`solicitor_login:ip:${ip}`, `solicitor_login:email:${normalizedEmail}`]) {
-      const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', { p_key: key, p_max: 10, p_window_seconds: 900 });
-      if (allowed === false) return new Response(JSON.stringify({ error: GENERIC_AUTH_ERROR }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+    // Previously keyed on `x-forwarded-for[0]` (caller-controlled, so the ceiling
+    // was one header away from gone) and read only `allowed === false`, so an RPC
+    // error fell through as allowed. See _shared/authRateLimit.ts.
+    const rateLimit = await enforceAuthRateLimit(supabase, req, {
+      scope: 'spl',
+      ip: LOGIN_IP_BUDGET,
+      identifier: normalizedEmail,
+      identifierBudget: LOGIN_IDENTIFIER_BUDGET,
+    });
+    if (!rateLimit.allowed) {
+      console.warn('[solicitor-portal-login] rate limited', { ipTrusted: rateLimit.ipTrusted, degraded: rateLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, rateLimit.retryAfterSeconds, GENERIC_AUTH_ERROR);
     }
 
     const { data: portalUser, error: userError } = await supabase

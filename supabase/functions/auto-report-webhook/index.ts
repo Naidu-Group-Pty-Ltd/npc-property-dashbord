@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyInternal, logSecurityEvent } from "../_shared/auth_v2.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 const corsHeaders = {
@@ -1302,9 +1303,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[Auto-Report Webhook] Error:', error);
     return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }),
+      JSON.stringify(internalError(error, 'auto-report-webhook')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

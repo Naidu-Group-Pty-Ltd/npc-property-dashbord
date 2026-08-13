@@ -9,9 +9,17 @@
 import { getCatalogNode } from '@/lib/workflow/catalog';
 import type { Vec2, WorkflowEdge, WorkflowGraph, WorkflowNode } from '@/lib/workflow/types';
 
-/** Matches `.wf-node { width }` in src/styles/workflow.css. */
-export const NODE_WIDTH = 272;
-export const NODE_HEIGHT = 76;
+/**
+ * Matches `.wf-node { width }` in src/styles/workflow.css.
+ *
+ * Smaller than it was (272×76). The card carried its step's full summary, which
+ * forced two lines of body text on every node; dropping that in favour of
+ * name-and-app let the card shrink by a third of its height, and a workflow you
+ * can see the shape of at 100% zoom is worth more than a summary you can read
+ * without clicking.
+ */
+export const NODE_WIDTH = 224;
+export const NODE_HEIGHT = 56;
 
 export const GRID_SIZE = 16;
 export const MIN_ZOOM = 0.35;
@@ -52,12 +60,23 @@ export function sourcePort(node: WorkflowNode, branchId?: string): Vec2 {
  * A horizontal cubic bezier between two ports. The control points lean out
  * proportionally to the horizontal gap so short links stay tight and long ones
  * bow gently rather than looping.
+ *
+ * `endInset` stops the drawn line short of the target port. The arrowhead is
+ * drawn at the path's end, and the port is a filled circle sitting exactly
+ * there — so without the inset the arrow is underneath the port and the
+ * connection reads as undirected. The hit path and the port maths stay at full
+ * length; this is a visual offset only.
  */
-export function edgePath(from: Vec2, to: Vec2): string {
+export function edgePath(from: Vec2, to: Vec2, endInset = 0): string {
   const dx = Math.abs(to.x - from.x);
   const curve = Math.max(32, Math.min(dx * 0.55, 160));
-  return `M ${from.x},${from.y} C ${from.x + curve},${from.y} ${to.x - curve},${to.y} ${to.x},${to.y}`;
+  // Never inset past the source, which would reverse a very short connection.
+  const end = { x: to.x - Math.min(endInset, Math.max(0, dx - 4)), y: to.y };
+  return `M ${from.x},${from.y} C ${from.x + curve},${from.y} ${end.x - curve},${end.y} ${end.x},${end.y}`;
 }
+
+/** How far the drawn line stops short of a target port, so its arrow shows. */
+export const EDGE_END_INSET = 13;
 
 export const edgeMidpoint = (from: Vec2, to: Vec2): Vec2 => ({
   x: (from.x + to.x) / 2,

@@ -6,7 +6,7 @@
       "url": "https://github.com/advisories/GHSA-4w7w-66w2-5vf9",
       "ghsa": "GHSA-4w7w-66w2-5vf9",
       "package": "vite",
-      "reason": "Path traversal in the dev server's optimized-deps `.map` handling. This repository ships a static `vite build`; the dev server runs on a developer's own machine and is never exposed. The only fix is vite 8 \u2014 a major bump of the build toolchain, which is its own change with its own regression surface.",
+      "reason": "Path traversal in the dev server's optimized-deps `.map` handling. This repository ships a static `vite build`; the dev server runs on a developer's own machine and is never exposed. The only fix is vite 8 — a major bump of the build toolchain, which is its own change with its own regression surface.",
       "review_by": "2026-11-04"
     },
     {
@@ -27,7 +27,7 @@
       "url": "https://github.com/advisories/GHSA-4r6h-8v6p-xvw6",
       "ghsa": "GHSA-4r6h-8v6p-xvw6",
       "package": "xlsx",
-      "reason": "Prototype pollution in SheetJS. `npm audit` reports no fixed version because SheetJS stopped publishing to the npm registry after 0.18 \u2014 the patched releases exist only on the vendor's own CDN, so there is no upgrade path from here. Accepted rather than ignored: the real remediation is to drop the dependency, and `exceljs` is already in this project and does the same work.",
+      "reason": "Prototype pollution in SheetJS. `npm audit` reports no fixed version because SheetJS stopped publishing to the npm registry after 0.18 — the patched releases exist only on the vendor's own CDN, so there is no upgrade path from here. Accepted rather than ignored: the real remediation is to drop the dependency, and `exceljs` is already in this project and does the same work.",
       "review_by": "2026-11-04"
     },
     {
@@ -35,6 +35,20 @@
       "ghsa": "GHSA-5pgg-2g8v-p4x9",
       "package": "xlsx",
       "reason": "Regular-expression denial of service in SheetJS. Same absent upgrade path, and same remediation, as GHSA-4r6h-8v6p-xvw6.",
+      "review_by": "2026-11-04"
+    },
+    {
+      "url": "https://github.com/advisories/GHSA-w3rx-r6r6-pgpr",
+      "ghsa": "GHSA-w3rx-r6r6-pgpr",
+      "package": "image-size",
+      "reason": "Infinite loop in the ICNS parser, reached only through pptxgenjs, whose only call site is src/lib/reportTemplate/pptxExporter.ts. That runs in the browser, on a PowerPoint export the user themselves started, over images from their own template — so the worst case is that user hanging their own tab, not a server-side denial of service. The only fix is pptxgenjs 1.x, a major bump of the deck exporter, which is its own change with its own regression surface. Same argument as the vite entries below.",
+      "review_by": "2026-11-04"
+    },
+    {
+      "url": "https://github.com/advisories/GHSA-5p2g-fcmc-qvqq",
+      "ghsa": "GHSA-5p2g-fcmc-qvqq",
+      "package": "image-size",
+      "reason": "Infinite loop in the JXL and HEIF parsers. Same reachability and the same fix as GHSA-w3rx-r6r6-pgpr: browser-side, user-initiated, requires the pptxgenjs 1.x major bump.",
       "review_by": "2026-11-04"
     }
   ]

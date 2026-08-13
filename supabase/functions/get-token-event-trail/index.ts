@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 Deno.serve(async (req) => {
   // Credentialed CORS: the app invokes this function with
   // credentials:'include' (HttpOnly session cookie), and browsers reject a
@@ -91,7 +92,7 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     console.error("[get-token-event-trail]", e);
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }), {
+    return new Response(JSON.stringify(internalError(e, 'get-token-event-trail')), {
       status: 500, headers: { ...corsHeaders, "content-type": "application/json" },
     });
   }

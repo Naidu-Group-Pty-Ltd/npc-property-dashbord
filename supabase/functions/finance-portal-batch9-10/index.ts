@@ -20,6 +20,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { canAccessFinanceClient, canAccessPurchaseFile } from '../_shared/financePortalObjectAuthz.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const jsonWithHeaders = (d: unknown, responseCorsHeaders: Record<string, string>, s = 200) =>
   new Response(JSON.stringify(d), {
@@ -574,6 +575,6 @@ Deno.serve(async (req) => {
 
   } catch (e) {
     console.error('[finance-portal-batch9-10]', e);
-    return json({ error: (e as Error).message || 'Internal error' }, 500);
+    return json({ ...internalError(e, 'finance-portal-batch9-10') }, 500);
   }
 });

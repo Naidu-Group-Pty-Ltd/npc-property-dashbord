@@ -17,6 +17,9 @@ import { hashSessionToken } from '../_shared/sessionHash.ts';
 import { validateBuilderPortalRequest } from '../_shared/builderSessionToken.ts';
 import { auditBuilderIdentity } from '../_shared/builderSessions.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { authRateLimitedResponse, beginAuthRateLimit } from '../_shared/authRateLimit.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ForgotPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -46,7 +49,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { email } = await req.json();
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ForgotPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES);
+    if (!__body.ok) return __body.response;
+    const { email } = __body.data;
     if (!email || typeof email !== 'string') {
       return new Response(JSON.stringify({ error: 'Email is required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -54,18 +62,23 @@ Deno.serve(async (req) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
 
     // Rate limit BEFORE any lookup so enumeration cannot outrun the throttle.
-    const limits = await Promise.all(
-      [`builder_forgot:email:${normalizedEmail}`, `builder_forgot:ip:${ip}`].map((p_key) =>
-        supabase.rpc('check_and_bump_rate_limit', {
-          p_key, p_max: MAX_REQUESTS_PER_WINDOW, p_window_seconds: WINDOW_SECONDS,
-        })));
-    if (limits.some((result) => result.data === false)) {
-      return new Response(JSON.stringify({ error: 'Too many reset requests. Please try again later.' }), {
-        status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    //
+    // ABUSE-003: this used to consume an EMAIL-keyed bucket concurrently with
+    // the IP one (`Promise.all`) and before the account was known to exist, so a
+    // caller who was already over their IP ceiling could still mint a persistent
+    // limiter row for every address they cared to type. The source-IP gate now
+    // runs first and alone; the account bucket below is only reachable once the
+    // account has been confirmed reachable. The address also no longer comes
+    // from `x-forwarded-for`, which the caller sets.
+    const gate = await beginAuthRateLimit(supabase, req, {
+      scope: 'bpfp',
+      ip: { max: MAX_REQUESTS_PER_WINDOW, windowSeconds: WINDOW_SECONDS },
+    });
+    if (!gate.allowed) {
+      console.warn('[builder-portal-forgot-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds, 'Too many reset requests. Please try again later.');
     }
 
     const { data: user } = await supabase
@@ -87,11 +100,13 @@ Deno.serve(async (req) => {
     if (!Array.isArray(reachable) || !reachable.length) return genericOk();
 
     // A per-account bucket so rotating the source IP cannot churn reset tokens.
-    const { data: accountAllowed } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `builder_forgot_account:${user.id}`,
-      p_max: MAX_REQUESTS_PER_WINDOW, p_window_seconds: WINDOW_SECONDS,
+    const accountLimit = await gate.consumeIdentifier(user.id, {
+      max: MAX_REQUESTS_PER_WINDOW, windowSeconds: WINDOW_SECONDS,
     });
-    if (accountAllowed !== true) return genericOk();
+    if (!accountLimit.allowed) {
+      console.warn('[builder-portal-forgot-password] account rate limited', { degraded: accountLimit.degraded });
+      return genericOk();
+    }
 
     const otp = generateOtp();
     const otpHash = await hashSessionToken(otp);

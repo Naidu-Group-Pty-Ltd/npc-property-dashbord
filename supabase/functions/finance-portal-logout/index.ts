@@ -2,18 +2,30 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import {
   createCorsHeaders,
   createClearFinanceSessionCookie,
-  createClearSessionCookie,
 } from "../_shared/auth.ts"
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
+/**
+ * Clears the Finance Portal cookie and NOTHING ELSE.
+ *
+ * This used to also emit `createClearSessionCookie()`, which clears the
+ * Command Centre's `__Host-session_token`. The finance client calls this
+ * endpoint with `credentials: 'include'`, so the browser honoured it: a broker
+ * signing out of the Finance Portal silently signed the same browser out of the
+ * Command Centre. Where one person holds both accounts — which is the norm
+ * while the same addresses are being used across portals in testing — that
+ * reads as the Command Centre spontaneously losing its session.
+ *
+ * A logout may only revoke the credential of the portal it belongs to.
+ */
 function createLogoutHeaders(corsHeaders: Record<string, string>): Headers {
   const headers = new Headers({
     ...corsHeaders,
     'Content-Type': 'application/json',
   });
   headers.append('Set-Cookie', createClearFinanceSessionCookie());
-  headers.append('Set-Cookie', createClearSessionCookie());
   return headers;
 }
 
@@ -45,7 +57,7 @@ Deno.serve(async (req) => {
 
     let body: Record<string, unknown> | undefined;
     try {
-      body = await req.json();
+      body = await readBoundedJson(req);
     } catch { /* ignore */ }
 
     const sessionToken = extractFinanceSessionToken(req.headers, body);

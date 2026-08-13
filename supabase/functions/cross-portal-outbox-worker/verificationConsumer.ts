@@ -10,6 +10,8 @@
  */
 import {
   getIdvProvider,
+  idvFlowFor,
+  isStandaloneIdvProvider,
   resolveTenantProvider,
   runWithMetrics,
   currentEnvironment,
@@ -17,6 +19,7 @@ import {
 } from '../_shared/aml/providers/index.ts';
 import { stripImagePayloads } from '../_shared/aml/verificationEvidence.pure.ts';
 import { canonicalOutcome } from '../_shared/aml/verificationOutcome.pure.ts';
+import { processStandaloneCheck } from '../_shared/aml/standaloneVerification.ts';
 
 /** Matches MAX_VERIFICATION_ATTEMPTS in aml-client-portal and the DB constraint. */
 const MAX_VERIFICATION_ATTEMPTS = 3;
@@ -56,6 +59,54 @@ export async function processVerificationEvent(db: any, event: any): Promise<voi
   if (!check) return;
   if (check.superseded_at || check.status !== 'pending') return;
   if (!['submitted', 'queued', 'retry_scheduled'].includes(check.processing_status ?? 'submitted')) return;
+
+  /**
+   * A hosted-session check is not this worker's to process.
+   *
+   * Didit owns the capture: there is no document in `aml-documents` and no
+   * selfie in `aml-biometrics`, because the customer never uploaded one to us.
+   * Reaching `runProviderForCheck` would download nothing, throw
+   * `storage_unreadable:document`, and stamp a technical failure on a check
+   * whose outcome is on its way from a webhook — the customer's journey shows
+   * an error for a verification that is proceeding normally.
+   *
+   * The database trigger (20260908000000) already declines to emit
+   * `aml.verification.requested` for these, so in a converged deployment no
+   * such event exists. This is the second lock: a legacy event still in the
+   * outbox from before that migration, or a hand-inserted one, must also find
+   * the door shut. Returning without claiming leaves the row untouched.
+   */
+  if (idvFlowFor(check.provider) === 'hosted_session') return;
+
+  /**
+   * Belt and braces for the same defect, expressed as the precondition the
+   * body below actually has: this worker downloads `document_reference`, so a
+   * check without one can only produce a technical failure. Any future hosted
+   * provider is covered by this line without touching it.
+   */
+  if (!check.document_reference) return;
+
+  /**
+   * A Standalone-API check belongs to the shared orchestrator, and it returns
+   * WITHOUT throwing whatever happens.
+   *
+   * That is the important half. Everything below re-throws so the outbox
+   * applies backoff and re-delivers, which is right for a free call against a
+   * service NPC hosts. Didit's Standalone endpoints are billed per response and
+   * document no idempotency key, so the same policy there would turn one
+   * customer submission into up to ten unattended purchases of the same
+   * verification. The orchestrator records every failure on the row instead,
+   * and the retry is a deliberate one — a fresh customer submission, which
+   * consumes nothing from the failed attempt.
+   *
+   * It claims the row conditionally first, so this path, the portal's direct
+   * dispatch and the one-minute sweep can all be handed the same check and
+   * exactly one of them will reach the provider.
+   */
+  if (isStandaloneIdvProvider(check.provider)) {
+    await processStandaloneCheck(db, checkId);
+    return;
+  }
 
   // Optimistic claim — a concurrent worker loses the conditional update and
   // walks away, so the provider is called at most once per event delivery.

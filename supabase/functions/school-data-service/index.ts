@@ -1,5 +1,8 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
+import { internalError } from '../_shared/errorResponse.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { SchoolDataRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,7 +41,11 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { suburb, state, postcode, latitude, longitude }: SchoolDataRequest = await req.json();
+    // WP-24: bounded and shape-checked. This endpoint takes no session,
+    // so a bare req.json() read whatever was sent.
+    const __parsed = await parseJsonBody(req, SchoolDataRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
+    if (!__parsed.ok) return __parsed.response;
+    const { suburb, state, postcode, latitude, longitude } = __parsed.data;
     console.log('Fetching school data for:', suburb, state, postcode);
 
     if (!suburb || !state || !postcode) {
@@ -68,9 +75,9 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('❌ Error in School Data service:', error);
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: error.message 
+    return new Response(JSON.stringify({
+      ...internalError(error, 'school-data-service'),
+      success: false,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -123,7 +130,7 @@ async function fetchSchoolDataFromDB(
       }));
 
       // Sort by distance if available, otherwise by rating
-      schoolsWithDistance.sort((a, b) => {
+      schoolsWithDistance.sort((a: typeof schoolsWithDistance[number], b: typeof schoolsWithDistance[number]) => {
         if (a.distance !== undefined && b.distance !== undefined) {
           return a.distance - b.distance;
         }

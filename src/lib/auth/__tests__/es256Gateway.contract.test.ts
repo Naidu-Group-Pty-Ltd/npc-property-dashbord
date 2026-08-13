@@ -138,7 +138,22 @@ describe('ownership cannot be widened by the caller', () => {
   });
 
   it('stamps the owning column on writes from the resolved user', () => {
-    expect(gateway).toContain('[rule.ownerColumn!]: userId');
+    expect(gateway).toContain('[stampColumn]: userId');
+  });
+
+  /**
+   * `insertOwnerColumn` records authorship (`workflows.created_by`, which a
+   * dispatched run acts under) and is a different thing from `ownerColumn`,
+   * which is an access rule. Two ways it must not behave like one:
+   * it must not narrow reads, and it must not be re-stamped on UPDATE — a
+   * colleague saving an edit is not the author.
+   */
+  it('stamps the author column only on creation', () => {
+    expect(gateway).toContain("req.method === 'POST' ? rule.insertOwnerColumn : undefined");
+  });
+
+  it('never scopes a read by the author column', () => {
+    expect(gateway).not.toMatch(/searchParams\.append\(\s*rule\.insertOwnerColumn/);
   });
 
   it('forwards to PostgREST rather than hand-rolling SQL', () => {

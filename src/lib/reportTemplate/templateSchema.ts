@@ -72,6 +72,11 @@ export const FontFaceSchema = z.object({
   style: z.enum(['normal', 'italic']).optional(),
   display: z.enum(['auto', 'swap', 'block', 'fallback', 'optional']).optional(),
   source: z.enum(['url', 'embedded']).optional(),   // 'embedded' = captured from a reference PDF/image (data: src)
+  // R2 — cmap-coverage scoping for embedded faces: strict `U+hex[-hex]` list
+  // only, so the value can be emitted into a style element verbatim.
+  unicodeRange: z.string()
+    .regex(/^[Uu]\+[0-9A-Fa-f]{1,6}(?:-[0-9A-Fa-f]{1,6})?(?:,\s*[Uu]\+[0-9A-Fa-f]{1,6}(?:-[0-9A-Fa-f]{1,6})?)*$/)
+    .optional(),
 });
 export type FontFace = z.infer<typeof FontFaceSchema>;
 
@@ -272,6 +277,35 @@ const BaseOverlay = z.object({
     width: z.enum(['fixed', 'scale']).optional(),
     height: z.enum(['fixed', 'scale']).optional(),
   }).optional(),
+  /**
+   * What this element IS, as the source pipeline classified it.
+   *
+   * Docling labels every text item it extracts — title, section header with a
+   * level, page header/footer, caption, footnote, list item, code, formula —
+   * and the import mapper already reads those labels to pick default weights
+   * and sizes. Until this field existed they died at the plan boundary, so a
+   * stored template knew the geometry of every box and the meaning of none.
+   *
+   * Annotation only: nothing here moves a box or changes a style. It decides
+   * the ELEMENT NAME the renderer emits, which is what puts headings in the
+   * exported PDF's structure tree — `render-template-pdf` asks WeasyPrint for
+   * `pdf/ua-1`, and before this every imported page tagged as a flat run of
+   * `/Div`. See `pdfImport/semanticRole.pure.ts`.
+   *
+   * Absent means "no classification", never "body copy": the non-Docling import
+   * paths emit no labels, and defaulting there would state a call nobody made.
+   */
+  semantics: z.object({
+    version: z.string(),
+    role: z.enum([
+      'title', 'heading', 'body', 'listItem', 'caption', 'footnote',
+      'pageHeader', 'pageFooter', 'code', 'formula', 'figure', 'table',
+    ]),
+    headingLevel: z.number().int().min(1).max(6).optional(),
+    /** Position in the SOURCE's reading order, which paint order does not preserve. */
+    readingOrder: z.number().int().min(0).optional(),
+    listGroupId: z.string().optional(),
+  }).optional(),
 });
 
 
@@ -281,12 +315,25 @@ export const TextOverlaySchema = BaseOverlay.extend({
   content: BindableStringSchema,
   fontFamily: BindableStringSchema.default('Helvetica'),
   fontSize: BindableNumberSchema.default(12),
+  // Coarse weight. A numeric value collapses to this enum, which is lossy on
+  // purpose for legacy templates — the exact grade belongs in
+  // `fontWeightNumeric` below, which every renderer prefers. A producer that
+  // knows the real weight MUST write both, or 300 renders as 400 and 600 as
+  // 700, and both are wider than the source inside a fixed-width box.
   fontWeight: z.preprocess((value) => {
     if (value === 'bold' || value === 'normal') return value;
     const numeric = Number(value);
     if (Number.isFinite(numeric)) return numeric >= 600 ? 'bold' : 'normal';
     return 'normal';
   }, z.enum(['normal', 'bold'])).default('normal'),
+  /**
+   * What happens when the text does not fit its box. Defaults to `visible`,
+   * preserving the export renderer's long-standing spill behaviour for every
+   * existing template; the editor canvas now honours the same value instead of
+   * always clipping. Imported overlays are the interesting case — see
+   * rendering/textOverlayStyle.pure.ts.
+   */
+  overflowPolicy: z.enum(['visible', 'clip']).optional(),
   fontStyle: z.enum(['normal', 'italic']).default('normal'),
   color: BindableColorSchema.default('#000000'),
   align: z.enum(['left', 'center', 'right', 'justify']).default('left'),
@@ -463,6 +510,17 @@ export const TableOverlaySchema = BaseOverlay.extend({
 export const ImageOverlaySchema = BaseOverlay.extend({
   type: z.literal('image'),
   src: BindableStringSchema,
+  /**
+   * Alternative text. Emitted as the `alt` attribute, which WeasyPrint writes
+   * straight into the tagged PDF as the figure's `/Alt`.
+   *
+   * A figure with no alternative text is a hard PDF/UA failure, and every
+   * imported picture was one — the import mapper extracts Docling's own
+   * description and caption and, until this field existed, spent them on the
+   * Layers-panel name. Absent stays absent: a placeholder like `[image]`
+   * satisfies a checker and tells a reader nothing.
+   */
+  alt: z.string().optional(),
   fit: z.enum(['cover', 'contain', 'fill']).default('cover'),
   // Manual crop, expressed as percent (0–100) of the source image trimmed
   // from each edge before fit/positioning is applied.
@@ -506,12 +564,88 @@ export const VectorOverlaySchema = BaseOverlay.extend({
   paths: z.array(VectorPathSchema).default([]),
 });
 
+// ---------------------------------------------------------------------------
+// Chart overlay (W3) — a reconstructed chart as an EDITABLE object.
+//
+// Charts imported from a PDF were previously flattened to an image overlay even
+// when Docling had classified the picture as `bar_chart`: the class was carried
+// in meta and then dropped. This type is the destination that makes a chart
+// editable instead.
+//
+// Deliberately an OVERLAY rather than a Block, even though eleven data-bound
+// chart Blocks already exist with renderers and inspector panels. Every
+// downstream contract in the import path is keyed by overlay id — the plan
+// contract carries `overlays`, chart suppression takes overlay ids, the repair
+// ops target overlayId, and the editor canvas flattens blocks purely to harvest
+// their overlays and gives handles only to those. The block renderers are still
+// reused, through a thin adapter, because they read `block.props` and a chart
+// overlay carries the same prop shape.
+//
+// `series` is inline data, not a `dataPath` binding: an imported chart's numbers
+// come from the source document, not from report data. `dataPath` remains
+// available for the case where someone rebinds it afterwards.
+// ---------------------------------------------------------------------------
+export const ChartSeriesPointSchema = z.object({
+  label: z.string(),
+  value: z.number(),
+  /** Optional per-point colour captured from the source geometry. */
+  color: BindableColorSchema.optional(),
+});
+export type ChartSeriesPoint = z.infer<typeof ChartSeriesPointSchema>;
+
+export const ChartOverlayKindSchema = z.enum([
+  'bar', 'stacked-bar', 'line', 'area', 'pie', 'donut', 'scatter', 'radar',
+]);
+export type ChartOverlayKind = z.infer<typeof ChartOverlayKindSchema>;
+
+export const ChartOverlaySchema = BaseOverlay.extend({
+  type: z.literal('chart'),
+  chartKind: ChartOverlayKindSchema.default('bar'),
+  /** Inline series extracted from the source. Editable in the inspector. */
+  series: z.array(ChartSeriesPointSchema).default([]),
+  /** Optional binding, for a chart later rebound to live report data. */
+  dataPath: BindableStringSchema.optional(),
+  labelKey: z.string().optional(),
+  valueKey: z.string().optional(),
+  title: BindableStringSchema.optional(),
+  caption: BindableStringSchema.optional(),
+  accent: BindableColorSchema.optional(),
+  palette: z.array(z.string()).optional(),
+  orientation: z.enum(['vertical', 'horizontal']).optional(),
+  /**
+   * Provenance for a reconstructed chart. `sourceCropUrl` is retained even when
+   * the chart renders natively, so review can compare the reconstruction
+   * against the pixels it came from — the single most important affordance for
+   * catching a misread value before it reaches a client.
+   */
+  chartPreservation: z.object({
+    version: z.string(),
+    /** How this chart reached the page. */
+    renderMode: z.enum([
+      'verified-native-chart',
+      'native-with-source-reference',
+      'chart-source-crop',
+      'containment-fallback',
+    ]),
+    detectionMethod: z.string().optional(),
+    /** Hard-defect codes that vetoed a native reconstruction, if any. */
+    defects: z.array(z.string()).default([]),
+    /** Set when a human must confirm the numbers before the chart is trusted. */
+    manualReviewRequired: z.boolean().default(false),
+    sourceCropUrl: z.string().optional(),
+    sourceRegionId: z.string().optional(),
+    /** Goodness-of-fit of the axis scale calibration, when one was derived. */
+    axisScaleR2: z.number().optional(),
+  }).optional(),
+});
+
 export const OverlaySchema = z.discriminatedUnion('type', [
   TextOverlaySchema,
   ImageOverlaySchema,
   ShapeOverlaySchema,
   TextOnPathOverlaySchema,
   TableOverlaySchema,
+  ChartOverlaySchema,
   VectorOverlaySchema,
 ]);
 
@@ -668,6 +802,18 @@ export const PageSchema = z.object({
         decidedAt: z.string(),
         decidedBy: z.enum(['quality-gate', 'operator', 'migration']),
       }).optional(),
+      // A1 — region-scoped containment on an otherwise NATIVE page: windows onto
+      // the page's own source raster, painted over regions that could not be
+      // verified. The alternative to rasterizing the whole page, not an addition
+      // to it — so it is only ever meaningful with `outputStrategy: 'native'`.
+      // Bounded: geometry and overlay ids only, never pixels or a signed URL.
+      containedRegions: z.array(z.object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number(),
+        height: z.number(),
+        overlayIds: z.array(z.string()).max(512).default([]),
+      })).max(24).optional(),
     }).optional(),
     // ── E6 (pdf-region-output-policy-v1) additive, OPTIONAL, backward-compatible.
     // Bounded per-page region-composition summary + a reference to the private

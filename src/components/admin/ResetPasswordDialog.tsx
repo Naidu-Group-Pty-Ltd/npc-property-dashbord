@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
@@ -20,8 +20,8 @@ export function ResetPasswordDialog({ open, onOpenChange, userId, username }: Re
   const [resetting, setResetting] = useState(false);
 
   const handleReset = async () => {
-    if (!newPassword || newPassword.length < 8) {
-      toast.error('Password must be at least 8 characters');
+    if (!newPassword || newPassword.length < 12) {
+      toast.error('Password must be at least 12 characters');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -67,8 +67,7 @@ export function ResetPasswordDialog({ open, onOpenChange, userId, username }: Re
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>New Password</Label>
-            <Input
-              type="password"
+            <PasswordInput
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               placeholder="Minimum 8 characters"
@@ -76,8 +75,7 @@ export function ResetPasswordDialog({ open, onOpenChange, userId, username }: Re
           </div>
           <div className="space-y-2">
             <Label>Confirm Password</Label>
-            <Input
-              type="password"
+            <PasswordInput
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Repeat password"

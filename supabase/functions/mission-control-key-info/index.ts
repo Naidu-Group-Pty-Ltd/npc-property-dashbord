@@ -5,6 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 function prefixOf(key: string | undefined): string | null {
   if (!key) return null;
   // mck_xxxxxxxxxxxx -> "mck_xxxxxx…"
@@ -84,7 +85,7 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     console.error("[mission-control-key-info]", e);
-    return new Response(JSON.stringify({ error: "internal_error", message: String(e) }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'mission-control-key-info'), error: "internal_error" }), {
       status: 500, headers: { ...corsHeaders, "content-type": "application/json" },
     });
   }

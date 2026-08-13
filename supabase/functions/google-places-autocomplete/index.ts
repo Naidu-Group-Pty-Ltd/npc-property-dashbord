@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 import {
   enforceGlobalDailyQuota,
   enforceIpQuota,
@@ -43,7 +44,12 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
     if (!apiKey) return j({ error: 'Places service not configured', success: false }, 500);
 
-    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    // WP-24: bounded. Every field below is sanitised, but the READ was not —
+    // `req.json()` takes whatever is sent, and nothing authenticates this
+    // endpoint. 8 KiB is far beyond an autocomplete fragment.
+    const __bounded = await enforceJsonBodyLimit<Record<string, unknown>>(req, 8 * 1024);
+    if (!__bounded.ok) return __bounded.error;
+    const body = __bounded.value ?? {};
     const input = sanitizeShortText(body.input, 120);
     const sessionToken = sanitizeShortText(body.sessionToken, 64);
 

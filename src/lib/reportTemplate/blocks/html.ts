@@ -4,8 +4,10 @@
  */
 import type { Block } from '../templateSchema';
 import type { HtmlBlockContext, HtmlBlockRenderer } from './_shared.html';
+import { registerChartOverlayRenderers } from './_shared.html';
 import { renderCoverHtml } from './cover.html';
 import { renderTextBlockHtml } from './textBlock.html';
+import { renderMarkdownBlockHtml } from './markdownBlock.html';
 import { renderKpiGridHtml } from './kpiGrid.html';
 import { renderDataTableHtml } from './dataTable.html';
 import { renderDividerHtml } from './divider.html';
@@ -77,6 +79,7 @@ const HTML_RENDERERS: Record<string, HtmlBlockRenderer> = {
   cover: renderCoverHtml,
   'text-block': renderTextBlockHtml,
   text: renderTextBlockHtml,
+  'markdown-block': renderMarkdownBlockHtml,
   'kpi-grid': renderKpiGridHtml,
   'data-table': renderDataTableHtml,
   divider: renderDividerHtml,
@@ -147,6 +150,13 @@ const HTML_RENDERERS: Record<string, HtmlBlockRenderer> = {
 export function getHtmlBlockRenderer(type: string): HtmlBlockRenderer | undefined {
   return HTML_RENDERERS[type];
 }
+
+// W3 — let the chart OVERLAY renderer in `_shared.html.ts` reach these same
+// functions. It cannot import them directly (charts.html.ts imports
+// _shared.html.ts), and duplicating chart drawing code to dodge that cycle
+// would put imported charts and authored charts on renderers that drift apart.
+// This module already imports both sides, so it is the right place to bind.
+registerChartOverlayRenderers((kind) => HTML_RENDERERS[`chart-${kind}`] ?? null);
 
 export function htmlBlockTypes(): string[] {
   return Object.keys(HTML_RENDERERS);

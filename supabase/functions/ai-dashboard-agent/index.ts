@@ -6,6 +6,7 @@ import { authorizeAgentTool, AgentToolAuthzError, type AgentToolAuthzContext } f
 import { actorIsSuperadmin, requireModulePermission } from "../_shared/authz.ts";
 import { logApiUsage, estimateCost, extractOpenAIUsage } from "../_shared/logApiUsage.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -8856,6 +8857,6 @@ Deno.serve(async (req) => {
     }
   } catch (error: any) {
     console.error('[ai-dashboard-agent] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { ...cors, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify(internalError(error, 'ai-dashboard-agent')), { status: 500, headers: { ...cors, 'Content-Type': 'application/json' } });
   }
 });

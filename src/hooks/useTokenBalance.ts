@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { fetchTokenBalance, type TokenBalance } from "@/lib/missionControl";
 import { onTokensUsed, onOutOfTokens } from "@/lib/tokenEvents";
 import { isAuthExhausted } from "@/lib/secureInvoke";
+import { useAuth } from "@/hooks/useAuth";
 
 // Absolute low-balance thresholds (billing credits) used when the tenant has
 // no plan allowance to compute a percentage against — e.g. the prime install
@@ -28,6 +29,7 @@ export function useTokenBalance(opts: UseTokenBalanceOptions = {}) {
     refetchOnFocus = true,
     refetchOnTokenEvent = true,
   } = opts;
+  const { user } = useAuth();
   const [balance, setBalance] = useState<TokenBalance | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -40,7 +42,8 @@ export function useTokenBalance(opts: UseTokenBalanceOptions = {}) {
     // session fallback). Gating on hasActiveSession() here made the pill show
     // a permanent zero balance for cookie-only sessions. Only skip once the
     // global auth circuit breaker has tripped (genuinely signed out).
-    if (isAuthExhausted()) {
+    // No resolved staff session means `mission-control-balance` can only 401.
+    if (isAuthExhausted() || !user) {
       setBalance(null);
       setError(null);
       setLoading(false);
@@ -64,11 +67,11 @@ export function useTokenBalance(opts: UseTokenBalanceOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user?.id]);
 
   // Initial + polling
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !user) return;
     refresh();
     if (pollMs > 0) {
       const id = setInterval(refresh, pollMs);

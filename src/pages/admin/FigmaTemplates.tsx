@@ -22,7 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Loader2, Plus, RefreshCw, Trash2, ExternalLink, AlertCircle, CheckCircle2,
-  Eye, Layers, Figma as FigmaIcon, Star,
+  Eye, Layers, Frame as FigmaIcon, Star,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { invokeSecureFunction } from '@/lib/secureInvoke';

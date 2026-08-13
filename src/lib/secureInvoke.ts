@@ -13,13 +13,20 @@ let _globalAuthExhausted = false;
 const GLOBAL_AUTH_FAIL_LIMIT = 5;
 let _globalAuthFailCount = 0;
 
+/** Fired once when the breaker trips, so auth state can clear and redirect. */
+export const AUTH_EXHAUSTED_EVENT = 'npc-auth-exhausted';
+
 export function markAuthFailure(): void {
   _globalAuthFailCount++;
-  if (_globalAuthFailCount >= GLOBAL_AUTH_FAIL_LIMIT) {
+  if (_globalAuthFailCount >= GLOBAL_AUTH_FAIL_LIMIT && !_globalAuthExhausted) {
     _globalAuthExhausted = true;
     console.warn('[secureInvoke] Global auth circuit breaker tripped – all polling stopped until re-login.');
+    // Without this, a revoked/expired session left every poller 401-ing behind a
+    // blank screen instead of returning the user to the login page.
+    try { window.dispatchEvent(new Event(AUTH_EXHAUSTED_EVENT)); } catch { /* non-browser */ }
   }
 }
+
 
 export function resetAuthFailures(): void {
   _globalAuthFailCount = 0;
@@ -268,7 +275,7 @@ export async function resolveAuthBearer(
 export async function invokeSecureFunction<T = any>(
   functionName: string,
   body?: Record<string, any>,
-  options?: { timeoutMs?: number; _isRetry?: boolean; stepUpCapability?: string; correlationId?:string }
+  options?: { timeoutMs?: number; _isRetry?: boolean; stepUpCapability?: string; correlationId?:string; signal?: AbortSignal }
 ): Promise<InvokeResult<T>> {
   const correlationId = options?.correlationId ?? crypto.randomUUID();
   try {
@@ -309,6 +316,16 @@ export async function invokeSecureFunction<T = any>(
     const sendRequest = async (credentials: RequestCredentials): Promise<Response> => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      // A caller-supplied signal (the editor cancels a superseded preview
+      // render) aborts this request too. Without it, callers that need
+      // cancellation had to hand-roll their own fetch — which is how the
+      // render calls came to bypass this transport entirely.
+      const external = options?.signal;
+      const onExternalAbort = () => controller.abort();
+      if (external) {
+        if (external.aborted) controller.abort();
+        else external.addEventListener('abort', onExternalAbort, { once: true });
+      }
       try {
         return await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
           method: 'POST',
@@ -327,6 +344,7 @@ export async function invokeSecureFunction<T = any>(
         });
       } finally {
         clearTimeout(timeoutId);
+        external?.removeEventListener('abort', onExternalAbort);
       }
     };
 

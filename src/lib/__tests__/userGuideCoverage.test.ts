@@ -21,17 +21,20 @@ import {
   formatModuleAwarenessForAI,
   getAllSectionIds,
 } from '../userGuideKnowledge';
-import { ADDITIONAL_GUIDE_SECTIONS } from '../userGuideSections';
+import { GUIDE_SECTIONS } from '../userGuideContent';
 import { MODULE_TIERS } from '../pricing/planEntitlements';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const readRepoFile = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8');
 
-/** Section ids the guide page renders, read from its source. */
+/**
+ * Section ids the guide page renders. The page renders `GUIDE_SECTIONS`
+ * verbatim (filtered only by entitlement), so the content module is the
+ * page's section list — including the sections from `userGuideSections.ts`,
+ * which it appends itself.
+ */
 function pageSectionIds(): string[] {
-  const src = readRepoFile('src/pages/UserGuide.tsx');
-  const inline = [...src.matchAll(/^ {6}id: '([a-z0-9-]+)',$/gm)].map((m) => m[1]);
-  return [...inline, ...ADDITIONAL_GUIDE_SECTIONS.map((s) => s.id)];
+  return GUIDE_SECTIONS.map((s) => s.id);
 }
 
 describe('guide page and AI knowledge base agree', () => {

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +28,7 @@ const formVariants = {
 
 export default function FinancePortalLogin() {
   const { user, signIn, requestPasswordReset, verifyOTP, resetPassword, loading } = useFinancePortalAuth();
+  const location = useLocation();
   const { settings } = useWhiteLabel();
   const navigate = useNavigate();
   const formRef = useRef<HTMLDivElement>(null);
@@ -55,7 +56,18 @@ export default function FinancePortalLogin() {
     );
   }
 
-  if (user) return <Navigate to="/finance" replace />;
+  // Where the partner was actually going, if a guard sent them here. An email
+  // deep-link into an agreement hits sign-in first; without this it is lost and
+  // they land on the dashboard with no idea which document the email meant.
+  // Only in-portal paths are honoured — a `from` is attacker-supplied in
+  // principle, and an open redirect out of an authentication page is not worth
+  // the convenience.
+  const intended = (location.state as { from?: string } | null)?.from;
+  const destination = typeof intended === 'string' && /^\/finance(\/|$|\?)/.test(intended)
+    ? intended
+    : '/finance';
+
+  if (user) return <Navigate to={destination} replace />;
 
   const changeMode = (next: Mode) => {
     setMode(next);
@@ -74,8 +86,11 @@ export default function FinancePortalLogin() {
     try {
       const { error, mustChangePassword } = await signIn(email, password, turnstileToken || undefined);
       if (error) { toast.error(error); setTurnstileToken(null); }
-      else if (mustChangePassword) navigate('/finance/change-password', { replace: true });
-      else navigate('/finance', { replace: true });
+      else if (mustChangePassword) {
+        // The password gate keeps the destination travelling; the route guard
+        // hands it on through terms and onboarding after that.
+        navigate('/finance/change-password', { replace: true, state: { from: destination } });
+      } else navigate(destination, { replace: true });
     } finally { setSubmitting(false); }
   };
 

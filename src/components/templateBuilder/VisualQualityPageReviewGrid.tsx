@@ -11,16 +11,20 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { VisualQualityPageReviewCard } from './VisualQualityPageReviewCard';
 import type { PageReviewCollection, PageReviewAction } from '@/lib/reportTemplate/ingestion/visualQuality';
+import type { CorroboratedFinding, CritiqueSummary } from '@/lib/reportTemplate/pdfImport/visualCritique';
 
 interface Props {
   collection: PageReviewCollection;
   aiRepairEnabled?: boolean;
+  aiCritiqueEnabled?: boolean;
+  /** Stage 3 — critique results by page id, for pages where one has run. */
+  pageCritiques?: Record<string, { findings: CorroboratedFinding[]; summary: CritiqueSummary }> | null;
   /** The page currently running an action (disables its card's controls). */
   busyPageId?: string | null;
   onAction?: (pageId: string, action: PageReviewAction) => void;
 }
 
-export function VisualQualityPageReviewGrid({ collection, aiRepairEnabled, busyPageId, onAction }: Props) {
+export function VisualQualityPageReviewGrid({ collection, aiRepairEnabled, aiCritiqueEnabled, pageCritiques, busyPageId, onAction }: Props) {
   if (collection.totalPages === 0) {
     return (
       <Card className="p-4 text-sm text-muted-foreground">
@@ -54,6 +58,8 @@ export function VisualQualityPageReviewGrid({ collection, aiRepairEnabled, busyP
             key={model.pageId}
             model={model}
             aiRepairEnabled={aiRepairEnabled}
+            aiCritiqueEnabled={aiCritiqueEnabled}
+            critique={pageCritiques?.[model.pageId] ?? null}
             busy={busyPageId === model.pageId}
             onAction={onAction}
           />

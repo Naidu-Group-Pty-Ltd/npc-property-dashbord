@@ -3,8 +3,17 @@ import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
 import { auditSolicitorIdentity, revokeAllSolicitorSessions } from "../_shared/solicitorSessions.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ResetPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const MAX_OTP_ATTEMPTS = 5;
+
+// The per-account OTP cap only ever sees one account; this bounds a caller
+// walking a dictionary of addresses six digits at a time.
+const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const RESET_IDENTIFIER_BUDGET = { max: 15, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -26,13 +35,30 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const { action, email, otp, new_password } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ResetPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { action, email, otp, new_password } = __body.data
 
     if (!email || !otp) {
       return json({ error: 'Email and code are required' }, 400)
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
+
+    // Source-keyed ceiling, consumed before the account-keyed one (ABUSE-003).
+    const gate = await beginAuthRateLimit(supabase, req, { scope: 'sprp', ip: RESET_IP_BUDGET });
+    if (!gate.allowed) {
+      console.warn('[solicitor-portal-reset-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds);
+    }
+    const identifierLimit = await gate.consumeIdentifier(normalizedEmail, RESET_IDENTIFIER_BUDGET);
+    if (!identifierLimit.allowed) {
+      console.warn('[solicitor-portal-reset-password] identifier rate limited', { degraded: identifierLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, identifierLimit.retryAfterSeconds);
+    }
 
     // Consume an attempt in the database so concurrent guesses cannot share a
     // stale reset_attempts value and bypass the cap.
@@ -73,8 +99,19 @@ Deno.serve(async (req) => {
     }
 
     // === RESET PASSWORD ===
-    if (!new_password || typeof new_password !== 'string' || new_password.length < 10) {
+    if (!new_password || typeof new_password !== 'string') {
+      return json({ error: 'A new password is required' }, 400)
+    }
+    // Keep this portal's 10-character floor (stricter than the shared policy's
+    // 8) and add the shared checks on top — common-password list, character
+    // classes, and the HIBP k-anonymity breach lookup. Fail-open on HIBP being
+    // unreachable, so an outage cannot block account recovery.
+    if (new_password.length < 10) {
       return json({ error: 'Password must be at least 10 characters' }, 400)
+    }
+    const strength = await validatePasswordStrength(new_password)
+    if (!strength.isValid) {
+      return json({ error: strength.error }, 400)
     }
 
     const passwordHash = await hashPassword(new_password)
@@ -118,7 +155,9 @@ Deno.serve(async (req) => {
       actor_type: 'solicitor_user',
       action: 'password_reset_completed',
       entity_type: 'session',
-      ip_address: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
+      // Only a platform-vouched address; `x-forwarded-for[0]` is caller-set and
+      // would let an attacker forge the recorded source of a password reset.
+      ip_address: gate.ipTrusted ? gate.ip : null,
     });
 
     return json({ success: true })
