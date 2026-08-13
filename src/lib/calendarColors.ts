@@ -14,30 +14,30 @@
 
 /** Distinct, print-safe hues. Ordered so adjacent entries are far apart. */
 export const CALENDAR_COLOR_PALETTE = [
-  '#3b82f6', // blue
-  '#f59e0b', // amber
-  '#10b981', // emerald
-  '#ec4899', // pink
-  '#8b5cf6', // violet
-  '#ef4444', // red
-  '#14b8a6', // teal
-  '#f97316', // orange
-  '#6366f1', // indigo
-  '#84cc16', // lime
-  '#d946ef', // fuchsia
-  '#0ea5e9', // sky
-  '#eab308', // yellow
-  '#22c55e', // green
-  '#a855f7', // purple
-  '#f43f5e', // rose
-  '#06b6d4', // cyan
-  '#b45309', // bronze
-  '#7c3aed', // deep violet
-  '#059669', // deep emerald
-  '#be123c', // crimson
-  '#0891b2', // deep cyan
-  '#ca8a04', // dark gold
-  '#4f46e5', // deep indigo
+  'hsl(217 91% 60%)', // blue
+  'hsl(38 92% 50%)', // amber
+  'hsl(160 84% 39%)', // emerald
+  'hsl(330 81% 60%)', // pink
+  'hsl(258 90% 66%)', // violet
+  'hsl(0 84% 60%)', // red
+  'hsl(173 80% 40%)', // teal
+  'hsl(25 95% 53%)', // orange
+  'hsl(239 84% 67%)', // indigo
+  'hsl(84 81% 44%)', // lime
+  'hsl(292 84% 61%)', // fuchsia
+  'hsl(199 89% 48%)', // sky
+  'hsl(45 93% 47%)', // yellow
+  'hsl(142 71% 45%)', // green
+  'hsl(271 91% 65%)', // purple
+  'hsl(350 89% 60%)', // rose
+  'hsl(189 94% 43%)', // cyan
+  'hsl(26 90% 37%)', // bronze
+  'hsl(262 83% 58%)', // deep violet
+  'hsl(161 94% 30%)', // deep emerald
+  'hsl(345 83% 41%)', // crimson
+  'hsl(192 91% 36%)', // deep cyan
+  'hsl(41 96% 40%)', // dark gold
+  'hsl(243 75% 59%)', // deep indigo
 ] as const;
 
 export const FALLBACK_CALENDAR_COLOR = CALENDAR_COLOR_PALETTE[0];
