@@ -24553,6 +24553,9 @@ export type Database = {
       partner_agreement_change_requests: {
         Row: {
           agreement_id: string
+          anchor_label: string | null
+          anchor_path: string | null
+          anchor_quote: string | null
           comment: string
           created_at: string
           id: string
@@ -24569,6 +24572,9 @@ export type Database = {
         }
         Insert: {
           agreement_id: string
+          anchor_label?: string | null
+          anchor_path?: string | null
+          anchor_quote?: string | null
           comment: string
           created_at?: string
           id?: string
@@ -24585,6 +24591,9 @@ export type Database = {
         }
         Update: {
           agreement_id?: string
+          anchor_label?: string | null
+          anchor_path?: string | null
+          anchor_quote?: string | null
           comment?: string
           created_at?: string
           id?: string
