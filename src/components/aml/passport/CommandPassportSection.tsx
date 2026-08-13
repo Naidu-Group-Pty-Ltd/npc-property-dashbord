@@ -10,6 +10,7 @@ import { amlRelianceApi } from "@/lib/aml/amlRelianceApi";
 import type { PassportStamp, PassportView } from "@/lib/aml/passport";
 import { PassportStateBadge } from "./PassportStateBadge";
 import { StampSeal } from "./StampSeal";
+import { classifyPassportLoadFailure } from "./loadState";
 import {
   formatPassportCurrency as formatCurrency,
   formatPassportDate as formatDate,
@@ -49,11 +50,11 @@ export function CommandPassportSection({
       const { passport } = await amlRelianceApi.getPassportView(caseId);
       setState({ kind: "ready", view: passport });
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      if (/passport_disabled|not available/i.test(message)) {
+      const failure = classifyPassportLoadFailure(e);
+      if (failure.kind === "disabled") {
         setState({ kind: "disabled" });
       } else {
-        setState({ kind: "error", message });
+        setState({ kind: "error", message: failure.message });
       }
     }
   }, [caseId]);

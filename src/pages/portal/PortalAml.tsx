@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
+import { PassportPromoCard } from '@/components/portal/PassportPromoCard';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
@@ -350,6 +351,10 @@ export default function PortalAml() {
               </div>
             </CardContent>
           </Card>
+
+          {/* The journey → Passport bridge. Renders nothing while the
+              passport flag is off, so this page is unchanged until then. */}
+          <PassportPromoCard />
 
           {refreshFailed && (
             // One line, and the page stays exactly where it was. This used to
