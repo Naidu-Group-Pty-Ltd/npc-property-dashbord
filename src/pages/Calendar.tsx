@@ -39,7 +39,7 @@ import { QuickAddAppointmentModal } from '@/components/calendar/QuickAddAppointm
 import { MultiCalendarOverlay } from '@/components/calendar/MultiCalendarOverlay';
 import { RecurringPatterns } from '@/components/calendar/RecurringPatterns';
 import { SmartReminders } from '@/components/calendar/SmartReminders';
-import { MiniCalendarNavigator } from '@/components/calendar/MiniCalendarNavigator';
+import { CalendarPeriodPicker } from '@/components/calendar/CalendarPeriodPicker';
 import { EnhancedEventPreview } from '@/components/calendar/EnhancedEventPreview';
 import { KeyboardShortcutsHint } from '@/components/calendar/KeyboardShortcutsHint';
 import { CalendarLoadingSkeleton, StatsLoadingSkeleton, SidebarLoadingSkeleton } from '@/components/calendar/CalendarLoadingSkeleton';
@@ -564,18 +564,8 @@ export default function Calendar() {
       .map((x) => x.e);
   }, [filteredEvents]);
 
-  // Events per day for mini calendar
-  const eventsPerDay = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredEvents.forEach(event => {
-      const d = safeParseISO(event.startTime);
-      if (d) {
-        const key = format(d, 'yyyy-MM-dd');
-        map[key] = (map[key] || 0) + 1;
-      }
-    });
-    return map;
-  }, [filteredEvents]);
+
+
 
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentMonth);
@@ -922,19 +912,8 @@ export default function Calendar() {
                     </div>
                     {/* Tab content */}
                     <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 scrollbar-hide">
-                      {/* Mini Calendar Navigator */}
-                      <div className="mb-4 rounded-2xl border border-border bg-background/55 p-3 shadow-inner shadow-sm dark:shadow-black/20">
-                        <MiniCalendarNavigator
-                          currentMonth={currentMonth}
-                          setCurrentMonth={setCurrentMonth}
-                          selectedDate={selectedDate}
-                          onDateSelect={(date) => {
-                            setSelectedDate(date);
-                            setCurrentMonth(date);
-                          }}
-                          eventsPerDay={eventsPerDay}
-                        />
-                      </div>
+
+
 
                       {sidebarTab === 'events' && (
                         <div>
@@ -1613,19 +1592,8 @@ export default function Calendar() {
               </CardHeader>
 
               <CardContent className="p-3">
-              {/* Mini Calendar Navigator */}
-              <div className="mb-4 rounded-2xl border border-border bg-muted/40 p-3 shadow-inner shadow-sm dark:shadow-black/20">
-                <MiniCalendarNavigator
-                  currentMonth={currentMonth}
-                  setCurrentMonth={setCurrentMonth}
-                  selectedDate={selectedDate}
-                  onDateSelect={(date) => {
-                    setSelectedDate(date);
-                    setCurrentMonth(date);
-                  }}
-                  eventsPerDay={eventsPerDay}
-                />
-              </div>
+
+
 
               {sidebarTab === 'events' && (
                 <div>
