@@ -59,7 +59,6 @@ import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificat
 import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
-import { CommandPassportSection } from "@/components/aml/passport/CommandPassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import { progressRail, type ProgressRailState } from "@/lib/aml/caseDimensions";
 import {
@@ -365,11 +364,6 @@ export default function AmlCaseWorkspace() {
           )}
           {resolvedSection === "passport" && (
             <div className="space-y-4">
-              {/* The Compliance Passport — the RESULTING RECORD of the
-                  journey, projected server-side. Renders nothing while
-                  aml_passport_command_view is off, so the section behaves
-                  exactly as before the Passport existed. */}
-              <CommandPassportSection caseId={caseRow.id} />
               {/* The full journey map keeps its place in the product — it
                   now sits where sharing is worked on rather than at the top
                   of every case. */}

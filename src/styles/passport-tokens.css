@@ -1,17 +1,582 @@
 /**
- * Compliance Passport — scoped presentation tokens.
+ * Compliance Passport — the scoped design layer.
  *
- * The Passport's seal/stamp faces carry a deliberate "ink on paper" palette
- * taken from the approved Claude Design (gold foil, registry navy, verified
- * green, partner blue, restriction red). They exist ONLY inside a
- * `.passport-scope` wrapper: nothing here restyles shared UI, and no
- * component may hard-code these colours inline — the audit:style ratchet
- * stays untouched because every value lives in this one token file.
+ * This file IS the Passport's visual system, transcribed from the approved
+ * Claude Design (`AML Compliance Passport.dc.html`). It exists as CSS rather
+ * than as utility classes on components for three reasons:
  *
- * Values are HSL triples in the repo's token convention. Both themes read
- * acceptably because seals sit on card surfaces that already adapt; the
- * ink tones are mid-saturation by design (print ink, not neon).
+ *  1. The Passport is a deliberate exception to the app's surface language. It
+ *     is a *document* — a dark registry shell wrapping a cream paper booklet —
+ *     and it must not drift when the app's tokens move. Every value the design
+ *     specifies lives here and nowhere else.
+ *  2. `audit:style` counts hex literals and inline colour styles in components.
+ *     Putting the palette in one scoped stylesheet keeps the ratchet clean
+ *     while still reproducing a design that is defined in hex.
+ *  3. Nothing here escapes `.passport-scope`. No global token is redefined, so
+ *     no other surface in the product can be affected by editing this file.
+ *
+ * The booklet's paper does NOT flip with the app theme: a passport's paper is
+ * paper in the dark. The shell is dark in both themes for the same reason —
+ * this is one designed artefact, not a themed surface.
  */
+
+.passport-scope {
+  /* ── shell (dark registry chrome) ─────────────────────────────────────── */
+  --passport-bg: hsl(240 11% 4%);
+  --passport-surface: hsl(240 10% 6%);
+  --passport-surface-raised: hsl(240 9% 7%);
+  --passport-surface-hover: hsl(240 9% 11%);
+  --passport-hairline: hsl(240 6% 13%);
+  --passport-border: hsl(240 9% 15%);
+  --passport-border-raised: hsl(240 6% 16%);
+  --passport-border-strong: hsl(240 5% 24%);
+  --passport-border-gold: hsl(43 14% 20%);
+
+  --passport-text: hsl(40 12% 90%);
+  --passport-text-bright: hsl(40 21% 95%);
+  --passport-text-dim: hsl(40 6% 71%);
+  --passport-text-muted: hsl(43 3% 53%);
+  --passport-text-faint: hsl(40 3% 42%);
+
+  --passport-gold: hsl(44 75% 49%);
+  --passport-gold-soft: hsl(44 74% 67%);
+  --passport-gold-bright: hsl(44 69% 84%);
+  --passport-gold-dim: hsl(41 50% 57%);
+  --passport-gold-faint: hsl(45 29% 47%);
+
+  --passport-ok: hsl(145 58% 61%);
+  --passport-ok-bright: hsl(145 57% 68%);
+  --passport-ok-dim: hsl(137 6% 51%);
+
+  /* Tone triples: wash / edge / ink — the design's `tone()` helper. */
+  --passport-tone-ok-wash: rgba(47, 191, 107, 0.1);
+  --passport-tone-ok-edge: rgba(47, 191, 107, 0.36);
+  --passport-tone-ok-ink: hsl(145 58% 61%);
+  --passport-tone-info-wash: rgba(90, 140, 220, 0.1);
+  --passport-tone-info-edge: rgba(90, 140, 220, 0.34);
+  --passport-tone-info-ink: hsl(216 70% 73%);
+  --passport-tone-warn-wash: rgba(217, 166, 31, 0.1);
+  --passport-tone-warn-edge: rgba(217, 166, 31, 0.36);
+  --passport-tone-warn-ink: hsl(44 74% 67%);
+  --passport-tone-bad-wash: rgba(214, 69, 69, 0.1);
+  --passport-tone-bad-edge: rgba(214, 69, 69, 0.36);
+  --passport-tone-bad-ink: hsl(0 67% 73%);
+  --passport-tone-na-wash: rgba(255, 255, 255, 0.03);
+  --passport-tone-na-edge: hsl(240 5% 18%);
+  --passport-tone-na-ink: hsl(43 3% 53%);
+
+  /* ── seal inks (shared by shell and booklet) ──────────────────────────── */
+  --passport-seal-gold-ink: hsl(43 60% 34%);
+  --passport-seal-gold-ring: rgba(166, 130, 43, 0.8);
+  --passport-seal-gold-wash: rgba(166, 130, 43, 0.07);
+  --passport-seal-gold-dim: hsl(42 38% 47%);
+  --passport-seal-green-ink: hsl(143 40% 30%);
+  --passport-seal-green-ring: rgba(46, 107, 69, 0.72);
+  --passport-seal-green-wash: rgba(46, 107, 69, 0.06);
+  --passport-seal-green-dim: hsl(143 20% 45%);
+  --passport-seal-navy-ink: hsl(220 38% 28%);
+  --passport-seal-navy-ring: rgba(44, 62, 99, 0.7);
+  --passport-seal-navy-wash: rgba(44, 62, 99, 0.05);
+  --passport-seal-navy-dim: hsl(219 20% 46%);
+  --passport-seal-blue-ink: hsl(216 57% 32%);
+  --passport-seal-blue-ring: rgba(35, 71, 126, 0.7);
+  --passport-seal-blue-wash: rgba(35, 71, 126, 0.06);
+  --passport-seal-blue-dim: hsl(216 28% 49%);
+  --passport-seal-red-ink: hsl(0 57% 39%);
+  --passport-seal-red-ring: rgba(158, 43, 43, 0.7);
+  --passport-seal-red-wash: rgba(158, 43, 43, 0.06);
+  --passport-seal-red-dim: hsl(0 31% 55%);
+
+  /* ── booklet (cream paper) ────────────────────────────────────────────── */
+  --passport-paper: hsl(42 62% 96%);
+  --passport-paper-mid: hsl(41 56% 91%);
+  --passport-paper-edge: hsl(41 49% 88%);
+  --passport-foil: hsl(42 59% 41%);
+  --passport-foil-dim: hsl(43 60% 34%);
+  --passport-ink: hsl(221 48% 17%);
+  --passport-ink-soft: hsl(221 35% 23%);
+  --passport-ink-muted: hsl(220 14% 50%);
+  --passport-ink-faint: hsl(218 19% 65%);
+  --passport-ink-note: hsl(219 14% 55%);
+  --passport-cover: hsl(228 40% 12%);
+  --passport-cover-deep: hsl(225 44% 7%);
+
+  /* The design's display face is a serif — the document character depends on
+     it. The repo ships no serif token, so one is named here and resolved from
+     system faces: a webfont would be a network dependency on a compliance
+     surface that must render offline. */
+  --passport-font-display: ui-serif, Georgia, "Times New Roman", serif;
+  --passport-font-mono: var(--font-mono);
+}
+
+/* ══ shell ═══════════════════════════════════════════════════════════════ */
+
+.passport-scope {
+  background: var(--passport-bg);
+  color: var(--passport-text);
+}
+
+.passport-shell__strip {
+  background: linear-gradient(180deg, rgba(217, 166, 31, 0.045), transparent);
+  border-bottom: 1px solid var(--passport-hairline);
+}
+
+.passport-display {
+  font-family: var(--passport-font-display);
+  color: var(--passport-text-bright);
+  letter-spacing: -0.005em;
+}
+
+.passport-mono {
+  font-family: var(--passport-font-mono);
+  letter-spacing: 0.05em;
+}
+
+.passport-kicker {
+  font-size: 0.625rem;
+  letter-spacing: 0.22em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--passport-gold);
+}
+
+.passport-card {
+  background: var(--passport-surface);
+  border: 1px solid var(--passport-border);
+  border-radius: 12px;
+}
+
+.passport-card--pending {
+  border-color: rgba(217, 166, 31, 0.32);
+}
+
+.passport-panel {
+  background: var(--passport-surface-raised);
+  border: 1px solid var(--passport-border-raised);
+  border-radius: 12px;
+}
+
+.passport-muted { color: var(--passport-text-muted); }
+.passport-faint { color: var(--passport-text-faint); }
+.passport-dim { color: var(--passport-text-dim); }
+.passport-gold-text { color: var(--passport-gold-soft); }
+.passport-rule { border-color: var(--passport-hairline); }
+
+/* ── navigation rail ──────────────────────────────────────────────────── */
+
+.passport-rail {
+  background: var(--passport-surface);
+  border: 1px solid var(--passport-border);
+  border-radius: 12px;
+}
+
+.passport-rail__item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  text-align: left;
+  color: var(--passport-text-muted);
+  transition: background 140ms ease-out, color 140ms ease-out;
+}
+
+.passport-rail__item:hover {
+  background: var(--passport-surface-hover);
+  color: var(--passport-text);
+}
+
+.passport-rail__item[aria-current="page"] {
+  background: rgba(217, 166, 31, 0.09);
+  border-color: rgba(217, 166, 31, 0.32);
+  color: var(--passport-gold-bright);
+}
+
+.passport-rail__n {
+  font-family: var(--passport-font-mono);
+  font-size: 0.6875rem;
+  color: var(--passport-text-faint);
+  flex: 0 0 auto;
+}
+
+.passport-rail__item[aria-current="page"] .passport-rail__n {
+  color: var(--passport-gold);
+}
+
+/* ── controls ─────────────────────────────────────────────────────────── */
+
+.passport-action {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border-radius: 8px;
+  border: 1px solid var(--passport-border-raised);
+  background: var(--passport-surface-raised);
+  color: var(--passport-text);
+  font-size: 0.75rem;
+  text-align: left;
+  transition: background 140ms ease-out, border-color 140ms ease-out;
+}
+
+.passport-action:hover:not(:disabled) {
+  background: var(--passport-surface-hover);
+  border-color: var(--passport-border-strong);
+}
+
+.passport-action:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.passport-action--restricted {
+  border-color: rgba(158, 43, 43, 0.4);
+  color: hsl(0 67% 73%);
+}
+
+.passport-action--restricted:hover:not(:disabled) {
+  background: rgba(158, 43, 43, 0.1);
+  border-color: rgba(158, 43, 43, 0.6);
+}
+
+.passport-action--primary {
+  border-color: rgba(217, 166, 31, 0.45);
+  background: linear-gradient(160deg, rgba(233, 200, 107, 0.16), rgba(192, 143, 28, 0.08));
+  color: var(--passport-gold-bright);
+  font-weight: 600;
+}
+
+.passport-action--primary:hover:not(:disabled) {
+  background: linear-gradient(160deg, rgba(233, 200, 107, 0.24), rgba(192, 143, 28, 0.14));
+}
+
+/* ── tone pills ───────────────────────────────────────────────────────── */
+
+.passport-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.1875rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--passport-tone-na-edge);
+  background: var(--passport-tone-na-wash);
+  color: var(--passport-tone-na-ink);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.passport-pill--ok {
+  border-color: var(--passport-tone-ok-edge);
+  background: var(--passport-tone-ok-wash);
+  color: var(--passport-tone-ok-ink);
+}
+.passport-pill--info {
+  border-color: var(--passport-tone-info-edge);
+  background: var(--passport-tone-info-wash);
+  color: var(--passport-tone-info-ink);
+}
+.passport-pill--warn {
+  border-color: var(--passport-tone-warn-edge);
+  background: var(--passport-tone-warn-wash);
+  color: var(--passport-tone-warn-ink);
+}
+.passport-pill--bad {
+  border-color: var(--passport-tone-bad-edge);
+  background: var(--passport-tone-bad-wash);
+  color: var(--passport-tone-bad-ink);
+}
+
+/* ── field grids ──────────────────────────────────────────────────────── */
+
+.passport-field__k {
+  font-size: 0.625rem;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: var(--passport-text-faint);
+  margin-bottom: 0.25rem;
+  text-transform: uppercase;
+}
+
+.passport-field__v {
+  font-size: 0.8125rem;
+  color: var(--passport-text-bright);
+  line-height: 1.45;
+}
+
+.passport-field__v--mono {
+  font-family: var(--passport-font-mono);
+  color: var(--passport-gold-soft);
+}
+
+/* ── seals (shell + booklet share the ink set) ────────────────────────── */
+
+.passport-wax {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--seal-ring);
+  background: radial-gradient(circle at 50% 38%, var(--seal-wash), transparent 72%);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, 0.45),
+    inset 0 0 0 4px var(--seal-ring),
+    0 3px 12px -5px var(--seal-ring);
+  color: var(--seal-ink);
+}
+
+.passport-wax__ring {
+  position: absolute;
+  inset: 9px;
+  border: 1px dashed var(--seal-ring);
+  border-radius: 50%;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.passport-wax__ticks {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0.55;
+  background: repeating-conic-gradient(from 0deg, var(--seal-ring) 0 1deg, transparent 1deg 6deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 78%, hsl(0 0% 0%) 78% 88%, transparent 88%);
+  mask: radial-gradient(circle, transparent 0 78%, hsl(0 0% 0%) 78% 88%, transparent 88%);
+}
+
+.passport-wax__org {
+  font-size: 0.3125rem;
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  color: var(--seal-dim);
+}
+
+.passport-wax__title {
+  margin: 3px 0;
+  font-family: var(--passport-font-display);
+  font-size: 0.6875rem;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--seal-ink);
+}
+
+.passport-wax__cap {
+  font-size: 0.3125rem;
+  letter-spacing: 0.13em;
+  font-weight: 700;
+  color: var(--seal-dim);
+}
+
+.passport-wax--gold {
+  --seal-ink: var(--passport-seal-gold-ink);
+  --seal-ring: var(--passport-seal-gold-ring);
+  --seal-wash: var(--passport-seal-gold-wash);
+  --seal-dim: var(--passport-seal-gold-dim);
+}
+.passport-wax--green {
+  --seal-ink: var(--passport-seal-green-ink);
+  --seal-ring: var(--passport-seal-green-ring);
+  --seal-wash: var(--passport-seal-green-wash);
+  --seal-dim: var(--passport-seal-green-dim);
+}
+.passport-wax--navy {
+  --seal-ink: var(--passport-seal-navy-ink);
+  --seal-ring: var(--passport-seal-navy-ring);
+  --seal-wash: var(--passport-seal-navy-wash);
+  --seal-dim: var(--passport-seal-navy-dim);
+}
+.passport-wax--blue {
+  --seal-ink: var(--passport-seal-blue-ink);
+  --seal-ring: var(--passport-seal-blue-ring);
+  --seal-wash: var(--passport-seal-blue-wash);
+  --seal-dim: var(--passport-seal-blue-dim);
+}
+.passport-wax--red {
+  --seal-ink: var(--passport-seal-red-ink);
+  --seal-ring: var(--passport-seal-red-ring);
+  --seal-wash: var(--passport-seal-red-wash);
+  --seal-dim: var(--passport-seal-red-dim);
+}
+
+/* An unearned seal is shown as an empty impression, never as a filled one:
+   the register must not imply a certification that no record supports. */
+.passport-wax--unearned {
+  opacity: 0.32;
+  filter: grayscale(1);
+  box-shadow: none;
+  border-style: dashed;
+}
+
+/* ── booklet ─────────────────────────────────────────────────────────── */
+
+.passport-cover {
+  position: relative;
+  color: var(--passport-gold-soft);
+  background:
+    radial-gradient(120% 85% at 50% 8%, rgba(233, 200, 107, 0.1), transparent 58%),
+    linear-gradient(155deg, var(--passport-cover) 0%, var(--passport-cover-deep) 55%, hsl(36 29% 3%) 100%);
+  border: 1px solid rgba(166, 130, 43, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+
+.passport-cover__frame {
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(166, 130, 43, 0.45);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.passport-cover__rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(166, 130, 43, 0.8), transparent);
+}
+
+.passport-leaf {
+  position: relative;
+  color: var(--passport-ink);
+  background:
+    repeating-linear-gradient(56deg, rgba(22, 35, 63, 0.022) 0 1px, transparent 1px 7px),
+    repeating-linear-gradient(-56deg, rgba(22, 35, 63, 0.018) 0 1px, transparent 1px 9px),
+    linear-gradient(152deg, var(--passport-paper) 0%, var(--passport-paper-mid) 52%, var(--passport-paper-edge) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(166, 130, 43, 0.34),
+    0 26px 60px -28px rgba(0, 0, 0, 0.75);
+  border-radius: 11px;
+  overflow: hidden;
+}
+
+/* The guilloche rosette — a security-print motif, not decoration: it is what
+   makes a screenshot of the booklet read as a document rather than a card. */
+.passport-leaf__guilloche {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 58%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0.55;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(166, 130, 43, 0.16) 0 1px, transparent 1px 7px),
+    repeating-conic-gradient(from 0deg, rgba(166, 130, 43, 0.1) 0 0.6deg, transparent 0.6deg 5deg);
+}
+
+.passport-leaf__frame-outer {
+  position: absolute;
+  inset: 9px;
+  border: 1px solid rgba(166, 130, 43, 0.3);
+  border-radius: 7px;
+  pointer-events: none;
+}
+
+.passport-leaf__frame-inner {
+  position: absolute;
+  inset: 13px;
+  border: 1px solid rgba(166, 130, 43, 0.14);
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+.passport-leaf__kicker {
+  font-size: 0.46875rem;
+  letter-spacing: 0.26em;
+  font-weight: 700;
+  color: var(--passport-foil);
+  text-transform: uppercase;
+}
+
+.passport-leaf__title {
+  font-family: var(--passport-font-display);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  color: var(--passport-ink);
+  text-transform: uppercase;
+  margin: 7px 0 0;
+}
+
+.passport-leaf__sub { color: var(--passport-ink-muted); }
+.passport-leaf__muted { color: var(--passport-ink-muted); }
+.passport-leaf__faint { color: var(--passport-ink-faint); }
+.passport-leaf__note { color: var(--passport-ink-note); }
+.passport-leaf__row { border-bottom: 1px solid rgba(22, 35, 63, 0.09); }
+
+.passport-leaf__divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(166, 130, 43, 0.65), transparent);
+}
+
+.passport-leaf__k {
+  font-size: 0.4375rem;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: var(--passport-ink-faint);
+  text-transform: uppercase;
+}
+
+.passport-leaf__statement {
+  font-family: var(--passport-font-display);
+  color: var(--passport-ink-soft);
+}
+
+.passport-leaf__aside {
+  padding: 10px 12px;
+  background: rgba(22, 35, 63, 0.035);
+  border-left: 2px solid rgba(166, 130, 43, 0.65);
+  border-radius: 0 6px 6px 0;
+}
+
+/* Progress in the booklet — colour here, only the width stays inline. */
+.passport-progress { background: rgba(22, 35, 63, 0.12); }
+.passport-progress__bar { background: var(--passport-foil-dim); }
+
+/* ── motion ──────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: no-preference) {
+  .passport-fade { animation: passportFade 240ms ease-out both; }
+  .passport-wax-hover { transition: transform 180ms ease-out; }
+  button:hover > .passport-wax-hover,
+  button:focus-visible > .passport-wax-hover { transform: scale(1.03); }
+}
+
+@keyframes passportFade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The page-turn is the one motion the design treats as meaningful rather than
+   decorative — it is what makes the booklet read as a bound document. It is
+   suppressed entirely under reduced-motion: the page simply changes. */
+@media (prefers-reduced-motion: no-preference) {
+  .passport-turn-fwd { animation: passportTurnFwd 420ms ease-in-out both; }
+  .passport-turn-back { animation: passportTurnBack 420ms ease-in-out both; }
+}
+
+@keyframes passportTurnFwd {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(-178deg); }
+}
+
+@keyframes passportTurnBack {
+  from { transform: rotateY(178deg); }
+  to { transform: rotateY(0deg); }
+}
+
+/* ══ legacy stamp seal + client booklet page ═════════════════════════════
+   These classes predate the design rebuild and are still the contract for
+   `StampSeal` and the Client Portal booklet (`PortalPassport`). They are kept
+   verbatim rather than folded into the new `.passport-wax` family: the client
+   surface is a separate, already-shipped audience projection, and restyling it
+   as a side effect of rebuilding the Command page is exactly the kind of
+   unrelated regression this rebuild was asked not to introduce. */
 
 .passport-scope {
   --passport-seal-gold: 43 59% 34%;
@@ -19,69 +584,6 @@
   --passport-seal-navy: 221 40% 28%;
   --passport-seal-blue: 215 57% 32%;
   --passport-seal-red: 0 55% 40%;
-
-  /* Booklet world — a deliberate single-look print metaphor. The cover is
-     navy leather with gold foil; pages are cream paper with registry-navy
-     ink. These do NOT flip with the app theme: a passport's paper is paper
-     in the dark. Every colour is painted explicitly for that reason. */
-  --passport-cover: 221 47% 16%;
-  --passport-cover-deep: 222 52% 10%;
-  --passport-foil: 42 55% 62%;
-  --passport-foil-dim: 42 35% 45%;
-  --passport-paper: 42 45% 96%;
-  --passport-paper-edge: 42 35% 88%;
-  --passport-ink: 222 42% 17%;
-  --passport-ink-soft: 221 20% 42%;
-}
-
-/* Journey progress inside the booklet — colour lives here, only the
-   dynamic width stays inline. */
-.passport-progress {
-  background: hsl(var(--passport-ink) / 0.12);
-}
-.passport-progress__bar {
-  background: hsl(var(--passport-foil-dim));
-}
-
-/* ── booklet ───────────────────────────────────────────────────────────── */
-
-.passport-cover {
-  color: hsl(var(--passport-foil));
-  background:
-    radial-gradient(120% 85% at 50% 8%, hsl(var(--passport-foil) / 0.10), transparent 58%),
-    linear-gradient(152deg, hsl(var(--passport-cover)) 0%, hsl(var(--passport-cover-deep)) 100%);
-  border: 1px solid hsl(var(--passport-foil) / 0.35);
-  box-shadow: inset 0 1px 0 hsl(var(--passport-foil) / 0.15);
-}
-.passport-cover__rule {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, hsl(var(--passport-foil) / 0.8), transparent);
-}
-.passport-cover__frame {
-  position: absolute;
-  inset: 10px;
-  border: 1px solid hsl(var(--passport-foil) / 0.45);
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-.passport-page {
-  color: hsl(var(--passport-ink));
-  background:
-    repeating-linear-gradient(56deg, hsl(var(--passport-ink) / 0.02) 0 1px, transparent 1px 7px),
-    linear-gradient(152deg, hsl(var(--passport-paper)) 0%, hsl(var(--passport-paper-edge)) 100%);
-  border: 1px solid hsl(var(--passport-foil-dim) / 0.45);
-}
-.passport-page__kicker {
-  color: hsl(var(--passport-foil-dim));
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-.passport-page__muted { color: hsl(var(--passport-ink-soft)); }
-.passport-page__rule {
-  height: 1px;
-  background: hsl(var(--passport-ink) / 0.12);
 }
 
 .passport-seal {
@@ -127,11 +629,56 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .passport-seal {
-    transition: transform 180ms ease-out;
-  }
+  .passport-seal { transition: transform 180ms ease-out; }
   button:hover > .passport-seal,
-  button:focus-visible > .passport-seal {
-    transform: rotate(0deg) scale(1.02);
-  }
+  button:focus-visible > .passport-seal { transform: rotate(0deg) scale(1.02); }
+}
+
+.passport-page {
+  color: hsl(var(--passport-page-ink, 222 42% 17%));
+  background:
+    repeating-linear-gradient(56deg, rgba(22, 35, 63, 0.02) 0 1px, transparent 1px 7px),
+    linear-gradient(152deg, var(--passport-paper) 0%, var(--passport-paper-edge) 100%);
+  border: 1px solid rgba(166, 130, 43, 0.45);
+}
+.passport-page__kicker {
+  color: var(--passport-foil-dim);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+.passport-page__muted { color: var(--passport-ink-muted); }
+.passport-page__rule { height: 1px; background: rgba(22, 35, 63, 0.12); }
+
+/* Journey markers — state is a class, never an inline colour, so the ratchet
+   in scripts/audit-style-tokens.cjs stays clean. */
+.passport-phase-dot {
+  height: 0.625rem;
+  width: 0.625rem;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid var(--passport-border-strong);
+  background: transparent;
+}
+.passport-phase-dot--complete {
+  border-color: var(--passport-gold);
+  background: var(--passport-gold);
+}
+
+.passport-ordinal {
+  display: flex;
+  height: 30px;
+  width: 30px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--passport-border-strong);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--passport-text-faint);
+}
+.passport-ordinal--recorded {
+  border-color: rgba(217, 166, 31, 0.45);
+  color: var(--passport-gold);
 }

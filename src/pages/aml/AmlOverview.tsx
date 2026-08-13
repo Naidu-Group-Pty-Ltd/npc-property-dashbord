@@ -62,14 +62,6 @@ const QUEUE_LINKS: QueueLink[] = [
     capability: "aml.view",
   },
   {
-    key: "passport",
-    label: "Compliance Passports",
-    description: "Open a customer's verified Compliance Passport — versions, evidence and partner reliance.",
-    to: "/admin/aml/passport",
-    cta: "Open passports",
-    capability: "aml.view",
-  },
-  {
     key: "monitoring",
     label: "Monitoring & alerts",
     description: "Triage open alerts, unprocessed events and periodic reviews.",

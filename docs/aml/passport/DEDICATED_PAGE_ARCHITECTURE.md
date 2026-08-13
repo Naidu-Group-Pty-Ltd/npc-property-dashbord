@@ -1,0 +1,121 @@
+# Compliance Passport — the dedicated page
+
+Rebuild of the Passport onto the approved Claude Design
+(`AML Compliance Passport.dc.html`, project `a663070e-…`), as a page of its own
+under AML/CTF Compliance rather than as sections grafted onto the surfaces
+where compliance work is done.
+
+## The architectural correction
+
+The Passport had been embedded in three places on the existing AML pages: a tab
+in `CaseWorkspaceTabs`, a section in the V3 `AmlCaseWorkspace`, and queue cards
+on both Compliance Home surfaces. That made it read as one more tab in the
+casework interface.
+
+It is not casework. **The case workspace is where compliance work is done; the
+Passport is the record that work produces.** Those are different artefacts with
+different audiences, and merging their surfaces is what made the Passport feel
+like a feature bolted onto a page rather than a document the platform issues.
+
+All three embeds are removed. What stays is the destination:
+`/admin/aml/passport`, in the AML nav under Customer Compliance, in **both**
+shells.
+
+### What the revert deliberately did NOT take with it
+
+`ReliancePassportSection` and `ComplianceJourneyMap` predate this programme
+(#2018) and stay exactly where they were in the case workspace. A test asserts
+this, because the risk in any revert is removing the thing beside the thing you
+meant to remove.
+
+## Layers
+
+```
+supabase/functions/_shared/aml/passport/*.pure.ts   derivation (shared, Deno)
+  passportState / passportStamps / passportJourney / passportCredential
+  passportView          the audience assembler + fail-closed tripwire
+  passportIdv           ← the IDV seam (below)
+        │  re-exported by relative path
+src/lib/aml/passport/index.ts
+        │
+src/components/aml/passport/design/
+  primitives.tsx        tone pills, wax seals, field grids, record rows
+  pagesJourney.tsx      00–05
+  pagesRecord.tsx       06–11
+  pageRegister.tsx      order, numbering, audience
+  PassportBooklet.tsx   the cream-paper document view
+  PassportWorkspace.tsx the shell: identity strip, rail, controls, page
+        │
+src/pages/aml/AmlPassports.tsx    customer picker + workspace
+```
+
+Every page is a **pure function of the projection**. No page fetches, and no
+page decides what may be disclosed — the projection has already removed what
+this audience may not see, so a page cannot leak by forgetting a check. Adding
+a page is a component plus one line in `pageRegister.tsx`.
+
+## The design layer
+
+`src/styles/passport-tokens.css` **is** the visual system. Components carry no
+colour. Three reasons, recorded in that file's header: the Passport is a
+deliberate exception to the app's surface language and must not drift when app
+tokens move; `audit:style` counts hex literals in components; and nothing in
+that file escapes `.passport-scope`.
+
+Values are HSL, matching the repo convention — the design specifies hex, and
+transcribing it as hex would have moved `cssHexOutsideTokens` from 2 to 56.
+
+The legacy `.passport-seal--circle|rect|seal` and `.passport-page*` classes are
+kept verbatim at the foot of the file. They are the contract for `StampSeal`
+and the **client** booklet, which is a separate, already-shipped audience
+projection: restyling it as a side effect of rebuilding the Command page is
+exactly the unrelated regression this rebuild was asked not to introduce.
+
+## The IDV seam
+
+`passportIdv.pure.ts` exists before the integration does, and it is the reason
+the later wiring is an addition rather than a rewrite.
+
+**The page never names a check type.** It asks the module what components exist
+and what each means. When the live IDV workflow starts emitting richer signals
+it declares them there, beside the existing ones, and the Verification page
+renders them untouched.
+
+Two rules the module carries:
+
+- **An unknown check type returns `null`, never a default bucket.** Showing a
+  check under the wrong component tells an operator that a control was
+  performed which was not. Unmapped checks are counted and surfaced.
+- **`disclosable: false` means presence and pass/fail only** — never a score, a
+  measurement or the underlying media. `face_match` and `liveness` are marked
+  false. `summariseIdv` cannot return a score because the module never carries
+  one, and a test asserts its output matches no score-like key.
+
+A component with no record is reported as `not_performed` rather than omitted:
+the design shows the full control set so a reader can see what was *not* done,
+which is the question an auditor asks first.
+
+## The flag-off contract, and where it is asserted
+
+With `aml_passport_command_view` off the server answers `passport_disabled` and
+the workspace renders **nothing** — the AML module behaves exactly as it did
+before the Passport existed.
+
+That branch lives in `passportSurfaceState` (`loadState.ts`) rather than inline
+in the component, and is asserted exhaustively in `loadState.test.ts`. The
+reason is recorded there: a mocked rejection inside a full Passport component
+graph is mis-attributed as an unhandled error by the test runner even when
+demonstrably caught. Rather than leave the contract that matters most as the one
+branch no test could reach, the branch was extracted into a pure function.
+
+`disabled` beats `loading`, so no skeleton flashes on a deployment with the flag
+off. A stale view alongside a fresh failure is still a failure — showing the
+previous customer's record after a failed load is worse than an error.
+
+## Still deferred
+
+Unchanged from `DESIGN_CONFORMANCE_AUDIT.md`: QR/public verification, client
+biometric portrait, per-document partner ACLs, four-eyes authorisation,
+printable booklet PDF, identifier unmask-with-reason, Command preview-as-client,
+and notification-drawer passport events. The booklet is a single-leaf reader
+rather than the design's two-page bound spread.
