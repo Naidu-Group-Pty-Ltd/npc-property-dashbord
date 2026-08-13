@@ -235,6 +235,11 @@ export function cover(opts: {
       subtitle: opts.subtitle ?? '',
       footnote: opts.footnote ?? '',
       titleSize: opts.titleSize ?? activeVoice.coverSize,
+      // One of the two surfaces `REPORT_RULES.md` §5 allows a mark on. The
+      // voice cover is an obsidian ground, so it takes the mono lockup; the
+      // mark is a gold gradient and is never auto-inverted. Drawn only when it
+      // resolves, so a tenant with no mark gets none rather than ours.
+      mark: '{{org.markMono}}',
       bg: 'token:bg',
       accent: 'token:primary',
       color: 'token:text',
@@ -318,6 +323,38 @@ export function prose(body: string, height = 52): FlowItem {
  * the five look like five: Chancery divides with a full accent rule, Broadsheet
  * whispers with a beige hairline, Slip states its case with a short bold stub.
  */
+/**
+ * The brand mark, at the head of a document that has no cover page.
+ *
+ * Fifteen of the voice templates are deliberately cover-less — "One page, no
+ * cover", as the Property Snapshot's own description puts it — so their first
+ * page is the face of the document and the only place a mark belongs. The rest
+ * carry it on the `cover` block instead.
+ *
+ * `REPORT_RULES.md` §5 sizes it at ~14mm; 40pt is 14.1mm. These pages are
+ * `token:surface`, which is the ivory of the two grounds §5 permits, so this
+ * takes the paper lockup rather than the mono one — the mark is a gold gradient
+ * and is never auto-inverted.
+ *
+ * A flow item rather than an absolute block, so the heading beneath it moves
+ * down instead of being printed over. It costs its height whether or not the
+ * mark resolves, which is a slightly deeper top margin on a document whose
+ * tenant has uploaded none — the safe direction.
+ */
+export function brandMark(): FlowItem {
+  return {
+    height: 40,
+    gap: 16,
+    block: (y) => block('image', {
+      src: '{{org.mark}}',
+      fit: 'contain',
+      // Never a grey "No image" rectangle on a client's report.
+      placeholder: false,
+      x: MARGIN, y, width: 50, height: 40,
+    }, 'Brand mark'),
+  };
+}
+
 export function rule(height = 2): FlowItem {
   const v = activeVoice;
   return {
@@ -800,6 +837,10 @@ export function disclaimerPage(text: string): PageDef {
       phone: '{{org.phone}}',
       email: '{{org.email}}',
       website: '{{org.website}}',
+      // The other allowed surface: this block paints a full-page obsidian
+      // ground, which is the one §5 names for the contact page.
+      mark: '{{org.markMono}}',
+      markHeight: 37,
       disclaimerText: text,
       fontSize: 8,
     }),

@@ -32,8 +32,7 @@ import { applyBorrowingCapacityProjection } from '../../../../supabase/functions
 import {
   CLIENT_NAME_COLUMNS, type ClientNameRow,
 } from '../../../../supabase/functions/_shared/clientName';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -125,7 +124,7 @@ export const borrowingCapacityAdapter: ReportTemplateAdapter = {
     // disclaimer page every template ends with. Nothing published `org` until
     // August 2026, so both printed blank on every report this product has ever
     // generated. See `organisationProjection.pure.ts`.
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
 
     return {

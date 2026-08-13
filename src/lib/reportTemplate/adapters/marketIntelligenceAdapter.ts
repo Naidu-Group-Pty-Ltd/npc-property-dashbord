@@ -9,7 +9,7 @@ import {
   applyMarketIntelligenceProjection,
 } from '../../../../supabase/functions/_shared/marketIntelligenceProjection.pure';
 import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { loadBrandMarks, loadOrganisation } from './organisation';
 
 /**
  * Market Intelligence, through the normaliser its own render route uses.
@@ -119,7 +119,7 @@ export const marketIntelligenceAdapter: ReportTemplateAdapter = {
     };
 
     applyMarketIntelligenceProjection(data, built.report);
-    applyOrganisationProjection(data, organisation);
+    applyOrganisationProjection(data, organisation, await loadBrandMarks());
 
     return {
       data,

@@ -4,8 +4,7 @@ import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportT
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { applyOrganisationAndBrand } from './organisation';
 
 function flatten(obj: any): Record<string, any> {
   if (!obj || typeof obj !== 'object') return {};
@@ -130,7 +129,7 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     // disclaimer page every template ends with. Nothing published `org` until
     // August 2026, so both printed blank on every report this product has ever
     // generated. See `organisationProjection.pure.ts`.
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
 
     return {

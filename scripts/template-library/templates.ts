@@ -16,7 +16,7 @@ import {
   scorecard, signature, strengthsWatch, table, timeline, twoColumn,
   withFurniture,
   type PageDef,
-} from './blocks';
+  brandMark,} from './blocks';
 import { STANDARD_DISCLAIMER, voiceTokens } from './designSystem';
 import { CASH_FLOW_TEMPLATES } from './templatesCashFlow';
 import { EXTENDED_TEMPLATES } from './templatesExtended';
@@ -329,6 +329,7 @@ function propertySnapshot(): SeedTemplate {
   beginTemplate('minimal', 'gold', 'investment');
   const pages = [
     withFurniture(page('Snapshot', flow([
+      brandMark(),
       heading('{{property.address}}', '{{property.suburb}} · prepared for {{client.name}}', 62),
       rule(),
       kpis([
@@ -558,6 +559,7 @@ function suburbSnapshot(): SeedTemplate {
   beginTemplate('minimal', 'amethyst', 'suburb');
   const pages = [
     withFurniture(page('Snapshot', flow([
+      brandMark(),
       heading('{{property.suburb}}', 'Market snapshot prepared for {{client.name}}', 60),
       rule(),
       kpis([

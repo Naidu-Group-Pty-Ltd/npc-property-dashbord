@@ -496,7 +496,17 @@ describe('image plates', () => {
 
       // The `image` block's placeholder is the hole the catalogue warns about.
       expect(bare, template.name).not.toContain('No image');
-      expect(bare, template.name).not.toContain('<img ');
+      /*
+       * No *plate* image, rather than no image at all.
+       *
+       * The document still carries the brand mark on its cover and its contact
+       * page — `REPORT_RULES.md` §5's two surfaces — and that is an `<img>` too.
+       * The assertion here is about the photographs: a plate that is not bound
+       * must leave nothing behind, and the mark is not a plate.
+       */
+      const plateImages = (h: string) => (h.match(/<img [^>]*src="(?!data:image\/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB)/g) ?? []).length;
+      expect(plateImages(bare), template.name).toBe(0);
+      expect(plateImages(full), template.name).toBeGreaterThan(0);
 
       // And the pages the plates occupied are gone rather than blank.
       const pagesIn = (h: string) => (h.match(/class="tpl-page /g) ?? []).length;

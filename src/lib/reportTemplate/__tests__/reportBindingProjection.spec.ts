@@ -134,9 +134,21 @@ const ORGANISATION = {
 };
 
 describe('after projection', () => {
+  /*
+   * The marks an adapter now supplies alongside the letterhead.
+   *
+   * `applyOrganisationAndBrand` reads `whitelabel_settings.logo_config`,
+   * resolves a slot through `assets.pure.ts` and inlines the bytes, so a live
+   * render has both. A 1x1 PNG stands in here: what this spec measures is
+   * whether the path resolves, not which picture arrives.
+   */
+  const MARK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1'
+    + 'HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
   const data = applyOrganisationProjection(
     applyInvestmentProjection(rawContext(), ROW),
     ORGANISATION,
+    { mark: MARK, markMono: MARK },
   );
 
   it('resolves every binding the catalogue has, bar the photographs', () => {

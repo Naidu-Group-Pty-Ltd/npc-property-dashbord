@@ -11,8 +11,7 @@ import {
 import {
   applyCommercialCapacityProjection,
 } from '../../../../supabase/functions/_shared/commercialCapacityProjection.pure';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { applyOrganisationAndBrand } from './organisation';
 
 /**
  * Commercial & Industrial Capacity, from the stored calculation run.
@@ -168,7 +167,7 @@ export const commercialCapacityAdapter: ReportTemplateAdapter = {
     };
 
     applyCommercialCapacityProjection(data, snapshot);
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
     return {
       data,

@@ -20,7 +20,7 @@ import {
   scorecard, signature, strengthsWatch, table, timeline, twoColumn,
   withFurniture,
   type PageDef,
-} from './blocks';
+  brandMark,} from './blocks';
 import {
   STANDARD_DISCLAIMER as DISCLAIMER,
   voiceTokens,
@@ -78,6 +78,7 @@ function offMarketBrief(): SeedTemplate {
     industry: ['property'], tags: ['off-market', 'urgent', 'decision'],
     pages: [
       withFurniture(page('Opportunity', flow([
+        brandMark(),
         heading('{{property.address}}', 'Off-market opportunity · prepared for {{client.name}}', 62),
         rule(),
         callout('Time sensitive', '{{opportunity.deadline}}', 'warning', 62),
@@ -607,6 +608,7 @@ function marketBrief(opts: {
     industry: ['property'], tags: opts.tags,
     pages: [
       withFurniture(page('Brief', flow([
+        brandMark(),
         heading(opts.subject, 'Market brief prepared for {{client.name}}', 62),
         rule(),
         kpis([
@@ -659,6 +661,7 @@ function marketSnapshot(opts: {
     industry: ['property'], tags: opts.tags,
     pages: [
       withFurniture(page('Snapshot', flow([
+        brandMark(),
         heading(opts.subject, 'Snapshot for {{client.name}}', 60),
         rule(),
         kpis([
@@ -827,6 +830,7 @@ function headToHead(): SeedTemplate {
     industry: ['property'], tags: ['comparison', 'shortlist', 'decision', 'concise'],
     pages: [
       withFurniture(page('Head to head', flow([
+        brandMark(),
         heading('Head to head', 'Prepared for {{client.name}}', 60),
         rule(),
         table(
@@ -997,6 +1001,7 @@ function cashFlowSnapshot(): SeedTemplate {
     industry: ['property', 'finance'], tags: ['quick', 'one-page', 'cash-flow'],
     pages: [
       withFurniture(page('Snapshot', flow([
+        brandMark(),
         heading('{{property.address}}', 'Cash flow snapshot for {{client.name}}', 60),
         rule(),
         kpis([
@@ -1168,6 +1173,7 @@ function buyerBrief(): SeedTemplate {
     industry: ['property'], tags: ['brief', 'mandate', 'intake', 'signature'],
     pages: [
       withFurniture(page('Your brief', flow([
+        brandMark(),
         heading('Your brief', 'What we will be searching for, in your words.', 62),
         rule(),
         definitions('The mandate', [
@@ -1220,6 +1226,7 @@ function riskProfile(): SeedTemplate {
     industry: ['property', 'finance'], tags: ['risk', 'profile', 'intake', 'compliance'],
     pages: [
       withFurniture(page('Capacity', flow([
+        brandMark(),
         heading('Your capacity for risk', 'What your position can absorb.', 62),
         rule(),
         definitions('Financial position', [
@@ -1331,6 +1338,7 @@ function inspectionChecklist(): SeedTemplate {
     industry: ['property'], tags: ['inspection', 'checklist', 'on-site', 'condition'],
     pages: [
       withFurniture(page('Inspection', flow([
+        brandMark(),
         heading('{{property.address}}', 'Inspection record · {{inspection.date}}', 62),
         rule(),
         definitions('Inspection detail', [
@@ -1521,6 +1529,7 @@ function complianceAttestation(): SeedTemplate {
     industry: ['finance', 'legal', 'general'], tags: ['attestation', 'annual', 'governance', 'internal'],
     pages: [
       withFurniture(page('Attestation', flow([
+        brandMark(),
         heading('Annual compliance attestation', 'Period {{attestation.period}}', 62),
         rule(),
         kpis([
@@ -1573,6 +1582,7 @@ function complaintsRegister(): SeedTemplate {
     industry: ['finance', 'legal', 'general'], tags: ['complaints', 'root-cause', 'internal'],
     pages: [
       withFurniture(page('Summary', flow([
+        brandMark(),
         heading('Complaints register', 'Period {{complaints.period}}', 62),
         rule(),
         kpis([

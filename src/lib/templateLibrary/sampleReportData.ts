@@ -697,6 +697,20 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     phone: '(02) 8005 4120',
     email: 'advice@meridianproperty.example',
     website: 'meridianproperty.example',
+    /*
+     * The brand marks, as a 1x1 PNG.
+     *
+     * Deliberately not the house monogram. This sample belongs to a fictional
+     * tenant — "Meridian Property Advisory" — and the whole point of binding a
+     * mark rather than baking one is that a tenant gets their own or none at
+     * all. A preview that quietly showed NPC's monogram over Meridian's name
+     * would be the exact confusion the arrangement exists to prevent.
+     *
+     * Two of them because the mark is never auto-inverted: `mark` is the lockup
+     * for ivory paper and `markMono` the one for an obsidian ground.
+     */
+    mark: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    markMono: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   },
   author: { name: 'Alexandra Whitfield', title: 'Senior Investment Adviser' },
   /**
