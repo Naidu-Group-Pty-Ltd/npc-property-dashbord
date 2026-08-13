@@ -310,8 +310,8 @@ export default function Calendar() {
       }
     };
 
-    calendarPage.addEventListener('wheel', handleCalendarWheel, { passive: false });
-    return () => calendarPage.removeEventListener('wheel', handleCalendarWheel);
+    calendarPage.addEventListener('wheel', handleCalendarWheel, { passive: false, capture: true });
+    return () => calendarPage.removeEventListener('wheel', handleCalendarWheel, { capture: true });
   }, []);
 
 

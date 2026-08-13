@@ -27,7 +27,7 @@ test('pointer-lock checks are frame-coalesced and cleaned up on unmount', () => 
 });
 
 test('wheel gestures over calendar content reach the dashboard scroll owner', () => {
-  assert.match(calendar, /calendarPage\.addEventListener\('wheel', handleCalendarWheel, \{ passive: false \}\)/);
+  assert.match(calendar, /calendarPage\.addEventListener\('wheel', handleCalendarWheel, \{ passive: false, capture: true \}\)/);
   assert.match(calendar, /calendarPage\.closest\('\.dashboard-main'\)/);
   assert.match(calendar, /dashboardMain\.scrollBy\(\{ top: deltaY, behavior: 'auto' \}\)/);
   assert.match(calendar, /window\.scrollBy\(\{ top: deltaY, behavior: 'auto' \}\)/);
