@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 interface GoogleFont {
   family: string;
@@ -77,20 +78,24 @@ export function useGoogleFonts() {
     if (fullListLoaded.current || isLoading) return;
     setIsLoading(true);
     try {
-      // Use the public Google Fonts API (no key needed for basic list)
-      const res = await fetch('https://www.googleapis.com/webfonts/v1/webfonts?sort=popularity&key=AIzaSyAPjKmIVPd3M30RFnb1pCqJ1fT-BaKkPNI');
-      if (res.ok) {
-        const data = await res.json();
-        const items: GoogleFont[] = (data.items || []).map((item: any) => ({
-          family: item.family,
-          variants: item.variants || ['regular'],
-          category: item.category || 'sans-serif',
-        }));
-        if (items.length > 0) {
-          setFonts(items);
-          fullListLoaded.current = true;
-        }
+      // The catalogue comes from the `google-fonts-catalog` edge function, which
+      // holds the Google API key server-side. This used to call
+      // googleapis.com directly with the key written into this file — which Vite
+      // inlines into the bundle, so it shipped to every visitor. It is also a
+      // billable key, and in a Mission Control workspace the account being
+      // billed is the prime's, not this tenant's.
+      const { data, error } = await invokeSecureFunction<{
+        success: boolean;
+        fonts?: GoogleFont[];
+      }>('google-fonts-catalog', {});
+
+      const items = data?.success && Array.isArray(data.fonts) ? data.fonts : [];
+      if (!error && items.length > 0) {
+        setFonts(items);
+        fullListLoaded.current = true;
       }
+      // Anything else keeps POPULAR_FONTS, which is a working picker rather
+      // than an empty one.
     } catch {
       // Silently fall back to popular list
     } finally {

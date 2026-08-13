@@ -1,8 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { formatInSydney, formatDateInSydney } from '@/lib/timezoneUtils';
+import { FALLBACK_CALENDAR_COLOR, buildCalendarColorMap, resolveCalendarColor } from '@/lib/calendarColors';
+
 
 export interface GHLTeamMember {
   userId: string;
@@ -146,6 +148,10 @@ export function useGHLCalendar() {
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Colour is assigned per calendar (see lib/calendarColors) and held here so events
+  // fetched without their calendar list still resolve to the same swatch.
+  const calendarColorMapRef = useRef<Map<string, string>>(new Map());
+
   const { toast } = useToast();
   const { addNotification } = useNotifications();
 
@@ -182,9 +188,21 @@ export function useGHLCalendar() {
           slug: cal.widgetSlug ? String(cal.widgetSlug) : (cal.slug ? String(cal.slug) : undefined),
           eventColor: cal.eventColor ? String(cal.eventColor) : undefined,
         }));
-        setCalendars(normalizedCalendars);
+        // GHL repeats a handful of hexes across calendars, so the swatch is assigned
+        // here — one colour per calendar, never shared — and used everywhere.
+        const colorMap = buildCalendarColorMap(normalizedCalendars);
+        calendarColorMapRef.current = colorMap;
+        const colouredCalendars = normalizedCalendars.map((cal) => ({
+          ...cal,
+          eventColor: resolveCalendarColor(colorMap, cal.id, cal.eventColor ?? FALLBACK_CALENDAR_COLOR),
+        }));
+        setCalendars(colouredCalendars);
         const rawEvents = data.events || [];
-        const normalized = rawEvents.map(normalizeEvent).filter(Boolean) as GHLEvent[];
+        const normalized = (rawEvents.map(normalizeEvent).filter(Boolean) as GHLEvent[]).map((event) => ({
+          ...event,
+          calendarColor: resolveCalendarColor(colorMap, event.calendarId, event.calendarColor ?? FALLBACK_CALENDAR_COLOR),
+        }));
+
 
         // Debug visibility when API returns events but we drop them during normalization
         if (rawEvents.length > 0 && normalized.length === 0) {
@@ -227,11 +245,19 @@ export function useGHLCalendar() {
       }
 
       if (data && data.events) {
-        const normalized = (data.events || [])
+        const normalized = ((data.events || [])
           .map(normalizeEvent)
-          .filter(Boolean) as GHLEvent[];
+          .filter(Boolean) as GHLEvent[]).map((event) => ({
+            ...event,
+            calendarColor: resolveCalendarColor(
+              calendarColorMapRef.current,
+              event.calendarId,
+              event.calendarColor ?? FALLBACK_CALENDAR_COLOR,
+            ),
+          }));
         setEvents(normalized);
       }
+
     } catch (err: any) {
       console.error('Error fetching events:', err);
       setError(err.message);
@@ -634,8 +660,9 @@ export function useGHLCalendar() {
 
   const getCalendarColor = useCallback((calendarId: string): string => {
     const calendar = calendars.find(c => c.id === calendarId);
-    return calendar?.eventColor || '#3b82f6';
+    return calendar?.eventColor || resolveCalendarColor(calendarColorMapRef.current, calendarId);
   }, [calendars]);
+
 
   return {
     calendars,

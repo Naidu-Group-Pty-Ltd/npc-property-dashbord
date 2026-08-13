@@ -3,6 +3,7 @@ import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shar
 import { requireModulePermission } from "../_shared/authz.ts"
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const INVITE_EXPIRY_HOURS = 72;
 const MODULE_KEY = 'solicitor_portal_admin';
@@ -209,7 +210,7 @@ Deno.serve(async (req) => {
     let emailSent = false;
     if (resendApiKey) {
       try {
-        const res = await fetch('https://api.resend.com/emails', {
+        const res = await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

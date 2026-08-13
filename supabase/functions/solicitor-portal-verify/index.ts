@@ -4,6 +4,8 @@ import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts"
 import { auditSolicitorIdentity, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
 import { hashSessionToken } from "../_shared/sessionHash.ts"
+import { ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, readAcknowledgements } from "../_shared/portalAgreement.ts"
+
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -47,8 +49,19 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'accept_terms' || action === 'accept_current_terms') {
-      const { data: terms } = await supabase.from('portal_terms_versions').select('id, version').eq('portal','solicitor').is('retired_at',null).lte('effective_at',new Date().toISOString()).order('effective_at',{ascending:false}).limit(1).maybeSingle();
+      const { data: terms } = await supabase.from('portal_terms_versions').select('id, version, document_hash').eq('portal','solicitor').is('retired_at',null).lte('effective_at',new Date().toISOString()).order('effective_at',{ascending:false}).limit(1).maybeSingle();
       if (!terms) return new Response(JSON.stringify({ error: 'Current terms unavailable' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+      // Every mandatory acknowledgment must be asserted. The list is shared
+      // with the Builder and Finance portals: one agreement, one gate.
+      const { acknowledgements, missing } = readAcknowledgements(body);
+      if (missing.length > 0) {
+        return new Response(
+          JSON.stringify({ error: ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, code: 'ACKNOWLEDGEMENTS_INCOMPLETE', missing }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
       const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
       // Uniqueness is enforced by the per-portal PARTIAL unique indexes
       // (`portal_terms_acceptances_solicitor_key`), which PostgREST cannot
@@ -63,7 +76,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (existingError) throw existingError;
       if (!existingAcceptance) {
-        const { error: acceptanceError } = await supabase.from('portal_terms_acceptances').insert({ portal:'solicitor', terms_version_id:terms.id, solicitor_user_id:session.user.id, ip_hash:ip ? await hashSessionToken(`ip:${ip}`):null, user_agent_hash:req.headers.get('user-agent') ? await hashSessionToken(`ua:${req.headers.get('user-agent')}`):null });
+        const { error: acceptanceError } = await supabase.from('portal_terms_acceptances').insert({ portal:'solicitor', terms_version_id:terms.id, solicitor_user_id:session.user.id, acknowledgements, ip_hash:ip ? await hashSessionToken(`ip:${ip}`):null, user_agent_hash:req.headers.get('user-agent') ? await hashSessionToken(`ua:${req.headers.get('user-agent')}`):null });
         if (acceptanceError && acceptanceError.code !== '23505') throw acceptanceError;
       }
       await supabase
@@ -73,7 +86,7 @@ Deno.serve(async (req) => {
       await auditSolicitorIdentity(supabase, req, {
         userId: session.user.id, firmId: session.user.firm_id,
         action: 'terms_version_accepted', sessionId: session.session_id,
-        metadata: { terms_version_id: terms.id, version: terms.version },
+        metadata: { terms_version_id: terms.id, version: terms.version, document_hash: terms.document_hash ?? null, acknowledgements },
       });
       return new Response(JSON.stringify({ success: true }), {
         status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json', ...(migratedCookie ? { 'Set-Cookie': migratedCookie } : {}) },
@@ -82,7 +95,7 @@ Deno.serve(async (req) => {
 
     if (action === 'get_governance') {
       const [{ data: terms }, { data: steps }] = await Promise.all([
-        supabase.from('portal_terms_versions').select('id, version, title, content_markdown, effective_at').eq('portal','solicitor').is('retired_at',null).lte('effective_at',new Date().toISOString()).order('effective_at',{ascending:false}).limit(1).maybeSingle(),
+        supabase.from('portal_terms_versions').select('id, version, title, content_markdown, document_hash, effective_at').eq('portal','solicitor').is('retired_at',null).lte('effective_at',new Date().toISOString()).order('effective_at',{ascending:false}).limit(1).maybeSingle(),
         supabase.from('solicitor_onboarding_steps').select('step_key, mandatory, completed_at').eq('solicitor_user_id',session.user.id).order('created_at'),
       ]);
       return new Response(JSON.stringify({ success:true, terms, terms_accepted:session.user.has_accepted_current_terms, steps:steps||[] }), { status:200, headers:{...corsHeaders,'Content-Type':'application/json',...(migratedCookie?{'Set-Cookie':migratedCookie}:{})} });

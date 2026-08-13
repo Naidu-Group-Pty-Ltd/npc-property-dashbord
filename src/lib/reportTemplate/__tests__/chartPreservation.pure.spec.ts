@@ -204,7 +204,15 @@ describe('chart preservation metrics', () => {
     const plan = buildChartRenderPlanForRegions([a, b], 1);
     expect(plan.metrics.chartCropAvailability).toBe(0.5);
     expect(plan.metrics.chartCompleteness).toBe(0.5);
-    expect(plan.metrics.chartRenderModeCounts).toEqual({ 'chart-crop': 1, 'containment-fallback': 1 });
+    // W3 — the histogram enumerates every render mode, zeros included, so a
+    // dashboard reading it sees "no native charts" as a stated fact rather
+    // than a missing key.
+    expect(plan.metrics.chartRenderModeCounts).toEqual({
+      'chart-crop': 1,
+      'containment-fallback': 1,
+      'native-with-source-reference': 0,
+      'verified-native-chart': 0,
+    });
     expect(plan.metrics.chartSuppressionSuccess).toBe(1);
   });
 

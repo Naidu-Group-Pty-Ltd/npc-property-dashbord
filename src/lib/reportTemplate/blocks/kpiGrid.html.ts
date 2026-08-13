@@ -1,9 +1,46 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { absBoxStyle, esc, type HtmlBlockContext } from './_shared.html';
+import {
+  absBoxStyle, esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
+} from './_shared.html';
 
-interface KpiItem { label: string; value: string; accent?: string }
+interface KpiItem {
+  label: string;
+  value: string;
+  accent?: string;
+  /** Optional qualifier under the value ("50-week basis · $25,500 p.a."). */
+  note?: string;
+}
 
+/**
+ * The KPI band.
+ *
+ * ## Why this block has layout variants
+ *
+ * KPI composition is one of the axes the approved Investment Compass catalogue
+ * uses to tell templates within a family apart: Private Banking alone declares
+ * `four_column_ruled`, `six_column_ruled`, `two_by_two_display`, `stacked_rail`
+ * and `ledger_rows` across its five masters. Those are genuinely different
+ * arrangements of the same data, not restyles, so expressing them as one filled
+ * tile grid with a different colour would have collapsed four of the five
+ * templates into the same page.
+ *
+ * `variant` defaults to `'tile'`, which is the arrangement this block has always
+ * drawn — a filled tile with a left accent bar. Every other variant is opt-in,
+ * so no existing template moves.
+ *
+ * | `variant`  | Manifest value it serves            | Shape |
+ * | ---------- | ----------------------------------- | ----- |
+ * | `tile`     | (pre-existing default)              | Filled tiles, accent bar |
+ * | `ruled`    | `four_column_ruled`, `six_column_ruled` | Hairline-separated columns in a ruled band |
+ * | `display`  | `two_by_two_display`                | Two-up grid at display size |
+ * | `rows`     | `ledger_rows`                       | Label left, figure right, rule between |
+ * | `stacked`  | `stacked_rail`                      | Vertical stack against an accent rail |
+ *
+ * The ruled band's weights are the archetype's: 1.5pt over the band, 1pt under
+ * it, 1pt between columns. That asymmetry is deliberate — the heavier rule is
+ * what attaches the band to the heading above it.
+ */
 export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const items = Array.isArray(p.items) ? (p.items as KpiItem[]) : [];
@@ -21,6 +58,110 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   // that know their column count set this; the default is unchanged.
   const valueSize = Number.isFinite(Number(p.valueSize)) ? Number(p.valueSize) : 20;
 
+  const variant = String(p.variant ?? 'tile');
+
+  // ── Shared typography for the non-tile variants ──────────────────────────
+  const valueFont = fontFamilyDecl(p.valueFont, 'var(--font-heading, Helvetica)');
+  const labelFont = fontFamilyDecl(p.labelFont, 'var(--font-body, Helvetica)');
+  const noteFont = fontFamilyDecl(p.noteFont, 'var(--font-body, Helvetica)');
+  const labelTracking = trackingDecl(p.labelTracking, 0.18);
+  const labelSize = Number(p.labelSize ?? 8);
+  const noteSize = Number(p.noteSize ?? 7.4);
+  const valueColor = resolveBindableColor(p.valueColor ?? 'token:ink', ctx, '#1A1A1A');
+  const ruleColor = resolveBindableColor(p.ruleColor ?? 'token:line', ctx, '#DDD1C0');
+  const emphasisColor = resolveBindableColor(p.emphasisColor ?? 'token:ink', ctx, '#1A1A1A');
+  const valueWeight = Number(p.valueWeight ?? 400);
+  // Figures are set with lining tabular numerals wherever a column of them has
+  // to align. `numeric_typography: playfair_lining_tabular` is exactly this.
+  const figures = 'font-variant-numeric:tabular-nums lining-nums;';
+
+  /**
+   * Reserve a fixed number of label lines so the values sit on one baseline.
+   *
+   * A KPI band is read across, and it only reads across if the figures line up.
+   * They stop lining up as soon as one label wraps: at five-up, "WEEKLY
+   * POSITION" takes two lines where "WEEKLY RENT" takes one, and that column's
+   * value — and its note — drop by a line while the other four stay put. It
+   * looks like a mistake because it is one.
+   *
+   * `labelLines` reserves the space whether or not it is used, which costs a few
+   * points of white above the shorter labels and buys alignment across the band.
+   * Unset by default, so an existing template is unchanged.
+   */
+  const labelLines = Number(p.labelLines ?? 0);
+  const labelLineHeight = 1.25;
+  const labelReserve = labelLines > 0
+    ? `min-height:${(labelSize * labelLineHeight * labelLines).toFixed(2)}pt;`
+    : '';
+  const label = (item: KpiItem) =>
+    `<div style="color:${labelColor};font-size:${labelSize}pt;line-height:${labelLineHeight};text-transform:uppercase;${labelReserve}${labelTracking}${labelFont}">${esc(String(item.label || ''))}</div>`;
+
+  const note = (item: KpiItem) => (item.note
+    ? `<div style="color:${labelColor};font-size:${noteSize}pt;margin-top:5pt;line-height:1.35;${noteFont}">${esc(resolveBindable(item.note, ctx))}</div>`
+    : '');
+
+  const figure = (item: KpiItem, size: number, colour: string) =>
+    `<div style="color:${colour};font-size:${size}pt;line-height:1;margin-top:8pt;font-weight:${valueWeight};${figures}${valueFont}">${esc(resolveBindable(item.value, ctx) || '—')}</div>`;
+
+  // ── ruled: a band of hairline-separated columns ──────────────────────────
+  if (variant === 'ruled' || variant === 'display') {
+    const perRow = variant === 'display' ? Math.min(cols, 2) : cols;
+    // Every item is shown, wrapping into as many rows as it takes. A console of
+    // twelve figures is six across and two deep; slicing to one row instead
+    // would silently drop half the dashboard.
+    const shown = items;
+    const rows = Math.ceil(shown.length / perRow);
+    // A full cell grid rather than column separators — the Swiss module and the
+    // analyst's field cells, where the boundary is the system made visible.
+    const cellBorders = p.cellBorders === true;
+    const cells = shown.map((item, i) => {
+      const col = i % perRow;
+      const row = Math.floor(i / perRow);
+      const last = col === perRow - 1;
+      const first = col === 0;
+      const lastRow = row === rows - 1;
+      const pad = cellBorders
+        ? 'padding:10pt 10pt 11pt'
+        : `padding:11pt ${last ? '0' : '12pt'} 12pt ${first ? '0' : '12pt'}`;
+      const borders = cellBorders
+        ? `border:1pt solid ${ruleColor};margin:-0.5pt;`
+        : `${last ? '' : `border-right:1pt solid ${ruleColor};`}`
+          + `${lastRow ? '' : `border-bottom:1pt solid ${ruleColor};`}`;
+      return `<div style="${pad};${borders}">
+        ${label(item)}
+        ${figure(item, valueSize, item.accent ? resolveBindableColor(item.accent, ctx, valueColor) : valueColor)}
+        ${note(item)}
+      </div>`;
+    }).join('');
+    const frame = cellBorders
+      ? ''
+      : `border-top:1.5pt solid ${emphasisColor};border-bottom:1pt solid ${ruleColor};`;
+    return `<div style="${style}${frame}display:grid;grid-template-columns:repeat(${perRow}, 1fr);">${cells}</div>`;
+  }
+
+  // ── rows: a ledger. Label left, figure right, hairline between ───────────
+  if (variant === 'rows') {
+    const rows = items.map((item, i) => `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12pt;padding:7pt 0;${i === items.length - 1 ? '' : `border-bottom:1pt solid ${ruleColor};`}">
+      <div style="flex:1;min-width:0;">
+        ${label(item)}
+        ${item.note ? `<div style="color:${labelColor};font-size:${noteSize}pt;margin-top:3pt;${noteFont}">${esc(resolveBindable(item.note, ctx))}</div>` : ''}
+      </div>
+      <div style="color:${item.accent ? resolveBindableColor(item.accent, ctx, valueColor) : valueColor};font-size:${valueSize}pt;line-height:1;font-weight:${valueWeight};${figures}${valueFont}">${esc(resolveBindable(item.value, ctx) || '—')}</div>
+    </div>`).join('');
+    return `<div style="${style}border-top:1.5pt solid ${emphasisColor};">${rows}</div>`;
+  }
+
+  // ── stacked: a vertical run against an accent rail ───────────────────────
+  if (variant === 'stacked') {
+    const stack = items.map((item, i) => `<div style="${i === 0 ? '' : 'margin-top:12pt;'}">
+      ${label(item)}
+      ${figure(item, valueSize, item.accent ? resolveBindableColor(item.accent, ctx, valueColor) : valueColor)}
+      ${note(item)}
+    </div>`).join('');
+    return `<div style="${style}border-left:2pt solid ${accentDefault};padding-left:14pt;">${stack}</div>`;
+  }
+
+  // ── tile: the original arrangement, unchanged ────────────────────────────
   const tiles = items.slice(0, cols).map((item) => {
     const value = resolveBindable(item.value, ctx) || '—';
     const accent = item.accent ? resolveBindableColor(item.accent, ctx, accentDefault) : accentDefault;

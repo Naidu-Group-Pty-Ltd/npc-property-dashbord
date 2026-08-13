@@ -268,6 +268,87 @@ carries no `high` findings, and the following were confirmed by looking at them:
   reasons beside it;
 - the KPI strip sets `House`, `3.74%` and `−$6.7k` each on one line.
 
-The sparse-page findings that remain are the chapter-per-section page break and
-a fixture with two paragraphs a section, and they belong to the page-economy
-work, not to this change.
+## 7. Page economy — and the fixture that was measuring the wrong document
+
+The sentence that stood here said the remaining sparse pages were the
+chapter-per-section page break. **That was mostly wrong, and the way it was
+wrong is the same failure as the score breakdown one level up: the fixture
+agreed with the code and disagreed with the database.**
+
+| per section | fixture (before) | corpus | fixture (now) |
+| --- | ---: | ---: | ---: |
+| characters | 958 | **7,938** | 7,634 |
+| paragraphs | 2 | 11.5 | 12 |
+| `###` sub-headings | 0 | 4.3 | 4 |
+| bullets | 0 | 6.7 | 7 |
+| **chart directives** | **1** | **6.9** | **7** |
+| bold-carrying lines | 0 | 14.7 | 13 |
+
+Every page-economy number this format had ever produced was taken on a document
+**8.3× thinner per section** than the one a client receives. Resizing the
+fixture to the measured composition, and changing nothing else:
+
+| | thin fixture | production-density fixture |
+| --- | ---: | ---: |
+| pages | 28 | 86 |
+| median ink | 0.065 | **0.100** |
+| pages in the 0.133–0.221 band | 4 of 26 | **27 of 84** |
+| sparse pages | 17 (**61%**) | 21 (**24%**) |
+
+### Where the 21 that remain actually are
+
+Cross-referenced against the chapter openers rather than guessed:
+
+- **11 are chapter tails** — the last page of a chapter, which is part-full by
+  definition. A chaptered document pays a part-page per chapter; at 18 chapters
+  that is about eight sheets. This is what a chapter costs, not a defect.
+- **10 are mid-chapter**, and every one is a figure that did not fit in the
+  space left and pushed whole to the next page. `.chart-figure` is
+  `page-break-inside: avoid` and must be — a chart split across a fold is worse
+  than a gap — so the hole is the price of an unbreakable figure at seven
+  figures a section.
+- **No chapter opener is sparse.** They are full pages.
+
+### 86 pages reconciles with the 61-page delivered document
+
+The Compass a client was sent last month is 61 pages and carries **zero**
+figures — its directives printed as body text. This document draws 112 of them
+at roughly eight lines each, which is about 24 sheets. 61 + 24 ≈ 86. The page
+growth *is* the figures, which are the point of the format.
+
+### What a thin section does now get
+
+`THIN_CHAPTER_LINES` (half a page, 19 lines) moved from the converted-template
+format into `markdown.pure.ts`, and the unnumbered path packs a section under it
+into the chapter before it rather than opening a sheet. It fires rarely by
+design: **27 of 546 real sections (4.9%)** are that short.
+
+### Two defects the render showed, which no test could
+
+- **Every timeline clipped its first label.** `renderTimelineRibbon` centred all
+  four phase labels, so the first sat at x=44 in a 760-unit viewBox and a
+  28-character label spanned −16 to 104. "Rail within 900m" printed as "ail
+  within 900m", on all 188 timelines in the corpus. The end labels now anchor to
+  the edge; only the interior ones centre.
+- **Every glance strip printed two markers.** The model writes its own — a tick,
+  a diamond, a warning sign, a star — and the stylesheet added a bullet in front
+  of it. 660 glance strips in the corpus. `ul.marked` drops the sheet's marker
+  and keeps the list semantics a tagged PDF needs.
+
+### The measure to take before touching any other format's layout
+
+Seven of eleven formats sit below the 0.133 ink floor, and the investment result
+says a low number is not evidence of a layout fault until the fixture is checked
+against production:
+
+| format | fixture payload | production median | ratio |
+| --- | ---: | ---: | ---: |
+| investment-compass | 122,255 (was 15,292) | ~140,000 | **1.15×** (was 9.2×) |
+| market-intelligence | 18,209 | 64,229 | **3.5× thin** |
+| report-qa | inline in the spec | 2,193 per answer | not yet measured |
+| the other eight | — | — | not yet measured |
+
+Market Intelligence is the worst-measuring format in the programme at 0.060, and
+it is **3.5× thin**. Nobody should change a page rule there until that is fixed
+first. The method is the one used here: take the format's production table,
+median the payload column, and compare it to what the fixture builds.

@@ -31,7 +31,11 @@ export interface ImportAsset {
   createdAt: string;
 }
 
-export type RawImportBlockType = 'text' | 'image' | 'shape' | 'table' | 'formula' | 'code' | 'vector' | 'unknown';
+// W3 — 'chart' lets the import IR carry a reconstructed chart at all. Without
+// it `pictureItemToBlock` had no choice but to emit `type: 'image'` even when
+// Docling had classified the picture as `bar_chart`: the class rode along in
+// meta and was then dropped, so a chart could only ever become a picture.
+export type RawImportBlockType = 'text' | 'image' | 'shape' | 'table' | 'formula' | 'code' | 'vector' | 'chart' | 'unknown';
 export type RawImportBlockSource = 'pdf-text' | 'ocr' | 'vision' | 'detected' | 'dom';
 
 export interface ImportBBox {
@@ -73,6 +77,24 @@ export interface RawImportBlock {
     listGroupId?: string;
     /** Monotonic reading-order index within the page (Docling document order). */
     readingOrder?: number;
+    /**
+     * W3 — a reconstructed chart, present only when the sidecar extracted
+     * series AND `chartArbitration` cleared it for native rendering. Absent
+     * means the chart stays a source crop, which is the safe default and by far
+     * the common case.
+     */
+    chartData?: {
+      chartKind: string;
+      series: Array<{ label: string; value: number; color?: string }>;
+      title?: string;
+      renderMode: string;
+      defects: string[];
+      manualReviewRequired: boolean;
+      sourceCropUrl?: string;
+      sourceRegionId?: string;
+      axisScaleR2?: number;
+      detectionMethod?: string;
+    };
     /** Parsed table cell grid — row-major strings, plus the header row count. */
     tableData?: {
       rows: string[][];
@@ -91,6 +113,13 @@ export interface RawImportBlock {
     };
     /** Caption text linked to this image/table item (when the parser provides it). */
     caption?: string;
+    /** The paired caption's WORDS — Docling states a caption by reference. */
+    captionText?: string;
+    /**
+     * Chart-likeness decided from the page's own geometry. Detection only: it
+     * never carries a value read off the chart.
+     */
+    chartCandidate?: import('../../pdfImport/chartCandidate.pure').ChartCandidate;
     /** Phase B: VLM-generated alt-text/description for images. */
     altText?: string;
     /** Phase B: picture classifier label (e.g. chart, logo, photo, diagram, map). */
@@ -111,6 +140,31 @@ export interface RawImportBlock {
     language?: string;
     /** Phase D: cross-reference target ($ref form). */
     xref?: string;
+    /**
+     * Lines the SOURCE actually drew inside this block's box
+     * (`source_measure.lineCount` — a count from PyMuPDF, not an inference).
+     *
+     * The extractor joins a multi-line paragraph's lines with a SPACE, so the
+     * string alone cannot say whether the source wrapped. This can, and it is
+     * what decides `whiteSpace: 'nowrap'` — see resolveTextWrapping.pure.ts.
+     */
+    sourceLineCount?: number;
+    /**
+     * Distinct baselines among those lines (`source-measure-v2`).
+     *
+     * `sourceLineCount` counts line RECORDS, and two runs set side by side on
+     * one baseline are two records. This counts rows, which is what "did the
+     * source wrap here" actually asks.
+     */
+    sourceBaselineCount?: number;
+    /**
+     * Baseline of the FIRST source line, in page points (`source-measure-v2`).
+     *
+     * The box's top is the top of the INK; CSS puts the first baseline a full
+     * ascent plus half-leading below the box top, which is lower. This is the
+     * one number that lets the two be reconciled without guessing a cap height.
+     */
+    sourceFirstBaselineY?: number;
     /** Phase 3: original source PostScript font name (pre-resolution). */
     sourceFont?: string;
     /** Phase 3: true when the source font was not catalog-known and was substituted. */
@@ -222,6 +276,17 @@ export interface TemplateImportPlan {
   version: 1;
   importId: string;
   pages: TemplateImportPagePlan[];
+  /**
+   * The design system measured FROM this import — the source's own palette and
+   * typefaces, weighted by glyph count and painted area.
+   *
+   * Until this field existed an import shipped `{ colors: {}, fonts: {} }` and
+   * every overlay carried a literal, so a reconstructed template could not be
+   * restyled at all. `applyTemplateImportPlan` merges these under any base
+   * template's tokens and binds the overlays that match — see
+   * `pdfImport/designSystemBinding.pure.ts` for why the match must be exact.
+   */
+  tokens?: { colors?: Record<string, string>; fonts?: Record<string, string> };
   warnings: ImportWarning[];
   confidenceScore: number;
   importSummary: {

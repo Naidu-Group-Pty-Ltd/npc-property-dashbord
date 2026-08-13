@@ -15,6 +15,9 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   getIdvProvider,
+  idvAdapterReadiness,
+  isStandaloneIdvProvider,
+  standaloneIdvReadiness,
   getScreeningProvider,
   resolveTenantProvider,
   runWithMetrics,
@@ -76,6 +79,7 @@ async function hasCaseAccess(
 }
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -333,15 +337,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("id, subject_display_name, subject_type").eq("id", caseId).maybeSingle();
         if (!caseRow) return jr({ error: "Case not found" }, 404);
 
-        const scope: ScreeningScope[] = Array.isArray(body.scope) && body.scope.length
+        const requestedScope: ScreeningScope[] = Array.isArray(body.scope)
           ? body.scope.filter((s: string) => ["pep", "sanctions", "adverse_media", "watchlist"].includes(s))
-          : ["pep", "sanctions", "adverse_media"];
+          : [];
         const tenantId = await resolveTenantId(admin, caseId);
-        const capability = scope.length === 1 && scope[0] === "adverse_media" ? "adverse_media" : "pep_sanctions";
+        const capability = requestedScope.length === 1 && requestedScope[0] === "adverse_media"
+          ? "adverse_media" : "pep_sanctions";
         const resolved = await resolveTenantProvider(admin, tenantId, capability);
         let provider;
         try {
-          provider = getScreeningProvider({ resolved, preferred: body.provider });
+          // Server-side selection only: tenant + capability + provider_configs
+          // + factory. The request body used to be able to steer this with a
+          // provider hint — a browser must never choose the authoritative
+          // screening provider, so no hint is passed.
+          provider = getScreeningProvider({ resolved, admin });
         } catch (resolutionErr: any) {
           if (resolutionErr instanceof ProviderResolutionError) {
             return jr({
@@ -352,6 +361,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }
           throw resolutionErr;
         }
+
+        // Default to what the resolved provider actually covers, never to a
+        // wish-list. The old default of pep+sanctions+adverse_media recorded
+        // checks nobody performed; a caller may still request wider scopes,
+        // and the provider then reports them truthfully as not covered.
+        const scope: ScreeningScope[] = requestedScope.length
+          ? requestedScope
+          : provider.supportedScopes;
 
         const idempotencyKey = `aml-scr-${caseId}-${Date.now()}`;
         let reservation: { jobId: string } | null = null;
@@ -433,18 +450,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         } catch (e: any) {
           if (reservation) await cancelTokens(reservation.jobId, "screening_failed");
           // Same contract as IDV: an unreachable provider is not a screening
-          // outcome and never renders as a failure against the subject.
+          // outcome and never renders as a failure against the subject. Stale
+          // or missing list data is the same shape of condition — screening
+          // incomplete, never "clear", never "matched".
+          const listDataStale = /sanctions_list_unavailable/.test(String(e?.message ?? ""));
+          const errorCategory = listDataStale ? "list_data_unavailable" : "provider_unavailable";
           await admin.schema("aml").from("screening_checks").update({
             status: "pending",
             result_summary: {
-              error_category: "provider_unavailable",
+              error_category: errorCategory,
               error: String(e?.message ?? "provider_failure").slice(0, 300),
             },
             completed_at: new Date().toISOString(),
           }).eq("id", inserted.id);
           return jr({
-            error: "The screening provider could not be reached. No result was produced — try again once Integration Health shows the provider is available.",
-            code: "provider_unavailable",
+            error: listDataStale
+              ? "The sanctions list data is missing or stale, so screening cannot produce an authoritative result. No result was recorded — re-run once the sanctions refresh has succeeded."
+              : "The screening provider could not be reached. No result was produced — try again once Integration Health shows the provider is available.",
+            code: errorCategory,
           }, 502);
         }
       }
@@ -511,6 +534,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           : disposition === "dismissed" ? "dismissed" : "escalated";
         const { data: updatedMatch } = await admin.schema("aml").from("screening_matches")
           .update({ status: nextStatus }).eq("id", matchId).select().single();
+
+        // Party screening state is a projection of canonical match state:
+        // resolving a match here re-derives any party subject that references
+        // the same screening check, so the two vocabularies cannot drift.
+        const { projectPartyScreeningState } = await import("../_shared/aml/partyScreening.pure.ts");
+        const { data: linkedSubjects } = await admin.schema("aml").from("party_screening_subjects")
+          .select("id").eq("screening_check_id", match.screening_check_id);
+        if ((linkedSubjects ?? []).length > 0) {
+          const { data: allMatches } = await admin.schema("aml").from("screening_matches")
+            .select("status").eq("screening_check_id", match.screening_check_id);
+          const projected = projectPartyScreeningState(
+            (allMatches ?? []).map((m: any) => m.status));
+          for (const subject of linkedSubjects ?? []) {
+            await admin.schema("aml").from("party_screening_subjects").update({
+              state: projected,
+              adjudicated_by: userId,
+              adjudicated_at: now,
+              adjudication_note: rationale,
+              updated_at: now,
+            }).eq("id", subject.id);
+          }
+        }
 
         await appendCaseEvent(admin, match.case_id, "mlro_decision",
           `Match ${match.matched_name} ${disposition} (${match.list_name ?? match.match_type})`,
@@ -850,14 +895,45 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           const mode = resolved?.mode ??
             ((Deno.env.get("AML_PROVIDER_MODE") || "").toLowerCase() === "live" ? "live" : "simulator");
           const key = (resolved?.providerKey ?? "simulator").toLowerCase();
-          const secrets = capability === "idv" ? {
-            AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
-            AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
-          } : {};
-          const wired = capability === "idv" ? key === "selfhosted" : key === "local_lists";
-          const configured = capability === "idv"
-            ? Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")) && Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN"))
-            : true;
+          // Wiring and configuration come from the provider registry rather
+          // than from a second opinion here. `idvAdapterReadiness` knows about
+          // BOTH registries — capture (selfhosted) and hosted-session (didit) —
+          // so a correctly configured hosted provider no longer reports as
+          // misconfigured on the Command Centre card.
+          const idvReadiness = capability === "idv"
+            ? idvAdapterReadiness(key, resolved) : null;
+          // Secret PRESENCE only, and only the ones the active flow actually
+          // needs. Never a value.
+          const isStandalone = capability === "idv" && isStandaloneIdvProvider(key);
+          const secrets = capability !== "idv" ? {}
+            : idvReadiness?.flow === "hosted_session" ? {
+              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              DIDIT_WEBHOOK_SECRET: Boolean(Deno.env.get("DIDIT_WEBHOOK_SECRET")),
+            } : isStandalone ? {
+              // The Standalone path needs neither the workflow id nor the
+              // webhook secret — there is no workflow and, with
+              // save_api_request=false, no webhook is ever emitted. Reporting
+              // them would send an operator hunting for a secret that is
+              // correctly absent.
+              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              DIDIT_LIVENESS_THRESHOLD: Boolean(Deno.env.get("DIDIT_LIVENESS_THRESHOLD")),
+              DIDIT_FACE_MATCH_THRESHOLD: Boolean(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD")),
+            } : {
+              AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
+              AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
+            };
+          /**
+           * The specific fault, for the person who has to fix it.
+           *
+           * `secrets_present` answers "is it set", which cannot distinguish a
+           * threshold nobody set from one set to `0.6` on a 0-100 scale — the
+           * two mistakes an operator is most likely to make here, with opposite
+           * fixes. Presence and validity only; no value crosses this boundary,
+           * and nothing here is ever sent to the client portal.
+           */
+          const standaloneReadiness = isStandalone ? standaloneIdvReadiness() : null;
+          const wired = capability === "idv" ? Boolean(idvReadiness?.wired) : key === "local_lists";
+          const configured = capability === "idv" ? Boolean(idvReadiness?.configured) : true;
           const wantsSimulator = mode === "simulator" || key === "simulator";
           let state: string;
           // Live health of the actual service, not an inference from secrets.
@@ -888,9 +964,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return {
             capability,
             configured_provider: resolved?.providerKey ?? null,
+            // Which experience the client will get. Lets the Command Centre
+            // word its client request correctly instead of assuming capture.
+            idv_flow: idvReadiness?.flow ?? null,
             mode,
             adapter_wired: wired,
             secrets_present: secrets,
+            // Null for every provider except the Standalone one.
+            standalone_readiness: standaloneReadiness,
             last_health: cfg ? {
               at: cfg.last_health_at, status: cfg.last_health_status,
               message: cfg.last_health_message,
@@ -916,7 +997,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
   } catch (e: any) {
     console.error("[aml-verification] error", e);
-    return jr({ error: e?.message ?? "internal_error" }, 500);
+    return jr({ ...internalError(e, 'aml-verification') }, 500);
   }
 });
 

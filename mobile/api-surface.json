@@ -5,10 +5,10 @@
     "supabase/config.toml"
   ],
   "counts": {
-    "staff": 237,
+    "staff": 240,
     "public": 40,
     "portal": 69,
-    "server-only": 66
+    "server-only": 67
   },
   "functions": [
     {
@@ -238,6 +238,12 @@
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": true
+    },
+    {
+      "name": "authenticated-data",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": false
     },
     {
       "name": "auto-report-sync",
@@ -1938,6 +1944,12 @@
       "verify_jwt": true
     },
     {
+      "name": "partner-agreement-records",
+      "exposure_class": "module-gated",
+      "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
       "name": "partner-compliance",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
@@ -2100,6 +2112,12 @@
       "verify_jwt": true
     },
     {
+      "name": "render-commercial-capacity-pdf",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": false
+    },
+    {
       "name": "render-investment-report-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
@@ -2139,6 +2157,12 @@
       "name": "render-template-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
+      "verify_jwt": false
+    },
+    {
+      "name": "report-api-usage",
+      "exposure_class": "cron-worker",
+      "mobileScope": "server-only",
       "verify_jwt": false
     },
     {

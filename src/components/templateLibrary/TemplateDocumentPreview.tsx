@@ -26,6 +26,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
+import type { Tokens } from '@/lib/reportTemplate/templateSchema';
 import { SAMPLE_REPORT_DATA } from '@/lib/templateLibrary/sampleReportData';
 import { PAGE_GUTTER_PT, PT_TO_PX, pageGeometry } from '@/lib/templateLibrary/pageGeometry';
 
@@ -49,11 +50,20 @@ interface Props {
    * passes a real report's data when the user picks one.
    */
   data?: Record<string, unknown>;
+  /**
+   * Design-token overrides — how a colourway is previewed.
+   *
+   * The renderer already merges these over the template's own tokens, so
+   * switching colourway is this component re-rendering the SAME schema with a
+   * different colour map. No second template, no refetch, and nothing written:
+   * the stored entry keeps its default colourway until a working copy is made.
+   */
+  tokenOverrides?: Partial<Tokens>;
 }
 
 export function TemplateDocumentPreview({
   schema, label, variant = 'page', className, lazy = false, onReady,
-  data = SAMPLE_REPORT_DATA,
+  data = SAMPLE_REPORT_DATA, tokenOverrides,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -94,6 +104,7 @@ export function TemplateDocumentPreview({
       const gutter = variant === 'document' ? PAGE_GUTTER_PT : 0;
       const { html } = renderTemplateToHtml(schema, {
         data,
+        tokenOverrides,
         // The sheet treatment lives inside the frame because the pages are laid
         // out here, not by the host document.
         customCss: `
@@ -112,7 +123,7 @@ export function TemplateDocumentPreview({
       // A template that cannot render must not take the browse grid with it.
       return null;
     }
-  }, [schema, visible, variant, data]);
+  }, [schema, visible, variant, data, tokenOverrides]);
 
   const pageCount = useMemo(
     () => (Array.isArray((schema as any)?.pages) ? (schema as any).pages.length : 0),

@@ -31,6 +31,23 @@ export interface PdfImportPagePolicyDecision {
   decidedBy: PagePolicyDecidedBy;
 }
 
+/**
+ * A window onto the page's source raster, painted over one region.
+ *
+ * The page's text renders natively; inside these boxes the source pixels do,
+ * because something there could not be verified. Same fidelity as a full-page
+ * raster over that area — see tableRegionContainment.pure.ts for why the scope
+ * narrows and when it refuses to.
+ */
+export interface PageContainedRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Overlays this window covers; they must not also render natively. */
+  overlayIds: string[];
+}
+
 export interface PdfImportPagePolicy {
   version: typeof PDF_PAGE_OUTPUT_POLICY_VERSION;
   finalMode: PageFinalMode;
@@ -38,6 +55,45 @@ export interface PdfImportPagePolicy {
   sourceRasterRole: PageSourceRasterRole;
   nativeLayerPolicy: PageNativeLayerPolicy;
   decision?: PdfImportPagePolicyDecision;
+  /**
+   * Region-scoped containment on an otherwise NATIVE page.
+   *
+   * Only ever set alongside `outputStrategy: 'native'` — it is the alternative
+   * to rasterizing the page, not an addition to it. A raster-only page already
+   * shows source pixels everywhere.
+   */
+  containedRegions?: PageContainedRegion[];
+}
+
+/** Largest number of windows a page may carry, so a pathological page cannot. */
+export const MAX_CONTAINED_REGIONS_PER_PAGE = 24;
+
+/**
+ * The contained windows to paint for a page, validated against its own box.
+ *
+ * A window is dropped rather than trusted when it does not fit the page: it
+ * positions source pixels by absolute geometry, and one that runs off the sheet
+ * is describing a different page than the one being rendered.
+ */
+export function pageContainedRegions(
+  policy: PdfImportPagePolicy | null | undefined,
+  pageSize: { width?: number; height?: number } | null | undefined,
+): PageContainedRegion[] {
+  if (!policy || policy.outputStrategy !== 'native') return [];
+  const regions = Array.isArray(policy.containedRegions) ? policy.containedRegions : [];
+  const pw = Number(pageSize?.width);
+  const ph = Number(pageSize?.height);
+  if (!Number.isFinite(pw) || !Number.isFinite(ph) || pw <= 0 || ph <= 0) return [];
+  return regions
+    .filter((r) => {
+      const { x, y, width, height } = r ?? ({} as PageContainedRegion);
+      return [x, y, width, height].every((n) => Number.isFinite(Number(n)))
+        && Number(width) > 0 && Number(height) > 0
+        && Number(x) >= 0 && Number(y) >= 0
+        && Number(x) + Number(width) <= pw + 0.5
+        && Number(y) + Number(height) <= ph + 0.5;
+    })
+    .slice(0, MAX_CONTAINED_REGIONS_PER_PAGE);
 }
 
 /** Canonical healthy policies. */
@@ -209,6 +265,29 @@ export function shouldRenderPageBackgroundImage(
   plan: { showSourceRaster: boolean },
 ): boolean {
   return isPdfImportSourceRaster(page) ? plan.showSourceRaster : true;
+}
+
+/**
+ * Last-resort guarantee that a page renders SOMETHING.
+ *
+ * A raster-only page suppresses its native layers because the source raster is
+ * the final output — but that raster is not stored on the template. Its URL is
+ * signed at render time from `meta.sourceRasterRef`, and a signing failure
+ * (expired credential, storage hiccup, an export path that never resolved it)
+ * leaves the page with no raster AND no native blocks: a blank sheet, silently,
+ * in a client's PDF. That is strictly worse than the reconstruction the page
+ * already carries.
+ *
+ * So: when the plan suppressed native blocks and the raster did not actually
+ * paint, render the native blocks after all. Both layers can never appear
+ * together — this only fires when the raster is absent — so it cannot
+ * reintroduce the double-render this policy exists to prevent.
+ */
+export function shouldFallBackToNativeBlocks(
+  plan: { renderNativeBlocks: boolean },
+  rasterPainted: boolean,
+): boolean {
+  return !plan.renderNativeBlocks && !rasterPainted;
 }
 
 /**

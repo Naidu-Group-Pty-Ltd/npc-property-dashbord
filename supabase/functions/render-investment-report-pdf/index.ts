@@ -20,7 +20,20 @@ import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSaf
 // produce a single PDF.
 import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 import { wrapInlineInsightParagraphs } from "./insightSections.ts";
-import { NPC_HOUSE_COVER_ART } from "../_shared/reportDesign/defaultAssets.generated.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+// The house cover artwork used to be inlined here as ~490 KB of base64
+// (`_shared/reportDesign/defaultAssets.generated.ts`). Every file under
+// `supabase/functions/` counts toward *every* function's deploy upload, so those
+// bytes pushed `manage-partner-agreements`, `aml-client-portal` and
+// `generate-investment-report` past Supabase's ~4.5 MB cap — they could not be
+// deployed at all. The bytes now live in `public.report_default_assets` and are
+// loaded here at request time (see `loadHouseCoverArt`). Still no external
+// network and still a `data:` URI by the time WeasyPrint sees it, so the
+// "a report must render without the network" policy in `assets.pure.ts` holds.
+// Source of truth for regeneration is unchanged:
+// `scripts/reportDesign/buildDefaultAssets.ts` →
+// `scripts/reportDesign/generated/defaultAssets.generated.ts`, re-seeded via the
+// one-off `seed-report-assets` function.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -2670,6 +2683,35 @@ type HeroPlacement = {
   rounded: boolean;
 };
 
+/**
+ * The house cover artwork, as a `data:` URI, read from
+ * `public.report_default_assets`.
+ *
+ * Cached per isolate: a report render touches the cover once, but a warm isolate
+ * serves many renders and this row is ~220 KB. A miss returns `null` rather than
+ * throwing — a cover with no photograph still prints, and the gradient/foil
+ * treatment below carries it. Losing the artwork must never lose the report.
+ */
+let houseCoverArtCache: string | null | undefined;
+async function loadHouseCoverArt(): Promise<string | null> {
+  if (houseCoverArtCache !== undefined) return houseCoverArtCache;
+  try {
+    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
+    const { data, error } = await supabase
+      .from("report_default_assets")
+      .select("data_uri")
+      .eq("asset_key", "npc_house_cover_art")
+      .maybeSingle();
+    if (error) throw error;
+    const uri = typeof data?.data_uri === "string" ? data.data_uri : null;
+    houseCoverArtCache = uri && uri.startsWith("data:") ? uri : null;
+  } catch (err) {
+    console.error("[render-investment-report-pdf] cover art load failed", err);
+    houseCoverArtCache = null;
+  }
+  return houseCoverArtCache;
+}
+
 async function loadHeroPlacements(reportId: string): Promise<Record<string, HeroPlacement>> {
   const out: Record<string, HeroPlacement> = {};
   try {
@@ -3083,20 +3125,25 @@ export async function buildHtml(
       <rect width='210' height='297' fill='url(%23sheen)'/>
       <rect width='210' height='297' filter='url(%23nz)'/>
     </svg>`)}`;
-  // Inlined, not fetched. This used to be an absolute `lovable.app` URL — a
-  // preview host — on a client-facing premium PDF: every render made an
-  // outbound fetch the SSRF guard had to allow, a 404 printed a blank cover
-  // with nothing raised, and re-issuing an old report depended on that host
-  // still serving that path. Same bytes, no network. See
-  // `scripts/reportDesign/buildDefaultAssets.ts`.
-  const coverArtSrc = NPC_HOUSE_COVER_ART;
+  // Loaded from the database, not fetched from a host. This used to be an
+  // absolute `lovable.app` URL — a preview host — on a client-facing premium
+  // PDF: every render made an outbound fetch the SSRF guard had to allow, a 404
+  // printed a blank cover with nothing raised, and re-issuing an old report
+  // depended on that host still serving that path. It then lived inlined in the
+  // function source, which broke deploys for unrelated functions (see the note
+  // at the top of this file). It is a `data:` URI either way by the time the
+  // renderer sees it. See `scripts/reportDesign/buildDefaultAssets.ts`.
+  const coverArtSrc = await loadHouseCoverArt();
+  const coverBgImg = coverArtSrc
+    ? `<img class="cover-bg" src="${coverArtSrc}" alt="" />`
+    : "";
   const coverHtml = design.coverStyle === "image"
     ? `<section class="cover cover-clean">
-        <img class="cover-bg" src="${coverArtSrc}" alt="" />
+        ${coverBgImg}
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
       </section>`
     : `<section class="cover cover-${design.coverStyle}">
-        <img class="cover-bg" src="${coverArtSrc}" alt="" />
+        ${coverBgImg}
         <div class="cover-scrim"></div>
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
         <div class="cover-masthead">${esc(String(brandName).toUpperCase())}</div>
@@ -5629,7 +5676,7 @@ if (import.meta.main) Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error("[render-investment-report-pdf]", err);
-    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+    return new Response(JSON.stringify(internalError(err, 'render-investment-report-pdf')), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

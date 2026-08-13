@@ -23,6 +23,7 @@ import { planChapters } from '../sections.pure';
 import { scoreBreakdownTable } from '../charts.pure';
 import {
   CURRENT_SECTION_TITLES,
+  PREPARED_ON,
   SOURCE_COUNT,
   currentFormat,
   reportRow,
@@ -30,8 +31,8 @@ import {
 } from './fixtures';
 
 const normalise = (row: Record<string, unknown>) => {
-  const result = buildInvestmentReport({ row });
-  if (!result.ok) throw new Error(result.error);
+  const result = buildInvestmentReport({ row, preparedOn: PREPARED_ON });
+  if (result.ok === false) throw new Error(result.error);
   return result.report;
 };
 

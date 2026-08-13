@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 type Status = 'draft'|'pre_assessment'|'submitted'|'conditional_approval'|'unconditional_approval'|'loan_docs_issued'|'settled'|'declined'|'withdrawn';
 
 const ALLOWED_TRANSITIONS: Record<Status, Status[]> = {
@@ -236,7 +237,7 @@ Deno.serve(async (req) => {
         return j({ success: false, error: 'Invalid action' }, 400);
     }
   } catch (e: any) {
-    return new Response(JSON.stringify({ success: false, error: e.message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'manage-lender-submissions'), success: false }), {
       status: 500, headers: { ...cors, 'Content-Type': 'application/json' },
     });
   }

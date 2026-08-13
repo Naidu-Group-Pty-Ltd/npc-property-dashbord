@@ -29,8 +29,11 @@ import {
   buildCacheContractFingerprintInput,
   PDF_CACHE_CONTRACT_VERSION,
 } from '../_shared/pdfCacheContract.pure.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 import { resolvePdfDescriptionTier } from '../_shared/pdfDescriptionTier.pure.ts';
+import { meteredFetch } from '../_shared/meteredFetch.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -39,7 +42,26 @@ const PARSE_TOKEN = Deno.env.get('PDF_PARSE_SERVICE_TOKEN') ?? '';
 const DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
 const SOURCE_BUCKET = 'template-import-assets';
 const ENGINE = 'docling';
-const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest';
+// +subset-fonts-v1+source-measure-v1: the sidecar now embeds subset font
+// programs (exact source glyphs) and ships per-line measured advance widths.
+// Cached artifacts predating that carry neither, so they must not be reused —
+// a cache hit would quietly bring the font substitutes back.
+//
+// +align-v2: `text_align` changed MEANING rather than shape — a two-line block
+// is no longer reported as justified. An older artifact answers the same key
+// with the old semantics, which is exactly the case a fingerprint exists to
+// catch. Mirrors the sidecar's ENGINE_VERSION; the two must move together.
+//
+// +source-measure-v2: per-line x0/x1/baseline, so two fields sharing a baseline
+// can be told from a wrapped paragraph.
+//
+// +cmap-repair-v1: the embedded font BYTES changed. A subset's cmap need not
+// address every glyph it carries, and a cached program still cannot — serving
+// one would put the fallback typeface back mid-word.
+//
+// +font-metrics-v1: per-font hhea ascent/descent, without which the importer
+// cannot place a block by its baseline and every line lands ~0.36em low.
+const ENGINE_VERSION_FAMILY = 'docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+subset-fonts-v1+source-measure-v2+align-v2+cmap-repair-v1+font-metrics-v1';
 const ARTIFACT_CONTRACT_VERSION = 'raster-manifest-v1';
 const DOCLING_PAGE_REBASE_VERSION = 'chunk-page-rebase-v1';
 const CHUNK_MERGE_VALIDATION_VERSION = 'chunk-merge-validation-v1';
@@ -59,7 +81,11 @@ const STATUS_SAFE_FIELDS = [
 // behavior changes so stale-policy artifacts are never reused.
 // G1: bumped to v2 alongside the sidecar's extractor-lane-policy-v2 so cached
 // v1-semantics artifacts are never reused for v2 lane behavior.
-const LANE_POLICY_VERSION = 'extractor-lane-policy-v2';
+// v3: mirrors the sidecar decoupling `force_full_page_ocr_default` from OCR
+// availability and defaulting formula/code enrichment off. Every INHERIT cell in
+// the lane matrix resolves differently, so v2 artifacts must not be reused.
+// Deploy this function and the sidecar image together (LANE-POLICY.md G3).
+const LANE_POLICY_VERSION = 'extractor-lane-policy-v3';
 const REDACTION_POLICY_VERSION = 'redaction-policy-v1';
 const PARSE_PROVIDER = 'docling';
 const DEFAULT_SERVICE_CLASS = 'default';
@@ -271,8 +297,44 @@ async function sha256Text(text: string): Promise<string> {
 
 // Requested raster DPI is a deterministic function of the requested mode; used
 // both for the parse request and for the cache fingerprint.
-function requestedRasterDpi(mode: string): number {
-  return (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 200 : 144;
+/**
+ * The output-grade raster DPI for a mode.
+ *
+ * The dispatcher is the only layer that knows whether a page raster is a
+ * throwaway alignment underlay or the actual deliverable, so the DPI decision
+ * belongs here — `lane_policy.resolve_raster_dpi` treats an explicit request as
+ * the target and `DOCLING_RASTER_DPI` only as a fallback.
+ *
+ * Was a flat 200/144. At 144 DPI an A4 page is 1191px, which a Retina display
+ * at 100% zoom already upscales 1.33x — the reported pixelation — and which is
+ * 2.08x below the 300 DPI print floor. Pixel-perfect rasters ARE the output, so
+ * they go to the print floor. Hybrid rasters are nominally an editor underlay
+ * (see TemplateImportPagePlan.background.underlay), but the quality gate can
+ * later downgrade a hybrid page to raster-only and promote that same underlay
+ * to final output, so 144 is too weak a starting point; 200 matches what the
+ * design_heavy lane already demands.
+ *
+ * This value feeds computeCacheFingerprint, so changing it invalidates cached
+ * artifacts for the affected modes automatically — which is correct, the old
+ * ones are lower-resolution than the contract now promises.
+ */
+function requestedRasterDpi(_mode: string): number {
+  // 300 for every mode that rasters at all, and the reason is the raster-only
+  // downgrade path. The quality gate decides AFTER the parse that a page cannot
+  // be rebuilt natively, and promotes that page's raster from alignment
+  // underlay to final output — see applyCriticalContainment / pageFidelityDecision.
+  // A mode-dependent DPI therefore means the pages that lost their native
+  // layers, and so have the least fidelity left, are also the ones stuck with
+  // the weakest asset. Rastering everything at the print floor removes the
+  // problem instead of requiring a second round trip to re-raster after the
+  // decision.
+  //
+  // Affordable because of the reference-mode transport: rasters are fetched by
+  // WeasyPrint from storage rather than base64-inlined into a 25 MB payload, so
+  // page count no longer bounds resolution. The remaining cost is sidecar
+  // parse time and memory, which scale with DPI^2 — dial back here first if a
+  // raster-heavy corpus regresses.
+  return 300;
 }
 
 // pdf-cache-contract-v2 fingerprint. Computed pre-plan from request-level policy
@@ -706,7 +768,7 @@ async function callSidecarPlan(
     const maxChunkPages = typeof requestPayload?.max_chunk_pages === 'number' && Number.isFinite(requestPayload.max_chunk_pages)
       ? requestPayload.max_chunk_pages
       : null;
-    const res = await fetch(`${PARSE_URL.replace(/\/$/, '')}/plan`, {
+    const res = await meteredFetch(`${PARSE_URL.replace(/\/$/, '')}/plan`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -719,7 +781,7 @@ async function callSidecarPlan(
         max_chunk_pages: maxChunkPages,
         force_chunking: requestPayload?.force_chunked === true,
       }),
-    });
+    }, { secretName: 'PDF_PARSE_SERVICE_TOKEN', feature: 'pdf-parse/sidecar' });
     if (!res.ok) {
       console.warn('[pdf-parse-dispatch] /plan returned', res.status);
       return null;
@@ -786,11 +848,13 @@ async function dispatchChunkToSidecar(
     include_doctags: true,
     include_markdown: requestPayload?.include_markdown !== false,
     redact_pii: Boolean(requestPayload?.redact_pii),
-    raster_dpi: (mode === 'pixel_perfect' || mode === 'pixel-perfect') ? 200 : 144,
+    // Same source as the cache fingerprint — a chunked page must not raster at a
+    // different grade from the monolithic path, or a cache hit serves the wrong one.
+    raster_dpi: requestedRasterDpi(mode),
     raster_format: 'png',
   };
   try {
-    const res = await fetch(`${PARSE_URL.replace(/\/$/, '')}/parse-chunk`, {
+    const res = await meteredFetch(`${PARSE_URL.replace(/\/$/, '')}/parse-chunk`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -798,7 +862,7 @@ async function dispatchChunkToSidecar(
         'X-Request-Id': jobId,
       },
       body: JSON.stringify(body),
-    });
+    }, { secretName: 'PDF_PARSE_SERVICE_TOKEN', feature: 'pdf-parse/sidecar' });
     if (res.status !== 202) {
       const text = await res.text().catch(() => '');
       console.error('[pdf-parse-dispatch] /parse-chunk non-202', { jobId, chunkIndex: chunk.chunk_index, status: res.status, text: text.slice(0, 300) });
@@ -981,7 +1045,7 @@ async function runJob(
     const includeMarkdown = requestPayload?.include_markdown === false ? false : true;
     const enablePictureDescription = (descriptionTier === 'on' || descriptionTier === 'premium')
       && (!plan || plan.requires_picture_description === true);
-    const rasterDpi = (effectiveMode === 'pixel_perfect' || effectiveMode === 'pixel-perfect') ? 200 : 144;
+    const rasterDpi = requestedRasterDpi(effectiveMode);
 
     const parseBody: Record<string, unknown> = {
       url: signedUrl,
@@ -1005,7 +1069,7 @@ async function runJob(
     for (let attempt = 1; attempt <= MAX_SIDECAR_ATTEMPTS; attempt++) {
       const attemptStarted = Date.now();
       try {
-        const parseRes = await fetch(`${PARSE_URL.replace(/\/$/, '')}/parse`, {
+        const parseRes = await meteredFetch(`${PARSE_URL.replace(/\/$/, '')}/parse`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1013,7 +1077,7 @@ async function runJob(
             'X-Request-Id': jobId,
           },
           body: JSON.stringify(parseBody),
-        });
+        }, { secretName: 'PDF_PARSE_SERVICE_TOKEN', feature: 'pdf-parse/sidecar' });
         const text = await parseRes.text().catch(() => '');
         if (parseRes.status === 202) {
           await appendAttempt(admin, jobId, { endpoint: '/parse', attempt, status: 202, ok: true, duration_ms: Date.now() - attemptStarted, mode: 'callback', selected_lane: selectedLane, requested_mode: mode, effective_mode: effectiveMode });
@@ -1153,10 +1217,18 @@ async function recoverStuckJobs(admin: Admin): Promise<{ requeued: number; faile
 }
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  // Origin-aware: an allowlisted origin gets an exact ACAO + credentials so the
+  // HttpOnly `__Host-session_token` cookie authenticates the parse job. Anyone
+  // else keeps the historical wildcard token-auth answer.
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   const json = (b: unknown, status = 200) =>
     new Response(JSON.stringify(b), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
+
+  // Ambient cookie authority requires an exact-origin check; no-ops for
+  // token-only callers, which send no cookie.
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
 
   if (!PARSE_URL || !PARSE_TOKEN) {
     return json({ error: 'PDF_PARSE_SERVICE_URL / PDF_PARSE_SERVICE_TOKEN not configured' }, 503);
@@ -1194,7 +1266,14 @@ Deno.serve(async (req) => {
       // bucket itself under our custom-auth model, so we mediate here.
       const path = typeof body.path === 'string' ? body.path : '';
       if (!path) return json({ error: 'path required' }, 400);
-      const expiresIn = Math.min(Math.max(Number(body.expires_in) || 300, 60), 300);
+      // Ceiling raised 300s -> 900s. A signed URL handed to WeasyPrint as a
+      // resource reference (rather than inlined as base64) must outlive the
+      // render that consumes it, and the render timeout is 600s. At 300s a
+      // long multi-page export would have had its images expire midway and
+      // silently drop to blank backgrounds. Still short-lived: this is a
+      // bearer credential for a private bucket, so the window is the render
+      // duration plus headroom and nothing more.
+      const expiresIn = Math.min(Math.max(Number(body.expires_in) || 300, 60), 900);
       const objectPath = path.startsWith(`${DIAGNOSTICS_BUCKET}/`)
         ? path.slice(DIAGNOSTICS_BUCKET.length + 1)
         : path;
@@ -1364,6 +1443,6 @@ Deno.serve(async (req) => {
     return json({ error: `unknown operation: ${operation}` }, 400);
   } catch (e) {
     console.error('[pdf-parse-dispatch] unhandled', e);
-    return json({ error: String((e as Error)?.message ?? e) }, 500);
+    return json({ ...internalError(e, 'pdf-parse-dispatch') }, 500);
   }
 });

@@ -8,6 +8,8 @@ import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, create
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkModuleView } from "../_shared/permissions.ts";
 import { assertSafeRecordingUrl } from "./recordingUrlPolicy.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MAX_RECORDING_REDIRECTS = 3;
 
@@ -75,7 +77,7 @@ Deno.serve(async (req) => {
 
     if (vapiApiKey && row.vapi_call_id) {
       try {
-        const r = await fetch(`https://api.vapi.ai/call/${row.vapi_call_id}`, {
+        const r = await meteredFetch(`https://api.vapi.ai/call/${row.vapi_call_id}`, {
           headers: { 'Authorization': `Bearer ${vapiApiKey}` },
         });
         if (r.ok) {
@@ -137,7 +139,7 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     console.error('[get-call-recording] error', e);
-    return new Response(JSON.stringify({ error: (e as Error).message }), {
+    return new Response(JSON.stringify(internalError(e, 'get-call-recording')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

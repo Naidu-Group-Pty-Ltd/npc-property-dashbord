@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -78,6 +79,9 @@ Respond with ONLY a valid JSON object in this exact format, no other text:
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'expense_estimation',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         {
           role: 'system',
@@ -168,8 +172,8 @@ Respond with ONLY a valid JSON object in this exact format, no other text:
     const origin = req.headers.get('origin');
     const corsHeaders = createCorsHeaders(origin);
     return new Response(JSON.stringify({
+      ...internalError(error, 'estimate-property-expenses'),
       success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

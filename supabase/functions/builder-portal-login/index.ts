@@ -24,9 +24,15 @@ import {
   auditBuilderIdentity, GENERIC_AUTH_ERROR, issueBuilderSession,
 } from '../_shared/builderSessions.ts';
 import { listAccessibleOrganisations } from '../_shared/builderPortalAuth.ts';
+import { authRateLimitedResponse, enforceAuthRateLimit } from '../_shared/authRateLimit.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { PortalLoginRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+
+const LOGIN_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const LOGIN_IDENTIFIER_BUDGET = { max: 12, windowSeconds: 900 };
 
 // A fixed bcrypt hash keeps missing and passwordless accounts on the same
 // expensive verification path as accounts with a stored password.
@@ -52,20 +58,35 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { email, password, turnstile_token } = await req.json();
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, PortalLoginRequest, corsHeaders, AUTH_MAX_BODY_BYTES);
+    if (!__body.ok) return __body.response;
+    const { email, password, turnstile_token } = __body.data;
     if (!email || !password) {
       return json({ error: 'Email and password are required' }, 400);
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
 
     // Rate limit before any lookup so enumeration cannot outrun the throttle.
-    for (const key of [`builder_login:ip:${ip}`, `builder_login:email:${normalizedEmail}`]) {
-      const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', {
-        p_key: key, p_max: 10, p_window_seconds: 900,
-      });
-      if (allowed === false) return json({ error: GENERIC_AUTH_ERROR }, 429);
+    //
+    // This previously keyed the source bucket on `x-forwarded-for[0]`, which the
+    // caller sets — one header per request and the ceiling was gone. It also read
+    // only `allowed === false`, so an RPC *error* (data: undefined) fell straight
+    // through as "allowed" and the throttle silently did nothing. The shared
+    // helper keys on the platform's unforgeable address header and degrades to a
+    // per-isolate counter rather than failing open. See _shared/authRateLimit.ts.
+    const rateLimit = await enforceAuthRateLimit(supabase, req, {
+      scope: 'bpl',
+      ip: LOGIN_IP_BUDGET,
+      identifier: normalizedEmail,
+      identifierBudget: LOGIN_IDENTIFIER_BUDGET,
+    });
+    if (!rateLimit.allowed) {
+      console.warn('[builder-portal-login] rate limited', { ipTrusted: rateLimit.ipTrusted, degraded: rateLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, rateLimit.retryAfterSeconds, GENERIC_AUTH_ERROR);
     }
 
     // Turnstile, mirroring `solicitor-portal-login`: fails closed when

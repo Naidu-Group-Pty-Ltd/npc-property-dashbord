@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -257,7 +258,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[conversation-sync-cron] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'conversation-sync-cron')), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

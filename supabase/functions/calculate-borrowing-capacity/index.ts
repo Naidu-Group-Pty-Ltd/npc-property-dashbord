@@ -18,6 +18,7 @@ import {
   type AcquisitionContext as SharedAcquisitionContext,
 } from '../_shared/scenarioDeltaEngine.ts';
 import { reconcileSegments } from './segments/reconcile.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 
 
@@ -1381,8 +1382,16 @@ Deno.serve(async (req) => {
       return createUnauthorizedResponse(authError, corsHeaders);
     }
 
+    // Named once, as in get-client-data and manage-bc-scenarios. The authz gate
+    // (scripts/security/check-client-portfolio-authz.mjs) asserts on the exact
+    // access-check call below, so the actor shape is not inlined at the call
+    // site. Do not restate that call in a comment either — a comment satisfies
+    // the gate's literal match just as well as the code does, which is how this
+    // very line first defeated its own negative test.
+    const actor = { userId, authMethod };
+
     // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
-    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'borrowing-capacity');
+    const entitlement = await requireWorkspaceCapability(supabase, actor, 'borrowing-capacity');
     if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log(`[calculate-borrowing-capacity] Authenticated user: ${userId}`);
 
@@ -1395,7 +1404,7 @@ Deno.serve(async (req) => {
 
     // The service-role client bypasses RLS, so bind this request to a client
     // the authenticated actor owns or is assigned to before reading any data.
-    if (!await canAccessClient(supabase, { userId, authMethod }, clientId)) {
+    if (!await canAccessClient(supabase, actor, clientId)) {
       return new Response(
         JSON.stringify({ success: false, error: "Client not found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -2052,7 +2061,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("[calculate-borrowing-capacity] Error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'calculate-borrowing-capacity'), success: false }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

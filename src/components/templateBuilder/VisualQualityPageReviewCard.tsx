@@ -9,7 +9,7 @@
  * action policy demands it).
  */
 import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, ExternalLink, ImageOff, Layers3, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, ImageOff, Layers3, Loader2, ScanEye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,13 +24,28 @@ import {
   type PageReviewAction,
 } from '@/lib/reportTemplate/ingestion/visualQuality';
 import type { VisualRecommendedAction } from '@/lib/reportTemplate/ingestion/visualQuality';
+import type { CorroboratedFinding, CritiqueSummary } from '@/lib/reportTemplate/pdfImport/visualCritique';
 
 interface Props {
   model: PageReviewModel;
   aiRepairEnabled?: boolean;
+  aiCritiqueEnabled?: boolean;
+  /** Stage 3 — findings for this page, once a critique has run. */
+  critique?: { findings: CorroboratedFinding[]; summary: CritiqueSummary } | null;
   busy?: boolean;
   onAction?: (pageId: string, action: PageReviewAction) => void;
 }
+
+/**
+ * How a finding is presented depends entirely on whether measurement backed it.
+ * A model's observation that the geometry contradicts is shown as contradicted,
+ * never quietly as a defect — that separation is the whole point of the stage.
+ */
+const VERDICT_BADGE: Record<CorroboratedFinding['verdict'], { label: string; variant: 'destructive' | 'warning' | 'secondary' }> = {
+  confirmed: { label: 'measured', variant: 'destructive' },
+  unverifiable: { label: 'unchecked', variant: 'warning' },
+  refuted: { label: 'contradicted', variant: 'secondary' },
+};
 
 function pct(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
@@ -87,7 +102,7 @@ function ThumbSlot({ label, url, eager }: { label: string; url: string | null; e
   );
 }
 
-export function VisualQualityPageReviewCard({ model, aiRepairEnabled, busy, onAction }: Props) {
+export function VisualQualityPageReviewCard({ model, aiRepairEnabled, aiCritiqueEnabled, critique, busy, onAction }: Props) {
   const [confirm, setConfirm] = useState<PageActionDescriptor | null>(null);
   const strategy = strategyBadge(model);
   const rec = model.recommendedAction ? ACTION_COPY[model.recommendedAction] : null;
@@ -97,6 +112,8 @@ export function VisualQualityPageReviewCard({ model, aiRepairEnabled, busy, onAc
     outputStrategy: model.outputStrategy,
     score: model.overallScore,
     aiRepairEnabled,
+    aiCritiqueEnabled,
+    hasRenderedRaster: model.artifacts.generated,
     nativeMode: model.policy?.finalMode,
   });
 
@@ -170,6 +187,33 @@ export function VisualQualityPageReviewCard({ model, aiRepairEnabled, busy, onAc
               <span className="tabular-nums">{pct(entry.scoreBefore)} → {pct(entry.scoreAfter)} {entry.accepted ? '✓' : '✕'}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {critique && (
+        <div className="rounded border bg-muted/20 p-2 text-[11px]">
+          <div className="mb-1 flex items-center gap-1 font-medium">
+            <ScanEye className="h-3 w-3" />
+            {critique.findings.length
+              ? `${critique.summary.confirmed} measured · ${critique.summary.unverifiable} unchecked · ${critique.summary.refuted} contradicted`
+              : 'No differences reported'}
+          </div>
+          <ul className="space-y-1">
+            {critique.findings.slice(0, 6).map((finding, index) => (
+              <li key={`${finding.kind}-${index}`} className="flex items-start gap-1.5">
+                <Badge variant={VERDICT_BADGE[finding.verdict].variant} className="mt-px shrink-0 px-1 py-0 text-[9px]">
+                  {VERDICT_BADGE[finding.verdict].label}
+                </Badge>
+                <span className="min-w-0">
+                  <span className="text-foreground">{finding.note}</span>
+                  <span className="block text-muted-foreground">{finding.basis}</span>
+                </span>
+              </li>
+            ))}
+            {critique.findings.length > 6 && (
+              <li className="italic text-muted-foreground">+{critique.findings.length - 6} more…</li>
+            )}
+          </ul>
         </div>
       )}
 

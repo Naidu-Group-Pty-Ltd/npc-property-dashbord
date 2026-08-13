@@ -30,6 +30,7 @@ export type PageReviewAction =
   | 'accept'
   | 'repair'
   | 'ai_repair'
+  | 'ai_critique'
   | 'force_hybrid'
   | 'force_pixel'
   | 'promote_native'
@@ -49,6 +50,15 @@ export interface PageActionContext {
   score: number | null;
   /** Enables the AI-repair action (post-C9). Defaults to false. */
   aiRepairEnabled?: boolean;
+  /**
+   * Enables the visual critique (Stage 3). Independent of `aiRepairEnabled`,
+   * and deliberately so: a critique reports what differs and can change
+   * nothing, so it does not carry the risk the repair action's operator gate
+   * exists to hold back.
+   */
+  aiCritiqueEnabled?: boolean;
+  /** Both rasters are present. A critique compares two images or it does not run. */
+  hasRenderedRaster?: boolean;
   /** The document's requested/native mode, used when promoting to native. */
   nativeMode?: PageFinalMode;
 }
@@ -100,6 +110,23 @@ export function describePageActions(ctx: PageActionContext): PageActionDescripto
       disabledReason: ctx.aiRepairEnabled
         ? (ctx.hasSourceRaster ? undefined : noRaster)
         : 'AI repair is operator-only and unlocks after the C9 safeguards land.',
+    },
+    {
+      // Stage 3 — the model looks at the two pages and says what differs. It
+      // returns findings only: nothing in this action's path can write to the
+      // template, which is why it needs no confirmation step.
+      action: 'ai_critique',
+      label: 'Explain the difference',
+      available: Boolean(ctx.aiCritiqueEnabled) && ctx.hasSourceRaster && ctx.hasRenderedRaster !== false,
+      requiresConfirm: false,
+      variant: 'outline',
+      disabledReason: !ctx.aiCritiqueEnabled
+        ? 'Visual critique is operator-only for this review.'
+        : !ctx.hasSourceRaster
+          ? noRaster
+          : ctx.hasRenderedRaster === false
+            ? 'The rendered page for this review has not been captured, so there is nothing to compare.'
+            : undefined,
     },
     {
       action: 'force_hybrid',

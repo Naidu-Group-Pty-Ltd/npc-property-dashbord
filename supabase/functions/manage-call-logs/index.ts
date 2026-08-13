@@ -3,6 +3,7 @@ import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, create
 import { checkPermission } from "../_shared/permissions.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const VAPI_BASE_URL = 'https://api.vapi.ai';
 const VAPI_FETCH_TIMEOUT_MS = 5000;
 const CALL_LOG_UPDATE_FIELDS = new Set(['resolution_status', 'resolution_notes', 'reviewed_at']);
@@ -481,7 +482,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[manage-call-logs] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'manage-call-logs'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

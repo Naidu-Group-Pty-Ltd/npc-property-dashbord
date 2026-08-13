@@ -8,16 +8,17 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Sparkles, ExternalLink, Loader2, RefreshCw, FileWarning, CheckCircle2, Image as ImageIcon, FileCode } from 'lucide-react';
+import { Sparkles, ExternalLink, Loader2, RefreshCw, FileWarning, CheckCircle2, Image as ImageIcon, FileCode, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
+import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
+import { downloadUrlAsFile } from '@/lib/downloadFile';
 import { downloadTemplateAsHtml } from '@/lib/reportTemplate/htmlExporter';
 import { downloadTemplateAsDocx } from '@/lib/reportTemplate/docxExporter';
 import { downloadTemplateAsPptx } from '@/lib/reportTemplate/pptxExporter';
 import { logTemplateAudit } from '@/lib/reportTemplate/templateAuditLog';
-import { preloadImages } from '@/lib/reportTemplate/imagePreloader';
+import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
 import { lintTemplate, type LintIssue } from '@/lib/reportTemplate/lintTemplate';
 import { analyzeExportCapability, type ExportCapabilityReport } from '@/lib/reportTemplate/exportCapability';
 import type { ReportTemplate } from '@/lib/reportTemplate/templateSchema';
@@ -235,37 +236,37 @@ export function ExportPipelineDialog({
     setRunning(true);
     const toastId = toast.loading('Preparing export…');
     try {
-      // 1) Preload remote images into the template WeasyPrint will receive.
+      // 1+2) Resolve render-time assets and compile, in one step that cannot
+      // be skipped. This used to run `preloadImages` only when
+      // `assetSummary.images.length` was non-zero — a count of `https://…png`
+      // strings already in the template. A stored PDF import has none (the
+      // raster URLs are stripped at save; only `meta.sourceRasterRef` paths
+      // remain), so the resolution was skipped for exactly the templates that
+      // depend on it and every raster-only page exported blank.
       setPreloading(true);
       const tplForExport = buildTemplateForExport();
-      const tplForRender = assetSummary.images.length
-        ? await preloadImages(tplForExport).catch(() => tplForExport)
-        : tplForExport;
-      setPreloading(false);
-
-      // 2) Compile HTML server-friendly with page-range + theme applied
       toast.loading('Compiling HTML…', { id: toastId });
-      const { html } = renderTemplateToHtml(tplForRender, {
+      const { html, unresolvedRasterPages } = await compileTemplateHtmlForPdf(tplForExport, {
         data: sampleData,
         title: templateName || 'Template Export',
         customCss: customCss || undefined,
         includeBookmarks,
       });
+      setPreloading(false);
+      const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
+      if (degraded) toast.warning(degraded);
 
-      // 3) Call edge function
+      // 3) Call the edge function through the app's one transport, rather
+      // than a hand-rolled fetch built on Vite env vars only the hosting build
+      // defines. invokeSecureFunction hardcodes the project URL and anon key,
+      // carries the HttpOnly session cookie, and refreshes-and-retries once on
+      // an auth failure.
       toast.loading('Rendering PDF on WeasyPrint…', { id: toastId });
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token;
-      const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
-      const url = `https://${projectId}.supabase.co/functions/v1/render-template-pdf`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY,
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
+      const { data: json, error: renderError } = await invokeSecureFunction<{
+        url?: string; bytes?: number; durationMs?: number;
+      }>(
+        'render-template-pdf',
+        {
           html,
           fileName: `${(templateName || 'template').replace(/[^a-z0-9]+/gi, '-')}-${mode}.pdf`,
           templateId,
@@ -276,18 +277,29 @@ export function ExportPipelineDialog({
           optimizeImages,
           themeId: themeId === '__active__' ? template.activeThemeId ?? null : themeId,
           pageMasterId: template.defaultPageMasterId ?? null,
-          pageCount: tplForRender.pages.length,
+          pageCount: tplForExport.pages.length,
           assetCount: assetSummary.total,
           pageRange: pageRange || null,
           includeBookmarks,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+        },
+        { timeoutMs: 10 * 60_000 },
+      );
+      if (renderError) throw new Error(describeAuthError(renderError.message) ?? renderError.message);
+      if (!json?.url) throw new Error('WeasyPrint render returned no document URL');
 
-      toast.success(`Export ready (${(json.bytes / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, { id: toastId });
       if (templateId) void logTemplateAudit(templateId, 'exported_pdf', undefined, { variant, mode, bytes: json.bytes });
-      window.open(json.url, '_blank', 'noopener');
+      // Save the PDF rather than `window.open` it. A render takes tens of
+      // seconds, so by the time it resolves the click that started it no
+      // longer counts as user activation and the popup is blocked silently —
+      // the export "succeeded" and the person got nothing. See downloadFile.ts.
+      const exportFileName = `${(templateName || 'template').replace(/[^a-z0-9]+/gi, '-')}-${mode}.pdf`;
+      const signedUrl = json.url;
+      await downloadUrlAsFile(signedUrl, exportFileName);
+      toast.success(`Export ready (${((json.bytes ?? 0) / 1024).toFixed(0)} KB, ${json.durationMs}ms)`, {
+        id: toastId,
+        description: exportFileName,
+        action: { label: 'Open', onClick: () => window.open(signedUrl, '_blank', 'noopener') },
+      });
       await loadJobs();
     } catch (e: any) {
       toast.error(`Export failed: ${e?.message ?? e}`, { id: toastId });
@@ -486,11 +498,23 @@ export function ExportPipelineDialog({
                         </div>
                       </div>
                       {j.signed_url && (
-                        <Button size="sm" variant="outline" asChild>
-                          <a href={j.signed_url} target="_blank" rel="noopener noreferrer">
-                            <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open
-                          </a>
-                        </Button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              void downloadUrlAsFile(j.signed_url!, j.file_name)
+                                .catch((e: Error) => toast.error(e.message));
+                            }}
+                          >
+                            <Download className="h-3.5 w-3.5 mr-1" /> Download
+                          </Button>
+                          <Button size="sm" variant="ghost" asChild>
+                            <a href={j.signed_url} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="h-3.5 w-3.5 mr-1" /> Open
+                            </a>
+                          </Button>
+                        </div>
                       )}
                     </li>
                   ))}

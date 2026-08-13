@@ -941,6 +941,16 @@ export function buildReportCss(input: ReportCssInput): string {
   }
   ul, ol { margin: 0 0 ${pt(d.paragraphGapPt)}; padding-left: 14pt; }
   li { margin-bottom: ${pt(d.paragraphGapPt / 2)}; }
+  /* A list whose items carry their own leading glyph.
+     The model's glance strip writes its own marker per item — a tick, a
+     diamond, a warning sign, a star — and each one means something. Left as an
+     ordinary list the sheet added a bullet in front of it, so a client's page
+     printed two markers where the model wrote one. The list stays a list,
+     because a tagged PDF should announce it as one; only the sheet's marker
+     goes. (No example glyph in this comment: comments in this file ship inside
+     every document, and the clientDetails spec rightly fails the build for a
+     dingbat anywhere in the HTML.) */
+  ul.marked { list-style: none; padding-left: 0; }
 ${options.showDropCaps
     ? `
   /* A raised initial on the chapter's first body paragraph — NOT a floated drop

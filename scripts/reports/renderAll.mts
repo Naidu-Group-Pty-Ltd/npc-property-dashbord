@@ -65,6 +65,11 @@ const FORMATS: ReadonlyArray<{ id: string; spec: string }> = [
   { id: 'property-comparison', spec: 'src/lib/reports/propertyComparison/__tests__/render.spec.ts' },
   { id: 'report-qa', spec: 'src/lib/reports/reportQa/__tests__/render.spec.ts' },
   { id: 'converted', spec: 'src/lib/reports/converted/__tests__/converter.spec.ts' },
+  // Not a report, and the only client-facing document here that a *partner*
+  // receives rather than a client. It is in this table because it is rendered
+  // by the same stylesheet and has the same way of going wrong — and because
+  // for its first two months nobody could look at it without a database.
+  { id: 'partner-agreement', spec: 'src/lib/reports/partnerAgreement/__tests__/render.spec.ts' },
 ];
 
 const args = process.argv.slice(2);

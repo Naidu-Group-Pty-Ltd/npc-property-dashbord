@@ -2,28 +2,50 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Loader2, ShieldCheck, CheckCircle2, AlertTriangle, Camera, ArrowRight, ArrowLeft, RefreshCw,
+  Clock,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import {
   amlPortalApi, type AmlVerificationParty, type AmlVerificationStatus,
 } from '@/lib/aml/amlPortalApi';
+import {
+  IDENTITY_DOCUMENT_CHOICES, IDENTITY_DOCUMENT_PRESENTATION, identityCheckRequirements,
+  identityDocumentCapturePlan,
+  type IdentityCaptureKind, type IdentityDocumentChoice,
+} from '@/lib/aml/identityDocuments';
 import { frameToJpeg, toUploadableJpeg, MAX_CAPTURE_EDGE_PX } from '@/lib/aml/captureImage';
 
 /**
- * Identity verification step (zero-cost stack).
+ * Identity verification step.
  *
- * Two captures per party: a photo of the identity document, and a selfie. The
- * comparison happens server-side; this component never sees a score, and
- * never tells the client whether the face matched. That is internal AML
- * information — the client is told only what they must do next.
+ * ## The whole journey is NPC's
  *
- * The document-instead escape hatch is deliberately prominent. Consent to
- * biometric collection is genuinely optional (APP 3.3), so refusing must be
- * an obvious, unpenalised path rather than something a client has to hunt for.
+ * The customer chooses a document, photographs it, photographs themselves, and
+ * waits — all inside this page. They never see a verification vendor: no
+ * window opens, nothing redirects, no third-party SDK loads, and no image is
+ * ever sent anywhere except NPC's own private storage over a signed upload the
+ * server minted. The provider is called server-to-server, from an Edge
+ * Function, with a credential this bundle has no way to reach.
+ *
+ * ## Nothing here can mark anybody verified
+ *
+ * There is no field this component could set, and no response it could read,
+ * that moves a verification. It uploads photographs, says "these are ready",
+ * and then does exactly one thing for ever after: re-read what NPC's own
+ * server says. Scores, thresholds, provider warnings and the reason for a
+ * referral are internal AML information (Appendix C.1) and none of them
+ * crosses the wire.
+ *
+ * The document-instead escape hatch is deliberately prominent on every screen.
+ * Consent to biometric collection is genuinely optional (APP 3.3), so refusing
+ * has to be visible at the moment somebody decides to refuse — not hidden
+ * behind the check they are declining.
  */
 
 type Capture = { blob: Blob; url: string } | null;
@@ -38,6 +60,16 @@ const UNAVAILABLE_CODES = [
   'temporarily_unavailable',
   'attempts_exhausted',
   'already_processing',
+  // The server refused because the retired hosted flow is still configured for
+  // this tenant. Not a capture failure and never something the customer did —
+  // the step re-reads and renders the documentary route.
+  'hosted_verification_required',
+  'hosted_flow_retired',
+  // The active capture integration changed under us — the tenant moved between
+  // the prepared-attempt journey and the older single-shot one. Also not a
+  // capture failure, and never something the customer did.
+  'capture_flow_unavailable',
+  'capture_flow_superseded',
 ];
 
 /** A signed-URL PUT that failed, carrying the object it was writing. */
@@ -56,27 +88,107 @@ const STATUS_PRESENTATION: Record<AmlVerificationParty['status'], { label: strin
   contact_adviser: { label: 'We will contact you', tone: 'text-warning' },
 };
 
+/**
+ * What this party's state looks like right now, as one comparable string.
+ *
+ * Used only to notice that something MOVED. It is not sent anywhere and it is
+ * not an outcome — the parent's response to it is to re-read the server, never
+ * to believe anything the browser worked out.
+ */
+function statusSignature(status: AmlVerificationStatus): string {
+  return status.parties
+    .map((p) => `${p.party_id ?? 'self'}:${p.status}:${p.verification_in_progress ? 1 : 0}`)
+    .join('|');
+}
+
 export function IdentityVerificationStep({
-  caseId, onBack, onNext, onNeedsConsent,
+  caseId, onBack, onNext, onNeedsConsent, onStatusChange,
 }: {
   caseId: string;
   onBack: () => void;
   onNext: () => void;
   onNeedsConsent: () => void;
+  /**
+   * Canonical verification state changed on the SERVER.
+   *
+   * This step keeps its own copy of the verification status; the journey that
+   * draws the stepper, the progress figure and the review summary lives on the
+   * page above it. Without this the two drifted apart — a client could return
+   * from a completed check and see "Verify identity" still grey, with the
+   * progress bar unmoved, until they reloaded the page by hand.
+   *
+   * It carries no argument on purpose. It reports that something moved, never
+   * what it moved to: the parent answers by re-reading the server, so a
+   * browser callback can never be the thing that marks anybody verified.
+   */
+  onStatusChange?: () => void;
 }) {
   const [state, setState] = useState<AmlVerificationStatus | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [activeParty, setActiveParty] = useState<AmlVerificationParty | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  /**
+   * The party currently going through the secure identity check.
+   *
+   * Holds a party and NOT a session: the URL is minted only once the customer
+   * presses Begin, inside the click that opens the window. Keeping it out of
+   * this state is what makes the popup rule satisfiable — see `beginCheck`.
+   */
+  const [checking, setChecking] = useState<AmlVerificationParty | null>(null);
+
+  /**
+   * The party-state this step has already accounted for.
+   *
+   * ## The loop this ref caused
+   *
+   * It used to notify the page on the first read whenever that read was not
+   * "quiet" — anything other than every party `not_started`. A client sitting
+   * on a check that was already `in_review` therefore announced a change that
+   * had not happened, the page reloaded, the reload blanked the portal, this
+   * component unmounted, the ref died with it, and the remount made the very
+   * same server state look new again. Forever. The page blinked and the
+   * customer could not use it.
+   *
+   * So the first successful read for a case is a BASELINE and never a change.
+   * The page has already loaded the overview from the same server; there is
+   * nothing to tell it. `onStatusChange` announces a change AFTER the baseline
+   * and nothing else.
+   */
+  const reportedRef = useRef<string | null>(null);
+  /**
+   * Which case that baseline belongs to.
+   *
+   * A genuinely different case needs a fresh baseline — its first read is not
+   * a change either. Keyed on the case rather than on mount so an ordinary
+   * parent refresh, which re-renders this component without remounting it,
+   * cannot make an unchanged identity state look new.
+   */
+  const baselineCaseRef = useRef<string | null>(null);
+  const onStatusChangeRef = useRef(onStatusChange);
+  onStatusChangeRef.current = onStatusChange;
+
+  /** Adopt a fresh server read, and tell the page only if the state moved. */
+  const applyStatus = useCallback((next: AmlVerificationStatus) => {
+    setState(next);
+    const signature = statusSignature(next);
+    if (baselineCaseRef.current !== caseId) {
+      // First read for this case: record where we are starting from, silently.
+      baselineCaseRef.current = caseId;
+      reportedRef.current = signature;
+      return;
+    }
+    if (reportedRef.current === signature) return;
+    reportedRef.current = signature;
+    onStatusChangeRef.current?.();
+  }, [caseId]);
 
   const load = useCallback(async () => {
     try {
-      setState(await amlPortalApi.verificationStatus(caseId));
+      applyStatus(await amlPortalApi.verificationStatus(caseId));
       setLoadError(null);
     } catch (e: any) {
       setLoadError(e?.message ?? 'Unable to load verification status.');
     }
-  }, [caseId]);
+  }, [caseId, applyStatus]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -94,17 +206,38 @@ export function IdentityVerificationStep({
     setStarting(party.party_id ?? 'self');
     try {
       const fresh = await amlPortalApi.verificationStatus(caseId);
-      setState(fresh);
+      applyStatus(fresh);
       const stillAllowed = fresh.parties.find(
         (p) => (p.party_id ?? null) === (party.party_id ?? null))?.can_attempt;
       if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
-      setActiveParty(party);
+
+      /**
+       * A hosted provider runs the short capture on its own page. NPC owns
+       * everything either side of it, so this opens NPC's own screens — pick a
+       * document, then read what to have ready — and no session is created
+       * until the customer presses Begin.
+       *
+       * That ordering is not cosmetic. The verification window has to be
+       * opened synchronously inside the customer's click or the browser
+       * classifies it as an unsolicited popup and blocks it, so the click that
+       * opens the window cannot be the same click that waits for a session.
+       */
+      // Both experiences are sub-screens of this step, and both are NPC's own.
+      // `hosted` is the legacy provider-window flow, kept only while the
+      // sessions opened before the cutover can still settle; `capture` is the
+      // journey every new attempt takes, and it never leaves this page.
+      setChecking(party);
     } catch (e: any) {
+      if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {
+        toast.info(e.message);
+        await load();
+        return;
+      }
       setLoadError(e?.message ?? 'Unable to check verification availability.');
     } finally {
       setStarting(null);
     }
-  }, [caseId]);
+  }, [caseId, load, applyStatus]);
 
   if (loadError) {
     return (
@@ -139,10 +272,29 @@ export function IdentityVerificationStep({
   const allSettled = state.parties.every(
     (p) => p.status === 'verified' || p.status === 'in_review' || p.status === 'contact_adviser');
 
+  /**
+   * A backend that still says `hosted` is treated as UNAVAILABLE, never obeyed.
+   *
+   * The hosted capture UI is gone from this bundle, so there is nothing to
+   * render for that answer even if we wanted to. What matters is that the
+   * customer still gets somewhere real: the documentary route, which is a way
+   * to finish their onboarding rather than an error.
+   *
+   * This is the defence-in-depth line. A stale deployment, a tenant left on the
+   * retired provider, or a response from a server older than the cutover all
+   * arrive here — and the worst case is a customer told to upload their
+   * document, which is true and actionable, instead of a window opening on
+   * somebody else's website.
+   */
+  const hostedRetired = (state.provider_flow ?? 'capture') === 'hosted';
+  if (hostedRetired) reportRetiredHostedFlow(caseId);
+
   // The server refuses a selfie upload URL unless a live provider can examine
   // the result. Honour that here rather than offering a capture that ends in a
   // 409 — the same contradiction the request router was fixed to avoid.
-  const availability = state.availability ?? 'available';
+  const availability = hostedRetired
+    ? 'temporarily_unavailable'
+    : (state.availability ?? 'available');
   if (availability !== 'available') {
     return (
       <Card>
@@ -152,17 +304,81 @@ export function IdentityVerificationStep({
           </CardTitle>
           <CardDescription>
             {availability === 'manual_verification_required'
-              ? 'The photo check is not available for your case. Your adviser will verify your identity from your documents instead — there is nothing you need to do here, and no disadvantage to you.'
-              : 'The photo check is temporarily unavailable. Nothing has been used up. Please come back shortly, or upload your identity document and your adviser will take it from there.'}
+              ? 'We will verify your identity from your documents instead of a photo check. '
+                + 'Please make sure your identity document is uploaded on the previous step — '
+                + 'your adviser checks it from there. There is no disadvantage to you.'
+              : 'The photo check is temporarily unavailable and nothing has been used up. '
+                + 'You can upload your identity document instead and your adviser will take it '
+                + 'from there, or come back shortly to try the photo check again.'}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex justify-between">
+        {/*
+          The documentary route is not "nothing to do" — it is the route, and it
+          needs the client to upload a document on the Documents step. This card
+          used to say an adviser would arrange it and offered only Back/Continue,
+          so a client whose provider was unavailable was told to wait for
+          something that was waiting on them.
+        */}
+        <CardContent className="flex flex-wrap items-center justify-between gap-2">
           <Button variant="outline" onClick={onBack}>
             <ArrowLeft className="mr-1 h-4 w-4" /> Back
           </Button>
-          <Button onClick={onNext}>Continue <ArrowRight className="ml-1 h-4 w-4" /></Button>
+          <div className="flex gap-2">
+            <Button onClick={onBack}>
+              <ArrowLeft className="mr-1 h-4 w-4" /> Upload identity document
+            </Button>
+            <Button variant="outline" onClick={onNext}>
+              Skip for now <ArrowRight className="ml-1 h-4 w-4" />
+            </Button>
+          </div>
         </CardContent>
       </Card>
+    );
+  }
+
+  /**
+   * The secure check takes over the step while it is running.
+   *
+   * A sub-screen rather than a dialog: this is NPC's own journey — choose a
+   * document, read what to have ready, then a short trip out and back — and
+   * wrapping it in a modal would frame it as an interruption to the portal
+   * rather than a part of it.
+   */
+  if (checking) {
+    /**
+     * The LIVE party, re-read from the latest server state.
+     *
+     * `checking` is the party as it stood when the customer pressed Start, and
+     * it never changes again — so a sub-screen given it directly is looking at
+     * a snapshot. Found in a browser and not in jsdom: the capture screen
+     * polls, the poll refreshes `state`, and the customer sat on "Checking your
+     * identity" for ever because the object they were being judged against
+     * still said the check was in flight. The polling worked; nothing was
+     * reading its answer.
+     *
+     * Falls back to the snapshot if the party has gone from the list, which
+     * would otherwise unmount the screen out from under somebody mid-capture.
+     */
+    const live = state.parties.find(
+      (p) => (p.party_id ?? null) === (checking.party_id ?? null)) ?? checking;
+
+    /*
+     * There is exactly one branch, and that is the point.
+     *
+     * This used to choose between the capture journey and a hosted screen that
+     * opened the provider's own page in a new window. A backend saying `hosted`
+     * now reaches `hostedRetired` above, before this line, and never gets here
+     * — but even if it did, the only thing that can be rendered is NPC's own
+     * camera. A popup is not reachable from any state of this component.
+     */
+    return (
+      <SecureCaptureCheck
+        caseId={caseId}
+        party={live}
+        maxAttempts={state.max_attempts}
+        onRefresh={load}
+        onExit={async () => { setChecking(null); await load(); }}
+      />
     );
   }
 
@@ -211,7 +427,23 @@ export function IdentityVerificationStep({
                   // server will refuse collects a face for nothing (APP 3).
                   onClick={() => void startCapture(party)}
                 >
-                  {party.attempts_used > 0 ? (
+                  {/*
+                    Three labels, and the middle one matters most: a client
+                    who already has a check open has NOT failed and has NOT
+                    used anything up, so they are asked to continue rather
+                    than to try again. `verification_in_progress` is the
+                    server's answer and survives the refresh that loses every
+                    trace of the window on this side.
+                  */}
+                  {/*
+                    "Continue verification" is gone with the flow it belonged
+                    to. It meant "your window is still open" — and there is no
+                    window any more, so the only honest label for work in
+                    flight is one that offers to show progress.
+                  */}
+                  {party.verification_in_progress ? (
+                    <><Clock className="mr-1.5 h-3.5 w-3.5" /> Check progress</>
+                  ) : party.attempts_used > 0 ? (
                     <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Try again</>
                   ) : (
                     <><Camera className="mr-1.5 h-3.5 w-3.5" /> Start</>
@@ -219,6 +451,13 @@ export function IdentityVerificationStep({
                 </Button>
               ) : null}
             </div>
+
+            {party.verification_in_progress && party.can_attempt && (
+              <p className="mt-3 text-xs text-muted-foreground">
+                We are checking the photos you sent. You do not need to do anything — nothing has
+                been used up, and we will show the result here.
+              </p>
+            )}
 
             {party.retake_required && party.can_attempt && (
               <p className="mt-3 text-xs text-muted-foreground">
@@ -255,196 +494,702 @@ export function IdentityVerificationStep({
         </div>
       </CardContent>
 
-      {activeParty && (
-        <CaptureDialog
-          caseId={caseId}
-          party={activeParty}
-          onClose={() => setActiveParty(null)}
-          onDone={async () => { setActiveParty(null); await load(); }}
-          // A readiness refusal closes the dialog and re-reads status, so the
-          // client lands on the step's unavailable or manual-route state
-          // instead of being left pressing Submit against a dead provider.
-          onUnavailable={async () => { setActiveParty(null); await load(); }}
-        />
-      )}
     </Card>
   );
 }
 
-/* ─────────────────────────────── capture ────────────────────────────────── */
+/* ─────────────────── the hosted flow, and why it is gone ─────────────────── */
 
-function CaptureDialog({
-  caseId, party, onClose, onDone, onUnavailable,
+/**
+ * There is no hosted verification component here any more, and that absence is
+ * the feature.
+ *
+ * ## What was here
+ *
+ * `SecureIdentityCheck` — a screen that opened a separate top-level window at
+ * the provider's own session URL, painted a placeholder into it, polled for it
+ * closing, and listened for a return message. It existed so that hosted
+ * sessions opened before the Standalone cutover could still be completed by the
+ * customer who started them.
+ *
+ * ## Why it was deleted rather than disabled
+ *
+ * That grandfathering was revoked as a product decision: no customer may be
+ * sent to a verification vendor's page again. A component that is merely
+ * unreachable is one branch away from being reachable — a stale server, a
+ * misconfigured tenant, a future refactor of the flow token. Deleting it makes
+ * the guarantee structural: there is no code in this bundle that can open a
+ * window, so no state of the backend can produce one.
+ *
+ * ## What deliberately still exists, server-side
+ *
+ * Nothing about hosted RESULTS was removed. `didit-webhook`, the decision
+ * parsing, the correlation rules and every historical `provider = 'didit'` row
+ * are untouched: a late signed outcome for a session that was already completed
+ * is still accepted and still settles the canonical record. Retiring the
+ * capture UI is not erasing the evidence.
+ */
+
+/**
+ * A backend said `hosted`. Report it; never act on it.
+ *
+ * Defence in depth for the one thing this hotfix exists to make impossible. A
+ * stale deployment, a tenant still configured for the retired provider, or a
+ * response from a version of the server that predates the cutover all land
+ * here — and all of them get the documentary route, which is a real way
+ * forward, rather than a popup.
+ *
+ * Console only. This is an operator signal, not something to put in front of
+ * the customer, and it carries no session, URL or provider.
+ */
+function reportRetiredHostedFlow(caseId: string): void {
+  console.warn(
+    '[aml/identity] server reported a retired hosted verification flow; '
+    + 'rendering the documentary route instead',
+    { case_id: caseId },
+  );
+}
+
+/* ──────────────────── the NPC capture check (Standalone) ────────────────── */
+
+/**
+ * The whole identity check, inside NPC.
+ *
+ * Choose a document → read what to have ready → photograph its front → its
+ * back, only if that document has one → photograph your face → upload → wait.
+ * Nothing here opens a window, loads a third-party script, or sends an image
+ * anywhere except NPC's own private storage.
+ *
+ * ## Why preparation happens before the camera
+ *
+ * `prepareVerificationAttempt` is called from the Begin button and not from the
+ * first shutter press, because it is where the server checks provider
+ * readiness, the attempt ceiling, both consents and whether something is
+ * already processing. If any of those refuses, the customer has not yet taken a
+ * photograph and there is nothing to throw away. The previous shape asked for
+ * one upload grant, wrote the document, and then hit the gate — which is how
+ * production ended up holding nine identity documents belonging to submissions
+ * that never happened.
+ *
+ * It also returns the three storage locations, which the SERVER names. This
+ * component never constructs a path and never sends one back: submission is an
+ * attempt id, and everything else is read off the row the server already wrote.
+ *
+ * ## Preparing and photographing consume nothing
+ *
+ * A prepared attempt is a draft. Cancelling, closing the tab, retaking a photo
+ * ten times, or a failed upload all cost the customer nothing — the allowance
+ * moves only when the provider has actually examined a usable capture, and that
+ * decision is made on the server.
+ */
+
+/** The stages of the check, in the order they happen. */
+type CaptureStage =
+  /** Nothing chosen yet. */
+  | 'choose'
+  /** Document chosen; showing what to have ready. */
+  | 'brief'
+  /** Server is preparing the attempt. No camera yet, nothing written yet. */
+  | 'preparing'
+  | 'document_front'
+  | 'document_back'
+  | 'selfie'
+  /** Writing the photographs to NPC storage. */
+  | 'uploading'
+  /** Submitted. NPC is checking; the customer may leave. */
+  | 'processing'
+  /** Settled while they were watching. */
+  | 'received';
+
+/** A signed-URL PUT that failed, carrying the capture it was writing. */
+class CaptureUploadFailed extends Error {
+  constructor(message: string, readonly kind: IdentityCaptureKind) {
+    super(message);
+    this.name = 'CaptureUploadFailed';
+  }
+}
+
+/**
+ * How long to wait before each re-read while a check is processing.
+ *
+ * Bounded and backing off, and it stops. Three provider calls usually settle in
+ * under twenty seconds, so the early reads are close together and the later
+ * ones are not; after the last entry the page stops asking and waits for the
+ * customer to return, which the focus listener below handles for free.
+ *
+ * A fixed interval that never ended was the alternative, and it is how a portal
+ * left open on a desk becomes a request storm against the same endpoint for
+ * hours.
+ */
+const PROCESSING_POLL_MS = [2_000, 3_000, 4_000, 6_000, 8_000, 12_000, 15_000, 20_000, 30_000];
+
+/** Per-stage copy. Keeping it beside the stage list stops the two drifting. */
+const CAPTURE_COPY: Record<IdentityCaptureKind, {
+  title: string; description: string; facing: 'user' | 'environment';
+}> = {
+  document_front: {
+    title: 'Photograph the front of your document',
+    description: 'Lay it flat in good, even light. Fit the whole document in the frame — all '
+      + 'four corners visible — and check the text is readable before you continue. Do not crop '
+      + 'it in.',
+    facing: 'environment',
+  },
+  document_back: {
+    title: 'Now photograph the back',
+    description: 'Turn the card over and photograph the other side the same way — flat, whole, '
+      + 'and readable.',
+    facing: 'environment',
+  },
+  selfie: {
+    title: 'Take a photo of yourself',
+    description: 'Look straight at the camera in even lighting. Remove hats and sunglasses, and '
+      + 'make sure your whole face is in the frame.',
+    facing: 'user',
+  },
+};
+
+function SecureCaptureCheck({
+  caseId, party, maxAttempts, onRefresh, onExit,
 }: {
   caseId: string;
   party: AmlVerificationParty;
-  onClose: () => void;
-  onDone: () => void | Promise<void>;
-  onUnavailable: () => void | Promise<void>;
+  maxAttempts: number;
+  onRefresh: () => Promise<void>;
+  onExit: () => void | Promise<void>;
 }) {
-  const [stage, setStage] = useState<'document' | 'selfie' | 'submitting'>('document');
-  const [documentShot, setDocumentShot] = useState<Capture>(null);
-  const [selfieShot, setSelfieShot] = useState<Capture>(null);
+  const [stage, setStage] = useState<CaptureStage>(
+    // Somebody returning to a check that is already running should land on the
+    // waiting screen, not be offered a document picker for an attempt that is
+    // mid-flight. The server's boolean survives the refresh that loses
+    // everything on this side.
+    party.verification_in_progress ? 'processing' : 'choose',
+  );
+  const [choice, setChoice] = useState<IdentityDocumentChoice | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Guards a second submit from a double tap, before React re-renders. */
-  const submitting = useRef(false);
+  const [captures, setCaptures] = useState<Partial<Record<IdentityCaptureKind, Capture>>>({});
 
   /**
-   * Object URLs hold image data until revoked, so every one we mint is tracked
-   * and released on unmount. Revoking on each capture change — the previous
-   * shape here — released the document preview's URL the moment the selfie was
-   * taken, which is only invisible because that preview is off screen by then.
+   * The prepared attempt: its id and the three places the server told us to
+   * write. Held in memory only — none of it is a credential the customer keeps,
+   * and the upload permissions are short-lived by design.
+   */
+  const attempt = useRef<{
+    id: string;
+    required: { document_front: true; document_back: boolean; selfie: true };
+    uploads: Partial<Record<IdentityCaptureKind, { upload_url: string }>>;
+  } | null>(null);
+
+  /** Guards a second prepare/submit from a double tap, before React re-renders. */
+  const busy = useRef(false);
+
+  /**
+   * Every object URL minted, released on unmount.
+   *
+   * Tracked as a set rather than revoked per replacement: revoking the previous
+   * capture's URL when a new one is taken releases a preview that is still
+   * mounted behind the current stage, which shows as a broken image the moment
+   * anybody presses Back.
    */
   const urls = useRef<string[]>([]);
-  const setCapture = useCallback((
-    set: (c: Capture) => void, previous: Capture,
-  ) => (next: Capture) => {
-    if (previous) {
-      URL.revokeObjectURL(previous.url);
-      urls.current = urls.current.filter((u) => u !== previous.url);
-    }
-    if (next) urls.current.push(next.url);
-    set(next);
-  }, []);
   useEffect(() => () => {
     urls.current.forEach((u) => URL.revokeObjectURL(u));
     urls.current = [];
   }, []);
 
-  const submit = async () => {
-    if (submitting.current) return;
-    if (!documentShot || !selfieShot) {
-      // Never return silently: the customer pressed Submit and is owed a
-      // reason. Reaching this means a capture was lost, so send them back to
-      // the step that has to be redone rather than leaving Submit inert.
-      setError(!documentShot
-        ? 'The photo of your document was not kept. Please take it again.'
-        : 'The photo of your face was not kept. Please take it again.');
-      setStage(documentShot ? 'selfie' : 'document');
-      return;
-    }
-    submitting.current = true;
-    setStage('submitting');
+  const setCapture = useCallback((kind: IdentityCaptureKind) => (next: Capture) => {
+    setCaptures((prev) => {
+      const previous = prev[kind];
+      if (previous) {
+        URL.revokeObjectURL(previous.url);
+        urls.current = urls.current.filter((u) => u !== previous.url);
+      }
+      if (next) urls.current.push(next.url);
+      return { ...prev, [kind]: next };
+    });
+  }, []);
+
+  const plan = choice ? identityDocumentCapturePlan(choice) : null;
+  const chosen = choice ? IDENTITY_DOCUMENT_PRESENTATION[choice] : null;
+
+  /**
+   * Prepare the attempt, then open the camera.
+   *
+   * The order is the point, and it is the opposite of the popup rule the hosted
+   * flow had to satisfy: there is no window to open synchronously, so the
+   * server is asked first and the camera only opens once it has said yes.
+   */
+  const begin = useCallback(async (documentType: IdentityDocumentChoice) => {
+    if (busy.current) return;
+    busy.current = true;
     setError(null);
+    setStage('preparing');
     try {
-      /**
-       * Both signed-upload grants BEFORE either byte is written.
-       *
-       * The old order asked for the document URL and uploaded it, then asked
-       * for the selfie URL — and the selfie request is the gate: it is where
-       * the server checks provider readiness and remaining attempts. With no
-       * live provider that gate answers 409, so every attempt uploaded a
-       * customer's identity document to `aml-documents` and then abandoned the
-       * submission. Production accumulated nine orphaned documents and not one
-       * selfie, verification row or outbox event.
-       *
-       * Asking for the gated grant first means a refusal costs nothing: no
-       * object is written, no attempt is spent, and nothing needs cleaning up.
-       */
-      const selfieMeta = await amlPortalApi.requestVerificationUpload(caseId, 'selfie');
-      const documentMeta = await amlPortalApi.requestVerificationUpload(caseId, 'document');
-
-      const put = async (meta: { upload_url: string; path: string }, blob: Blob) => {
-        const res = await fetch(meta.upload_url, {
-          method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob,
-        });
-        if (!res.ok) throw new UploadFailed(`Upload failed (${res.status})`, meta.path);
-        return meta.path;
-      };
-
-      const docPath = await put(documentMeta, documentShot.blob);
-      const selfiePath = await put(selfieMeta, selfieShot.blob);
-
-      const res = await amlPortalApi.submitVerification(caseId, {
-        party_id: party.party_id,
-        party_label: party.label,
-        document_storage_path: docPath,
-        selfie_storage_path: selfiePath,
+      const prepared = await amlPortalApi.prepareVerificationAttempt(caseId, {
+        party_id: party.party_id, party_label: party.label, document_type: documentType,
       });
-      toast.success(res.message);
-      await onDone();
-    } catch (e: any) {
-      // A readiness refusal is not a capture problem, and leaving the client
-      // in the camera to press Submit again against a provider that cannot
-      // serve them is a dead end. Hand it back to the step, which renders the
-      // correct unavailable or manual-route state.
-      if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {
-        await onUnavailable();
+      attempt.current = {
+        id: prepared.attempt_id,
+        required: prepared.required,
+        uploads: prepared.uploads,
+      };
+      setStage('document_front');
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
+      if (err?.code && UNAVAILABLE_CODES.includes(err.code)) {
+        // Provider gone, manual route, attempts exhausted, or something already
+        // processing. The step owns what the customer is shown for each of
+        // these, and none of them is "verification failed".
+        toast.info(err.message ?? 'Verification is unavailable just now.');
+        await onExit();
         return;
       }
-      setError(e?.message ?? 'Something went wrong. Please try again.');
+      setStage(err?.code === 'unsupported_document_type' ? 'choose' : 'brief');
+      setError(err?.message
+        ?? 'We could not start the check just now. Nothing has been used up — please try '
+        + 'again in a moment.');
+    } finally {
+      busy.current = false;
+    }
+  }, [caseId, party.party_id, party.label, onExit]);
+
+  /**
+   * Upload every required photograph, then submit the attempt id.
+   *
+   * The images go to the exact objects the server named at preparation, over
+   * signed permissions it minted. There is no path in this request and no
+   * choice about where anything lands.
+   */
+  const submit = useCallback(async () => {
+    if (busy.current) return;
+    const prepared = attempt.current;
+    if (!prepared) {
+      setError('Your check needs to be started again. Nothing has been used up.');
+      setStage('choose');
+      return;
+    }
+    busy.current = true;
+    setStage('uploading');
+    setError(null);
+    try {
+      for (const kind of ['document_front', 'document_back', 'selfie'] as const) {
+        if (!prepared.required[kind]) continue;
+        const shot = captures[kind];
+        const grant = prepared.uploads[kind];
+        if (!shot || !grant) {
+          // A capture was lost between taking it and sending it. Send them back
+          // to the one that has to be redone rather than failing silently.
+          setError('One of your photos was not kept. Please take it again.');
+          setStage(kind);
+          return;
+        }
+        const res = await fetch(grant.upload_url, {
+          method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: shot.blob,
+        });
+        if (!res.ok) throw new CaptureUploadFailed(`Upload failed (${res.status})`, kind);
+      }
+
+      const result = await amlPortalApi.submitVerificationAttempt(caseId, prepared.id);
+      toast.success(result.message);
+      setStage('processing');
+      await onRefresh();
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string; retake?: IdentityCaptureKind[] };
+      if (err?.code && UNAVAILABLE_CODES.includes(err.code)) {
+        toast.info(err.message ?? 'Verification is unavailable just now.');
+        await onExit();
+        return;
+      }
+      if (err?.code === 'capture_incomplete' && err.retake?.length) {
+        // The server checked the objects and one of them is not there. Name the
+        // photograph rather than the failure.
+        setError('One of your photos did not upload properly. Please take it again.');
+        setStage(err.retake[0]);
+        return;
+      }
+      if (e instanceof CaptureUploadFailed) {
+        setError('That photo did not upload. Please check your connection and try again — '
+          + 'nothing has been used up.');
+        setStage(e.kind);
+        return;
+      }
+      setError(err?.message ?? 'Something went wrong. Nothing has been used up — please try '
+        + 'again.');
       setStage('selfie');
     } finally {
-      submitting.current = false;
+      busy.current = false;
     }
-  };
+  }, [caseId, captures, onExit, onRefresh]);
+
+  /**
+   * Watch for the result, briefly.
+   *
+   * Backing off and finite (see `PROCESSING_POLL_MS`), and it stops the moment
+   * the server says the check is no longer in flight. `onRefresh` re-reads the
+   * canonical status — this component never decides anything from the answer
+   * beyond which sentence to show.
+   */
+  useEffect(() => {
+    if (stage !== 'processing') return;
+    let cancelled = false;
+    let index = 0;
+    let timer = 0;
+
+    const tick = async () => {
+      if (cancelled) return;
+      await onRefresh();
+      if (cancelled) return;
+      if (index < PROCESSING_POLL_MS.length) {
+        timer = window.setTimeout(tick, PROCESSING_POLL_MS[index++]);
+      }
+      // Past the last delay we simply stop. The focus listener below picks the
+      // customer up when they come back, and the step re-reads on mount.
+    };
+
+    timer = window.setTimeout(tick, PROCESSING_POLL_MS[index++]);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [stage, onRefresh]);
+
+  /**
+   * Coming back to the tab is itself a signal.
+   *
+   * Somebody who left while the check ran should find the answer waiting, not a
+   * spinner that gave up. Guarded on `document.hidden` so a window that was
+   * never hidden does not re-read on every focus event.
+   */
+  useEffect(() => {
+    if (stage !== 'processing') return;
+    const refresh = () => { if (!document.hidden) void onRefresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [stage, onRefresh]);
+
+  /**
+   * The check settled while they watched.
+   *
+   * Read from the party the parent re-loaded — never from anything this
+   * component worked out. `verification_in_progress` going false is the
+   * server's statement that processing finished; what it finished as is the
+   * step's to render, not this screen's.
+   */
+  useEffect(() => {
+    if (stage !== 'processing') return;
+    if (!party.verification_in_progress && party.status !== 'not_started') {
+      setStage('received');
+    }
+  }, [stage, party.verification_in_progress, party.status]);
+
+  const captureStage = stage === 'document_front' || stage === 'document_back'
+    || stage === 'selfie' ? stage : null;
+
+  /**
+   * The card heading.
+   *
+   * Deliberately NEUTRAL for the two waiting states. The state itself is
+   * carried by the live region below, which is the element a screen reader is
+   * told about — putting it in the title as well printed "Checking your
+   * identity" twice, one line apart, which reads as a rendering fault rather
+   * than emphasis. Seen in a browser; jsdom queries do not notice a duplicate.
+   */
+  const title = captureStage ? CAPTURE_COPY[captureStage].title
+    : stage === 'processing' || stage === 'received' ? 'Identity verification'
+      : 'Verify your identity';
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Verify ${party.label}`}
-    >
-      <Card className="max-h-full w-full max-w-lg overflow-y-auto">
-        <CardHeader>
-          <CardTitle className="text-base">
-            {stage === 'document' ? 'Step 1 — photograph your ID'
-              : stage === 'selfie' ? 'Step 2 — take a photo of yourself'
-                : 'Sending…'}
-          </CardTitle>
-          <CardDescription>
-            {stage === 'document'
-              ? 'Place your passport or driver licence on a flat surface in good light. Make sure the whole document is in frame and the text is readable.'
-              : stage === 'selfie'
-                ? 'Look straight at the camera in even lighting. Remove hats and sunglasses.'
-                : 'Uploading securely.'}
-          </CardDescription>
-        </CardHeader>
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
+          {title}
+        </CardTitle>
+        <CardDescription>
+          {party.label}
+          {chosen && stage !== 'choose' && <> · {chosen.label}</>}
+        </CardDescription>
+      </CardHeader>
 
-        <CardContent className="space-y-4">
-          {error && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
+      <CardContent className="space-y-5">
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-          {stage === 'document' && (
-            <CameraCapture
-              facing="environment"
-              existing={documentShot}
-              onCapture={setCapture(setDocumentShot, documentShot)}
-              onConfirm={() => setStage('selfie')}
-            />
-          )}
-
-          {stage === 'selfie' && (
-            <CameraCapture
-              facing="user"
-              existing={selfieShot}
-              onCapture={setCapture(setSelfieShot, selfieShot)}
-              onConfirm={submit}
-              confirmLabel="Submit"
-            />
-          )}
-
-          {stage === 'submitting' && (
-            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Sending your photos securely…
+        {/* ── A. Which document ─────────────────────────────────────────── */}
+        {stage === 'choose' && (
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-sm font-medium">Which identity document will you use?</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Choose the document you have with you. We only need one.
+              </p>
             </div>
-          )}
 
-          {stage !== 'submitting' && (
-            <Button variant="ghost" size="sm" onClick={onClose} className="w-full">
-              Cancel
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            {/*
+              A radio group and not a row of buttons: this is a single choice
+              from a short closed list, so arrow keys should move through it,
+              the label should be clickable, and a screen reader should hear
+              "2 of 4". Pressing an option does not start anything — the launch
+              screen is a separate, deliberate step.
+
+              `?? ''` and not `?? undefined`: an undefined value makes the group
+              UNCONTROLLED, and an uncontrolled group tracks its own selection
+              while ours stays null — the option looked chosen and Continue
+              stayed disabled. Found in a browser, not in jsdom.
+            */}
+            <RadioGroup
+              value={choice ?? ''}
+              onValueChange={(v) => setChoice(v as IdentityDocumentChoice)}
+              aria-label="Identity document"
+              className="gap-2"
+            >
+              {IDENTITY_DOCUMENT_CHOICES.map((option) => {
+                const presentation = IDENTITY_DOCUMENT_PRESENTATION[option];
+                const id = `identity-document-${option}`;
+                return (
+                  /*
+                    The label is a SIBLING of the control, not its wrapper.
+                    Measured in a browser: with the label wrapped around the
+                    radio, arrow keys did not move between options at all — the
+                    list could be tabbed into and then not moved through, which
+                    is the whole of keyboard operation for a radio group.
+                  */
+                  <div
+                    key={option}
+                    className="flex items-start gap-3 rounded-md border p-3 transition-colors
+                      hover:bg-accent/50 has-[[data-state=checked]]:border-primary
+                      has-[[data-state=checked]]:bg-accent/40 motion-reduce:transition-none"
+                  >
+                    <RadioGroupItem value={option} id={id} className="mt-0.5" />
+                    <Label htmlFor={id} className="flex-1 cursor-pointer space-y-0.5 font-normal">
+                      <span className="block text-sm font-medium">{presentation.label}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {presentation.hint}
+                      </span>
+                    </Label>
+                  </div>
+                );
+              })}
+            </RadioGroup>
+
+            <div className="flex flex-wrap justify-between gap-2">
+              <Button variant="outline" onClick={() => void onExit()}>
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Back
+              </Button>
+              <Button disabled={!choice} onClick={() => { setStage('brief'); setError(null); }}>
+                Continue <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── B. What to have ready ─────────────────────────────────────── */}
+        {stage === 'brief' && choice && chosen && plan && (
+          <div className="space-y-4">
+            <div className="rounded-md border p-4">
+              <div className="text-sm font-medium">{chosen.label}</div>
+              <p className="mt-3 text-xs font-medium text-muted-foreground">You will need:</p>
+              <ul className="mt-2 space-y-1.5">
+                {identityCheckRequirements(choice).map((requirement) => (
+                  <li key={requirement} className="flex items-start gap-2 text-sm">
+                    <CheckCircle2
+                      className="mt-0.5 h-4 w-4 shrink-0 text-success"
+                      aria-hidden="true"
+                    />
+                    <span>{requirement}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/*
+              Said before the camera opens, not after. Somebody is about to be
+              asked for a camera permission and then for a photograph of their
+              face, and being told how many photographs and in what order is
+              the difference between a step and a surprise.
+            */}
+            <div className="rounded-md border p-4">
+              <p className="text-xs font-medium text-muted-foreground">
+                {plan.document_back ? 'Three photos, on this page:' : 'Two photos, on this page:'}
+              </p>
+              <ol className="mt-2 space-y-1 text-sm">
+                <li>1. The front of your {chosen.label.toLowerCase()}</li>
+                {plan.document_back && <li>2. The back of it</li>}
+                <li>{plan.document_back ? '3.' : '2.'} A photo of your face</li>
+              </ol>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Everything stays on this page — nothing opens a new window and nothing takes you
+                to another site. Your photos are sent securely to us, and we check them for you.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap justify-between gap-2">
+              <Button variant="outline" onClick={() => { setStage('choose'); setError(null); }}>
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Change document
+              </Button>
+              <Button onClick={() => void begin(choice)}>
+                <Camera className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                Begin secure verification
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── C. Preparing ──────────────────────────────────────────────── */}
+        {stage === 'preparing' && (
+          <div className="rounded-md border p-4" role="status" aria-live="polite">
+            <p className="flex items-center gap-2 text-sm">
+              <Loader2
+                className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              Preparing your secure identity check…
+            </p>
+          </div>
+        )}
+
+        {/* ── D–F. The three captures ───────────────────────────────────── */}
+        {captureStage && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {CAPTURE_COPY[captureStage].description}
+            </p>
+            <CameraCapture
+              // Keyed on the stage so moving between captures rebuilds the
+              // component: without it the acquisition effect sees the same
+              // `facing` value and never reopens the stream, which leaves a
+              // black preview and a dead shutter with no way out but a reload.
+              key={captureStage}
+              facing={CAPTURE_COPY[captureStage].facing}
+              existing={captures[captureStage] ?? null}
+              onCapture={setCapture(captureStage)}
+              confirmLabel={captureStage === 'selfie' ? 'Send securely' : 'Use this photo'}
+              onConfirm={() => {
+                setError(null);
+                if (captureStage === 'document_front') {
+                  setStage(attempt.current?.required.document_back ? 'document_back' : 'selfie');
+                } else if (captureStage === 'document_back') {
+                  setStage('selfie');
+                } else {
+                  void submit();
+                }
+              }}
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setError(null);
+                  if (captureStage === 'selfie' && attempt.current?.required.document_back) {
+                    setStage('document_back');
+                  } else if (captureStage === 'selfie' || captureStage === 'document_back') {
+                    setStage('document_front');
+                  } else {
+                    // Leaving before anything is uploaded. The prepared attempt
+                    // is a draft and stays one; nothing has been used up.
+                    void onExit();
+                  }
+                }}
+              >
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" />
+                {captureStage === 'document_front' ? 'Cancel' : 'Back'}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {captureStage === 'selfie' && attempt.current?.required.document_back
+                  ? 'Step 3 of 3'
+                  : captureStage === 'selfie' ? 'Step 2 of 2'
+                    : captureStage === 'document_back' ? 'Step 2 of 3' : 'Step 1'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* ── G. Uploading ──────────────────────────────────────────────── */}
+        {stage === 'uploading' && (
+          <div className="rounded-md border p-4" role="status" aria-live="polite">
+            <p className="flex items-center gap-2 text-sm">
+              <Loader2
+                className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+              Uploading securely…
+            </p>
+          </div>
+        )}
+
+        {/* ── H–I. Waiting, and the result ──────────────────────────────── */}
+        {(stage === 'processing' || stage === 'received') && (
+          <div className="space-y-4">
+            <div className="rounded-md border p-4" role="status" aria-live="polite">
+              {stage === 'processing' ? (
+                <div className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <Clock className="h-4 w-4 text-primary" aria-hidden="true" />
+                    Checking your identity
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Your photos were received securely. This usually takes under a minute. You can
+                    keep this page open, or come back later — we will show the result here.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
+                    Verification received
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Thank you. There is nothing else for you to do here.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button variant="outline" onClick={() => void onExit()}>
+                <ArrowLeft className="mr-1 h-4 w-4" aria-hidden="true" /> Back to identity
+              </Button>
+              {stage === 'processing' && (
+                <Button variant="outline" onClick={() => void onRefresh()}>
+                  <RefreshCw className="mr-1.5 h-4 w-4" aria-hidden="true" /> Check now
+                </Button>
+              )}
+              {stage === 'received' && (
+                <Button onClick={() => void onExit()}>
+                  Return to Identity &amp; Compliance
+                  <ArrowRight className="ml-1 h-4 w-4" aria-hidden="true" />
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/*
+          The documentary route stays on every screen of this flow. Consent to
+          biometric collection is genuinely optional (APP 3.3), so refusing has
+          to be visible at the moment somebody decides to refuse — not hidden
+          behind the check they are declining.
+        */}
+        <Alert>
+          <AlertTitle className="text-sm">Prefer not to use the photo check?</AlertTitle>
+          <AlertDescription className="text-xs">
+            You do not have to. Tell your adviser and we will verify your identity from original
+            or certified copies of your documents instead. It takes a little longer, you keep all
+            {' '}{maxAttempts} attempts, and there is no disadvantage to you.
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </Card>
   );
 }
+
+
 
 /**
  * Camera capture with an explicit file-upload fallback.

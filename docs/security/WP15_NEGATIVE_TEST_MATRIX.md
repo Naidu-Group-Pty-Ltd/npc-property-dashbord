@@ -33,17 +33,17 @@ Store results at `docs/security/wp15-evidence/<date>/negative-tests.jsonl`.
 | NT-17 | Step-up gated endpoint | Reuse of consumed step-up token | 401 `step_up_replayed` |
 | NT-18 | Commission ledger writer | Duplicate commit for same (payout_id, milestone) | 409 `duplicate_commit` |
 | NT-19 | Any external send fn (email/SMS/WhatsApp) | Send twice with same idempotency key within window | 409 `duplicate_send` |
-| NT-20 | Storage — direct URL to sensitive bucket object | GET without signed URL | 403 |
-| NT-21 | Storage — signed URL from Client A rebound to Client B path | 403 `binding_mismatch` |
+| NT-20 | Storage — direct URL to sensitive bucket object | GET the public-object route **and** anon `list()` on 10 private buckets | neither serves bytes nor enumerates — **implemented, WP-26** |
+| NT-21 | Storage — signed URL not issued by this project | Forged signed-URL tokens, plus an anon attempt to mint one | no forged token delivers an object; the publishable key cannot mint — **implemented, WP-26** |
 | NT-22 | Public forms (`request-lead-magnet`, marketing) | CSRF: POST without Origin / Referer | 403 |
 | NT-23 | Public forms | Missing/failed Turnstile token | 403 `human_verification_failed` |
 | NT-24 | `render-source` | ZIP payload > 15 MB base64 | 413 |
 | NT-25 | `render-source` | URL host `127.0.0.1`, `2130706433`, `[::1]`, `0x7f.0.0.1`, `169.254.169.254` | 400 `ssrf_denied` |
-| NT-26 | `outlook-email-webhook` | Replay identical Graph notification | second call responds 200 with `skipped:true`, no side effect |
-| NT-27 | `outlook-email-webhook` | `clientState` mismatch | 401 |
+| NT-26 | `outlook-email-webhook` | Replay identical Graph notification | second call reports the tuple already claimed — **implemented, WP-26; needs `OUTLOOK_WEBHOOK_CLIENT_STATE`, else `skipped`** |
+| NT-27 | `outlook-email-webhook` | `clientState` mismatch | 401 — **implemented, WP-26** |
 | NT-28 | Metering (Mission Control token spend) | Force Mission Control 5xx → verify graceful degradation, no unpaid generation | 503 with `metering_unavailable` |
-| NT-29 | Public quota boundary | Exceed sliding-window quota on `google-places-autocomplete` | 429 `quota_exhausted` |
-| NT-30 | Cookie theft / session fixation | Reuse portal cookie from another IP after idle timeout | 401 `session_expired` |
+| NT-29 | Public quota boundary | Exceed the 30/60s IP quota on `google-places-autocomplete` | 429 — **implemented, WP-26; opt-in via `RUN_QUOTA_TEST` because it bills ~30 Places calls, else `skipped`** |
+| NT-30 | Portal session token not issued by this project | Forged token through all four carriers `extractPortalToken` accepts | every carrier 401/403 — **implemented, WP-26** |
 | NT-31 | Oversized attachment on ingest endpoints | > declared cap | 413 |
 | NT-32 | Enumerate cross-user IDs on finance / clients / reports | UUID from another tenant | 403/404 (never leak existence) |
 | NT-33 | `security-step-up` enrolled TOTP user | Missing, malformed, or incorrect `mfa_code` | 401 `mfa_verification_required`; no proof minted |
@@ -53,6 +53,76 @@ Store results at `docs/security/wp15-evidence/<date>/negative-tests.jsonl`.
 
 ## Automation hooks
 
-The negative-test runner lives at `scripts/security/wp15-negative-tests.mjs`
-(to be added by the QA owner). It reads `WP15_NEGATIVE_TEST_MATRIX.md` inline
-IDs and posts each request via `fetch()` with expected status codes.
+The negative-test runner lives at `scripts/security/wp15-negative-tests.mjs`.
+It posts each request via `fetch()` and asserts the expected status codes,
+emitting one JSON line per row into
+`docs/security/wp15-evidence/<date>/negative-tests.jsonl`.
+
+It implements **17 of the rows in this document**, not all of them. The rest
+need a real user session, a provider fixture, or a state the harness cannot
+manufacture from outside; each is still listed above so the gap is visible
+rather than absent.
+
+---
+
+## Rows added by the 20-item programme (WP-16 … WP-21)
+
+| ID | Target | Attack | Expected result |
+|----|--------|--------|-----------------|
+| NT-37 | `template-share` (any browser-session fn) | Credentialed request with `Origin: https://negative-test.invalid` | `Access-Control-Allow-Origin` is neither `*` nor the request origin |
+| NT-38 | `get-client-data` | UUID belonging to another tenant, ordinary staff token | 401/403/404, and no row (never leak existence) |
+| NT-39 | `aml-monitoring` `upsert_alert` | Write naming `resolved_by`, a column no request may set | 401/403 |
+| NT-40 | any | Every 5xx seen during the run | no schema detail in any body — no `relation "…"`, `column "…"`, `constraint "…"`, `permission denied for table`, or stack frame |
+
+NT-40 is asserted over whatever responses the run happened to produce rather
+than by provoking a failure. Deliberately breaking a production endpoint to
+watch it break is not a test worth running against a live system, and this
+catches the same regression whenever any other row trips a 5xx.
+
+NT-39 asserts the authorization denial, which is what an ordinary staff token
+can reach. Proving the field allowlist itself needs an AML-write session, so
+that stays a source-level concern in
+`scripts/security/check-mass-assignment.mjs`.
+
+## Rows added by WP-26 — the four items with a gate and no live row
+
+NT-20, NT-21, NT-26, NT-27, NT-29 and NT-30 were declared in the table above
+from the beginning and implemented in the runner by nothing, which left items
+5, 10, 16 and 20 with a CI gate and no way to ask the deployed system anything
+at all. They are implemented now; the rows above carry the detail.
+
+Two of them are conditional, and both conditions are about cost rather than
+difficulty:
+
+| Row | Condition | Why |
+|---|---|---|
+| NT-26 | `OUTLOOK_WEBHOOK_CLIENT_STATE` | Idempotency is checked *after* the `clientState` match — correctly, since a caller who could claim nonces unauthenticated could poison the dedupe table. Proving it needs the live webhook secret, and putting that in CI is a second place for it to leak. |
+| NT-29 | `RUN_QUOTA_TEST=true` | The quota is consumed *before* the vendor call, so observing the 429 means ~30 billable Google Places requests first. Per [`API_USAGE_METERING.md`](../integrations/API_USAGE_METERING.md) this deployment may be spending the prime's credential. |
+
+Both record themselves as `skipped` with the reason when the condition is
+absent. A `skipped` row does not fail the run. That is deliberate: the
+alternative — the row simply not existing in the harness — is what "declared but
+unimplemented" meant before, and in the evidence file it is indistinguishable
+from a row that passed.
+
+Two rows were also **reworded to what is actually testable**, rather than being
+left aspirational:
+
+- **NT-21** said "Client A's signed URL rebound to Client B's path", which needs
+  two live portal sessions and a real object in each. What it asserts instead is
+  the property underneath: that the signature is *verified* rather than merely
+  present — a well-formed token this project never signed must be refused, and
+  the publishable key must not be able to mint one.
+- **NT-30** said "reuse a portal cookie from another IP after idle timeout". The
+  idle-timeout half cannot be manufactured from outside. What it asserts is that
+  the token is looked up and validated rather than trusted for being present —
+  through all four carriers `extractPortalToken` accepts, because a control that
+  holds on the header and not the body is not a control.
+
+## Running it
+
+`.github/workflows/security-negative-tests.yml`, `workflow_dispatch` only.
+Runbook: [`runbooks/live-negative-tests.md`](./runbooks/live-negative-tests.md).
+
+`result` is one of `expected_denial`, `FAIL` or `skipped`; the run exits
+non-zero iff any row is `FAIL`.

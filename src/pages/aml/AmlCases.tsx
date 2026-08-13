@@ -9,9 +9,14 @@ import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import {
   amlCasesApi, AmlCase, AmlCaseStatus, AmlRiskRating,
 } from "@/lib/aml/amlCasesApi";
+import { CASE_STATUS_LABELS } from "@/lib/aml/caseDimensions";
 import {
-  CASE_STATUS_LABELS, caseStage, serviceGateStatus,
-} from "@/lib/aml/caseDimensions";
+  deriveAmlCaseAttention, deriveAmlMacroPhase, MACRO_PHASE_LABELS,
+  serviceReadinessLabel,
+} from "@/lib/aml/workspaceViewModel";
+import { ATTENTION_TEXT, READINESS_TEXT } from "@/components/aml/workspace";
+import { displayRelative } from "@/lib/aml/displayDate";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,11 +38,9 @@ import {
   AmlAccessGate,
   AmlEmptyState,
   AmlErrorState,
-  AmlGateBadge,
   AmlPageHeader,
   AmlRefreshButton,
   AmlRiskBadge,
-  AmlStageBadge,
 } from "@/components/aml/primitives";
 
 const SUBJECT_TYPE_LABELS: Record<string, string> = {
@@ -51,19 +54,36 @@ const RISK_FILTER_LABELS: Record<string, string> = {
 /**
  * Saved views (directive §10.3): one-click presets over the register filters.
  * Also addressable as `?view=<key>` so Compliance Home metrics can deep-link
- * to the exact queue a count was computed from.
+ * to the exact queue a count was computed from — every key that has ever been
+ * linked is preserved, only the labels were made plainer.
+ *
+ * Almost every view is a server filter. "Needs attention" is the exception:
+ * there is no server-side predicate for it, so it refines the rows the
+ * register already loaded using the same row-only reading the Attention
+ * column shows. When the register is truncated the page says so rather than
+ * implying the count is the whole register.
  */
 const SAVED_VIEWS: Array<{
-  key: string; label: string;
+  key: string;
+  label: string;
   filters: { status?: string; risk?: string; assignedToMe?: boolean };
+  /** Applied to the loaded page, not the query. */
+  refine?: (c: AmlCase) => boolean;
 }> = [
   { key: "all", label: "All open", filters: {} },
-  { key: "my_queue", label: "My queue", filters: { assignedToMe: true } },
-  { key: "onboarding", label: "Onboarding", filters: { status: "kyc_in_progress" } },
+  { key: "my_queue", label: "My cases", filters: { assignedToMe: true } },
+  {
+    key: "needs_attention",
+    label: "Needs attention",
+    filters: {},
+    refine: (c) => deriveAmlCaseAttention(c).needsAttention,
+  },
+  { key: "onboarding", label: "Awaiting client", filters: { status: "kyc_in_progress" } },
   { key: "awaiting_review", label: "Awaiting review", filters: { status: "kyc_complete" } },
-  { key: "additional_info", label: "Additional information", filters: { status: "edd_required" } },
-  { key: "awaiting_decision", label: "Awaiting decision", filters: { status: "escalated_mlro" } },
+  { key: "additional_info", label: "Information outstanding", filters: { status: "edd_required" } },
+  { key: "awaiting_decision", label: "Ready for decision", filters: { status: "escalated_mlro" } },
   { key: "high_risk", label: "High risk", filters: { risk: "high" } },
+  { key: "blocked", label: "Blocked", filters: { status: "blocked" } },
   { key: "cleared", label: "Cleared", filters: { status: "cleared" } },
   { key: "closed", label: "Closed", filters: { status: "closed" } },
 ];
@@ -205,6 +225,15 @@ export default function AmlCasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access.hasAnyRole, access.flagEnabled, status, risk, assignedToMe]);
 
+  // The active view may refine the loaded page (see SAVED_VIEWS). Rows are
+  // never invented — this only hides rows the reading says are quiet.
+  const refine = SAVED_VIEWS.find((v) => v.key === view)?.refine;
+  const visibleCases = useMemo(
+    () => (refine ? cases.filter(refine) : cases),
+    [cases, refine],
+  );
+  const refinedFromTruncatedPage = Boolean(refine) && total > cases.length;
+
   const activeFilterLabels = useMemo(() => {
     const labels: string[] = [];
     if (status !== "all") labels.push(`Status: ${CASE_STATUS_LABELS[status as AmlCaseStatus] ?? status}`);
@@ -339,9 +368,11 @@ export default function AmlCasesPage() {
           <span>
             {loading
               ? "Loading cases…"
-              : total > cases.length
-                ? `Showing the first ${cases.length} of ${total} cases`
-                : `${total} case${total === 1 ? "" : "s"}`}
+              : refine
+                ? `${visibleCases.length} of ${cases.length} loaded case${cases.length === 1 ? "" : "s"} need attention`
+                : total > cases.length
+                  ? `Showing the first ${cases.length} of ${total} cases`
+                  : `${total} case${total === 1 ? "" : "s"}`}
           </span>
           {activeFilterLabels.map((label) => (
             <span key={label} className="rounded-full bg-muted px-2 py-0.5">{label}</span>
@@ -380,8 +411,22 @@ export default function AmlCasesPage() {
                 <Skeleton key={i} className="h-12 w-full" aria-hidden="true" />
               ))}
             </div>
-          ) : cases.length === 0 && !loadError ? (
-            hasActiveFilters ? (
+          ) : visibleCases.length === 0 && !loadError ? (
+            refine ? (
+              <AmlEmptyState
+                title="Nothing needs attention"
+                body={
+                  refinedFromTruncatedPage
+                    ? `None of the ${cases.length} loaded cases is waiting on a decision or a chase. The register holds ${total} in total — narrow the filters to check the rest.`
+                    : "No case in the register is waiting on a decision or a chase."
+                }
+                action={
+                  <Button size="sm" variant="outline" onClick={() => selectView("all")}>
+                    Show all open cases
+                  </Button>
+                }
+              />
+            ) : hasActiveFilters ? (
               <AmlEmptyState
                 title="No cases match the current filters"
                 body="Widen the search or clear a filter to see more of the register."
@@ -399,54 +444,88 @@ export default function AmlCasesPage() {
             )
           ) : (
             <>
-              {/* Desktop: commercial data table (directive §10.1) */}
+              {/* Desktop: the work queue. Columns answer, left to right:
+                  who, where in the process, how risky, may the service
+                  proceed, what is waiting — then ownership and freshness.
+                  Phase and owner fold away on narrower laptops rather than
+                  squeezing the first five into an unreadable width. */}
               <div className="hidden max-h-[58vh] overflow-auto md:block">
                 <Table aria-label="Case register">
                   <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                     <TableRow>
-                      <TableHead scope="col">Client / subject</TableHead>
-                      <TableHead scope="col">Reference</TableHead>
-                      <TableHead scope="col">Type</TableHead>
-                      <TableHead scope="col">Stage</TableHead>
+                      <TableHead scope="col">Customer</TableHead>
+                      <TableHead scope="col" className="hidden lg:table-cell">Phase</TableHead>
                       <TableHead scope="col">Risk</TableHead>
-                      <TableHead scope="col">Service gate</TableHead>
+                      <TableHead scope="col">Service</TableHead>
+                      <TableHead scope="col">Attention</TableHead>
+                      <TableHead scope="col" className="hidden xl:table-cell">Owner</TableHead>
                       <TableHead scope="col">Updated</TableHead>
-                      <TableHead scope="col">
+                      <TableHead scope="col" className="hidden xl:table-cell">
                         <span className="sr-only">Open</span>
                       </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {cases.map((c) => {
-                      const gate = serviceGateStatus(c);
+                    {visibleCases.map((c) => {
+                      const attention = deriveAmlCaseAttention(c);
+                      const readiness = serviceReadinessLabel(c);
+                      const phase = deriveAmlMacroPhase({ caseRow: c }).phase;
                       return (
                         <TableRow
                           key={c.id}
                           tabIndex={0}
                           role="link"
-                          aria-label={`Open case ${c.case_reference} for ${c.subject_display_name}`}
+                          aria-label={`Open case ${c.case_reference} for ${c.subject_display_name} — ${attention.detail}`}
                           className="cursor-pointer border-l-2 border-l-transparent transition-colors hover:border-l-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                           onClick={() => openCase(c)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCase(c); }
                           }}
                         >
-                          <TableCell className="max-w-[280px] font-medium">
-                            <span className="block truncate" title={c.subject_display_name}>
+                          <TableCell className="max-w-[280px]">
+                            <span className="block truncate font-medium" title={c.subject_display_name}>
                               {c.subject_display_name}
                             </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {c.case_reference} · {SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type}
+                              {c.purchase_file_id ? " · purchase file" : ""}
+                            </span>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-muted-foreground">{c.case_reference}</TableCell>
-                          <TableCell>{SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type}</TableCell>
-                          <TableCell><AmlStageBadge stage={caseStage(c)} /></TableCell>
+                          <TableCell className="hidden whitespace-nowrap text-sm lg:table-cell">
+                            {MACRO_PHASE_LABELS[phase]}
+                          </TableCell>
                           <TableCell><AmlRiskBadge risk={c.risk_rating} /></TableCell>
-                          <TableCell><AmlGateBadge gate={gate} /></TableCell>
-                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                            {new Date(c.updated_at).toLocaleDateString()}
+                          <TableCell
+                            className={cn("whitespace-nowrap text-sm", READINESS_TEXT[readiness.level])}
+                          >
+                            {readiness.label}
                           </TableCell>
-                          <TableCell className="text-right">
-                            {/* Explicit action alongside the row-as-link,
-                                for anyone who misses the row affordance. */}
+                          {/* The attention label wraps rather than
+                              truncating — "Conditions outstan…" is not a
+                              status anybody can act on, and the row is
+                              already two lines tall. */}
+                          <TableCell className="max-w-[220px]">
+                            <span
+                              className={cn("block text-sm", ATTENTION_TEXT[attention.level])}
+                              title={attention.detail}
+                            >
+                              {attention.needsAttention && (
+                                <span aria-hidden className="mr-1.5">•</span>
+                              )}
+                              {attention.label}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
+                            {c.assigned_analyst_id || c.assigned_mlro_id ? "Assigned" : "Unassigned"}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {displayRelative(c.updated_at)}
+                          </TableCell>
+                          <TableCell className="hidden text-right xl:table-cell">
+                            {/* Explicit action alongside the row-as-link, for
+                                anyone who misses the row affordance. It folds
+                                away below xl, where the columns that carry
+                                actual information need the width. */}
                             <Button
                               size="sm"
                               variant="ghost"
@@ -466,31 +545,41 @@ export default function AmlCasesPage() {
 
               {/* Mobile: responsive cards (directive §6.2) */}
               <div className="space-y-2 md:hidden">
-                {cases.map((c) => {
-                  const gate = serviceGateStatus(c);
+                {visibleCases.map((c) => {
+                  const attention = deriveAmlCaseAttention(c);
+                  const readiness = serviceReadinessLabel(c);
+                  const phase = deriveAmlMacroPhase({ caseRow: c }).phase;
                   return (
                     <button
                       key={c.id}
                       onClick={() => openCase(c)}
                       className="w-full rounded-xl border border-border bg-card/60 p-3 text-left shadow-sm transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-                      aria-label={`Open case ${c.case_reference} for ${c.subject_display_name}`}
+                      aria-label={`Open case ${c.case_reference} for ${c.subject_display_name} — ${attention.detail}`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="truncate font-medium">{c.subject_display_name}</div>
-                          <div className="mt-0.5 text-xs text-muted-foreground">
+                          <div className="mt-0.5 truncate text-xs text-muted-foreground">
                             {c.case_reference} · {SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type}
                           </div>
                         </div>
                         <ChevronRight aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <AmlStageBadge stage={caseStage(c)} />
-                        <AmlRiskBadge risk={c.risk_rating} />
-                        <AmlGateBadge gate={gate} />
+                      <div className={cn("mt-2 text-sm", ATTENTION_TEXT[attention.level])}>
+                        {attention.needsAttention && <span aria-hidden className="mr-1.5">•</span>}
+                        {attention.label}
                       </div>
-                      <div className="mt-1.5 text-xs text-muted-foreground">
-                        Updated {new Date(c.updated_at).toLocaleDateString()}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span>{MACRO_PHASE_LABELS[phase]}</span>
+                        <span aria-hidden>·</span>
+                        <span className={READINESS_TEXT[readiness.level]}>
+                          Service: {readiness.label}
+                        </span>
+                        <span aria-hidden>·</span>
+                        <span>Updated {displayRelative(c.updated_at)}</span>
+                      </div>
+                      <div className="mt-1.5">
+                        <AmlRiskBadge risk={c.risk_rating} prefix />
                       </div>
                     </button>
                   );

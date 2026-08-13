@@ -3,6 +3,8 @@
 // using openai/text-embedding-3-small (1536 dims) via Lovable AI Gateway.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { enforceRawBodyLimit, verifyRequiredCronSecret, verifySignedInternal } from '../_shared/requestSecurity.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -21,7 +23,7 @@ const EMBED_MODEL = 'openai/text-embedding-3-small';
 const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 async function embedBatch(inputs: string[]): Promise<number[][]> {
-  const res = await fetch('https://ai.gateway.lovable.dev/v1/embeddings', {
+  const res = await meteredFetch('https://ai.gateway.lovable.dev/v1/embeddings', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -108,7 +110,7 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     return new Response(
-      JSON.stringify({ ok: false, error: String((err as Error).message), ...stats }),
+      JSON.stringify({ ...internalError(err, 'market-updates-embed-backfill'), ok: false, ...stats }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

@@ -1,3 +1,4 @@
+import { meteredFetch } from "./meteredFetch.ts";
 /**
  * Shared utility for sending branded portal notification emails via Resend.
  * Used by all edge functions that create client_portal_notifications.
@@ -127,7 +128,7 @@ export async function sendPortalNotificationEmail(params: PortalNotificationEmai
 </html>`.trim();
 
   try {
-    const response = await fetch('https://api.resend.com/emails', {
+    const response = await meteredFetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${resendApiKey}`,

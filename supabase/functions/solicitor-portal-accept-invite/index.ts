@@ -3,6 +3,9 @@ import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth.ts"
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
 import { auditSolicitorIdentity, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { AcceptInviteRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 
 Deno.serve(async (req) => {
@@ -20,7 +23,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const { action, token, password } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, AcceptInviteRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { action, token, password } = __body.data
     if (!token) {
       return new Response(
         JSON.stringify({ error: 'Invite token is required' }),
@@ -110,6 +118,17 @@ Deno.serve(async (req) => {
     if (password.length < 10) {
       return new Response(
         JSON.stringify({ error: 'Password must be at least 10 characters' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    // This portal's 10-character floor stays (stricter than the shared policy's
+    // 8); the shared checks — common-password list, character classes and the
+    // HIBP k-anonymity breach lookup — run on top. Fail-open if HIBP is
+    // unreachable so an outage cannot block onboarding.
+    const strength = await validatePasswordStrength(password)
+    if (!strength.isValid) {
+      return new Response(
+        JSON.stringify({ error: strength.error }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }

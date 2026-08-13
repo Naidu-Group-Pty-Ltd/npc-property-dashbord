@@ -289,18 +289,27 @@ Deno.serve(async (req: Request) => {
     // Helper to verify any authenticated user (not just superadmin).
     // Returns the active session id so callers can rotate it on privilege
     // elevation (WP-11B/C Phase 3).
-    const verifySession = async (sessionToken: string) => {
-      if (!sessionToken) {
+    const verifySession = async (sessionToken?: string | null) => {
+      // The browser can no longer read its own session: the Command Centre
+      // session lives in an HttpOnly cookie, so `body.session_token` is
+      // undefined for every self-service call and this used to fail with
+      // "Session token required". Fall back to the cookie/header carrier.
+      const token = (sessionToken && sessionToken.trim())
+        ? sessionToken.trim()
+        : (extractSessionToken(req.headers, body) ?? '');
+
+      if (!token) {
         return { error: 'Session token required', user: null, sessionId: null };
       }
 
       // Hash-first lookup (plaintext fallback) so hash-only sessions resolve.
       const session = await resolveUserSessionRow(
         supabase,
-        sessionToken,
+        token,
         'id, user_id, expires_at, revoked_at, idle_expires_at',
         (q: any) => q.gt('expires_at', new Date().toISOString()).is('revoked_at', null),
       );
+
 
       if (!session || !isSessionUsable(session).ok) {
         return { error: 'Invalid or expired session', user: null, sessionId: null };
@@ -691,8 +700,12 @@ Deno.serve(async (req: Request) => {
           );
         }
 
-        // Hash the new password before storing
+        // Hash the new password before storing, and release any lockout —
+        // `finance-portal-change-password` already does this, and a lock left
+        // standing here would refuse the password the caller just chose.
         updates.password_hash = await hashPassword(new_password);
+        updates.failed_login_attempts = 0;
+        updates.locked_until = null;
       }
 
       // Only proceed if there are actual updates
@@ -1345,12 +1358,23 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // Releasing the lockout is part of the reset, not an extra.
+      //
+      // This is the action an administrator reaches for when a colleague
+      // cannot get in, so the account is very often locked at the moment it
+      // runs — the failed attempts that prompted the call are the same ones
+      // that tripped it. Writing only the hash hands back a password that is
+      // refused for the rest of the window, and refused as though it were
+      // wrong, so the administrator is told the reset worked and the colleague
+      // is still locked out. Same reasoning as admin-password-reset.
       const hashedPassword = await hashPassword(new_password);
       const { error } = await supabase
         .from('custom_users')
-        .update({ 
-          password_hash: hashedPassword, 
-          updated_at: new Date().toISOString() 
+        .update({
+          password_hash: hashedPassword,
+          failed_login_attempts: 0,
+          locked_until: null,
+          updated_at: new Date().toISOString()
         })
         .eq('id', user_id);
 

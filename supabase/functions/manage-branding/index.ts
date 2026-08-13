@@ -17,6 +17,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createForbiddenResponse } from "../_shared/auth.ts";
 import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 type Operation = 'get' | 'update';
 
@@ -177,6 +178,6 @@ Deno.serve(async (req) => {
     return json({ success: true, operation, settings: updated });
   } catch (error) {
     console.error('[manage-branding] Unexpected error:', error);
-    return json({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }, 500);
+    return json({ ...internalError(error, 'manage-branding'), success: false }, 500);
   }
 });

@@ -57,27 +57,81 @@ export interface ClipInput {
   lineRectsPx: RenderedRectV1[];
   /** The visible clipping region = intersection of overlay box + clipping ancestors. */
   clipRectPx: RenderedRectV1;
+  /**
+   * The overlay's own content box, when the caller can supply it separately from
+   * `clipRectPx`. With `overflow: visible` and no clipping ancestor the two are
+   * the same rect, and a line outside it is SPILLING rather than clipped — the
+   * distinction the two result families below encode. Falls back to
+   * `clipRectPx` when absent, preserving the previous behaviour exactly.
+   */
+  contentBoxPx?: RenderedRectV1;
   tolerancePx?: number;
 }
 
-export interface ClipResult { clipped: boolean; clippedWidthPx: number; clippedHeightPx: number; clippedLineCount: number }
+export interface ClipResult {
+  /** Content is LOST — an ancestor with a clipping `overflow` cut it off. */
+  clipped: boolean;
+  clippedWidthPx: number; clippedHeightPx: number; clippedLineCount: number;
+  /**
+   * Content is VISIBLE but outside its box — it spills and collides with
+   * whatever sits below. Distinct from `clipped`: same root cause (the box is
+   * too small for its text), opposite symptom, and both are defects.
+   */
+  overflowing: boolean;
+  overflowWidthPx: number; overflowHeightPx: number; overflowLineCount: number;
+}
 
 const CLIPS = new Set(['hidden', 'clip', 'scroll', 'auto']);
 
-/** Deterministic clipping detection from scroll/client + line-box intersection. */
+/**
+ * Deterministic overflow detection from scroll/client + line-box intersection.
+ *
+ * The previous implementation gated the scroll-vs-client comparison on the
+ * `overflow` value being a clipping one, so a box whose text spilled under
+ * `overflow: visible` measured as perfectly fine. That is exactly the shape the
+ * export renderer produces (`blocks/_shared.html.ts` sets `overflow` only under
+ * `maxLines`), which is why constricted text was structurally invisible to the
+ * quality gate while users could see it plainly.
+ *
+ * Overflow is now measured unconditionally and then CLASSIFIED by the overflow
+ * mode: a clipping mode loses content (`clipped`), a visible mode spills it
+ * (`overflowing`).
+ */
 export function evaluateClipping(input: ClipInput): ClipResult {
   const tol = input.tolerancePx ?? 1;
-  let clippedWidthPx = 0; let clippedHeightPx = 0;
   const overX = (input.overflowX ?? 'visible'); const overY = (input.overflowY ?? 'visible');
-  if (CLIPS.has(overX) && input.scrollWidth - input.clientWidth > tol) clippedWidthPx = input.scrollWidth - input.clientWidth;
-  if (CLIPS.has(overY) && input.scrollHeight - input.clientHeight > tol) clippedHeightPx = input.scrollHeight - input.clientHeight;
-  let clippedLineCount = 0;
+
+  // Measure first, classify second. `scrollWidth`/`scrollHeight` exceed their
+  // client counterparts whenever content does not fit, regardless of mode.
+  const rawWidth = Math.max(0, input.scrollWidth - input.clientWidth);
+  const rawHeight = Math.max(0, input.scrollHeight - input.clientHeight);
+
+  const xClips = CLIPS.has(overX); const yClips = CLIPS.has(overY);
+  const clippedWidthPx = xClips && rawWidth > tol ? rawWidth : 0;
+  const clippedHeightPx = yClips && rawHeight > tol ? rawHeight : 0;
+  const overflowWidthPx = !xClips && rawWidth > tol ? rawWidth : 0;
+  const overflowHeightPx = !yClips && rawHeight > tol ? rawHeight : 0;
+
+  // A line outside the clip region is lost; a line outside the content box but
+  // inside (or without) a clip region is spilling. When the caller cannot
+  // separate the two rects, every out-of-box line is attributed to the mode.
+  const contentBox = input.contentBoxPx ?? input.clipRectPx;
+  const anyClips = xClips || yClips;
+  let clippedLineCount = 0; let overflowLineCount = 0;
   for (const line of input.lineRectsPx) {
-    const visibleRatio = intersectionOverArea(line, input.clipRectPx);
-    if (visibleRatio < 0.98) clippedLineCount += 1;
+    if (intersectionOverArea(line, input.clipRectPx) < 0.98) {
+      if (anyClips) clippedLineCount += 1; else overflowLineCount += 1;
+      continue;
+    }
+    if (!anyClips && intersectionOverArea(line, contentBox) < 0.98) overflowLineCount += 1;
   }
-  const clipped = clippedWidthPx > tol || clippedHeightPx > tol || clippedLineCount > 0;
-  return { clipped, clippedWidthPx, clippedHeightPx, clippedLineCount };
+
+  return {
+    clipped: clippedWidthPx > tol || clippedHeightPx > tol || clippedLineCount > 0,
+    clippedWidthPx, clippedHeightPx, clippedLineCount,
+    overflowing: overflowWidthPx > tol || overflowHeightPx > tol || overflowLineCount > 0,
+    overflowWidthPx, overflowHeightPx, overflowLineCount,
+  };
 }
 
 // ── Off-page ─────────────────────────────────────────────────────────────────

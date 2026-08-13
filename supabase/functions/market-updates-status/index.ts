@@ -160,7 +160,10 @@ Deno.serve(async (req) => {
         const adminPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
         if (!adminPermission.ok) return json({ error:'Admin privilege required to review unpublished updates', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
       }
-      const limit = Math.max(1, Math.min(200, Number(body.limit) || 200));
+      // The published archive grows past a few hundred rows, so the ceiling here
+      // must not double as the feed's page size — a 200 cap silently truncated
+      // the front end at exactly 200 articles no matter how many were published.
+      const limit = Math.max(1, Math.min(1000, Number(body.limit) || 200));
       // Shadow rows share the 'candidate' status but are not the operator's review
       // queue, so a caller has to ask for them explicitly.
       const visibility = body.visibility === 'shadow' ? 'shadow' : 'public';

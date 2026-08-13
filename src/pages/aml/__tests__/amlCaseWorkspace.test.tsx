@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AmlCaseWorkspace from "../AmlCaseWorkspace";
@@ -121,28 +121,64 @@ beforeEach(() => {
 });
 
 describe("AmlCaseWorkspace — full-page shell", () => {
-  it("renders the persistent case header with stage, gate and risk in text", async () => {
+  it("renders the persistent case header with phase, gate and risk in text", async () => {
     setup();
     expect(await screen.findByRole("heading", { name: "Avery Client" })).toBeInTheDocument();
     expect(screen.getByText("AML-2026-00001")).toBeInTheDocument();
-    // Stage/gate/risk appear in the header badges (and again in the
-    // overview summary) — always as text, never colour alone.
-    expect(screen.getAllByText("Client submitted").length).toBeGreaterThan(0);
+    // Risk and the gate are the header's only two badges, and they are
+    // always words — never colour alone.
     expect(screen.getByText(/Service gate: Under review/)).toBeInTheDocument();
     expect(screen.getByText(/Risk: MEDIUM/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to case register" })).toBeInTheDocument();
+    // The five macro phases, with the current one marked for assistive tech.
+    const rail = screen.getByRole("list", { name: "Case phase" });
+    for (const phase of ["Collect", "Verify", "Assess", "Decide", "Monitor"]) {
+      expect(within(rail).getByText(phase)).toBeInTheDocument();
+    }
+    expect(within(rail).getByText("Verify").closest("li")).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("link", { name: "Back to the case register" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Client record/ })).toBeInTheDocument();
   });
 
-  it("selecting a section writes it to the URL so refresh and sharing keep it", async () => {
+  it("puts the next action, readiness and the evidence summary on the overview", async () => {
     setup();
     await screen.findByRole("heading", { name: "Avery Client" });
-    fireEvent.click(screen.getByRole("button", { name: /Identity & Screening/ }));
+    // The one dominant call to action, derived from canonical state.
+    expect(screen.getByRole("heading", { name: "Review the client submission" })).toBeInTheDocument();
+    expect(screen.getByText("Service readiness")).toBeInTheDocument();
+    expect(screen.getByText("Compliance evidence")).toBeInTheDocument();
+    // Evidence never implies the gate.
+    expect(
+      screen.getByText(/The service gate is an explicit decision/),
+    ).toBeInTheDocument();
+  });
+
+  it("selecting an area writes its section to the URL so refresh and sharing keep it", async () => {
+    setup();
+    await screen.findByRole("heading", { name: "Avery Client" });
+    // The rail renders twice (a scrolling rail below lg, a vertical rail
+    // above it); only one is ever visible, so either drives the same state.
+    fireEvent.click(screen.getAllByRole("button", { name: /^Customer/ })[0]);
     expect(screen.getByTestId("location").dataset.search).toBe("?section=identity");
     expect(screen.getByTestId("tab-screening")).toBeInTheDocument();
+    // The area's sections appear once it is open.
+    expect(screen.getAllByRole("button", { name: /Ownership & control/ }).length)
+      .toBeGreaterThan(0);
     // Overview is the clean default — no parameter.
-    fireEvent.click(screen.getByRole("button", { name: /Overview/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /^Overview/ })[0]);
     expect(screen.getByTestId("location").dataset.search).toBe("");
+  });
+
+  it("keeps every previously deep-linked section reachable at the same key", async () => {
+    for (const [section, testId] of [
+      ["risk", "tab-risk"],
+      ["ownership", "tab-ownership"],
+      ["finance", "tab-finance"],
+    ] as const) {
+      const view = setup(`/admin/aml/cases/${CASE_ID}?section=${section}`);
+      await screen.findByRole("heading", { name: "Avery Client" });
+      expect(screen.getByTestId(testId)).toBeInTheDocument();
+      view.unmount();
+    }
   });
 
   it("opens directly on a deep-linked ?section=", async () => {
@@ -155,16 +191,45 @@ describe("AmlCaseWorkspace — full-page shell", () => {
   it("ignores unknown ?section= values and falls back to the overview", async () => {
     setup(`/admin/aml/cases/${CASE_ID}?section=nonsense`);
     await screen.findByRole("heading", { name: "Avery Client" });
+    expect(screen.getByText("Service readiness")).toBeInTheDocument();
+  });
+
+  it("keeps the compliance journey map and passport, in Records", async () => {
+    setup(`/admin/aml/cases/${CASE_ID}?section=passport`);
+    await screen.findByRole("heading", { name: "Avery Client" });
     expect(screen.getByTestId("journey-map")).toBeInTheDocument();
+    expect(screen.getByTestId("section-reliance")).toBeInTheDocument();
+  });
+
+  it("keeps the detailed fourteen-step rail, in Records", async () => {
+    setup(`/admin/aml/cases/${CASE_ID}?section=timeline`);
+    await screen.findByRole("heading", { name: "Avery Client" });
+    const rail = screen.getByRole("list", { name: "Case process steps" });
+    expect(within(rail).getByText("Identity verification")).toBeInTheDocument();
+    expect(within(rail).getByText("Service gate")).toBeInTheDocument();
+    expect(within(rail).getByText("Retention")).toBeInTheDocument();
   });
 
   it("hides investigate-only sections from users without that capability", async () => {
     mockRoles = new Set(["auditor"]);
-    setup();
+    setup(`/admin/aml/cases/${CASE_ID}?section=documents`);
     await screen.findByRole("heading", { name: "Avery Client" });
-    expect(screen.queryByRole("button", { name: /Purchase & Counterparty/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Funding & Finance/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Overview/ })).toBeInTheDocument();
+    // Transaction is open, so its sections are listed — but the two behind
+    // canInvestigate are absent from the rail entirely.
+    expect(screen.getAllByRole("button", { name: /Documents & evidence/ }).length)
+      .toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /Purchase & counterparty/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Funding & finance/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Monitoring & reviews/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Overview/ }).length).toBeGreaterThan(0);
+  });
+
+  it("falls back to the overview when a deep link points at a section the role cannot open", async () => {
+    mockRoles = new Set(["auditor"]);
+    setup(`/admin/aml/cases/${CASE_ID}?section=finance`);
+    await screen.findByRole("heading", { name: "Avery Client" });
+    expect(screen.queryByTestId("tab-finance")).not.toBeInTheDocument();
+    expect(screen.getByText("Service readiness")).toBeInTheDocument();
   });
 
   it("redirects to the legacy ?open= deep link while the workspace flag is off", async () => {

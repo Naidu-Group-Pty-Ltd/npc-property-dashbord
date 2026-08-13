@@ -3,6 +3,7 @@ import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -64,7 +65,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     });
   } catch (error) {
     console.error("[aml-access] failed", error);
-    return json({ error: error instanceof Error ? error.message : "Unable to resolve AML access" }, 500);
+    return json({ ...internalError(error, 'aml-access') }, 500);
   }
 });
 

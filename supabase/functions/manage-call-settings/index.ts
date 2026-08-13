@@ -3,6 +3,7 @@ import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createForbid
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { normalizePhone, digitsOnly } from "../_shared/phone.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 type TableName = 'call_tags' | 'call_alert_rules' | 'call_alert_history' | 'blacklisted_numbers';
 type Operation = 'list' | 'create' | 'update' | 'delete';
@@ -357,7 +358,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[manage-call-settings] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'manage-call-settings'), success: false }),
       { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
     );
   }

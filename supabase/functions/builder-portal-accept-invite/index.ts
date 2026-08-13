@@ -28,6 +28,8 @@ import { hashSessionToken } from '../_shared/sessionHash.ts';
 import { validateBuilderPortalRequest } from '../_shared/builderSessionToken.ts';
 import { auditBuilderIdentity, issueBuilderSession } from '../_shared/builderSessions.ts';
 import { listAccessibleOrganisations } from '../_shared/builderPortalAuth.ts';
+import { parseJsonBody } from '../_shared/validate.ts';
+import { AcceptInviteRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const GENERIC_INVITE_ERROR = 'Invalid or expired invite link';
 
@@ -48,7 +50,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const { action, token, password } = await req.json();
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, AcceptInviteRequest, corsHeaders, AUTH_MAX_BODY_BYTES);
+    if (!__body.ok) return __body.response;
+    const { action, token, password } = __body.data;
     if (!token || typeof token !== 'string') {
       return json({ error: GENERIC_INVITE_ERROR, valid: false }, 400);
     }

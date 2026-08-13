@@ -173,6 +173,25 @@ export const LINES_PER_PAGE = 38;
 /** A section always claims at least one page, because its header opens one. */
 export const MIN_SECTION_PAGES = 1;
 
+/**
+ * Below this, a chapter cannot hold a page on its own.
+ *
+ * Half of `LINES_PER_PAGE`. Arrived at by the converted-template format and
+ * moved here when the investment format needed the same rule — the number is
+ * about the page, not about either format.
+ *
+ * Its history is the point. The first value was twelve — a third of a page,
+ * reasoned from "a heading, a short paragraph and a couple of bullets" rather
+ * than measured. Then the document was rendered and the pages counted: a
+ * section of three ordinary paragraphs costs fourteen estimated lines, cleared
+ * the threshold, and printed on a sheet of its own at **2.3% ink**. Three
+ * consecutive sheets did. The rubric's sparse floor is 8% and a natively
+ * designed page in this system measures 13.3% to 22.1%, so a third of a page is
+ * not the boundary between "deliberate" and "unfinished" — it is well inside
+ * "unfinished".
+ */
+export const THIN_CHAPTER_LINES = Math.round(LINES_PER_PAGE / 2);
+
 /** Lines to pages, floored at one. The one conversion both formats do. */
 export function pagesForLines(lines: number): number {
   return Math.max(MIN_SECTION_PAGES, Math.ceil(lines / LINES_PER_PAGE));
@@ -833,7 +852,12 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
         const html = typeof drawn === 'string' ? drawn : drawn?.html ?? '';
         if (!html.trim()) { notices.figuresDropped++; continue; }
         notices.figuresDrawn++;
-        const charged = typeof drawn === 'object' && typeof drawn.lines === 'number'
+        // `typeof null === 'object'`, so the null arm must be excluded
+        // explicitly before reading `.lines`. Unreachable with null at
+        // runtime anyway — a null draw produced an empty `html` and was
+        // dropped by the guard above — but the narrowing makes that visible
+        // to the type system instead of relying on it.
+        const charged = drawn !== null && typeof drawn === 'object' && typeof drawn.lines === 'number'
           ? drawn.lines
           : DEFAULT_FIGURE_LINES;
         if (!push('figure', html, charged)) break scan;

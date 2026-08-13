@@ -1,0 +1,81 @@
+# WP-21: give the dependency gate a remediation path.
+#
+# `scripts/security/dependency-audit.mjs` has blocked unaccepted high/critical
+# advisories since SUPPLY-001, and `codex-security-scan.yml` runs osv-scanner on
+# top. Detection was never the gap. Nothing opened upgrade PRs, so every
+# remediation was somebody noticing — which is how `xlsx` sat on a version npm
+# had stopped publishing patches for, with two advisories reachable from the
+# client-upload parsers, behind an allowlist entry that said out loud the real
+# fix was to drop it.
+#
+# Grouped on purpose. Ungrouped npm updates on a dependency tree this size open
+# dozens of PRs a week, and a review queue nobody can keep up with is the same
+# outcome as no PRs at all — it just looks busier.
+version: 2
+
+updates:
+  # ── Application dependencies ─────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Australia/Sydney
+    open-pull-requests-limit: 5
+    labels: [dependencies, security]
+    commit-message:
+      prefix: deps
+      include: scope
+    groups:
+      # Security fixes travel alone and first — the point of the whole file.
+      # Dependabot raises these regardless of the `ignore` rules below.
+      security-patches:
+        applies-to: security-updates
+        patterns: ["*"]
+      # Everything else batches, so the queue stays reviewable.
+      minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+    ignore:
+      # Major bumps of the build toolchain and the render path are their own
+      # changes with their own regression surface, and this repo has the
+      # evidence: the golden-render guard exists because renderer output is
+      # byte-compared, and the vite advisories are accepted precisely because
+      # the fix is a major bump. A Dependabot PR cannot make that judgement, so
+      # it should not raise it — the audit gate will keep saying so instead.
+      - dependency-name: vite
+        update-types: [version-update:semver-major]
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+      - dependency-name: "@supabase/supabase-js"
+        update-types: [version-update:semver-major]
+      - dependency-name: jspdf
+        update-types: [version-update:semver-major]
+      - dependency-name: pptxgenjs
+        update-types: [version-update:semver-major]
+      # `xlsx` is pinned to a vendor CDN tarball because SheetJS stopped
+      # publishing to npm after 0.18. Dependabot cannot resolve a URL
+      # dependency, and a "helpful" rewrite back to the registry would silently
+      # reintroduce two advisories with no upgrade path. See WP-21.
+      - dependency-name: xlsx
+
+  # ── The workflows themselves ─────────────────────────────────────────────
+  # A pinned action is a supply-chain dependency like any other, and this repo
+  # has 10 workflows' worth of them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]

@@ -23,6 +23,13 @@ export interface FontFaceEntry {
   style: 'normal' | 'italic';
   display: 'swap';
   source: 'embedded';
+  /**
+   * R2: `unicode-range` value scoping this face to the codepoints its cmap
+   * actually maps. With it, browsers and WeasyPrint use the embedded face only
+   * for glyphs it truly has and fall per glyph to the stack fallback for the
+   * rest — a partial subset can never claim codepoints it lacks.
+   */
+  unicodeRange?: string;
 }
 
 export interface EmbeddedFontInput {
@@ -32,6 +39,8 @@ export interface EmbeddedFontInput {
   mimetype?: string;                 // Docling-era PDF font.mimetype
   bold?: boolean;
   italic?: boolean;
+  /** R2: sidecar-enumerated cmap coverage, e.g. ["U+0041-005A", "U+0061"]. */
+  coverageRanges?: string[];
 }
 
 export interface EmbeddedFontResult {
@@ -80,6 +89,24 @@ export function dataUrlMime(mimetype?: string): string {
   return 'font/otf';
 }
 
+// A CSS unicode-range segment: U+XXXX or U+XXXX-XXXX (1-6 hex digits each).
+// Wildcard segments (U+4??) are deliberately excluded — the sidecar never
+// emits them, so one appearing means corrupt data, not a broader range.
+const UNICODE_RANGE_SEGMENT = /^[Uu]\+[0-9A-Fa-f]{1,6}(-[0-9A-Fa-f]{1,6})?$/;
+
+/**
+ * Validate sidecar coverage segments into one CSS `unicode-range` value.
+ * Any malformed segment invalidates the whole list — a partially-trusted
+ * range would mis-scope the face — and the face is emitted unscoped, which
+ * is the pre-R2 behaviour.
+ */
+export function buildUnicodeRange(coverageRanges?: string[]): string | undefined {
+  if (!Array.isArray(coverageRanges) || coverageRanges.length === 0) return undefined;
+  const segments = coverageRanges.map((s) => String(s ?? '').trim());
+  if (!segments.every((s) => UNICODE_RANGE_SEGMENT.test(s))) return undefined;
+  return segments.join(', ');
+}
+
 /** Build a self-hosted, embedded `@font-face` entry + the family/weight to use. */
 export function buildEmbeddedFontFace(input: EmbeddedFontInput): EmbeddedFontResult {
   const psName = input.postscriptName || input.loadedName;
@@ -88,10 +115,8 @@ export function buildEmbeddedFontFace(input: EmbeddedFontInput): EmbeddedFontRes
   const weight = deriveWeight(psName, input.bold);
   const style = deriveStyle(psName, input.italic);
   const src = `data:${dataUrlMime(input.mimetype)};base64,${input.base64}`;
-  return {
-    family,
-    weight,
-    style,
-    face: { family, src, weight, style, display: 'swap', source: 'embedded' },
-  };
+  const unicodeRange = buildUnicodeRange(input.coverageRanges);
+  const face: FontFaceEntry = { family, src, weight, style, display: 'swap', source: 'embedded' };
+  if (unicodeRange) face.unicodeRange = unicodeRange;
+  return { family, weight, style, face };
 }

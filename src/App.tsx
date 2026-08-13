@@ -43,6 +43,7 @@ const ReportViewer = lazyWithRetry(() => import("./pages/ReportViewer"));
 const Settings = lazyWithRetry(() => import("./pages/Settings"));
 const UserGuide = lazyWithRetry(() => import("./pages/UserGuide"));
 const Feedback = lazyWithRetry(() => import("./pages/Feedback"));
+const Support = lazyWithRetry(() => import("./pages/Support"));
 import DataImport from './pages/DataImport';
 import Monitoring from './pages/Monitoring';
 import QualityAssurance from './pages/QualityAssurance';
@@ -96,6 +97,7 @@ const AgentQuality = lazyWithRetry(() => import("./pages/admin/AgentQuality"));
 const AmlCases = lazyWithRetry(() => import("./pages/aml/AmlCases"));
 const AmlCaseWorkspace = lazyWithRetry(() => import("./pages/aml/AmlCaseWorkspace"));
 const AmlOverview = lazyWithRetry(() => import("./pages/aml/AmlOverview"));
+const AmlPassports = lazyWithRetry(() => import("./pages/aml/AmlPassports"));
 import {
   AmlIntakeQueue, AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
   AmlFinance, AmlTransactions,
@@ -127,6 +129,9 @@ const RemindersHub = lazyWithRetry(() => import("./pages/RemindersHub"));
 const Checklists = lazyWithRetry(() => import("./pages/Checklists"));
 const Agreements = lazyWithRetry(() => import("./pages/Agreements"));
 const PartnerAgreements = lazyWithRetry(() => import("./pages/PartnerAgreements"));
+const AgreementCentre = lazyWithRetry(() => import("./pages/AgreementCentre"));
+const AgreementWizard = lazyWithRetry(() => import("./pages/AgreementWizard"));
+const AgreementCentreDetail = lazyWithRetry(() => import("./pages/AgreementCentreDetail"));
 const PartnerCompliance = lazyWithRetry(() => import("./pages/PartnerCompliance"));
 
 const PartnerReferrals = lazyWithRetry(() => import("./pages/PartnerReferrals"));
@@ -168,6 +173,8 @@ const PortalPropertyInsights = lazyWithRetry(() => import("./pages/portal/Portal
 const PortalBooking = lazyWithRetry(() => import("./pages/portal/PortalBooking"));
 const PortalAppointments = lazyWithRetry(() => import("./pages/portal/PortalAppointments"));
 const PortalAml = lazyWithRetry(() => import("./pages/portal/PortalAml"));
+const PortalPassport = lazyWithRetry(() => import("./pages/portal/PortalPassport"));
+const PortalIdentityReturn = lazyWithRetry(() => import("./pages/portal/PortalIdentityReturn"));
 const PortalLegal = lazyWithRetry(() => import("./pages/portal/PortalLegal"));
 const PortalLegalDetail = lazyWithRetry(() => import("./pages/portal/PortalLegalDetail"));
 const PortalConfig = lazyWithRetry(() => import("./pages/PortalConfig"));
@@ -224,6 +231,8 @@ import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLa
 const FinancePortalLogin = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalLogin"));
 const FinancePortalAcceptInvite = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAcceptInvite"));
 const FinancePortalChangePassword = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalChangePassword"));
+const FinancePortalTerms = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalTerms"));
+const FinancePortalOnboarding = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalOnboarding"));
 const FinancePortalDashboard = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalDashboard"));
 const FinancePortalClients = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClients"));
 const FinancePortalClientProfile = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientProfile"));
@@ -238,6 +247,8 @@ const FinancePortalPurchaseFileDetail = lazyWithRetry(() => import("./pages/fina
 const FinancePortalClientInbox = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientInbox"));
 const FinancePortalPipeline = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPipeline"));
 const FinancePortalComplianceWorkspace = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalComplianceWorkspace"));
+const FinancePortalAgreements = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAgreements"));
+const FinancePortalAgreementDetail = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAgreementDetail"));
 const FinancePortalInsights = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalInsights"));
 const PartnerReferralInbox = lazyWithRetry(() => import("./pages/finance-portal/PartnerReferralInbox"));
 const AmlCaseSnapshot = lazyWithRetry(() => import("./pages/finance-portal/AmlCaseSnapshot"));
@@ -362,6 +373,16 @@ const App = () => (
                           <PortalAcceptInvite />
                         } />
                         <Route path="/client/handoff" element={<PortalHandoff />} />
+                        {/*
+                          Where the secure identity check returns the customer.
+                          Outside the authenticated tree on purpose: they may
+                          land here in a window with no portal session — a
+                          handed-off phone is the ordinary case — and a login
+                          wall at the end of a verification is the third-party
+                          ending this flow exists to remove. The page displays
+                          no case data and reads no status from the redirect.
+                        */}
+                        <Route path="/client/aml/identity-return" element={<PortalIdentityReturn />} />
                         <Route path="/client/consent" element={
                           <PortalAuthProvider>
                             <PortalConsentWall />
@@ -394,6 +415,7 @@ const App = () => (
                           <Route path="booking" element={<PortalBooking />} />
                           <Route path="appointments" element={<PortalAppointments />} />
                           <Route path="aml" element={<PortalAml />} />
+                          <Route path="aml/passport" element={<PortalPassport />} />
                         </Route>
 
                         {/* Finance Portal Routes - single provider wrapping all /finance/* */}
@@ -405,6 +427,24 @@ const App = () => (
                               <Route path="change-password" element={
                                 <FinancePortalProtectedRoute>
                                   <FinancePortalChangePassword />
+                                </FinancePortalProtectedRoute>
+                              } />
+                              {/*
+                                Governance gates, in the order the guard enforces:
+                                terms, then onboarding. Both sit OUTSIDE the portal
+                                layout so neither shares a tree with the welcome tour,
+                                and so each contains itself in the viewport instead of
+                                being squeezed into a dialog. Same shape as
+                                /solicitor/terms and /solicitor/onboarding.
+                              */}
+                              <Route path="terms" element={
+                                <FinancePortalProtectedRoute>
+                                  <FinancePortalTerms />
+                                </FinancePortalProtectedRoute>
+                              } />
+                              <Route path="onboarding" element={
+                                <FinancePortalProtectedRoute>
+                                  <FinancePortalOnboarding />
                                 </FinancePortalProtectedRoute>
                               } />
                               <Route path="" element={
@@ -424,6 +464,8 @@ const App = () => (
                                 <Route path="pipeline" element={<FinancePortalPipeline />} />
                                 <Route path="insights" element={<FinancePortalInsights />} />
                                 <Route path="referrals" element={<PartnerReferralInbox />} />
+                                <Route path="agreements" element={<FinancePortalAgreements />} />
+                                <Route path="agreements/:id" element={<FinancePortalAgreementDetail />} />
                                 <Route path="reports" element={<FinancePortalReports />} />
                                 <Route path="settings" element={<FinancePortalSettings />} />
                                 <Route path="aml-snapshot/:token" element={<AmlCaseSnapshot />} />
@@ -553,6 +595,7 @@ const App = () => (
                 <Route path="generated-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
                 <Route path="user-guide" element={<UserGuide />} />
                 <Route path="feedback" element={<Feedback />} />
+                <Route path="support" element={<Support />} />
                 <Route path="monitoring" element={<ModuleGuard moduleKey="monitoring"><Monitoring /></ModuleGuard>} />
                 <Route path="quality-assurance" element={<ModuleGuard moduleKey="quality_assurance"><QualityAssurance /></ModuleGuard>} />
                 <Route path="data-import" element={<ModuleGuard moduleKey="data_import"><DataImport /></ModuleGuard>} />
@@ -602,6 +645,7 @@ const App = () => (
                   <Route path="intake" element={<AmlGuard capability="aml.view"><AmlIntakeQueue /></AmlGuard>} />
                   <Route path="cases" element={<AmlGuard capability="aml.view"><AmlCases /></AmlGuard>} />
                   <Route path="cases/:caseId" element={<AmlGuard capability="aml.view"><AmlCaseWorkspace /></AmlGuard>} />
+                  <Route path="passport" element={<AmlGuard capability="aml.view"><AmlPassports /></AmlGuard>} />
                   <Route path="verification" element={<AmlGuard capability="aml.view"><AmlVerification /></AmlGuard>} />
                   <Route path="screening" element={<AmlGuard capability="aml.view"><AmlScreening /></AmlGuard>} />
                   <Route path="risk" element={<AmlGuard capability="aml.view"><AmlRisk /></AmlGuard>} />
@@ -639,7 +683,11 @@ const App = () => (
                 <Route path="reminders" element={<ModuleGuard moduleKey="reminders"><RemindersHub /></ModuleGuard>} />
                 <Route path="checklists" element={<ModuleGuard moduleKey="checklists"><Checklists /></ModuleGuard>} />
                 <Route path="agreements" element={<ModuleGuard moduleKey="agreements"><Agreements /></ModuleGuard>} />
-                <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><PartnerAgreements /></ModuleGuard>} />
+                <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><AgreementCentre /></ModuleGuard>} />
+                <Route path="partner-agreements/new" element={<ModuleGuard moduleKey="agreements" requireEdit><AgreementWizard /></ModuleGuard>} />
+                <Route path="partner-agreements/register" element={<ModuleGuard moduleKey="agreements"><PartnerAgreements /></ModuleGuard>} />
+                <Route path="partner-agreements/:id" element={<ModuleGuard moduleKey="agreements"><AgreementCentreDetail /></ModuleGuard>} />
+                <Route path="partner-agreements/:id/edit" element={<ModuleGuard moduleKey="agreements" requireEdit><AgreementWizard /></ModuleGuard>} />
                 <Route path="partner-referrals" element={<ModuleGuard moduleKey="agreements"><PartnerReferrals /></ModuleGuard>} />
                 <Route path="loan-writer-undertakings" element={<ModuleGuard moduleKey="agreements"><LoanWriterUndertakings /></ModuleGuard>} />
                 <Route path="partner-compliance" element={<ModuleGuard moduleKey="agreements"><PartnerCompliance /></ModuleGuard>} />

@@ -34,6 +34,7 @@ function entry(over: Partial<TemplateLibraryListEntry> = {}): TemplateLibraryLis
       compatibilityVersion: 1,
       engine: 'weasyprint',
     },
+    designMeta: null,
     thumbnailPath: null,
     previewImagePaths: [],
     sourceTemplateId: null,

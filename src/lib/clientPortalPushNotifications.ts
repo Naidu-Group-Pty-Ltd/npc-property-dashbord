@@ -6,9 +6,9 @@
  * with subscriber_type='client_portal' so the dispatcher targets the correct pool.
  */
 import { supabase } from '@/integrations/supabase/client';
+import { getPortalSessionToken } from '@/lib/portalSession';
 
 const SW_URL = '/sw-push.js';
-const PORTAL_SESSION_KEY = 'portal_session_token';
 
 export type PushSupportStatus =
   | 'unsupported'
@@ -55,18 +55,6 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; ++i) out[i] = raw.charCodeAt(i);
   return out;
-}
-
-function getPortalSessionToken(): string | null {
-  try {
-    return sessionStorage.getItem(PORTAL_SESSION_KEY) || localStorage.getItem(PORTAL_SESSION_KEY);
-  } catch {
-    try {
-      return localStorage.getItem(PORTAL_SESSION_KEY);
-    } catch {
-      return null;
-    }
-  }
 }
 
 async function registerServiceWorker(): Promise<ServiceWorkerRegistration> {

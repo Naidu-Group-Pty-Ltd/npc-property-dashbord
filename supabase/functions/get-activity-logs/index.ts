@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface ActivityLogsRequest {
   session_token?: string;
   action_filter?: string | string[];
@@ -190,7 +191,7 @@ Deno.serve(async (req) => {
     );
   } catch (error) {
     console.error('[get-activity-logs] Unexpected error:', error);
-    return new Response(JSON.stringify({ error: (error as Error).message }), {
+    return new Response(JSON.stringify(internalError(error, 'get-activity-logs')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

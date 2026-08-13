@@ -2,6 +2,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts";
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ForgotPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -35,7 +39,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const { email } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ForgotPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { email } = __body.data
     if (!email || typeof email !== 'string') {
       return new Response(
         JSON.stringify({ error: 'Email is required' }),
@@ -46,13 +55,20 @@ Deno.serve(async (req) => {
     const normalizedEmail = email.toLowerCase().trim();
 
     // Rate limit BEFORE any lookup so enumeration cannot outrun the throttle.
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const limits = await Promise.all([`solicitor_forgot:email:${normalizedEmail}`, `solicitor_forgot:ip:${ip}`].map(p_key => supabase.rpc('check_and_bump_rate_limit', { p_key, p_max: MAX_REQUESTS_PER_WINDOW, p_window_seconds: WINDOW_SECONDS })));
-    if (limits.some(result => result.data === false)) {
-      return new Response(
-        JSON.stringify({ error: 'Too many reset requests. Please try again later.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    //
+    // ABUSE-003: this used to consume an EMAIL-keyed bucket concurrently with the
+    // IP one (`Promise.all`) and before the account was known to exist, so a
+    // caller already over their IP ceiling could still mint a persistent limiter
+    // row for every address they typed. The source-IP gate now runs first and
+    // alone; the account bucket below is only reachable once the account is
+    // confirmed. The address no longer comes from `x-forwarded-for`.
+    const gate = await beginAuthRateLimit(supabase, req, {
+      scope: 'spfp',
+      ip: { max: MAX_REQUESTS_PER_WINDOW, windowSeconds: WINDOW_SECONDS },
+    });
+    if (!gate.allowed) {
+      console.warn('[solicitor-portal-forgot-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds, 'Too many reset requests. Please try again later.');
     }
 
     const { data: user } = await supabase
@@ -80,20 +96,24 @@ Deno.serve(async (req) => {
 
     // A validated account gets its own bucket so changing the source IP cannot
     // churn reset tokens or trigger repeated email delivery.
-    const { data: accountAllowed, error: accountLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `solicitor_forgot_account:${user.id}`,
-      p_max: MAX_REQUESTS_PER_WINDOW,
-      p_window_seconds: WINDOW_SECONDS,
+    const accountLimit = await gate.consumeIdentifier(user.id, {
+      max: MAX_REQUESTS_PER_WINDOW,
+      windowSeconds: WINDOW_SECONDS,
     });
-    if (accountLimitError || accountAllowed !== true) {
-      console.warn('[solicitor-portal-forgot-password] account rate limited', { userId: user.id });
+    if (!accountLimit.allowed) {
+      console.warn('[solicitor-portal-forgot-password] account rate limited', { userId: user.id, degraded: accountLimit.degraded });
       return genericOk();
     }
 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
 
-    await supabase
+    // Store the code before sending it, and refuse to send one that was not
+    // stored. `reset_token` carries a partial UNIQUE index, so a collision with
+    // another account's live code fails this write — and an unchecked failure
+    // would email a code that no verification could ever match, which reads to
+    // the recipient exactly like the ambiguity bug did.
+    const { error: tokenError } = await supabase
       .from('solicitor_portal_users')
       .update({
         reset_token: otp,
@@ -101,6 +121,10 @@ Deno.serve(async (req) => {
         reset_attempts: 0,
       })
       .eq('id', user.id)
+    if (tokenError) {
+      console.error('[solicitor-portal-forgot-password] could not store reset code:', tokenError)
+      return genericOk();
+    }
 
     const brand = await getBrandConfig();
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
@@ -108,7 +132,7 @@ Deno.serve(async (req) => {
 
     if (resendApiKey) {
       try {
-        await fetch('https://api.resend.com/emails', {
+        await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -149,7 +173,10 @@ Deno.serve(async (req) => {
       actor_type: 'solicitor_user',
       action: 'password_reset_requested',
       entity_type: 'session',
-      ip_address: ip === 'unknown' ? null : ip,
+      // Record the address only when the platform vouched for it. This used to
+      // log `x-forwarded-for[0]`, which meant an attacker could write whatever
+      // address they liked into the firm's audit trail.
+      ip_address: gate.ipTrusted ? gate.ip : null,
     });
 
     return genericOk();

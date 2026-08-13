@@ -16,6 +16,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { hashSessionToken } from '../_shared/sessionHash.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 const MODULE_KEY = 'builder_portal_admin';
 const INVITE_EXPIRY_HOURS = 72;
@@ -126,7 +127,7 @@ Deno.serve(async (req) => {
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
     if (resendApiKey) {
       try {
-        const response = await fetch('https://api.resend.com/emails', {
+        const response = await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendApiKey}` },
           body: JSON.stringify({

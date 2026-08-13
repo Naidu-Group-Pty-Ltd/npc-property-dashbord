@@ -12,6 +12,31 @@
  *   node scripts/audit-style-tokens.cjs            # check against baseline
  *   node scripts/audit-style-tokens.cjs --update   # rewrite the baseline
  *   node scripts/audit-style-tokens.cjs --report   # print per-file breakdown
+ *
+ * ## The baseline was reset once, in August 2026, and why matters
+ *
+ * A ratchet only works while it is accurate. This one had drifted: the
+ * committed baseline said `hexLiterals: 800` and `inlineColorStyles: 320`
+ * while the tree held **836** and **340**, and it did so at *every commit in
+ * the repository's history* — including the commit that last wrote the
+ * baseline file. So the gate failed on every run, for everyone, and a genuinely
+ * new violation was indistinguishable from the standing backlog. A check that
+ * is always red is not a ratchet; it is noise that teaches people to skip it.
+ *
+ * The 36 and the 20 are concentrated in the legacy print components this
+ * repository is in the middle of replacing — `StrictPDFTemplate`,
+ * `ClientPDFTemplate`, `HybridPDFTemplate`, `CashFlowAnalysisModal`,
+ * `FormaraPDFGenerator` — where a hex literal is a *print* colour rather than
+ * screen UI. Rewriting them to chase the number would be work against
+ * components that are being deleted; see `docs/reports/DESIGN_SYSTEM.md`.
+ *
+ * So the baseline was re-measured rather than the code rewritten, and
+ * `cssHexOutsideTokens` was ratcheted **down** 15 → 2 in the same edit — a real
+ * improvement the stale baseline had been hiding behind its own failure.
+ *
+ * That is the only circumstance in which this file moves upward: the numbers
+ * are wrong, not the code. Adding a hex literal and running `--update` to make
+ * the build pass is the thing this exists to stop.
  */
 'use strict';
 

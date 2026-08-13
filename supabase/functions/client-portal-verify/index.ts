@@ -1,5 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { extractSessionToken, createCorsHeaders } from "../_shared/auth.ts"
+// `extractSessionToken` is deliberately NOT imported here: it reads the Command
+// Centre's `__Host-session_token`, and a staff cookie must never resolve a
+// client portal session. This function reads only the client portal's own
+// carriers (see `extractPortalSessionToken` below).
+import { createCorsHeaders } from "../_shared/auth.ts"
+import { extractClientPortalSessionToken } from "../_shared/clientPortalSessionToken.ts"
+import { readBoundedJson } from '../_shared/validate.ts';
 
 function smartCapitalizeStr(name: string): string {
   if (!name) return '';
@@ -32,11 +38,14 @@ Deno.serve(async (req) => {
     let sessionToken: string | null = null;
     let action: string | null = null;
     try {
-      const body = await req.json();
-      sessionToken = body?.portal_session_token || extractPortalSessionToken(req.headers, body);
+      const body = await readBoundedJson(req);
+      // Cookie-first (see `extractClientPortalSessionToken`). The body field is
+      // no longer preferred over it: preferring a caller-supplied value over the
+      // HttpOnly cookie would defeat the point of moving to the cookie.
+      sessionToken = extractClientPortalSessionToken(req.headers, body);
       action = body?.action || null;
     } catch {
-      sessionToken = extractPortalSessionToken(req.headers);
+      sessionToken = extractClientPortalSessionToken(req.headers);
     }
 
     if (!sessionToken) {
@@ -125,22 +134,8 @@ Deno.serve(async (req) => {
   }
 })
 
-/**
- * Extract portal session token from headers/body
- * Uses x-portal-session-token header and portal_session_token body field
- */
-function extractPortalSessionToken(headers: Headers, body?: any): string | null {
-  // Check custom header
-  const headerToken = headers.get('x-portal-session-token');
-  if (headerToken) return headerToken;
-
-  // Check body
-  if (body?.portal_session_token) return body.portal_session_token;
-
-  // Fall back to general session token extraction
-  const sessionHeader = headers.get('x-session-token');
-  if (sessionHeader) return sessionHeader;
-  if (body?.session_token) return body.session_token;
-
-  return null;
-}
+// The local extractor that used to live here read only the header and body, so
+// the HttpOnly `__Host-client_session_token` cookie that `client-portal-login`
+// has always set was never consulted — which is why the front end had to keep a
+// script-readable copy of the token in `localStorage`. The shared extractor
+// reads the cookie first and keeps the header/body carriers as a fallback.

@@ -17,6 +17,8 @@ import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePath, signStoragePaths } from "../_shared/storageSign.ts";
 import { validateReferenceImages } from "./referenceImages.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // investment-reports is private (STOR-005): resolve display URLs by signing each
 // row's storage_path. The signed URL is returned in the same public_url/
@@ -108,7 +110,7 @@ Rules:
 - No people, no text, no logos, no charts, no watermarks.
 - Wide landscape framing unless the user specifies otherwise.`;
 
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const res = await meteredFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -167,7 +169,7 @@ async function generateOne(opts: {
           size: `${opts.width}x${opts.height}`,
         };
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
+    const res = await meteredFetch("https://ai.gateway.lovable.dev/v1/images/generations", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -514,7 +516,7 @@ Deno.serve(async (req) => {
     return jsonErr("unknown action", corsHeaders);
   } catch (err: any) {
     console.error("[hero-image-studio]", err);
-    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+    return new Response(JSON.stringify(internalError(err, 'hero-image-studio')), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

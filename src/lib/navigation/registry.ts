@@ -37,6 +37,7 @@ import {
   Home,
   Inbox,
   Layers,
+  LifeBuoy,
   Mail,
   Map as MapIcon,
   MessageSquare,
@@ -110,7 +111,11 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Reminders', url: '/reminders', icon: Bell, moduleKey: 'reminders', group: 'Operations' },
   { title: 'Checklists', url: '/checklists', icon: ClipboardList, moduleKey: 'checklists', group: 'Operations' },
   { title: 'Agreements', url: '/agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
-  { title: 'Partner Agreements', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
+  // Lives inside Finance Portal Admin (Administration) — reached from its
+  // action bar rather than the Operations sidebar, so partner agreements sit
+  // with the rest of the finance-partner tooling. paletteOnly keeps ⌘K
+  // discovery and deep links working.
+  { title: 'Agreement Centre', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations', keywords: ['partner agreements', 'agreement centre', 'referral agreement', 'commission agreement', 'executed', 'issue', 'sign', 'finance portal'], paletteOnly: true },
   { title: 'Partner Referrals', url: '/partner-referrals', icon: ArrowLeftRight, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Loan Writer Undertakings', url: '/loan-writer-undertakings', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Partner Compliance', url: '/partner-compliance', icon: ShieldCheck, moduleKey: 'agreements', group: 'Operations' },
@@ -121,6 +126,7 @@ export const NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'User Guide', url: '/user-guide', icon: BookOpen, moduleKey: 'user_guide', group: 'Help & Usage' },
   { title: 'Billing & Usage', url: '/billing', icon: Coins, moduleKey: '__always__', group: 'Help & Usage' },
   { title: 'Feedback', url: '/feedback', icon: MessageSquareQuote, moduleKey: '__always__', group: 'Help & Usage' },
+  { title: 'Support', url: '/support', icon: LifeBuoy, moduleKey: '__always__', group: 'Help & Usage', keywords: ['help', 'ticket', 'issue', 'incident', 'support portal'] },
 ];
 
 export const ADMIN_NAVIGATION_ITEMS: readonly NavItemDef[] = [

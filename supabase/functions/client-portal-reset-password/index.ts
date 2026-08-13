@@ -2,6 +2,16 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { verifyResetToken, MAX_RESET_ATTEMPTS } from "../_shared/resetTokens.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ResetPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
+
+// The per-account attempt cap below (`consume_client_portal_reset_attempt`) only
+// ever sees one account. It cannot see a caller walking a dictionary of e-mail
+// addresses six digits at a time, which is what this source ceiling bounds.
+const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const RESET_IDENTIFIER_BUDGET = { max: 15, windowSeconds: 900 };
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -16,7 +26,12 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { action, email, otp, new_password } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ResetPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { action, email, otp, new_password } = __body.data
 
     if (!email) {
       return new Response(
@@ -26,6 +41,21 @@ Deno.serve(async (req) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+
+    // Source-keyed ceiling, consumed before the account-keyed one so a caller
+    // already over their IP budget cannot mint limiter rows for addresses they
+    // invent (ABUSE-003). Both `verify_otp` and `reset_password` pass through
+    // here, because both spend an OTP guess.
+    const gate = await beginAuthRateLimit(supabase, req, { scope: 'cprp', ip: RESET_IP_BUDGET });
+    if (!gate.allowed) {
+      console.warn('[client-portal-reset-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds);
+    }
+    const identifierLimit = await gate.consumeIdentifier(normalizedEmail, RESET_IDENTIFIER_BUDGET);
+    if (!identifierLimit.allowed) {
+      console.warn('[client-portal-reset-password] identifier rate limited', { degraded: identifierLimit.degraded });
+      return authRateLimitedResponse(corsHeaders, identifierLimit.retryAfterSeconds);
+    }
 
     /**
      * Load the portal user and verify the OTP with attempt limiting
@@ -91,10 +121,16 @@ Deno.serve(async (req) => {
         )
       }
 
-      // Validate password length
-      if (new_password.length < 8) {
+      // Full server-side strength policy, including the Have I Been Pwned
+      // k-anonymity breach check. This was a bare `length < 8` test, so a
+      // client could be re-set to a password already published in a breach
+      // corpus — the exact credential an attacker tries first. The check is
+      // fail-open on HIBP being unreachable (see passwordValidation.ts): an
+      // outage at Cloudflare must not stop someone recovering their account.
+      const strength = await validatePasswordStrength(new_password)
+      if (!strength.isValid) {
         return new Response(
-          JSON.stringify({ error: 'Password must be at least 8 characters', success: false }),
+          JSON.stringify({ error: strength.error, success: false }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         )
       }

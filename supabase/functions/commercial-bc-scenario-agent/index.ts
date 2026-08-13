@@ -9,6 +9,7 @@ import { consumeRateLimit, enforceJsonBodyLimit } from "../_shared/requestSecuri
 import { extractOpenAIUsage, logApiUsage } from "../_shared/logApiUsage.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface ChatTurn { role: 'user' | 'assistant'; content: string; }
 
 interface Snapshot {
@@ -245,6 +246,6 @@ ${prompt}`;
     return new Response(JSON.stringify({ success: true, assistantText, scenarios }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err: any) {
     console.error('[commercial-bc-scenario-agent] fatal', err);
-    return new Response(JSON.stringify({ success: false, error: err?.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ ...internalError(err, 'commercial-bc-scenario-agent'), success: false }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

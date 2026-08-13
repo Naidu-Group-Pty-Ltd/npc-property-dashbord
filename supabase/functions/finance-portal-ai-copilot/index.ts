@@ -7,6 +7,7 @@ import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from ".
 import { consumeRateLimit, enforceJsonBodyLimit } from "../_shared/requestSecurity.ts";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 // Dynamic per-request CORS (frontend uses credentials: 'include').
 const ALLOW_HEADERS = "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token";
 const EXPOSE_HEADERS = "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms";
@@ -73,7 +74,7 @@ async function callAI(systemPrompt: string, userPrompt: string, opts?: { tool?: 
     body.tools = [opts.tool];
     body.tool_choice = { type: "function", function: { name: opts.tool.function.name } };
   }
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const res = await meteredFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -428,7 +429,7 @@ async function coachInsights(supabase: any, userId: string) {
 
 async function transcribeVoice(supabase: any, userId: string, pfId: string | null, clientId: string | null, audioBase64: string, durationSeconds: number) {
   // Use Gemini multimodal: include audio inline
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const res = await meteredFetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({

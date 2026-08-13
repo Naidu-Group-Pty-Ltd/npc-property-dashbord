@@ -24,6 +24,12 @@ interface Props {
   sort: TemplateLibrarySort;
   onSortChange: (next: TemplateLibrarySort) => void;
   reportTypes: string[];
+  /** Design families present in the catalogue, with their entry counts. */
+  families: Array<{ key: string; name: string; count: number }>;
+  /** Recommended-use buckets present in the catalogue. */
+  useBuckets: string[];
+  /** Density steps present, in compact → spacious order. */
+  densities: string[];
   onClear: () => void;
   resultCount: number;
   totalCount: number;
@@ -70,8 +76,15 @@ function ChipGroup({ legend, children }: { legend: string; children: React.React
   );
 }
 
+const GROUND_OPTIONS: Array<{ value: Filters['ground']; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
 export function TemplateLibraryFilters({
-  filters, onChange, sort, onSortChange, reportTypes, onClear, resultCount, totalCount,
+  filters, onChange, sort, onSortChange, reportTypes, families, useBuckets, densities,
+  onClear, resultCount, totalCount,
 }: Props) {
   const active = hasActiveFilters(filters);
 
@@ -108,6 +121,66 @@ export function TemplateLibraryFilters({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Design-family axes come first: in a catalogue organised as families ×
+            variants × colourways, those are the questions a user asks before
+            "which report type is this". They hide entirely when the catalogue
+            holds no family entries, so a deployment that has not applied the
+            Investment Compass migration sees exactly the previous filter set. */}
+        {families.length > 0 && (
+          <ChipGroup legend="Design family">
+            {families.map((f) => (
+              <FilterChip
+                key={f.key}
+                label={`${f.name} (${f.count})`}
+                pressed={filters.families.includes(f.key)}
+                onClick={() => onChange({ ...filters, families: toggle(filters.families, f.key) })}
+              />
+            ))}
+          </ChipGroup>
+        )}
+
+        {families.length > 0 && (
+          <ChipGroup legend="Ground">
+            {GROUND_OPTIONS.map((o) => (
+              <FilterChip
+                key={o.value}
+                label={o.label}
+                pressed={filters.ground === o.value}
+                // Single-select: "Light" and "Dark" together is what "All"
+                // means, so offering both pressed at once would be a third way
+                // of saying the same thing.
+                onClick={() => onChange({ ...filters, ground: o.value })}
+              />
+            ))}
+          </ChipGroup>
+        )}
+
+        {densities.length > 0 && (
+          <ChipGroup legend="Density">
+            {densities.map((d) => (
+              <FilterChip
+                key={d}
+                label={d.charAt(0).toUpperCase() + d.slice(1)}
+                pressed={filters.densities.includes(d)}
+                onClick={() => onChange({ ...filters, densities: toggle(filters.densities, d) })}
+              />
+            ))}
+          </ChipGroup>
+        )}
+
+        {useBuckets.length > 0 && (
+          <ChipGroup legend="Recommended use">
+            {useBuckets.map((b) => (
+              <FilterChip
+                key={b}
+                label={b}
+                pressed={filters.useBuckets.includes(b)}
+                onClick={() => onChange({ ...filters, useBuckets: toggle(filters.useBuckets, b) })}
+              />
+            ))}
+          </ChipGroup>
+        )}
+
         <ChipGroup legend="Category">
           {CATEGORY_OPTIONS.map((o) => (
             <FilterChip
@@ -187,6 +260,9 @@ export function TemplateLibraryFilters({
         )}
         {filters.productionReadyOnly && (
           <Badge variant="outline" className="text-xs">Report-ready only</Badge>
+        )}
+        {filters.ground !== 'all' && (
+          <Badge variant="outline" className="text-xs capitalize">{filters.ground} ground</Badge>
         )}
       </div>
     </div>

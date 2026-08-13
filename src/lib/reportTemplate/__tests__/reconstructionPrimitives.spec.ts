@@ -100,6 +100,40 @@ describe('R0 — embedded (data:) fonts', () => {
     expect(css).toContain("format('woff2')");
   });
 
+  it('R2: emits unicode-range for a coverage-scoped face and drops a malformed one', () => {
+    const scoped = tokensToFontFaceCss({
+      colors: {}, fonts: {}, spacing: {},
+      fontFaces: [{
+        family: 'Scoped', src: 'data:font/ttf;base64,AAAA', source: 'embedded',
+        unicodeRange: 'U+0041-005A, U+0061',
+      }],
+    } as any);
+    expect(scoped).toContain('unicode-range: U+0041-005A, U+0061;');
+
+    const mangled = tokensToFontFaceCss({
+      colors: {}, fonts: {}, spacing: {},
+      fontFaces: [{
+        family: 'Unscoped', src: 'data:font/ttf;base64,AAAA', source: 'embedded',
+        unicodeRange: "U+41;}</style><script>alert(1)</script>",
+      }],
+    } as any);
+    expect(mangled).toContain("font-family: 'Unscoped'");
+    expect(mangled).not.toContain('unicode-range');
+    expect(mangled).not.toContain('script');
+  });
+
+  it('R2: parseTemplate round-trips unicodeRange on a fontFace', () => {
+    const tpl = parseTemplate({
+      version: 1,
+      tokens: {
+        colors: {}, fonts: {}, spacing: {},
+        fontFaces: [{ family: 'X', src: 'data:font/woff2;base64,AAAA', unicodeRange: 'U+0020-007E' }],
+      },
+      pages: [],
+    });
+    expect((tpl.tokens as any).fontFaces[0].unicodeRange).toBe('U+0020-007E');
+  });
+
   it('parseTemplate keeps a data: fontFace (the .url() validator no longer rejects it)', () => {
     const tpl = parseTemplate({
       version: 1,

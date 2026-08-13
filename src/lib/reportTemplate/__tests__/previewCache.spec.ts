@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makePreviewKey, makeCanvasRenderKey, pageWithoutOverlays } from '../previewCache';
+import { makePreviewKey, makeCanvasRenderKey } from '../previewCache';
 import { type ReportTemplate, type Page, type Block, type Overlay } from '../templateSchema';
 
 const ov = (id: string, x = 0, y = 0): Overlay => ({ id, type: 'text', x, y, text: '' } as unknown as Overlay);
@@ -36,18 +36,27 @@ describe('makeCanvasRenderKey', () => {
   const template = tpl([pg('p1'), pg('p2')]);
   const page = (overlays: Overlay[], props: any = {}) => pg('p1', [blk('b1', 'free', overlays, props)]);
 
-  it('is UNCHANGED when an overlay moves (canvas hides overlays)', () => {
+  // R3 — the canvas iframe is the single renderer of overlay pixels, so a
+  // COMMITTED overlay change must rebuild the srcDoc. (Transient drags never
+  // touch the template; the canvas mirrors geometry onto the iframe DOM.)
+  it('CHANGES when an overlay moves (the iframe paints overlays now)', () => {
     const k1 = makeCanvasRenderKey(template, page([ov('o1', 0, 0)]), {}, '');
     const k2 = makeCanvasRenderKey(template, page([ov('o1', 120, 240)]), {}, '');
-    expect(k1).toBe(k2);
+    expect(k1).not.toBe(k2);
   });
 
-  it('is UNCHANGED when an overlay is added or removed', () => {
+  it('CHANGES when an overlay is added or removed', () => {
     const none = makeCanvasRenderKey(template, page([]), {}, '');
     const one = makeCanvasRenderKey(template, page([ov('o1')]), {}, '');
     const two = makeCanvasRenderKey(template, page([ov('o1'), ov('o2')]), {}, '');
-    expect(none).toBe(one);
-    expect(one).toBe(two);
+    expect(none).not.toBe(one);
+    expect(one).not.toBe(two);
+  });
+
+  it('is STABLE for identical content across new object references', () => {
+    const k1 = makeCanvasRenderKey(template, page([ov('o1', 5, 6)]), { a: 1 }, '.c{}');
+    const k2 = makeCanvasRenderKey(template, page([ov('o1', 5, 6)]), { a: 1 }, '.c{}');
+    expect(k1).toBe(k2);
   });
 
   it('CHANGES when a block prop changes (the background actually changes)', () => {
@@ -62,17 +71,5 @@ describe('makeCanvasRenderKey', () => {
     expect(makeCanvasRenderKey(template, p, {}, '')).not.toBe(makeCanvasRenderKey(themed, p, {}, ''));
     expect(makeCanvasRenderKey(template, p, { a: 1 }, '')).not.toBe(makeCanvasRenderKey(template, p, { a: 2 }, ''));
     expect(makeCanvasRenderKey(template, p, {}, '.a{}')).not.toBe(makeCanvasRenderKey(template, p, {}, '.b{}'));
-  });
-});
-
-describe('pageWithoutOverlays', () => {
-  it('removes overlay content from the iframe render input without mutating the page', () => {
-    const overlay = { ...ov('o1'), rich: true, text: '<script>malicious()</script>' } as unknown as Overlay;
-    const page = pg('p1', [blk('b1', 'free', [overlay])]);
-
-    const renderPage = pageWithoutOverlays(page);
-
-    expect(renderPage.blocks[0].overlays).toEqual([]);
-    expect(page.blocks[0].overlays).toEqual([overlay]);
   });
 });

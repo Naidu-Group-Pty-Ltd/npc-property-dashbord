@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createForbiddenResponse } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 /**
  * Edge function to fetch system logs and error data
  * Tables: auto_report_generation_log, api_health_log, investment_reports (stuck/failed)
@@ -179,7 +180,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[get-system-logs] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'get-system-logs'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

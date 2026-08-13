@@ -32,6 +32,7 @@ import {
 } from '../_shared/migration-jobs.ts';
 import { tokenKeyFor } from '../_shared/ghl-rate-limiter.ts';
 import { createGhlFetchContext } from '../_shared/ghl-worker-fetch.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 const MAX_RUNTIME_MS = 110_000;
@@ -489,6 +490,6 @@ Deno.serve(async (req) => {
     if (jobId && supabase) {
       await finishJob(supabase, jobId, 'failed', err.message || 'Worker crashed').catch(() => {});
     }
-    return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500 });
+    return new Response(JSON.stringify({ ...internalError(err, 'ghl-migrate-calendars-worker'), success: false }), { status: 500 });
   }
 });

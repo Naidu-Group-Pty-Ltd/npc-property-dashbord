@@ -4,6 +4,7 @@ import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, create
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission } from '../_shared/authz.ts';
 import { logSecurityEvent } from '../_shared/auth_v2.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 interface Body {
   view: 'vw_pipeline_funnel' | 'vw_lender_mix' | 'vw_broker_scorecard' | 'vw_revenue_dashboard';
@@ -58,7 +59,7 @@ Deno.serve(async (req) => {
     return j({ success: true, data });
   } catch (e) {
     console.error('[analytics-query]', e);
-    return new Response(JSON.stringify({ success: false, error: (e as Error).message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'analytics-query'), success: false }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });

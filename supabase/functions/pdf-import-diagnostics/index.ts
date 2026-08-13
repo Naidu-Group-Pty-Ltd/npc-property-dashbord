@@ -29,6 +29,7 @@ import {
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
@@ -420,7 +421,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   } catch (e: any) {
     console.error('[pdf-import-diagnostics] error', e);
     return new Response(
-      JSON.stringify({ error: e?.message ?? String(e) }),
+      JSON.stringify(internalError(e, 'pdf-import-diagnostics')),
       { status: 500, headers: { ...cors, 'Content-Type': 'application/json' } },
     );
   }

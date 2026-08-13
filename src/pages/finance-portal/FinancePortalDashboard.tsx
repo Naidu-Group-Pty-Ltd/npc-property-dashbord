@@ -16,6 +16,7 @@ import {
 import { TodayPanel } from '@/components/finance-portal/TodayPanel';
 import { DocumentExpiryWatchlist } from '@/components/finance-portal/DocumentExpiryWatchlist';
 import { EngagementHeader } from '@/components/finance-portal/EngagementHeader';
+import { AgreementActionCard } from '@/components/finance-portal/AgreementActionCard';
 import { GoalsProgressCard } from '@/components/finance-portal/GoalsProgressCard';
 import { AiRiskSnifferWidget } from '@/components/finance-portal/AiRiskSnifferWidget';
 import { AiCoachWidget } from '@/components/finance-portal/AiCoachWidget';
@@ -205,6 +206,11 @@ export default function FinancePortalDashboard() {
             {user?.company || 'Independent Finance Partner'} · {user?.email}
           </p>
         </motion.div>
+
+        {/* Anything waiting on the partner, above everything else. The bell
+            is a notification about a notification; this is the thing itself,
+            and it renders nothing when there is nothing to do. */}
+        <AgreementActionCard />
 
         {/* Engagement: streak + what changed since last visit */}
         <EngagementHeader />

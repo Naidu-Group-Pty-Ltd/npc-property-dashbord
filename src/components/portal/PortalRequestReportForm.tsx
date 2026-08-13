@@ -15,21 +15,16 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PortalEmptyState } from '@/components/portal/PortalEmptyState';
 import { PortalPanel, PortalPanelContent, PortalPanelHeader, PortalPanelTitle } from '@/components/portal/PortalSurface';
+import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
 
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
-const PORTAL_SESSION_KEY = 'portal_session_token';
 
 interface Prediction {
   placeId: string;
   description: string;
   mainText: string;
   secondaryText: string;
-}
-
-function getSessionToken(): string | null {
-  try { return sessionStorage.getItem(PORTAL_SESSION_KEY) || localStorage.getItem(PORTAL_SESSION_KEY); }
-  catch { try { return localStorage.getItem(PORTAL_SESSION_KEY); } catch { return null; } }
 }
 
 interface Property {
@@ -164,7 +159,6 @@ export function PortalRequestReportForm({ properties, onSubmitted, onCancel }: P
 
     setSubmitting(true);
     try {
-      const sessionToken = getSessionToken();
       const payload: Record<string, any> = {
         operation: 'insert',
         table: 'client_portal_report_requests',
@@ -172,7 +166,7 @@ export function PortalRequestReportForm({ properties, onSubmitted, onCancel }: P
           request_type: requestType,
           notes: notes.trim() || null,
         },
-        portal_session_token: sessionToken,
+        ...portalSessionBodyFields(),
       };
 
       if (requestType === 'investment_property') {
@@ -191,9 +185,10 @@ export function PortalRequestReportForm({ properties, onSubmitted, onCancel }: P
           'Content-Type': 'application/json',
           'apikey': SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          ...(sessionToken ? { 'x-portal-session-token': sessionToken } : {}),
+          ...portalSessionHeaders(),
         },
-        credentials: 'omit',
+        // Attach the HttpOnly session cookie; see src/lib/portalSession.ts.
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 

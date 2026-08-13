@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // Vapi monitor URLs are bearer capabilities. Older call-log rows may still
 // contain them, so redact them at this API boundary as defense in depth.
@@ -233,7 +234,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[get-call-logs] Unexpected error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'get-call-logs'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

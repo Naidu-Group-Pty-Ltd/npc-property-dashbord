@@ -227,12 +227,21 @@ export const CASE_STATUS_LABELS: Record<AmlCaseStatus, string> = {
  * weight rather than four unrelated hues: the two "bad" ratings share the
  * destructive token separated by fill strength, so `prohibited` is
  * unmistakably the loudest pill on any surface. Semantic tokens only.
+ *
+ * `prohibited` must keep `border-transparent`. It is the one rating whose
+ * legibility comes from its fill rather than its text colour, and the glass
+ * re-skin (`src/styles/glass.css`, "Badges") deliberately re-tints the
+ * background of every badge that does *not* carry `border-transparent`.
+ * Without it the solid destructive fill was replaced by the pale glass fill
+ * while the text stayed `destructive-foreground` — near-white on near-white,
+ * so the loudest rating in the system rendered as an empty pill on every
+ * surface that shows it.
  */
 export const RISK_BADGE_CLASSES = {
   low: "bg-success/20 text-success border-success/40",
   medium: "bg-warning/20 text-warning border-warning/40",
   high: "bg-destructive/15 text-destructive border-destructive/40",
-  prohibited: "border-destructive bg-destructive text-destructive-foreground",
+  prohibited: "border-transparent bg-destructive text-destructive-foreground",
 } as const;
 
 /** Plain-English labels for the service-gate dimension (Command Centre only). */

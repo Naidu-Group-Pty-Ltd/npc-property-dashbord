@@ -6,21 +6,29 @@ import { extractFinanceSessionToken } from '../_shared/financeSessionToken';
 const functionSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
 describe('finance portal session token extraction', () => {
-  it('restores a session from the HttpOnly cookie used by finance portal login', () => {
-    const headers = new Headers({ cookie: '__Host-session_token=server-valid-token; theme=dark' });
-
-    expect(extractFinanceSessionToken(headers)).toBe('server-valid-token');
-  });
-
-  it('accepts the finance-specific cookie name during rollout', () => {
-    const headers = new Headers({ cookie: '__Host-finance_session_token=finance%2Ftoken' });
+  it('restores a session from the finance portal HttpOnly cookie', () => {
+    const headers = new Headers({ cookie: '__Host-finance_session_token=finance%2Ftoken; theme=dark' });
 
     expect(extractFinanceSessionToken(headers)).toBe('finance/token');
   });
 
+  /**
+   * The extractor used to fall back to `__Host-session_token` — the COMMAND
+   * CENTRE's cookie. It was propping up `finance-portal-accept-invite`, which
+   * was writing finance sessions into the staff cookie name; both are fixed at
+   * the source. A staff cookie must never be offered as a finance credential:
+   * a signed-in staff member visiting the Finance Portal would otherwise have
+   * their Command Centre token presented to finance session lookups.
+   */
+  it('ignores the Command Centre cookie entirely', () => {
+    const headers = new Headers({ cookie: '__Host-session_token=staff-token; theme=dark' });
+
+    expect(extractFinanceSessionToken(headers)).toBeNull();
+  });
+
   it('preserves explicit finance header precedence', () => {
     const headers = new Headers({
-      cookie: '__Host-session_token=cookie-token',
+      cookie: '__Host-finance_session_token=cookie-token',
       'x-finance-session-token': 'header-token',
     });
 

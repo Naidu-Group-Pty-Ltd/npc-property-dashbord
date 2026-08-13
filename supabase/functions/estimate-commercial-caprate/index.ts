@@ -8,6 +8,8 @@ import { checkModuleView } from "../_shared/permissions.ts";
 import { consumeRateLimit, enforceJsonBodyLimit, securityJsonError } from "../_shared/requestSecurity.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface Snapshot {
   propertyId?: string;
   dealId?: string;
@@ -161,7 +163,7 @@ Deno.serve(async (req) => {
       },
     }];
 
-    const aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResp = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -205,6 +207,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ success: true, estimate }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err: any) {
     console.error('[estimate-commercial-caprate] fatal', err);
-    return new Response(JSON.stringify({ success: false, error: err?.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ ...internalError(err, 'estimate-commercial-caprate'), success: false }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

@@ -1,6 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { AcceptInviteRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -15,7 +18,12 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { action, token, password } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, AcceptInviteRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { action, token, password } = __body.data
 
     if (!token) {
       return new Response(
@@ -68,9 +76,14 @@ Deno.serve(async (req) => {
       )
     }
 
-    if (password.length < 8) {
+    // Full strength policy including the HIBP k-anonymity breach lookup. This
+    // is the password the client will hold for the life of the account, so it
+    // is the one place a breached credential is most worth refusing. Fail-open
+    // if HIBP is unreachable — an outage must not block onboarding.
+    const strength = await validatePasswordStrength(password)
+    if (!strength.isValid) {
       return new Response(
-        JSON.stringify({ error: 'Password must be at least 8 characters' }),
+        JSON.stringify({ error: strength.error }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -110,7 +123,7 @@ Deno.serve(async (req) => {
       })
 
     const clientData = portalUser.clients as any
-    const sessionCookie = createSessionCookie(sessionToken, expiresAt)
+    const sessionCookie = createClientPortalSessionCookie(sessionToken, expiresAt)
 
     return new Response(
       JSON.stringify({

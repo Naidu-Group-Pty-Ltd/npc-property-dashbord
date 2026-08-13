@@ -3,6 +3,7 @@ import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts"
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -248,7 +249,7 @@ Deno.serve(async (req) => {
     if (resendApiKey) {
       const brand = await getBrandConfig();
       try {
-        const emailRes = await fetch('https://api.resend.com/emails', {
+        const emailRes = await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -13,6 +13,8 @@ import {
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { loadSplitRegistry, defaultSplitRegistryBundle } from '../_shared/reportSplitRegistry.ts';
 import { loadPacketConfig, applyPacketConfig, DEFAULT_PACKET_KEYS } from '../_shared/packetConfigLoader.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SYSTEM_PROMPT = `
 You are the Report Engine Operator: a strictly-scoped AI agent whose ONLY job is to
@@ -1512,7 +1514,7 @@ Deno.serve(async (req) => {
     const MAX_TURNS = 8;
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const resp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      const resp = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${lovableKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1552,7 +1554,7 @@ Deno.serve(async (req) => {
 
     return json({ assistant: assistantText, tool_invocations: invocations }, corsHeaders);
   } catch (e: any) {
-    return json({ error: e?.message || String(e) }, createCorsHeaders(origin), 500);
+    return json({ ...internalError(e, 'report-engine-agent') }, createCorsHeaders(origin), 500);
   }
 });
 

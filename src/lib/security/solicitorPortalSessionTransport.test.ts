@@ -22,11 +22,20 @@ describe('solicitor portal session transport', () => {
   });
 
   it('does not return raw session credentials in authentication responses', () => {
-    // The sole remaining occurrence in each function persists the server-side
-    // session record; response JSON must never contain a second occurrence.
-    expect(loginSource.match(/session_token:\s*sessionToken/g)).toHaveLength(1);
-    expect(acceptInviteSource.match(/session_token:\s*sessionToken/g)).toHaveLength(1);
-    expect(loginSource).toContain("'Set-Cookie': createSolicitorSessionCookie(sessionToken, expiresAt)");
-    expect(acceptInviteSource).toContain("'Set-Cookie': createSolicitorSessionCookie(sessionToken, expiresAt)");
+    // ZERO occurrences now, not one. WP-11A moved these to hash-only storage —
+    // both functions write `session_token: null` and persist only the peppered
+    // `token_hash`, so the raw token is neither returned to the caller NOR at
+    // rest in the database. The assertion tightened with the code: it used to
+    // allow the single occurrence that wrote the plaintext column.
+    expect(loginSource).not.toMatch(/session_token:\s*sessionToken/);
+    expect(acceptInviteSource).not.toMatch(/session_token:\s*sessionToken/);
+    expect(loginSource).toMatch(/session_token:\s*null/);
+    expect(acceptInviteSource).toMatch(/session_token:\s*null/);
+    // Asserted on the invariant, not on the argument names: session issuance
+    // moved into `_shared/solicitorSessions.ts`, so the token and expiry now
+    // arrive as `issued.token` / `issued.absoluteExpiresAt`. Pinning the old
+    // identifiers made a rename look like a missing cookie.
+    expect(loginSource).toMatch(/'Set-Cookie':\s*createSolicitorSessionCookie\(/);
+    expect(acceptInviteSource).toMatch(/'Set-Cookie':\s*createSolicitorSessionCookie\(/);
   });
 });

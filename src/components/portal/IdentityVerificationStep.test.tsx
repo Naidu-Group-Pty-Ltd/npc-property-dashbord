@@ -10,14 +10,21 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
  */
 
 const verificationStatus = vi.fn();
+const startHostedVerification = vi.fn();
+const submitVerification = vi.fn();
+const prepareVerificationAttempt = vi.fn();
+const submitVerificationAttempt = vi.fn();
 vi.mock('@/lib/aml/amlPortalApi', () => ({
   amlPortalApi: {
     verificationStatus: (...a: unknown[]) => verificationStatus(...a),
     requestVerificationUpload: vi.fn(),
-    submitVerification: vi.fn(),
+    submitVerification: (...a: unknown[]) => submitVerification(...a),
+    startHostedVerification: (...a: unknown[]) => startHostedVerification(...a),
+    prepareVerificationAttempt: (...a: unknown[]) => prepareVerificationAttempt(...a),
+    submitVerificationAttempt: (...a: unknown[]) => submitVerificationAttempt(...a),
   },
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 import { IdentityVerificationStep } from './IdentityVerificationStep';
 
@@ -63,25 +70,64 @@ function stubCanvas(blob: Blob | null = new Blob(['jpeg'], { type: 'image/jpeg' 
 }
 
 /**
- * Open the capture dialog and let the camera effect settle.
+ * A prepared attempt, as `prepare_verification_attempt` answers it.
+ *
+ * The server names all three objects; the browser is handed permissions to
+ * write to them and nothing else. `document_back` is absent for a passport,
+ * which is what makes the two-photo journey two photos.
+ */
+const preparedFor = (choice: 'passport' | 'driver_licence' = 'passport') => ({
+  attempt_id: '11111111-1111-4111-8111-111111111111',
+  required: {
+    document_front: true as const,
+    document_back: choice === 'driver_licence',
+    selfie: true as const,
+  },
+  uploads: {
+    document_front: { upload_url: 'https://storage.test/front', token: 't1' },
+    ...(choice === 'driver_licence'
+      ? { document_back: { upload_url: 'https://storage.test/back', token: 't2' } }
+      : {}),
+    selfie: { upload_url: 'https://storage.test/selfie', token: 't3' },
+  },
+  attempts_remaining: 3,
+  max_attempts: 3,
+});
+
+/**
+ * Walk from the party list to the first camera.
+ *
+ * The journey is deliberately longer than it used to be: choose a document,
+ * read what to have ready, then Begin — which is where the server prepares the
+ * attempt. The camera opens only after that returns, which is the whole point
+ * (nothing is collected before the gate).
  *
  * `/^start$/` rather than `/start/`: the shoot button reads "Starting camera…"
  * until the stream is ready, and would otherwise match.
  */
-async function openDialog() {
+async function openDialog(choice: RegExp = /passport/i) {
   fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+  fireEvent.click(await screen.findByRole('radio', { name: choice }));
+  fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }));
+  await act(async () => {
+    fireEvent.click(await screen.findByRole('button', { name: /begin secure verification/i }));
+  });
   // getUserMedia → play() → setReady is a promise chain; flush it inside act
   // so the ready-gated button has rendered before anything looks for it.
   await act(async () => { await Promise.resolve(); });
 }
 
-/** Walk the dialog to the selfie step, leaving the selfie camera open. */
+/** Walk to the selfie step, leaving the selfie camera open and ready. */
 async function reachSelfieStep() {
   await openDialog();
   await act(async () => {
     fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
   });
   fireEvent.click(await screen.findByRole('button', { name: /use this photo/i }));
+  // The front camera is acquired by an effect, and its shutter stays disabled
+  // ("Starting camera…") until the stream reports dimensions. Flush that chain
+  // so callers find a live shutter rather than the placeholder.
+  await act(async () => { await Promise.resolve(); });
 }
 
 const party = {
@@ -101,6 +147,18 @@ const renderStep = () => render(
 
 beforeEach(() => {
   verificationStatus.mockReset();
+  startHostedVerification.mockReset();
+  submitVerification.mockReset();
+  prepareVerificationAttempt.mockReset();
+  submitVerificationAttempt.mockReset();
+  prepareVerificationAttempt.mockResolvedValue(preparedFor('passport'));
+  submitVerificationAttempt.mockResolvedValue({
+    submitted: true, attempt_id: preparedFor().attempt_id, attempt_number: 1,
+    attempts_remaining: 3, status: 'processing', message: 'received',
+  });
+  // The signed-URL PUT. Uploads go to NPC storage and nowhere else, so a test
+  // that reaches the network has found a defect rather than a flake.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
   URL.createObjectURL = vi.fn(() => 'blob:capture');
   URL.revokeObjectURL = vi.fn();
 });
@@ -119,7 +177,7 @@ describe('identity verification step', () => {
 
     renderStep();
 
-    fireEvent.click(await screen.findByRole('button', { name: /start/i }));
+    await openDialog();
     await waitFor(() => expect(camera.getUserMedia).toHaveBeenCalledTimes(1));
 
     await act(async () => {
@@ -140,7 +198,7 @@ describe('identity verification step', () => {
 
     renderStep();
 
-    fireEvent.click(await screen.findByRole('button', { name: /start/i }));
+    await openDialog();
     await waitFor(() => expect(camera.facings).toEqual(['environment']));
 
     // Document retake reopens the environment-facing camera.
@@ -182,7 +240,7 @@ describe('identity verification step', () => {
     expect(camera.stops[0], 'the document stream must not stay open').toHaveBeenCalled();
   });
 
-  it('stops every track when the dialog is closed', async () => {
+  it('stops every track when the check is cancelled', async () => {
     const camera = mockCamera();
     verificationStatus.mockResolvedValue(status());
     stubCanvas();
@@ -191,7 +249,11 @@ describe('identity verification step', () => {
     await openDialog();
     await waitFor(() => expect(camera.stops).toHaveLength(1));
 
-    fireEvent.click(await screen.findByRole('button', { name: /cancel/i }));
+    // Leaving the first capture is a cancel. The prepared attempt stays a
+    // draft and nothing has been used up.
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /^cancel$/i }));
+    });
     await waitFor(() => expect(camera.stops[0]).toHaveBeenCalled());
   });
 
@@ -264,7 +326,11 @@ describe('identity verification step', () => {
 
     renderStep();
 
-    expect(await screen.findByText(/adviser will verify your identity/i)).toBeTruthy();
+    // The documentary route is the route, not "nothing to do": the client is
+    // sent to upload their document rather than told to wait for an adviser
+    // who is in fact waiting on them.
+    expect(await screen.findByText(/verify your identity from your documents/i)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /upload identity document/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
   });
 
@@ -276,6 +342,8 @@ describe('identity verification step', () => {
     renderStep();
 
     expect(await screen.findByText(/nothing has been used up/i)).toBeTruthy();
+    // Even a transient outage offers the working route rather than only a wait.
+    expect(await screen.findByRole('button', { name: /upload identity document/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
   });
 
@@ -286,5 +354,508 @@ describe('identity verification step', () => {
     renderStep();
 
     expect(await screen.findByRole('button', { name: /start/i })).toBeTruthy();
+  });
+});
+
+/**
+ * The NPC capture journey, end to end.
+ *
+ * The customer chooses a document, photographs it, photographs themselves, and
+ * waits — without ever leaving this page. What these check is the shape of
+ * that: how many photographs each document asks for, that nothing is collected
+ * before the server has agreed, that a double tap buys one verification rather
+ * than two, and that the customer is never shown anybody else's product.
+ */
+describe('the NPC capture journey', () => {
+  it('asks a passport holder for two photographs, not three', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+    prepareVerificationAttempt.mockResolvedValue(preparedFor('passport'));
+
+    renderStep();
+    await openDialog(/passport/i);
+
+    // Front, then straight to the selfie: there is no back to photograph and
+    // asking for one is a dead end.
+    expect(await screen.findByText(/photograph the front of your document/i)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /use this photo/i }));
+
+    expect(await screen.findByText(/take a photo of yourself/i)).toBeTruthy();
+    expect(screen.queryByText(/now photograph the back/i)).toBeNull();
+    await waitFor(() => expect(camera.facings).toEqual(['environment', 'user']));
+  });
+
+  it('asks a driver licence holder for the back as well, in order', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+    prepareVerificationAttempt.mockResolvedValue(preparedFor('driver_licence'));
+
+    renderStep();
+    await openDialog(/driver licence/i);
+
+    expect(await screen.findByText(/photograph the front of your document/i)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /use this photo/i }));
+
+    expect(await screen.findByText(/now photograph the back/i)).toBeTruthy();
+    // Still the rear camera for the second side.
+    await waitFor(() => expect(camera.facings).toEqual(['environment', 'environment']));
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /use this photo/i }));
+
+    expect(await screen.findByText(/take a photo of yourself/i)).toBeTruthy();
+    await waitFor(() =>
+      expect(camera.facings).toEqual(['environment', 'environment', 'user']));
+  });
+
+  it('tells the customer how many photographs before the camera opens', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status());
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    fireEvent.click(await screen.findByRole('radio', { name: /driver licence/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }));
+
+    expect(await screen.findByText(/three photos, on this page/i)).toBeTruthy();
+    // And says plainly that nothing leaves the page — the promise this whole
+    // architecture exists to keep.
+    expect(await screen.findByText(/nothing opens a new window/i)).toBeTruthy();
+    // Still nothing prepared and nothing collected.
+    expect(prepareVerificationAttempt).not.toHaveBeenCalled();
+  });
+
+  it('prepares the attempt before the camera opens, and never after', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    fireEvent.click(await screen.findByRole('radio', { name: /passport/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }));
+
+    // Reading the brief opens no camera.
+    expect(camera.getUserMedia).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /begin secure verification/i }));
+    });
+
+    expect(prepareVerificationAttempt).toHaveBeenCalledWith('case-1', {
+      party_id: null, party_label: 'You', document_type: 'passport',
+    });
+    // The document type is the ONLY thing the browser declares.
+    const [, params] = prepareVerificationAttempt.mock.calls[0];
+    expect(Object.keys(params).sort()).toEqual(['document_type', 'party_id', 'party_label']);
+    await waitFor(() => expect(camera.getUserMedia).toHaveBeenCalledTimes(1));
+  });
+
+  it('collects nothing when the server refuses to prepare', async () => {
+    const camera = mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    prepareVerificationAttempt.mockRejectedValue(Object.assign(
+      new Error('Verification is temporarily unavailable. Nothing has been used up.'),
+      { code: 'temporarily_unavailable' },
+    ));
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    fireEvent.click(await screen.findByRole('radio', { name: /passport/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }));
+
+    verificationStatus.mockResolvedValue(status({ availability: 'temporarily_unavailable' }));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /begin secure verification/i }));
+    });
+
+    // No camera was ever opened, so no photograph exists to have been wasted —
+    // and the customer lands on the documentary route rather than a dead end.
+    expect(camera.getUserMedia).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: /upload identity document/i })).toBeTruthy();
+  });
+
+  it('uploads to the server-named locations and submits an attempt id alone', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await reachSelfieStep();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /send securely/i }));
+    });
+
+    const puts = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    expect(puts.map((c) => c[0]))
+      .toEqual(['https://storage.test/front', 'https://storage.test/selfie']);
+    for (const [, init] of puts) expect((init as RequestInit).method).toBe('PUT');
+
+    // The submission carries the attempt id and nothing else — no path, no
+    // status, no provider, no score.
+    expect(submitVerificationAttempt)
+      .toHaveBeenCalledWith('case-1', preparedFor().attempt_id);
+    expect(submitVerificationAttempt.mock.calls[0]).toHaveLength(2);
+  });
+
+  it('double-tapping Send submits once, not twice', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await reachSelfieStep();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+
+    const send = await screen.findByRole('button', { name: /send securely/i });
+    await act(async () => {
+      fireEvent.click(send);
+      fireEvent.click(send);
+    });
+
+    // Two paid verifications from one impatient customer is exactly what the
+    // in-flight guard exists to prevent; the server refuses a second too.
+    expect(submitVerificationAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the waiting state and lets the customer leave', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await reachSelfieStep();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /send securely/i }));
+    });
+
+    // Once, in the live region. The card title stays neutral: a browser run
+    // showed the state printed twice one line apart, which reads as a
+    // rendering fault rather than as emphasis.
+    expect(await screen.findByText(/checking your identity/i)).toBeTruthy();
+    expect(await screen.findByText(/keep this page open, or come back later/i)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /back to identity/i })).toBeTruthy();
+  });
+
+  it('lands a returning customer on the waiting state, not a fresh chooser', async () => {
+    mockCamera();
+    verificationStatus.mockResolvedValue(status({
+      parties: [{ ...party, verification_in_progress: true }],
+    }));
+
+    renderStep();
+    // A refresh loses every trace of the submission on this side. The server's
+    // boolean is what stops the customer photographing everything again while
+    // their first set is still with the provider.
+    expect(await screen.findByRole('button', { name: /check progress/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /check progress/i }));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(await screen.findByText(/checking your identity/i)).toBeTruthy();
+    expect(screen.queryByText(/which identity document will you use/i)).toBeNull();
+  });
+
+  it('leaves the waiting state when the server says the check has settled', async () => {
+    /*
+     * The defect a browser found and jsdom did not.
+     *
+     * The sub-screen was handed the party as it stood when Start was pressed,
+     * and that object never changed again. The polling worked, the server
+     * settled, and the customer sat on "Checking your identity" for ever —
+     * because nothing was reading the answer. The step now re-derives the live
+     * party from the latest read on every render.
+     */
+    mockCamera();
+    verificationStatus.mockResolvedValue(status({
+      parties: [{ ...party, verification_in_progress: true }],
+    }));
+    stubCanvas();
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /check progress/i }));
+    await act(async () => { await Promise.resolve(); });
+    expect(await screen.findByText(/checking your identity/i)).toBeTruthy();
+
+    // The processor finishes. The next poll carries the settled party.
+    verificationStatus.mockResolvedValue(status({
+      parties: [{
+        ...party, status: 'verified', can_attempt: false, verification_in_progress: false,
+      }],
+    }));
+
+    await waitFor(
+      async () => expect(await screen.findByText(/verification received/i)).toBeTruthy(),
+      { timeout: 8000 },
+    );
+  }, 15000);
+
+  it('refuses to obey a backend that still says hosted', async () => {
+    /*
+     * The production defect, as a test.
+     *
+     * On 2026-08-11 the server answered `provider_flow: 'hosted'` — the
+     * migrations were unapplied, `didit` was still the active provider — and
+     * the portal opened `verify.didit.me/session/…` in a window. A customer saw
+     * a vendor's page.
+     *
+     * The same answer now lands on the documentary route. This is the
+     * defence-in-depth line: a stale deployment cannot produce a popup, only a
+     * safe and actionable state.
+     */
+    const camera = mockCamera();
+    const open = vi.spyOn(window, 'open');
+    verificationStatus.mockResolvedValue(status({ provider_flow: 'hosted' }));
+
+    renderStep();
+
+    expect(await screen.findByRole('button', { name: /upload identity document/i }))
+      .toBeTruthy();
+    expect(await screen.findByText(/nothing has been used up/i)).toBeTruthy();
+    // No "Continue verification", no window, no camera, no hosted request.
+    expect(screen.queryByRole('button', { name: /continue verification/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    expect(camera.getUserMedia).not.toHaveBeenCalled();
+    expect(startHostedVerification).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('never shows the customer a provider window, frame or brand', async () => {
+    mockCamera();
+    const open = vi.spyOn(window, 'open');
+    verificationStatus.mockResolvedValue(status());
+    stubCanvas();
+
+    renderStep();
+    await reachSelfieStep();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /take photo/i }));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /send securely/i }));
+    });
+
+    expect(open).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(startHostedVerification).not.toHaveBeenCalled();
+    expect(document.body.textContent?.toLowerCase()).not.toContain('didit');
+  });
+});
+
+/**
+ * The hosted secure-identity check was removed on 2026-08-11.
+ *
+ * ~470 lines of tests lived here: the popup rule (open the window
+ * synchronously inside the click, or browsers block it), blocked-window
+ * recovery, close polling, the origin-checked return message, and the
+ * guarantee that none of it could mark anybody verified. They were good tests
+ * of a flow that no longer exists.
+ *
+ * A customer showed "Continue verification" in production and was sent to
+ * `verify.didit.me/session/...`. The product decision that followed is final:
+ * no customer reaches a verification vendor's page again. The component, the
+ * window, the listener and the client API method are all gone.
+ *
+ * What replaced these tests is stronger than they were, because it asserts an
+ * absence rather than a behaviour: `src/lib/aml/hostedIdvRetired.test.ts` fails
+ * if any client-side identity module contains an executable `window.open`, an
+ * iframe, a navigation, a `postMessage`, or any way to ask the server for a
+ * hosted session. A test of how the popup behaved cannot fail when somebody
+ * reintroduces one; that test can.
+ *
+ * Hosted RESULTS are still covered — `diditDecision.test.ts`,
+ * `diditWebhookSecurity.test.ts` and `diditSessionLifecycle.test.ts` are
+ * untouched, because a late signed outcome for a session that already ran must
+ * still settle the canonical record.
+ */
+
+/* ── telling the page when canonical verification state moves ──────────── */
+
+/**
+ * This step keeps its own copy of the verification status; the journey that
+ * draws the stepper, the overall progress figure and the review summary lives
+ * on the page above it. They used to drift: a customer could finish a check,
+ * come back, and find "Verify identity" still grey with the progress bar
+ * unmoved until they reloaded the page by hand.
+ *
+ * The callback carries NO argument, and that is the contract. It says
+ * something moved; the page answers by re-reading the server. Nothing the
+ * browser works out can mark anybody verified.
+ *
+ * ## The loop these also guard
+ *
+ * The first version notified on the first read whenever that read was not
+ * "quiet". A customer sitting on a check that was already `in_review`
+ * therefore announced a change that had not happened; the page reloaded, the
+ * reload blanked the portal, this component unmounted, its memory of what it
+ * had seen died with it, and the remount made the same server state new
+ * again — forever. The page blinked and could not be used.
+ *
+ * The first successful read for a case is a BASELINE, never a change. The
+ * page loaded its overview from the same server; there is nothing to tell it.
+ */
+describe('parent refresh on canonical change', () => {
+  const onStatusChange = vi.fn();
+  const renderWithStatusChange = () => render(
+    <IdentityVerificationStep
+      caseId="case-1" onBack={noop} onNext={noop} onNeedsConsent={noop}
+      onStatusChange={onStatusChange}
+    />,
+  );
+
+  beforeEach(() => { onStatusChange.mockReset(); });
+
+  it('stays quiet on the first read when nothing has been started', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+    // The page already assumes this state; an overview fetch here buys nothing.
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet on the first read when a check is ALREADY in flight', async () => {
+    // The production loop, in one assertion. `in_review` at mount is not news:
+    // the page's own overview came from the same server, and announcing it
+    // reloaded the page, which unmounted this component, which forgot it had
+    // seen anything, which made the same state new again on remount.
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    renderWithStatusChange();
+    await screen.findByText(/with our team/i);
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet on the first read for every settled state', async () => {
+    for (const partyStatus of ['verified', 'action_required', 'contact_adviser'] as const) {
+      onStatusChange.mockReset();
+      verificationStatus.mockResolvedValue(
+        status({ parties: [{ ...party, status: partyStatus, can_attempt: false }] }));
+      const view = renderWithStatusChange();
+      await waitFor(() => expect(verificationStatus).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); });
+      expect(onStatusChange).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  });
+
+  it('stays quiet when a hosted check is open at mount', async () => {
+    verificationStatus.mockResolvedValue(status({
+      parties: [{ ...party, status: 'not_started', verification_in_progress: true }],
+    }));
+    renderWithStatusChange();
+    await waitFor(() => expect(verificationStatus).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('tells the page when the party state moves, and says nothing about what to', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+    expect(onStatusChange).not.toHaveBeenCalled();
+
+    // The server has settled the party since the page loaded; the step's next
+    // read is where it finds out.
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'verified', can_attempt: false }] }));
+    fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
+
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledTimes(1));
+    // No outcome crosses the callback — the parent re-reads the server.
+    for (const call of onStatusChange.mock.calls) expect(call).toHaveLength(0);
+  });
+
+  it('does not notify again while the state is unchanged', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+
+    // Same state read again — not news, whatever prompts the read.
+    fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('takes a fresh baseline for a genuinely different case', async () => {
+    verificationStatus.mockResolvedValue(status());
+    const view = render(
+      <IdentityVerificationStep
+        caseId="case-1" onBack={noop} onNext={noop} onNeedsConsent={noop}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    await screen.findByRole('button', { name: /^start$/i });
+
+    // A different case, already in review. Its first read is its baseline —
+    // not a change, even though it differs from the previous case's state.
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    view.rerender(
+      <IdentityVerificationStep
+        caseId="case-2" onBack={noop} onNext={noop} onNeedsConsent={noop}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    await screen.findByText(/with our team/i);
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('an ordinary parent re-render does not make an unchanged state new', async () => {
+    // The parent re-renders this component on every background refresh, with
+    // fresh inline callback props. That must not be mistaken for a change —
+    // it is the other half of what made the loop endless.
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    const view = render(
+      <IdentityVerificationStep
+        caseId="case-1" onBack={noop} onNext={noop} onNeedsConsent={noop}
+        onStatusChange={onStatusChange}
+      />,
+    );
+    await screen.findByText(/with our team/i);
+
+    for (let i = 0; i < 5; i++) {
+      view.rerender(
+        <IdentityVerificationStep
+          caseId="case-1" onBack={() => {}} onNext={() => {}} onNeedsConsent={() => {}}
+          onStatusChange={onStatusChange}
+        />,
+      );
+      await act(async () => { await Promise.resolve(); });
+    }
+    expect(onStatusChange).not.toHaveBeenCalled();
+  });
+
+  it('reports a change once, then goes quiet again on the same state', async () => {
+    verificationStatus.mockResolvedValue(status());
+    renderWithStatusChange();
+    await screen.findByRole('button', { name: /^start$/i });
+
+    verificationStatus.mockResolvedValue(
+      status({ parties: [{ ...party, status: 'in_review', can_attempt: false }] }));
+    fireEvent.click(screen.getByRole('button', { name: /^start$/i }));
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledTimes(1));
+
+    // Re-rendering with new parent props must not make it look new again —
+    // that is what turned one announcement into an endless one.
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).toHaveBeenCalledTimes(1);
   });
 });

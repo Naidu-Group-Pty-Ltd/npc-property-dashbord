@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PartnerAgreementsPanel } from '@/components/admin/PartnerAgreementsPanel';
+import { useAgreementDownload } from '@/components/admin/useAgreementDownload';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -19,6 +21,7 @@ import { formatDistanceToNow } from 'date-fns';
 import {
   Briefcase, Building2, Gavel, History, Link2, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
   Settings2, Shield, Trash2, Unlock, UserCheck, Users, UserX,
+  FileSignature,
 } from 'lucide-react';
 import { IntegrationHealthPanel } from '@/components/admin/solicitor-portal/IntegrationHealthPanel';
 import { CollaborationHealthPanel } from '@/components/admin/solicitor-portal/CollaborationHealthPanel';
@@ -43,6 +46,7 @@ const STATUS_META: Record<SolicitorUserRow['status'], { label: string; variant: 
 };
 
 export default function SolicitorPortalAdmin() {
+  const { downloadForUser, downloadingUserId } = useAgreementDownload();
   const [loading, setLoading] = useState(true);
   const [firms, setFirms] = useState<SolicitorFirm[]>([]);
   const [aiPolicyFirm,setAiPolicyFirm]=useState<{id:string;name:string}|null>(null);
@@ -224,7 +228,13 @@ export default function SolicitorPortalAdmin() {
           <TabsTrigger value="matters" className="gap-2"><Briefcase className="h-4 w-4" /> Matters</TabsTrigger>
           <TabsTrigger value="cases" className="gap-2"><Link2 className="h-4 w-4" /> Transaction Cases</TabsTrigger>
           <TabsTrigger value="integrations" className="gap-2"><RefreshCw className="h-4 w-4" /> Integration Health</TabsTrigger>
+          <TabsTrigger value="agreements" className="gap-2"><FileSignature className="h-4 w-4" /> Agreements</TabsTrigger>
         </TabsList>
+
+        {/* ───────────── AGREEMENTS ───────────── */}
+        <TabsContent value="agreements" className="mt-4">
+          <PartnerAgreementsPanel portal="solicitor" partnerNoun="legal practice" />
+        </TabsContent>
 
         {/* ───────────── USERS ───────────── */}
         <TabsContent value="users" className="mt-4">
@@ -358,6 +368,16 @@ export default function SolicitorPortalAdmin() {
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => setActivityDialog({ open: true, user: u })}>
                                     <History className="mr-2 h-4 w-4" /> Activity
+                                  </DropdownMenuItem>
+                                  {/* Where the question is asked: a partner rings
+                                      up wanting their agreement and the staff
+                                      user is looking at this row. */}
+                                  <DropdownMenuItem
+                                    disabled={downloadingUserId === u.id}
+                                    onClick={() => void downloadForUser('solicitor', u.id, u.name)}
+                                  >
+                                    <FileSignature className="mr-2 h-4 w-4" />
+                                    {downloadingUserId === u.id ? 'Preparing agreement…' : 'Download agreement'}
                                   </DropdownMenuItem>
                                   <DropdownMenuSeparator />
                                   {u.status !== 'revoked' && (

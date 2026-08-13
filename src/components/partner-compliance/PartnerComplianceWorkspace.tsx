@@ -10,6 +10,7 @@ import type {
 import { ResponsibilityNotice } from "./ResponsibilityNotice";
 import { RefreshBanner } from "./RefreshBanner";
 import { ComplianceSummaryCard } from "./ComplianceSummaryCard";
+import { PartnerPassportStrip } from "./PartnerPassportStrip";
 import { ProcedureEvidenceViewer } from "./ProcedureEvidenceViewer";
 import { IndependentAssessmentForm } from "./IndependentAssessmentForm";
 import { RecordsRequestBuilder } from "./RecordsRequestBuilder";
@@ -141,6 +142,9 @@ export function PartnerComplianceWorkspace({
       {workspace && !loading && (
         <>
           <RefreshBanner state={workspace.attestation_state} />
+          {/* Phase 4: the Passport identity strip — presentation of data the
+              workspace DTO already discloses; renders nothing pre-share. */}
+          <PartnerPassportStrip workspace={workspace} adapter={adapter} />
           <ComplianceSummaryCard workspace={workspace} adapter={adapter} />
           <TaskDeadlineRail workspace={workspace} adapter={adapter} />
           {adapter.panels.procedures && <ProcedureEvidenceViewer workspace={workspace} />}

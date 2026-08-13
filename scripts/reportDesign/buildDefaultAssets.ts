@@ -38,7 +38,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, '../..');
-const OUT = resolve(REPO, 'supabase/functions/_shared/reportDesign/defaultAssets.generated.ts');
+const OUT = resolve(REPO, 'scripts/reportDesign/generated/defaultAssets.generated.ts');
 
 interface AssetSpec {
   /** Exported constant name. */

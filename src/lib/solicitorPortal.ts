@@ -27,6 +27,18 @@ export interface SolicitorPortalUser {
   has_completed_mandatory_onboarding: boolean;
 }
 
+/**
+ * The Solicitor Portal's mandatory acknowledgments are the Portal Agreement's
+ * acknowledgments — the same four the Builder/Developer and Finance portals
+ * present. They live in `@/lib/portalAgreement` so that one agreement cannot
+ * end up with three lists; these aliases stay so the Solicitor Portal's own
+ * modules keep reading in its own vocabulary.
+ */
+export {
+  PORTAL_TERMS_ACKNOWLEDGEMENTS as SOLICITOR_TERMS_ACKNOWLEDGEMENTS,
+} from './portalAgreement';
+export type { PortalAcknowledgementKey as SolicitorAcknowledgementKey } from './portalAgreement';
+
 export async function invokeSolicitorFunction<T = any>(
   functionName: string,
   body: Record<string, unknown> = {},

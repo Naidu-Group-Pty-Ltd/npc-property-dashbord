@@ -8,6 +8,7 @@ import { verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -185,7 +186,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     });
   } catch (error: any) {
     console.error('[agent-insights-runner] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify(internalError(error, 'agent-insights-runner')), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

@@ -5,6 +5,8 @@ import { callLLMRaw } from '../_shared/llmRouter.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { resolvePrompt } from '../_shared/engine-prompts.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -110,7 +112,7 @@ async function queryPerplexity(
   apiKey: string,
   systemPrompt?: string
 ): Promise<PerplexityResult> {
-  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+  const response = await meteredFetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -1007,9 +1009,7 @@ Tone: Authoritative, data-backed, actionable. Use bold for key figures. Position
 
   } catch (error) {
     console.error('[market-intel-report] Fatal error:', error);
-    return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : 'Internal error'
-    }), {
+    return new Response(JSON.stringify(internalError(error, 'generate-market-intelligence-report')), {
       status: 500, headers: { ...createCorsHeaders(), 'Content-Type': 'application/json' },
     });
   }

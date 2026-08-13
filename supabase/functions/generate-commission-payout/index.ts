@@ -12,6 +12,7 @@ import { logSecurityEvent } from '../_shared/auth_v2.ts';
 import { normalizeIdempotencyKey } from '../_shared/wp09Guards.ts';
 import { isSuperadmin } from '../_shared/wp08Guards.ts';
 import { requireStepUp } from '../_shared/stepUp.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 interface Body {
   action: 'list' | 'generate' | 'mark_paid' | 'cancel';
@@ -138,7 +139,7 @@ Deno.serve(async (req) => {
     return j({ success: false, error: 'Unknown action' }, 400);
   } catch (e) {
     console.error('[generate-commission-payout]', e);
-    return new Response(JSON.stringify({ success: false, error: (e as Error).message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'generate-commission-payout'), success: false }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });

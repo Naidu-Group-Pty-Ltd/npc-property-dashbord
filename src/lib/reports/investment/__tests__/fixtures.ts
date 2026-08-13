@@ -83,6 +83,80 @@ const para = (seed: number): string => {
     + `${OBSERVED[(n * 3 + 5) % OBSERVED.length]}. ${CAVEAT[n % CAVEAT.length]}`;
 };
 
+/** Leads for a bold-led bullet or paragraph — the corpus bolds 14.7 lines a section. */
+const BULLET_LEADS = [
+  'Vacancy', 'Days on market', 'Median rent', 'Stock on market', 'Approvals',
+  'Owner-occupier share', 'Travel time', 'School catchment', 'Land value',
+  'Insurance', 'Holding period', 'Buyer depth', 'Yield gap', 'Rate exposure',
+  'Zoning', 'Comparable sales', 'Household size',
+];
+
+/**
+ * A fifth clause, so a paragraph reaches the length the *current* format writes.
+ *
+ * Thirteen entries, which shares no factor with the 11, 7 and 5 above, so the
+ * combined period is 5,005 paragraphs — an order of magnitude more than any
+ * document this format can produce.
+ */
+const QUALIFIER = [
+  'The figure is drawn from the twelve months to June and has not been seasonally adjusted',
+  'Two of the four comparable sales used here settled before the most recent rate decision',
+  'The catchment boundary used is the one the department published in March, not the older line',
+  'Where a range is quoted the lower bound is the one the council will hold to',
+  'The series was rebased in 2024, so anything before that is not directly comparable',
+  'This counts dwellings approved rather than dwellings completed, and the gap is widening',
+  'The rental figure is advertised rent, which runs slightly ahead of achieved rent',
+  'Only sales with a disclosed price are counted; withdrawn listings are excluded',
+  'The measure is a median rather than a mean, so a single large transaction cannot move it',
+  'Population here is usual residents, not the larger night-time or worker population',
+  'The travel time assumes an off-peak departure and no service disruption',
+  'The insurance estimate is a market quote and not a bound premium',
+  'Land value is the unimproved figure the Valuer General records, not a sale price',
+];
+
+/**
+ * A paragraph at the length this format's paragraphs actually run.
+ *
+ * Measured over the 546 sections in the 35 current reports: a section is 7,838
+ * characters carrying 11.5 paragraphs, 4.3 sub-headings, 6.7 bullets and **6.9
+ * chart directives**. Net of the furniture that leaves about 480 characters a
+ * paragraph, against the 350 `para` produces — which is right for the *numbered*
+ * format, whose 36 sections average 1,035 characters, and wrong for this one.
+ */
+const richPara = (seed: number): string => {
+  const n = Math.abs(seed);
+  // Every second paragraph opens on a bold lead. The corpus averages 14.7
+  // bold-carrying lines a section against the seven the bullets alone give,
+  // and the difference is this: the model leads a paragraph with its subject
+  // as often as it leads a bullet. Bold is heavier ink, so a fixture without
+  // it measures lighter than the document it stands for.
+  const lead = n % 2 === 0 ? '' : `**${BULLET_LEADS[n % BULLET_LEADS.length]}.** `;
+  return `${lead}${para(n)} ${QUALIFIER[n % QUALIFIER.length]}.`;
+};
+
+/** Sub-headings, so a section has the internal structure a real one has. */
+const SUBHEADS = [
+  'What the record shows',
+  'How it compares to the suburb',
+  'Where the risk sits',
+  'What a tenant sees',
+  'The supply position',
+  'What has changed since the last review',
+  'How durable this looks',
+  'What would change the assessment',
+  'The comparison set',
+  'What is not in the data',
+  'How this affects holding cost',
+  'The practical implication',
+  'Where the numbers disagree',
+];
+
+
+const bullet = (seed: number): string => {
+  const n = Math.abs(seed);
+  return `- **${BULLET_LEADS[n % BULLET_LEADS.length]}** — ${OBSERVED[n % OBSERVED.length]}.`;
+};
+
 /** The 36-section prose skeleton, as the model writes it. */
 const SECTION_TITLES: ReadonlyArray<[number, string]> = [
   [1, 'Location Overview'],
@@ -455,42 +529,114 @@ export const CURRENT_SECTION_TITLES: readonly string[] = [
  * checking. Cycling seven directives over sixteen sections put the identical
  * gauge on pages 7 and 17 and fired the rule five times on the fixture alone.
  */
-const directiveFor = (i: number, title: string): string => {
-  const v = 52 + ((i * 7) % 34);
-  switch (i % 8) {
+const glanceFor = (i: number, title: string): string =>
+  `{{glance: \u2713 ${title} holds up on the evidence | \u25c6 Established 4-bed House `
+  + `| \u26a0 Watch the ${['insurance', 'supply', 'employment', 'rates'][i % 4]} line `
+  + `| \u2605 Weighting: ${['strong', 'adequate', 'mixed', 'thin'][i % 4]}}}`;
+
+/**
+ * One of the seven plottable kinds, chosen by a running index.
+ *
+ * The glance is separate because the generator's prompt mandates it as the
+ * *opener* of every section \u2014 "Every chapter MUST open with a `{{glance: \u2026}}`
+ * strip" \u2014 so it cannot be one entry in a rotation that might place it in the
+ * middle.
+ *
+ * Same kind and same value recur only when the index differs by
+ * `lcm(7, 34) = 238`, and the document uses 96 of them, so no two figures in
+ * this fixture draw the same chart.
+ */
+const figureFor = (n: number, title: string): string => {
+  const v = 52 + ((n * 7) % 34);
+  switch (n % 7) {
     case 0:
-      return `{{glance: \u2713 ${title} holds up on the evidence | \u25c6 Established 4-bed House `
-        + `| \u26a0 Watch the ${['insurance', 'supply', 'employment', 'rates'][i % 4]} line `
-        + `| \u2605 Weighting: ${['strong', 'adequate', 'mixed', 'thin'][i % 4]}}}`;
-    case 1:
       return `{{gauge: ${v} | ${title} score | Weighted against the firm's own record}}`;
-    case 2:
+    case 1:
       return `{{bars: Town centre access ${v}, Highway connectivity ${v - 9}, `
         + `Active transport ${v - 17} | title=${title} pillars | max=100 | unit=%}}`;
-    case 3:
+    case 2:
       return `{{donut: Detached ${v}, Semi/terrace ${100 - v - 14}, Units 14 `
         + `| title=${title} mix | center=${v}% | centerSub=Detached}}`;
-    case 4:
-      return `{{tiles: Kirribeck ${v} sub="Quiet streets, large yards" int=0.7${i % 9}, `
-        + `Marlowe Point ${v - 11} sub="Rail, schools, retail" int=0.6${i % 9} `
+    case 3:
+      return `{{tiles: Kirribeck ${v} sub="Quiet streets, large yards" int=0.7${n % 9}, `
+        + `Marlowe Point ${v - 11} sub="Rail, schools, retail" int=0.6${n % 9} `
         + `| title=${title} across nearby markets | cols=3}}`;
+    case 4:
+      return `{{timeline: Existing "Rail within 900m", 0-2y "Forecourt upgrade stage ${v}", `
+        + `3-5y "Arterial widening stage ${v}" | title=${title} pipeline}}`;
     case 5:
-      return `{{timeline: Existing "Rail within 900m", 0-2y "Forecourt upgrade stage ${i}", `
-        + `3-5y "Arterial widening stage ${i}" | title=${title} pipeline}}`;
-    case 6:
       return `{{wheel: ${v},${v - 4},${v + 6},${v - 12},${v + 2} `
         + `| labels=Location,Yield,Growth,Demand,Risk | max=100 | title=${title} dimensions}}`;
     default:
-      return `{{pictograph: ${(i % 8) + 2}/10 | label=${title} | `
+      return `{{pictograph: ${(n % 8) + 2}/10 | label=${title} | `
         + `sub=Share of the catchment this applies to | icon=house | cols=10}}`;
   }
 };
 
+/**
+ * The prose column, at the density the generator actually writes.
+ *
+ * Composition measured across the **546 sections in the 35 current reports**,
+ * not chosen:
+ *
+ * | per section | corpus | here |
+ * | --- | ---: | ---: |
+ * | characters | 7,838 | ~7,800 |
+ * | paragraphs | 11.5 | 12 |
+ * | `###` sub-headings | 4.3 | 4 |
+ * | bullets | 6.7 | 7 |
+ * | **chart directives** | **6.9** | **7** |
+ *
+ * The first version of this gave each section one directive and two paragraphs
+ * \u2014 958 characters against a 7,938-character median, **8.3\u00d7 thin**. Every
+ * page-economy measurement taken on this format was therefore taken on a
+ * document one-eighth the density of the one a client receives, and it read as
+ * a layout fault: 0.065 median ink and seventeen sparse pages. The fixture
+ * agreed with the code and disagreed with the database, which is the same
+ * failure as the score breakdown and the spec table one level up.
+ *
+ * The three running counters are what keep it non-repeating, and each stays
+ * under its generator's period: 192 paragraphs against 5,005, 112 bullets
+ * against 187, 96 figures against 238. So no line of this document is printed
+ * twice, and `duplicate-block` \u2014 the rubric's only `high` rule \u2014 stays able to
+ * see a real repeat.
+ */
 export function currentFormatContent(): string {
+  let p = 0;
+  let b = 0;
+  let f = 0;
+  const P = () => richPara(p++);
+  const B = () => bullet(b++);
+
   const body = CURRENT_SECTION_TITLES.map((title, i) => {
-    const s = (i + 1) * 7;
-    return `## ${title}\n\n${directiveFor(i, title)}\n\n${para(s)}\n\n${para(s + 1)}`;
+    const F = () => figureFor(f++, title);
+    const sub = (k: number) => `### ${SUBHEADS[(i * 5 + k) % SUBHEADS.length]}`;
+    // One table in the document, not one per section: the corpus averages 0.5
+    // table *lines* a section, so tables are rare rather than routine.
+    const table = i === 9
+      ? '\n\n| Comparable | Sold | Price |\n| --- | --- | ---: |\n'
+        + '| 4 Marlowe Parade | Mar 2026 | $902,000 |\n'
+        + '| 21 Cardigan Street | Feb 2026 | $874,500 |\n'
+        + '| 9 Marlowe Parade | Dec 2025 | $918,000 |'
+      : '';
+
+    return [
+      `## ${title}`,
+      glanceFor(i, title),
+      P(), P(),
+      sub(0),
+      P(), F(), P(),
+      [B(), B(), B()].join('\n'),
+      sub(1),
+      P(), F(), P(), F(), P(),
+      sub(2),
+      F(), P(), P(),
+      [B(), B(), B(), B()].join('\n'),
+      sub(3),
+      P(), F(), P(), F(), P(),
+    ].join('\n\n') + table;
   }).join('\n\n');
+
   return `# Property & Location Due Diligence Report\n\n_${ADDRESS}_\n\n${body}\n`;
 }
 

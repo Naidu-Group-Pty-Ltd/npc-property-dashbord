@@ -9,6 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   UNDERTAKING_TABLE,
   expireLapsedUndertakings,
@@ -44,7 +45,15 @@ function json(body: unknown, corsHeaders: Record<string, string>, status = 200) 
   });
 }
 
-function sanitize(input: Record<string, unknown>) {
+/**
+ * Copy only the columns in `WRITABLE`, normalising blanks and dates.
+ *
+ * Named for what it does rather than `sanitize`, which said that something had
+ * been cleaned without saying against what. The distinction matters here: this
+ * is an allowlist, so a column added to the table is not writable until it is
+ * added above — and a reader at the call site can now see that.
+ */
+function pickWritable(input: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
   for (const key of WRITABLE) {
     if (!(key in input)) continue;
@@ -154,7 +163,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'create') {
-      const payload = sanitize(body);
+      const payload = pickWritable(body);
       if (!payload.writer_full_name) return json({ error: 'writer_full_name_required' }, corsHeaders, 400);
 
       const reference = await nextReference(supabase);
@@ -177,7 +186,7 @@ Deno.serve(async (req) => {
 
       const { data, error } = await supabase
         .from(UNDERTAKING_TABLE)
-        .update({ ...sanitize(body), updated_by: actorId })
+        .update({ ...pickWritable(body), updated_by: actorId })
         .eq('id', id).select().single();
       if (error) throw error;
       return json({ undertaking: decorate(data) }, corsHeaders);
@@ -276,6 +285,6 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (err) {
     console.error('[loan-writer-undertakings] error:', err);
-    return json({ error: 'internal_error', message: (err as Error).message }, corsHeaders, 500);
+    return json({ ...internalError(err, 'manage-loan-writer-undertakings'), error: 'internal_error' }, corsHeaders, 500);
   }
 });

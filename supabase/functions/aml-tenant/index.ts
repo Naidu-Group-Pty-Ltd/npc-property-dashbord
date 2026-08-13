@@ -18,6 +18,7 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireStepUpSession } from "../_shared/aml/step-up.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -337,7 +338,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
   } catch (e) {
     console.error("[aml-tenant] fatal", e);
-    return jr({ error: (e as Error).message ?? "internal error" }, 500);
+    return jr({ ...internalError(e, 'aml-tenant') }, 500);
   }
 });
 

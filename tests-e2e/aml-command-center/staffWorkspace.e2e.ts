@@ -219,11 +219,16 @@ test('party screening renders every state, and a client detail never appears', a
     'possible match', 'confirmed match', 'false positive', 'error']) {
     expect(text, `screening state ${state} must render`).toContain(state);
   }
-  // Reviewer adjudication controls exist for a possible match.
-  await expect(page.getByRole('button', { name: /confirm match/i }).first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /false positive/i }).first()).toBeVisible();
-  // Screening detail is staff-only: the panel must say so and must not name a
-  // list, a score or a client-facing consequence.
+  // Adjudication is per canonical candidate match: staff can inspect the
+  // actual listing before deciding, and confirm/dismiss it individually.
+  await expect(page.getByText('Synthetic Listed Person').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /confirm/i }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /dismiss/i }).first()).toBeVisible();
+  // PEP determination state is visible and actionable for a reviewer.
+  expect(text).toContain('pep determination outstanding');
+  await expect(page.getByRole('button', { name: /not a pep/i }).first()).toBeVisible();
+  // Screening detail is staff-only: the panel says so, and this response
+  // shape is never served to the Client or Finance portals.
   expect(text).toContain('clients never see screening detail');
   await shot(page, 'staff-08-party-screening');
   net.check();

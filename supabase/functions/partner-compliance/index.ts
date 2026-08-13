@@ -10,6 +10,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   recordPartnerAudit,
   verifyPartnerAuditChain,
@@ -533,6 +534,6 @@ Deno.serve(async (req) => {
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (err) {
     console.error('[partner-compliance] error', err);
-    return json({ error: (err as Error).message || 'internal_error' }, createCorsHeaders(origin), 500);
+    return json({ ...internalError(err, 'partner-compliance') }, createCorsHeaders(origin), 500);
   }
 });
