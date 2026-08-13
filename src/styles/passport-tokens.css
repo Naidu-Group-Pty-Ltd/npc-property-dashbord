@@ -34,6 +34,15 @@
   --passport-ink-soft: 221 20% 42%;
 }
 
+/* Journey progress inside the booklet — colour lives here, only the
+   dynamic width stays inline. */
+.passport-progress {
+  background: hsl(var(--passport-ink) / 0.12);
+}
+.passport-progress__bar {
+  background: hsl(var(--passport-foil-dim));
+}
+
 /* ── booklet ───────────────────────────────────────────────────────────── */
 
 .passport-cover {

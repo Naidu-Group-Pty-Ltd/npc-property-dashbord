@@ -62,6 +62,7 @@ export default function PortalPassport() {
     if (!view) return [];
     const list: BookletPage[] = [
       { id: 'cover', title: 'Cover', kicker: 'AML/CTF Compliance Passport' },
+      { id: 'journey', title: 'Journey', kicker: 'Your progress' },
       { id: 'identity', title: 'Identity', kicker: 'Page I' },
       { id: 'verification', title: 'Verification', kicker: 'Page II' },
       { id: 'documents', title: 'Documents', kicker: 'Page III' },
@@ -173,6 +174,7 @@ export default function PortalPassport() {
             <div className="passport-cover__rule mx-auto mt-2 w-24" />
           </header>
 
+          {page.id === 'journey' && <JourneyPage v={v} />}
           {page.id === 'identity' && <IdentityPage v={v} />}
           {page.id === 'verification' && <VerificationPage v={v} />}
           {page.id === 'documents' && <DocumentsPage v={v} />}
@@ -254,6 +256,43 @@ function PageRow({ k, v: value }: { k: string; v: string }) {
 
 function EmptyPage({ text }: { text: string }) {
   return <p className="passport-page__muted py-6 text-center text-sm">{text}</p>;
+}
+
+function JourneyPage({ v }: { v: PassportView }) {
+  const j = v.journey;
+  return (
+    <div className="space-y-4">
+      <p className="passport-page__muted text-center text-[11px]">
+        {j.recorded} of {j.total} compliance milestones recorded. Each one you complete is added to your Passport.
+      </p>
+      <div
+        className="passport-progress h-1.5 overflow-hidden rounded-full"
+        role="progressbar"
+        aria-valuenow={j.percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${j.recorded} of ${j.total} milestones recorded`}
+      >
+        <div className="passport-progress__bar h-full rounded-full" style={{ width: `${j.percent}%` }} />
+      </div>
+      {j.phases.map((phase) => (
+        <div key={phase.phase}>
+          <div className="passport-page__kicker text-[9px]">{phase.label}</div>
+          <div className="passport-page__rule my-1.5" />
+          {phase.milestones.map((m) => (
+            <div key={m.code} className="flex items-baseline justify-between gap-3 py-1">
+              <span className={m.recorded ? 'text-xs' : 'passport-page__muted text-xs'}>
+                <span aria-hidden="true">{m.recorded ? '✓ ' : '· '}</span>{m.title}
+              </span>
+              <span className="passport-page__muted shrink-0 font-mono text-[10px]">
+                {m.at ? formatPassportDate(m.at) : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function IdentityPage({ v }: { v: PassportView }) {

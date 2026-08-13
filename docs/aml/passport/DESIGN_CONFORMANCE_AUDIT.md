@@ -6,7 +6,13 @@ since the 2026-08-13T09:20Z sync). Measured by reading the design's own
 element inventory and grepping the shipped source — not from the phase
 reports.
 
-**Verdict: the build is a SUBSET of the design.** 8 of the design's 12
+> **STATUS: CLOSED.** The gaps below were closed in the "close the gap"
+> change (Journey, Ownership & Control, Screening, Funding & EDD pages;
+> disclosure matrix; Passport controls; authenticity; client journey page).
+> The findings are retained verbatim as the record of what was missing and
+> why. See §6 for what remains deliberately deferred.
+
+**Verdict at time of audit: the build was a SUBSET of the design.** 8 of the design's 12
 Command Centre pages exist; 4 do not. Several interaction surfaces in the
 design (controls, notification drawer, disclosure matrix, document viewer,
 authenticity, portal preview) are absent. The projection layer beneath is
@@ -87,3 +93,37 @@ implemented in full. It was not, and this document is the correction.
 | Authenticity action | Small | No |
 | Booklet fidelity (spread, turn, 16 pages) | Medium | No |
 | Notification drawer / passport events | Small | Reuse existing feeds |
+
+---
+
+## 6. Closure record
+
+Closed:
+
+| Gap | Closed by |
+|---|---|
+| 00 AML/CTF Journey page | `passportJourney.pure.ts` — derived from the SAME facts as the stamps, so journey and stamps cannot disagree. No new query. Command page + client booklet page |
+| 04 Ownership & Control | Ownership parties added to the projection (owners + authorised representatives, names/roles/percent/state only); Command page with UBO and verification summary |
+| 05 Screening | Command page over the existing projection summary, including the design's "internal boundary — not part of the Passport" panel |
+| 06 Funding & EDD | Command page over the existing projection summary; decision facts only, reasoning stays internal |
+| Disclosure matrix | Built from the stored `aml.disclosure_manifests` (allowed codes minus denied, denied winning). v1 grants have no manifest and the page says so rather than implying an empty matrix means "nothing" |
+| Passport controls | `PassportControls` wired to canonical ops — `issue_attestation`, and `set_service_gate` (`locked`/`terminated`) for suspend/revoke, MLRO-gated server-side with a mandatory reason. Sharing and client requests point at the Compliance Sharing panel that owns their inputs |
+| Authenticity / verify integrity | Dialog over the sealed fingerprint and version |
+| Entity particulars | Entity register is now canonical for particulars; the questionnaire fills gaps |
+
+**Client-boundary note.** Adding the journey to the client booklet initially
+carried operational vocabulary ("sanctions", "PEP", "risk assessment") into a
+client surface. Rather than loosening the contract test, the journey now
+carries **client-safe wording** per milestone: the client is told the
+milestone happened, in their words. A new contract test pins that no
+operational vocabulary can re-enter the client journey.
+
+**Client ownership page:** deliberately NOT added. The client-portal function
+is contract-bound never to read `beneficial_owners`; the client sees their
+verified parties on the Verification page instead.
+
+Still deferred (unchanged, by design): QR/public verification, client
+biometric portrait, per-document partner ACLs, four-eyes authorisation,
+printable booklet PDF, identifier unmask-with-reason, portal switcher
+(Command preview-as-client), notification-drawer passport events, and full
+booklet fidelity (two-page spread, page-turn animation, 16 pages).

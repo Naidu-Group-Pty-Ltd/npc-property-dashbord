@@ -11,6 +11,13 @@ import { buildPassportView, type PassportViewInput } from '@/lib/aml/passport';
 import { CommandPassportSection } from './CommandPassportSection';
 
 const getPassportView = vi.fn();
+vi.mock('@/hooks/useAmlAccess', () => ({
+  useAmlAccess: () => ({
+    roles: new Set(['mlro']), isMlro: true, canWrite: true,
+    flagEnabled: true, loading: false, capabilities: new Set(['aml.view']),
+  }),
+}));
+
 vi.mock('@/lib/aml/amlRelianceApi', () => ({
   amlRelianceApi: {
     getPassportView: (...args: unknown[]) => getPassportView(...args),
