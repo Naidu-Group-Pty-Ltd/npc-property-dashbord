@@ -55,3 +55,14 @@ export {
   type PassportView,
   type PassportViewInput,
 } from '../../../../supabase/functions/_shared/aml/passport/passportView.pure';
+
+export {
+  IDV_COMPONENTS,
+  classifyIdvCheck,
+  summariseIdv,
+  type IdvCheckFact,
+  type IdvComponent,
+  type IdvComponentCode,
+  type IdvComponentResult,
+  type IdvSummary,
+} from '../../../../supabase/functions/_shared/aml/passport/passportIdv.pure';
