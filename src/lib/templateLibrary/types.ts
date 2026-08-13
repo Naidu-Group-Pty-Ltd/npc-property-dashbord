@@ -38,7 +38,9 @@ export type TemplateLibraryCategory =
   | 'comparison'
   | 'cash_flow'
   | 'client_form'
-  | 'compliance';
+  | 'compliance'
+  | 'finance'
+  | 'portfolio';
 
 export type TemplateLibraryStyle =
   | 'corporate'
