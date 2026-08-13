@@ -41,7 +41,10 @@ export function drawDataTableBlock(block: Block, ctx: BlockRenderContext): void 
   doc.setFontSize(9);
   let cx = x;
   headers.forEach((h, i) => {
-    doc.text(String(h).toUpperCase(), cx + 6, y + rowH / 2, { baseline: 'middle', maxWidth: widths[i] - 12 });
+    // Resolved, for the reason the HTML renderer's copy of this records: every
+    // body cell went through `resolveBindable` and the headers did not, so a
+    // bound header printed as a literal `{{…}}`.
+    doc.text(resolveBindable(h, ctx).toUpperCase(), cx + 6, y + rowH / 2, { baseline: 'middle', maxWidth: widths[i] - 12 });
     cx += widths[i];
   });
 

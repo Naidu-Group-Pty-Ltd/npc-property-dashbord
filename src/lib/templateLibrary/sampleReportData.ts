@@ -35,6 +35,7 @@
 
 import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
 import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
+import { projectCashFlowComparison } from '../../../supabase/functions/_shared/cashFlowComparisonProjection.pure';
 
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
@@ -439,6 +440,224 @@ const CLIENT_DETAILS_SAMPLE = (() => {
   return projectClientDetails(details as never).clientDetails;
 })();
 
+/**
+ * The Cash Flow Comparison's own vocabulary, run through its projection.
+ *
+ * ## Its magnitudes come from the payload's caps, not from production
+ *
+ * Every other sample in this file is shaped from measured production rows. This
+ * one cannot be: the format's ledger holds **0 rows**, its analysis table holds
+ * 0 rows and structurally cannot hold any, and the projections it compares are
+ * the browser's and are never persisted. See
+ * `cashFlowComparisonProjection.pure.ts` — that is also why the 50 masters are
+ * preview-only.
+ *
+ * So the figures below are the same Leichhardt-area properties the rest of this
+ * file describes, at the same magnitudes, with three properties — the middle of
+ * the 2-to-5 range the normaliser enforces, so the preview exercises the
+ * property-count variants rather than either end of them.
+ *
+ * The analysis half is present, because a preview of the pages that only exist
+ * when a model wrote something is worth more than a preview without them. The
+ * catalogue spec exercises the other direction.
+ */
+const CASH_FLOW_COMPARISON_SAMPLE = (() => {
+  const aud = (value: number) => ({ value, unit: 'aud' as const });
+  const perYear = (value: number) => ({ value, unit: 'aud/year' as const });
+  const pct = (value: number) => ({ value, unit: 'percent' as const });
+  const ratio = (value: number) => ({ value, unit: 'rate' as const });
+
+  /** Ten years of one property, compounding from its own inputs. */
+  const projectionFor = (
+    value: number, loan: number, rent: number, growth: number, afterTaxYearOne: number,
+  ) => {
+    const years = Array.from({ length: 10 }, (_, i) => {
+      const y = i + 1;
+      const propertyValue = Math.round(value * growth ** y);
+      const loanBalance = Math.round(loan * (1 - 0.0114 * y));
+      const afterTaxAnnual = Math.round(afterTaxYearOne + i * 1450);
+      return {
+        year: y, calendarYear: 2026 + i,
+        propertyValue: aud(propertyValue),
+        loanBalance: aud(loanBalance),
+        equity: aud(propertyValue - loanBalance),
+        lvr: pct((loanBalance / propertyValue) * 100),
+        rentalIncome: perYear(Math.round(rent * 1.031 ** i)),
+        grossYield: pct((rent / value) * 100),
+        netYield: pct(((rent * 0.72) / value) * 100),
+        expenses: perYear(Math.round(rent * 0.28)),
+        interestRate: pct(6.14),
+        interest: perYear(Math.round(loanBalance * 0.0614)),
+        principal: perYear(Math.round(loan * 0.0114)),
+        preTaxAnnual: perYear(afterTaxAnnual - 5200),
+        preTaxWeekly: { value: (afterTaxAnnual - 5200) / 52, unit: 'aud/week' as const },
+        afterTaxAnnual: perYear(afterTaxAnnual),
+        afterTaxWeekly: { value: afterTaxAnnual / 52, unit: 'aud/week' as const },
+        depreciation: perYear(8200), taxRefund: perYear(5200), landTax: perYear(0),
+        capitalGrowth: pct((growth - 1) * 100), cpiGrowth: pct(2.8),
+      };
+    });
+    return { years };
+  };
+
+  const outcomeFor = (
+    proj: ReturnType<typeof projectionFor>, initial: number,
+  ) => {
+    const first = proj.years[0];
+    const last = proj.years[9];
+    const cumulative = proj.years.reduce((t, y) => t + y.afterTaxAnnual.value, 0);
+    const gain = last.propertyValue.value - first.propertyValue.value;
+    const total = gain + cumulative;
+    const firstPositive = proj.years.find((y) => y.afterTaxAnnual.value >= 0)?.year ?? null;
+    let running = 0;
+    let payback: number | null = null;
+    for (const y of proj.years) {
+      running += y.afterTaxAnnual.value;
+      if (running >= 0 && payback === null) payback = y.year;
+    }
+    return {
+      cumulativeAfterTax: aud(cumulative),
+      capitalGain: aud(gain),
+      endingValue: aud(last.propertyValue.value),
+      endingEquity: aud(last.equity.value),
+      totalReturn: aud(total),
+      initialInvestment: aud(initial),
+      roi: pct((total / initial) * 100),
+      annualisedRoi: pct((((1 + total / initial) ** 0.1) - 1) * 100),
+      cashOnCash: pct((first.afterTaxAnnual.value / initial) * 100),
+      equityMultiple: ratio((last.equity.value + cumulative) / initial),
+      firstPositiveYear: firstPositive,
+      paybackYear: payback,
+      grossYield: first.grossYield,
+      netYield: first.netYield,
+      capitalGrowthRate: first.capitalGrowth,
+    };
+  };
+
+  const spec = [
+    { address: ADDRESS, short: 'Marlborough Street, Leichhardt', value: 1285000, loan: 1028000, rent: 47840, growth: 1.052, atax: -31600, initial: 315890, primary: true },
+    { address: '7 Wardell Road, Dulwich Hill NSW 2203', short: 'Wardell Road, Dulwich Hill', value: 640000, loan: 288000, rent: 29400, growth: 1.048, atax: -9800, initial: 168400, primary: false },
+    { address: '12/3 Denison Road, Lewisham NSW 2049', short: 'Denison Road, Lewisham', value: 360000, loan: 160000, rent: 17640, growth: 1.044, atax: -4200, initial: 96200, primary: false },
+  ];
+
+  const properties = spec.map((p, i) => {
+    const projection = projectionFor(p.value, p.loan, p.rent, p.growth, p.atax);
+    return {
+      reportId: `report-${i + 1}`, number: i + 1,
+      address: p.address, shortAddress: p.short, isPrimary: p.primary,
+      projection, outcome: outcomeFor(projection, p.initial),
+    };
+  });
+
+  const ranked = [...properties].sort(
+    (a, b) => b.outcome.totalReturn.value - a.outcome.totalReturn.value,
+  );
+  const [first, second] = ranked;
+  const lead = ((first.outcome.totalReturn.value - second.outcome.totalReturn.value)
+    / Math.abs(first.outcome.totalReturn.value)) * 100;
+
+  const winner = (key: string, label: string, pick: (p: typeof properties[number]) => number, lowerIsBetter = false) => {
+    const sorted = [...properties].sort((a, b) => (lowerIsBetter ? pick(a) - pick(b) : pick(b) - pick(a)));
+    return {
+      key, label, property: sorted[0].number,
+      value: aud(pick(sorted[0])), margin: aud(Math.abs(pick(sorted[0]) - pick(sorted[1]))),
+      lowerIsBetter,
+    };
+  };
+
+  const note = (reason: string, detail = '') => ({ reason, detail });
+
+  const comparison = {
+    meta: {
+      primaryReportId: 'a41f8c92-0000-4000-8000-000000000000',
+      clientName: CLIENT,
+      preparedOn: '2026-08-02T00:00:00.000Z',
+      investorProfile: 'balanced',
+      investorProfileLabel: 'Balanced investor',
+      termYears: 10,
+      propertyCount: properties.length,
+    },
+    narrative:
+      'Three properties compared over ten years for a balanced investor. The ranking is on '
+      + 'capital gain plus cumulative cash flow, and the leader is ahead of second place by a '
+      + 'margin stated as a share of its own return.',
+    properties,
+    scoreboard: {
+      order: ranked.map((p) => p.number),
+      leadMargin: pct(lead),
+      winners: [
+        winner('totalReturn', 'Best total return', (p) => p.outcome.totalReturn.value),
+        winner('capitalGain', 'Most capital growth', (p) => p.outcome.capitalGain.value),
+        winner('cumulativeAfterTax', 'Least cash required', (p) => p.outcome.cumulativeAfterTax.value),
+        winner('endingEquity', 'Most ending equity', (p) => p.outcome.endingEquity.value),
+        winner('initialInvestment', 'Cheapest to enter', (p) => p.outcome.initialInvestment.value, true),
+      ],
+    },
+    analysis: {
+      summary:
+        'All three properties run negative in the early years and the smallest carries the '
+        + 'lowest holding cost in absolute terms. Over the full term the largest holding '
+        + 'produces the greatest capital gain, and that gain outweighs the additional cash it '
+        + 'requires to hold.',
+      rankings: [
+        {
+          rank: 1, property: 1, statedAddress: ADDRESS, score: 84,
+          strengths: ['Largest capital gain over the term', 'Land-led inner-west holding'],
+          weaknesses: ['Highest cash requirement in the early years'],
+          verdict: 'The strongest total return of the three, driven by capital growth rather than by cash flow.',
+        },
+        {
+          rank: 2, property: 3, statedAddress: '12/3 Denison Road, Lewisham NSW 2049', score: 71,
+          strengths: ['Cheapest to enter', 'Smallest annual shortfall'],
+          weaknesses: ['Least capital gain in dollar terms'],
+          verdict: 'The easiest of the three to hold, and the least it returns.',
+        },
+        {
+          rank: 3, property: null, statedAddress: '7 Wardell Rd, Dulwich Hill', score: 68,
+          strengths: ['Balanced between growth and holding cost'],
+          weaknesses: ['Leads on nothing'],
+          verdict: 'Sits between the other two on every measure.',
+        },
+      ],
+      trajectory: {
+        fastestPositive: note('The smallest holding turns positive first, in year seven.'),
+        strongestGrowth: note('The largest holding compounds from the highest base.'),
+        concerns: [note('None of the three is cash-flow positive before year six.')],
+      },
+      capitalGrowth: {
+        strongestEquity: note('Ending equity is greatest on the largest holding.'),
+        wealthBuilder: note('Capital gain accounts for most of the total return in all three cases.'),
+        endingValues: [],
+      },
+      yields: {
+        bestGross: note('The smallest holding has the highest gross yield on its purchase price.'),
+        bestNet: note('Net yields are within half a point of each other across the three.'),
+        bestRoi: note('Return on capital favours the smallest holding, on the smallest base.'),
+      },
+      risk: {
+        mostStable: note('The smallest holding requires the least cash in any single year.'),
+        highestRisk: note('The largest holding carries the greatest absolute exposure to a rate move.'),
+        risks: ['Rate sensitivity at the modelled LVR', 'Vacancy on a single-dwelling holding'],
+        breakEven: [],
+      },
+      investorMatches: [
+        { key: 'growthFocused', label: 'Growth focused', note: note('Favours the largest holding, on capital gain.') },
+        { key: 'incomeFocused', label: 'Income focused', note: note('Favours the smallest holding, on the lowest shortfall.') },
+        { key: 'balanced', label: 'Balanced', note: note('The middle holding sits between the two on every measure.') },
+        { key: 'riskAverse', label: 'Risk averse', note: note('The lowest absolute exposure is the smallest holding.') },
+      ],
+      recommendation: {
+        best: note('The largest holding, on total return over the full term.'),
+        avoid: [note('None of the three should be ruled out on these figures alone.')],
+        scenarios: ['If the holding period shortened to five years, the ranking would reverse.'],
+      },
+      missing: [],
+    },
+  };
+
+  return projectCashFlowComparison(comparison as never).cashFlowComparison;
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -467,6 +686,9 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
    */
   /** The Client Details Form's namespace. See `CLIENT_DETAILS_SAMPLE`. */
   clientDetails: CLIENT_DETAILS_SAMPLE,
+
+  /** The Cash Flow Comparison's namespace. See `CASH_FLOW_COMPARISON_SAMPLE`. */
+  cashFlowComparison: CASH_FLOW_COMPARISON_SAMPLE,
 
   org: {
     name: 'Meridian Property Advisory',

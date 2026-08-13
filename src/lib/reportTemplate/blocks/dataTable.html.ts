@@ -90,7 +90,16 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
       + (ruledHeader ? `border-bottom:1.5pt solid ${emphasisColor};` : '')
       + (gridLines && i < headers.length - 1 ? `border-right:1pt solid ${borderColor};` : '')
       + (headerFont ? `font-family:${headerFont};` : '');
-    return `<th style="${cellStyle}">${esc(h)}</th>`;
+    // Resolved, not printed verbatim.
+    //
+    // Every cell in the body goes through `resolveBindable`; the headers did
+    // not, so a template that bound one — a comparison putting the property
+    // address above its column, which is the natural thing to do — printed a
+    // literal `{{cashFlowComparison.properties.0.shortAddress}}` at the top of
+    // the table. Visibly wrong rather than silently blank, which is the one
+    // mercy in it; no format bound a header until the seventh, which is why it
+    // survived this long.
+    return `<th style="${cellStyle}">${esc(resolveBindable(h, ctx))}</th>`;
   }).join('')}
   </tr></thead>`;
   const tbody = `<tbody>${rows.map((row, i) => {

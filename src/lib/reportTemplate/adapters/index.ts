@@ -37,6 +37,25 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   // uses — 742 of the 775 clients hold nothing financial, which is what the
   // masters are built around rather than in spite of.
   clientDetailsAdapter,
+  /**
+   * Preview-only, and not for want of an adapter.
+   *
+   * A Cash Flow Comparison has nothing an adapter could read: the projections
+   * are the browser's and are never persisted, the analysis is never persisted
+   * and structurally cannot be (`cash_flow_analyses` holds 0 rows and its
+   * INSERT policy refuses this application's own sign-in), and the render
+   * ledger holds 0 rows, stores neither, and is superadmin-only. The stored
+   * `financial_calculations.projections` cannot stand in: every headline
+   * measure here is built on `afterTaxAnnual` and that series models no tax.
+   * `cashFlowComparisonProjection.pure.ts` carries the detail, and is what an
+   * adapter would call the day a comparison is persisted.
+   */
+  previewOnlyAdapter(
+    'cash_flow_comparison',
+    'Cash Flow Comparison',
+    'No comparison is persisted anywhere a template can read: the projections are the '
+    + 'browser’s, the analysis table refuses every write, and the render ledger stores neither.',
+  ),
   previewOnlyAdapter('qa', 'Q&A Export'),
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),

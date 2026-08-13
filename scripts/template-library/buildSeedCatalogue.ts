@@ -46,6 +46,7 @@ import { PORTFOLIO_TEMPLATES } from './investmentCompass/portfolio';
 import { COMPARISON_TEMPLATES } from './investmentCompass/comparison';
 import { CASH_FLOW_COMPASS_TEMPLATES } from './investmentCompass/cashFlow';
 import { CLIENT_DETAILS_TEMPLATES } from './investmentCompass/clientDetails';
+import { CASH_FLOW_COMPARISON_TEMPLATES } from './investmentCompass/cashFlowComparison';
 import type { CompassSeedTemplate } from './investmentCompass/master';
 
 /**
@@ -62,6 +63,7 @@ const FAMILY_TEMPLATES: CompassSeedTemplate[] = [
   ...COMPARISON_TEMPLATES,
   ...CASH_FLOW_COMPASS_TEMPLATES,
   ...CLIENT_DETAILS_TEMPLATES,
+  ...CASH_FLOW_COMPARISON_TEMPLATES,
 ];
 import { typographyFor } from './investmentCompass/family';
 import {
@@ -399,7 +401,8 @@ function main(): void {
 -- ${FAMILY_TEMPLATES.length} of them are design-family masters (${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass,
 -- ${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity, ${PORTFOLIO_TEMPLATES.length} Portfolio Performance Review,
 -- ${COMPARISON_TEMPLATES.length} Property Comparison, ${CASH_FLOW_COMPASS_TEMPLATES.length} 10 Year Cash Flow,
--- ${CLIENT_DETAILS_TEMPLATES.length} Client Details Form), which additionally carry
+-- ${CLIENT_DETAILS_TEMPLATES.length} Client Details Form,
+-- ${CASH_FLOW_COMPARISON_TEMPLATES.length} Cash Flow Comparison), which additionally carry
 -- \`design_meta\` (family, variant axis, density, resolved manifest, colourway
 -- set). Requires 20260811110000_template_library_design_meta.sql.
 --
@@ -463,7 +466,8 @@ WHERE version = 1
     + `${PORTFOLIO_TEMPLATES.length} Portfolio Performance Review, `
     + `${COMPARISON_TEMPLATES.length} Property Comparison, `
     + `${CASH_FLOW_COMPASS_TEMPLATES.length} 10 Year Cash Flow, `
-    + `${CLIENT_DETAILS_TEMPLATES.length} Client Details Form`,
+    + `${CLIENT_DETAILS_TEMPLATES.length} Client Details Form, `
+    + `${CASH_FLOW_COMPARISON_TEMPLATES.length} Cash Flow Comparison`,
   );
   console.log(`  ${readyCount} production-ready, ${all.length - readyCount} preview-only`);
   console.log(`  → ${MIGRATION.replace(REPO + '/', '')} (${(sql.length / 1024).toFixed(0)} KB)`);

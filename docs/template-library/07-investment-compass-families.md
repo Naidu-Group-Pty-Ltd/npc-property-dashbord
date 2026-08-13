@@ -310,23 +310,60 @@ could not paint a background at all.
 
 The ten designs are **format-agnostic by construction** — typography, density,
 margins, KPI arrangement, table treatment and colourway carry no subject matter
-— so they serve any report. Six formats have taken them up, at 50 masters each:
-the same ten families × five variants × ten colourways.
+— so they serve any report. Seven formats have taken them up, at 50 masters
+each: the same ten families × five variants × ten colourways. Six are
+production-ready; the seventh is preview-only, and the reason is worth reading
+before assuming an adapter was forgotten.
 
-| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison | 10 Year Cash Flow | Client Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| Masters | 50 | 50 | 50 | 50 | 50 | 50 |
-| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` | `cashflow` | `client_details` |
-| `category` | `investment` | `finance` | `portfolio` | `comparison` | `cash_flow` | `client_details` |
-| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` | `cash-flow-ten-year-` | `client-details-form-` |
-| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` | `cashFlow.ts` | `clientDetails.ts` |
-| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` | `cashFlowAdapter` | `clientDetailsAdapter` |
-| Source | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` | `investment_reports` | nine `client_*` tables |
-| Production-ready | yes | yes | yes | yes | yes, for 162 of 1,182 | yes |
+| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison | 10 Year Cash Flow | Client Details | Cash Flow Comparison |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Masters | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` | `cashflow` | `client_details` | `cash_flow_comparison` |
+| `category` | `investment` | `finance` | `portfolio` | `comparison` | `cash_flow` | `client_details` | `comparison` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` | `cash-flow-ten-year-` | `client-details-form-` | `cash-flow-comparison-` |
+| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` | `cashFlow.ts` | `clientDetails.ts` | `cashFlowComparison.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` | `cashFlowAdapter` | `clientDetailsAdapter` | **none possible** |
+| Source | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` | `investment_reports` | nine `client_*` tables | nothing persisted |
+| Production-ready | yes | yes | yes | yes | yes, for 162 of 1,182 | yes | **no — nothing is persisted** |
 
-Adding a seventh is a `ReportFormat` descriptor and a page sequence — plus the
+Adding an eighth is a `ReportFormat` descriptor and a page sequence — plus the
 adapter and projection that make it production-ready — not a second design
 system.
+
+### The Cash Flow Comparison has nothing to read, and says so
+
+The seventh format, and the first preview-only one. Every other format on this
+system reads a stored artefact; this one has none. Its projections are the
+browser's and are never persisted, its analysis table holds **0 rows and
+structurally cannot hold any** (its INSERT policy refuses this application's own
+sign-in), and its render ledger holds 0 rows, stores neither the projections nor
+the analysis, and is superadmin-only.
+
+The obvious substitute — the stored `financial_calculations.projections` the 10
+Year Cash Flow format uses — fails for a reason that is not about scope: every
+headline measure in this document is built on `afterTaxAnnual`, and that series
+models no tax at all. Filling the field to make the shape fit would put an
+invented after-tax position on a client's page.
+
+So the projection is written and tested, the masters bind what it publishes, and
+the registry entry says *why* rather than the default "not configured yet". An
+adapter is the whole of the remaining work, on the day a comparison is persisted
+somewhere a template can reach.
+
+Its other difficulty is one the Property Comparison introduced and this format
+has five times over: **the tables change shape with the property count**. A
+comparison holds 2 to 5 properties and the central tables put one column per
+property, so every property-wide table is drawn four times, once per count, under
+mutually exclusive conditionals at one position — `byPropertyCount()`.
+
+**One renderer defect came out of it.** `data-table` never resolved bindings in
+its column headers: every body cell went through `resolveBindable` and the
+headers did not, so a bound header printed a literal
+`{{cashFlowComparison.properties.0.shortAddress}}` across the top of the table.
+No format bound a header until the seventh — the other six all name their columns
+statically — and it is the only binding defect in this programme that is
+*visible* rather than silent, since an unresolved binding elsewhere renders as
+the empty string.
 
 ### The Client Details format is built for the record that is empty
 
