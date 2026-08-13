@@ -10,13 +10,14 @@ test('calendar non-modal menus do not lock the page scroll surface', () => {
 });
 
 test('stale pointer-lock recovery only preserves genuinely blocking overlays', () => {
-  const recoveryStart = calendar.indexOf('const releaseStuckPointerLock');
+  const recoveryStart = calendar.indexOf('const releaseStuckOverlayLocks');
   assert.notEqual(recoveryStart, -1);
 
-  const recovery = calendar.slice(recoveryStart, recoveryStart + 1_000);
+  const recovery = calendar.slice(recoveryStart, recoveryStart + 1_200);
   assert.match(recovery, /\[role="dialog"\]\[data-state="open"\]/);
   assert.doesNotMatch(recovery, /data-radix-popper-content-wrapper/);
   assert.match(recovery, /removeProperty\('pointer-events'\)/);
+  assert.match(recovery, /removeAttribute\('data-scroll-locked'\)/);
 });
 
 test('pointer-lock checks are frame-coalesced and cleaned up on unmount', () => {

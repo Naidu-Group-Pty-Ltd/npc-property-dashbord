@@ -205,12 +205,18 @@ export default function Calendar() {
     // can remain mounted during their closing animation. Only state-aware modal
     // content keeps the lock; otherwise release it after Radix has completed its
     // own close-frame cleanup.
-    const releaseStuckPointerLock = () => {
-      if (document.body.style.pointerEvents !== 'none') return;
+    const releaseStuckOverlayLocks = () => {
+      const hasPointerLock = document.body.style.pointerEvents === 'none';
+      const hasScrollLock = document.body.hasAttribute('data-scroll-locked');
+      if (!hasPointerLock && !hasScrollLock) return;
+
       const blockingOverlayOpen = document.querySelector(
-        '[role="dialog"][data-state="open"], [role="listbox"][data-state="open"], [data-vaul-drawer][data-state="open"], [data-radix-alert-dialog-content][data-state="open"]',
+        '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="listbox"][data-state="open"], [data-vaul-drawer][data-state="open"]',
       );
-      if (!blockingOverlayOpen) document.body.style.removeProperty('pointer-events');
+      if (blockingOverlayOpen) return;
+
+      if (hasPointerLock) document.body.style.removeProperty('pointer-events');
+      if (hasScrollLock) document.body.removeAttribute('data-scroll-locked');
     };
 
     let pointerLockFrame: number | null = null;
@@ -221,7 +227,7 @@ export default function Calendar() {
         pointerLockFrame = null;
         pointerLockSettleFrame = window.requestAnimationFrame(() => {
           pointerLockSettleFrame = null;
-          releaseStuckPointerLock();
+          releaseStuckOverlayLocks();
         });
       });
     };
@@ -244,7 +250,7 @@ export default function Calendar() {
       window.removeEventListener('focus', schedulePointerLockCheck);
       document.removeEventListener('pointerup', schedulePointerLockCheck, true);
       document.removeEventListener('keyup', schedulePointerLockCheck, true);
-      releaseStuckPointerLock();
+      releaseStuckOverlayLocks();
       document.body.classList.remove(bodyClass);
       document.getElementById(styleId)?.remove();
     };
