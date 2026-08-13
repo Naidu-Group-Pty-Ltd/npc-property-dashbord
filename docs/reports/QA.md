@@ -507,81 +507,80 @@ modules through `../_shared/**`, and the CLI is what resolves them.
 
 ---
 
-## 12 · Why this format is not on the Investment Compass families
+## 12 · How this format got onto the Investment Compass families
 
-Seven report formats have been drawn in the ten design families, and this one is
-the obvious eighth. It cannot be, and the reason is about the **renderer** rather
-than the record — which is worth stating here, because from the outside this
-looks like the one format nobody got round to.
+This section used to explain why it could not be. The argument was sound about
+the vocabulary it was written against, and it named the two things that would
+have to change. Both changed, so the section now records what they were and what
+holds the result in place.
 
-### The block vocabulary cannot draw a Q&A answer
+### What blocked it
 
-The Template Builder's blocks have **no Markdown renderer and no block that
-accepts HTML**. `text-block` escapes its body, which is correct: it is the reason
-a model-authored string cannot inject markup into a client's document.
+The Template Builder's blocks had **no Markdown renderer and no block that
+accepted HTML**. `text-block` escapes its body, which is correct — it is the
+reason a model-authored string cannot inject markup into a client's document —
+and the consequence was that an answer bound to one printed its own source:
+`## Yield analysis`, `**gross yield**` and `| Gross yield | 3.71% |` all set as
+body copy. Against the corpus that was not an edge case: **394 of the 565
+answers (70%) carry inline bold**, 271 (48%) an ATX heading, 315 (56%) a bullet
+list and 106 (19%) a pipe table.
 
-The consequence is that an answer bound to one prints its own source. Rendered,
-not reasoned about:
-
-```
-## Yield analysis
-
-The **gross yield** is 3.71%.
-
-| Metric | Value |
-| --- | --- |
-| Gross yield | 3.71% |
-```
-
-— all of it set as body copy. Against the corpus that is not an edge case:
-**394 of the 565 answers (70%) carry inline bold** and **130 (23%) carry a pipe
-table**, with 321 carrying a bullet list and 270 an ATX heading.
-
-`markdown.pure.ts` exists for exactly this and belongs to the archetype route.
-There is no equivalent on the Template Builder side, and adding a raw-HTML block
-would put a hole in `PRODUCTION_SAFE_BLOCK_TYPES` — a security allow-list — for
-content a language model wrote.
-
-### And the structure is discovered at render time, against build-time heights
-
-A family master declares every block's height when the template is built. This
-payload has no shape until it is read:
+And the structure is discovered at render time against heights a master declares
+at build time:
 
 | | p50 | p90 | max |
 | --- | --- | --- | --- |
-| answer, characters | 2,188 | 10,574 | **33,359** |
-| conversation, characters | 1,428 | 21,748 | **354,406** |
+| answer, characters | 2,193 | 10,591 | **33,377** |
 | sections discovered in an answer | 1 | 16 | **63** |
 
-33,359 characters is about eight pages of set prose and 354,406 is about eighty,
-across up to 70 turns. Half of all answers carry no heading at all and one
-carries 63. There is no `textHeight(chars)` for a field spanning two orders of
-magnitude, and no fixed page sequence for a spine that is discovered — which is
-what §5's "the sections are discovered rather than declared" means when the
-renderer cannot flow.
+### 1 · `markdown-block` takes source, not HTML
 
-Stripping the Markdown to plain text does not rescue it. The 23% of answers
-carrying a table lose it entirely; a capped section count truncates the 10% with
-more than sixteen; and a 10,905-character section still overflows whatever height
-its block declared. Each of those is a defect this programme exists to prevent —
-`PORTFOLIO.md`'s F4 in three new places.
+The half of the argument that had to stay true is the escaping. A block that
+accepted rendered HTML would be a hole in `PRODUCTION_SAFE_BLOCK_TYPES` — a
+security allow-list — for exactly the content least able to be trusted.
 
-### What would have to change, and what holds the line meanwhile
+So the block takes Markdown **source** and renders it itself, through
+`_shared/reports/markdown.pure.ts`: the programme's only Markdown
+implementation, already shared with this route, and **escape-first** —
+`escapeHtml` runs at one auditable call before any parsing. That makes safety a
+property of the renderer rather than of the caller: there is no input to the
+block that produces markup the model chose, whatever is bound to it. A second
+implementation would have been a second set of escaping decisions.
 
-Both, not either:
+`markdownBlock.spec.ts` asserts it on the **tag set** the output contains rather
+than on substrings — a fully-escaped `href=&quot;javascript:…&quot;` still
+contains the text `javascript:` and is inert, and a substring assertion there
+fails for the wrong reason and teaches you to loosen it.
 
-1. A Markdown-capable block in `PRODUCTION_SAFE_BLOCK_TYPES`, which is a
-   sanitiser decision before it is a rendering one.
-2. A way for a master to size or flow a block whose content it has not seen.
+### 2 · Conditional pages, sized by the same function the block uses
 
-Until then `render-report-qa-pdf` is the renderer for this format, and it
-produces a better document than fifty fixed-layout masters could.
+The block renders the whole source, packs the resulting blocks into buckets of
+`linesPerPage` and emits bucket `pageIndex`. A master declares one answer page
+plus seven continuations, each conditional on `qa.answerPages > N`, and a
+conditional page that does not render costs nothing because `visiblePages`
+filters before layout. A median answer therefore produces a five-page document
+and the longest produces twelve, from one set of masters — the Client Details
+Form pattern.
 
-`reportQaNotOnTheFamilies.spec.ts` holds that: it renders a real answer through a
-`text-block` and shows the Markdown coming out as source, sweeps seven block
-types with a hostile payload to prove none interprets markup, and fails if a
-composer ever declares `reportType: 'qa'` or if `qa` reaches the production
-report-template set. It matches on the declared `ReportFormat` rather than on a
-filename, because `investmentCompass/qa.ts` is the render QA harness and a
-filename check gets that wrong.
+`packMarkdownPages` lives in `reports/markdownPaging.pure.ts` because the
+projection and the block both need it and **must not disagree**: the master makes
+page N conditional while the block decides what page N holds, and a drift of one
+line prints a blank page or loses the end of an answer. `reportQaOnTheFamilies.spec.ts`
+asserts the composer's lines-per-page equals the module's.
 
+Packing never splits a Markdown block, so a table taller than a page keeps its
+header instead of reading as two unlabelled tables.
+
+### What the masters draw, and what stays here
+
+**One exchange in depth** — the question, its answer, the sources it was grounded
+in, and a list of what else was asked. That is the document a fixed page sequence
+suits.
+
+A whole transcript is not: conversations reach 70 turns, and
+`render-report-qa-pdf` paginates one properly. It remains the default, and the
+adapter's `legacyFallback` says so rather than implying the template replaces it.
+
+`reportQaOnTheFamilies.spec.ts` replaces `reportQaNotOnTheFamilies.spec.ts` and
+keeps its central assertion — that **`text-block` still escapes**. The fix was to
+add a block that renders safely, not to relax the one that escapes.

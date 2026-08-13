@@ -332,3 +332,72 @@ hand", and verify the same way: OPTIONS 200, then an unauthenticated POST that
 must answer `401 {"error":"Authentication required"}` with the CORS headers on
 it. A worker that failed to parse answers 503 `WORKER_BOOT_ERROR` instead, so
 the 401 is the proof it booted.
+
+---
+
+## 9. On the Investment Compass families
+
+Fifty masters, one per family and variant, plus the projection and adapter that
+make them production-ready. Before this the format had **no adapter at all** —
+not even a preview-only registry entry — so its library card read "unknown"
+rather than "preview-only", despite this being the second-most-rendered route in
+the programme.
+
+### The corpus is a decline, so the document is built around one
+
+Measured against production rather than assumed:
+
+| | |
+| --- | --- |
+| assessments | 16 |
+| **with no calculation run** | **13** (7 `draft`, 4 `archived`, 2 `data_entry`) |
+| carrying figures | 3 |
+| of those, `outside_current_assumptions` | **3 of 3** |
+| of those, bound by the DSCR | **3 of 3** |
+
+Thirteen have no figures for a document to carry, so `commercialCapacityAdapter`
+returns `null` for them rather than producing a page of blanks — the Cash Flow
+adapter's behaviour, for the same reason.
+
+For the three that remain, a decline is not the edge case after the happy path;
+it is the whole document. The answer page leads with the outcome, the reason and
+the binding test.
+
+**`difference` is signed and a template cannot branch on a sign.** So the
+projection publishes `differenceLabel` (`Shortfall` / `Headroom`) and
+`differenceAbsolute`. Without them a master prints a negative number under a
+heading reading "headroom", on every assessment in the record.
+
+### Nothing recomputes
+
+§2's rule, kept by construction. `commercialCapacityProjection.pure.ts` unwraps
+`Measure`s to the bare values a template filter can format, labels, and caps —
+it derives no totals. A derived total would be a second engine, and a document
+whose arithmetic disagrees with the calculator a broker was looking at is worse
+than one with a gap in it. `commercialCapacityProjection.spec.ts` asserts the
+transaction total is the engine's rather than the lines summed.
+
+### The analysis cannot be drawn unlabelled
+
+§4's fourth rule, enforced structurally rather than by review. `analysis` and
+`analysisProvenance` are published **together or not at all**, so a master that
+draws the model's prose cannot draw it without the sentence identifying it. A
+spec walks all fifty masters and fails any page that binds
+`capacity.analysis.interpretation` without `capacity.analysisProvenance`.
+
+The analysis itself is reused from the run and never regenerated at render time:
+a re-issued report must say what the first one said, and a template render is not
+the place to spend a metered model call.
+
+### Reportability follows the route
+
+A stored run is necessary but not sufficient — the adapter defers to
+`route.pure.ts`'s own `isReportable`, so a template cannot produce a document the
+flowing route would refuse.
+
+That costs one assessment today, and it is worth recording why: `REPORTABLE_STATUSES`
+is `['completed', 'linked']`, **no row has ever been `completed`**, and the one
+`calculated` row carries a complete run and outcome and is excluded by it. Two
+parts of one product disagreeing about whether a deal may be sent to a client
+would be worse than a row somebody has to link first — but the vocabulary looks
+wrong and is worth a second opinion.
