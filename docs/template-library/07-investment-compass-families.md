@@ -330,6 +330,25 @@ Adding an eighth is a `ReportFormat` descriptor and a page sequence — plus the
 adapter and projection that make it production-ready — not a second design
 system.
 
+### Report Q&A is the format the families cannot draw at all
+
+Worth recording beside the seven, because it is the one that looks like an
+omission and is not. Its payload is Markdown a model wrote, and the block
+vocabulary has **no Markdown renderer and no block that accepts HTML** —
+`text-block` escapes its body, which is what stops model-authored content
+injecting markup into a client's document. So an answer bound to one prints
+`## Yield analysis`, `**gross yield**` and `| Metric | Value |` as body copy, on
+70% and 23% of the corpus respectively.
+
+The second reason is this system's own: a master declares every block's height
+at build time, and an answer runs 2,188 characters at the median and **33,359**
+at the maximum, with a conversation reaching 354,406 across 70 turns and a spine
+that is discovered rather than declared.
+
+`docs/reports/QA.md` §12 has the measurements and the two things that would have
+to change. `reportQaNotOnTheFamilies.spec.ts` enforces it, and sweeps seven block
+types with a hostile payload while it is there.
+
 ### The Cash Flow Comparison has nothing to read, and says so
 
 The seventh format, and the first preview-only one. Every other format on this

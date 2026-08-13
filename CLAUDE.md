@@ -377,7 +377,16 @@ Analysis, the 10 Year Cash Flow, the Client Details Form and the Cash Flow
 Comparison, sharing one shell (`investmentCompass/master.ts`) and contributing a
 page sequence each. Six are production-ready; the Cash Flow Comparison is
 **preview-only because nothing about a comparison is persisted anywhere a
-template can read** — not the projections, not the analysis, not the ledger. Adding a
+template can read** — not the projections, not the analysis, not the ledger.
+
+**Report Q&A is not on the families and cannot be**, which is a renderer fact
+rather than a gap: the block vocabulary has no Markdown renderer and no block
+that accepts HTML — `text-block` escapes, which is what keeps model-authored
+content from injecting markup — so an answer bound to one prints `**bold**` and
+`| pipe | tables |` as body copy, on 70% and 23% of the corpus. Its structure is
+discovered at render time too, against heights a master declares at build time.
+`reportQaNotOnTheFamilies.spec.ts` enforces it; `docs/reports/QA.md` §12 has the
+measurements. Adding a
 format is a composer plus a `ReportFormat` descriptor — and the adapter and
 projection that make it production-ready — not a second design system.
 
