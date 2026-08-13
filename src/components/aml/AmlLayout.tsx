@@ -95,6 +95,13 @@ const LEGACY_WORKSPACES: Workspace[] = [
     icon: Users,
     paths: [
       "/admin/aml/cases",
+      // A destination in `secondary` MUST also be listed here. `paths` is what
+      // pathMatchesWorkspace resolves the active workspace from, and the
+      // secondary strip is rendered from the ACTIVE workspace only — so a link
+      // missing from this list navigates to a page that then shows no
+      // secondary nav at all and highlights Compliance Home instead. That is
+      // how the Passport shipped reachable and still looked absent.
+      "/admin/aml/passport",
       "/admin/aml/intake",
       "/admin/aml/verification",
       "/admin/aml/screening",
@@ -189,6 +196,9 @@ const V3_WORKSPACES: Workspace[] = [
     icon: Users,
     paths: [
       "/admin/aml/cases",
+      // Listed for the same reason as the legacy shell: `secondary` links must
+      // appear in `paths` or the page they reach loses its secondary nav.
+      "/admin/aml/passport",
       "/admin/aml/intake",
       // Legacy aliases stay part of this workspace for URL matching only.
       "/admin/aml/verification",
