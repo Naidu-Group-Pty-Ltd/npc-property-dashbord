@@ -1,6 +1,7 @@
 import { investmentReportAdapter } from './investmentReportAdapter';
 import { borrowingCapacityAdapter } from './borrowingCapacityAdapter';
 import { portfolioAdapter } from './portfolioAdapter';
+import { comparisonAdapter } from './comparisonAdapter';
 import type { ReportTemplateAdapter } from './types';
 
 function previewOnlyAdapter(reportType: string, label: string, reason = 'Production adapter has not been configured yet.'): ReportTemplateAdapter {
@@ -22,12 +23,14 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   borrowingCapacityAdapter,
   // Third production adapter, reading `portfolio_analysis_reports` (21 rows).
   portfolioAdapter,
+  // Fourth, reading `property_comparisons` (50 rows) through the normaliser the
+  // format's own render route already uses.
+  comparisonAdapter,
   previewOnlyAdapter('cashflow', 'Cash Flow'),
   previewOnlyAdapter('qa', 'Q&A Export'),
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
-  previewOnlyAdapter('comparison', 'Comparison Report'),
   previewOnlyAdapter('client_details', 'Client Details'),
   previewOnlyAdapter('market_intelligence', 'Market Intelligence'),
   previewOnlyAdapter('formara', 'Formara / Client Form'),

@@ -332,6 +332,9 @@ const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   'borrowing',
   // Portfolio Performance Review reads `portfolio_analysis_reports`.
   'portfolio',
+  // Property Comparison Analysis reads `property_comparisons`, through the
+  // normaliser its own render route uses.
+  'comparison',
 ]);
 
 function normaliseReportTemplateType(reportType: unknown): string {
