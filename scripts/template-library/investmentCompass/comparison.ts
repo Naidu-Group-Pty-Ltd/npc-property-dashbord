@@ -66,7 +66,15 @@ import { hasContents } from './resolvers';
 import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
-const FOOTER = '{{client.name}} · Property comparison analysis';
+/**
+ * Not `{{client.name}}`. A comparison is stored against `report_ids` and
+ * nothing else — and the reports it points at have **no client-name column**,
+ * so `resolveClientName` could never have returned one. An unresolved binding
+ * renders as the empty string, so the foot of every page read
+ * " · Property comparison analysis" and the cover title was blank. Found by the
+ * binding audit written for the Cash Flow format; see `cashFlowAdapter.ts`.
+ */
+const FOOTER = 'Property comparison analysis · {{comparison.propertyCount}} properties';
 const DOCUMENT_LABEL = 'Property Comparison Analysis';
 
 /** The observed range across all 50 stored comparisons. */
@@ -212,7 +220,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     tagline: 'Your dedicated property partner',
     marker: 'Comparison',
     eyebrow: 'Property comparison analysis',
-    title: '{{client.name}}',
+    // The subject, not the client — see the note on FOOTER. `propertyCount` is
+    // stored on all 50 comparisons.
+    title: '{{comparison.propertyCount}} properties, compared',
     standfirst: 'Every property side by side, ranked, and the one the analysis would buy.',
     locations: 'Prepared {{report.generatedDate}}',
     facts: [

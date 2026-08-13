@@ -1345,6 +1345,16 @@ export function scenarioChart(opts: {
   dataPath: string;
   data: Array<{ label: string; value: number }>;
   height?: number;
+  /**
+   * Which keys of a bound element carry the label and the figure.
+   *
+   * Default `label`/`value`, which is the shape the Investment Compass masters
+   * assume. A projection that publishes whole rows — the Cash Flow series is
+   * ten objects of eight fields each — names the two it wants plotted rather
+   * than being reshaped into a second array purely for the chart.
+   */
+  labelKey?: string;
+  valueKey?: string;
 }): FlowItem {
   const c = ctx();
   const plan = chartPlan(c.manifest.chart_style);
@@ -1359,8 +1369,8 @@ export function scenarioChart(opts: {
       ...(isSparkline ? {} : { title: opts.title, caption: opts.caption }),
       dataPath: opts.dataPath,
       data: opts.data,
-      labelKey: 'label',
-      valueKey: 'value',
+      labelKey: opts.labelKey ?? 'label',
+      valueKey: opts.valueKey ?? 'value',
       accent: 'token:primary',
       x: c.contentLeft, y, width: c.contentWidth, height,
     }),

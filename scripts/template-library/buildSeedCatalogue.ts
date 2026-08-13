@@ -44,6 +44,7 @@ import { INVESTMENT_COMPASS_TEMPLATES } from './investmentCompass/templates';
 import { BORROWING_CAPACITY_TEMPLATES } from './investmentCompass/borrowingCapacity';
 import { PORTFOLIO_TEMPLATES } from './investmentCompass/portfolio';
 import { COMPARISON_TEMPLATES } from './investmentCompass/comparison';
+import { CASH_FLOW_COMPASS_TEMPLATES } from './investmentCompass/cashFlow';
 import type { CompassSeedTemplate } from './investmentCompass/master';
 
 /**
@@ -58,6 +59,7 @@ const FAMILY_TEMPLATES: CompassSeedTemplate[] = [
   ...BORROWING_CAPACITY_TEMPLATES,
   ...PORTFOLIO_TEMPLATES,
   ...COMPARISON_TEMPLATES,
+  ...CASH_FLOW_COMPASS_TEMPLATES,
 ];
 import { typographyFor } from './investmentCompass/family';
 import {
@@ -108,6 +110,13 @@ const REPO = resolve(__dirname, '../..');
  * harmful once it is not: a file whose prefix is already recorded never runs
  * again, whatever it is called. If v5 has been applied by the time the
  * Comparison masters land, they need a v6 rather than an edit here.
+ *
+ * It carries **four** of them now — Borrowing Capacity, the Portfolio Review,
+ * the Comparison and the 10 Year Cash Flow — because v5 is still unapplied.
+ * Checked against the live project each time a format is added, and the check
+ * is one query: `20260812090000` is absent from
+ * `supabase_migrations.schema_migrations`, so this file has not run and editing
+ * it is safe. The moment that prefix appears there, the next format needs a v6.
  */
 const MIGRATION = resolve(
   REPO,
@@ -387,7 +396,7 @@ function main(): void {
 --
 -- ${FAMILY_TEMPLATES.length} of them are design-family masters (${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass,
 -- ${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity, ${PORTFOLIO_TEMPLATES.length} Portfolio Performance Review,
--- ${COMPARISON_TEMPLATES.length} Property Comparison), which additionally carry
+-- ${COMPARISON_TEMPLATES.length} Property Comparison, ${CASH_FLOW_COMPASS_TEMPLATES.length} 10 Year Cash Flow), which additionally carry
 -- \`design_meta\` (family, variant axis, density, resolved manifest, colourway
 -- set). Requires 20260811110000_template_library_design_meta.sql.
 --
@@ -449,7 +458,8 @@ WHERE version = 1
     `  ${SEED_TEMPLATES.length} voice, ${INVESTMENT_COMPASS_TEMPLATES.length} Investment Compass, `
     + `${BORROWING_CAPACITY_TEMPLATES.length} Borrowing Capacity, `
     + `${PORTFOLIO_TEMPLATES.length} Portfolio Performance Review, `
-    + `${COMPARISON_TEMPLATES.length} Property Comparison`,
+    + `${COMPARISON_TEMPLATES.length} Property Comparison, `
+    + `${CASH_FLOW_COMPASS_TEMPLATES.length} 10 Year Cash Flow`,
   );
   console.log(`  ${readyCount} production-ready, ${all.length - readyCount} preview-only`);
   console.log(`  → ${MIGRATION.replace(REPO + '/', '')} (${(sql.length / 1024).toFixed(0)} KB)`);

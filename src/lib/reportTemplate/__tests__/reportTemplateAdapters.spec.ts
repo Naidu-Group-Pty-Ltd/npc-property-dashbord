@@ -15,11 +15,14 @@ describe('report template adapter registry', () => {
     // against `borrowing_capacity_assessments` — a typed 35-column table with
     // 143 real rows — then `portfolio` against `portfolio_analysis_reports` (21
     // stored reports) and `comparison` against `property_comparisons` (50).
-    // This list is the gate
+    // `cashflow` is the fifth and the odd one: `cash_flow_analyses` holds 0
+    // rows by design, so its adapter reads the projection stored on
+    // `investment_reports` and returns null for the 1,020 reports that carry
+    // none. This list is the gate
     // `deriveEntryFacts` reads for `production_ready`, so adding a type to it
     // without a working `buildBindingContext` marks templates report-ready that
     // cannot render one.
-    for (const reportType of ['investment', 'borrowing_capacity', 'portfolio', 'comparison']) {
+    for (const reportType of ['investment', 'borrowing_capacity', 'portfolio', 'comparison', 'cashflow']) {
       const adapter = getAdapter(reportType);
       expect(adapter?.supportsProduction, reportType).toBe(true);
       // Still names a fallback: the legacy generator stays until a template is
@@ -30,11 +33,12 @@ describe('report template adapter registry', () => {
   });
 
   it('marks the remaining report types preview-only until adapters are implemented', () => {
-    const previewOnlyTypes = ['cashflow', 'qa', 'suburb', 'postcode', 'statewide', 'formara'];
+    const previewOnlyTypes = ['qa', 'suburb', 'postcode', 'statewide', 'formara'];
 
     expect(listAdapters().map((adapter) => adapter.reportType))
       .toEqual(expect.arrayContaining([
-        'investment', 'borrowing_capacity', 'portfolio', 'comparison', ...previewOnlyTypes,
+        'investment', 'borrowing_capacity', 'portfolio', 'comparison', 'cashflow',
+        ...previewOnlyTypes,
       ]));
     for (const reportType of previewOnlyTypes) {
       const adapter = getAdapter(reportType);

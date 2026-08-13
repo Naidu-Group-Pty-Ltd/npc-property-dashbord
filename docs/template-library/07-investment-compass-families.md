@@ -310,23 +310,90 @@ could not paint a background at all.
 
 The ten designs are **format-agnostic by construction** — typography, density,
 margins, KPI arrangement, table treatment and colourway carry no subject matter
-— so they serve any report. Three formats have taken them up, at 50 masters
+— so they serve any report. Five formats have taken them up, at 50 masters
 each: the same ten families × five variants × ten colourways.
 
-| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison |
-| --- | --- | --- | --- | --- |
-| Masters | 50 | 50 | 50 | 50 |
-| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` |
-| `category` | `investment` | `finance` | `portfolio` | `comparison` |
-| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` |
-| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` |
-| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` |
-| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` |
-| Production-ready | yes | yes | yes | yes |
+| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison | 10 Year Cash Flow |
+| --- | --- | --- | --- | --- | --- |
+| Masters | 50 | 50 | 50 | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` | `cashflow` |
+| `category` | `investment` | `finance` | `portfolio` | `comparison` | `cash_flow` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` | `cash-flow-ten-year-` |
+| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` | `cashFlow.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` | `cashFlowAdapter` |
+| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` | `investment_reports` |
+| Production-ready | yes | yes | yes | yes | yes, for 162 of 1,182 |
 
-Adding a fifth is a `ReportFormat` descriptor and a page sequence — plus the
+Adding a sixth is a `ReportFormat` descriptor and a page sequence — plus the
 adapter and projection that make it production-ready — not a second design
 system.
+
+### The Cash Flow format is the one with no prose in it
+
+The other four bind paragraphs a model wrote, and every height on their pages is
+a `textHeight(chars)` measured against production. This one binds nothing but
+numbers, and the risk moves to the other end: **five ten-row tables** on a page
+model that cannot paginate, across ten spacing scales that put the same ten rows
+anywhere between 154pt and 244pt. Each series table gets a page of its own, and
+the collision measure is what proves it.
+
+It is also the only format whose adapter **declines** reports. Its source is
+`financial_calculations.projections`, present on 162 of the 1,182 investment
+reports; `buildBindingContext` returns null for the other 1,020 rather than
+rendering a document whose entire subject is missing, so the legacy generator
+keeps them.
+
+Most of what its projection does is **refuse**. Four stored figures contradict
+the series they would be printed beside — a year-one cash flow that disagrees
+with the series' own year one by a median of $24,793, two totals that do not
+equal the components listed under them (on 132 of 161 and 141 of 162
+respectively), and a purchase price of $3 on one report whose series says
+$780,000 — so none is published and the cost pages carry **no total row**. The
+growth rates the pages state are derived from the series rather than read from
+`assumptions`, which records a different rate on 66 of the 69 reports that carry
+one. `docs/reports/CASH_FLOW.md` §8 has the measurements.
+
+### The cover title that rendered as nothing
+
+Building the fifth format meant auditing every path all 250 masters bind against
+a row taken verbatim from production, and that found a defect in two formats that
+had already shipped.
+
+An unresolved binding renders as the **empty string**, not as a visible `{{…}}`.
+The Borrowing Capacity and Comparison masters titled their cover `{{client.name}}`
+— and `borrowing_capacity_assessments` carries `client_id` rather than a name,
+while a comparison is stored against `report_ids` pointing at a table that has no
+client-name column either. Both shipped a cover with no title at all and a running
+foot beginning " · ". The Comparison adapter's `resolveClientName` had been
+querying a column that does not exist, so PostgREST answered `42703` and the
+error branch returned undefined every time.
+
+The covers now name what each document is about: the Snapshot leads on its
+serviceability band, the Comparison on how many properties it compares, and the
+Cash Flow on the property. `cashFlowCatalogue.spec.ts` asserts which of the five
+formats may bind a client at all — only the Portfolio Review, whose
+`portfolio_analysis_reports.client_name` is populated on all 21 rows.
+
+### Two chart primitives could not draw what this format needed
+
+Both were found by giving the Cash Flow masters a chart, and both were silent.
+
+- **`chart-bar` could not draw a negative value.** It scaled every bar as
+  `value / Math.max(1, ...values)` of the plot height, so an all-negative series
+  — which is what a cash-flow projection is — asked for a rect of negative
+  height, which is invalid SVG and renders as nothing. The domain now always
+  contains zero and bars are measured from it, which leaves every all-positive
+  chart identical to the pixel.
+- **`sparkline` accepted only a literal `values` array** — the one input a
+  template cannot supply, since a template is authored before the report exists.
+  Three of the catalogue's chart styles resolve to `sparkline`, so those masters
+  emitted a `dataPath` the block never read and drew an empty frame. It now
+  accepts `dataPath`/`data`/`valueKey` like every other chart, with `values`
+  still winning where it is given.
+
+The masters chart **equity** regardless: it is positive on all 4,860 stored
+elements, so every one of the four chart primitives a family might resolve to can
+draw it.
 
 ### The Comparison format draws a thing whose size it does not know
 

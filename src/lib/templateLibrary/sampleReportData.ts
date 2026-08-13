@@ -33,6 +33,8 @@
  * fragments. That consistency is most of what makes a preview feel considered.
  */
 
+import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
+
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
 
@@ -166,6 +168,143 @@ const PORTFOLIO_TOTALS = (() => {
     averageYield: mean((h) => h.grossYield),
   };
 })();
+
+/**
+ * The 10 Year Cash Flow sample, built the way production builds it.
+ *
+ * ## Run through the projection rather than written out
+ *
+ * Every other namespace in this file is typed by hand, and for most of them
+ * that is right. This one is not: the Compass masters bind
+ * `cashflow.outcome.equityGrowthLessShortfall`,
+ * `cashflow.outcome.valueGrowthPercent` and eight fields across ten years in
+ * three scenarios — 240 numbers plus a dozen derivations. Typing them means the
+ * preview can disagree with what the adapter would produce, and the disagreement
+ * would be invisible: every figure would still look like a figure.
+ *
+ * So this states a **`financial_calculations` blob shaped exactly as
+ * `investment_reports` stores one** and runs `projectCashFlow` over it, which is
+ * the same call `cashFlowAdapter` makes. The preview is then the adapter's
+ * output by construction, and a change to the projection moves the preview with
+ * it rather than leaving it stale.
+ *
+ * ## The figures are the same engagement, at production's magnitudes
+ *
+ * The Leichhardt holding the rest of this file describes: $1.285m, an $1.028m
+ * loan at 6.14%. Growth rates differ per scenario and nothing else does, which
+ * is what the stored projections do — the loan amortises identically in all
+ * three. The resulting series sit inside every range measured across the 162
+ * stored projections: cash flow negative in every year, cumulative cash flow
+ * reaching −$333k by year ten, and return running from 9% to 24%.
+ */
+const CASH_FLOW_FINANCIALS = (() => {
+  const VALUE = 1285000;
+  const LOAN = 1028000;
+  const RATE = 6.14;
+  const MONTHLY_PAYMENT = 6280;
+  /** Year-one costs, grown at CPI. Their sum is deliberately never published. */
+  const COSTS = {
+    councilRates: 2184, waterRates: 780, landlordInsurance: 1612,
+    maintenance: 2496, propertyManagement: 3224, strataFees: 0, landTax: 0,
+    lettingFees: 920,
+  };
+  const COSTS_YEAR_ONE = Object.values(COSTS).reduce((t, v) => t + v, 0);
+  const UPFRONT = 257000 + 56890 + 1500 + 500;
+  const RENT_YEAR_ONE = 920 * 52;
+  const CPI = 1.028;
+  /**
+   * The rates the stored projections are actually built at.
+   *
+   * Not a choice: `(value10/value1)^(1/9)` is 2.000, 4.000 and 6.000 on all 162
+   * stored reports and `(rent10/rent1)^(1/9)` is 2.000, 3.000 and 4.000, to
+   * three decimal places, without exception. The recorded
+   * `assumptions.capitalGrowth` says something else on 66 of the 69 reports
+   * that carry one, which is why neither the projection nor these masters
+   * publish it — see `cashFlowProjection.pure.ts`.
+   */
+  const GROWTH: Record<string, { value: number; rent: number }> = {
+    conservative: { value: 1.02, rent: 1.02 },
+    moderate: { value: 1.04, rent: 1.03 },
+    optimistic: { value: 1.06, rent: 1.04 },
+  };
+
+  /** Monthly amortisation, so the balance falls the way the stored series does. */
+  const balanceAfterYears = (years: number): number => {
+    const r = RATE / 100 / 12;
+    let b = LOAN;
+    for (let m = 0; m < years * 12; m += 1) b = b * (1 + r) - MONTHLY_PAYMENT;
+    return Math.round(b);
+  };
+
+  const seriesFor = (scenario: string) => {
+    const g = GROWTH[scenario];
+    let cumulative = 0;
+    return Array.from({ length: 10 }, (_, i) => {
+      const year = i + 1;
+      const propertyValue = Math.round(VALUE * g.value ** year);
+      const previousValue = Math.round(VALUE * g.value ** (year - 1));
+      const loanBalance = balanceAfterYears(year);
+      const annualRent = Math.round(RENT_YEAR_ONE * g.rent ** i);
+      const annualCosts = Math.round(COSTS_YEAR_ONE * CPI ** i);
+      const cashFlow = Math.round(annualRent - annualCosts - MONTHLY_PAYMENT * 12);
+      cumulative += cashFlow;
+      return {
+        year,
+        propertyValue,
+        loanBalance,
+        equity: propertyValue - loanBalance,
+        annualRent,
+        cashFlow,
+        cumulativeCashFlow: cumulative,
+        // The year's own return: the value it gained plus the cash it took,
+        // over what was put in. Whole-number percent, as the table stores it.
+        roi: Number(
+          (((propertyValue - previousValue + cashFlow) / UPFRONT) * 100).toFixed(2),
+        ),
+      };
+    });
+  };
+
+  return {
+    projections: {
+      conservative: seriesFor('conservative'),
+      moderate: seriesFor('moderate'),
+      optimistic: seriesFor('optimistic'),
+    },
+    initialCosts: {
+      propertyValue: VALUE, deposit: 257000, stampDuty: 56890,
+      legalFees: 1500, inspectionFees: 500, lmi: 0,
+      loanAmount: LOAN,
+      // Present, production-shaped, and never published — the stored totals do
+      // not equal the components beside them. See `cashFlowProjection.pure.ts`.
+      totalUpfront: UPFRONT,
+    },
+    loanDetails: {
+      interestRate: RATE,
+      monthlyPayment: MONTHLY_PAYMENT,
+      weeklyPayment: Number(((MONTHLY_PAYMENT * 12) / 52).toFixed(2)),
+      totalInterest: 1230480,
+      loanType: 'interest_only',
+      rateSource: 'User specified',
+      interestOnlyPeriod: 2,
+      lvr: 80,
+    },
+    annualCosts: { ...COSTS, totalAnnual: COSTS_YEAR_ONE },
+    // Recorded, production-shaped, and deliberately never published: 5.2% is
+    // not the 4% the moderate series above is built at, which is exactly the
+    // disagreement measured on 66 of the 69 stored reports that record one.
+    assumptions: { capitalGrowth: 5.2, cpiGrowth: 2.8, occupancyWeeks: 52 },
+    keyMetrics: { lvr: 80, annualNet: -21476, weeklyNet: -413 },
+  };
+})();
+
+/** Exactly what `cashFlowAdapter` would hand the renderer for that report. */
+const CASH_FLOW_SAMPLE = projectCashFlow({
+  id: 'sample-cash-flow',
+  property_address: ADDRESS,
+  financial_calculations: CASH_FLOW_FINANCIALS,
+  updated_at: '2026-08-02T00:00:00.000Z',
+}).cashflow;
 
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
@@ -559,6 +698,14 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     acc[String(i)] = row;
     return acc;
   }, {
+    // ── The 10 Year Cash Flow format's own vocabulary ──────────────────────
+    //
+    // `years`, `scenarios`, `outcome`, `firstYear`, `purchase`, `loan`,
+    // `costs`, `assumptions` and `property`, straight off the projection. The
+    // keys above are the voice templates' indexed rows and `breakEvenNote` /
+    // `narrative` / `conclusion`; the two sets are disjoint, which is why this
+    // format nests here rather than claiming a namespace of its own.
+    ...CASH_FLOW_SAMPLE,
     breakEvenNote: 'Pre-tax cash flow turns positive in year seven on the modelled assumptions.',
     narrative:
       'Rent compounds faster than costs from year four, and the position crosses into '

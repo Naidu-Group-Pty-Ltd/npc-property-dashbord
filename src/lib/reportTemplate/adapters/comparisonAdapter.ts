@@ -33,28 +33,24 @@ async function loadComparison(reportId: string): Promise<Record<string, any> | n
 }
 
 /**
- * The client's name, and only when exactly one resolves.
+ * ## There is no client name to resolve, and this used to try
  *
- * A comparison is stored against `report_ids`, not against a client, so the
- * name has to come from the reports it compares. When they disagree — a
- * comparison across two clients' shortlists — the normaliser is given nothing
- * rather than one of the two, because naming the wrong client on the cover of a
- * document is worse than naming none.
+ * A comparison is stored against `report_ids` and nothing else, so the obvious
+ * move is to read the name off the reports it compares — taking it only when
+ * exactly one resolves, since naming the wrong client is worse than naming
+ * none. That is what this adapter did.
+ *
+ * It cannot work: **`investment_reports` has no `client_name` column.** The
+ * request was a PostgREST `42703`, the error branch returned `undefined`, and
+ * the cover title bound to `{{client.name}}` rendered as the empty string on
+ * every comparison — the same failure mode as the Finance Portal's notification
+ * feed, where a filter on three columns that did not exist failed the whole
+ * statement and returned 500 for three weeks.
+ *
+ * So the masters name the subject instead of the client, and this function is
+ * gone rather than fixed. `comparison_client_identity` in
+ * `comparisonCatalogue.spec.ts` keeps it gone.
  */
-async function resolveClientName(reportIds: unknown): Promise<string | undefined> {
-  const ids = Array.isArray(reportIds) ? reportIds.filter((v) => typeof v === 'string') : [];
-  if (!ids.length) return undefined;
-  const { data, error } = await supabase
-    .from('investment_reports')
-    .select('client_name')
-    .in('id', ids as string[]);
-  if (error || !data) return undefined;
-  const names = [...new Set(
-    data.map((r: Record<string, any>) => String(r.client_name ?? '').trim()).filter(Boolean),
-  )];
-  return names.length === 1 ? names[0] : undefined;
-}
-
 export const comparisonAdapter: ReportTemplateAdapter = {
   reportType: 'comparison',
   label: 'Comparison Report',
@@ -105,7 +101,8 @@ export const comparisonAdapter: ReportTemplateAdapter = {
 
     applyComparisonProjection(data, {
       row,
-      clientName: await resolveClientName(row.report_ids),
+      // Deliberately absent — see the note above.
+      clientName: undefined,
       notes,
       now: new Date().toISOString(),
     });

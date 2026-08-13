@@ -368,19 +368,26 @@ come from `scripts/template-library/designSystem.ts` — five voices keyed to th
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
 tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
 
-The 200 *family* templates come from the approved Claude Design **Investment
+The 250 *family* templates come from the approved Claude Design **Investment
 Compass Template Catalogue**: ten design families × five structural variants ×
-ten colourways. The designs carry no subject matter, so they serve **four
+ten colourways. The designs carry no subject matter, so they serve **five
 report formats** — 50 masters each of Investment Compass, the Borrowing
-Capacity Snapshot, the Portfolio Performance Review and the Property Comparison
-Analysis, sharing one shell (`investmentCompass/master.ts`) and contributing a
-page sequence each. Adding a format is a composer plus a `ReportFormat`
-descriptor — and the adapter and projection that make it production-ready — not
-a second design system. **A declared block height is a promise the renderer
-keeps only if the text is as short as the author assumed**, and a block that
-sets taller does not overflow the page, it prints over the next one; size from
-`textHeight(chars)` against measured production lengths, and `npm run
-templates:compass:qa` fails on the class. Read
+Capacity Snapshot, the Portfolio Performance Review, the Property Comparison
+Analysis and the 10 Year Cash Flow, sharing one shell
+(`investmentCompass/master.ts`) and contributing a page sequence each. Adding a
+format is a composer plus a `ReportFormat` descriptor — and the adapter and
+projection that make it production-ready — not a second design system.
+
+Two rules are worth knowing before you bind anything. **A declared block height
+is a promise the renderer keeps only if the text is as short as the author
+assumed**, and a block that sets taller does not overflow the page, it prints
+over the next one; size from `textHeight(chars)` against measured production
+lengths, and `npm run templates:compass:qa` fails on the class. And **an
+unresolved binding renders as the empty string, never as a visible `{{…}}`** —
+which is why two formats shipped a cover with no title at all, bound to a
+`client.name` their source tables have no column for. A format's projection is
+the authority on what may be bound; the catalogue specs assert the masters bind
+nothing it cannot publish. Read
 [`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
 before touching `scripts/template-library/investmentCompass/` or
 `_shared/templateColourways.*`.
