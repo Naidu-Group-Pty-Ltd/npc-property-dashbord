@@ -178,3 +178,47 @@ describe('rendering', () => {
     expect(withLmi).toContain('Lenders mortgage insurance');
   });
 });
+
+describe('the cover names the applicants', () => {
+  it('binds the client on all fifty covers', () => {
+    // The fix has to reach every master, not the reference variant: a family
+    // contributes five, and an operator picks whichever one they like.
+    for (const t of BORROWING_CAPACITY_TEMPLATES) {
+      const cover = JSON.stringify((t.schema.pages as any[])[0]);
+      expect(cover, `${t.slug} cover does not bind the client`).toContain('{{client.name}}');
+    }
+    expect(BORROWING_CAPACITY_TEMPLATES).toHaveLength(50);
+  });
+
+  it('binds it as a whole slot, with no literal stranded beside it', () => {
+    /*
+     * `{{client.name}}` stands alone in the eyebrow rather than sitting after
+     * "Prepared for". An unresolved binding renders as the empty string, so a
+     * preposition beside it prints with nothing after it — the defect this
+     * catalogue already carries in its risk register and contents page.
+     */
+    for (const t of BORROWING_CAPACITY_TEMPLATES) {
+      for (const block of (t.schema.pages as any[])[0].blocks as any[]) {
+        const eyebrow = String(block.props?.eyebrow ?? '');
+        if (!eyebrow.includes('{{client.name}}')) continue;
+        expect(eyebrow.trim(), `${t.slug} strands a literal beside the client name`)
+          .toBe('{{client.name}}');
+      }
+    }
+  });
+
+  it('shows the name on the rendered cover, and nothing when there is none', () => {
+    const t: any = BORROWING_CAPACITY_TEMPLATES[0];
+
+    const named = renderTemplateToHtml(t.schema, {
+      data: { ...SAMPLE, client: { name: 'Jane Smith & John Smith' } },
+    }).html;
+    expect(named).toContain('Jane Smith &amp; John Smith');
+
+    const { client, ...noClient } = { ...SAMPLE, client: undefined } as any;
+    const bare = renderTemplateToHtml(t.schema, { data: noClient }).html;
+    expect(bare).not.toContain('Jane Smith');
+    // The conclusion still carries the cover.
+    expect(bare).toContain('tpl-page');
+  });
+});

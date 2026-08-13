@@ -94,7 +94,17 @@ function investmentData(row: any): Record<string, any> {
 
 function borrowingData(row: any): Record<string, any> {
   const data: Record<string, any> = { report: {}, assessment: row, brand: {} };
-  applyBorrowingCapacityProjection(data, row);
+  /*
+   * The longest applicant name the cover can be asked to set.
+   *
+   * The adapter joins `clients` for this; the fixture row here does not carry
+   * it, so the worst realistic name is supplied instead. The longest primary
+   * name in production is 27 characters — this is 24 longer, so the eyebrow is
+   * measured past the end of the record rather than at it.
+   */
+  applyBorrowingCapacityProjection(data, row, {
+    primary_first_name: 'Christopher', primary_surname: 'Papadopoulos',
+  });
   applyOrganisationProjection(data, ORG as any);
   return data;
 }

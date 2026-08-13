@@ -207,3 +207,57 @@ describe('the projection', () => {
     expect(resolves(data, 'capacity.borrowing')).toBe(true);
   });
 });
+
+describe('the client on the cover', () => {
+  /*
+   * The cover named the conclusion and never the person whose assessment it
+   * was. The projection would not guess a name from a `client_id` and the
+   * adapter never did the join, so nothing published one at all.
+   *
+   * It is worth joining here in a way it was not for the investment reports:
+   * all 143 stored assessments resolve to a real client row and all 143 carry
+   * both a first name and a surname.
+   *
+   * The formatting is `clientName.ts`'s, not this module's — including the rule
+   * that the document names the primary applicant. 33 of the 143 are joint, and
+   * naming both here would put a different name on the cover from the one the
+   * Snapshot's filename is built from.
+   */
+  const jane = { primary_first_name: 'Jane', primary_surname: 'Smith' };
+
+  it('publishes `client.name` when the caller supplies a client', () => {
+    const data = applyBorrowingCapacityProjection({}, ROW, jane);
+    expect(data.client).toEqual({ name: 'Jane Smith' });
+  });
+
+  it('names the primary applicant on a joint assessment', () => {
+    const data = applyBorrowingCapacityProjection({}, ROW, {
+      ...jane, secondary_first_name: 'John', secondary_surname: 'Smith',
+    });
+    expect(data.client).toEqual({ name: 'Jane Smith' });
+  });
+
+  it('falls back to the secondary applicant when only that one is named', () => {
+    const data = applyBorrowingCapacityProjection({}, ROW, {
+      secondary_first_name: 'John', secondary_surname: 'Smith',
+    });
+    expect(data.client).toEqual({ name: 'John Smith' });
+  });
+
+  it('stops a shouted name reaching the page as typed', () => {
+    const data = applyBorrowingCapacityProjection({}, ROW, {
+      primary_first_name: 'JANE', primary_surname: 'SMITH',
+    });
+    expect(data.client).toEqual({ name: 'Jane Smith' });
+  });
+
+  it('publishes nothing at all when there is no name', () => {
+    // An object published with an empty string in it is truthy, which is how a
+    // page conditional on `client` draws blank instead of dropping out.
+    expect(applyBorrowingCapacityProjection({}, ROW, null).client).toBeUndefined();
+    expect(applyBorrowingCapacityProjection({}, ROW).client).toBeUndefined();
+    expect(applyBorrowingCapacityProjection({}, ROW, {
+      primary_first_name: '  ', primary_surname: '',
+    }).client).toBeUndefined();
+  });
+});

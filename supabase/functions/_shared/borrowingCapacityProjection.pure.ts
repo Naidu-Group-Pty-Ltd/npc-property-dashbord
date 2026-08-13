@@ -44,10 +44,29 @@
  *  - `net_purchase_capacity` is populated on **3 of 143**, so it is emitted only
  *    when present rather than defaulted to zero. Zero would read as "you can
  *    buy nothing", which is a different claim from "not calculated".
- *  - `client.*` — the row carries `client_id`, not a name. Resolving it is a
- *    join the caller can do; guessing is not.
  *  - `explanation.*` — null on every row, as above.
+ *
+ * ## The applicants
+ *
+ * `client.*` used to be absent for the reason above — the row carries
+ * `client_id` and not a name, and guessing one is not this module's job. The
+ * caller does the join and hands the names in, which is the arrangement
+ * `comparisonProjection` already uses.
+ *
+ * It is worth doing here in a way it was not for the investment reports: all
+ * **143 of 143** assessments carry a `client_id` that resolves to a real
+ * `clients` row, and all 143 of those carry both a first name and a surname.
+ *
+ * The name itself comes from `clientName.ts` rather than being formatted here.
+ * That module already owns the four columns the table actually has — the two
+ * legacy routes each invented their own spelling and one of them 404'd every
+ * client in the database — and it already decides that the document names the
+ * **primary** applicant, falling back to the secondary, because the Snapshot's
+ * filename is built from the same call. 33 of the 143 are joint; naming both
+ * here would put a different name on the cover from the one on the file.
  */
+
+import { clientDisplayName, type ClientNameRow } from './clientName.ts';
 
 export interface BorrowingCapacityRowLike {
   gross_annual_income?: number | string | null;
@@ -269,12 +288,24 @@ function expenseMethodLabel(method: string | undefined): string | undefined {
   }
 }
 
-/** Merge the projection into a binding-context `data` object. */
+/**
+ * Merge the projection into a binding-context `data` object.
+ *
+ * `client` is supplied by the caller because the assessment row carries a
+ * `client_id` and not a name; see the header. It is published only when there
+ * is a name to publish, so a template binding `{{client.name}}` renders nothing
+ * rather than a fragment when there is not — and, more to the point, an object
+ * published with an empty string in it would make a page conditional on
+ * `client` draw blank instead of dropping out.
+ */
 export function applyBorrowingCapacityProjection(
   data: Record<string, any>,
   row: BorrowingCapacityRowLike,
+  client?: ClientNameRow | null,
 ): Record<string, any> {
   const p = projectBorrowingCapacity(row);
+  const name = clientDisplayName(client);
+  if (name) data.client = { ...obj(data.client), name };
   const merge = (key: string, extra: Record<string, unknown>) => {
     if (!Object.keys(extra).length) return;
     data[key] = { ...obj(data[key]), ...extra };

@@ -258,16 +258,32 @@ describe('rendering', () => {
 });
 
 describe('the other four formats keep their own identity rules', () => {
-  it('lets only the Portfolio Review name a client', () => {
-    // `portfolio_analysis_reports.client_name` is populated on all 21 rows.
-    // The other three source tables have no such column, and a binding that
-    // cannot resolve renders blank rather than visibly broken — so this is
-    // asserted for all five formats at once rather than discovered again.
+  it('lets a format name a client only where one actually resolves', () => {
+    /*
+     * The rule is "bind a client only where there is one to bind", not "only
+     * the Portfolio Review may". A binding that cannot resolve renders blank
+     * rather than visibly broken, which is why this is asserted for all four
+     * formats at once rather than discovered one cover at a time.
+     *
+     * Where each stands, measured:
+     *
+     *  - Portfolio Review — `portfolio_analysis_reports.client_name`, populated
+     *    on all 21 rows.
+     *  - Borrowing Capacity — the assessment row carries `client_id` and no
+     *    name, which is why this used to be `false`. All **143 of 143** resolve
+     *    that id to a real `clients` row, so the adapter joins it and the cover
+     *    names the applicant. The premise changed; the rule did not.
+     *  - Property Comparison — stored against `report_ids` and nothing else,
+     *    and the reports it points at have no client-name column.
+     *  - 10 Year Cash Flow — reads `investment_reports`, where **2 of 1,182**
+     *    rows link to a client at all. A cover naming one would be blank on
+     *    99.8% of them.
+     */
     const bindsClient = (templates: any[]) =>
       templates.some((t) => JSON.stringify(t.schema).includes('{{client.name}}'));
 
     expect(bindsClient(PORTFOLIO_TEMPLATES), 'portfolio').toBe(true);
-    expect(bindsClient(BORROWING_CAPACITY_TEMPLATES), 'borrowing capacity').toBe(false);
+    expect(bindsClient(BORROWING_CAPACITY_TEMPLATES), 'borrowing capacity').toBe(true);
     expect(bindsClient(COMPARISON_TEMPLATES), 'comparison').toBe(false);
     expect(bindsClient(CASH_FLOW_COMPASS_TEMPLATES), 'cash flow').toBe(false);
   });
