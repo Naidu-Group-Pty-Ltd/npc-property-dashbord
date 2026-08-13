@@ -359,6 +359,11 @@ const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   // flowing route stays the default for a long transcript, because a template is
   // a fixed page sequence and carries the first exchanges.
   'qa',
+  // Commercial & Industrial Capacity reads the stored calculation run through
+  // the normaliser its own render route uses, and defers to that route's
+  // `isReportable` so a template cannot produce a document the route refuses.
+  'commercial_capacity',
+  'commercial_industrial',
 ]);
 
 function normaliseReportTemplateType(reportType: unknown): string {

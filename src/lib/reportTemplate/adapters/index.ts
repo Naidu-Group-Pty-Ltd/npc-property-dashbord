@@ -4,6 +4,7 @@ import { portfolioAdapter } from './portfolioAdapter';
 import { comparisonAdapter } from './comparisonAdapter';
 import { cashFlowAdapter } from './cashFlowAdapter';
 import { qaAdapter } from './qaAdapter';
+import { commercialCapacityAdapter } from './commercialCapacityAdapter';
 import { clientDetailsAdapter } from './clientDetailsAdapter';
 import type { ReportTemplateAdapter } from './types';
 
@@ -65,6 +66,14 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
    * to a `text-block` printed its own source.
    */
   qaAdapter,
+  /**
+   * Eighth. Reads the stored calculation run through the normaliser the
+   * format's own render route uses, and declines the thirteen of sixteen
+   * assessments that have no run — there are no figures for a document to
+   * carry, and this format's first rule is that every figure comes from the
+   * stored run rather than a recomputation.
+   */
+  commercialCapacityAdapter,
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
