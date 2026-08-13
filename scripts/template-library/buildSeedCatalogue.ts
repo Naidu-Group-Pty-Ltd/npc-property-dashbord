@@ -38,6 +38,15 @@ import {
 } from '../../supabase/functions/_shared/templateLibraryCore.pure';
 import { takeOverflows } from './blocks';
 import { runningHeadFor, VOICES, type VoiceId } from './designSystem';
+
+/**
+ * Mirrors `template_library_entries_category_check`. See the check in
+ * `validateTemplate` for what this cost the first time it was missing.
+ */
+const LIBRARY_CATEGORIES: ReadonlySet<string> = new Set([
+  'investment', 'suburb', 'postcode', 'statewide', 'comparison',
+  'cash_flow', 'client_form', 'compliance', 'finance', 'portfolio',
+]);
 import { SEED_TEMPLATES, type SeedTemplate } from './templates';
 import { takeCompassOverflows } from './investmentCompass/blocks';
 import { INVESTMENT_COMPASS_TEMPLATES } from './investmentCompass/templates';
@@ -198,6 +207,30 @@ function validateCommon(template: CatalogueTemplate): Problem[] {
       problems.push({ template: label, message: `page ${i + 1} ("${page.name}") has no blocks` });
     }
   });
+
+  // 5. The category has to be one the column will accept.
+  //
+  //    This lives in validateCommon, not beside the voice checks, because the
+  //    350 family masters do not go through validateVoice — and they were the
+  //    ones that broke. The seed validated everything about a template except
+  //    whether the database would take it: 50 Client Details masters carried
+  //    `category: 'client_details'` (the format's `report_type`, which is a
+  //    different vocabulary), the build was clean, the Zod parse was clean, and
+  //    Postgres rejected all 50 partway through a live apply — after 290 rows
+  //    had already been written.
+  //
+  //    Keep LIBRARY_CATEGORIES in step with
+  //    `template_library_entries_category_check`. Validating against a copy of a
+  //    constraint is weaker than validating against the constraint itself, and
+  //    enormously stronger than the nothing that was here.
+  if (!LIBRARY_CATEGORIES.has(template.category)) {
+    problems.push({
+      template: label,
+      message: `category "${template.category}" is not accepted by `
+        + `template_library_entries_category_check (allowed: `
+        + `${[...LIBRARY_CATEGORIES].join(', ')})`,
+    });
+  }
 
   return problems;
 }
