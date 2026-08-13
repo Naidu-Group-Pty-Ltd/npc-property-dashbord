@@ -1146,13 +1146,24 @@ export default function Calendar() {
                 <span className="rounded-xl border border-primary/25 bg-primary/10 p-2 text-primary">
                   <CalendarIcon className="h-5 w-5" />
                 </span>
-                {view === 'month'
-                  ? format(currentMonth, 'MMMM yyyy')
-                  : view === 'week'
-                    ? `${format(weekDays[0], 'MMM d')} - ${format(weekDays[6], 'MMM d, yyyy')}`
-                    : selectedDate ? format(selectedDate, 'MMMM d, yyyy') : 'Timeline'
-                }
+                <CalendarPeriodPicker
+                  label={
+                    view === 'month'
+                      ? format(currentMonth, 'MMMM yyyy')
+                      : view === 'week'
+                        ? `${format(weekDays[0], 'MMM d')} - ${format(weekDays[6], 'MMM d, yyyy')}`
+                        : selectedDate ? format(selectedDate, 'MMMM d, yyyy') : 'Timeline'
+                  }
+                  anchorDate={view === 'month' ? currentMonth : view === 'week' ? currentWeek : (selectedDate ?? currentMonth)}
+                  showWeek={view !== 'month'}
+                  onNavigate={(date) => {
+                    setCurrentMonth(date);
+                    setCurrentWeek(date);
+                    if (view === 'timeline') setSelectedDate(date);
+                  }}
+                />
               </CardTitle>
+
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button
                   aria-label={view === 'month' ? 'Previous month' : 'Previous week'}
