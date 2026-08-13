@@ -189,6 +189,12 @@ const PRODUCTION_SAFE_BLOCK_TYPES = new Set([
   'kpi-strip',
   'legend',
   'auto-toc',
+  // Takes Markdown *source* and renders it itself through the programme's
+  // escape-first renderer, so it cannot emit markup the author of the content
+  // chose. That is what makes it admissible here: this list is a security
+  // boundary, and a block that accepted rendered HTML would be a hole in it for
+  // exactly the content least able to be trusted. See `markdownBlock.html.ts`.
+  'markdown-block',
 ]);
 
 function collectUnsupportedProductionBlocks(schema: any): Array<{ pageIndex: number; blockIndex: number; type: string }> {
