@@ -90,7 +90,7 @@ function costLine(line: CostLine): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   put(out, 'label', str(line.label));
   put(out, 'amount', num(line.amount as Measure));
-  put(out, 'note', str((line as Record<string, unknown>).note));
+  put(out, 'note', str((line as unknown as Record<string, unknown>).note));
   return out;
 }
 
