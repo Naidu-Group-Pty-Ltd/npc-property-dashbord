@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+
+const calendar = fs.readFileSync('src/pages/Calendar.tsx', 'utf8');
+
+test('calendar non-modal menus do not lock the page scroll surface', () => {
+  assert.match(calendar, /<DropdownMenu modal=\{false\}>/);
+  assert.equal((calendar.match(/<ContextMenu key=\{tab\.id\} modal=\{false\}/g) ?? []).length, 3);
+});
+
+test('stale pointer-lock recovery only preserves genuinely blocking overlays', () => {
+  const recoveryStart = calendar.indexOf('const releaseStuckPointerLock');
+  assert.notEqual(recoveryStart, -1);
+
+  const recovery = calendar.slice(recoveryStart, recoveryStart + 1_000);
+  assert.match(recovery, /\[role="dialog"\]\[data-state="open"\]/);
+  assert.doesNotMatch(recovery, /data-radix-popper-content-wrapper/);
+  assert.match(recovery, /removeProperty\('pointer-events'\)/);
+});
+
+test('pointer-lock checks are frame-coalesced and cleaned up on unmount', () => {
+  assert.match(calendar, /if \(pointerLockFrame !== null\) return;/);
+  assert.match(calendar, /cancelAnimationFrame\(pointerLockFrame\)/);
+  assert.match(calendar, /cancelAnimationFrame\(pointerLockSettleFrame\)/);
+});
