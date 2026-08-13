@@ -56,6 +56,20 @@ export * from './recipients.pure.ts';
  */
 export * from './annotations.pure.ts';
 
+/**
+ * The cheap cursor both portals poll so neither has to be reloaded to notice
+ * the other moved. Realtime is unavailable to the Finance Portal by
+ * construction — see the module header.
+ */
+export * from './syncStamp.pure.ts';
+
+/**
+ * Whether what was issued can be shown to have reached the partner's portal.
+ * Distinct from `partnerAccess` (can they sign in) and from the lifecycle
+ * (what state is the document in).
+ */
+export * from './portalReceipt.pure.ts';
+
 export function agreementTemplate(key: AgreementTemplateKey): AgreementTemplateContent {
   return key === 'strategic_property_referral' ? STRATEGIC_REFERRAL_CONTENT : FINANCE_REFERRAL_CONTENT;
 }

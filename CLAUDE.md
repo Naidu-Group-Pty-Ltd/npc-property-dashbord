@@ -250,6 +250,25 @@ weeks — 238 notifications, 236 unread, 0 readable. The boundary is now stated 
 `financeNotificationRouting.pure.ts` and enforced on the columns where they
 exist and on the notification type where they do not.
 
+Once it is there, the two portals have to agree that it is. Read
+[`SYNCHRONISATION.md`](./docs/agreements/SYNCHRONISATION.md) before touching
+`syncStamp.pure.ts`, `useAgreementSync.ts` or either function's `sync`
+operation. "The Finance Portal is not receiving agreements" was measured and is
+not a delivery fault — one production agreement went issued → opened in
+**11 seconds** — it is that **every agreement surface on both sides fetched once,
+on mount**, so an agreement issued into an hour-old tab was invisible until
+somebody reloaded. Realtime is unavailable to the partner *by construction*
+(bespoke session token, service-role-only tables), so both portals poll a
+four-scalar **stamp** and refetch payloads only when it moves. Three rules bite:
+a **null previous stamp is not a change** (or every mount refetches what it just
+fetched), `refetchOnWindowFocus: true` **and** `staleTime: 0` are set against the
+app's global defaults and are the half that actually fixes the reported case,
+and a **receipt is counted on `metadata->>agreement_id`** — `related_entity_id`
+is null on every agreement notification in production. That doc also records why
+`notifyPartner` now returns its outcome: it swallowed its own errors and
+returned void, so an issue whose notification never wrote said the same thing as
+one that landed.
+
 Deployment is the other half of it, and it has bitten twice:
 [`DEPLOYMENT.md`](./docs/agreements/DEPLOYMENT.md).
 

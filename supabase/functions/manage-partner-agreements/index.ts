@@ -64,11 +64,18 @@ import {
   listAgreementAmendments,
   AGREEMENT_CENTRE_DOCUMENT_REVISION,
   agreementDelivery,
+  agreementPortalReceipt,
+  canPartnerSignIn,
   CHANGE_REQUEST_SECTIONS,
+  ISSUER_ATTENTION_STATUSES,
   partnerIssueGate,
   partnerNotificationsAddressable,
   partnerPortalAccess,
   resolveRecipients,
+} from '../_shared/agreements/index.pure.ts';
+import type {
+  AgreementSyncStamp,
+  PartnerNotifyOutcome,
 } from '../_shared/agreements/index.pure.ts';
 import { agreementDownloadFileName } from '../_shared/agreements/documentHtml.pure.ts';
 import { sendAgreementEmail } from '../_shared/agreements/sendAgreementEmail.ts';
@@ -251,9 +258,9 @@ async function notifyPartner(
   supabase: any,
   financeContactId: string | null | undefined,
   notification: { type: string; title: string; body: string; link: string; agreementId: string },
-) {
+): Promise<PartnerNotifyOutcome> {
   try {
-    if (!financeContactId) return;
+    if (!financeContactId) return 'deferred';
     const row = await loadPortalUserRow(supabase, financeContactId);
     // `invited` is addressable: the row exists, so the notification has
     // somewhere to live and the partner meets it on first sign-in. It used to
@@ -262,8 +269,8 @@ async function notifyPartner(
     // all there is nothing to reference, and activation sweeps for whatever was
     // issued in the meantime (`_shared/agreements/pendingDelivery.ts`).
     const portalUser = partnerNotificationsAddressable(partnerPortalAccess({ row })) ? row : null;
-    if (!portalUser?.id) return;
-    await supabase.from('finance_portal_notifications').insert({
+    if (!portalUser?.id) return 'deferred';
+    const { error } = await supabase.from('finance_portal_notifications').insert({
       portal_user_id: portalUser.id,
       client_id: null,
       notification_type: notification.type,
@@ -272,9 +279,47 @@ async function notifyPartner(
       link_path: notification.link,
       metadata: { agreement_id: notification.agreementId, origin_portal: 'command_center' },
     });
+    if (error) {
+      console.error('[partner-agreements] partner notify insert failed:', error.message);
+      return 'failed';
+    }
+    return 'delivered';
   } catch (e) {
-    // Notification delivery must never break the lifecycle action.
+    // Notification delivery must never break the lifecycle action — but it must
+    // no longer be silent about having failed. The caller reports the outcome
+    // and the detail page names it; see `portalReceipt.pure.ts`.
     console.error('[partner-agreements] partner notify failed:', e);
+    return 'failed';
+  }
+}
+
+/**
+ * How many in-portal notifications this agreement has ever raised.
+ *
+ * Keyed on `metadata->>agreement_id`, which every writer of an agreement
+ * notification sets — the issue path here, the send/resend path in
+ * `agreement-centre-render`, and the activation sweep in `pendingDelivery.ts`.
+ * The `related_entity_id` column would be the tidier join and is null on every
+ * row in production, so using it would report zero for everything.
+ *
+ * Tolerant by construction: this feeds an informational panel, and a detail
+ * page that 500s because a receipt could not be counted would be a worse
+ * outcome than a receipt that says "unknown".
+ */
+async function countPortalNotifications(supabase: any, agreementId: string): Promise<number | null> {
+  try {
+    const { count, error } = await supabase
+      .from('finance_portal_notifications')
+      .select('id', { count: 'exact', head: true })
+      .filter('metadata->>agreement_id', 'eq', agreementId);
+    if (error) {
+      console.warn('[partner-agreements] portal receipt count failed:', error.message);
+      return null;
+    }
+    return count ?? 0;
+  } catch (e) {
+    console.warn('[partner-agreements] portal receipt count threw:', e instanceof Error ? e.message : e);
+    return null;
   }
 }
 
@@ -313,7 +358,7 @@ Deno.serve(async (req) => {
     // Deny-by-default module gate. Reads need view; anything that changes a
     // row, a status or a document needs edit.
     const READ_ACTIONS = new Set([
-      'list', 'get', 'list_partners', 'effective_schedule', 'duplicate_check',
+      'sync', 'list', 'get', 'list_partners', 'effective_schedule', 'duplicate_check',
       'issuer_defaults', 'validate_issue',
     ]);
     const authz = await requireModulePermission(
@@ -341,6 +386,54 @@ Deno.serve(async (req) => {
           message: 'This agreement is archived. Restore it to the working list before changing it.',
         }, corsHeaders, 409);
       }
+    }
+
+    // ─── SYNC (the cheap cursor) ────────────────────────────
+    // The Command Centre half of the cross-portal cursor. Four scalars, four
+    // indexed counts, no row bodies — polled so the register notices a partner
+    // accepting, signing or raising a request without anybody reloading the
+    // page. Scoped to one agreement when the caller is sitting on its detail
+    // view, register-wide otherwise. See `syncStamp.pure.ts`.
+    if (action === 'sync') {
+      const scopedId = typeof body.agreement_id === 'string' && body.agreement_id
+        ? body.agreement_id : null;
+      // The working list is what the register renders, so the stamp counts the
+      // working list — otherwise archiving a row would read as a change to
+      // everybody's view of it and archiving is not news.
+      const scopeAgreements = (query: any) => (scopedId
+        ? query.eq('id', scopedId)
+        : query.is('archived_at', null));
+
+      const [countRes, latestRes, requestsRes, attentionRes] = await Promise.all([
+        scopeAgreements(supabase.from(TABLE).select('id', { count: 'exact', head: true })),
+        scopeAgreements(supabase.from(TABLE).select('updated_at'))
+          .order('updated_at', { ascending: false }).limit(1).maybeSingle(),
+        scopedId
+          ? supabase.from(CHANGE_REQUESTS_TABLE).select('id', { count: 'exact', head: true })
+            .eq('agreement_id', scopedId).eq('status', 'open')
+          : supabase.from(CHANGE_REQUESTS_TABLE).select('id', { count: 'exact', head: true })
+            .eq('status', 'open'),
+        scopeAgreements(supabase.from(TABLE).select('id', { count: 'exact', head: true }))
+          .in('status', ISSUER_ATTENTION_STATUSES as unknown as string[]),
+      ]);
+
+      // A failed sub-query must not 500 the poll — the client would treat a
+      // dead cursor as "nothing has changed" either way, and a five-hundred
+      // every twenty seconds buries the log that would explain a real one.
+      for (const res of [countRes, latestRes, requestsRes, attentionRes]) {
+        if (res?.error) {
+          console.error('[manage-partner-agreements] sync query failed:', res.error.message);
+          return json({ error: 'sync_failed', message: res.error.message }, corsHeaders, 500);
+        }
+      }
+
+      const stamp: AgreementSyncStamp = {
+        count: countRes.count ?? 0,
+        latest: (latestRes.data?.updated_at as string | undefined) ?? null,
+        openRequests: requestsRes.count ?? 0,
+        attention: attentionRes.count ?? 0,
+      };
+      return json({ stamp }, corsHeaders);
     }
 
     // ─── LIST ───────────────────────────────────────────────
@@ -429,9 +522,26 @@ Deno.serve(async (req) => {
         row: await loadPortalUserRow(supabase, agreement.finance_agent_contact_id),
       });
 
+      // …and whether anything ever told them. Independent of access and of the
+      // lifecycle: an agreement can be perfectly issued, to a partner who can
+      // perfectly well sign in, and still have raised no notification — which
+      // is exactly what "the agreement never reached the portal" looks like
+      // from the partner's chair. `null` means the count could not be taken,
+      // and the UI says nothing rather than guessing. See
+      // `portalReceipt.pure.ts`.
+      const notificationCount = await countPortalNotifications(supabase, id);
+      const portalReceipt = notificationCount === null ? null : agreementPortalReceipt({
+        issuedAt: agreement.issued_at as string | null,
+        canSignIn: canPartnerSignIn(partnerAccess),
+        notifications: notificationCount,
+        firstViewedAt: agreement.first_viewed_at as string | null,
+      });
+
       return json({
         partner_portal_access: partnerAccess,
         delivery: agreementDelivery(agreement.issued_at as string | null, partnerAccess),
+        portal_receipt: portalReceipt,
+        portal_notification_count: notificationCount,
         agreement,
         events: events.data ?? [],
         versions: rowChain.data ?? [],
@@ -895,13 +1005,23 @@ Deno.serve(async (req) => {
         });
 
       const template = agreementTemplate(templateKey);
-      await notifyPartner(supabase, existing.finance_agent_contact_id, {
+      // The outcome is now carried back to the caller. It used to be discarded,
+      // which meant a notification that never wrote and one that landed
+      // produced the same "issued to the partner portal" toast.
+      const portalNotify = await notifyPartner(supabase, existing.finance_agent_contact_id, {
         type: issueSequence === 1 ? 'agreement_issued' : 'agreement_reissued',
         title: issueSequence === 1 ? 'New agreement for review' : 'Updated agreement available',
         body: `${template.title} (version ${label}) is ready for your review.`,
         link: `/finance/agreements/${id}`,
         agreementId: id,
       });
+      if (portalNotify === 'failed') {
+        // Worth an audit line: the agreement is issued and the counterparty was
+        // not told, which is the one combination somebody has to act on.
+        await logEvent(supabase, id, 'portal_notification_failed', actorId, actorLabel,
+          'Issued, but the partner portal notification could not be raised',
+          { version_label: label });
+      }
 
       // The as-issued PDF. Best-effort: a renderer outage must not block the
       // issue — the partner's first download generates it instead.
@@ -978,6 +1098,7 @@ Deno.serve(async (req) => {
         version,
         partner_portal_access: access,
         delivery,
+        portal_notify: portalNotify,
         email_sent: emailSent,
         email_error: emailError,
       }, corsHeaders);
