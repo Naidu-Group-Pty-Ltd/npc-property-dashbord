@@ -20,7 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Loader2, ShieldCheck, ScanSearch, Gauge, ClipboardList, Play,
   Network, Wallet, ExternalLink, AlertTriangle, History,
-  Scale, CircleDot,
+  Scale, CircleDot, BookMarked,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -32,6 +32,8 @@ import {
   type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { CommandPassportSection } from "@/components/aml/passport/CommandPassportSection";
+import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
@@ -67,7 +69,7 @@ interface Props {
 
 const KNOWN_TABS = new Set([
   "overview", "verification", "screening", "risk",
-  "ownership", "finance", "timeline", "audit",
+  "ownership", "finance", "timeline", "audit", "passport",
 ]);
 
 /** Shared trigger treatment: roomy touch target, never-wrapping label. */
@@ -120,6 +122,9 @@ export function CaseWorkspaceTabs({
             <History className="h-3.5 w-3.5 mr-1.5" /> Timeline
           </TabsTrigger>
         )}
+        <TabsTrigger value="passport" className={TAB_TRIGGER_CLS}>
+          <BookMarked className="h-3.5 w-3.5 mr-1.5" /> Compliance Passport
+        </TabsTrigger>
         <TabsTrigger value="audit" className={TAB_TRIGGER_CLS}>
           <Scale className="h-3.5 w-3.5 mr-1.5" /> Audit
         </TabsTrigger>
@@ -161,6 +166,16 @@ export function CaseWorkspaceTabs({
           <TimelineTab caseId={caseRow.id} events={events} canInvestigate={canInvestigate} />
         </TabsContent>
       )}
+      <TabsContent value="passport" className={contentCls}>
+        {/* The Compliance Passport must be reachable from THIS surface, not
+            only the V3 workspace: the V3 flags are a separate cutover, and a
+            merged product that is only visible behind an unrelated flag reads
+            as missing. The section itself renders nothing until the server
+            answers under aml_passport_command_view, so with the flag off this
+            tab shows only the sharing controls exactly as V3 does. */}
+        <PassportTabBody caseId={caseRow.id} />
+      </TabsContent>
+
       <TabsContent value="audit" className={contentCls}>
         <AuditTab events={events} />
       </TabsContent>
@@ -1730,3 +1745,13 @@ export function TimelineTab({
   );
 }
 
+/** The Passport tab: the resulting record, then the sharing controls. */
+function PassportTabBody({ caseId }: { caseId: string }) {
+  const access = useAmlAccess();
+  return (
+    <div className="space-y-4">
+      <CommandPassportSection caseId={caseId} />
+      <ReliancePassportSection caseId={caseId} isMlro={access.isMlro} />
+    </div>
+  );
+}

@@ -16,7 +16,7 @@ export const SECTION_LABELS: Record<AmlWorkspaceSection, string> = {
   "submission-review": "Submission review",
   risk: "Risk & decision",
   requests: "Requests",
-  passport: "Compliance sharing",
+  passport: "Compliance Passport",
   monitoring: "Monitoring & reviews",
   timeline: "Timeline & audit",
 };
