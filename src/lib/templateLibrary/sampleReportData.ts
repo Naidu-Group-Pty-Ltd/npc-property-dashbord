@@ -668,6 +668,164 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   ],
 
   comparison: {
+    // ── Property Comparison Analysis ──────────────────────────────────────
+    //
+    // Everything the 50 Comparison masters bind, nested here rather than at the
+    // top level: `risks`, `recommendations` and `properties` already mean three
+    // other things to the voice and Portfolio templates, and in this one shared
+    // preview object whichever loaded last would win. See
+    // `comparisonProjection.pure.ts`.
+    //
+    // The shapes and magnitudes are the stored table's. A comparison compares
+    // 2-5 properties (this one, 3), scores them out of 10 or out of 100 — never
+    // a bare figure — and names nobody on about one axis in six.
+    title: 'COMPARISON ANALYSIS - 3 PROPERTIES, NSW',
+    analysedOn: '2 August 2026',
+    propertyCount: 3,
+    statesLine: 'NSW',
+    states: ['NSW'],
+    scaleOutOf: 100,
+    scaleConfident: true,
+    shape: 'columns',
+    // Built by the format, never by the model — see `describeComparison`.
+    narrative: '3 properties compared in NSW. 22 Chapel Street, Marrickville ranks first. '
+      + 'It scores 88.5 out of 100.',
+    summary:
+      'Three inner-west properties were compared against a five-to-seven year horizon and a '
+      + 'moderate risk tolerance. Marrickville ranks first on the strength of its growth record '
+      + 'and the smallest gap between asking price and the suburb median, and it is the only one '
+      + 'of the three whose rental demand is supported by two separate employment catchments. '
+      + 'Leichhardt is the land play: the largest lot, the clearest secondary-dwelling path, and '
+      + 'the thinnest entry yield of the three, which is a position that needs income to service '
+      + 'it for the first four years. Dulwich Hill is the cheapest entry and the weakest growth '
+      + 'thesis; it would suit a buyer who needs the holding to pay for itself from settlement '
+      + 'rather than one building a ten-year position. No property in this comparison is clearly '
+      + 'under the market, so none of the three offers a discount to compensate for its own '
+      + 'weakness.',
+    properties: [
+      { number: 1, address: ADDRESS, shortAddress: '14 Marlborough Street', state: 'NSW' },
+      { number: 2, address: '22 Chapel Street, Marrickville NSW 2204', shortAddress: '22 Chapel Street', state: 'NSW' },
+      { number: 3, address: '7 Wardell Road, Dulwich Hill NSW 2203', shortAddress: '7 Wardell Road', state: 'NSW' },
+    ],
+    ranked: [
+      {
+        number: 2, address: '22 Chapel Street, Marrickville NSW 2204', shortAddress: '22 Chapel Street',
+        rank: 1, score: 88.5, outOf: 100, scaleConfident: true,
+        bestSuitedFor: 'A growth-weighted buyer with a seven-year horizon and income to service a small shortfall.',
+        strengths: [
+          'Growth of 7.2% a year over the last five years, ahead of both comparisons',
+          'Two employment catchments support rental demand independently',
+          'Renovated in 2021, so no capital works are due inside three years',
+        ],
+        concerns: [
+          'Smallest land component of the three at 328m²',
+          'Entry price is closest to the suburb median, so the discount is thin',
+          'Body corporate sinking fund is below the recommended balance',
+        ],
+        riskLevel: 'Moderate', riskBand: 'moderate',
+      },
+      {
+        number: 1, address: ADDRESS, shortAddress: '14 Marlborough Street',
+        rank: 2, score: 74, outOf: 100, scaleConfident: true,
+        bestSuitedFor: 'A land-led buyer prepared to hold through four years of shortfall for a second income stream.',
+        strengths: [
+          '412m² of R2 land, 18% above the suburb average lot size',
+          'Compliant secondary-dwelling footprint confirmed at concept level',
+          'Vacancy at 1.4% with a 12-day average letting time',
+        ],
+        concerns: [
+          'Entry yield of 3.84% needs the shortfall serviced from income',
+          'Kitchen and bathroom will need $60–80k inside three years',
+          'Heritage conservation area limits external change without consent',
+        ],
+        riskLevel: 'Moderate', riskBand: 'moderate',
+      },
+      {
+        number: 3, address: '7 Wardell Road, Dulwich Hill NSW 2203', shortAddress: '7 Wardell Road',
+        rank: 3, score: 61.5, outOf: 100, scaleConfident: true,
+        bestSuitedFor: 'An income-first buyer who needs the holding to pay for itself from settlement.',
+        strengths: [
+          'Cheapest entry of the three at $640,000',
+          'Only one of the three that is cash-flow positive from year one',
+        ],
+        concerns: [
+          'Weakest growth thesis of the three',
+          'Single access road into the pocket',
+          'Smallest catchment of the three suburbs compared',
+        ],
+        riskLevel: 'Low', riskBand: 'low',
+      },
+    ],
+    axes: {
+      money: {
+        title: 'Money',
+        winners: [
+          { key: 'bestROI', label: 'Best return on investment', winner: '22 Chapel Street', value: '6.4%', reason: 'Highest modelled return on the entry price once the 2021 renovation is taken into account, and the only one of the three that does not need capital works inside three years to hold its rent.' },
+          { key: 'bestYield', label: 'Best gross yield', winner: '7 Wardell Road', value: '4.60%', reason: 'The cheapest entry of the three against a rent that is within $30 a week of the most expensive, which is what puts it ahead on yield despite ranking last overall.' },
+          { key: 'bestCashFlow', label: 'Best cash flow', winner: '7 Wardell Road', value: '$283/mo', reason: 'The only property of the three that is positive from year one without assuming rental growth or a rate cut.' },
+          // 43 of the 253 stored pointers name nobody. It is an answer.
+          { key: 'bestValue', label: 'Best value against the market', winner: 'No clear winner', value: '', reason: 'No property in this comparison sits far enough below its suburb median to be called under the market. The closest is Dulwich Hill at 4% below, which is inside the ordinary spread for the stock type.' },
+        ],
+      },
+      place: {
+        title: 'Location and lifestyle',
+        winners: [
+          { key: 'bestSchools', label: 'Best school catchment', winner: '14 Marlborough Street', value: '', reason: 'Two state schools inside the catchment, one of them selective, and both within a fifteen-minute walk.' },
+          { key: 'bestGrowthCorridor', label: 'Best growth corridor', winner: '22 Chapel Street', value: '', reason: 'Sits inside the declared corridor with a funded transport upgrade, which is the difference between a growth thesis and a hope.' },
+          { key: 'bestInfrastructure', label: 'Best infrastructure', winner: '22 Chapel Street', value: '', reason: 'Metro upgrade committed and funded, with construction already under way at the nearest station.' },
+          { key: 'bestLifestyle', label: 'Best lifestyle', winner: 'No clear winner', value: '', reason: 'All three sit within 6km of the CBD on comparable amenity, and the analysis could not separate them on anything a buyer would notice.' },
+        ],
+      },
+      risk: {
+        title: 'Risk',
+        winners: [
+          { key: 'lowestRisk', label: 'Lowest risk', winner: '7 Wardell Road', value: '', reason: 'Established street, long tenancy history, and the only one of the three whose income covers its own holding costs from settlement.' },
+          { key: 'highestRisk', label: 'Highest risk', winner: '14 Marlborough Street', value: '', reason: 'The thinnest entry yield of the three against the largest near-term capital works bill, so the position depends on income outside the property for its first four years.' },
+          { key: 'bestRiskReward', label: 'Best risk-adjusted return', winner: '22 Chapel Street', value: '', reason: 'Growth exposure without the capital-works overhang, and the only one of the three where the rental demand does not depend on a single employment catchment.' },
+        ],
+      },
+    },
+    risks: [
+      { number: 1, shortAddress: '14 Marlborough Street', level: 'Moderate', band: 'moderate', specificRisks: ['Kitchen and bathroom due inside three years', 'Heritage conservation area limits external change'] },
+      { number: 2, shortAddress: '22 Chapel Street', level: 'Moderate', band: 'moderate', specificRisks: ['Body corporate sinking fund below the recommended balance', 'Smallest land component of the three'] },
+      { number: 3, shortAddress: '7 Wardell Road', level: 'Low', band: 'low', specificRisks: ['Single access road into the pocket', 'Weakest growth thesis of the three'] },
+    ],
+    redFlags: [
+      { winner: '14 Marlborough Street', severity: 'Moderate', band: 'moderate', concerns: ['Capital works are not funded from the current rent'] },
+      { winner: '22 Chapel Street', severity: 'Low', band: 'low', concerns: ['Sinking fund would need a special levy to reach the recommended balance'] },
+    ],
+    matches: [
+      { winner: '22 Chapel Street', investorTypes: ['Growth', 'Long hold'], investorTypesLine: 'Growth · Long hold', reasoning: 'Suits a buyer with a seven-year horizon and enough surplus income to carry a small shortfall for the first two years. The growth record and the funded transport upgrade are what this property is bought for; the yield is not.' },
+      { winner: '14 Marlborough Street', investorTypes: ['Development', 'Land banking'], investorTypesLine: 'Development · Land banking', reasoning: 'Suits a buyer who wants the land and the second dwelling rather than the current improvements, and who can service the shortfall while the secondary dwelling is approved and built.' },
+      { winner: '7 Wardell Road', investorTypes: ['Income'], investorTypesLine: 'Income', reasoning: 'Suits a buyer who needs the holding to pay for itself from settlement and is not relying on it for capital growth.' },
+    ],
+    recommendations: {
+      bestOverall: {
+        winner: '22 Chapel Street, Marrickville NSW 2204',
+        reason: 'It wins on four of the eleven axes and loses none of them badly. The growth record is the strongest of the three and is supported by a funded transport upgrade rather than by a forecast, the 2021 renovation removes the near-term capital works that weigh on the Leichhardt holding, and the rental demand does not depend on a single employment catchment. The thin land component is the trade, and it is the right one at this horizon.',
+      },
+      runners: [
+        { winner: '14 Marlborough Street, Leichhardt NSW 2040', reason: 'The land play, and the better property on a fifteen-year view. It is second here because the first four years need income from outside the property to service the shortfall and fund the capital works, which is a position not every buyer can hold.' },
+      ],
+      avoid: [
+        { winner: '7 Wardell Road, Dulwich Hill NSW 2203', reason: 'Not a bad property, but the wrong one against this brief: it is bought for income and the brief is growth-weighted over five to seven years. The single access road and the smallest catchment of the three are what keep its growth thesis behind the other two.' },
+      ],
+      alternativeScenarios: [
+        {
+          scenario: 'If the horizon shortened to three years',
+          reason: 'Dulwich Hill becomes the pick. Over three years the growth advantage at Marrickville does not have time to compound past the transaction costs, and the only one of the three that funds its own holding costs from settlement is the one that survives a short hold intact.',
+          winner: '7 Wardell Road',
+        },
+      ],
+    },
+    basis: {
+      timeHorizon: '5-7 years',
+      riskTolerance: 'moderate',
+      depth: 'comprehensive',
+      investorProfile: 'growth',
+      model: 'sonar-pro',
+    },
+
     a: {
       address: ADDRESS, price: 1285000, rent: 950, yield: 3.84, net: -413, land: '412 m²',
       built: '1928', config: '3 bed · 2 bath · 1 car', condition: 'Original', growth: 6.1,

@@ -275,10 +275,11 @@ describe('a truncated record', () => {
 });
 
 describe('applying it to a binding context', () => {
-  it('merges into the namespaces rather than replacing them', () => {
+  it('nests the whole format under `comparison`, and merges rather than replaces', () => {
     const data: Record<string, any> = {
       report: { id: 'cmp-1', type: 'comparison' },
       client: { email: 'someone@example.com' },
+      comparison: { keptFromBefore: true },
       analysis: ROW_A,
     };
     applyComparisonProjection(data, { row: ROW_A, clientName: 'Example Client', notes: [], now: NOW });
@@ -286,9 +287,21 @@ describe('applying it to a binding context', () => {
     expect(data.report.id).toBe('cmp-1');
     expect(data.client.email).toBe('someone@example.com');
     expect(data.client.name).toBe('Example Client');
+    expect(data.comparison.keptFromBefore).toBe(true);
     expect(data.analysis.property_count).toBe(3);
-    expect(data.ranked).toHaveLength(3);
-    expect(data.properties).toHaveLength(3);
+
+    // Nested, because `risks`, `recommendations` and `properties` already mean
+    // three other things to the voice and Portfolio templates and the preview
+    // sample is one shared object. `client` and `report` stay ambient.
+    expect(data.comparison.ranked).toHaveLength(3);
+    expect(data.comparison.properties).toHaveLength(3);
+    expect(data.comparison.risks).toHaveLength(3);
+    expect(Object.keys(data.comparison.axes).sort()).toEqual(['money', 'place', 'risk']);
+    expect(data.comparison.recommendations.bestOverall.winner).toContain('Beta');
+    expect(data.comparison.basis.timeHorizon).toBe('5-7 years');
+    expect(data.ranked).toBeUndefined();
+    expect(data.risks).toBeUndefined();
+    expect(data.properties).toBeUndefined();
   });
 });
 

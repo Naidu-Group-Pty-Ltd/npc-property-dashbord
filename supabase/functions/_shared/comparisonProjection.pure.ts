@@ -270,7 +270,25 @@ export function projectComparison(input: BuildComparisonInput): ProjectedCompari
   return projectComparisonModel(buildPropertyComparison(input));
 }
 
-/** Merge the projection into a binding-context `data` object. */
+/**
+ * Merge the projection into a binding-context `data` object.
+ *
+ * ## Everything lands under `comparison`, and that is deliberate
+ *
+ * The obvious arrangement — `properties`, `ranked`, `risks`, `recommendations`
+ * at the top level — collides with three namespaces the catalogue already uses
+ * for other things: `risks` is a list of `{risk, why, action}` to the voice
+ * templates, `recommendations` is a list of strings to the Borrowing Capacity
+ * masters, and `properties` is a portfolio's holdings. In production each
+ * report type gets its own data object so nothing would notice; in the preview
+ * sample, where every format's data shares one object, whichever loaded last
+ * would win and the other format's pages would render somebody else's content.
+ *
+ * A comparison is one analysis of one shortlist, so nesting costs nothing and
+ * removes the whole class of collision. `client` and `report` stay at the top
+ * because they are ambient — every format binds them and they mean the same
+ * thing to all of them.
+ */
 export function applyComparisonProjection(
   data: Record<string, any>,
   input: BuildComparisonInput,
@@ -281,16 +299,19 @@ export function applyComparisonProjection(
     const existing = data[key];
     data[key] = { ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}), ...extra };
   };
-  merge('comparison', p.comparison);
-  merge('axes', p.axes);
-  merge('recommendations', p.recommendations);
-  merge('basis', p.basis);
+
+  const comparison: Record<string, unknown> = { ...p.comparison };
+  if (Object.keys(p.axes).length) comparison.axes = p.axes;
+  if (Object.keys(p.recommendations).length) comparison.recommendations = p.recommendations;
+  if (Object.keys(p.basis).length) comparison.basis = p.basis;
+  if (p.properties.length) comparison.properties = p.properties;
+  if (p.ranked.length) comparison.ranked = p.ranked;
+  if (p.risks.length) comparison.risks = p.risks;
+  if (p.redFlags.length) comparison.redFlags = p.redFlags;
+  if (p.matches.length) comparison.matches = p.matches;
+
+  merge('comparison', comparison);
   merge('client', p.client);
   merge('report', p.report);
-  if (p.properties.length) data.properties = p.properties;
-  if (p.ranked.length) data.ranked = p.ranked;
-  if (p.risks.length) data.risks = p.risks;
-  if (p.redFlags.length) data.redFlags = p.redFlags;
-  if (p.matches.length) data.matches = p.matches;
   return data;
 }

@@ -368,14 +368,19 @@ come from `scripts/template-library/designSystem.ts` — five voices keyed to th
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
 tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
 
-The 150 *family* templates come from the approved Claude Design **Investment
+The 200 *family* templates come from the approved Claude Design **Investment
 Compass Template Catalogue**: ten design families × five structural variants ×
-ten colourways. The designs carry no subject matter, so they serve **three
-report formats** — 50 Investment Compass masters, 50 Borrowing Capacity
-Snapshot masters and 50 Portfolio Performance Review masters, sharing one shell
-(`investmentCompass/master.ts`) and contributing a page sequence each. Adding a
-format is a composer plus a `ReportFormat` descriptor — and the adapter and
-projection that make it production-ready — not a second design system. Read
+ten colourways. The designs carry no subject matter, so they serve **four
+report formats** — 50 masters each of Investment Compass, the Borrowing
+Capacity Snapshot, the Portfolio Performance Review and the Property Comparison
+Analysis, sharing one shell (`investmentCompass/master.ts`) and contributing a
+page sequence each. Adding a format is a composer plus a `ReportFormat`
+descriptor — and the adapter and projection that make it production-ready — not
+a second design system. **A declared block height is a promise the renderer
+keeps only if the text is as short as the author assumed**, and a block that
+sets taller does not overflow the page, it prints over the next one; size from
+`textHeight(chars)` against measured production lengths, and `npm run
+templates:compass:qa` fails on the class. Read
 [`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
 before touching `scripts/template-library/investmentCompass/` or
 `_shared/templateColourways.*`.

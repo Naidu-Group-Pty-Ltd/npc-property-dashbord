@@ -84,8 +84,9 @@ describe('the borrowing capacity adapter is real, not a stub', () => {
     // These have no data source wired yet; claiming production support would
     // mark their templates report-ready when they cannot render one.
     // `portfolio` left this list when it gained an adapter against
-    // `portfolio_analysis_reports` — see `portfolioProjection.spec.ts`.
-    for (const t of ['comparison', 'cashflow', 'qa']) {
+    // `portfolio_analysis_reports`, and `comparison` when it gained one against
+    // `property_comparisons` — see their projection specs.
+    for (const t of ['cashflow', 'qa', 'suburb']) {
       expect(supportsProduction(t), t).toBe(false);
     }
   });

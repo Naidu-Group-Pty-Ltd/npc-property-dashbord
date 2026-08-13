@@ -313,20 +313,39 @@ margins, KPI arrangement, table treatment and colourway carry no subject matter
 — so they serve any report. Three formats have taken them up, at 50 masters
 each: the same ten families × five variants × ten colourways.
 
-| | Investment Compass | Borrowing Capacity | Portfolio Review |
-| --- | --- | --- | --- |
-| Masters | 50 | 50 | 50 |
-| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` |
-| `category` | `investment` | `finance` | `portfolio` |
-| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` |
-| Composer | `investmentCompass/templates.ts` | `investmentCompass/borrowingCapacity.ts` | `investmentCompass/portfolio.ts` |
-| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` |
-| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` |
-| Production-ready | yes | yes | yes |
+| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison |
+| --- | --- | --- | --- | --- |
+| Masters | 50 | 50 | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` |
+| `category` | `investment` | `finance` | `portfolio` | `comparison` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` |
+| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` |
+| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` |
+| Production-ready | yes | yes | yes | yes |
 
-Adding a fourth is a `ReportFormat` descriptor and a page sequence — plus the
+Adding a fifth is a `ReportFormat` descriptor and a page sequence — plus the
 adapter and projection that make it production-ready — not a second design
 system.
+
+### The Comparison format draws a thing whose size it does not know
+
+Every other format draws a fixed document. A comparison ranks **2 to 5
+properties** — 7 of the 50 stored rows compare two, 17 compare three, 9 compare
+four and 17 compare five — and neither answer a fixed table can give is right: a
+five-row table prints three empty rows on the two-property comparisons, and a
+two-row table silently drops three properties.
+
+So the ranking is drawn **four times, once per count, each under a conditional,
+all at the same `y`**. One renders and the rest do not exist. `FlowItem.block`
+may return several blocks for exactly this; the item's height is the tallest
+variant's, so whatever follows clears all of them.
+
+It is also the only format whose projection **normalises nothing**. The format
+already had a normaliser for its own WeasyPrint route, so the projection
+restates that model rather than re-reading the row — one reader, two renderers,
+one answer to the 27 truncated records, the two score scales and the winner
+pointers that name nobody.
 
 **What is shared and what is not.** `master.ts` holds the shell — tokens
 compiled from the family's colourway and measured type scale, the Google Fonts
