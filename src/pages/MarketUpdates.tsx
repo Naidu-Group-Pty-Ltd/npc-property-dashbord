@@ -182,7 +182,7 @@ export default function MarketUpdates() {
   const loadUpdates = async () => {
     setLoading(true);
     const [updatesResult, healthResult, heldResult] = await Promise.allSettled([
-      fetchMarketUpdates({ limit:200 }),
+      fetchMarketUpdates({ limit:1000 }),
       fetchMarketSourceHealth(),
       fetchMarketUpdates({ status:'candidate', limit:100 }),
     ]);
