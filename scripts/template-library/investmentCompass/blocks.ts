@@ -1094,10 +1094,33 @@ export function table(opts: {
   /** Indices of rows that close a total. */
   totals?: number[];
   numeric?: number[];
+  /**
+   * The longest a cell runs, and in which column, when the text wraps.
+   *
+   * A table row is one line tall unless something in it is too long for its
+   * column, and the declared height assumed the former for every table in the
+   * catalogue. That is fine for a figure and wrong for a sentence: the
+   * Commercial Capacity scenarios table sets a 177-character impact into a
+   * 140pt column and a 164-character question across the measure, so its rows
+   * wrap to three and four lines and the page ran 26pt past the footer on
+   * `le-03` — declared nine rows, drew about thirty lines.
+   *
+   * Given this, the row height is sized from the wrap instead, the same way
+   * `definitions` takes its `chars`. Omitted, the height is unchanged, so no
+   * existing table moves.
+   */
+  wraps?: { chars: number; columnWidth: number };
 }): FlowItem {
   const c = ctx();
   const plan = tablePlan(c.manifest.table_style);
-  const rowHeight = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const flat = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const rowHeight = opts.wraps
+    ? Math.max(flat, textHeight(opts.wraps.chars, {
+      size: c.scale.cell,
+      width: opts.wraps.columnWidth,
+      extra: 2 * (plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding),
+    }))
+    : flat;
   const numericColumns = opts.numeric ?? opts.headers.map((_, i) => i).slice(1);
   const cellPadding = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
 
@@ -1357,19 +1380,54 @@ export function definitions(
   };
 }
 
-/** A contents page, for the families whose `toc_style` is not `none`. */
+/**
+ * A contents page, for the families whose `toc_style` is not `none`.
+ *
+ * ## The renderer writes the list; `entries` only sizes it
+ *
+ * `toc` does not draw what it is handed. It walks the document's own rendered
+ * pages and sets one row per page, with that page's real name and real number —
+ * which is the right behaviour, because it stays true when a conditional page
+ * drops out and a hand-written list does not.
+ *
+ * `title` is the block's *heading*, and this used to be given
+ * `entries.join('\n')`. A `<div>` collapses newlines, so every contents page in
+ * seven formats printed all twelve section names as one run-on line at heading
+ * size — "The verdict Executive summary The ranking The scorecard Money ·
+ * return, cash flow …" — set above the real list, which was directly beneath it.
+ * The page already carries a `sectionHeading` reading "Contents", so the block
+ * wants no heading of its own: the renderer omits it when it is empty.
+ *
+ * `entries` is therefore a size hint and nothing else, and it is a floor rather
+ * than the truth — the row count is the document's page count, which is larger
+ * than the list of section names whenever a section runs to more than one page.
+ * `ROW_SLACK` covers that gap, because a block that declares less height than
+ * it draws does not overflow the page, it prints over whatever is under it.
+ */
+const CONTENTS_ROW = 20;
+/**
+ * Extra rows the contents block reserves beyond the section names it is given.
+ *
+ * Measured against the stored production rows: a Property Comparison renders 17
+ * pages from a 12-name list, the widest gap of the seven formats that declare a
+ * contents page. Reserving eight rows covers it with a row to spare, and an
+ * over-declared block only leaves white space.
+ */
+const CONTENTS_ROW_SLACK = 8;
+
 export function contents(entries: string[]): FlowItem {
   const c = ctx();
   return {
-    height: 40 + entries.length * 20,
+    height: 40 + (entries.length + CONTENTS_ROW_SLACK) * CONTENTS_ROW,
     block: (y) => block('toc', {
-      title: entries.join('\n'),
+      // Deliberately no title: the page's own section heading says "Contents".
+      title: '',
       titleSize: c.scale.heading,
       titleColor: 'token:ink',
       color: 'token:ink',
       indexColor: 'token:primary',
       size: c.scale.body,
-      lineHeight: 20,
+      lineHeight: CONTENTS_ROW,
       x: c.contentLeft, y, width: c.contentWidth,
     }, 'Contents'),
   };

@@ -792,6 +792,26 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
 
   const textLines = (s: string) => Math.ceil(Math.max(1, s.length) / CHARS_PER_LINE);
 
+  /**
+   * How many lines a list actually sets.
+   *
+   * An item is not one line. It is as many as its text needs at the measure,
+   * and a nested item has less measure to work with because its marker and
+   * indent eat into it. Counting one line per item is what made a 4,315-
+   * character Market Intelligence strategy — three headings and three lists —
+   * estimate at 19 lines and pack onto a single page, which then rendered 96pt
+   * past the footer. A paragraph two lines above this already counts its wrap;
+   * a list simply never did.
+   *
+   * The `+ 1` that follows the sum is the block's own separation, unchanged.
+   */
+  const listLines = (items: readonly ListItem[]) => items.reduce(
+    (n, it) => n + Math.ceil(
+      Math.max(1, it.text.length) / Math.max(20, CHARS_PER_LINE - it.depth * 4),
+    ),
+    0,
+  );
+
   // ── Pass 1b — one left-to-right walk ──────────────────────────────────────
   let i = 0;
   let paragraph: string[] = [];
@@ -989,7 +1009,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       }
       const kept = items.slice(0, MAX_LIST_ITEMS);
       notices.listItemsDropped += items.length - kept.length;
-      if (!push('list', listHtml(kept, ordered, notices), kept.length + 1)) break scan;
+      if (!push('list', listHtml(kept, ordered, notices), listLines(kept) + 1)) break scan;
       continue;
     }
 
@@ -1132,7 +1152,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     if (width === 1) {
       const items = cells.map((r) => ({ depth: 0, text: r[0] })).filter((it) => it.text);
       const head = cols[0].label ? `<h4>${escapeHtml(cols[0].label)}</h4>` : '';
-      return push('list', head + listHtml(items, false, notices), items.length + 2);
+      return push('list', head + listHtml(items, false, notices), listLines(items) + 2);
     }
 
     const rows: TableRow[] = cells.map((r) => {

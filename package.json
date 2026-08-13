@@ -165,6 +165,8 @@
     "security:mass-assignment": "node scripts/security/check-mass-assignment.mjs",
     "security:baseline-invariants": "node scripts/security/check-baseline-invariants.mjs",
     "security:public-validation": "node scripts/security/check-public-validation.mjs",
+    "templates:production-fit": "tsx scripts/template-library/productionFit.ts",
+    "templates:macro-scan": "tsx scripts/template-library/macroScan.ts",
     "templates:compass:qa": "tsx scripts/template-library/investmentCompass/qa.ts",
     "templates:compass:generate": "tsx scripts/template-library/investmentCompass/generate.ts"
   },

@@ -79,6 +79,17 @@ const LENGTHS = {
   interpretation: 900,
   findingDetail: 420,
   scenarioReasoning: 300,
+  /*
+   * Two table cells that hold a sentence rather than a figure.
+   *
+   * Measured on the stored run: the three scenarios' `estimatedImpact` runs
+   * 124-177 characters into a 140pt column, and the six questions run 86-164
+   * across the full measure. A table row is one line tall unless a cell wraps,
+   * so both need `wraps` or the declared height is a fiction — that is what ran
+   * the page 26pt past the footer on `le-03`.
+   */
+  scenarioImpact: 180,
+  question: 170,
 } as const;
 
 const COMMERCIAL_CAPACITY_FORMAT: ReportFormat = {
@@ -310,16 +321,46 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ...withFurniture(page('What could change it', [
       ...flow([
         sectionHeading({ eyebrow: 'Interpretation', heading: 'Scenarios' }),
-        table({
-          headers: ['Scenario', 'Impact', 'Risk'],
-          rows: Array.from({ length: ROWS.scenarios }, (_, i) => [
-            `{{capacity.analysis.scenarios.${i}.name}}`,
-            `{{capacity.analysis.scenarios.${i}.estimatedImpact}}`,
-            `{{capacity.analysis.scenarios.${i}.executionRisk}}`,
-          ]),
-          columnWidths: [c.contentWidth - 220, 140, 80],
-          numeric: [],
-        }),
+        /*
+         * A definition list, not a table.
+         *
+         * `estimatedImpact` is a sentence a model wrote — 124 to 177 characters
+         * across the three stored scenarios — and it was being set into a 140pt
+         * column. Measured on `le-03`, that wrapped each row to about 204pt and
+         * the three-row table rendered 611pt tall, ending 26pt past the footer.
+         *
+         * Widening the column is not the fix, because the row is only ever as
+         * narrow as its narrowest useful column. A definition list gives the
+         * sentence the full measure, which is what prose needs, and sizes its
+         * rows from `chars` rather than assuming one line.
+         */
+        definitions(
+          'Scenarios',
+          Array.from({ length: ROWS.scenarios }, (_, i) => ({
+            term: `{{capacity.analysis.scenarios.${i}.name}}`
+              + ` · {{capacity.analysis.scenarios.${i}.executionRisk}} risk`,
+            definition: `{{capacity.analysis.scenarios.${i}.estimatedImpact}}`,
+          })),
+          LENGTHS.scenarioImpact,
+        ),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'capacity && capacity.analysis && capacity.analysis.scenarios',
+  });
+
+  /*
+   * The credit assessor's questions get their own page.
+   *
+   * They used to sit under the scenarios table. Both are model-authored
+   * sentences rather than figures — the six stored questions run 86 to 164
+   * characters across the full measure, and the three scenarios wrap to three
+   * lines each — so the two together declared nine rows and drew about thirty
+   * lines. That ran 26pt past the footer on `le-03`, the most generous variant.
+   */
+  pages.push({
+    ...withFurniture(page('What a lender will ask', [
+      ...flow([
+        sectionHeading({ eyebrow: 'Interpretation', heading: 'Questions to expect' }),
         table({
           headers: ['What a credit assessor would ask'],
           rows: Array.from({ length: ROWS.questions }, (_, i) => [
@@ -327,10 +368,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           ]),
           columnWidths: [c.contentWidth],
           numeric: [],
+          wraps: { chars: LENGTHS.question, columnWidth: c.contentWidth },
         }),
       ], contentTop()),
     ]), FOOTER),
-    conditional: 'capacity && capacity.analysis && capacity.analysis.scenarios',
+    conditional: 'capacity && capacity.analysis && capacity.analysis.questions',
   });
 
   // ── How it was calculated ────────────────────────────────────────────────
