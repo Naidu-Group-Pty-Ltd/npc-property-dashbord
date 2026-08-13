@@ -289,18 +289,27 @@ Deno.serve(async (req: Request) => {
     // Helper to verify any authenticated user (not just superadmin).
     // Returns the active session id so callers can rotate it on privilege
     // elevation (WP-11B/C Phase 3).
-    const verifySession = async (sessionToken: string) => {
-      if (!sessionToken) {
+    const verifySession = async (sessionToken?: string | null) => {
+      // The browser can no longer read its own session: the Command Centre
+      // session lives in an HttpOnly cookie, so `body.session_token` is
+      // undefined for every self-service call and this used to fail with
+      // "Session token required". Fall back to the cookie/header carrier.
+      const token = (sessionToken && sessionToken.trim())
+        ? sessionToken.trim()
+        : (extractSessionToken(req.headers, body) ?? '');
+
+      if (!token) {
         return { error: 'Session token required', user: null, sessionId: null };
       }
 
       // Hash-first lookup (plaintext fallback) so hash-only sessions resolve.
       const session = await resolveUserSessionRow(
         supabase,
-        sessionToken,
+        token,
         'id, user_id, expires_at, revoked_at, idle_expires_at',
         (q: any) => q.gt('expires_at', new Date().toISOString()).is('revoked_at', null),
       );
+
 
       if (!session || !isSessionUsable(session).ok) {
         return { error: 'Invalid or expired session', user: null, sessionId: null };
