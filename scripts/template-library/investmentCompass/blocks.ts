@@ -1357,19 +1357,54 @@ export function definitions(
   };
 }
 
-/** A contents page, for the families whose `toc_style` is not `none`. */
+/**
+ * A contents page, for the families whose `toc_style` is not `none`.
+ *
+ * ## The renderer writes the list; `entries` only sizes it
+ *
+ * `toc` does not draw what it is handed. It walks the document's own rendered
+ * pages and sets one row per page, with that page's real name and real number —
+ * which is the right behaviour, because it stays true when a conditional page
+ * drops out and a hand-written list does not.
+ *
+ * `title` is the block's *heading*, and this used to be given
+ * `entries.join('\n')`. A `<div>` collapses newlines, so every contents page in
+ * seven formats printed all twelve section names as one run-on line at heading
+ * size — "The verdict Executive summary The ranking The scorecard Money ·
+ * return, cash flow …" — set above the real list, which was directly beneath it.
+ * The page already carries a `sectionHeading` reading "Contents", so the block
+ * wants no heading of its own: the renderer omits it when it is empty.
+ *
+ * `entries` is therefore a size hint and nothing else, and it is a floor rather
+ * than the truth — the row count is the document's page count, which is larger
+ * than the list of section names whenever a section runs to more than one page.
+ * `ROW_SLACK` covers that gap, because a block that declares less height than
+ * it draws does not overflow the page, it prints over whatever is under it.
+ */
+const CONTENTS_ROW = 20;
+/**
+ * Extra rows the contents block reserves beyond the section names it is given.
+ *
+ * Measured against the stored production rows: a Property Comparison renders 17
+ * pages from a 12-name list, the widest gap of the seven formats that declare a
+ * contents page. Reserving eight rows covers it with a row to spare, and an
+ * over-declared block only leaves white space.
+ */
+const CONTENTS_ROW_SLACK = 8;
+
 export function contents(entries: string[]): FlowItem {
   const c = ctx();
   return {
-    height: 40 + entries.length * 20,
+    height: 40 + (entries.length + CONTENTS_ROW_SLACK) * CONTENTS_ROW,
     block: (y) => block('toc', {
-      title: entries.join('\n'),
+      // Deliberately no title: the page's own section heading says "Contents".
+      title: '',
       titleSize: c.scale.heading,
       titleColor: 'token:ink',
       color: 'token:ink',
       indexColor: 'token:primary',
       size: c.scale.body,
-      lineHeight: 20,
+      lineHeight: CONTENTS_ROW,
       x: c.contentLeft, y, width: c.contentWidth,
     }, 'Contents'),
   };
