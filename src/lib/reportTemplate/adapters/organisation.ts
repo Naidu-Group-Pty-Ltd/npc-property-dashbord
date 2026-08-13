@@ -38,7 +38,7 @@ export async function loadOrganisation(): Promise<OrganisationRowLike | null> {
         inFlight = null;
         return null;
       }
-      return data as OrganisationRowLike;
+      return data as unknown as OrganisationRowLike;
     } catch {
       inFlight = null;
       return null;
