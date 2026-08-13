@@ -37,10 +37,19 @@ import { applyBorrowingCapacityProjection } from '../../supabase/functions/_shar
 import { applyPortfolioProjection } from '../../supabase/functions/_shared/portfolioProjection.pure';
 import { applyComparisonProjection } from '../../supabase/functions/_shared/comparisonProjection.pure';
 import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
+import { applyReportQaProjection } from '../../supabase/functions/_shared/reportQaProjection.pure';
+import { applyCommercialCapacityProjection } from '../../supabase/functions/_shared/commercialCapacityProjection.pure';
+import { applyMarketIntelligenceProjection } from '../../supabase/functions/_shared/marketIntelligenceProjection.pure';
+import { buildReportQaDocument } from '../../supabase/functions/_shared/reports/reportQa/normalise.pure';
+import { buildCapacitySnapshot } from '../../supabase/functions/_shared/reports/commercialCapacity/normalise.pure';
+import { buildMarketIntelligenceReport } from '../../supabase/functions/_shared/reports/marketIntelligence/normalise.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from './investmentCompass/templates';
 import { BORROWING_CAPACITY_TEMPLATES } from './investmentCompass/borrowingCapacity';
 import { PORTFOLIO_TEMPLATES } from './investmentCompass/portfolio';
 import { COMPARISON_TEMPLATES } from './investmentCompass/comparison';
+import { REPORT_QA_TEMPLATES } from './investmentCompass/reportQa';
+import { COMMERCIAL_CAPACITY_TEMPLATES } from './investmentCompass/commercialCapacity';
+import { MARKET_INTELLIGENCE_TEMPLATES } from './investmentCompass/marketIntelligence';
 
 const SCRATCH = process.env.FIXTURES
   ?? '/tmp/claude-0/-home-user/2d1fcc99-8bfb-51aa-8aa3-79bd8050091a/scratchpad';
@@ -106,11 +115,69 @@ function comparisonData(row: any): Record<string, any> {
   return data;
 }
 
+/*
+ * The three model-authored formats.
+ *
+ * Their rows are far larger than the others — one stored Market Intelligence
+ * report is 305 KB and a Q&A conversation reaches 4 MB — and they are the ones
+ * whose length nobody controls, because a model wrote the prose. They are also
+ * the three whose page budgets were fitted most recently, so measuring them
+ * against the stored row rather than a fixture is the point of this harness.
+ */
+const ROWS2 = JSON.parse(readFileSync(`${SCRATCH}/format-rows2.json`, 'utf8'));
+
+function qaData(row: any): Record<string, any> {
+  const built = buildReportQaDocument({
+    conversation: row.conversation,
+    messages: row.messages ?? [],
+    subject: 'transcript',
+    messageId: null,
+    preparedOn: new Date('2026-08-13').toISOString(),
+  } as any);
+  const data: Record<string, any> = { report: {}, brand: {} };
+  if ((built as any)?.ok !== false) {
+    applyReportQaProjection(data, (built as any).document ?? built);
+  }
+  applyOrganisationProjection(data, ORG as any);
+  return data;
+}
+
+function capacityData(row: any): Record<string, any> {
+  const { assessment, run } = row;
+  const snapshot = buildCapacitySnapshot({
+    assessment,
+    outputs: run?.outputs,
+    inputs: run?.inputs_snapshot,
+    clientName: 'A Client Pty Ltd',
+    analysis: (run?.analysis ?? null) as never,
+  } as any);
+  const data: Record<string, any> = { report: {}, brand: {} };
+  applyCommercialCapacityProjection(data, snapshot as any);
+  applyOrganisationProjection(data, ORG as any);
+  return data;
+}
+
+function marketData(row: any): Record<string, any> {
+  const built = buildMarketIntelligenceReport({
+    row,
+    preparedOn: new Date('2026-08-13').toISOString(),
+    brandName: ORG.company_name,
+    audienceOverride: null,
+  } as any);
+  const data: Record<string, any> = { report: {}, brand: {} };
+  if ((built as any)?.ok) applyMarketIntelligenceProjection(data, (built as any).report);
+  applyOrganisationProjection(data, ORG as any);
+  return data;
+}
+
 const SETS: Array<[string, any[], Record<string, any>]> = [
   ['Investment Compass', INVESTMENT_COMPASS_TEMPLATES as any[], investmentData(ROWS.investment)],
   ['Borrowing Capacity', BORROWING_CAPACITY_TEMPLATES as any[], borrowingData(ROWS.borrowing_capacity)],
   ['Portfolio Review', PORTFOLIO_TEMPLATES as any[], portfolioData(ROWS.portfolio)],
   ['Property Comparison', COMPARISON_TEMPLATES as any[], comparisonData(ROWS.comparison)],
+  ['Report Q&A', REPORT_QA_TEMPLATES as any[], qaData(ROWS2.qa)],
+  ['Commercial Capacity', COMMERCIAL_CAPACITY_TEMPLATES as any[], capacityData(ROWS2.commercial_capacity)],
+  ['Market Intelligence', MARKET_INTELLIGENCE_TEMPLATES as any[], marketData(ROWS2.market_intelligence)],
 ];
 
 const PAGE_H_PT = 842;
@@ -162,7 +229,17 @@ const overflows: Overflow[] = [];
 let measured = 0;
 let pagesMeasured = 0;
 
+/**
+ * Optional substring filter, so the heavy formats can be run on their own.
+ *
+ * A stored Q&A conversation is 4 MB and a Market Intelligence report 305 KB;
+ * rendering seventy masters against those in one pass outlasts a sensible
+ * timeout, and a harness nobody can finish running is a harness nobody runs.
+ */
+const ONLY = process.env.ONLY?.toLowerCase();
+
 for (const [format, list, data] of SETS) {
+  if (ONLY && !format.toLowerCase().includes(ONLY)) continue;
   // The spacious variant of each family is the binding constraint; see header.
   const tight = list.filter((t: any) => /-0(3)-/.test(t.slug));
   for (const t of tight) {

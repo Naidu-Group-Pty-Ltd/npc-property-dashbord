@@ -1094,10 +1094,33 @@ export function table(opts: {
   /** Indices of rows that close a total. */
   totals?: number[];
   numeric?: number[];
+  /**
+   * The longest a cell runs, and in which column, when the text wraps.
+   *
+   * A table row is one line tall unless something in it is too long for its
+   * column, and the declared height assumed the former for every table in the
+   * catalogue. That is fine for a figure and wrong for a sentence: the
+   * Commercial Capacity scenarios table sets a 177-character impact into a
+   * 140pt column and a 164-character question across the measure, so its rows
+   * wrap to three and four lines and the page ran 26pt past the footer on
+   * `le-03` — declared nine rows, drew about thirty lines.
+   *
+   * Given this, the row height is sized from the wrap instead, the same way
+   * `definitions` takes its `chars`. Omitted, the height is unchanged, so no
+   * existing table moves.
+   */
+  wraps?: { chars: number; columnWidth: number };
 }): FlowItem {
   const c = ctx();
   const plan = tablePlan(c.manifest.table_style);
-  const rowHeight = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const flat = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const rowHeight = opts.wraps
+    ? Math.max(flat, textHeight(opts.wraps.chars, {
+      size: c.scale.cell,
+      width: opts.wraps.columnWidth,
+      extra: 2 * (plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding),
+    }))
+    : flat;
   const numericColumns = opts.numeric ?? opts.headers.map((_, i) => i).slice(1);
   const cellPadding = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
 

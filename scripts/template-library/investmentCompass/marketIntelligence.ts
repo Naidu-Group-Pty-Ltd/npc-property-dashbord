@@ -84,6 +84,8 @@ const LENGTHS = {
   executiveSummary: 1080,
   keyInsights: 1100,
   strategy: 1100,
+  /** Longest event name across the stored reports; 47, rounded up. */
+  eventName: 50,
 } as const;
 
 const MARKET_INTELLIGENCE_FORMAT: ReportFormat = {
@@ -111,6 +113,17 @@ const MARKET_INTELLIGENCE_FORMAT: ReportFormat = {
 };
 
 const HAS_INTEL = 'marketIntel';
+
+/**
+ * Events the calendar sets before it continues onto a second page.
+ *
+ * Measured on `le-03`, the most generous variant: a calendar row renders about
+ * 56pt there, so a header and ten events is 621pt into 584pt of page and ran
+ * 37pt past the footer. Eight fits with room, and the rest continue rather than
+ * being dropped — the stored report carries exactly ten, so a cap of eight
+ * would have lost two off a client's calendar.
+ */
+const EVENTS_FIRST_PAGE = 8;
 
 function eventRow(collection: string, i: number): string[] {
   return [
@@ -171,6 +184,60 @@ function layerPages(index: number, bodyHeight: number, firstHeight: number): Pag
   return out;
 }
 
+/** Pages a paged prose section is allowed. Mirrors the projection's page count. */
+const PROSE_PAGES = 3;
+
+/**
+ * A long prose section: one page plus conditional continuations.
+ *
+ * The same shape `layerPages` gives a layer, and for the same reason — a model
+ * writes these and nobody controls their length. `executiveSummary` measures
+ * 4,430 characters on the stored reports and `strategy` 4,315, against a single
+ * block that had been sized for about 1,100. That set the page 275pt past the
+ * footer on `de-03`, the most generous variant.
+ *
+ * Continuations are conditional on the page count the projection publishes, so
+ * a short section costs nothing: `visiblePages` filters a conditional page out
+ * before layout rather than printing it blank.
+ */
+function prosePages(opts: {
+  key: 'executiveSummary' | 'strategy';
+  name: string;
+  eyebrow: string;
+  heading: string;
+  c: ReturnType<typeof beginCompassTemplate>;
+}): PageDef[] {
+  const { key, name, eyebrow, heading, c } = opts;
+  const source = `{{marketIntel.prose.${key}}}`;
+  const has = `marketIntel && marketIntel.prose && marketIntel.prose.${key}`;
+  const firstHeight = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
+  const contHeight = c.contentBottom - contentTop() - 12;
+  const out: PageDef[] = [];
+
+  out.push({
+    ...withFurniture(page(name, [
+      ...flow([
+        sectionHeading({ eyebrow, heading }),
+        markdown(source, 0, firstHeight, MARKDOWN_LINES_PER_PAGE),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: has,
+  });
+
+  for (let p = 1; p < PROSE_PAGES; p += 1) {
+    out.push({
+      ...withFurniture(page(`${name} (${p + 1})`, [
+        ...flow([
+          markdown(source, p, contHeight, MARKDOWN_LINES_PER_PAGE),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: `${has} && marketIntel.prose.${key}Pages > ${p}`,
+    });
+  }
+
+  return out;
+}
+
 function buildTemplate(family: DesignFamily, variant: VariantDefinition): CompassSeedTemplate {
   const manifest = resolveManifest(family, variant);
   const c = beginCompassTemplate(family, variant, manifest);
@@ -198,12 +265,15 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   }));
 
   // ── Where it stands ──────────────────────────────────────────────────────
+  //
+  // The narrative is short and fixed — 108 characters on the stored reports —
+  // so it keeps a sized block. The executive summary is not: it runs 4,430,
+  // which is why it is paged rather than set into one block.
   pages.push({
     ...withFurniture(page('Where it stands', [
       ...flow([
         sectionHeading({ eyebrow: 'This period', heading: 'Where the market stands' }),
         prose('{{marketIntel.narrative}}', textHeight(LENGTHS.narrative)),
-        prose('{{marketIntel.prose.executiveSummary}}', textHeight(LENGTHS.executiveSummary)),
         {
           ...callout('Not every section returned', '{{marketIntel.layersOmitted}}'),
           conditional: 'marketIntel && marketIntel.layersOmitted',
@@ -212,6 +282,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ]), FOOTER),
     conditional: HAS_INTEL,
   });
+
+  pages.push(...prosePages({
+    key: 'executiveSummary',
+    name: 'The summary',
+    eyebrow: 'This period',
+    heading: 'In summary',
+    c,
+  }));
 
   // ── What stands out ──────────────────────────────────────────────────────
   pages.push({
@@ -238,13 +316,32 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         sectionHeading({ eyebrow: 'Dated', heading: 'What moved the market' }),
         table({
           headers: ['Date', 'Event', 'Impact'],
-          rows: Array.from({ length: ROWS.events }, (_, i) => eventRow('events', i)),
+          rows: Array.from({ length: EVENTS_FIRST_PAGE }, (_, i) => eventRow('events', i)),
           columnWidths: [80, c.contentWidth - 200, 120],
           numeric: [],
+          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 200 },
         }),
       ], contentTop()),
     ]), FOOTER),
     conditional: 'marketIntel && marketIntel.events',
+  });
+
+  // The calendar continues only when there is something to continue with.
+  pages.push({
+    ...withFurniture(page('The calendar (2)', [
+      ...flow([
+        sectionHeading({ eyebrow: 'Dated', heading: 'What moved the market' }),
+        table({
+          headers: ['Date', 'Event', 'Impact'],
+          rows: Array.from({ length: ROWS.events - EVENTS_FIRST_PAGE }, (_, i) =>
+            eventRow('events', EVENTS_FIRST_PAGE + i)),
+          columnWidths: [80, c.contentWidth - 200, 120],
+          numeric: [],
+          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 200 },
+        }),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: `marketIntel && marketIntel.eventCount > ${EVENTS_FIRST_PAGE}`,
   });
 
   pages.push({
@@ -257,11 +354,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           columnWidths: [80, c.contentWidth - 200, 120],
           numeric: [],
         }),
-        prose('{{marketIntel.prose.strategy}}', textHeight(LENGTHS.strategy)),
       ], contentTop()),
     ]), FOOTER),
     conditional: 'marketIntel && marketIntel.upcoming',
   });
+
+  // The strategy is the other long one — 4,315 characters — so it is paged
+  // rather than tucked under the calendar table.
+  pages.push(...prosePages({
+    key: 'strategy',
+    name: 'What to do',
+    eyebrow: 'Ahead',
+    heading: 'Where this points',
+    c,
+  }));
 
   // ── Sources ──────────────────────────────────────────────────────────────
   pages.push({

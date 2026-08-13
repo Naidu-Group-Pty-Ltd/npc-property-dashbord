@@ -172,6 +172,21 @@ export function projectMarketIntelligence(
   put(proseOut, 'executiveSummary', str(prose.executiveSummary));
   put(proseOut, 'keyInsights', str(prose.keyInsightsSnapshot));
   put(proseOut, 'strategy', str(prose.actionableStrategy));
+  /*
+   * The two long ones are paged, exactly as the layers are.
+   *
+   * Measured on the stored reports, `executiveSummary` runs 4,430 characters
+   * and `actionableStrategy` 4,315 — four times what a single block was sized
+   * for, and a fixed block set them 275pt past the footer on the most generous
+   * variant. Nobody controls their length, because a model writes them, so they
+   * get the treatment this format already gives a body of unknown length: one
+   * page plus conditional continuations, counted by the same `packMarkdownPages`
+   * the block uses so the two cannot disagree.
+   */
+  put(proseOut, 'executiveSummaryPages',
+    layerPageCount(String(prose.executiveSummary ?? ''), linesPerPage) || undefined);
+  put(proseOut, 'strategyPages',
+    layerPageCount(String(prose.actionableStrategy ?? ''), linesPerPage) || undefined);
   // `ctaContent` is deliberately not published. It is the generator's
   // call-to-action for the email the legacy attached this PDF to; a template is
   // a document rather than a campaign, and a "book a call" panel in the middle
