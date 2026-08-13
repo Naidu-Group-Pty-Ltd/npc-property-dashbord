@@ -1589,6 +1589,7 @@ export default function Calendar() {
                     <TabsList className="grid h-auto w-full grid-cols-4 gap-2 rounded-2xl border border-border bg-card/80 p-2 shadow-inner shadow-sm dark:shadow-black/20">
                       {orderedSidebarTabs.map((tab) => {
                         const isPinned = pinnedTabs.includes(tab.id);
+                        const isActiveTab = sidebarTab === tab.id;
                         return (
                           <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                           <Tooltip>
