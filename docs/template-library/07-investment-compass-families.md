@@ -310,23 +310,51 @@ could not paint a background at all.
 
 The ten designs are **format-agnostic by construction** — typography, density,
 margins, KPI arrangement, table treatment and colourway carry no subject matter
-— so they serve any report. Five formats have taken them up, at 50 masters
-each: the same ten families × five variants × ten colourways.
+— so they serve any report. Six formats have taken them up, at 50 masters each:
+the same ten families × five variants × ten colourways.
 
-| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison | 10 Year Cash Flow |
-| --- | --- | --- | --- | --- | --- |
-| Masters | 50 | 50 | 50 | 50 | 50 |
-| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` | `cashflow` |
-| `category` | `investment` | `finance` | `portfolio` | `comparison` | `cash_flow` |
-| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` | `cash-flow-ten-year-` |
-| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` | `cashFlow.ts` |
-| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` | `cashFlowAdapter` |
-| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` | `investment_reports` |
-| Production-ready | yes | yes | yes | yes | yes, for 162 of 1,182 |
+| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison | 10 Year Cash Flow | Client Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| Masters | 50 | 50 | 50 | 50 | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` | `cashflow` | `client_details` |
+| `category` | `investment` | `finance` | `portfolio` | `comparison` | `cash_flow` | `client_details` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` | `cash-flow-ten-year-` | `client-details-form-` |
+| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` | `cashFlow.ts` | `clientDetails.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` | `cashFlowAdapter` | `clientDetailsAdapter` |
+| Source | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` | `investment_reports` | nine `client_*` tables |
+| Production-ready | yes | yes | yes | yes | yes, for 162 of 1,182 | yes |
 
-Adding a sixth is a `ReportFormat` descriptor and a page sequence — plus the
+Adding a seventh is a `ReportFormat` descriptor and a page sequence — plus the
 adapter and projection that make it production-ready — not a second design
 system.
+
+### The Client Details format is built for the record that is empty
+
+96% of them are. Measured across all 775 clients: **742 have no property, no
+employment, no asset, no liability and no expense.** The shipping generator
+opens on a Properties Overview and follows it with per-property blocks, which
+for those 742 is a cover and several pages of empty tables.
+
+So every financial page here carries `conditional: clientDetails.hasFinancials`
+— and a conditional *page* costs nothing when it does not render, unlike a
+conditional block, because `visiblePages` filters it before anything is laid
+out. The same fifty masters produce a 5-page document for the 742 and up to 13
+for the other 33.
+
+The closing page draws **two blocks at one position** under opposite
+conditionals: a summary of where the client stands, or the sentence that says
+the record holds contact details and nothing else. Exactly one renders.
+
+Its other problem is the opposite of the Cash Flow format's. Nothing here is a
+fixed ten-year series; the collections are unbounded — one client records **100
+expense rows**, another 18 assets — on a page model that cannot paginate. Every
+collection is therefore capped and every cap is measured, and expenses are
+**grouped by category rather than listed** (the worst case grouped is 14 rows,
+and a category total is what a broker reads anyway). Where a cap bites, the page
+says so with the record's own count beside it.
+
+It is also the only one of the six that may bind `{{client.name}}`: `clients` is
+its source table, so the document is genuinely about a named person.
 
 ### The Cash Flow format is the one with no prose in it
 

@@ -39,6 +39,7 @@ import { BORROWING_CAPACITY_TEMPLATES } from './borrowingCapacity';
 import { PORTFOLIO_TEMPLATES } from './portfolio';
 import { COMPARISON_TEMPLATES } from './comparison';
 import { CASH_FLOW_COMPASS_TEMPLATES } from './cashFlow';
+import { CLIENT_DETAILS_TEMPLATES } from './clientDetails';
 
 import { DESIGN_FAMILIES } from './family';
 
@@ -55,6 +56,7 @@ const ALL_MASTERS = [
   ...PORTFOLIO_TEMPLATES,
   ...COMPARISON_TEMPLATES,
   ...CASH_FLOW_COMPASS_TEMPLATES,
+  ...CLIENT_DETAILS_TEMPLATES,
 ];
 
 

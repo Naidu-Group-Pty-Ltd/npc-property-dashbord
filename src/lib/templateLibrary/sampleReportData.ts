@@ -34,6 +34,7 @@
  */
 
 import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
+import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
 
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
@@ -306,6 +307,138 @@ const CASH_FLOW_SAMPLE = projectCashFlow({
   updated_at: '2026-08-02T00:00:00.000Z',
 }).cashflow;
 
+/**
+ * The Client Details Form's own vocabulary, built the way production builds it.
+ *
+ * Run through `projectClientDetails` over a `ClientDetails` payload rather than
+ * typed out, for the same reason the cash-flow sample is: the masters bind
+ * grouped expense categories, capped collections and a derived position, and a
+ * hand-written version can disagree with what the adapter produces without
+ * anything looking wrong.
+ *
+ * The figures are the same Nguyen household the rest of this file describes,
+ * shaped at the record's own magnitudes — and it is deliberately a client who
+ * **has** something recorded, because the 742 clients who have nothing are
+ * exercised by `clientDetailsCatalogue.spec.ts` instead. A preview showing the
+ * empty case would be a preview of a five-page document.
+ */
+const CLIENT_DETAILS_SAMPLE = (() => {
+  const aud = (value: number) => ({ value, unit: 'aud' as const });
+  const perMonth = (value: number) => ({ value, unit: 'aud/month' as const });
+  const perYear = (value: number) => ({ value, unit: 'aud/year' as const });
+  const pct = (value: number) => ({ value, unit: 'percent' as const });
+
+  const expense = (category: string, name: string, monthly: number, isEssential = true) =>
+    ({ category, name, monthly: perMonth(monthly), isEssential });
+
+  const property = (
+    kind: 'investment' | 'smsf', kindLabel: string, address: string, shortAddr: string,
+    value: number, loan: number, rent: number, outgoings: number, lender: string,
+  ) => ({
+    kind, kindLabel, address, shortAddress: shortAddr,
+    value: aud(value), loanRemaining: aud(loan), equity: aud(value - loan),
+    lvr: pct((loan / value) * 100), interestRate: pct(6.02), ownershipPercentage: pct(100),
+    lender, repaymentType: 'Principal and interest',
+    rentMonthly: perMonth(rent), rentWeekly: { value: (rent * 12) / 52, unit: 'aud/week' as const },
+    expensesMonthly: perMonth(outgoings), netMonthly: perMonth(rent - outgoings),
+    smsf: null,
+  });
+
+  const details = {
+    meta: {
+      clientId: 'sample-client',
+      clientName: CLIENT,
+      preparedOn: '2026-08-02T00:00:00.000Z',
+      propertyCount: 2,
+      hasSecondaryContact: true,
+    },
+    narrative:
+      'The record describes a two-person household with two investment holdings, three '
+      + 'employment rows and forty-one recorded expense lines. Every figure below is summed '
+      + 'from the rows this document also prints.',
+    household: {
+      contacts: [
+        { role: 'primary' as const, name: 'Jordan Nguyen', email: 'jordan@example.test', mobile: '0400 000 000', gender: 'Male', dateOfBirth: '1986-04-12' },
+        { role: 'secondary' as const, name: 'Sarah Nguyen', email: 'sarah@example.test', mobile: '0400 000 001', gender: 'Female', dateOfBirth: '1988-09-30' },
+      ],
+      residences: [{
+        contact: 'primary' as const,
+        residence: {
+          address: '9/44 Regent Street', suburb: 'Newtown', state: 'NSW', postcode: '2042',
+          country: 'Australia', livingSituation: 'Owner occupied',
+          residentialStatus: 'Australian citizen',
+        },
+        sharedWithPrimary: false,
+      }],
+      maritalStatus: 'Married',
+      dependents: { value: 2, unit: 'rate' as const },
+      history: [
+        { contact: 'primary' as const, address: '12/3 Denison Road, Lewisham', isCurrent: false, startDate: '2019-02-01', endDate: '2023-06-30', months: 53, livingSituation: 'Renting' },
+        { contact: 'primary' as const, address: '9/44 Regent Street, Newtown', isCurrent: true, startDate: '2023-07-01', endDate: '', months: 37, livingSituation: 'Owner occupied' },
+      ],
+    },
+    ownerOccupied: {
+      ...property('investment', 'Owner occupied', '9/44 Regent Street, Newtown NSW 2042', 'Regent Street, Newtown', 1125000, 612000, 0, 1840, 'Westpac'),
+      kind: 'owner-occupied' as const,
+    },
+    employment: [
+      { contact: 'primary' as const, employer: 'Meridian Systems Australia', employmentType: 'Full time', role: 'Engineering manager', startDate: '2021-03-01', isCurrent: true, workplace: 'Sydney NSW', workArrangement: 'Hybrid', grossAnnual: perYear(198000), extrasAnnual: perYear(24000) },
+      { contact: 'secondary' as const, employer: 'Inner West Health District', employmentType: 'Part time', role: 'Clinical nurse', startDate: '2018-08-13', isCurrent: true, workplace: 'Camperdown NSW', workArrangement: 'On site', grossAnnual: perYear(86000), extrasAnnual: perYear(9200) },
+    ],
+    income: {
+      primaryEmploymentMonthly: perMonth(18500), secondaryEmploymentMonthly: perMonth(7933),
+      totalEmploymentMonthly: perMonth(26433),
+      otherIncome: [{ label: 'Managed fund distributions', monthly: perMonth(410), contact: 'primary' as const }],
+      totalOtherMonthly: perMonth(410), rentalMonthly: perMonth(4290),
+      totalMonthly: perMonth(31133), totalGrossAnnual: perYear(373596),
+    },
+    assets: [
+      { type: 'Savings', description: 'Offset account', value: aud(84000) },
+      { type: 'Superfund', description: 'Australian Retirement Trust', value: aud(412000) },
+      { type: 'Superfund', description: 'Aware Super', value: aud(196000) },
+      { type: 'Vehicle', description: '2022 Subaru Outback', value: aud(38000) },
+      { type: 'Alternative', description: 'Listed shares', value: aud(61000) },
+      { type: 'Other', description: 'Term deposit', value: aud(25000) },
+    ],
+    liabilities: [
+      { type: 'Credit card', provider: 'CommBank', balance: aud(4200), creditLimit: aud(15000), interestRate: pct(20.99), captured: perMonth(300), monthlyServicing: perMonth(300), isEstimated: false, basis: 'As recorded' },
+      { type: 'Vehicle loan', provider: 'Pepper Money', balance: aud(28400), creditLimit: null, interestRate: pct(8.4), captured: perMonth(612), monthlyServicing: perMonth(612), isEstimated: false, basis: 'As recorded' },
+      { type: 'Student loan', provider: 'ATO', balance: aud(19800), creditLimit: null, interestRate: null, captured: perMonth(430), monthlyServicing: perMonth(430), isEstimated: false, basis: 'As recorded' },
+    ],
+    liabilitiesIncludeEstimates: false,
+    expenses: [
+      expense('Groceries', 'Supermarket', 1650),
+      expense('Groceries', 'Butcher and greengrocer', 340),
+      expense('Housing', 'Council rates', 210),
+      expense('Housing', 'Water', 85),
+      expense('Transport', 'Fuel', 380),
+      expense('Transport', 'Tolls and parking', 120),
+      expense('Insurance', 'Health cover', 460),
+      expense('Insurance', 'Car and contents', 180),
+      expense('Childcare & Support', 'Before and after school care', 720),
+      expense('Utilities', 'Electricity and gas', 290),
+      expense('Communications', 'Internet and mobile', 165),
+      expense('Recreation', 'Dining and entertainment', 540, false),
+      expense('Personal Care', 'Health and grooming', 210, false),
+      expense('Education', 'School fees', 1250),
+      expense('Medical', 'Out of pocket', 140),
+    ],
+    properties: [
+      property('investment', 'Investment', '7 Wardell Road, Dulwich Hill NSW 2203', 'Wardell Road, Dulwich Hill', 640000, 288000, 2450, 1180, 'CommBank'),
+      property('smsf', 'SMSF', '12/3 Denison Road, Lewisham NSW 2049', 'Denison Road, Lewisham', 360000, 160000, 1840, 900, 'Macquarie'),
+    ],
+    position: {
+      propertyValue: aud(2125000), propertyDebt: aud(1060000), propertyEquity: aud(1065000),
+      otherAssets: aud(816000), otherLiabilities: aud(52400),
+      netWorth: aud(1828600),
+      incomeMonthly: perMonth(31133), commitmentsMonthly: perMonth(14962),
+      surplusMonthly: perMonth(16171), commitmentRatio: pct(48.05),
+    },
+  };
+
+  return projectClientDetails(details as never).clientDetails;
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -332,6 +465,9 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
    * reading `whitelabel_settings`; `abn` and `address` below have no column
    * behind them and are sample-only.
    */
+  /** The Client Details Form's namespace. See `CLIENT_DETAILS_SAMPLE`. */
+  clientDetails: CLIENT_DETAILS_SAMPLE,
+
   org: {
     name: 'Meridian Property Advisory',
     abn: '42 618 305 774',
@@ -341,6 +477,36 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     website: 'meridianproperty.example',
   },
   author: { name: 'Alexandra Whitfield', title: 'Senior Investment Adviser' },
+  /**
+   * The five weighted dimensions `investment_score.breakdown` holds.
+   *
+   * Shaped from the record: `growthScore` is weighted 40 and `demandScore` 15,
+   * and both are scored a flat 50 with **no details** on 919 of the 985 scored
+   * reports — so the grade is 55% placeholder, and the sample says so rather
+   * than inventing prose for them. The three that do carry details are sized
+   * from their measured maxima: risk 228 characters, location 94, yield 51.
+   */
+  assessment: [
+    { label: 'Growth', score: 50, weight: 40 },
+    {
+      label: 'Location', score: 85, weight: 25,
+      details: 'Excellent walkability (90+). Excellent CBD access (<15 min). Exceptional school access (8+)',
+    },
+    {
+      label: 'Yield', score: 62, weight: 15,
+      details: 'Moderate yield (3-4%) - Negative cash flow likely',
+    },
+    { label: 'Demand', score: 50, weight: 15 },
+    {
+      label: 'Risk', score: 53, weight: 5,
+      details: 'High LVR (80%) increases leverage risk with LMI required. Moderate negative cash flow '
+        + '($100-200/week) requires contribution. Heritage overlay constrains external change',
+    },
+  ],
+
+  /** Empty on all but 19 of the 985 scored reports; the block is conditional. */
+  opportunities: ['Approved secondary-dwelling footprint not yet built out'],
+
   recommendation: {
     headline: 'Proceed to offer at or below $1.29m',
     rationale:

@@ -22,7 +22,10 @@ describe('report template adapter registry', () => {
     // `deriveEntryFacts` reads for `production_ready`, so adding a type to it
     // without a working `buildBindingContext` marks templates report-ready that
     // cannot render one.
-    for (const reportType of ['investment', 'borrowing_capacity', 'portfolio', 'comparison', 'cashflow']) {
+    for (const reportType of [
+      'investment', 'borrowing_capacity', 'portfolio', 'comparison', 'cashflow',
+      'client_details',
+    ]) {
       const adapter = getAdapter(reportType);
       expect(adapter?.supportsProduction, reportType).toBe(true);
       // Still names a fallback: the legacy generator stays until a template is
@@ -30,15 +33,20 @@ describe('report template adapter registry', () => {
       expect(adapter?.legacyFallback?.reason, reportType).toBeTruthy();
     }
     expect(supportsProduction('borrowing')).toBe(true);
+    // `formara` is the legacy generator's name for the Client Details document
+    // and reaches the same adapter, so a template stored under it is
+    // activatable rather than stranded.
+    expect(normaliseReportType('formara')).toBe('client_details');
+    expect(supportsProduction('formara')).toBe(true);
   });
 
   it('marks the remaining report types preview-only until adapters are implemented', () => {
-    const previewOnlyTypes = ['qa', 'suburb', 'postcode', 'statewide', 'formara'];
+    const previewOnlyTypes = ['qa', 'suburb', 'postcode', 'statewide'];
 
     expect(listAdapters().map((adapter) => adapter.reportType))
       .toEqual(expect.arrayContaining([
         'investment', 'borrowing_capacity', 'portfolio', 'comparison', 'cashflow',
-        ...previewOnlyTypes,
+        'client_details', ...previewOnlyTypes,
       ]));
     for (const reportType of previewOnlyTypes) {
       const adapter = getAdapter(reportType);

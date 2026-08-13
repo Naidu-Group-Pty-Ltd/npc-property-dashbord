@@ -3,6 +3,7 @@ import { borrowingCapacityAdapter } from './borrowingCapacityAdapter';
 import { portfolioAdapter } from './portfolioAdapter';
 import { comparisonAdapter } from './comparisonAdapter';
 import { cashFlowAdapter } from './cashFlowAdapter';
+import { clientDetailsAdapter } from './clientDetailsAdapter';
 import type { ReportTemplateAdapter } from './types';
 
 function previewOnlyAdapter(reportType: string, label: string, reason = 'Production adapter has not been configured yet.'): ReportTemplateAdapter {
@@ -32,13 +33,15 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   // `financial_calculations.projections` on `investment_reports` (162 of 1,182)
   // and returns null for the rest. See `cashFlowAdapter.ts`.
   cashFlowAdapter,
+  // Sixth. Nine tables through the normaliser the format's own render route
+  // uses — 742 of the 775 clients hold nothing financial, which is what the
+  // masters are built around rather than in spite of.
+  clientDetailsAdapter,
   previewOnlyAdapter('qa', 'Q&A Export'),
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
-  previewOnlyAdapter('client_details', 'Client Details'),
   previewOnlyAdapter('market_intelligence', 'Market Intelligence'),
-  previewOnlyAdapter('formara', 'Formara / Client Form'),
 ];
 
 const ALIASES: Record<string, string> = {
@@ -51,6 +54,8 @@ const ALIASES: Record<string, string> = {
   // which matches the raw `report_type` and does not run it through this map.
   // Without the alias the two gates would disagree about `cash_flow`.
   cash_flow: 'cashflow',
+  clientdetails: 'client_details',
+  formara: 'client_details',
 };
 
 export function normaliseReportType(reportType?: string | null): string {
