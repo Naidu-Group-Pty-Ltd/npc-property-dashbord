@@ -25,3 +25,12 @@ test('pointer-lock checks are frame-coalesced and cleaned up on unmount', () => 
   assert.match(calendar, /cancelAnimationFrame\(pointerLockFrame\)/);
   assert.match(calendar, /cancelAnimationFrame\(pointerLockSettleFrame\)/);
 });
+
+test('wheel gestures over calendar content reach the dashboard scroll owner', () => {
+  assert.match(calendar, /calendarPage\.addEventListener\('wheel', handleCalendarWheel, \{ passive: false \}\)/);
+  assert.match(calendar, /calendarPage\.closest\('\.dashboard-main'\)/);
+  assert.match(calendar, /dashboardMain\.scrollBy\(\{ top: deltaY, behavior: 'auto' \}\)/);
+  assert.match(calendar, /window\.scrollBy\(\{ top: deltaY, behavior: 'auto' \}\)/);
+  assert.match(calendar, /if \(canScrollVertically && hasRoom\) return;/);
+  assert.match(calendar, /event\.ctrlKey \|\| event\.metaKey/);
+});

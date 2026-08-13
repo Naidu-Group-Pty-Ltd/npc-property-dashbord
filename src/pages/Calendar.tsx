@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, Users, Filter, RefreshCw, GripVertical, LayoutList, Flame, BarChart3, TrendingUp, AlertTriangle, Sparkles, Plus, Layers, Repeat, Bell, X, PanelLeftClose, PanelLeft, Menu, Mail, Pin, PinOff } from 'lucide-react';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
@@ -111,6 +111,7 @@ const PREMIUM_PANEL = 'dashboard-theme-section border-border/60 bg-card/80 text-
 const PREMIUM_BUTTON = 'border-border/70 bg-card/85 text-foreground transition-all duration-200 ease-out hover:border-primary/40 hover:bg-primary/10 hover:text-primary hover:shadow-[0_10px_28px_hsl(var(--primary)/0.12)] dark:border-white/10 dark:bg-background/55';
 
 export default function Calendar() {
+  const calendarPageRef = useRef<HTMLElement | null>(null);
   const { canEdit: canEditCalendar } = useModulePermissions('calendar');
   const { user } = useAuth();
   const isMobile = useIsMobile();
@@ -254,6 +255,63 @@ export default function Calendar() {
       document.body.classList.remove(bodyClass);
       document.getElementById(styleId)?.remove();
     };
+  }, []);
+
+  useEffect(() => {
+    const calendarPage = calendarPageRef.current;
+    if (!calendarPage) return;
+
+    // The dashboard has two different scroll owners: `.dashboard-main` on
+    // mobile/tablet and the document viewport on desktop. Interactive calendar
+    // descendants (native draggable events, drop zones and Radix triggers) can
+    // consume a wheel gesture before it reaches either owner. That is why the
+    // same wheel scrolls over the empty gutter but appears frozen over the
+    // calendar and registry below it.
+    //
+    // Bridge vertical wheel input from this page to the actual owner. Genuine
+    // nested vertical scrollers retain control, as do horizontal gestures and
+    // Ctrl/Meta+wheel browser zoom.
+    const handleCalendarWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY) || event.deltaY === 0) return;
+
+      let nestedScroller = event.target instanceof Element ? event.target : null;
+      while (nestedScroller && nestedScroller !== calendarPage) {
+        const style = window.getComputedStyle(nestedScroller);
+        const canScrollVertically = /^(auto|scroll)$/.test(style.overflowY)
+          && nestedScroller.scrollHeight > nestedScroller.clientHeight;
+        const hasRoom = event.deltaY < 0
+          ? nestedScroller.scrollTop > 0
+          : nestedScroller.scrollTop + nestedScroller.clientHeight < nestedScroller.scrollHeight - 1;
+        if (canScrollVertically && hasRoom) return;
+        nestedScroller = nestedScroller.parentElement;
+      }
+
+      const dashboardMain = calendarPage.closest('.dashboard-main');
+      const mainStyle = dashboardMain instanceof HTMLElement
+        ? window.getComputedStyle(dashboardMain)
+        : null;
+      const mainOwnsScroll = dashboardMain instanceof HTMLElement
+        && /^(auto|scroll)$/.test(mainStyle?.overflowY ?? '')
+        && dashboardMain.scrollHeight > dashboardMain.clientHeight;
+
+      const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? window.innerHeight
+          : 1;
+      const deltaY = event.deltaY * multiplier;
+
+      event.preventDefault();
+      if (mainOwnsScroll) {
+        dashboardMain.scrollBy({ top: deltaY, behavior: 'auto' });
+      } else {
+        window.scrollBy({ top: deltaY, behavior: 'auto' });
+      }
+    };
+
+    calendarPage.addEventListener('wheel', handleCalendarWheel, { passive: false });
+    return () => calendarPage.removeEventListener('wheel', handleCalendarWheel);
   }, []);
 
 
@@ -795,7 +853,7 @@ export default function Calendar() {
   }
 
   return (
-    <DashboardThemeFrame variant="page" className={cn(CALENDAR_PAGE_SHELL, "calendar-page-scrollbar-fix max-w-none [scrollbar-gutter:auto]")}>
+    <DashboardThemeFrame ref={calendarPageRef} variant="page" className={cn(CALENDAR_PAGE_SHELL, "calendar-page-scrollbar-fix max-w-none [scrollbar-gutter:auto]")}>
       <GHLExportDialog
         open={showExportDialog}
         onOpenChange={setShowExportDialog}
