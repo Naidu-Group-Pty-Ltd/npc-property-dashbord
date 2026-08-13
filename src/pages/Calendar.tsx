@@ -213,8 +213,17 @@ export default function Calendar() {
       if (!blockingOverlayOpen) document.body.style.removeProperty('pointer-events');
     };
 
+    let pointerLockFrame: number | null = null;
+    let pointerLockSettleFrame: number | null = null;
     const schedulePointerLockCheck = () => {
-      window.requestAnimationFrame(() => window.requestAnimationFrame(releaseStuckPointerLock));
+      if (pointerLockFrame !== null) return;
+      pointerLockFrame = window.requestAnimationFrame(() => {
+        pointerLockFrame = null;
+        pointerLockSettleFrame = window.requestAnimationFrame(() => {
+          pointerLockSettleFrame = null;
+          releaseStuckPointerLock();
+        });
+      });
     };
 
     const observer = new MutationObserver(schedulePointerLockCheck);
@@ -230,6 +239,8 @@ export default function Calendar() {
 
     return () => {
       observer.disconnect();
+      if (pointerLockFrame !== null) window.cancelAnimationFrame(pointerLockFrame);
+      if (pointerLockSettleFrame !== null) window.cancelAnimationFrame(pointerLockSettleFrame);
       window.removeEventListener('focus', schedulePointerLockCheck);
       document.removeEventListener('pointerup', schedulePointerLockCheck, true);
       document.removeEventListener('keyup', schedulePointerLockCheck, true);
