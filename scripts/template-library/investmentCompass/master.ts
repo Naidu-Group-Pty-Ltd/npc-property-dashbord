@@ -29,6 +29,31 @@ import {
 } from '../../../supabase/functions/_shared/templateColourways.pure';
 
 /**
+ * The `category` values `template_library_entries_category_check` accepts.
+ *
+ * This was `string`, and that is the whole reason 50 Client Details masters
+ * shipped with `category: 'client_details'` — a plausible value, matching the
+ * format's `report_type`, that the column has never allowed. `tsc` had nothing
+ * to object to, the seed builder did not check the vocabulary, and the defect
+ * surfaced only when Postgres rejected the 30th chunk of a real apply.
+ *
+ * Keep in step with the CHECK constraint. `report_type` is a *different*
+ * vocabulary and deliberately not this one: a Client Details Form is
+ * report_type `client_details` and category `client_form`.
+ */
+export type LibraryCategory =
+  | 'investment'
+  | 'suburb'
+  | 'postcode'
+  | 'statewide'
+  | 'comparison'
+  | 'cash_flow'
+  | 'client_form'
+  | 'compliance'
+  | 'finance'
+  | 'portfolio';
+
+/**
  * What a report format contributes to the shell.
  *
  * Everything here is routing and catalogue vocabulary — none of it is design.
@@ -40,8 +65,8 @@ export interface ReportFormat {
   key: string;
   /** `report_type` on the library row. Normalised by the adapter registry. */
   reportType: string;
-  /** `category` on the library row. */
-  category: string;
+  /** `category` on the library row. Constrained by the column's CHECK. */
+  category: LibraryCategory;
   /** `tier` on the library row. */
   tier: string;
   /** Human name of the format, used in the long description. */

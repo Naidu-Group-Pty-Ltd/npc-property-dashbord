@@ -125,7 +125,12 @@ const LENGTHS = {
 const CLIENT_DETAILS_FORMAT: ReportFormat = {
   key: 'client-details-form',
   reportType: 'client_details',
-  category: 'client_details',
+  // `client_form`, not `client_details`. The report *type* is client_details —
+  // that is what the adapter registry keys on — but `category` is a separate,
+  // constrained vocabulary, and the taxonomy's term for a client-facing form is
+  // `client_form`. These 50 rows were rejected by
+  // template_library_entries_category_check on the first real apply.
+  category: 'client_form',
   tier: 'compass',
   label: 'Client Details Form',
   extraTags: ['client-details', 'fact-find', 'broker', 'household'],
