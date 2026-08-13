@@ -18,8 +18,7 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 import { applyComparisonProjection } from '../../../../supabase/functions/_shared/comparisonProjection.pure';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -112,7 +111,7 @@ export const comparisonAdapter: ReportTemplateAdapter = {
     // disclaimer page every template ends with. Nothing published `org` until
     // August 2026, so both printed blank on every report this product has ever
     // generated. See `organisationProjection.pure.ts`.
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
 
     return {

@@ -73,6 +73,17 @@ const ORG = {
 
 const flat = (o: unknown) => (o && typeof o === 'object' ? { ...(o as object) } : {});
 
+/**
+ * A stand-in brand mark, so the cover is measured with one on it.
+ *
+ * A 1x1 PNG: this harness measures boxes, and the box is fixed by the template
+ * rather than by the picture inside it. What matters is that the image block
+ * renders at all, because the head is moved down to clear it either way.
+ */
+const MARK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+  + 'AAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const MARKS = { mark: MARK, markMono: MARK };
+
 function investmentData(row: any): Record<string, any> {
   const data: Record<string, any> = {
     report: { id: row.id, type: 'investment', generated_at: row.updated_at },
@@ -88,21 +99,31 @@ function investmentData(row: any): Record<string, any> {
     brand: { tokens: {}, logo: null },
   };
   applyInvestmentProjection(data, row);
-  applyOrganisationProjection(data, ORG as any);
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 
 function borrowingData(row: any): Record<string, any> {
   const data: Record<string, any> = { report: {}, assessment: row, brand: {} };
-  applyBorrowingCapacityProjection(data, row);
-  applyOrganisationProjection(data, ORG as any);
+  /*
+   * The longest applicant name the cover can be asked to set.
+   *
+   * The adapter joins `clients` for this; the fixture row here does not carry
+   * it, so the worst realistic name is supplied instead. The longest primary
+   * name in production is 27 characters — this is 24 longer, so the eyebrow is
+   * measured past the end of the record rather than at it.
+   */
+  applyBorrowingCapacityProjection(data, row, {
+    primary_first_name: 'Christopher', primary_surname: 'Papadopoulos',
+  });
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 
 function portfolioData(row: any): Record<string, any> {
   const data: Record<string, any> = { report: {}, analysis: row, brand: {} };
   applyPortfolioProjection(data, row);
-  applyOrganisationProjection(data, ORG as any);
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 
@@ -111,7 +132,7 @@ function comparisonData(row: any): Record<string, any> {
   applyComparisonProjection(data, {
     row, clientName: undefined, notes: [], now: new Date('2026-08-13').toISOString(),
   } as any);
-  applyOrganisationProjection(data, ORG as any);
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 
@@ -138,7 +159,7 @@ function qaData(row: any): Record<string, any> {
   if ((built as any)?.ok !== false) {
     applyReportQaProjection(data, (built as any).document ?? built);
   }
-  applyOrganisationProjection(data, ORG as any);
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 
@@ -153,7 +174,7 @@ function capacityData(row: any): Record<string, any> {
   } as any);
   const data: Record<string, any> = { report: {}, brand: {} };
   applyCommercialCapacityProjection(data, snapshot as any);
-  applyOrganisationProjection(data, ORG as any);
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 
@@ -166,7 +187,7 @@ function marketData(row: any): Record<string, any> {
   } as any);
   const data: Record<string, any> = { report: {}, brand: {} };
   if ((built as any)?.ok) applyMarketIntelligenceProjection(data, (built as any).report);
-  applyOrganisationProjection(data, ORG as any);
+  applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }
 

@@ -115,11 +115,40 @@ export function projectOrganisation(row: OrganisationRowLike | null | undefined)
  * what an issued document was typeset under and the live settings row may have
  * moved since.
  */
+/**
+ * The brand marks a document may paint, already inlined.
+ *
+ * Both are `data:` URIs by the time they reach here. This module is pure and
+ * does not fetch; `adapters/organisation.ts` reads the bytes, and
+ * `reportDesign/assets.pure.ts` decides whether they may be used at all.
+ *
+ * Two, not one, because the mark is never auto-inverted: it is a gold gradient,
+ * and inverting it produces a muddy blue. `mark` is the lockup for ivory paper
+ * and `markMono` the one for an obsidian ground, and a cover binds whichever
+ * its own ground calls for.
+ */
+export interface BrandMarks {
+  mark?: string | null;
+  markMono?: string | null;
+}
+
 export function applyOrganisationProjection(
   data: Record<string, any>,
   row: OrganisationRowLike | null | undefined,
+  marks?: BrandMarks | null,
 ): Record<string, any> {
   const org = projectOrganisation(row);
+  /*
+   * Published only when the bytes exist.
+   *
+   * A tenant who has uploaded no mark gets **no mark, not ours** — the house
+   * monogram belongs to the deployment that is NPC and travels through
+   * `logo_config` like any other, rather than being baked into a shared
+   * template. An empty string here would be worse than nothing: an image block
+   * conditional on `org.mark` would draw an empty frame instead of dropping out.
+   */
+  put(org, 'mark', str(marks?.mark));
+  put(org, 'markMono', str(marks?.markMono));
   if (!Object.keys(org).length) return data;
   const existing = data.org && typeof data.org === 'object' && !Array.isArray(data.org)
     ? data.org as Record<string, unknown>

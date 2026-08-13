@@ -595,6 +595,21 @@ export function cover(opts: CoverOptions): PageDef {
 
   const blocks: BlockDef[] = [];
 
+  /*
+   * The mark, and the clear space the head is moved down to give it.
+   *
+   * `REPORT_RULES.md` §5: top-left, ~14mm tall, generous clear space. 40pt is
+   * 14.1mm. The box is the house monogram's own aspect at that height —
+   * 559×447 scaled to 40pt tall is 50pt wide — so the mark sits flush against
+   * the same left edge as the wordmark beneath it rather than being centred
+   * away from it. `contain` means a tenant lockup of another shape letterboxes
+   * inside the box instead of cropping.
+   */
+  const MARK_H = 40;
+  const MARK_W = 50;
+  const MARK_CLEAR = 16;
+  const headTop = c.margin + inset + MARK_H + MARK_CLEAR;
+
   // ── Ground ───────────────────────────────────────────────────────────────
   if (plan.ground === 'band') {
     // A field band behind the head only. Emitted as a full-width `hero` so the
@@ -631,6 +646,28 @@ export function cover(opts: CoverOptions): PageDef {
     }, 'Cover rail'));
   }
 
+  // ── The mark ─────────────────────────────────────────────────────────────
+  //
+  // Two slots, chosen by the ground the head sits on, because the mark is a
+  // gold gradient and is never auto-inverted — inverting it produces a muddy
+  // blue. `markMono` is the lockup for an obsidian ground and `mark` the one
+  // for ivory paper; a banded cover puts the head on the field, so it takes the
+  // mono one too.
+  //
+  // Conditional, and `placeholder: false`: a tenant who has uploaded no mark
+  // gets no mark rather than ours, and an unbound image block with no
+  // placeholder renders nothing at all — no frame, no grey rectangle.
+  const headOnField = onField || plan.ground === 'band';
+  blocks.push({
+    ...block('image', {
+      src: headOnField ? '{{org.markMono}}' : '{{org.mark}}',
+      fit: 'contain',
+      placeholder: false,
+      x: left, y: c.margin + inset, width: MARK_W, height: MARK_H,
+    }, 'Brand mark'),
+    conditional: headOnField ? 'org && org.markMono' : 'org && org.mark',
+  });
+
   // ── Head: wordmark, rule, tagline, marker ────────────────────────────────
   blocks.push(block('text-block', {
     body: `${opts.wordmarkTop}\n${opts.wordmarkBottom}`,
@@ -639,13 +676,13 @@ export function cover(opts: CoverOptions): PageDef {
     bodyTracking: TRACKING.wordmark,
     bodyLineHeight: 1.35,
     color: headInk,
-    x: left, y: c.margin + inset, width: width - 140,
+    x: left, y: headTop, width: width - 140,
   }, 'Wordmark'));
 
   blocks.push(block('divider', {
     color: 'token:primary',
     thickness: 1,
-    x: left, y: c.margin + inset + 38, width: 74,
+    x: left, y: headTop + 38, width: 74,
   }));
 
   blocks.push(block('text-block', {
@@ -654,7 +691,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodyFont: 'token:mono',
     bodyTracking: 0.24,
     color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
-    x: left, y: c.margin + inset + 46, width: width - 140,
+    x: left, y: headTop + 46, width: width - 140,
   }, 'Tagline'));
 
   blocks.push(block('text-block', {
@@ -663,7 +700,7 @@ export function cover(opts: CoverOptions): PageDef {
     bodyFont: 'token:mono',
     bodyAlign: 'right',
     color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
-    x: left + width - 140, y: c.margin + inset, width: 140,
+    x: left + width - 140, y: headTop, width: 140,
   }, 'Cover marker'));
 
   // ── Title block ──────────────────────────────────────────────────────────
@@ -1690,6 +1727,12 @@ export function disclaimerPage(text: string): PageDef {
       phone: '{{org.phone}}',
       email: '{{org.email}}',
       website: '{{org.website}}',
+      // The second of the two surfaces `REPORT_RULES.md` §5 allows a mark on.
+      // This page is an obsidian ground, so it takes the mono lockup — the mark
+      // is a gold gradient and is never auto-inverted. The block omits it when
+      // the binding resolves to nothing.
+      mark: '{{org.markMono}}',
+      markHeight: 37,
       disclaimerText: text,
       fontSize: 8,
     }),

@@ -29,8 +29,10 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 import { applyBorrowingCapacityProjection } from '../../../../supabase/functions/_shared/borrowingCapacityProjection.pure';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import {
+  CLIENT_NAME_COLUMNS, type ClientNameRow,
+} from '../../../../supabase/functions/_shared/clientName';
+import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -43,6 +45,31 @@ async function loadAssessment(reportId: string): Promise<Record<string, any> | n
     .maybeSingle();
   if (error || !data) return null;
   return data as Record<string, any>;
+}
+
+/**
+ * The client behind an assessment.
+ *
+ * The projection deliberately will not guess a name from a `client_id`, so the
+ * join is done here — and it asks for `CLIENT_NAME_COLUMNS` rather than naming
+ * columns itself. That constant exists because both legacy render routes
+ * invented their own spelling of this table, and one of them selected three
+ * columns that do not exist and so 404'd for every client in the database.
+ *
+ * All 143 stored assessments carry a `client_id` that resolves to a real row.
+ * A failed lookup still returns null rather than throwing: the document is
+ * about the capacity, and losing the name off the cover is not a reason to fail
+ * the whole render.
+ */
+async function loadClient(clientId: unknown): Promise<ClientNameRow | null> {
+  if (typeof clientId !== 'string' || !clientId) return null;
+  const { data, error } = await supabase
+    .from('clients')
+    .select(CLIENT_NAME_COLUMNS)
+    .eq('id', clientId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as ClientNameRow;
 }
 
 export const borrowingCapacityAdapter: ReportTemplateAdapter = {
@@ -92,12 +119,12 @@ export const borrowingCapacityAdapter: ReportTemplateAdapter = {
       },
     };
 
-    applyBorrowingCapacityProjection(data, row);
+    applyBorrowingCapacityProjection(data, row, await loadClient(row.client_id));
     // The letterhead — the wordmark on the cover and the contact block on the
     // disclaimer page every template ends with. Nothing published `org` until
     // August 2026, so both printed blank on every report this product has ever
     // generated. See `organisationProjection.pure.ts`.
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
 
     return {

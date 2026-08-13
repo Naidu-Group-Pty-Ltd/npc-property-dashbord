@@ -9,8 +9,7 @@ import type {
   ReportQaSubject,
 } from '../../../../supabase/functions/_shared/reports/reportQa/payload.pure';
 import { applyReportQaProjection } from '../../../../supabase/functions/_shared/reportQaProjection.pure';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { applyOrganisationAndBrand } from './organisation';
 
 /**
  * Report Q&A, through the normaliser the format's own render route uses.
@@ -129,7 +128,7 @@ export const qaAdapter: ReportTemplateAdapter = {
     };
 
     applyReportQaProjection(data, built.document);
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
     return {
       data,

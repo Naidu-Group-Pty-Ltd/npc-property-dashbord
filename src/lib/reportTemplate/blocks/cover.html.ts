@@ -19,9 +19,31 @@ export function renderCoverHtml(block: Block, ctx: HtmlBlockContext): string {
        <div style="position:absolute;inset:0;background:${bg};opacity:0.55;"></div>`
     : '';
 
+  /*
+   * The mark, top-left.
+   *
+   * `REPORT_RULES.md` §5: the cover is one of the two surfaces a mark may go
+   * on, at ~14mm with generous clear space. 40pt is 14.1mm. It sits above the
+   * title block, which is anchored at 55%, so there is no composition to move.
+   *
+   * Painted after the scrim so it is never dimmed by it, and never over the
+   * image's focal area — the top-left corner is the one part of a cover
+   * photograph the title does not already claim.
+   *
+   * Optional, and drawn only when it resolves: a tenant who has uploaded no
+   * mark gets none, rather than ours.
+   */
+  const mark = resolveBindable(p.mark, ctx);
+  const markHeight = Number(p.markHeight ?? 40);
+  const markBlock = mark
+    ? `<img src="${esc(mark)}" alt="" style="position:absolute;left:48pt;top:48pt;`
+      + `height:${markHeight}pt;width:auto;max-width:200pt;object-fit:contain;"/>`
+    : '';
+
   return `
   <div class="block-cover" style="position:absolute;inset:0;background:${bg};color:${text};">
     ${bgImage}
+    ${markBlock}
     <div style="position:absolute;left:48pt;top:55%;right:48pt;">
       <div style="width:60pt;height:3pt;background:${accent};margin-bottom:12pt;"></div>
       ${eyebrow ? `<div style="color:${accent};font-weight:700;font-size:10pt;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8pt;">${esc(eyebrow)}</div>` : ''}

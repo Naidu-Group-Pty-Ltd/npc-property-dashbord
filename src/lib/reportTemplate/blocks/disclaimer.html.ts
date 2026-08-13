@@ -30,7 +30,27 @@ export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): strin
        <div style="font-size:16pt;font-weight:400;margin-top:2pt;">${esc(parts[parts.length - 1])}</div>`
     : `<div style="font-size:28pt;font-weight:700;">${esc(parts[0])}</div>`;
 
+  /*
+   * The mark above the contact block.
+   *
+   * `REPORT_RULES.md` §5 puts the monogram on exactly two surfaces — the cover
+   * and this one — and this page is the obsidian ground it names, so the mono
+   * lockup belongs here. It is drawn inside the block rather than laid over it
+   * because the block is `inset:0` and opaque: anything painted before it is
+   * covered, and anything after it lands on the company name.
+   *
+   * Optional. An absent mark leaves the composition exactly as it was, which is
+   * what a tenant who has uploaded none must get — never ours.
+   */
+  const mark = resolveBindable(p.mark, ctx);
+  const markHeight = Number(p.markHeight ?? 37);
+  const markBlock = mark
+    ? `<img src="${esc(mark)}" alt="" style="height:${markHeight}pt;width:auto;max-width:180pt;`
+      + `object-fit:contain;display:block;margin:0 0 22pt;"/>`
+    : '';
+
   return `<div style="position:absolute;inset:0;background:#141414;color:#BF9B50;padding:40pt 20pt;font-family:var(--font-body, Helvetica);">
+    ${markBlock}
     ${heading}
     <div style="margin-top:30pt;font-size:14pt;font-weight:700;color:#BF9B50;">CONTACT US</div>
     <div style="margin-top:18pt;">

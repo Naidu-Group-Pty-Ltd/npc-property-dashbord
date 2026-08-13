@@ -922,3 +922,71 @@ Every column both routes name was then checked against
 RPC's six parameter names against `pg_get_function_identity_arguments`. String
 keys into a database are exactly what the type checker cannot see, so they were
 checked the only way that means anything.
+
+## 15. The cover names the applicant
+
+F1 said of the legacy cover that it "carries no client name, no report title and
+no date. It is a brand plate, not a cover." The design-system cover fixed two of
+those three. It carried the conclusion as its title (`{{capacity.bandLabel}}`)
+and the date on the locations line, and its eyebrow read "Borrowing capacity
+snapshot" — which the cover already says twice, in `wordmarkBottom` and in the
+top-right `marker`. The one thing a cover is normally expected to carry, whose
+assessment it is, was nowhere on the page.
+
+### Why it had not been done
+
+`borrowingCapacityProjection.pure.ts` recorded `client.*` as deliberately
+absent: "the row carries `client_id`, not a name. Resolving it is a join the
+caller can do; guessing is not." That was right, and the caller never did the
+join — so nothing published a name and no template could bind one.
+
+The catalogue spec then froze the consequence, asserting that only the Portfolio
+Review may bind `{{client.name}}` because "the other three source tables have no
+such column". True of the assessment row; incomplete as a statement about what
+is reachable.
+
+### What the record holds
+
+| | |
+| --- | --- |
+| assessments | 143 |
+| carrying a `client_id` | **143** |
+| whose `client_id` resolves to a real `clients` row | **143** |
+| carrying both a first name and a surname | **143** |
+| naming a second applicant | 33 |
+
+This is the opposite of the investment reports, where 2 of 1,182 link to a
+client at all — which is why the same fix is right here and wrong there.
+
+### What it does now
+
+`applyBorrowingCapacityProjection` takes an optional client row and publishes
+`client.name` **only when there is a name**, because an object published with an
+empty string in it is truthy and would make a page conditional on `client` draw
+blank instead of dropping out. The adapter does the join, asking for
+`CLIENT_NAME_COLUMNS` rather than naming columns itself — that constant exists
+because both legacy routes invented their own spelling of this table and one of
+them selected three columns that do not exist, 404ing every client in the
+database (§14).
+
+The formatting is `clientName.ts`'s and not a second implementation, which means
+the cover names the **primary** applicant, falling back to the secondary, and
+title-cases a name someone typed in capitals. 33 assessments are joint; naming
+both here would put a different name on the cover from the one the Snapshot's
+filename is built from. Showing both would be a change to that shared helper, so
+that every format moves together.
+
+It is bound in the cover's **eyebrow**, as a whole slot with no literal beside
+it — `{{client.name}}` and nothing else. An unresolved binding renders as the
+empty string, so "Prepared for " next to an empty binding would print a
+preposition with nothing after it, which is the defect this catalogue already
+carried in its risk register and on its contents page. An assessment without a
+resolvable client simply prints no eyebrow.
+
+### What holds it
+
+All 50 masters are asserted to bind it, and to bind it as a whole slot —
+a family contributes five variants and an operator picks whichever they like, so
+the reference variant passing means nothing on its own. The eyebrow was measured
+in Chromium across the ten families with a name 24 characters longer than the
+longest in production: one line, 8.3pt tall, 6pt clear of the heading beneath it.

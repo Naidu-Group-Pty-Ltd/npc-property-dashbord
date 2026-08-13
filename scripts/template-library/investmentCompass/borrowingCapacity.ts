@@ -180,10 +180,24 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     wordmarkBottom: 'Borrowing Capacity',
     tagline: 'Your dedicated property partner',
     marker: 'Borrowing Capacity',
-    eyebrow: 'Borrowing capacity snapshot',
-    // The conclusion, not the client — there is no client name on this record.
-    // See the note on FOOTER. `bandLabel` is derived from `serviceability_band`,
-    // which is set on all 143 assessments.
+    /*
+     * The applicants.
+     *
+     * This slot used to read "Borrowing capacity snapshot", which the cover
+     * already says twice — `wordmarkBottom` and `marker` both carry it — while
+     * the one thing a cover is normally expected to carry, whose assessment it
+     * is, was nowhere on the page.
+     *
+     * It sits here rather than in `locations` because the eyebrow is a single
+     * bound path with no literal beside it: an assessment without a resolvable
+     * client prints no eyebrow, where "Prepared for " next to an empty binding
+     * would print a preposition with nothing after it. `client.name` is
+     * published only when there is a name, and carries both applicants when
+     * there are two — 33 of the 143 stored assessments are joint.
+     */
+    eyebrow: '{{client.name}}',
+    // The conclusion, not the applicants — they are the eyebrow above it.
+    // `bandLabel` is derived from `serviceability_band`, set on all 143.
     title: '{{capacity.bandLabel}}',
     standfirst: 'What a lender would advance on the income, commitments and buffer stated inside.',
     locations: 'Prepared {{report.generatedDate}}',

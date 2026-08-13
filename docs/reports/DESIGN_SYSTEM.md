@@ -940,3 +940,65 @@ goes first, and the first thing to do is ask the running service what engine it
 has. The whole procedure — canary, verification, rollback, the edge-function
 half, and what to look for inside a delivered PDF — is
 [`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md).
+
+## The brand mark on a generated document
+
+`REPORT_RULES.md` §5 allows a mark on exactly two surfaces — the **cover** and
+the **contact/disclaimer page** — and explicitly none in a running header, a
+chapter opener or a footer. All 543 library templates now carry it on both.
+
+### It is bound, never baked
+
+No template embeds an asset. Each binds `{{org.mark}}` or `{{org.markMono}}`
+and the deployment supplies the bytes, because `defaultAssets.generated.ts` is
+blunt about the rule: *a tenant who has uploaded no mark gets no mark, not
+ours.* A spec asserts no seeded schema contains `data:image` or names an image
+file, and a second asserts none of them can name `npc-signature-logo`, any
+`icon-*`, `apple-touch-icon`, `og-image` or `favicon` — every one of which is
+the same email-signature banner with the director's mobile number burned into
+the pixels.
+
+### Two slots, because the mark is not inverted
+
+The mark is a gold gradient and inverting it produces a muddy blue, so there is
+no single lockup that works on both grounds. `org.mark` is the paper lockup and
+`org.markMono` the obsidian one, and each surface binds the one its own ground
+calls for — a compass cover chooses by `cover_overlay` (`field` and `band` put
+the head on the field; `paper` does not), and the contact page is always
+obsidian.
+
+### Where the bytes come from
+
+`adapters/organisation.ts` reads `whitelabel_settings.logo_config`, walks
+`ASSET_FALLBACK` for the `report` and `report-mono` slots, and inlines the
+result through the existing `fetchBrandAssets.ts` — the same machinery the
+legacy render routes have used for a while. Inlined rather than linked:
+`renderResourcePolicy` would admit a project-storage URL, but a `data:` URI is
+what makes the render network-free and reproducible.
+
+This is exposed as `applyOrganisationAndBrand(data)`, and all nine production
+adapters call that single function rather than the projection directly —
+because `org.*` had no producer at all for long enough that every document this
+product generated printed a blank letterhead, and an adapter that can remember
+the letterhead and forget the mark is the same failure waiting to happen.
+
+**The design-system path had supplied no brand at all.** `routeReportThroughTemplate`
+passes no `brand`, so every adapter built `brand: { logo: null }`; binding a mark
+without this would have put an unresolved path on 543 covers, which renders as
+the empty string.
+
+### What a document does without one
+
+Nothing. The image blocks carry `placeholder: false`, so an unbound mark renders
+no frame and no grey "No image" rectangle, and the compass cover's block is
+additionally page-conditional. Asserted in `brandMark.spec.ts` for all three
+template shapes: exactly two marks when one is supplied, zero and no placeholder
+when none is.
+
+### The fifteen without a cover
+
+Fifteen voice templates are deliberately cover-less — "One page, no cover", as
+the Property Snapshot's own description puts it. Their first page is the face of
+the document, so `brandMark()` puts the paper lockup at the head of it as a flow
+item, which moves the heading down rather than printing over it. The other 528
+carry it on a `cover` block.

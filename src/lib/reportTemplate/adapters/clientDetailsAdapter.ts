@@ -31,8 +31,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { buildClientDetails } from '@/lib/reports/clientDetails/normalise.pure';
 import { applyClientDetailsProjection } from '../../../../supabase/functions/_shared/clientDetailsProjection.pure';
-import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
-import { loadOrganisation } from './organisation';
+import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -175,7 +174,7 @@ export const clientDetailsAdapter: ReportTemplateAdapter = {
     };
 
     applyClientDetailsProjection(data, details);
-    applyOrganisationProjection(data, await loadOrganisation());
+    await applyOrganisationAndBrand(data);
 
     return {
       data,
