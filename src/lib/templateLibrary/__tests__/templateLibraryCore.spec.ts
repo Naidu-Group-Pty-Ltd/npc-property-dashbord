@@ -245,8 +245,11 @@ describe('isProductionReady', () => {
   it('is true only for a report type with a production adapter', () => {
     expect(isProductionReady('investment', clean)).toBe(true);
     expect(isProductionReady('investment_compass', clean)).toBe(true);
+    // `cashflow` joined the production types when it gained an adapter reading
+    // the projection stored on `investment_reports` — see
+    // `cashFlowProjection.pure.ts`. `suburb` still has no data source.
+    expect(isProductionReady('cashflow', clean)).toBe(true);
     expect(isProductionReady('suburb', clean)).toBe(false);
-    expect(isProductionReady('cashflow', clean)).toBe(false);
   });
 
   it('is false when the report type is missing', () => {

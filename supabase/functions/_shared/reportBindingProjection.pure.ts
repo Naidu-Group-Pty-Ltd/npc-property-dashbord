@@ -60,10 +60,37 @@
  *  - `property.suburb`, `property.condition`, `property.tenancy` — no column.
  *    Suburb is parseable from the address string, and that is exactly the kind
  *    of guess that puts the wrong suburb on a client's report.
- *  - `org.*`, `author.*`, `client.*` — organisation and people data lives
- *    outside this row. A caller that has it should merge it in.
+ *  - `author.*`, `client.*` — there is no `profiles` table for an adviser and
+ *    no client-name column on this row (`client_property_id` is set on 2 of the
+ *    1,182). The masters no longer bind either.
  *  - `property.images.*` — no adapter emits photographs; see
  *    `docs/template-library/07-investment-compass-families.md`.
+ *
+ * `org.*` was on that list until August 2026 and should not have been. The
+ * sentence "organisation data lives outside this row" is true of the *row* and
+ * was read for four months as though it meant no source existed. One does —
+ * `whitelabel_settings`, the table the Branding page writes — and every adapter
+ * now merges it. See `organisationProjection.pure.ts`.
+ *
+ * ## What the templates stopped binding
+ *
+ * The list above was, for most of its entries, a list of things the catalogue
+ * bound anyway. Measured against a report taken verbatim from production, **49
+ * of the masters' 80 paths resolved to nothing** — and an unresolved binding
+ * renders as the empty string, so a page of them is a page of labels with
+ * nothing beside them, not a page that looks broken.
+ *
+ * The masters were re-pointed rather than the projection widened, because the
+ * entries above genuinely have no source and inventing one is the worse
+ * outcome. Two got a real source instead:
+ *
+ *  - `assessment` — `investment_score.breakdown`, five weighted dimensions with
+ *    a score and a `details` sentence each. It replaced a three-row risk
+ *    register bound to `risks.0..2` when `risks` never holds more than one, and
+ *    a narrative page whose four paragraphs all bound `market.*`.
+ *  - `tenYear.equitySeries` — `financial_calculations.projections.moderate`, on
+ *    162 reports. The projection page's chart bound it and nothing published
+ *    it, so the one chart in the format drew an empty plot on every report.
  *
  * ## Units
  *
@@ -149,6 +176,11 @@ export interface ProjectedNamespaces {
   recommendation: Record<string, unknown>;
   summary: Record<string, unknown>;
   risks: Record<string, unknown>[];
+  /** The five weighted score dimensions, where the row carries a score. */
+  assessment: Record<string, unknown>[];
+  opportunities: string[];
+  /** `{ label, value }` per year, for the projection page's chart. */
+  equitySeries: Array<{ label: string; value: number }>;
   report: Record<string, unknown>;
 }
 
@@ -247,12 +279,83 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   if (weaknesses.length) summary.watch = weaknesses;
 
   // Objects rather than bare strings, because the catalogue binds `risks.N.risk`.
+  //
+  // There is never more than ONE. Measured across all 1,182 reports:
+  // `investment_score.risks` is an array on 985 of them and its length runs
+  // **0 to 1** — never 2, never 3. The catalogue drew a three-row register, so
+  // rows two and three were blank on every report ever produced, and the `why`
+  // and `ddAction` columns were blank on all three because a risk is a plain
+  // string with no such fields. The register now reads `assessment` below.
   const risks = strArray(score.risks).map((risk) => ({ risk }));
+
+  // ── the scored breakdown, which is what this report actually computed ──────
+  //
+  // `investment_score.breakdown` holds five weighted dimensions — growth (40),
+  // location (25), yield (15), demand (15), risk (5) — each with a `score`, its
+  // `weight` and a `details` sentence explaining the score. That `details` is
+  // the only per-dimension prose the record carries, and nothing bound it.
+  //
+  // It is published under its own key rather than folded into `risks` because
+  // it is not a risk register: it is the scorecard the grade is computed from,
+  // and `riskScore` is one row of five. `details` is empty on the dimensions the
+  // scorer had no data for — `demandScore` and `growthScore` on the sampled
+  // rows — so each entry is only emitted where it says something.
+  const breakdown = obj(score.breakdown);
+  const DIMENSIONS: Array<{ key: string; label: string }> = [
+    { key: 'growthScore', label: 'Growth' },
+    { key: 'locationScore', label: 'Location' },
+    { key: 'yieldScore', label: 'Yield' },
+    { key: 'demandScore', label: 'Demand' },
+    { key: 'riskScore', label: 'Risk' },
+  ];
+  const assessment = DIMENSIONS.map(({ key, label }) => {
+    const d = obj(breakdown[key]);
+    const entry: Record<string, unknown> = {};
+    put(entry, 'label', label);
+    put(entry, 'score', num(d.score));
+    put(entry, 'weight', num(d.weight));
+    put(entry, 'details', str(d.details));
+    return entry;
+  }).filter((e) => e.score !== undefined);
+
+  const opportunities = strArray(score.opportunities);
+
+  // ── the ten-year equity curve the chart page has always asked for ─────────
+  //
+  // `scenarioChart` on the projection page binds `tenYear.equitySeries`, and
+  // **nothing published `tenYear`** — so the one chart in the Investment
+  // Compass drew an empty plot on every report.
+  //
+  // The series is right here, in the same column the financials come from:
+  // `financial_calculations.projections.moderate`, ten years of
+  // `{ year, equity }`, on 162 of the 1,182 reports. The other 1,020 store no
+  // projection at all, and for those the key stays absent and the chart renders
+  // as it does today rather than as a flat line at zero — which would be a
+  // forecast, and a wrong one.
+  //
+  // Equity rather than value or cash flow: it is what the block's own caption
+  // says ("property value less loan balance"), it is positive on all 4,860
+  // stored elements, and every chart primitive a family resolves to can draw
+  // it. See `cashFlowProjection.pure.ts` for the rest of that series.
+  const projections = obj(obj(row.financial_calculations).projections);
+  const moderate = Array.isArray(projections.moderate) ? projections.moderate : [];
+  const equitySeries = moderate
+    .map((y) => {
+      const year = num(obj(y).year);
+      const equity = num(obj(y).equity);
+      return year !== undefined && equity !== undefined
+        ? { label: `Yr ${year}`, value: equity }
+        : null;
+    })
+    .filter((p): p is { label: string; value: number } => p !== null);
 
   const report: Record<string, unknown> = {};
   put(report, 'generatedDate', str(row.updated_at) ?? str(row.created_at));
 
-  return { property, financials, assumptions: assumptionsOut, recommendation, summary, risks, report };
+  return {
+    property, financials, assumptions: assumptionsOut, recommendation,
+    summary, risks, assessment, opportunities, equitySeries, report,
+  };
 }
 
 /**
@@ -278,5 +381,13 @@ export function applyInvestmentProjection(
   merge('summary', p.summary);
   merge('report', p.report);
   if (p.risks.length) data.risks = p.risks;
+  // Absent rather than empty, so a template can make the block conditional.
+  if (p.assessment.length) data.assessment = p.assessment;
+  if (p.opportunities.length) data.opportunities = p.opportunities;
+  // Absent on the 1,020 reports that store no projection, so the chart is empty
+  // rather than flat at zero.
+  if (p.equitySeries.length) {
+    data.tenYear = { ...obj(data.tenYear), equitySeries: p.equitySeries };
+  }
   return data;
 }

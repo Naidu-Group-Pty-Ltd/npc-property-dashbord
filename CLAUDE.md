@@ -368,14 +368,43 @@ come from `scripts/template-library/designSystem.ts` — five voices keyed to th
 catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
 tokens ([`06-design-system.md`](./docs/template-library/06-design-system.md)).
 
-The 150 *family* templates come from the approved Claude Design **Investment
+The 350 *family* templates come from the approved Claude Design **Investment
 Compass Template Catalogue**: ten design families × five structural variants ×
-ten colourways. The designs carry no subject matter, so they serve **three
-report formats** — 50 Investment Compass masters, 50 Borrowing Capacity
-Snapshot masters and 50 Portfolio Performance Review masters, sharing one shell
-(`investmentCompass/master.ts`) and contributing a page sequence each. Adding a
+ten colourways. The designs carry no subject matter, so they serve **seven
+report formats** — 50 masters each of Investment Compass, the Borrowing
+Capacity Snapshot, the Portfolio Performance Review, the Property Comparison
+Analysis, the 10 Year Cash Flow, the Client Details Form and the Cash Flow
+Comparison, sharing one shell (`investmentCompass/master.ts`) and contributing a
+page sequence each. Six are production-ready; the Cash Flow Comparison is
+**preview-only because nothing about a comparison is persisted anywhere a
+template can read** — not the projections, not the analysis, not the ledger.
+
+**Report Q&A is not on the families and cannot be**, which is a renderer fact
+rather than a gap: the block vocabulary has no Markdown renderer and no block
+that accepts HTML — `text-block` escapes, which is what keeps model-authored
+content from injecting markup — so an answer bound to one prints `**bold**` and
+`| pipe | tables |` as body copy, on 70% and 23% of the corpus. Its structure is
+discovered at render time too, against heights a master declares at build time.
+`reportQaNotOnTheFamilies.spec.ts` enforces it; `docs/reports/QA.md` §12 has the
+measurements. Adding a
 format is a composer plus a `ReportFormat` descriptor — and the adapter and
-projection that make it production-ready — not a second design system. Read
+projection that make it production-ready — not a second design system.
+
+Two rules are worth knowing before you bind anything. **A declared block height
+is a promise the renderer keeps only if the text is as short as the author
+assumed**, and a block that sets taller does not overflow the page, it prints
+over the next one; size from `textHeight(chars)` against measured production
+lengths, and `npm run templates:compass:qa` fails on the class. And **an
+unresolved binding renders as the empty string, never as a visible `{{…}}`** —
+which is why two formats shipped a cover with no title at all, why the
+Investment Compass's narrative page and risk register were blank on every report
+(49 of its 80 paths resolved to nothing), and why **every** document printed a
+blank letterhead until `organisationProjection.pure.ts` gave `org.*` a producer.
+A format's projection is the authority on what may be bound; the catalogue specs
+assert the masters bind nothing it cannot publish, and the check that finds this
+class is to resolve every bound path against a row taken verbatim from
+production — never against `SAMPLE_REPORT_DATA`, which is written in the
+catalogue's own vocabulary and passes while production is empty. Read
 [`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
 before touching `scripts/template-library/investmentCompass/` or
 `_shared/templateColourways.*`.

@@ -98,7 +98,23 @@ export interface PageDef {
 }
 
 export interface FlowItem {
-  block: (y: number) => BlockDef;
+  /**
+   * The block at this position — or several, all at the same position.
+   *
+   * More than one is for **mutually exclusive variants**: a ranking table drawn
+   * once for two properties, once for three, once for four and once for five,
+   * each carrying a `conditional` on the count, all placed at the same `y`. One
+   * renders and the rest do not exist.
+   *
+   * The alternative is a fixed five-row table, and on the seven stored
+   * comparisons that hold two properties that prints three empty rows — which
+   * reads as a document that failed to finish rather than one that compared two
+   * properties. Sizing to the smallest instead would silently drop three.
+   *
+   * The item's `height` must be the tallest variant's, so whatever follows
+   * clears all of them.
+   */
+  block: (y: number) => BlockDef | BlockDef[];
   height: number;
   /** Extra space after this block. Defaults to the manifest's spacing scale. */
   gap?: number;
@@ -224,7 +240,12 @@ export function flow(items: FlowItem[], startY?: number): BlockDef[] {
   const out: BlockDef[] = [];
   for (const item of items) {
     const emitted = item.block(y);
-    out.push(item.conditional ? { ...emitted, conditional: item.conditional } : emitted);
+    for (const b of Array.isArray(emitted) ? emitted : [emitted]) {
+      // An item-level conditional applies to every variant; a variant that
+      // carries its own keeps it, because that is how the variants tell
+      // themselves apart.
+      out.push(item.conditional && !b.conditional ? { ...b, conditional: item.conditional } : b);
+    }
     y += item.height + (item.gap ?? c.spacing.gap);
   }
   const last = items[items.length - 1];
@@ -1324,6 +1345,16 @@ export function scenarioChart(opts: {
   dataPath: string;
   data: Array<{ label: string; value: number }>;
   height?: number;
+  /**
+   * Which keys of a bound element carry the label and the figure.
+   *
+   * Default `label`/`value`, which is the shape the Investment Compass masters
+   * assume. A projection that publishes whole rows — the Cash Flow series is
+   * ten objects of eight fields each — names the two it wants plotted rather
+   * than being reshaped into a second array purely for the chart.
+   */
+  labelKey?: string;
+  valueKey?: string;
 }): FlowItem {
   const c = ctx();
   const plan = chartPlan(c.manifest.chart_style);
@@ -1338,8 +1369,8 @@ export function scenarioChart(opts: {
       ...(isSparkline ? {} : { title: opts.title, caption: opts.caption }),
       dataPath: opts.dataPath,
       data: opts.data,
-      labelKey: 'label',
-      valueKey: 'value',
+      labelKey: opts.labelKey ?? 'label',
+      valueKey: opts.valueKey ?? 'value',
       accent: 'token:primary',
       x: c.contentLeft, y, width: c.contentWidth, height,
     }),

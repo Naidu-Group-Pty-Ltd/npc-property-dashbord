@@ -310,23 +310,256 @@ could not paint a background at all.
 
 The ten designs are **format-agnostic by construction** — typography, density,
 margins, KPI arrangement, table treatment and colourway carry no subject matter
-— so they serve any report. Three formats have taken them up, at 50 masters
-each: the same ten families × five variants × ten colourways.
+— so they serve any report. Seven formats have taken them up, at 50 masters
+each: the same ten families × five variants × ten colourways. Six are
+production-ready; the seventh is preview-only, and the reason is worth reading
+before assuming an adapter was forgotten.
 
-| | Investment Compass | Borrowing Capacity | Portfolio Review |
-| --- | --- | --- | --- |
-| Masters | 50 | 50 | 50 |
-| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` |
-| `category` | `investment` | `finance` | `portfolio` |
-| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` |
-| Composer | `investmentCompass/templates.ts` | `investmentCompass/borrowingCapacity.ts` | `investmentCompass/portfolio.ts` |
-| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` |
-| Source table | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` |
-| Production-ready | yes | yes | yes |
+| | Investment Compass | Borrowing Capacity | Portfolio Review | Comparison | 10 Year Cash Flow | Client Details | Cash Flow Comparison |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Masters | 50 | 50 | 50 | 50 | 50 | 50 | 50 |
+| `report_type` | `investment_compass` | `borrowing_capacity` | `portfolio` | `comparison` | `cashflow` | `client_details` | `cash_flow_comparison` |
+| `category` | `investment` | `finance` | `portfolio` | `comparison` | `cash_flow` | `client_details` | `comparison` |
+| Slug prefix | `investment-compass-` | `borrowing-capacity-` | `portfolio-review-` | `comparison-analysis-` | `cash-flow-ten-year-` | `client-details-form-` | `cash-flow-comparison-` |
+| Composer | `templates.ts` | `borrowingCapacity.ts` | `portfolio.ts` | `comparison.ts` | `cashFlow.ts` | `clientDetails.ts` | `cashFlowComparison.ts` |
+| Adapter | `investmentReportAdapter` | `borrowingCapacityAdapter` | `portfolioAdapter` | `comparisonAdapter` | `cashFlowAdapter` | `clientDetailsAdapter` | **none possible** |
+| Source | `investment_reports` | `borrowing_capacity_assessments` | `portfolio_analysis_reports` | `property_comparisons` | `investment_reports` | nine `client_*` tables | nothing persisted |
+| Production-ready | yes | yes | yes | yes | yes, for 162 of 1,182 | yes | **no — nothing is persisted** |
 
-Adding a fourth is a `ReportFormat` descriptor and a page sequence — plus the
+Adding an eighth is a `ReportFormat` descriptor and a page sequence — plus the
 adapter and projection that make it production-ready — not a second design
 system.
+
+### Report Q&A is the format the families cannot draw at all
+
+Worth recording beside the seven, because it is the one that looks like an
+omission and is not. Its payload is Markdown a model wrote, and the block
+vocabulary has **no Markdown renderer and no block that accepts HTML** —
+`text-block` escapes its body, which is what stops model-authored content
+injecting markup into a client's document. So an answer bound to one prints
+`## Yield analysis`, `**gross yield**` and `| Metric | Value |` as body copy, on
+70% and 23% of the corpus respectively.
+
+The second reason is this system's own: a master declares every block's height
+at build time, and an answer runs 2,188 characters at the median and **33,359**
+at the maximum, with a conversation reaching 354,406 across 70 turns and a spine
+that is discovered rather than declared.
+
+`docs/reports/QA.md` §12 has the measurements and the two things that would have
+to change. `reportQaNotOnTheFamilies.spec.ts` enforces it, and sweeps seven block
+types with a hostile payload while it is there.
+
+### The Cash Flow Comparison has nothing to read, and says so
+
+The seventh format, and the first preview-only one. Every other format on this
+system reads a stored artefact; this one has none. Its projections are the
+browser's and are never persisted, its analysis table holds **0 rows and
+structurally cannot hold any** (its INSERT policy refuses this application's own
+sign-in), and its render ledger holds 0 rows, stores neither the projections nor
+the analysis, and is superadmin-only.
+
+The obvious substitute — the stored `financial_calculations.projections` the 10
+Year Cash Flow format uses — fails for a reason that is not about scope: every
+headline measure in this document is built on `afterTaxAnnual`, and that series
+models no tax at all. Filling the field to make the shape fit would put an
+invented after-tax position on a client's page.
+
+So the projection is written and tested, the masters bind what it publishes, and
+the registry entry says *why* rather than the default "not configured yet". An
+adapter is the whole of the remaining work, on the day a comparison is persisted
+somewhere a template can reach.
+
+Its other difficulty is one the Property Comparison introduced and this format
+has five times over: **the tables change shape with the property count**. A
+comparison holds 2 to 5 properties and the central tables put one column per
+property, so every property-wide table is drawn four times, once per count, under
+mutually exclusive conditionals at one position — `byPropertyCount()`.
+
+**One renderer defect came out of it.** `data-table` never resolved bindings in
+its column headers: every body cell went through `resolveBindable` and the
+headers did not, so a bound header printed a literal
+`{{cashFlowComparison.properties.0.shortAddress}}` across the top of the table.
+No format bound a header until the seventh — the other six all name their columns
+statically — and it is the only binding defect in this programme that is
+*visible* rather than silent, since an unresolved binding elsewhere renders as
+the empty string.
+
+### The Client Details format is built for the record that is empty
+
+96% of them are. Measured across all 775 clients: **742 have no property, no
+employment, no asset, no liability and no expense.** The shipping generator
+opens on a Properties Overview and follows it with per-property blocks, which
+for those 742 is a cover and several pages of empty tables.
+
+So every financial page here carries `conditional: clientDetails.hasFinancials`
+— and a conditional *page* costs nothing when it does not render, unlike a
+conditional block, because `visiblePages` filters it before anything is laid
+out. The same fifty masters produce a 5-page document for the 742 and up to 13
+for the other 33.
+
+The closing page draws **two blocks at one position** under opposite
+conditionals: a summary of where the client stands, or the sentence that says
+the record holds contact details and nothing else. Exactly one renders.
+
+Its other problem is the opposite of the Cash Flow format's. Nothing here is a
+fixed ten-year series; the collections are unbounded — one client records **100
+expense rows**, another 18 assets — on a page model that cannot paginate. Every
+collection is therefore capped and every cap is measured, and expenses are
+**grouped by category rather than listed** (the worst case grouped is 14 rows,
+and a category total is what a broker reads anyway). Where a cap bites, the page
+says so with the record's own count beside it.
+
+It is also the only one of the six that may bind `{{client.name}}`: `clients` is
+its source table, so the document is genuinely about a named person.
+
+### The Cash Flow format is the one with no prose in it
+
+The other four bind paragraphs a model wrote, and every height on their pages is
+a `textHeight(chars)` measured against production. This one binds nothing but
+numbers, and the risk moves to the other end: **five ten-row tables** on a page
+model that cannot paginate, across ten spacing scales that put the same ten rows
+anywhere between 154pt and 244pt. Each series table gets a page of its own, and
+the collision measure is what proves it.
+
+It is also the only format whose adapter **declines** reports. Its source is
+`financial_calculations.projections`, present on 162 of the 1,182 investment
+reports; `buildBindingContext` returns null for the other 1,020 rather than
+rendering a document whose entire subject is missing, so the legacy generator
+keeps them.
+
+Most of what its projection does is **refuse**. Four stored figures contradict
+the series they would be printed beside — a year-one cash flow that disagrees
+with the series' own year one by a median of $24,793, two totals that do not
+equal the components listed under them (on 132 of 161 and 141 of 162
+respectively), and a purchase price of $3 on one report whose series says
+$780,000 — so none is published and the cost pages carry **no total row**. The
+growth rates the pages state are derived from the series rather than read from
+`assumptions`, which records a different rate on 66 of the 69 reports that carry
+one. `docs/reports/CASH_FLOW.md` §8 has the measurements.
+
+### The cover title that rendered as nothing
+
+Building the fifth format meant auditing every path all 250 masters bind against
+a row taken verbatim from production, and that found a defect in two formats that
+had already shipped.
+
+An unresolved binding renders as the **empty string**, not as a visible `{{…}}`.
+The Borrowing Capacity and Comparison masters titled their cover `{{client.name}}`
+— and `borrowing_capacity_assessments` carries `client_id` rather than a name,
+while a comparison is stored against `report_ids` pointing at a table that has no
+client-name column either. Both shipped a cover with no title at all and a running
+foot beginning " · ". The Comparison adapter's `resolveClientName` had been
+querying a column that does not exist, so PostgREST answered `42703` and the
+error branch returned undefined every time.
+
+The covers now name what each document is about: the Snapshot leads on its
+serviceability band, the Comparison on how many properties it compares, and the
+Cash Flow on the property. `cashFlowCatalogue.spec.ts` asserts which of the five
+formats may bind a client at all — only the Portfolio Review, whose
+`portfolio_analysis_reports.client_name` is populated on all 21 rows.
+
+### Every generated document had a blank letterhead
+
+`disclaimerPage()` is the last page of all 293 seeded templates and the family
+covers set `{{org.name}}` as their wordmark. **Nothing published `org`** — not
+one adapter, not the edge mirror, not the render route. So the contact block at
+the foot of every report printed its labels with nothing beside them, and the
+cover wordmark was blank, on every document this product has ever generated.
+
+The preview never showed it: `SAMPLE_REPORT_DATA.org` is fully populated. That
+is the trap `reportBindingProjection.pure.ts` was written for, in a second
+place — a fixture in the catalogue's vocabulary passes while production is
+empty.
+
+`reportBindingProjection.spec.ts` had listed the six `org.*` paths under
+"organisation, adviser and client identity live outside this row" since it was
+written. True of the *row*, and read for four months as though it meant no
+source existed. One does: `whitelabel_settings`, the single row the Branding
+page writes. Four of the six now resolve —
+
+| Binding | Column |
+| --- | --- |
+| `org.name` | `company_name` |
+| `org.phone` | `email_signature_phone` |
+| `org.email` | `email_signature_email` |
+| `org.website` | `email_signature_website` |
+
+— and `org.abn` and `org.address` stay absent, because there is no ABN column
+and the stored address is an empty string. The disclaimer block omits a row
+whose value is empty, so neither prints. An ABN is a legal identifier and a
+plausible-looking wrong one is worse than a missing line.
+
+`organisationProjection.pure.ts` reads those four columns and nothing else. Not
+`email_signature_banner` — that is the image `REPORT_RULES.md` warns about — and
+not `email_signature_disclaimer`, which is written for the foot of an email
+rather than for print.
+
+### 49 of the Investment Compass's 80 bindings resolved to nothing
+
+Auditing every path the masters bind against a row taken verbatim from
+production is what found the blank cover titles, and it found much more in the
+oldest format on the system. Measured, then fixed by re-pointing the masters
+rather than widening the projection — because the paths below genuinely have no
+source, and inventing one is the worse outcome:
+
+| What it bound | Why it could not resolve | Now |
+| --- | --- | --- |
+| A four-paragraph narrative page: `market.conclusion.headline`, `market.narrative`, `market.conclusion.body`, `property.rationale` | No adapter publishes `market`; `location_intelligence` carries amenities, commute, schools and transport, not prose | **The assessment page** — `investment_score.breakdown`, five weighted dimensions with a score and a `details` sentence each |
+| A three-row risk register bound to `risks.0..2`, each with `.why` and `.action` | `investment_score.risks` is an array of plain **strings** whose length runs **0 to 1** across all 1,182 reports | One conditional row, its reasoning taken from the risk dimension's own `details` |
+| `{{client.name}}` in the footer and cover, `{{author.name}}`/`{{author.title}}` on the method page | No client-name column; `client_property_id` on 2 of 1,182; **no `profiles` table at all** | Removed; the method page names the organisation and the property |
+| `recommendation.rationale`, `financials.narrative`, `financials.fundingNote`, `financials.breakEvenRent`, `financials.loanFees`, `summary.narrative`, `assumptions.rentalGrowth`/`taxRate`/`sellingCosts`, `property.condition`/`tenancy`/`rationale` | No column for any of them | Removed, or replaced with a stored figure |
+| `strengthsWatch` drawing two marks a column | `strengths` holds two on **47** of 985 scored reports and `weaknesses` on **15** | One each |
+| `scenarioChart` bound to `tenYear.equitySeries` | Nothing published `tenYear`, so the format's one chart drew an empty plot | `financial_calculations.projections.moderate`, on 162 reports; absent on the rest rather than flat at zero |
+
+That leaves 8 unresolved of 74, and every one is deliberate: the six
+`property.images.*` (no adapter emits photographs, and the plates are
+page-conditional so an unfilled one costs no page) plus `org.abn` and
+`org.address`.
+
+Two things the exercise recorded without fixing. **The grade is 55%
+placeholder**: `breakdown.growthScore` and `demandScore` are weighted 40 and 15
+and scored a flat 50 with no details on 919 of the 985 scored reports. And
+`investment_score` is absent entirely on 197 of the 1,182.
+
+### Two chart primitives could not draw what this format needed
+
+Both were found by giving the Cash Flow masters a chart, and both were silent.
+
+- **`chart-bar` could not draw a negative value.** It scaled every bar as
+  `value / Math.max(1, ...values)` of the plot height, so an all-negative series
+  — which is what a cash-flow projection is — asked for a rect of negative
+  height, which is invalid SVG and renders as nothing. The domain now always
+  contains zero and bars are measured from it, which leaves every all-positive
+  chart identical to the pixel.
+- **`sparkline` accepted only a literal `values` array** — the one input a
+  template cannot supply, since a template is authored before the report exists.
+  Three of the catalogue's chart styles resolve to `sparkline`, so those masters
+  emitted a `dataPath` the block never read and drew an empty frame. It now
+  accepts `dataPath`/`data`/`valueKey` like every other chart, with `values`
+  still winning where it is given.
+
+The masters chart **equity** regardless: it is positive on all 4,860 stored
+elements, so every one of the four chart primitives a family might resolve to can
+draw it.
+
+### The Comparison format draws a thing whose size it does not know
+
+Every other format draws a fixed document. A comparison ranks **2 to 5
+properties** — 7 of the 50 stored rows compare two, 17 compare three, 9 compare
+four and 17 compare five — and neither answer a fixed table can give is right: a
+five-row table prints three empty rows on the two-property comparisons, and a
+two-row table silently drops three properties.
+
+So the ranking is drawn **four times, once per count, each under a conditional,
+all at the same `y`**. One renders and the rest do not exist. `FlowItem.block`
+may return several blocks for exactly this; the item's height is the tallest
+variant's, so whatever follows clears all of them.
+
+It is also the only format whose projection **normalises nothing**. The format
+already had a normaliser for its own WeasyPrint route, so the projection
+restates that model rather than re-reading the row — one reader, two renderers,
+one answer to the 27 truncated records, the two score scales and the winner
+pointers that name nobody.
 
 **What is shared and what is not.** `master.ts` holds the shell — tokens
 compiled from the family's colourway and measured type scale, the Google Fonts

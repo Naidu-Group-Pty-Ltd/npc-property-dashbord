@@ -245,6 +245,13 @@ describe('rendering', () => {
     }
   });
 
+  /**
+   * 550 renders: fifty masters against their base palette and each of their ten
+   * colourways. Exhaustive on purpose — a colourway that moved a block would
+   * move it on exactly one family — and slow enough to need saying so, because
+   * the 5s default passes when this file runs alone and times out when it runs
+   * beside the other catalogues.
+   */
   it('changes the colour and never the layout', () => {
     const geometry = (html: string) => (html.match(/left:[\d.]+pt;top:[\d.]+pt/g) ?? []).join('|');
     for (const t of PORTFOLIO_TEMPLATES) {
@@ -256,7 +263,7 @@ describe('rendering', () => {
         expect(other, `${t.name} / ${cw.name}`).toBe(base);
       }
     }
-  });
+  }, 60_000);
 
   it('says on the page when the inventory cannot show every holding', () => {
     // PORTFOLIO.md's F4: the shipping generator drops rows past the second page

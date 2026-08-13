@@ -15,6 +15,7 @@ import {
   projectInvestmentReport,
   applyInvestmentProjection,
 } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
+import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
 
 /** Shaped exactly like a stored row. See the header. */
@@ -49,9 +50,23 @@ const ROW = {
   investment_score: {
     totalScore: 72, grade: 'B+',
     recommendation: 'Proceed to offer at or below $1.29m',
-    risks: ['Interest rate exposure at 80% LVR', 'Strata levy uncertainty', 'Single-tenant vacancy risk'],
+    // ONE risk. `investment_score.risks` runs 0-1 across all 1,182 rows and
+    // never holds two — the fixture used to carry three, which is how a
+    // three-row register survived review.
+    risks: ['Interest rate exposure at 80% LVR'],
     strengths: ['Land-led inner-west holding', 'Below suburb median'],
     weaknesses: ['Negative cash flow in years 1-3', 'Dated internals'],
+    opportunities: ['Subdivision potential subject to council'],
+    // Five weighted dimensions. `growthScore` and `demandScore` carry a flat 50
+    // and no details on 919 of the 985 scored reports, which is why they are
+    // shaped that way here.
+    breakdown: {
+      growthScore: { score: 50, weight: 40, details: '' },
+      locationScore: { score: 85, weight: 25, details: 'Excellent walkability (90+). Excellent CBD access (<15 min).' },
+      yieldScore: { score: 62, weight: 15, details: 'Moderate yield (3-4%) - Negative cash flow likely' },
+      demandScore: { score: 50, weight: 15, details: '' },
+      riskScore: { score: 53, weight: 5, details: 'High LVR (80%) increases leverage risk. Moderate negative cash flow requires contribution.' },
+    },
   },
 };
 
@@ -109,14 +124,32 @@ describe('the defect this projection fixes', () => {
   });
 });
 
-describe('after projection', () => {
-  const data = applyInvestmentProjection(rawContext(), ROW);
+/** The live `whitelabel_settings` row: four fields set, address empty, no ABN. */
+const ORGANISATION = {
+  company_name: 'Naidu Property Consulting Services ',
+  email_signature_phone: '02 8609 3299',
+  email_signature_email: 'admin@npcservices.com.au',
+  email_signature_website: 'www.npcservices.com.au',
+  email_signature_address: '',
+};
 
-  it('takes the catalogue from 1 resolved binding to 40', () => {
+describe('after projection', () => {
+  const data = applyOrganisationProjection(
+    applyInvestmentProjection(rawContext(), ROW),
+    ORGANISATION,
+  );
+
+  it('resolves every binding the catalogue has, bar the photographs', () => {
+    // It began at 1 of 80. The projection took it to 40, and re-pointing the
+    // masters off the paths that have no source — a narrative page bound
+    // entirely to `market.*`, a three-row register bound to `risks.0..2` when
+    // the record never holds two — took it the rest of the way.
     const bindings = catalogueBindings();
-    const ok = bindings.filter((b) => resolves(data, b));
-    expect(bindings).toHaveLength(80);
-    expect(ok.length).toBeGreaterThanOrEqual(40);
+    const unresolved = bindings.filter((b) => !resolves(data, b));
+    expect(bindings.length).toBeGreaterThanOrEqual(70);
+    // Photographs (6), plus the ABN and postal address the settings row has no
+    // column for. Nothing else.
+    expect(unresolved).toHaveLength(8);
   });
 
   it('leaves exactly the bindings that have no source, and no others', () => {
@@ -126,25 +159,17 @@ describe('after projection', () => {
     // say where it came from — or it invented a figure, and this test is the
     // thing standing between that invention and a client's report.
     const expectedAbsent = [
-      // Photographs: no adapter emits them.
+      // Photographs: no adapter emits them. The plates are page-conditional, so
+      // an unfilled one costs no page rather than an empty one.
       'property.images.0', 'property.images.1', 'property.images.2',
       'property.images.3', 'property.images.4', 'property.images.5',
-      // Organisation, adviser and client identity live outside this row.
-      'org.abn', 'org.address', 'org.email', 'org.name', 'org.phone', 'org.website',
-      'author.name', 'author.title', 'client.name',
-      // location_intelligence carries amenities/commute/schools/transport —
-      // no postcode, state, suburb count or market prose.
-      'market.conclusion.body', 'market.conclusion.headline', 'market.narrative',
-      'market.postcode', 'market.state', 'market.suburbCount',
-      // investment_score.risks is an array of plain strings: one field, not three.
-      'risks.0.action', 'risks.0.why', 'risks.1.action',
-      'risks.1.why', 'risks.2.action', 'risks.2.why',
-      'recommendation.rationale',
-      // No column, and no safe derivation.
-      'assumptions.rentalGrowth', 'assumptions.sellingCosts', 'assumptions.taxRate',
-      'financials.breakEvenRent', 'financials.fundingNote', 'financials.loanFees',
-      'financials.narrative', 'summary.narrative',
-      'property.condition', 'property.rationale', 'property.suburb', 'property.tenancy',
+      // No ABN column exists, and `email_signature_address` is empty on the one
+      // stored settings row. The disclaimer block omits a row whose value is
+      // empty, so both simply do not print. The other four `org.*` bindings now
+      // resolve — see `organisationProjection.pure.ts`, which every adapter
+      // merges; this spec exercises the investment projection alone, so it
+      // supplies the organisation the way an adapter would.
+      'org.abn', 'org.address',
     ].sort();
 
     const actualAbsent = catalogueBindings().filter((b) => !resolves(data, b)).sort();
@@ -189,13 +214,16 @@ describe('after projection', () => {
     // Each of these has no source in the row. A number here would be invented,
     // and an invented figure on a client's financial report is the worst
     // outcome available — worse than a blank line.
+    // None of these is bound by a master any more either — but the projection
+    // must keep refusing them, because the next format to arrive will reach for
+    // exactly these names.
     for (const path of [
       'financials.breakEvenRent', 'financials.loanFees', 'financials.narrative',
       'assumptions.rentalGrowth', 'assumptions.sellingCosts', 'assumptions.taxRate',
       'market.postcode', 'market.narrative',
       'property.suburb', 'property.condition', 'property.tenancy',
       'recommendation.rationale', 'risks.0.why', 'risks.0.action',
-      'summary.narrative', 'org.name', 'author.name', 'client.name',
+      'summary.narrative', 'author.name', 'client.name',
     ]) {
       expect(resolves(data, path), `${path} must stay absent`).toBe(false);
     }

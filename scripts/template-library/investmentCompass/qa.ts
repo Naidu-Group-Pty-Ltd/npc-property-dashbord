@@ -28,6 +28,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright';
 import { renderTemplateToHtml } from '../../../src/lib/reportTemplate/htmlRenderer';
+import { evalConditional } from '../../../src/lib/reportTemplate/bindingResolver';
 import { SAMPLE_REPORT_DATA } from '../../../src/lib/templateLibrary/sampleReportData';
 import {
   colourwaysForFamily,
@@ -36,6 +37,10 @@ import {
 import { INVESTMENT_COMPASS_TEMPLATES } from './templates';
 import { BORROWING_CAPACITY_TEMPLATES } from './borrowingCapacity';
 import { PORTFOLIO_TEMPLATES } from './portfolio';
+import { COMPARISON_TEMPLATES } from './comparison';
+import { CASH_FLOW_COMPASS_TEMPLATES } from './cashFlow';
+import { CLIENT_DETAILS_TEMPLATES } from './clientDetails';
+import { CASH_FLOW_COMPARISON_TEMPLATES } from './cashFlowComparison';
 
 import { DESIGN_FAMILIES } from './family';
 
@@ -50,6 +55,10 @@ const ALL_MASTERS = [
   ...INVESTMENT_COMPASS_TEMPLATES,
   ...BORROWING_CAPACITY_TEMPLATES,
   ...PORTFOLIO_TEMPLATES,
+  ...COMPARISON_TEMPLATES,
+  ...CASH_FLOW_COMPASS_TEMPLATES,
+  ...CLIENT_DETAILS_TEMPLATES,
+  ...CASH_FLOW_COMPARISON_TEMPLATES,
 ];
 
 
@@ -286,7 +295,27 @@ async function main(): Promise<void> {
    * ground still reads — and is answered by eye, one per family.
    */
   for (const template of ALL_MASTERS) {
-    const pageNames = template.schema.pages.map((p) => p.name);
+    /**
+     * The pages this data actually renders, in rendered order.
+     *
+     * Every index below is used against a rendered page, and the schema's list
+     * is not that list: a conditional page that evaluates false is not drawn,
+     * so from that point on a schema index names the wrong page — the dashboard
+     * screenshot shifts and every overflow after it is mislabelled.
+     *
+     * Conditional pages are deliberate in two formats. Image plates disappear
+     * when an operator supplies no photograph, and the Comparison masters carry
+     * a second investor-fit page that only exists for a comparison of four or
+     * five properties. So the visible list is computed the same way the
+     * renderer computes it, rather than assumed to be the whole schema.
+     */
+    const visiblePages = template.schema.pages.filter(
+      (p) => evalConditional((p as { conditional?: string }).conditional, {
+        data: SAMPLE_REPORT_DATA,
+        tokens: template.schema.tokens as never,
+      }),
+    );
+    const pageNames = visiblePages.map((p) => p.name);
     // Variant codes repeat across formats — `pb-01` exists in both catalogues —
     // so an artifact named by code alone has one format silently overwrite the
     // other's. The first run of this after Borrowing Capacity landed reported 20
@@ -317,9 +346,12 @@ async function main(): Promise<void> {
      */
     const renderedPages = await page.locator('.tpl-page').count();
     if (renderedPages !== pageNames.length) {
+      // The two disagreeing means this harness and the renderer read the same
+      // conditionals differently, which makes every index below a guess. Stop
+      // rather than report.
       throw new Error(
-        `${template.name}: rendered ${renderedPages} pages against ${pageNames.length} in the schema — `
-        + 'a conditional page was filtered out and the sample data no longer covers every slot',
+        `${template.name}: rendered ${renderedPages} pages against ${pageNames.length} `
+        + 'the conditionals say should be visible — the QA and the renderer disagree',
       );
     }
 
@@ -338,10 +370,11 @@ async function main(): Promise<void> {
     // The densest page, whatever the format calls it. Hardcoding 'Executive
     // dashboard' meant the Borrowing Capacity masters — whose equivalent is
     // 'Capacity summary' — were screenshotted as covers only.
-    const dashboardIndex = template.schema.pages.findIndex(
+    const dashboardIndex = visiblePages.findIndex(
       (p) => p.name === 'Executive dashboard'
         || p.name === 'Capacity summary'
-        || p.name === 'Portfolio at a glance',
+        || p.name === 'Portfolio at a glance'
+        || p.name === 'The ranking',
     );
     if (dashboardIndex >= 0) {
       const dashboard = resolve(OUT, `${code}-dashboard.png`);
@@ -354,7 +387,7 @@ async function main(): Promise<void> {
     // operator supplies — and the one that has to disappear cleanly when they
     // do not. Index 0 is skipped: the cover's plate is a ground behind a
     // composition rather than a plate page.
-    const plateIndex = template.schema.pages.findIndex(
+    const plateIndex = visiblePages.findIndex(
       (p, i) => i > 0 && JSON.stringify(p.blocks).includes('property.images'),
     );
     if (plateIndex >= 0) {
@@ -377,7 +410,7 @@ async function main(): Promise<void> {
       });
       report.pdf.push({
         template: `${template.designMeta.familyName} — ${template.name}`,
-        pages: template.schema.pages.length,
+        pages: visiblePages.length,
         bytes: bytes.length,
       });
     }

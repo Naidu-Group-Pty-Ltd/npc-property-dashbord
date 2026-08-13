@@ -4,6 +4,8 @@ import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportT
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
+import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
+import { loadOrganisation } from './organisation';
 
 function flatten(obj: any): Record<string, any> {
   if (!obj || typeof obj !== 'object') return {};
@@ -124,6 +126,12 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     // masters' 80 bindings resolve to nothing on a real report — see
     // `reportBindingProjection.pure.ts`. Additive: nothing above is replaced.
     applyInvestmentProjection(data, row as Record<string, unknown>);
+    // The letterhead — the wordmark on the cover and the contact block on the
+    // disclaimer page every template ends with. Nothing published `org` until
+    // August 2026, so both printed blank on every report this product has ever
+    // generated. See `organisationProjection.pure.ts`.
+    applyOrganisationProjection(data, await loadOrganisation());
+
 
     return {
       data,

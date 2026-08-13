@@ -6,6 +6,7 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { esc, type HtmlBlockContext } from './_shared.html';
+import { resolveDataPath } from './_data';
 
 type R = Record<string, unknown>;
 
@@ -370,9 +371,46 @@ export function renderDefinitionListHtml(block: Block, ctx: HtmlBlockContext): s
 }
 
 // ── 18. Sparkline (SVG) ──────────────────────────────────────────────────────
+
+/**
+ * The series a sparkline draws.
+ *
+ * `values` — a literal array of numbers — was the only input this block
+ * accepted, and it is the one input a *template* cannot supply: a template is
+ * authored before the report exists, so its series has to arrive as a
+ * `dataPath` resolved at render time, exactly as `chart-line`, `chart-bar` and
+ * every other chart in `charts.html.ts` accepts one.
+ *
+ * The consequence was silent. `scenarioChart` in the template library emits
+ * `dataPath`/`data`/`valueKey` for whichever chart block a family's
+ * `chart_style` resolves to, and three of the catalogue's chart styles resolve
+ * to `sparkline` — so those masters asked for a series, this function read
+ * `p.values`, found nothing, and drew an empty frame. An empty chart looks like
+ * a chart, which is why nothing caught it.
+ *
+ * `values` still wins where it is given, so every existing sparkline renders
+ * exactly as before.
+ */
+function sparklineSeries(p: R, ctx: HtmlBlockContext): number[] {
+  const literal = Array.isArray(p.values) ? (p.values as unknown[]) : null;
+  if (literal) return literal.map((v) => Number(v) || 0);
+
+  const source = p.dataPath
+    ? resolveDataPath(p.dataPath, ctx)
+    : (Array.isArray(p.data) ? p.data : null);
+  if (!Array.isArray(source)) return [];
+
+  const valueKey = String(p.valueKey ?? 'value');
+  return source.map((it: unknown) => {
+    if (typeof it === 'number') return it;
+    if (it && typeof it === 'object') return Number((it as R)[valueKey] ?? (it as R).y ?? 0) || 0;
+    return Number(it) || 0;
+  });
+}
+
 export function renderSparklineHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as R;
-  const raw = Array.isArray(p.values) ? (p.values as unknown[]).map((v) => Number(v) || 0) : [];
+  const raw = sparklineSeries(p, ctx);
   const w = Number(p.width ?? 240);
   const h = Number(p.height ?? 60);
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');

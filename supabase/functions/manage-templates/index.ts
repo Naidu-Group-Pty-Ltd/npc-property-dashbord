@@ -332,6 +332,21 @@ const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   'borrowing',
   // Portfolio Performance Review reads `portfolio_analysis_reports`.
   'portfolio',
+  // Property Comparison Analysis reads `property_comparisons`, through the
+  // normaliser its own render route uses.
+  'comparison',
+  // Client Details reads nine `client_*` tables through the normaliser the
+  // format's own render route uses. `formara` is the legacy generator's name
+  // for the same document and reaches the same adapter, so a template stored
+  // under it is activatable rather than stranded.
+  'client_details',
+  'formara',
+  // 10 Year Cash Flow reads the stored `financial_calculations.projections` on
+  // `investment_reports`; `cash_flow_analyses` holds 0 rows by design. Its
+  // adapter returns null for the 1,020 reports that store no series, so a
+  // template being activatable for the type does not make every report render.
+  'cashflow',
+  'cash_flow',
 ]);
 
 function normaliseReportTemplateType(reportType: unknown): string {

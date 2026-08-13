@@ -359,3 +359,73 @@ and `toContain('blob: Blob')` by an unrelated function parameter.
 
 Until then the new control fails with a message naming the buttons that work,
 which keep working throughout.
+
+---
+
+## 8. The Template Builder path — the same record, fifty designs
+
+Everything above is the **render route**: `render-client-details-pdf`, one
+archetype, `pageBudget: [4, 34]`, a WeasyPrint container that can paginate.
+
+`/admin/template-builder` can now activate one of **50 design templates** for
+`report_type = 'client_details'` instead, drawn in the ten Investment Compass
+families. `clientDetailsAdapter` drives them, and it reads the same nine tables
+through the same `buildClientDetails` — one reader, two renderers, one answer to
+every question in §3 and §4 above. `formara`, the legacy generator's own name
+for this document, aliases to the same adapter so a template stored under it is
+activatable rather than stranded.
+
+### The family pages cannot paginate, so the bounding moved
+
+The archetype route flows: a 100-row expense table becomes three pages. A family
+master is absolutely positioned and cannot — a table that runs long does not
+spill onto the next page, it prints over whatever follows. So
+`clientDetailsProjection.pure.ts` bounds every collection, and every bound is
+measured:
+
+| Collection | Max in the record | Family masters draw | Clients above it |
+| --- | --- | --- | --- |
+| Expense rows | **100** | grouped, never listed | — |
+| Expense categories | 14 | 14 | 0 |
+| Assets | 18 | 8 | 2 of 20 |
+| Liabilities | 16 | 8 | 1 of 18 |
+| Properties | 4 | 4 | 0 |
+| Employment | 3 | 3 | 0 |
+| Address history | 18 | 4 | 2 of 18 |
+
+**Expenses are grouped rather than truncated.** One client records 100 rows and
+the average among the thirteen who record any is 39 — no cap short enough to fit
+a page leaves a useful document, and a category total is what a broker reads
+anyway. Grouping is safe on the payload and would not be on the column:
+`expense_category` is stored as `groceries` beside `Groceries` and
+`health_insurance` beside `Housing`, and `humanise()` has already folded them.
+
+Where a cap does bite the page says so, with the count from the record beside
+it. That is `PORTFOLIO.md`'s F4: the finding against the shipping generator is
+not that it stops, it is that it stops "with nothing on the page saying so".
+
+### D5 is the design, not a special case
+
+742 of the 775 clients hold nothing financial. Every financial page in these
+masters carries `conditional: clientDetails.hasFinancials`, so a conditional
+page costs nothing when it does not render — the same fifty masters produce a
+5-page document for those 742 and up to 13 for the other 33.
+
+The closing page draws **two blocks at one position** under opposite
+conditionals: the summary of where the client stands, or §5's sentence. Exactly
+one renders, and `clientDetailsCatalogue.spec.ts` asserts both directions.
+
+`hasFinancials` is deliberately not `netWorth > 0`: a client holding a property
+worth exactly what is owed on it has a net worth of zero and a great deal
+recorded, and one with only liabilities has a negative net worth and the same.
+
+### What this format can bind that the others cannot
+
+`{{client.name}}`. `clients` is the source table, so the document is genuinely
+about a named person — and this is the only one of the six formats where that
+binding resolves. The Borrowing Capacity, Comparison and Cash Flow masters name
+their subject instead, because their source tables carry no client at all; all
+three shipped a blank cover title before that was measured.
+
+See [`../template-library/07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)
+for the design system these 50 masters are drawn in.

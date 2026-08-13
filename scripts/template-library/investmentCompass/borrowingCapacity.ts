@@ -76,8 +76,22 @@ import { hasContents } from './resolvers';
 import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
-/** The running foot on every content page. */
-const FOOTER = '{{client.name}} · Borrowing capacity snapshot';
+/**
+ * The running foot on every content page.
+ *
+ * Not `{{client.name}}`, which is what this said until the Cash Flow format's
+ * binding audit ran every master's paths against a real row.
+ * `borrowing_capacity_assessments` has **no client-name column at all** — it
+ * carries `client_id` — and `borrowingCapacityProjection.spec.ts` has always
+ * asserted that `client.name` must stay absent rather than be invented. An
+ * unresolved binding renders as the empty string, so every page of every
+ * assessment was footed " · Borrowing capacity snapshot", and the cover title
+ * — the largest type in the document — was blank.
+ *
+ * The band is what this document concludes and is set on all 143 assessments,
+ * so it names the snapshot instead.
+ */
+const FOOTER = 'Borrowing capacity snapshot · {{capacity.bandLabel}}';
 /** The left half of the running head. */
 const DOCUMENT_LABEL = 'Borrowing Capacity Snapshot';
 
@@ -167,14 +181,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     tagline: 'Your dedicated property partner',
     marker: 'Borrowing Capacity',
     eyebrow: 'Borrowing capacity snapshot',
-    title: '{{client.name}}',
+    // The conclusion, not the client — there is no client name on this record.
+    // See the note on FOOTER. `bandLabel` is derived from `serviceability_band`,
+    // which is set on all 143 assessments.
+    title: '{{capacity.bandLabel}}',
     standfirst: 'What a lender would advance on the income, commitments and buffer stated inside.',
     locations: 'Prepared {{report.generatedDate}}',
     facts: [
       { label: 'Capacity', value: '{{capacity.borrowing | currency}}' },
-      { label: 'Position', value: '{{capacity.bandLabel}}' },
+      { label: 'Stress tested', value: '{{capacity.stressTested | currency}}' },
       { label: 'Assessment rate', value: '{{loan.assessmentRate | percent}}' },
-      { label: 'Lender', value: '{{loan.lender}}' },
+      // Was `{{loan.lender}}`, which is `assumptions.selectedLenderName` and is
+      // set on 26 of the 143 — a blank fact on 82% of covers. The surplus is
+      // stored on all 143 and is the figure the band is a judgement about.
+      { label: 'Monthly surplus', value: '{{capacity.monthlySurplus | currency}}' },
     ],
   }));
 

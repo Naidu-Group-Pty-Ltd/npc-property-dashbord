@@ -60,36 +60,72 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
   const meta = titleAndCaption(p, ctx);
   const palette = (p.palette as string[]) ?? undefined;
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
-  const max = Math.max(1, ...series.map((s) => s.value));
   const innerH = box.h - meta.reserveTop - meta.reserveBottom - 28;
   const innerW = box.w;
   const barGap = 6;
   const barW = series.length ? (innerW - barGap * (series.length + 1)) / series.length : 0;
   const horizontal = (p.orientation ?? 'vertical') === 'horizontal';
 
+  /**
+   * The domain always contains zero, and bars are measured from it.
+   *
+   * This used to be `max = Math.max(1, ...values)` with every bar drawn as
+   * `value / max` of the plot height. On an all-negative series — which is what
+   * a cash-flow projection is: 4,856 of the 4,860 stored elements are negative —
+   * `max` fell back to 1, so a −$35,909 bar asked for a rect 35,909pt tall at a
+   * negative height, which is invalid SVG and renders as nothing. A reader got
+   * an empty plot frame where the chart should be, on a page whose whole subject
+   * is the figure that is missing.
+   *
+   * Zero-based is also the only honest baseline for a chart carrying both signs:
+   * scaling to the range alone would draw the least-bad year as a full-height
+   * bar. The axis is drawn wherever zero falls, which is the top of the plot for
+   * an all-negative series and the bottom for an all-positive one — so the
+   * common case is unchanged, to the pixel.
+   */
+  const values = series.map((s) => s.value);
+  const hi = Math.max(0, ...values);
+  const lo = Math.min(0, ...values);
+  const span = hi - lo || 1;
+  /** Where zero sits, measured down from the top of the plot. */
+  const zeroY = (hi / span) * innerH;
+  const zeroX = 60 + (-lo / span) * (innerW - 60);
+
   const bars = series.map((s, i) => {
-    const v = (s.value / max) * (horizontal ? innerW - 60 : innerH);
     const color = safeChartColor(s.color ?? colorFromPalette(i, palette), ctx, accent);
+    const label = esc(formatCell(s.value, (p.format as any) ?? 'auto'));
     if (horizontal) {
       const rowH = innerH / series.length;
       const yPos = i * rowH + 4;
+      const len = (Math.abs(s.value) / span) * (innerW - 60);
+      const xStart = s.value < 0 ? zeroX - len : zeroX;
       return `<g>
         <text x="0" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:#1A1A1A;">${esc(s.label)}</text>
-        <rect x="60" y="${yPos}" width="${Math.max(0, v)}" height="${rowH - 8}" fill="${color}" rx="2"/>
-        <text x="${60 + v + 4}" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:#1A1A1A;font-variant-numeric:tabular-nums;">${esc(formatCell(s.value, (p.format as any) ?? 'auto'))}</text>
+        <rect x="${xStart.toFixed(1)}" y="${yPos}" width="${len.toFixed(1)}" height="${rowH - 8}" fill="${color}" rx="2"/>
+        <text x="${(xStart + len + 4).toFixed(1)}" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:#1A1A1A;font-variant-numeric:tabular-nums;">${label}</text>
       </g>`;
     }
     const xPos = barGap + i * (barW + barGap);
-    const yPos = innerH - v;
+    const height = (Math.abs(s.value) / span) * innerH;
+    const yPos = s.value < 0 ? zeroY : zeroY - height;
+    // The value sits outside the bar on whichever side the bar grew.
+    const valueY = s.value < 0 ? yPos + height + 9 : yPos - 3;
     return `<g>
-      <rect x="${xPos}" y="${yPos}" width="${barW}" height="${v}" fill="${color}" rx="2"/>
+      <rect x="${xPos}" y="${yPos.toFixed(1)}" width="${barW}" height="${height.toFixed(1)}" fill="${color}" rx="2"/>
       <text x="${xPos + barW / 2}" y="${innerH + 12}" style="font-size:7pt;fill:#666;text-anchor:middle;">${esc(s.label)}</text>
-      <text x="${xPos + barW / 2}" y="${yPos - 3}" style="font-size:7pt;fill:#1A1A1A;text-anchor:middle;font-variant-numeric:tabular-nums;">${esc(formatCell(s.value, (p.format as any) ?? 'auto'))}</text>
+      <text x="${xPos + barW / 2}" y="${valueY.toFixed(1)}" style="font-size:7pt;fill:#1A1A1A;text-anchor:middle;font-variant-numeric:tabular-nums;">${label}</text>
     </g>`;
   }).join('');
 
+  // Only where zero is inside the plot rather than on its edge, which is the
+  // case a reader cannot infer from the bars alone.
+  const zeroRule = !horizontal && lo < 0 && hi > 0
+    ? `<line x1="0" x2="${innerW}" y1="${zeroY.toFixed(1)}" y2="${zeroY.toFixed(1)}" stroke="#666" stroke-width="0.75"/>`
+    : '';
+
   return `<div style="${box.style}">${meta.titleHtml}
     <svg viewBox="0 0 ${innerW} ${innerH + 16}" style="width:100%;height:${innerH + 16}pt;display:block;">
+      ${zeroRule}
       ${bars}
     </svg>
     ${meta.captionHtml}

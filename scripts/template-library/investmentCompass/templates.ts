@@ -51,6 +51,7 @@ import {
   disclaimerPage,
   flow,
   furniture,
+  ifItFits,
   kpiCapacity,
   kpis,
   page,
@@ -62,6 +63,7 @@ import {
   scenarioChart,
   sectionHeading,
   strengthsWatch,
+  textHeight,
   table,
   verdict,
   withFurniture,
@@ -88,7 +90,34 @@ const INVESTMENT_COMPASS_FORMAT: ReportFormat = {
 };
 
 /** The running foot on every content page. */
-const FOOTER = '{{property.address}} · {{client.name}}';
+/**
+ * The running foot.
+ *
+ * Not `{{client.name}}`: `investment_reports` has no client-name column and
+ * `client_property_id` is set on 2 of the 1,182 reports, so every page of every
+ * Compass document was footed "<address> · " with a dangling separator. An
+ * unresolved binding renders as the empty string, never as a visible `{{…}}`.
+ */
+const FOOTER = '{{property.address}} · Investment Compass';
+
+/**
+ * The longest each bound field runs across the 1,182 stored reports.
+ *
+ * Measured, because a declared height that is too small does not overflow the
+ * page — it lays one block over the next, invisibly to `flow()`'s arithmetic
+ * guard. See `textHeight` in `blocks.ts`.
+ */
+/**
+ * `breakdown.<dimension>.details`, per dimension, across the 985 scored reports.
+ *
+ * Sized individually rather than at the worst case. Reserving risk's 228 for
+ * all three ran the assessment page 4pt past the footer on Luxury Editorial's
+ * third variant — which the seed builder refused to write, exactly as it
+ * should: `location` is 94 at its longest and `yield` is 51, and two thirds of
+ * that reservation was for prose those dimensions never write.
+ */
+const DETAIL_CHARS = { location: 94, yield: 51, risk: 228 } as const;
+
 /** The left half of the running head. */
 const DOCUMENT_LABEL = 'Investment Compass · {{property.address}}';
 
@@ -182,13 +211,19 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     marker: 'Investment Compass',
     eyebrow: 'Investment Compass',
     title: '{{property.address}}',
-    standfirst: '{{summary.narrative}}',
-    locations: '{{property.suburb}} · {{market.postcode}} · {{market.state}}',
+    // Was `{{summary.narrative}}`, `{{property.suburb}}`, `{{market.postcode}}`
+    // and `{{market.state}}` — none of which any adapter publishes, and none of
+    // which has a column to publish from. `location_intelligence` carries
+    // amenities, commute, schools and transport; there is no postcode, no state
+    // and no market prose anywhere in the row. So the cover said nothing under
+    // the address, on every report.
+    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
+    locations: 'Prepared {{report.generatedDate}}',
     facts: [
       { label: 'Verdict', value: '{{recommendation.headline}}' },
-      { label: 'Prepared', value: '{{report.generatedDate}}' },
-      { label: 'Prepared for', value: '{{client.name}}' },
-      { label: 'Adviser', value: '{{author.name}}' },
+      { label: 'Grade', value: '{{recommendation.grade}}' },
+      { label: 'Score', value: '{{recommendation.score | fixed:0}}', },
+      { label: 'Weekly position', value: '{{financials.weeklyNet | currency}}' },
     ],
   }));
 
@@ -236,7 +271,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     { label: 'Cash on cash', value: '{{financials.cashOnCash | percent}}', note: 'Year one' },
     { label: 'Total cost', value: '{{financials.totalCost | currency}}', note: 'Including acquisition costs' },
     { label: 'Annual repayment', value: '{{financials.annualRepayment | currency}}', note: 'P&I, modelled rate' },
-    { label: 'Break-even rent', value: '{{financials.breakEvenRent | currency}}', note: 'Weekly, to hold at nil' },
+    // Was `financials.breakEvenRent`, which no column supplies and no
+    // derivation can honestly reach. `netYield` is stored on every scored
+    // report and is the figure a reader wants beside the gross.
+    { label: 'Net yield', value: '{{financials.netYield | percent}}', note: 'After holding costs' },
     { label: 'Capital growth', value: '{{assumptions.capitalGrowth | percent}}', note: 'Base case, per annum' },
     { label: 'Interest rate', value: '{{assumptions.interestRate | percent}}', note: 'Modelled' },
     { label: 'Vacancy', value: '{{assumptions.vacancy | percent}}', note: 'Allowance' },
@@ -252,7 +290,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       verdict({
         eyebrow: 'The verdict',
         heading: '{{recommendation.headline}}',
-        body: '{{recommendation.rationale}}',
+        // `investment_score` holds ONE recommendation string and no rationale
+        // beside it, so this used to be blank under a heading that promised an
+        // explanation. The grade and the weighting are what the record can
+        // actually say about how the verdict was reached; the scorecard on the
+        // assessment page shows the five dimensions it is composed of.
+        body: 'Graded {{recommendation.grade}} at {{recommendation.score | fixed:0}} out of 100, '
+          + 'weighted across growth, location, yield, demand and risk.',
       }),
       kpis(dashboardKpis),
       ...(splitSnapshot ? [] : [
@@ -263,19 +307,26 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             ['Configuration', '{{property.configuration}}'],
             ['Land area', '{{property.landArea}}'],
             ['Zoning', '{{property.zoning}}'],
-            ['Tenancy', '{{property.tenancy}}'],
+            // Was `property.tenancy`: `property_specs` has no such key on any
+            // of the 1,182 rows. `council_area` is on 1,054 of them.
+            ['Council', '{{property.council}}'],
             ['Loan amount', '{{financials.loanAmount | currency}}'],
             ['Annual repayment', '{{financials.annualRepayment | currency}}'],
           ],
           columnWidths: [0.42, 0.58],
           numeric: [],
         }),
-        strengthsWatch(
-          ['{{summary.strength.0}}', '{{summary.strength.1}}'],
-          ['{{summary.watch.0}}', '{{summary.watch.1}}'],
-        ),
+        // One each, not two.
+        //
+        // Across the 985 scored reports `investment_score.strengths` holds at
+        // least one on 745 and at least two on **47**; `weaknesses` holds one on
+        // 874 and two on **15**. A second row therefore printed a marker with
+        // nothing beside it on 95% and 98% of reports respectively.
+        strengthsWatch(['{{summary.strength.0}}'], ['{{summary.watch.0}}']),
       ]),
-      callout('What this means', '{{financials.narrative}}'),
+      // No closing callout. It bound `financials.narrative`, which nothing
+      // publishes and no column holds, so it printed a titled panel with an
+      // empty body on every report.
     ], contentTop()),
   ]), FOOTER));
 
@@ -287,7 +338,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           eyebrow: 'The asset',
           heading: 'What is being bought',
           numeral: nextNumeral(),
-          standfirst: '{{property.rationale}}',
+          // No standfirst: `property.rationale` has no column and no producer.
         }),
         table({
           headers: ['Property', 'Detail'],
@@ -298,16 +349,22 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             ['Land area', '{{property.landArea}}'],
             ['Year built', '{{property.yearBuilt}}'],
             ['Zoning', '{{property.zoning}}'],
-            ['Condition', '{{property.condition}}'],
-            ['Tenancy', '{{property.tenancy}}'],
+            // `condition` and `tenancy` are not keys `property_specs` has ever
+            // carried; `council_area` and `building_size_sqm` are, on 1,054 of
+            // the 1,182 rows.
+            ['Council', '{{property.council}}'],
+            ['Building area', '{{property.buildingArea}}'],
           ],
           columnWidths: [0.34, 0.66],
           numeric: [],
         }),
-        strengthsWatch(
-          ['{{summary.strength.0}}', '{{summary.strength.1}}'],
-          ['{{summary.watch.0}}', '{{summary.watch.1}}'],
-        ),
+        // One each, not two.
+        //
+        // Across the 985 scored reports `investment_score.strengths` holds at
+        // least one on 745 and at least two on **47**; `weaknesses` holds one on
+        // 874 and two on **15**. A second row therefore printed a marker with
+        // nothing beside it on 95% and 98% of reports respectively.
+        strengthsWatch(['{{summary.strength.0}}'], ['{{summary.watch.0}}']),
       ], contentTop()),
     ]), FOOTER));
   }
@@ -317,20 +374,69 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // dropped from four of the ten plated masters without anything saying so.
   pages.push(...platesFor('property'));
 
-  // ── 03 Narrative ─────────────────────────────────────────────────────────
-  pages.push(withFurniture(page('Investment thesis', [
-    ...furniture(DOCUMENT_LABEL, nextPart('Thesis'), 'Investment thesis'),
-    ...flow([
+  // ── 03 The assessment ────────────────────────────────────────────────────
+  //
+  // This page used to be four bound paragraphs — `market.conclusion.headline`,
+  // `market.narrative`, `market.conclusion.body` and `property.rationale` — and
+  // **not one of them had a source**. No adapter published `market`, and
+  // `location_intelligence` carries amenities, commute, schools and transport
+  // rather than prose. So the Investment Compass's central narrative page
+  // rendered as white paper under a blank heading on every report ever produced.
+  //
+  // What the record does hold is `investment_score.breakdown`: five weighted
+  // dimensions, each with a score and a `details` sentence. That is the
+  // reasoning behind the grade, and it is what this page now shows.
+  //
+  // Three of the five carry prose and two do not. Measured across the 985
+  // scored reports: `riskScore.details` on all 985 (228 characters at its
+  // longest), `yieldScore` on all 985 (51), `locationScore` on 965 (94) — while
+  // `growthScore` and `demandScore` are scored a flat 50 with no details on 919
+  // of the 985, which is why they appear in the scorecard and not in the
+  // reasoning beneath it.
+  pages.push(withFurniture(page('The assessment', [
+    ...furniture(DOCUMENT_LABEL, nextPart('Assessment'), 'The assessment'),
+    ...flow(ifItFits([
       sectionHeading({
-        eyebrow: 'The case',
-        heading: '{{market.conclusion.headline}}',
+        eyebrow: 'How the grade was reached',
+        heading: 'Five dimensions, weighted',
         numeral: nextNumeral(),
+        standfirst: 'Each dimension is scored out of 100 and weighted into the total. '
+          + 'A dimension the assessment had no data for is scored at the midpoint.',
       }),
-      prose('{{market.narrative}}', manifest.density === 'compact' ? 96 : 120),
-      rule(),
-      prose('{{market.conclusion.body}}', 92),
-      callout('Why this suburb', '{{property.rationale}}'),
-    ], contentTop()),
+      table({
+        headers: ['Dimension', 'Score', 'Weight'],
+        rows: [0, 1, 2, 3, 4].map((i) => [
+          `{{assessment.${i}.label}}`,
+          `{{assessment.${i}.score | fixed:0}}`,
+          `{{assessment.${i}.weight | fixed:0}}%`,
+        ]),
+        columnWidths: [0.5, 0.25, 0.25],
+        numeric: [1, 2],
+      }),
+      // Location, yield and risk — the three that say something. Each is
+      // conditional on its own `details`, because a dimension with a score and
+      // no prose must not print a term with nothing beside it.
+      ...[
+        { i: 1, term: 'Location', chars: DETAIL_CHARS.location },
+        { i: 2, term: 'Yield', chars: DETAIL_CHARS.yield },
+        { i: 4, term: 'Risk', chars: DETAIL_CHARS.risk },
+      ].map(({ i, term, chars }) => ({
+        ...definitions('Why', [
+          { term, definition: `{{assessment.${i}.details}}` },
+        ], chars),
+        conditional: `assessment && assessment[${i}] && assessment[${i}].details`,
+      })),
+    ], [
+      // Opportunities are an array on the scored reports and empty on most of
+      // them, so this is drawn only where the variant has room AND the record
+      // has one.
+      {
+        ...definitions('Opportunities', [
+          { term: 'Noted', definition: '{{opportunities.0}}' },
+        ], 120),
+        conditional: 'opportunities && opportunities[0]',
+      },
+    ], contentTop()), contentTop()),
   ]), FOOTER));
   pages.push(...platesFor('thesis'));
 
@@ -340,7 +446,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ['Stamp duty', '{{financials.stampDuty | currency}}', 'State schedule'],
     ['Legal and conveyancing', '{{financials.legalFees | currency}}', 'Estimate'],
     ['Building and pest', '{{financials.inspectionFees | currency}}', 'Estimate'],
-    ['Loan establishment', '{{financials.loanFees | currency}}', 'Lender schedule'],
+    // `financials.loanFees` has no column and no producer; the row printed a
+    // label, a blank and "Lender schedule" on every report.
+    ['LVR at settlement', '{{financials.lvr | percent:0}}', 'Loan over price'],
     ['Total acquisition cost', '{{financials.totalCost | currency}}', 'Sum of the above'],
   ];
   const cashflowRows = [
@@ -396,7 +504,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           columnWidths: [0.46, 0.27, 0.27],
           totals: [cashflowRows.length - 1],
         }),
-        callout('The funding structure', '{{financials.fundingNote}}'),
+        // No funding callout: `financials.fundingNote` has no column and no
+        // producer, so it printed a titled panel with nothing in it.
       ], contentTop()),
     ]), FOOTER));
   }
@@ -418,9 +527,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       }),
       definitions('Assumptions', [
         { term: 'Capital growth', definition: '{{assumptions.capitalGrowth | percent}} per annum' },
-        { term: 'Rental growth', definition: '{{assumptions.rentalGrowth | percent}} per annum' },
         { term: 'Interest rate', definition: '{{assumptions.interestRate | percent}}' },
         { term: 'Vacancy allowance', definition: '{{assumptions.vacancy | percent}}' },
+        // `assumptions.rentalGrowth` was the fourth row and has no column.
+        { term: 'Occupancy', definition: '{{assumptions.occupancyWeeks}} weeks a year' },
       ]),
     ], contentTop()),
   ]), FOOTER));
@@ -435,21 +545,30 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: 'Manageable with verification, not without it',
         numeral: nextNumeral(),
       }),
-      risks('Hazard · rating · verification', [
-        {
-          risk: '{{risks.0.risk}}', rating: 'High', confidence: 'Indicative',
-          why: '{{risks.0.why}}', ddAction: '{{risks.0.action}}',
-        },
-        {
-          risk: '{{risks.1.risk}}', rating: 'Moderate', confidence: 'Indicative',
-          why: '{{risks.1.why}}', ddAction: '{{risks.1.action}}',
-        },
-        {
-          risk: '{{risks.2.risk}}', rating: 'Moderate', confidence: 'Indicative',
-          why: '{{risks.2.why}}', ddAction: '{{risks.2.action}}',
-        },
-      ], 118),
-      recommendation('{{recommendation.headline}}', '{{recommendation.rationale}}'),
+      // ONE row, not three, and no `why`/`ddAction` columns.
+      //
+      // `investment_score.risks` is an array of plain strings whose length runs
+      // **0 to 1** across all 1,182 reports — never 2, never 3 — and a string
+      // has no `why` and no verification action. So this register drew three
+      // rows of which at most one could ever fill, and all three of its prose
+      // columns were empty on every report ever produced.
+      //
+      // The row is conditional because 197 reports carry no score object at all
+      // and a further set score zero risks; the assessment page carries the
+      // risk dimension's own reasoning either way.
+      {
+        ...risks('Hazard · rating · verification', [{
+          risk: '{{risks.0.risk}}', rating: 'Noted', confidence: 'Indicative',
+          why: '{{assessment.4.details}}', ddAction: 'Verify before exchange',
+        }], DETAIL_CHARS.risk),
+        conditional: 'risks && risks[0] && risks[0].risk',
+      },
+      recommendation(
+        '{{recommendation.headline}}',
+        // Was `recommendation.rationale`, which the record does not carry.
+        'Graded {{recommendation.grade}} at {{recommendation.score | fixed:0}} out of 100. '
+        + 'The five weighted dimensions behind that grade are set out on the assessment page.',
+      ),
     ], contentTop()),
   ]), FOOTER));
 
@@ -462,17 +581,25 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: 'How this assessment was reached',
         numeral: nextNumeral(),
       }),
+      // Six rows, of which five could never resolve. There is no `profiles`
+      // table, so `author.*` has no source; `client.name` has no column;
+      // `market.postcode`/`state`/`suburbCount` are published by nothing; and
+      // `assumptions.taxRate`/`sellingCosts` have no column either. The method
+      // page listed six labelled terms with one value between them.
       definitions('Method', [
-        { term: 'Prepared by', definition: '{{author.name}}, {{author.title}}' },
-        { term: 'Prepared for', definition: '{{client.name}}' },
+        { term: 'Prepared by', definition: '{{org.name}}' },
         { term: 'Date of preparation', definition: '{{report.generatedDate}}' },
-        { term: 'Market data', definition: '{{market.postcode}} {{market.state}}, {{market.suburbCount}} suburbs surveyed' },
-        { term: 'Tax rate assumed', definition: '{{assumptions.taxRate | percent}}' },
-        { term: 'Selling costs assumed', definition: '{{assumptions.sellingCosts | percent}}' },
-        // "Alexandra Whitfield, Senior Investment Adviser" is the longest of
-        // these, at 45 characters — two lines on the narrowest family's measure.
+        { term: 'Property assessed', definition: '{{property.address}}' },
+        { term: 'Assessment grade', definition: '{{recommendation.grade}} · {{recommendation.score | fixed:0}} out of 100' },
+        { term: 'Interest rate assumed', definition: '{{assumptions.interestRate | percent}}' },
+        { term: 'Capital growth assumed', definition: '{{assumptions.capitalGrowth | percent}} per annum' },
       ], 96),
-      callout('Scope', '{{financials.fundingNote}}'),
+      callout(
+        'Scope',
+        'Figures are drawn from the stored assessment and are not re-derived here. '
+        + 'No tax position is modelled and no valuation after settlement is assumed.',
+        textHeight(150, { extra: 34 }),
+      ),
     ], contentTop()),
   ]), FOOTER));
   pages.push(...platesFor('sources'));
