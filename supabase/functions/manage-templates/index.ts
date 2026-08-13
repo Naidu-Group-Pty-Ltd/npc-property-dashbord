@@ -364,6 +364,10 @@ const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
   // `isReportable` so a template cannot produce a document the route refuses.
   'commercial_capacity',
   'commercial_industrial',
+  // Market Intelligence reads `marketing_intelligence_reports` through the
+  // normaliser its own route uses, so the three editorial strips are applied
+  // before a word reaches a page.
+  'market_intelligence',
 ]);
 
 function normaliseReportTemplateType(reportType: unknown): string {

@@ -58,6 +58,7 @@ import { CLIENT_DETAILS_TEMPLATES } from './investmentCompass/clientDetails';
 import { CASH_FLOW_COMPARISON_TEMPLATES } from './investmentCompass/cashFlowComparison';
 import { REPORT_QA_TEMPLATES } from './investmentCompass/reportQa';
 import { COMMERCIAL_CAPACITY_TEMPLATES } from './investmentCompass/commercialCapacity';
+import { MARKET_INTELLIGENCE_TEMPLATES } from './investmentCompass/marketIntelligence';
 import type { CompassSeedTemplate } from './investmentCompass/master';
 
 /**
@@ -77,6 +78,7 @@ const FAMILY_TEMPLATES: CompassSeedTemplate[] = [
   ...CASH_FLOW_COMPARISON_TEMPLATES,
   ...REPORT_QA_TEMPLATES,
   ...COMMERCIAL_CAPACITY_TEMPLATES,
+  ...MARKET_INTELLIGENCE_TEMPLATES,
 ];
 import { typographyFor } from './investmentCompass/family';
 import {
@@ -441,7 +443,8 @@ function main(): void {
 -- ${CLIENT_DETAILS_TEMPLATES.length} Client Details Form,
 -- ${CASH_FLOW_COMPARISON_TEMPLATES.length} Cash Flow Comparison,
 -- ${REPORT_QA_TEMPLATES.length} Report Q&A,
--- ${COMMERCIAL_CAPACITY_TEMPLATES.length} Commercial & Industrial Capacity), which additionally carry
+-- ${COMMERCIAL_CAPACITY_TEMPLATES.length} Commercial & Industrial Capacity,
+-- ${MARKET_INTELLIGENCE_TEMPLATES.length} Market Intelligence), which additionally carry
 -- \`design_meta\` (family, variant axis, density, resolved manifest, colourway
 -- set). Requires 20260811110000_template_library_design_meta.sql.
 --
@@ -508,7 +511,8 @@ WHERE version = 1
     + `${CLIENT_DETAILS_TEMPLATES.length} Client Details Form, `
     + `${CASH_FLOW_COMPARISON_TEMPLATES.length} Cash Flow Comparison, `
     + `${REPORT_QA_TEMPLATES.length} Report Q&A, `
-    + `${COMMERCIAL_CAPACITY_TEMPLATES.length} Commercial & Industrial Capacity`,
+    + `${COMMERCIAL_CAPACITY_TEMPLATES.length} Commercial & Industrial Capacity, `
+    + `${MARKET_INTELLIGENCE_TEMPLATES.length} Market Intelligence`,
   );
   console.log(`  ${readyCount} production-ready, ${all.length - readyCount} preview-only`);
   console.log(`  → ${MIGRATION.replace(REPO + '/', '')} (${(sql.length / 1024).toFixed(0)} KB)`);

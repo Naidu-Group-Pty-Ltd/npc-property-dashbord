@@ -5,6 +5,7 @@ import { comparisonAdapter } from './comparisonAdapter';
 import { cashFlowAdapter } from './cashFlowAdapter';
 import { qaAdapter } from './qaAdapter';
 import { commercialCapacityAdapter } from './commercialCapacityAdapter';
+import { marketIntelligenceAdapter } from './marketIntelligenceAdapter';
 import { clientDetailsAdapter } from './clientDetailsAdapter';
 import type { ReportTemplateAdapter } from './types';
 
@@ -74,10 +75,16 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
    * stored run rather than a recomputation.
    */
   commercialCapacityAdapter,
+  /**
+   * Ninth, and the last of the migrated formats to get one. Goes through the
+   * normaliser rather than the row because three editorial strips live there —
+   * the model's data-limitations hedging, its empty regulatory sections and the
+   * brand tagline it repeats under the letterhead.
+   */
+  marketIntelligenceAdapter,
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
-  previewOnlyAdapter('market_intelligence', 'Market Intelligence'),
 ];
 
 const ALIASES: Record<string, string> = {
