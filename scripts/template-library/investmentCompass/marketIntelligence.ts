@@ -57,10 +57,9 @@ import {
   table,
   textHeight,
   withFurniture,
-  type CompassSeedTemplate,
   type PageDef,
 } from './blocks';
-import { assembleMaster, type ReportFormat } from './master';
+import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
 const FOOTER = '{{marketIntel.meta.reportPeriod}} · Market Intelligence';

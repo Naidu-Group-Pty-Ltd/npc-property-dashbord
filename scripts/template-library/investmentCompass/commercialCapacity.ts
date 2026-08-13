@@ -50,11 +50,10 @@ import {
   table,
   textHeight,
   withFurniture,
-  type CompassSeedTemplate,
   type KpiItem,
   type PageDef,
 } from './blocks';
-import { assembleMaster, type ReportFormat } from './master';
+import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
 const FOOTER = '{{capacity.meta.reference}} · Commercial & Industrial Capacity';
