@@ -40,6 +40,7 @@ import {
   type PassportStampInput,
 } from "./passportStamps.pure.ts";
 import { passportCredential, passportVersionLabel, shortFingerprint } from "./passportCredential.pure.ts";
+import { derivePassportJourney, type PassportJourney } from "./passportJourney.pure.ts";
 
 export type PassportAudience = "command" | "client";
 
@@ -77,6 +78,25 @@ export type PassportTransactionFact = {
   purchase_price: number | null;
 };
 
+export type PassportOwnershipFact = {
+  /** Party name. Command and client both see who; neither sees internals. */
+  name: string;
+  /** beneficial_owner | authorised_representative | entity */
+  party_kind: string;
+  relationship: string | null;
+  ownership_percent: number | null;
+  control_type: string | null;
+  is_ubo: boolean | null;
+  verification_state: string | null;
+};
+
+/** One evidence class a partner organisation may receive. */
+export type PassportDisclosureFact = {
+  code: string;
+  /** granted | limited | withheld — built from the manifest, never guessed. */
+  state: "granted" | "limited" | "withheld";
+};
+
 export type PassportPartnerFact = {
   org_name: string | null;
   org_type: string | null;
@@ -91,6 +111,8 @@ export type PassportPartnerFact = {
   assessment_status: string | null;
   assessment_decided_at: string | null;
   assessor_name: string | null;
+  /** Authorised disclosure for this organisation (v2 manifests only). */
+  disclosure?: PassportDisclosureFact[];
 };
 
 export type PassportEventFact = {
@@ -121,6 +143,8 @@ export type PassportViewInput = {
   entity_details: Record<string, unknown> | null;
   documents: PassportDocumentFact[];
   transactions: PassportTransactionFact[];
+  /** Parties in the control structure. Empty = nothing to show, never faked. */
+  ownership?: PassportOwnershipFact[];
   /** Command-only families; omit entirely for the client audience. */
   screening?: {
     subjects: Array<{ state: string; completed_at?: string | null; party_label?: string | null }>;
@@ -197,6 +221,18 @@ export type PassportView = {
     /** Command always; client sees their own purchase figures too. */
     purchase_price: number | null;
   }>;
+  /** The journey that produced this record — derived, shared with stamps. */
+  journey: PassportJourney;
+  ownership: Array<{
+    name: string;
+    party_kind: string;
+    relationship: string | null;
+    ownership_percent: number | null;
+    control_type: string | null;
+    is_ubo: boolean;
+    verification_state: string | null;
+    verified: boolean;
+  }>;
   stamps: PassportStamp[];
   /** Command: raw hash-chained events. Client: CONSTRUCTED timeline. */
   history: Array<{
@@ -239,6 +275,7 @@ export type PassportView = {
     assessment_status: string | null;
     assessment_decided_at: string | null;
     assessor_name: string | null;
+    disclosure: PassportDisclosureFact[];
   }>;
   open_requests: PassportClientRequestFact[];
 };
@@ -363,6 +400,10 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     schema_version: a.schema_version ?? 1,
   }));
 
+  // The journey is derived from the SAME facts as the stamps, so the two
+  // can never disagree about what has happened.
+  const journey = derivePassportJourney(input.stamp_input, audience);
+
   const view: PassportView = {
     audience,
     header: {
@@ -404,6 +445,17 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
       contract_date: t.contract_date,
       settlement_date: t.settlement_date,
       purchase_price: t.purchase_price,
+    })),
+    journey,
+    ownership: (input.ownership ?? []).map((o) => ({
+      name: o.name,
+      party_kind: o.party_kind,
+      relationship: o.relationship,
+      ownership_percent: o.ownership_percent,
+      control_type: o.control_type,
+      is_ubo: Boolean(o.is_ubo),
+      verification_state: o.verification_state,
+      verified: ["verified", "waived"].includes(String(o.verification_state)),
     })),
     stamps,
     history: audience === "command"
@@ -467,6 +519,7 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
       view.partners = input.partners.map((p) => ({
         ...p,
         version_label: passportVersionLabel(p.attestation_version),
+        disclosure: p.disclosure ?? [],
       }));
     }
   } else {

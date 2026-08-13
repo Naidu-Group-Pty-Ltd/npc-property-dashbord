@@ -141,9 +141,19 @@ const stripComments = (src) => src
   // don't-reuse-your-old-password check over two values the user just typed and
   // has nothing to do with storage. A gate that cries wolf about correct code is
   // how gates get ignored, so this now requires one side to be a record field.
+  //
+  // Same reason for TYPEOF_GUARD. `typeof row.password_hash === 'string'` is a
+  // presence check — "does this partner have a credential at all" — and the
+  // right-hand side is a type name, never a submitted secret. It read as a
+  // violation for as long as `partnerAccess.pure.ts` has existed, which is long
+  // enough that the whole security job was failing on it. Neutralise the shape
+  // before testing rather than relax the rule: a real comparison is not written
+  // `typeof x === 'literal'`, so nothing the gate should catch hides in here —
+  // the negative-test mutation (`body.pw === user.password_hash`) still trips it.
+  const TYPEOF_GUARD = /typeof\s+[\w.]+\s*===?\s*(['"])[a-z]+\1/gi;
   const PLAINTEXT_COMPARE = /===\s*\w+\.(?:password|password_hash)\b|\.(?:password|password_hash)\s*===/i;
   for (const file of walk(FUNC_DIR, ['.ts'])) {
-    const src = stripComments(readFileSync(file, 'utf8'));
+    const src = stripComments(readFileSync(file, 'utf8')).replace(TYPEOF_GUARD, ' ');
     if (PLAINTEXT_COMPARE.test(src)) {
       errors.push(
         `[item-9] ${rel(file)}: compares a password by equality or queries a \`password\` column. `

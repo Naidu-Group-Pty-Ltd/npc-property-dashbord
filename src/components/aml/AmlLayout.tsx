@@ -106,6 +106,7 @@ const LEGACY_WORKSPACES: Workspace[] = [
     minCapability: "aml.view",
     secondary: [
       { label: "Register", to: "/admin/aml/cases", capability: "aml.view" },
+      { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
       { label: "Intake Queue", to: "/admin/aml/intake", capability: "aml.view" },
       { label: "Verification", to: "/admin/aml/verification", capability: "aml.view" },
       { label: "Screening", to: "/admin/aml/screening", capability: "aml.view" },
@@ -199,6 +200,7 @@ const V3_WORKSPACES: Workspace[] = [
     minCapability: "aml.view",
     secondary: [
       { label: "Cases", to: "/admin/aml/cases", capability: "aml.view" },
+      { label: "Compliance Passport", to: "/admin/aml/passport", capability: "aml.view" },
       { label: "My Queue", to: "/admin/aml/intake", capability: "aml.view" },
     ],
   },
