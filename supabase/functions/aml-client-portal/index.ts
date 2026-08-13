@@ -46,6 +46,8 @@ import {
 } from "../_shared/aml/providers/index.ts";
 import { callInternalFunction } from "../_shared/internalCall.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+import { buildPassportView } from "../_shared/aml/passport/passportView.pure.ts";
+import { buildClientStampInput } from "../_shared/aml/passport/passportStamps.pure.ts";
 // The journey is the one canonical statement of where a client is, and four
 // portal surfaces render it. It lives in a pure module so it is testable
 // without a database — see the header there for the documents defect that
@@ -898,6 +900,156 @@ const __corsWrappedHandler = async (req: Request) => {
             portalStatus,
           }),
         });
+      }
+
+      case 'get_passport': {
+        // The client's own Compliance Passport — a DEDICATED server-side
+        // sanitised projection built by the shared pure assembler. It is
+        // never the Command payload with fields hidden client-side: the
+        // restricted case families are not read by this function at all
+        // (a pinned source contract enforces that), and post-issuance
+        // milestone facts come from the ISSUED, SANITISED attestation
+        // payload — what the MLRO attested outward is exactly what the
+        // client may see. The assembler's fail-closed tripwire re-checks
+        // the finished view before it ships.
+        {
+          const { data: flagRow } = await admin.from('feature_flags')
+            .select('value').eq('key', 'aml_passport_client_view').maybeSingle();
+          const fv = flagRow?.value;
+          const flagOn = fv === true || fv === 'true' ||
+            (fv && typeof fv === 'object' && (fv as any).enabled === true);
+          if (!flagOn) {
+            return jsonResponse({ error: 'The Compliance Passport is not available yet.', code: 'passport_disabled' }, 404);
+          }
+        }
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ passport: null });
+
+        const [
+          { data: attRows }, { data: consents }, { data: checks }, { data: docs },
+          { data: reqs }, { data: txns }, { data: grants },
+          { data: assessments }, { data: refreshObs }, { data: requests },
+          { data: personal }, { data: entity }, { data: tenant },
+        ] = await Promise.all([
+          admin.schema('aml').from('compliance_attestations')
+            .select('id, version, issued_at, superseded_at, payload_sha256, schema_version, refresh_required_at, payload')
+            .eq('case_id', c.id).order('version', { ascending: true }),
+          admin.schema('aml').from('consents')
+            .select('id, kind, accepted_at').eq('case_id', c.id),
+          admin.schema('aml').from('verification_checks')
+            .select('id, party_label, check_type, status, completed_at').eq('case_id', c.id),
+          admin.schema('aml').from('documents')
+            .select('id, requirement_id, status, created_at, reviewed_at, version_number')
+            .eq('case_id', c.id).neq('status', 'deleted'),
+          admin.schema('aml').from('document_requirements')
+            .select('id, code, label, required').eq('case_id', c.id),
+          admin.schema('aml').from('transactions')
+            .select('id, kind, status, property_address, contract_date, settlement_date, purchase_price')
+            .eq('case_id', c.id).is('archived_at', null),
+          admin.schema('aml').from('reliance_grants')
+            .select('id, granted_at, revoked_at, attestation_id, reliance_agreements:agreement_id(partner_org_name, partner_org_type)')
+            .eq('case_id', c.id),
+          admin.schema('aml').from('independent_assessments')
+            .select('id, status, decided_at, assessor_name, reliance_agreements:agreement_id(partner_org_name, partner_org_type)')
+            .eq('case_id', c.id),
+          admin.schema('aml').from('partner_refresh_obligations')
+            .select('id, created_at, status').eq('case_id', c.id),
+          admin.schema('aml').from('client_requests')
+            .select('id, kind, subject, status, created_at').eq('case_id', c.id)
+            .order('created_at', { ascending: false }),
+          admin.schema('aml').from('questionnaire_responses')
+            .select('payload').eq('case_id', c.id).eq('section', 'personal_details').maybeSingle(),
+          admin.schema('aml').from('questionnaire_responses')
+            .select('payload').eq('case_id', c.id).eq('section', 'entity_details').maybeSingle(),
+          admin.schema('aml').from('tenant_settings')
+            .select('display_name').eq('tenant_id', 'default').maybeSingle(),
+        ]);
+
+        const attFacts = (attRows ?? []).map((a: any) => ({
+          version: a.version,
+          issued_at: a.issued_at,
+          superseded_at: a.superseded_at,
+          payload_sha256: a.payload_sha256,
+          schema_version: a.schema_version ?? 1,
+        }));
+        const currentAtt = (attRows ?? []).filter((a: any) => !a.superseded_at)
+          .sort((a: any, b: any) => b.version - a.version)[0] ?? null;
+        const versionByAttId = new Map<string, number>((attRows ?? []).map((a: any) => [a.id, a.version]));
+        const reqById = new Map<string, any>((reqs ?? []).map((r: any) => [r.id, r]));
+        const issuerOrg = tenant?.display_name ?? 'Your adviser';
+        // Derivation inputs only — the raw case enum and gate token feed the
+        // shared state derivation server-side and are never shipped; the
+        // client receives the derived passport state (label + tone). The
+        // local rename makes that boundary visible in the source.
+        const internalCaseStatus: string | null = c.status ?? null;
+        const caseFactsForDerivation = {
+          id: c.id,
+          case_reference: c.case_reference,
+          subject_display_name: c.subject_display_name,
+          subject_type: c.subject_type,
+          status: internalCaseStatus,
+          case_stage: c.case_stage ?? null,
+          service_gate_status: c.service_gate_status ?? null,
+          opened_at: c.opened_at,
+          closed_at: c.closed_at ?? null,
+        };
+
+        const view = buildPassportView('client', {
+          issuer_org: issuerOrg,
+          officer_label: null,
+          case: caseFactsForDerivation,
+          attestations: attFacts,
+          material_inputs_current: currentAtt
+            ? (currentAtt.refresh_required_at ? false : ((currentAtt.schema_version ?? 1) === 2 ? true : null))
+            : null,
+          open_refresh_obligations: (refreshObs ?? []).filter((r: any) => r.status === 'open').length,
+          personal_details: (personal?.payload && typeof personal.payload === 'object') ? personal.payload : null,
+          entity_details: (entity?.payload && typeof entity.payload === 'object') ? entity.payload : null,
+          documents: (docs ?? []).map((d: any) => ({
+            id: d.id,
+            requirement_label: reqById.get(d.requirement_id)?.label ?? null,
+            requirement_code: reqById.get(d.requirement_id)?.code ?? null,
+            required: reqById.get(d.requirement_id)?.required ?? null,
+            status: d.status,
+            created_at: d.created_at,
+            version_number: d.version_number,
+          })),
+          transactions: txns ?? [],
+          client_requests: requests ?? [],
+          stamp_input: buildClientStampInput({
+            issuer_org: issuerOrg,
+            attestations: attFacts.map((a: any) => ({
+              version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
+            })),
+            consents: consents ?? [],
+            verification_checks: checks ?? [],
+            documents: (docs ?? []).map((d: any) => ({
+              status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
+            })),
+            grants: (grants ?? []).map((g: any) => ({
+              id: g.id,
+              created_at: g.granted_at,
+              revoked_at: g.revoked_at,
+              partner_org_name: g.reliance_agreements?.partner_org_name ?? null,
+              partner_org_type: g.reliance_agreements?.partner_org_type ?? null,
+              attestation_version: versionByAttId.get(g.attestation_id) ?? null,
+            })),
+            assessments: (assessments ?? []).map((a: any) => ({
+              id: a.id, status: a.status, decided_at: a.decided_at, assessor_name: a.assessor_name,
+              partner_org_name: a.reliance_agreements?.partner_org_name ?? null,
+              partner_org_type: a.reliance_agreements?.partner_org_type ?? null,
+            })),
+            refresh_obligations: (refreshObs ?? []).map((r: any) => ({
+              id: r.id, created_at: r.created_at, status: r.status,
+            })),
+            transactions: (txns ?? []).map((t: any) => ({
+              id: t.id, status: t.status, settlement_date: t.settlement_date,
+              property_address: t.property_address,
+            })),
+            attestation_payload: currentAtt?.payload ?? null,
+          }),
+        });
+        return jsonResponse({ passport: view });
       }
 
       case 'get_questionnaire': {

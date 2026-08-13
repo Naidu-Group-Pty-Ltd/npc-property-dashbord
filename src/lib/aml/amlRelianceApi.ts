@@ -206,6 +206,14 @@ export const amlRelianceApi = {
 
   listAssessments: (case_id: string) =>
     invoke<{ assessments: IndependentAssessment[] }>({ op: "list_assessments", case_id }),
+  /**
+   * The Command Centre Compliance Passport projection. Read-only; any AML
+   * role; flag-gated server-side (`aml_passport_command_view` → 404
+   * `passport_disabled` when off). The state, credential, stamps and every
+   * section arrive derived — the browser renders and never re-decides.
+   */
+  getPassportView: (case_id: string) =>
+    invoke<{ passport: import("./passport").PassportView }>({ op: "get_passport_view", case_id }),
   listAccessLog: (case_id: string) =>
     invoke<{ access_log: any[] }>({ op: "list_access_log", case_id }),
 

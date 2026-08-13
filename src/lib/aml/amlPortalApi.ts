@@ -339,6 +339,15 @@ export const amlPortalApi = {
   respondRequest: (request_id: string, response_payload: Record<string, any>) =>
     call<{ request: any }>('respond_client_request', { request_id, response_payload }),
   submitForReview: (case_id: string) => call<{ submission: any }>('submit_for_review', { case_id }),
+
+  /**
+   * The client's own Compliance Passport — a dedicated server-side sanitised
+   * projection (never the staff payload trimmed client-side). Flag-gated
+   * server-side (`aml_passport_client_view` → 404 `passport_disabled` when
+   * off); `passport: null` means no case exists yet.
+   */
+  getPassport: (case_id?: string) =>
+    call<{ passport: import('./passport').PassportView | null }>('get_passport', case_id ? { case_id } : {}),
 };
 
 /** Upload a File via signed URL then confirm on the server. */

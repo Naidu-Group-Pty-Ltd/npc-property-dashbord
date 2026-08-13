@@ -1,0 +1,74 @@
+/**
+ * Compliance Passport — scoped presentation tokens.
+ *
+ * The Passport's seal/stamp faces carry a deliberate "ink on paper" palette
+ * taken from the approved Claude Design (gold foil, registry navy, verified
+ * green, partner blue, restriction red). They exist ONLY inside a
+ * `.passport-scope` wrapper: nothing here restyles shared UI, and no
+ * component may hard-code these colours inline — the audit:style ratchet
+ * stays untouched because every value lives in this one token file.
+ *
+ * Values are HSL triples in the repo's token convention. Both themes read
+ * acceptably because seals sit on card surfaces that already adapt; the
+ * ink tones are mid-saturation by design (print ink, not neon).
+ */
+
+.passport-scope {
+  --passport-seal-gold: 43 59% 34%;
+  --passport-seal-green: 146 40% 30%;
+  --passport-seal-navy: 221 40% 28%;
+  --passport-seal-blue: 215 57% 32%;
+  --passport-seal-red: 0 55% 40%;
+}
+
+.passport-seal {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-width: 2px;
+  border-style: solid;
+  border-color: hsl(var(--passport-seal-ink) / 0.55);
+  color: hsl(var(--passport-seal-ink));
+  background: hsl(var(--passport-seal-ink) / 0.06);
+}
+
+.passport-seal--gold { --passport-seal-ink: var(--passport-seal-gold); }
+.passport-seal--green { --passport-seal-ink: var(--passport-seal-green); }
+.passport-seal--navy { --passport-seal-ink: var(--passport-seal-navy); }
+.passport-seal--blue { --passport-seal-ink: var(--passport-seal-blue); }
+.passport-seal--red { --passport-seal-ink: var(--passport-seal-red); }
+
+.passport-seal--circle {
+  border-radius: 9999px;
+  border-style: double;
+  border-width: 3px;
+  transform: rotate(-6deg);
+}
+.passport-seal--rect {
+  border-radius: 3px;
+  transform: rotate(-2deg);
+}
+.passport-seal--seal {
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+  transform: rotate(3deg);
+}
+
+.passport-seal__ring {
+  position: absolute;
+  inset: 5px;
+  border: 1px dashed hsl(var(--passport-seal-ink) / 0.5);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .passport-seal {
+    transition: transform 180ms ease-out;
+  }
+  button:hover > .passport-seal,
+  button:focus-visible > .passport-seal {
+    transform: rotate(0deg) scale(1.02);
+  }
+}
