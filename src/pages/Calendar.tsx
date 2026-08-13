@@ -1589,6 +1589,7 @@ export default function Calendar() {
                     <TabsList className="grid h-auto w-full grid-cols-4 gap-2 rounded-2xl border border-border bg-card/80 p-2 shadow-inner shadow-sm dark:shadow-black/20">
                       {orderedSidebarTabs.map((tab) => {
                         const isPinned = pinnedTabs.includes(tab.id);
+                        const isActiveTab = sidebarTab === tab.id;
                         return (
                           <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                           <Tooltip>
@@ -1600,19 +1601,27 @@ export default function Calendar() {
                                 value={tab.id}
                                 aria-haspopup="menu"
                                 aria-expanded={contextMenuTab === tab.id}
+                                aria-current={isActiveTab ? 'true' : undefined}
+                                data-active={isActiveTab ? 'true' : 'false'}
                                 className={cn(
-                                  "group relative flex h-[4.25rem] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-2xl border border-border bg-gradient-to-br from-card/95 via-card/70 to-muted/40 p-0 text-muted-foreground shadow-sm transition-all duration-200 ease-out",
-                                  "hover:-translate-y-0.5 hover:border-primary/40 hover:from-primary/12 hover:via-card/70 hover:to-primary/5 hover:text-primary hover:shadow-[0_14px_32px_hsl(var(--primary)/0.16)]",
+                                  "group relative flex h-[4.25rem] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-2xl border p-0 shadow-sm transition-all duration-200 ease-out bg-gradient-to-br",
                                   "focus-visible:ring-2 focus-visible:ring-primary/45 active:translate-y-0 active:scale-[0.97]",
-                                  "data-[state=active]:border-primary/60 data-[state=active]:from-primary/25 data-[state=active]:via-primary/12 data-[state=active]:to-primary/5 data-[state=active]:text-primary data-[state=active]:shadow-[0_16px_38px_hsl(var(--primary)/0.24)] data-[state=active]:ring-1 data-[state=active]:ring-primary/40",
-                                  isPinned && "ring-1 ring-primary/25"
+                                  isActiveTab
+                                    ? "border-primary/60 from-primary/25 via-primary/12 to-primary/5 text-primary ring-1 ring-primary/40 shadow-[0_16px_38px_hsl(var(--primary)/0.24)]"
+                                    : "border-border from-card/95 via-card/70 to-muted/40 text-muted-foreground hover:-translate-y-0.5 hover:border-primary/40 hover:from-primary/12 hover:via-card/70 hover:to-primary/5 hover:text-primary hover:shadow-[0_14px_32px_hsl(var(--primary)/0.16)]",
+                                  isPinned && !isActiveTab && "ring-1 ring-primary/25"
                                 )}
                               >
                                 <span
                                   aria-hidden="true"
-                                  className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-data-[state=active]:opacity-100"
+                                  className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-data-[active=true]:opacity-100"
                                 />
-                                <span className="flex h-7 w-7 items-center justify-center rounded-xl border border-border/70 bg-background/70 text-current transition-all duration-200 group-hover:border-primary/35 group-hover:bg-primary/10 group-data-[state=active]:border-primary/45 group-data-[state=active]:bg-primary/15">
+                                <span className={cn(
+                                  "flex h-7 w-7 items-center justify-center rounded-xl border text-current transition-all duration-200",
+                                  isActiveTab
+                                    ? "border-primary/45 bg-primary/15"
+                                    : "border-border/70 bg-background/70 group-hover:border-primary/35 group-hover:bg-primary/10"
+                                )}>
                                   {tab.icon}
                                 </span>
                                 <span className="max-w-full truncate px-1 text-[10px] font-semibold uppercase tracking-[0.12em]">
@@ -1620,8 +1629,9 @@ export default function Calendar() {
                                 </span>
                                 <span
                                   aria-hidden="true"
-                                  className="pointer-events-none absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-primary/70 opacity-0 transition-opacity duration-200 group-data-[state=active]:opacity-100"
+                                  className="pointer-events-none absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-primary/70 opacity-0 transition-opacity duration-200 group-data-[active=true]:opacity-100"
                                 />
+
                                 {isPinned && <Pin aria-hidden="true" className="absolute right-1 top-1 h-3 w-3 text-primary" />}
                               </TabsTrigger>
 

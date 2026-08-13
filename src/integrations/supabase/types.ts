@@ -8607,6 +8607,512 @@ export type Database = {
           },
         ]
       }
+      client_fact_find_addresses: {
+        Row: {
+          address: string
+          address_type: string
+          applicant_number: number
+          display_order: number
+          fact_find_id: string
+          id: string
+          living_situation: string
+          moved_in_date: string | null
+        }
+        Insert: {
+          address?: string
+          address_type: string
+          applicant_number: number
+          display_order: number
+          fact_find_id: string
+          id?: string
+          living_situation?: string
+          moved_in_date?: string | null
+        }
+        Update: {
+          address?: string
+          address_type?: string
+          applicant_number?: number
+          display_order?: number
+          fact_find_id?: string
+          id?: string
+          living_situation?: string
+          moved_in_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_addresses_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_applicants: {
+        Row: {
+          applicant_number: number
+          date_of_birth: string | null
+          email: string
+          fact_find_id: string
+          first_name: string
+          gender: string
+          id: string
+          marital_status: string
+          middle_name: string
+          mobile: string
+          number_of_dependants: number | null
+          relationship: string
+          residency_status: string
+          surname: string
+          title: string
+        }
+        Insert: {
+          applicant_number: number
+          date_of_birth?: string | null
+          email?: string
+          fact_find_id: string
+          first_name?: string
+          gender?: string
+          id?: string
+          marital_status?: string
+          middle_name?: string
+          mobile?: string
+          number_of_dependants?: number | null
+          relationship: string
+          residency_status?: string
+          surname?: string
+          title?: string
+        }
+        Update: {
+          applicant_number?: number
+          date_of_birth?: string | null
+          email?: string
+          fact_find_id?: string
+          first_name?: string
+          gender?: string
+          id?: string
+          marital_status?: string
+          middle_name?: string
+          mobile?: string
+          number_of_dependants?: number | null
+          relationship?: string
+          residency_status?: string
+          surname?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_applicants_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_assets: {
+        Row: {
+          asset_type: string
+          current_value_cents: number
+          description_or_address: string
+          display_order: number
+          fact_find_id: string
+          financial_institution: string
+          id: string
+          interest_rate: number
+          loan_balance_cents: number
+          maturity_date: string | null
+          monthly_repayment_cents: number
+          owner: string
+          rental_or_other_income_cents: number
+        }
+        Insert: {
+          asset_type?: string
+          current_value_cents?: number
+          description_or_address?: string
+          display_order: number
+          fact_find_id: string
+          financial_institution?: string
+          id?: string
+          interest_rate?: number
+          loan_balance_cents?: number
+          maturity_date?: string | null
+          monthly_repayment_cents?: number
+          owner?: string
+          rental_or_other_income_cents?: number
+        }
+        Update: {
+          asset_type?: string
+          current_value_cents?: number
+          description_or_address?: string
+          display_order?: number
+          fact_find_id?: string
+          financial_institution?: string
+          id?: string
+          interest_rate?: number
+          loan_balance_cents?: number
+          maturity_date?: string | null
+          monthly_repayment_cents?: number
+          owner?: string
+          rental_or_other_income_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_assets_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_brand_snapshots: {
+        Row: {
+          accent_colour: string
+          business_address: string
+          confidentiality_label: string
+          created_at: string
+          document_title: string
+          email: string
+          fact_find_id: string
+          id: string
+          logo_reference: string
+          organisation_name: string
+          phone: string
+          prepared_by: string
+          primary_colour: string
+          source_white_label_setting_id: string | null
+          tagline: string
+          trading_name: string
+          version: string
+          website: string
+        }
+        Insert: {
+          accent_colour: string
+          business_address?: string
+          confidentiality_label?: string
+          created_at?: string
+          document_title?: string
+          email?: string
+          fact_find_id: string
+          id?: string
+          logo_reference?: string
+          organisation_name?: string
+          phone?: string
+          prepared_by?: string
+          primary_colour: string
+          source_white_label_setting_id?: string | null
+          tagline?: string
+          trading_name?: string
+          version?: string
+          website?: string
+        }
+        Update: {
+          accent_colour?: string
+          business_address?: string
+          confidentiality_label?: string
+          created_at?: string
+          document_title?: string
+          email?: string
+          fact_find_id?: string
+          id?: string
+          logo_reference?: string
+          organisation_name?: string
+          phone?: string
+          prepared_by?: string
+          primary_colour?: string
+          source_white_label_setting_id?: string | null
+          tagline?: string
+          trading_name?: string
+          version?: string
+          website?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_brand_snapsh_source_white_label_setting_i_fkey"
+            columns: ["source_white_label_setting_id"]
+            isOneToOne: false
+            referencedRelation: "whitelabel_settings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_fact_find_brand_snapshots_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: true
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_employment: {
+        Row: {
+          applicant_number: number
+          base_salary_cents: number
+          bonus_cents: number
+          commission_cents: number
+          employer_address: string
+          employer_or_business: string
+          employment_type: string
+          fact_find_id: string
+          id: string
+          other_taxable_income_cents: number
+          overtime_cents: number
+          role_or_position: string
+          start_date: string | null
+        }
+        Insert: {
+          applicant_number: number
+          base_salary_cents?: number
+          bonus_cents?: number
+          commission_cents?: number
+          employer_address?: string
+          employer_or_business?: string
+          employment_type?: string
+          fact_find_id: string
+          id?: string
+          other_taxable_income_cents?: number
+          overtime_cents?: number
+          role_or_position?: string
+          start_date?: string | null
+        }
+        Update: {
+          applicant_number?: number
+          base_salary_cents?: number
+          bonus_cents?: number
+          commission_cents?: number
+          employer_address?: string
+          employer_or_business?: string
+          employment_type?: string
+          fact_find_id?: string
+          id?: string
+          other_taxable_income_cents?: number
+          overtime_cents?: number
+          role_or_position?: string
+          start_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_employment_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_expenses: {
+        Row: {
+          display_order: number
+          expense_key: string
+          fact_find_id: string
+          id: string
+          monthly_amount_cents: number
+          notes: string
+          workbook_category: string
+          workbook_item_label: string
+        }
+        Insert: {
+          display_order: number
+          expense_key: string
+          fact_find_id: string
+          id?: string
+          monthly_amount_cents?: number
+          notes?: string
+          workbook_category: string
+          workbook_item_label: string
+        }
+        Update: {
+          display_order?: number
+          expense_key?: string
+          fact_find_id?: string
+          id?: string
+          monthly_amount_cents?: number
+          notes?: string
+          workbook_category?: string
+          workbook_item_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_expenses_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_liabilities: {
+        Row: {
+          account_or_description: string
+          current_balance_cents: number
+          display_order: number
+          fact_find_id: string
+          id: string
+          interest_rate: number
+          lender: string
+          liability_type: string
+          limit_or_original_amount_cents: number
+          monthly_repayment_cents: number
+          notes: string
+          owner: string
+          remaining_term: string
+        }
+        Insert: {
+          account_or_description?: string
+          current_balance_cents?: number
+          display_order: number
+          fact_find_id: string
+          id?: string
+          interest_rate?: number
+          lender?: string
+          liability_type?: string
+          limit_or_original_amount_cents?: number
+          monthly_repayment_cents?: number
+          notes?: string
+          owner?: string
+          remaining_term?: string
+        }
+        Update: {
+          account_or_description?: string
+          current_balance_cents?: number
+          display_order?: number
+          fact_find_id?: string
+          id?: string
+          interest_rate?: number
+          lender?: string
+          liability_type?: string
+          limit_or_original_amount_cents?: number
+          monthly_repayment_cents?: number
+          notes?: string
+          owner?: string
+          remaining_term?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_liabilities_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_outputs: {
+        Row: {
+          branding_snapshot_id: string
+          created_at: string
+          fact_find_id: string
+          generated_at: string | null
+          id: string
+          output_hash: string | null
+          storage_path: string | null
+          template_version: string
+        }
+        Insert: {
+          branding_snapshot_id: string
+          created_at?: string
+          fact_find_id: string
+          generated_at?: string | null
+          id?: string
+          output_hash?: string | null
+          storage_path?: string | null
+          template_version: string
+        }
+        Update: {
+          branding_snapshot_id?: string
+          created_at?: string
+          fact_find_id?: string
+          generated_at?: string | null
+          id?: string
+          output_hash?: string | null
+          storage_path?: string | null
+          template_version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_outputs_branding_snapshot_id_fkey"
+            columns: ["branding_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_find_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_fact_find_outputs_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_finds: {
+        Row: {
+          applicant_1_annual_income_cents: number
+          applicant_2_annual_income_cents: number
+          client_id: string
+          created_at: string
+          created_by: string
+          id: string
+          net_position_cents: number
+          revision: number
+          status: string
+          template_version: string
+          total_asset_linked_debt_cents: number
+          total_assets_cents: number
+          total_debt_cents: number
+          total_monthly_living_expenses_cents: number
+          total_other_liabilities_cents: number
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          applicant_1_annual_income_cents?: number
+          applicant_2_annual_income_cents?: number
+          client_id: string
+          created_at?: string
+          created_by: string
+          id?: string
+          net_position_cents?: number
+          revision?: number
+          status?: string
+          template_version: string
+          total_asset_linked_debt_cents?: number
+          total_assets_cents?: number
+          total_debt_cents?: number
+          total_monthly_living_expenses_cents?: number
+          total_other_liabilities_cents?: number
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          applicant_1_annual_income_cents?: number
+          applicant_2_annual_income_cents?: number
+          client_id?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          net_position_cents?: number
+          revision?: number
+          status?: string
+          template_version?: string
+          total_asset_linked_debt_cents?: number
+          total_assets_cents?: number
+          total_debt_cents?: number
+          total_monthly_living_expenses_cents?: number
+          total_other_liabilities_cents?: number
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_finds_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_files: {
         Row: {
           category: string
@@ -36811,6 +37317,10 @@ export type Database = {
         Args: { report_id: string }
         Returns: number
       }
+      can_access_client_fact_find: {
+        Args: { _fact_find_id: string }
+        Returns: boolean
+      }
       cancel_commission_payout: {
         Args: { p_actor_id: string; p_payout_id: string; p_reason: string }
         Returns: {
@@ -37180,6 +37690,10 @@ export type Database = {
           status: string
           user_id: string
         }[]
+      }
+      create_advanced_client_fact_find: {
+        Args: { _actor_id: string; _client: Json; _payload: Json }
+        Returns: Json
       }
       create_document_record: {
         Args: {
