@@ -125,6 +125,14 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "aml-idv-retention": {
+      "verify_jwt": true,
+      "exposure_class": "cron-worker",
+      "owner": "aml-didit-idv",
+      "reviewed": true,
+      "reviewed_in": "aurixa-passport-phase0-baseline",
+      "notes": "Daily capture-retention sweep. Signed internal callers only (verifySignedInternal: pg_cron, aml-verification, aml-records); gateway JWT applies on top (not declared in config.toml, so verify_jwt defaults true). Deletes identity captures only when both retention clocks agree (aml.retention_triggers minimum_retention_date AND AML_IDV_CAPTURE_RETENTION_DAYS) and no legal hold exists; deletion scope is limited to DELETABLE_BUCKETS."
+    },
     "aml-launch-ops": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -215,6 +223,14 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "aml-verification-processor": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "aml-didit-idv",
+      "reviewed": true,
+      "reviewed_in": "aurixa-passport-phase0-baseline",
+      "notes": "Didit Standalone verification driver (targeted mode + 1-minute cron sweep). Signed internal callers only (verifySignedInternal: pg_cron, aml-client-portal, aml-verification); gateway JWT applies on top (not declared in config.toml, so verify_jwt defaults true). Holds the provider credential and spends money; outcome authority stays in verificationOutcome.pure.ts and paid calls are never blindly retried."
     },
     "analytics-query": {
       "verify_jwt": false,

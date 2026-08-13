@@ -172,6 +172,7 @@ const PortalPropertyInsights = lazyWithRetry(() => import("./pages/portal/Portal
 const PortalBooking = lazyWithRetry(() => import("./pages/portal/PortalBooking"));
 const PortalAppointments = lazyWithRetry(() => import("./pages/portal/PortalAppointments"));
 const PortalAml = lazyWithRetry(() => import("./pages/portal/PortalAml"));
+const PortalPassport = lazyWithRetry(() => import("./pages/portal/PortalPassport"));
 const PortalIdentityReturn = lazyWithRetry(() => import("./pages/portal/PortalIdentityReturn"));
 const PortalLegal = lazyWithRetry(() => import("./pages/portal/PortalLegal"));
 const PortalLegalDetail = lazyWithRetry(() => import("./pages/portal/PortalLegalDetail"));
@@ -413,6 +414,7 @@ const App = () => (
                           <Route path="booking" element={<PortalBooking />} />
                           <Route path="appointments" element={<PortalAppointments />} />
                           <Route path="aml" element={<PortalAml />} />
+                          <Route path="aml/passport" element={<PortalPassport />} />
                         </Route>
 
                         {/* Finance Portal Routes - single provider wrapping all /finance/* */}
