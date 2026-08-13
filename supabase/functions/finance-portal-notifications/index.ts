@@ -51,25 +51,30 @@ function extractToken(headers: Headers, body?: any): string | null {
 let routingModeProbe: Promise<FinanceRoutingMode> | null = null;
 
 function resolveRoutingMode(supabase: any): Promise<FinanceRoutingMode> {
-  if (!routingModeProbe) {
-    routingModeProbe = supabase
-      .from('finance_portal_notifications')
-      .select('target_portal')
-      .limit(0)
-      .then((result: { error?: { code?: string; message?: string } | null }) => {
-        const mode = routingModeFromProbe(result?.error ?? null);
-        if (mode === 'types') {
-          console.warn(
-            '[finance-portal-notifications] routing columns absent — migration '
-            + '20260717000000 has not been applied. Enforcing the finance boundary by '
-            + 'notification type instead.',
-          );
-        }
-        return mode;
-      })
-      .catch(() => 'columns' as FinanceRoutingMode);
-  }
-  return routingModeProbe;
+  if (routingModeProbe) return routingModeProbe;
+  // Held in a local because assigning the module-level `let` does not narrow
+  // away its `null` — the client is `any`, so the chain's type is `any` and the
+  // declared type survives the assignment. Returning the local is what makes
+  // the non-null return provable; collapsing this back to `return
+  // routingModeProbe` fails the edge type-check gate.
+  const started: Promise<FinanceRoutingMode> = supabase
+    .from('finance_portal_notifications')
+    .select('target_portal')
+    .limit(0)
+    .then((result: { error?: { code?: string; message?: string } | null }) => {
+      const mode = routingModeFromProbe(result?.error ?? null);
+      if (mode === 'types') {
+        console.warn(
+          '[finance-portal-notifications] routing columns absent — migration '
+          + '20260717000000 has not been applied. Enforcing the finance boundary by '
+          + 'notification type instead.',
+        );
+      }
+      return mode;
+    })
+    .catch(() => 'columns' as FinanceRoutingMode);
+  routingModeProbe = started;
+  return started;
 }
 
 /**

@@ -27,28 +27,33 @@ function readsAsMissingColumn(error: { code?: string; message?: string } | null)
 }
 
 export function agreementAnchorsSupported(supabase: any): Promise<boolean> {
-  if (!probe) {
-    probe = supabase
-      .from('partner_agreement_change_requests')
-      .select('anchor_path')
-      .limit(0)
-      .then((result: { error?: { code?: string; message?: string } | null }) => {
-        if (readsAsMissingColumn(result?.error ?? null)) {
-          console.warn(
-            '[agreements] change-request anchor columns absent — migration '
-            + '20260913000000 has not been applied. Pinned requests will save with their '
-            + 'location in the comment instead.',
-          );
-          return false;
-        }
-        return true;
-      })
-      // An inconclusive probe assumes support: the columns are far more likely
-      // to be there than not, and a false negative permanently degrades a
-      // feature that works, whereas a false positive fails one insert loudly.
-      .catch(() => true);
-  }
-  return probe;
+  if (probe) return probe;
+  // Held in a local because assigning the module-level `let` does not narrow
+  // away its `null` — the client is `any`, so the chain's type is `any` and the
+  // declared type survives the assignment. Returning the local is what makes
+  // the non-null return provable; collapsing this back to `return probe` fails
+  // the edge type-check gate.
+  const started: Promise<boolean> = supabase
+    .from('partner_agreement_change_requests')
+    .select('anchor_path')
+    .limit(0)
+    .then((result: { error?: { code?: string; message?: string } | null }) => {
+      if (readsAsMissingColumn(result?.error ?? null)) {
+        console.warn(
+          '[agreements] change-request anchor columns absent — migration '
+          + '20260913000000 has not been applied. Pinned requests will save with their '
+          + 'location in the comment instead.',
+        );
+        return false;
+      }
+      return true;
+    })
+    // An inconclusive probe assumes support: the columns are far more likely
+    // to be there than not, and a false negative permanently degrades a
+    // feature that works, whereas a false positive fails one insert loudly.
+    .catch(() => true);
+  probe = started;
+  return started;
 }
 
 /** Test seam — the probe is module state and would leak between cases. */
