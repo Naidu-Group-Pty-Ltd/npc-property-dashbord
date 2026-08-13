@@ -189,14 +189,6 @@ export default function Calendar() {
           display: none;
         }
 
-        /* Tooltip, context-menu and drag decorations sit above the grid; the wheel
-           must reach the scroll container underneath them rather than stopping on
-           the icon the cursor happens to be over. */
-        body.${bodyClass} [data-radix-popper-content-wrapper],
-        body.${bodyClass} .calendar-scroll-transparent {
-          overscroll-behavior: contain;
-        }
-
         body.${bodyClass} .dashboard-main,
         body.${bodyClass} .dashboard-content,
         body.${bodyClass} .dashboard-page-shell {
@@ -206,27 +198,59 @@ export default function Calendar() {
       document.head.appendChild(styleEl);
     }
 
-    // Radix locks `pointer-events: none` on <body> while an overlay is open and
-    // occasionally fails to release it when several overlays (tooltip + context
-    // menu + select) close in the same frame. A stuck lock reads to the operator
-    // as "the page will not scroll when the cursor is over that icon", so the
-    // lock is released here whenever no overlay is actually open.
-    const releaseStuckPointerLock = () => {
-      if (document.body.style.pointerEvents !== 'none') return;
-      const overlayOpen = document.querySelector(
-        '[data-radix-popper-content-wrapper], [role="dialog"][data-state="open"], [data-state="open"][data-radix-menu-content], [data-vaul-drawer]',
+    // Radix modal primitives temporarily lock pointer input on <body>. When a
+    // tooltip, context menu and select close in the same frame, an old lock can
+    // survive their unmount and make wheel/touch scrolling appear frozen.
+    // A popper wrapper alone is not evidence of an open modal: tooltip wrappers
+    // can remain mounted during their closing animation. Only state-aware modal
+    // content keeps the lock; otherwise release it after Radix has completed its
+    // own close-frame cleanup.
+    const releaseStuckOverlayLocks = () => {
+      const hasPointerLock = document.body.style.pointerEvents === 'none';
+      const hasScrollLock = document.body.hasAttribute('data-scroll-locked');
+      if (!hasPointerLock && !hasScrollLock) return;
+
+      const blockingOverlayOpen = document.querySelector(
+        '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="listbox"][data-state="open"], [data-vaul-drawer][data-state="open"]',
       );
-      if (!overlayOpen) document.body.style.removeProperty('pointer-events');
+      if (blockingOverlayOpen) return;
+
+      if (hasPointerLock) document.body.style.removeProperty('pointer-events');
+      if (hasScrollLock) document.body.removeAttribute('data-scroll-locked');
     };
 
-    const observer = new MutationObserver(releaseStuckPointerLock);
-    observer.observe(document.body, { attributes: true, attributeFilter: ['style'] });
-    const lockInterval = window.setInterval(releaseStuckPointerLock, 700);
+    let pointerLockFrame: number | null = null;
+    let pointerLockSettleFrame: number | null = null;
+    const schedulePointerLockCheck = () => {
+      if (pointerLockFrame !== null) return;
+      pointerLockFrame = window.requestAnimationFrame(() => {
+        pointerLockFrame = null;
+        pointerLockSettleFrame = window.requestAnimationFrame(() => {
+          pointerLockSettleFrame = null;
+          releaseStuckOverlayLocks();
+        });
+      });
+    };
+
+    const observer = new MutationObserver(schedulePointerLockCheck);
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['style'],
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener('focus', schedulePointerLockCheck);
+    document.addEventListener('pointerup', schedulePointerLockCheck, true);
+    document.addEventListener('keyup', schedulePointerLockCheck, true);
 
     return () => {
       observer.disconnect();
-      window.clearInterval(lockInterval);
-      document.body.style.removeProperty('pointer-events');
+      if (pointerLockFrame !== null) window.cancelAnimationFrame(pointerLockFrame);
+      if (pointerLockSettleFrame !== null) window.cancelAnimationFrame(pointerLockSettleFrame);
+      window.removeEventListener('focus', schedulePointerLockCheck);
+      document.removeEventListener('pointerup', schedulePointerLockCheck, true);
+      document.removeEventListener('keyup', schedulePointerLockCheck, true);
+      releaseStuckOverlayLocks();
       document.body.classList.remove(bodyClass);
       document.getElementById(styleId)?.remove();
     };
@@ -884,7 +908,7 @@ export default function Calendar() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 md:justify-end">
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="h-10 rounded-xl border-border bg-card/85 px-3 font-semibold text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 active:translate-y-0 active:scale-[0.98]">
                     <Mail className="h-4 w-4 mr-2" />
@@ -914,7 +938,7 @@ export default function Calendar() {
                     <div className="shrink-0 overflow-x-auto border-b border-border px-4 py-3">
                       <div className="inline-flex flex-wrap gap-2">
                         {orderedSidebarTabs.map(tab => (
-                          <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
+                          <ContextMenu key={tab.id} modal={false} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                           <ContextMenuTrigger asChild>
                           <button
                             aria-pressed={sidebarTab === tab.id}
@@ -1487,7 +1511,7 @@ export default function Calendar() {
                 {orderedSidebarTabs.map((tab) => {
                   const isPinned = pinnedTabs.includes(tab.id);
                   return (
-                    <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
+                    <ContextMenu key={tab.id} modal={false} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <ContextMenuTrigger asChild>
@@ -1591,7 +1615,7 @@ export default function Calendar() {
                         const isPinned = pinnedTabs.includes(tab.id);
                         const isActiveTab = sidebarTab === tab.id;
                         return (
-                          <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
+                          <ContextMenu key={tab.id} modal={false} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <ContextMenuTrigger asChild>
