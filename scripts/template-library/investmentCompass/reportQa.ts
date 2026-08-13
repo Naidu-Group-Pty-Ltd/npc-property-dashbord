@@ -64,9 +64,8 @@ import {
   withFurniture,
   type KpiItem,
   type PageDef,
-  type CompassSeedTemplate,
 } from './blocks';
-import { assembleMaster, type ReportFormat } from './master';
+import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
 const FOOTER = '{{qa.title}} · Report Q&A';
