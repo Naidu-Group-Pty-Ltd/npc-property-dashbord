@@ -38,31 +38,60 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { BuilderStatCard } from '@/components/admin/builder-portal/ui/BuilderStatCard';
-import { BuilderConfirmDialog, type BuilderConsequence } from '@/components/admin/builder-portal/ui/BuilderConfirmDialog';
 import {
-  BuilderUserFormDialog, type BuilderUserFormValues,
-} from '@/components/admin/builder-portal/ui/BuilderUserFormDialog';
-import {
-  BuilderOrganisationFormDialog, type BuilderOrganisationFormValues,
-} from '@/components/admin/builder-portal/ui/BuilderOrganisationFormDialog';
-import {
-  BuilderMembershipFormDialog, type BuilderMembershipFormValues,
-} from '@/components/admin/builder-portal/ui/BuilderMembershipFormDialog';
-import {
-  BuilderPermissionsDialog, type BuilderPermissionKey, type BuilderPermissionOverride,
-  type BuilderRoleDefault,
-} from '@/components/admin/builder-portal/ui/BuilderPermissionsDialog';
+  BuilderConfirmDialog, type BuilderBlockedRemoval, type BuilderConsequence,
+} from '@/components/admin/builder-portal/ui/BuilderConfirmDialog';
 import { BuilderEmptyState } from '@/components/admin/builder-portal/ui/BuilderEmptyState';
 import { BuilderSearchField } from '@/components/admin/builder-portal/ui/BuilderSearchField';
 import { BuilderStatusBadge } from '@/components/admin/builder-portal/ui/BuilderStatusBadge';
 import {
   BuilderAccessLifecycle, type BuilderAccessLifecycleStep,
 } from '@/components/admin/builder-portal/ui/BuilderAccessLifecycle';
-import { ACCESS_ROLE_OPTIONS, accessErrorMessage } from '@/lib/builderAccessTerms';
+import { accessErrorMessage } from '@/lib/builderAccessTerms';
 import { toast } from 'sonner';
 import {
-  Copy, HardHat, KeyRound, Loader2, Mail, Pencil, Plus, RefreshCw, ShieldCheck, Users,
+  Ban, Boxes, Building2, Copy, FileSignature, FolderKanban, Handshake, HardHat, KeyRound,
+  LayoutDashboard, Loader2, LogOut, Mail, MoreHorizontal, Pencil, Plus, RefreshCw, ShieldCheck,
+  Truck, UserCheck, UserPlus, Users,
 } from 'lucide-react';
+
+/** Presentation of a status pill; mirrors `BuilderStatusBadge`'s own props. */
+type StatusPresentation = { label: string; dot?: string; tone?: 'destructive' };
+
+/** The richer failure `call` throws so a 409 can explain itself in the dialog. */
+type AdminCallError = Error & {
+  code?: string;
+  dependents?: string[];
+  currentVersion?: number;
+  status?: number;
+};
+
+/** Nested sections under Projects — stages of one project lifecycle. */
+const PROJECT_OPERATION_SECTIONS = [
+  { value: 'projects', label: 'Projects', icon: FolderKanban },
+  { value: 'inventory', label: 'Inventory', icon: Boxes },
+  { value: 'construction', label: 'Construction', icon: HardHat },
+  { value: 'delivery', label: 'Delivery', icon: Truck },
+  { value: 'collaboration', label: 'Collaboration', icon: Handshake },
+  { value: 'workspace', label: 'Workspace', icon: LayoutDashboard },
+] as const;
+
+/**
+ * A refused removal, put into the administrator's words. The server answers
+ * with the records that are holding the row; this says what to do instead.
+ */
+function describeBlockedRemoval(kind: string, dependents?: string[]): BuilderBlockedRemoval {
+  const recommendation = kind === 'org_remove'
+    ? 'Close the organisation instead — closure keeps every record.'
+    : kind === 'user_remove'
+      ? 'Revoke portal access instead — revoking keeps the history.'
+      : 'Revoke the assignment instead of removing it.';
+  return {
+    message: 'This cannot be removed while other records depend on it.',
+    dependents: dependents ?? [],
+    recommendation,
+  };
+}
 
 /**
  * Builder / Developer Portal administration — Phase 1 shell.
@@ -191,6 +220,25 @@ export default function BuilderPortalAdmin() {
   // Surfaced only when the invite function reports that email delivery did not
   // happen. The link is one-time and is never persisted anywhere in the browser.
   const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
+
+  /** Which top-level tab, and which nested project section, are showing. */
+  const [primaryTab, setPrimaryTab] = useState('users');
+  const [projectSection, setProjectSection] = useState('projects');
+
+  /**
+   * The action awaiting confirmation, and why the server refused it. Both live
+   * here so the confirmation dialog can stay open and explain a 409 in place.
+   */
+  const [confirm, setConfirm] = useState<
+    | { kind: 'user_revoke_access' | 'user_suspend' | 'user_revoke_invite' | 'user_revoke_sessions' | 'user_remove'; user: BuilderUser }
+    | { kind: 'user_restore_access'; user: BuilderUser; targetStatus: 'active' | 'suspended' | 'invited' }
+    | { kind: 'org_status'; organisation: BuilderOrganisation; status: 'active' | 'suspended' | 'closed' }
+    | { kind: 'org_remove'; organisation: BuilderOrganisation }
+    | { kind: 'membership_revoke'; membership: BuilderMembership; isLast: boolean }
+    | { kind: 'membership_remove'; membership: BuilderMembership }
+    | null
+  >(null);
+  const [confirmBlocked, setConfirmBlocked] = useState<BuilderBlockedRemoval | null>(null);
 
   const call = useCallback(async (operation: string, payload: Record<string, unknown> = {}) => {
     const { data, error } = await invokeSecureFunction('builder-portal-admin', { operation, ...payload });
@@ -401,27 +449,15 @@ export default function BuilderPortalAdmin() {
     }
   }, [call, load, confirm]);
 
-  /** The permission catalogue is fetched once, when it is first needed. */
-  const openPermissions = useCallback(async (membership: BuilderMembership) => {
-    setPermissionsDialog({ open: true, membership });
-    setPermissionsLoading(true);
-    try {
-      const [catalogue, current] = await Promise.all([
-        permissionKeys.length
-          ? Promise.resolve({ permission_keys: permissionKeys, role_defaults: roleDefaults })
-          : call('get_permission_catalogue'),
-        call('get_membership_permissions', { membership_id: membership.id }),
-      ]);
-      setPermissionKeys(catalogue?.permission_keys ?? []);
-      setRoleDefaults(catalogue?.role_defaults ?? []);
-      setMembershipOverrides(current?.overrides ?? []);
-    } catch (error: any) {
-      toast.error(error?.message || 'Failed to load access permissions');
-      setPermissionsDialog({ open: false, membership: null });
-    } finally {
-      setPermissionsLoading(false);
-    }
-  }, [call, permissionKeys, roleDefaults]);
+  /**
+   * Opening the permissions dialog is all this needs to do — the dialog fetches
+   * the catalogue and the current overrides itself through `loadCatalogue` and
+   * `loadOverrides`, so nothing is duplicated here.
+   */
+  const openPermissions = useCallback((membership: BuilderMembership) => {
+    setPermissionsMembership(membership);
+    setPermissionsOpen(true);
+  }, []);
 
   const organisationName = useCallback(
     (id: string) => organisations.find((o) => o.id === id)?.legal_name ?? 'Unknown organisation',
@@ -960,7 +996,7 @@ export default function BuilderPortalAdmin() {
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setOrgDialog({ open: true, organisation: null })}
+                        onClick={() => { setOrgEditing(null); setOrgDialogOpen(true); }}
                         className="gap-2"
                       >
                         <Plus className="h-4 w-4" aria-hidden />
@@ -1004,7 +1040,7 @@ export default function BuilderPortalAdmin() {
                             {organisation.abn ?? '—'}
                           </TableCell>
                           <TableCell>
-                            <BuilderStatusBadge label={meta.label} dot={meta.dot} tone={meta.tone} />
+                            <Badge variant={meta.variant} className="whitespace-nowrap">{meta.label}</Badge>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex flex-wrap justify-end gap-2">
@@ -1092,7 +1128,7 @@ export default function BuilderPortalAdmin() {
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setUserDialog({ open: true, user: null })}
+                        onClick={() => { setUserEditing(null); setUserDialogOpen(true); }}
                         className="gap-2"
                       >
                         <Plus className="h-4 w-4" aria-hidden />
@@ -1198,14 +1234,14 @@ export default function BuilderPortalAdmin() {
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end" className="w-60">
                                   <DropdownMenuLabel>Portal user</DropdownMenuLabel>
-                                  <DropdownMenuItem onClick={() => setUserDialog({ open: true, user })}>
+                                  <DropdownMenuItem onClick={() => { setUserEditing(user); setUserDialogOpen(true); }}>
                                     <Pencil className="mr-2 h-4 w-4" aria-hidden />
                                     Edit user
                                   </DropdownMenuItem>
                           
                                   {stage === 'no_membership' && (
                                     <DropdownMenuItem
-                                      onClick={() => setMembershipDialog({ open: true, membership: null })}
+                                      onClick={() => { setMembershipEditing(null); setMembershipDialogOpen(true); }}
                                     >
                                       <KeyRound className="mr-2 h-4 w-4" aria-hidden />
                                       Grant organisation access
@@ -1249,61 +1285,8 @@ export default function BuilderPortalAdmin() {
                                     <LogOut className="mr-2 h-4 w-4" aria-hidden />
                                     Revoke sessions
                                   </DropdownMenuItem>
-
-                              {canResend && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canEdit || busy}
-                                  onClick={() => void revokeInvite(user)}
-                                >
-                                  Revoke invite
-                                </Button>
-                              )}
-
-                              {stage === 'active' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canEdit || busy}
-                                  onClick={() => void mutate('set_user_status', {
-                                    builder_user_id: user.id,
-                                    expected_version: user.row_version,
-                                    status: 'suspended',
-                                    reason: 'Suspended by administrator',
-                                  }, 'User suspended')}
-                                >
-                                  Suspend
-                                </Button>
-                              )}
-
-                              {/* Restore is offered only for an account that
-                                  actually completed setup. The server enforces
-                                  the same rule and answers 409 otherwise. */}
-                              {stage === 'suspended' && user.has_completed_account_setup && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canEdit || busy}
-                                  onClick={() => void mutate('set_user_status', {
-                                    builder_user_id: user.id,
-                                    expected_version: user.row_version,
-                                    status: 'active',
-                                  }, 'User restored')}
-                                >
-                                  Restore
-                                </Button>
-                              )}
-
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={!canEdit || busy}
-                                onClick={() => { setUserEditing(user); setUserDialogOpen(true); }}
-                              >
-                                <Pencil className="mr-2 h-4 w-4" aria-hidden />
-                                Edit
-                              </Button>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
 
                               <Button
                                 size="sm"
@@ -1358,7 +1341,7 @@ export default function BuilderPortalAdmin() {
                     <Button
                       variant="outline"
                       disabled={busy}
-                      onClick={() => setMembershipDialog({ open: true, membership: null })}
+                      onClick={() => { setMembershipEditing(null); setMembershipDialogOpen(true); }}
                       className="gap-2"
                     >
                       <Plus className="h-4 w-4" aria-hidden />
@@ -1619,6 +1602,28 @@ export default function BuilderPortalAdmin() {
         loadOverrides={loadOverrides}
         onSave={savePermissions}
       />
+
+      {/* One dialog serves every confirmed action; the copy comes from
+          `confirmConfig`, so no action can end up with a bare "are you sure?". */}
+      {confirmConfig && (
+        <BuilderConfirmDialog
+          open={!!confirm}
+          onOpenChange={(open) => {
+            if (!open) { setConfirm(null); setConfirmBlocked(null); }
+          }}
+          title={confirmConfig.title}
+          description={confirmConfig.description}
+          consequences={confirmConfig.consequences}
+          reasonRequired={confirmConfig.reasonRequired}
+          reasonLabel={confirmConfig.reasonLabel}
+          reasonPlaceholder={confirmConfig.reasonPlaceholder}
+          confirmLabel={confirmConfig.confirmLabel}
+          destructive={confirmConfig.destructive}
+          busy={busy}
+          blocked={confirmBlocked}
+          onConfirm={confirmConfig.run}
+        />
+      )}
     </div>
   );
 }

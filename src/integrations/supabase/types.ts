@@ -12752,11 +12752,14 @@ export type Database = {
           email: string
           email_signature: string | null
           failed_login_attempts: number
+          first_name: string | null
           id: string
           is_active: boolean
           last_login_at: string | null
+          last_name: string | null
           locked_until: string | null
           mfa_enrolled_at: string | null
+          mfa_last_totp_counter: number | null
           mfa_last_verified_at: string | null
           mfa_method: string | null
           mfa_recovery_codes_hash: string[] | null
@@ -12769,6 +12772,7 @@ export type Database = {
           outlook_prep_minutes: number | null
           password_hash: string
           personal_mailbox: string | null
+          phone: string | null
           role: string
           timezone: string
           updated_at: string
@@ -12781,11 +12785,14 @@ export type Database = {
           email: string
           email_signature?: string | null
           failed_login_attempts?: number
+          first_name?: string | null
           id?: string
           is_active?: boolean
           last_login_at?: string | null
+          last_name?: string | null
           locked_until?: string | null
           mfa_enrolled_at?: string | null
+          mfa_last_totp_counter?: number | null
           mfa_last_verified_at?: string | null
           mfa_method?: string | null
           mfa_recovery_codes_hash?: string[] | null
@@ -12798,6 +12805,7 @@ export type Database = {
           outlook_prep_minutes?: number | null
           password_hash: string
           personal_mailbox?: string | null
+          phone?: string | null
           role?: string
           timezone?: string
           updated_at?: string
@@ -12810,11 +12818,14 @@ export type Database = {
           email?: string
           email_signature?: string | null
           failed_login_attempts?: number
+          first_name?: string | null
           id?: string
           is_active?: boolean
           last_login_at?: string | null
+          last_name?: string | null
           locked_until?: string | null
           mfa_enrolled_at?: string | null
+          mfa_last_totp_counter?: number | null
           mfa_last_verified_at?: string | null
           mfa_method?: string | null
           mfa_recovery_codes_hash?: string[] | null
@@ -12827,6 +12838,7 @@ export type Database = {
           outlook_prep_minutes?: number | null
           password_hash?: string
           personal_mailbox?: string | null
+          phone?: string | null
           role?: string
           timezone?: string
           updated_at?: string
@@ -17303,6 +17315,7 @@ export type Database = {
           is_active: boolean
           last_briefing_sent_at: string | null
           last_eod_sent_at: string | null
+          last_live_rates_refresh_at: string | null
           last_login_at: string | null
           last_seen_at: string | null
           locked_until: string | null
@@ -17342,6 +17355,7 @@ export type Database = {
           is_active?: boolean
           last_briefing_sent_at?: string | null
           last_eod_sent_at?: string | null
+          last_live_rates_refresh_at?: string | null
           last_login_at?: string | null
           last_seen_at?: string | null
           locked_until?: string | null
@@ -17381,6 +17395,7 @@ export type Database = {
           is_active?: boolean
           last_briefing_sent_at?: string | null
           last_eod_sent_at?: string | null
+          last_live_rates_refresh_at?: string | null
           last_login_at?: string | null
           last_seen_at?: string | null
           locked_until?: string | null
@@ -23675,22 +23690,29 @@ export type Database = {
           answer: string
           citation_urls: Json
           confidence_score: number | null
+          contrarian_view: string | null
           conversation_id: string | null
           correlation_id: string | null
           created_at: string
           created_by: string | null
+          depth_mode: string | null
           fallback_used: boolean
           follow_up_questions: Json
           id: string
+          implications: Json
           key_figures: Json
           metadata: Json
           model_used: string | null
           provider_attempts: Json
           question: string
+          research_plan: Json
+          retrieval_strategies: Json
           route_used: string | null
           sentiment: string | null
           source_update_ids: Json
           time_horizon: string | null
+          timeline: Json
+          watch_items: Json
         }
         Insert: {
           ai_failure_reason?: string | null
@@ -23698,22 +23720,29 @@ export type Database = {
           answer: string
           citation_urls?: Json
           confidence_score?: number | null
+          contrarian_view?: string | null
           conversation_id?: string | null
           correlation_id?: string | null
           created_at?: string
           created_by?: string | null
+          depth_mode?: string | null
           fallback_used?: boolean
           follow_up_questions?: Json
           id?: string
+          implications?: Json
           key_figures?: Json
           metadata?: Json
           model_used?: string | null
           provider_attempts?: Json
           question: string
+          research_plan?: Json
+          retrieval_strategies?: Json
           route_used?: string | null
           sentiment?: string | null
           source_update_ids?: Json
           time_horizon?: string | null
+          timeline?: Json
+          watch_items?: Json
         }
         Update: {
           ai_failure_reason?: string | null
@@ -23721,22 +23750,29 @@ export type Database = {
           answer?: string
           citation_urls?: Json
           confidence_score?: number | null
+          contrarian_view?: string | null
           conversation_id?: string | null
           correlation_id?: string | null
           created_at?: string
           created_by?: string | null
+          depth_mode?: string | null
           fallback_used?: boolean
           follow_up_questions?: Json
           id?: string
+          implications?: Json
           key_figures?: Json
           metadata?: Json
           model_used?: string | null
           provider_attempts?: Json
           question?: string
+          research_plan?: Json
+          retrieval_strategies?: Json
           route_used?: string | null
           sentiment?: string | null
           source_update_ids?: Json
           time_horizon?: string | null
+          timeline?: Json
+          watch_items?: Json
         }
         Relationships: []
       }
@@ -24570,6 +24606,51 @@ export type Database = {
             columns: ["sender_participant_id"]
             isOneToOne: false
             referencedRelation: "conversation_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mfa_totp_enrollment_challenges: {
+        Row: {
+          created_at: string
+          encrypted_secret: string
+          expires_at: string
+          id: string
+          staff_session_id: string
+          token_hash: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          encrypted_secret: string
+          expires_at: string
+          id?: string
+          staff_session_id: string
+          token_hash: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          encrypted_secret?: string
+          expires_at?: string
+          id?: string
+          staff_session_id?: string
+          token_hash?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mfa_totp_enrollment_challenges_staff_session_id_fkey"
+            columns: ["staff_session_id"]
+            isOneToOne: false
+            referencedRelation: "user_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mfa_totp_enrollment_challenges_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
             referencedColumns: ["id"]
           },
         ]
@@ -28231,6 +28312,7 @@ export type Database = {
         Row: {
           analysis_depth: string | null
           analysis_summary: string | null
+          comparison_type: string | null
           created_at: string
           created_by: string | null
           executive_summary: string | null
@@ -28257,6 +28339,7 @@ export type Database = {
         Insert: {
           analysis_depth?: string | null
           analysis_summary?: string | null
+          comparison_type?: string | null
           created_at?: string
           created_by?: string | null
           executive_summary?: string | null
@@ -28283,6 +28366,7 @@ export type Database = {
         Update: {
           analysis_depth?: string | null
           analysis_summary?: string | null
+          comparison_type?: string | null
           created_at?: string
           created_by?: string | null
           executive_summary?: string | null
@@ -32617,7 +32701,9 @@ export type Database = {
       step_up_sessions: {
         Row: {
           assurance_level: number
+          bound_session_id: string | null
           capability: string
+          consumed_at: string | null
           created_at: string
           expires_at: string
           id: string
@@ -32631,7 +32717,9 @@ export type Database = {
         }
         Insert: {
           assurance_level?: number
+          bound_session_id?: string | null
           capability: string
+          consumed_at?: string | null
           created_at?: string
           expires_at: string
           id?: string
@@ -32645,7 +32733,9 @@ export type Database = {
         }
         Update: {
           assurance_level?: number
+          bound_session_id?: string | null
           capability?: string
+          consumed_at?: string | null
           created_at?: string
           expires_at?: string
           id?: string
@@ -32657,7 +32747,15 @@ export type Database = {
           user_agent?: string | null
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "step_up_sessions_bound_session_id_fkey"
+            columns: ["bound_session_id"]
+            isOneToOne: false
+            referencedRelation: "user_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       storage_object_bindings: {
         Row: {
@@ -38308,6 +38406,18 @@ export type Database = {
           similarity: number
           state: string
           suburb: string
+        }[]
+      }
+      match_market_updates: {
+        Args: {
+          match_count?: number
+          match_threshold?: number
+          p_segment?: string
+          query_embedding: string
+        }
+        Returns: {
+          id: string
+          similarity: number
         }[]
       }
       next_notification_delivery_time: {
