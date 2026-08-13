@@ -8,6 +8,10 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import { chunkReportContent, extractStructureHeadings, selectStructureTemplate } from './reportSections.ts';
 import { applyInvestmentProjection } from './reportBindingProjection.pure.ts';
+import {
+  applyOrganisationProjection,
+  ORGANISATION_COLUMNS,
+} from './organisationProjection.pure.ts';
 
 export interface TemplateBindingContext {
   data: Record<string, any>;
@@ -36,6 +40,21 @@ async function loadStructureHeadings(
     return extractStructureHeadings((row as any)?.parsed_content || '');
   } catch {
     return [];
+  }
+}
+
+/** The deployment's one `whitelabel_settings` row, or null. Never throws. */
+async function loadOrganisation(supabase: SupabaseClient): Promise<Record<string, unknown> | null> {
+  try {
+    const { data, error } = await supabase
+      .from('whitelabel_settings')
+      .select(ORGANISATION_COLUMNS)
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as Record<string, unknown>;
+  } catch {
+    return null;
   }
 }
 
@@ -87,6 +106,13 @@ export async function buildTemplateBindingContext(
   // vocabulary; the seeded catalogue binds a different one, so without this a
   // live render resolves almost nothing. See `reportBindingProjection.pure.ts`.
   applyInvestmentProjection(data, row as Record<string, unknown>);
+
+  // The letterhead: the cover wordmark and the contact block on the disclaimer
+  // page every seeded template ends with. Nothing published `org` until August
+  // 2026, so both printed blank on every report. Best-effort — a failure here
+  // leaves the bindings exactly as they were rather than failing the render,
+  // because a document with no letterhead still beats no document.
+  applyOrganisationProjection(data, await loadOrganisation(supabase));
 
   return { data, meta: { reportId, reportType, variant, tier } };
 }

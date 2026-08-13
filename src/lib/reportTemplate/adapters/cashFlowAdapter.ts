@@ -33,6 +33,8 @@ import {
   DEFAULT_SCENARIO,
   type ScenarioName,
 } from '../../../../supabase/functions/_shared/cashFlowProjection.pure';
+import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
+import { loadOrganisation } from './organisation';
 import type {
   BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -130,6 +132,12 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
     };
 
     applyCashFlowProjection(data, row, scenario);
+    // The letterhead — the wordmark on the cover and the contact block on the
+    // disclaimer page every template ends with. Nothing published `org` until
+    // August 2026, so both printed blank on every report this product has ever
+    // generated. See `organisationProjection.pure.ts`.
+    applyOrganisationProjection(data, await loadOrganisation());
+
 
     return {
       data,

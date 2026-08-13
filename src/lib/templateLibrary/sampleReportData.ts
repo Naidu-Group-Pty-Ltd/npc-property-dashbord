@@ -318,6 +318,20 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     generatedDate: '2 August 2026',
   },
 
+  /**
+   * The letterhead.
+   *
+   * Fully populated here and, until August 2026, populated **nowhere else**:
+   * no adapter published `org`, so every seeded template's disclaimer page
+   * printed its labels with nothing beside them and every family cover had a
+   * blank wordmark — while this preview showed a complete contact block.
+   *
+   * That is the trap `reportBindingProjection.pure.ts` was written for, in a
+   * second place: a fixture written in the catalogue's vocabulary passes while
+   * production is empty. `organisationProjection.pure.ts` is the producer now,
+   * reading `whitelabel_settings`; `abn` and `address` below have no column
+   * behind them and are sample-only.
+   */
   org: {
     name: 'Meridian Property Advisory',
     abn: '42 618 305 774',

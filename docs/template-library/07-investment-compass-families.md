@@ -374,6 +374,69 @@ Cash Flow on the property. `cashFlowCatalogue.spec.ts` asserts which of the five
 formats may bind a client at all — only the Portfolio Review, whose
 `portfolio_analysis_reports.client_name` is populated on all 21 rows.
 
+### Every generated document had a blank letterhead
+
+`disclaimerPage()` is the last page of all 293 seeded templates and the family
+covers set `{{org.name}}` as their wordmark. **Nothing published `org`** — not
+one adapter, not the edge mirror, not the render route. So the contact block at
+the foot of every report printed its labels with nothing beside them, and the
+cover wordmark was blank, on every document this product has ever generated.
+
+The preview never showed it: `SAMPLE_REPORT_DATA.org` is fully populated. That
+is the trap `reportBindingProjection.pure.ts` was written for, in a second
+place — a fixture in the catalogue's vocabulary passes while production is
+empty.
+
+`reportBindingProjection.spec.ts` had listed the six `org.*` paths under
+"organisation, adviser and client identity live outside this row" since it was
+written. True of the *row*, and read for four months as though it meant no
+source existed. One does: `whitelabel_settings`, the single row the Branding
+page writes. Four of the six now resolve —
+
+| Binding | Column |
+| --- | --- |
+| `org.name` | `company_name` |
+| `org.phone` | `email_signature_phone` |
+| `org.email` | `email_signature_email` |
+| `org.website` | `email_signature_website` |
+
+— and `org.abn` and `org.address` stay absent, because there is no ABN column
+and the stored address is an empty string. The disclaimer block omits a row
+whose value is empty, so neither prints. An ABN is a legal identifier and a
+plausible-looking wrong one is worse than a missing line.
+
+`organisationProjection.pure.ts` reads those four columns and nothing else. Not
+`email_signature_banner` — that is the image `REPORT_RULES.md` warns about — and
+not `email_signature_disclaimer`, which is written for the foot of an email
+rather than for print.
+
+### 49 of the Investment Compass's 80 bindings resolved to nothing
+
+Auditing every path the masters bind against a row taken verbatim from
+production is what found the blank cover titles, and it found much more in the
+oldest format on the system. Measured, then fixed by re-pointing the masters
+rather than widening the projection — because the paths below genuinely have no
+source, and inventing one is the worse outcome:
+
+| What it bound | Why it could not resolve | Now |
+| --- | --- | --- |
+| A four-paragraph narrative page: `market.conclusion.headline`, `market.narrative`, `market.conclusion.body`, `property.rationale` | No adapter publishes `market`; `location_intelligence` carries amenities, commute, schools and transport, not prose | **The assessment page** — `investment_score.breakdown`, five weighted dimensions with a score and a `details` sentence each |
+| A three-row risk register bound to `risks.0..2`, each with `.why` and `.action` | `investment_score.risks` is an array of plain **strings** whose length runs **0 to 1** across all 1,182 reports | One conditional row, its reasoning taken from the risk dimension's own `details` |
+| `{{client.name}}` in the footer and cover, `{{author.name}}`/`{{author.title}}` on the method page | No client-name column; `client_property_id` on 2 of 1,182; **no `profiles` table at all** | Removed; the method page names the organisation and the property |
+| `recommendation.rationale`, `financials.narrative`, `financials.fundingNote`, `financials.breakEvenRent`, `financials.loanFees`, `summary.narrative`, `assumptions.rentalGrowth`/`taxRate`/`sellingCosts`, `property.condition`/`tenancy`/`rationale` | No column for any of them | Removed, or replaced with a stored figure |
+| `strengthsWatch` drawing two marks a column | `strengths` holds two on **47** of 985 scored reports and `weaknesses` on **15** | One each |
+| `scenarioChart` bound to `tenYear.equitySeries` | Nothing published `tenYear`, so the format's one chart drew an empty plot | `financial_calculations.projections.moderate`, on 162 reports; absent on the rest rather than flat at zero |
+
+That leaves 8 unresolved of 74, and every one is deliberate: the six
+`property.images.*` (no adapter emits photographs, and the plates are
+page-conditional so an unfilled one costs no page) plus `org.abn` and
+`org.address`.
+
+Two things the exercise recorded without fixing. **The grade is 55%
+placeholder**: `breakdown.growthScore` and `demandScore` are weighted 40 and 15
+and scored a flat 50 with no details on 919 of the 985 scored reports. And
+`investment_score` is absent entirely on 197 of the 1,182.
+
 ### Two chart primitives could not draw what this format needed
 
 Both were found by giving the Cash Flow masters a chart, and both were silent.

@@ -384,10 +384,15 @@ assumed**, and a block that sets taller does not overflow the page, it prints
 over the next one; size from `textHeight(chars)` against measured production
 lengths, and `npm run templates:compass:qa` fails on the class. And **an
 unresolved binding renders as the empty string, never as a visible `{{…}}`** —
-which is why two formats shipped a cover with no title at all, bound to a
-`client.name` their source tables have no column for. A format's projection is
-the authority on what may be bound; the catalogue specs assert the masters bind
-nothing it cannot publish. Read
+which is why two formats shipped a cover with no title at all, why the
+Investment Compass's narrative page and risk register were blank on every report
+(49 of its 80 paths resolved to nothing), and why **every** document printed a
+blank letterhead until `organisationProjection.pure.ts` gave `org.*` a producer.
+A format's projection is the authority on what may be bound; the catalogue specs
+assert the masters bind nothing it cannot publish, and the check that finds this
+class is to resolve every bound path against a row taken verbatim from
+production — never against `SAMPLE_REPORT_DATA`, which is written in the
+catalogue's own vocabulary and passes while production is empty. Read
 [`docs/template-library/07-investment-compass-families.md`](./docs/template-library/07-investment-compass-families.md)
 before touching `scripts/template-library/investmentCompass/` or
 `_shared/templateColourways.*`.
