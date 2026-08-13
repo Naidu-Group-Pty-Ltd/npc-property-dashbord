@@ -66,3 +66,13 @@ export {
   type IdvComponentResult,
   type IdvSummary,
 } from '../../../../supabase/functions/_shared/aml/passport/passportIdv.pure';
+
+export {
+  bookletLabel,
+  bookletSpreads,
+  buildBooklet,
+  type BookletBlock,
+  type BookletPage,
+  type BookletTone,
+  type SealTone,
+} from '../../../../supabase/functions/_shared/aml/passport/passportBooklet.pure';

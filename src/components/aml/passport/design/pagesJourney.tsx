@@ -28,6 +28,8 @@ import {
 export type PassportPageProps = {
   view: PassportView;
   onOpenBooklet?: () => void;
+  /** Stamps page only — opens the record a seal was earned from. */
+  onOpenStamp?: (code: string) => void;
 };
 
 const dash = (v: string | null | undefined) => (v && v.length > 0 ? v : "—");

@@ -274,10 +274,7 @@ export function PartnersPage({ view }: PassportPageProps) {
 
 /* ── 10 · Stamps & Certifications ─────────────────────────────────────── */
 
-export function StampsPage({
-  view,
-  onOpenStamp,
-}: PassportPageProps & { onOpenStamp?: (code: string) => void }) {
+export function StampsPage({ view, onOpenStamp }: PassportPageProps) {
   const stamps = view.stamps;
   return (
     <div>

@@ -1,48 +1,83 @@
 /**
- * The digital passport booklet.
+ * The digital passport booklet — a bound document, not a modal with pages.
  *
- * The Command pages are a *register* — dense, dark, operational. The booklet is
- * the same record presented as the document it stands for: cream paper, foil
- * rules, a guilloche rosette and one leaf at a time. Both read from the same
- * projection, so they cannot disagree; only the presentation differs.
+ * The Command pages are a *register*: dense, dark, operational. This is the
+ * same record presented as the artefact it stands for — cream paper on a navy
+ * board, a spine between facing leaves, foil rules, a guilloche rosette and
+ * wax seals.
  *
- * Leaves are built from the projection rather than declared, so a customer with
- * no partners simply has no partner leaf — the booklet never prints a page that
- * says nothing.
+ * Three things the design treats as structural rather than decorative, and
+ * which are therefore reproduced rather than approximated:
+ *
+ *  - **It is bound.** Wide viewports show two facing leaves with a spine
+ *    between them; narrow ones show a single leaf. A booklet that always
+ *    showed one page would read as a slideshow.
+ *  - **The page count comes from the data.** The design's own screenshots show
+ *    12, 14 and 16 pages of the same document, because a leaf whose records do
+ *    not exist is not printed. An empty "Screening" leaf in a bound document
+ *    reads as "screening found nothing", which is a different and much worse
+ *    claim than "screening is not part of this record".
+ *  - **Every leaf is reachable directly.** The numbered chips are how an
+ *    operator gets to page XIII without turning twelve pages.
+ *
+ * Composition lives in `passportBooklet.pure.ts`; this file only draws.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { PassportView } from "@/lib/aml/passport";
-import { formatPassportDate } from "../format";
-import { Wax } from "./primitives";
+import {
+  bookletLabel,
+  bookletSpreads,
+  buildBooklet,
+  type BookletPage,
+  type PassportView,
+} from "@/lib/aml/passport";
+import { BookletBlockView } from "./BookletBlocks";
 
-type Leaf = {
-  key: string;
-  kicker: string;
-  title: string;
-  sub?: string;
-  body: JSX.Element;
-};
+/** Below this width the booklet shows one leaf; above it, a facing pair. */
+const SPREAD_MIN_WIDTH = 900;
 
-function LeafField({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="passport-leaf__k">{k}</div>
-      <div className="mt-0.5 text-[11px] leading-snug">{v || "—"}</div>
-    </div>
+function useLeavesPerSpread(): 1 | 2 {
+  const [wide, setWide] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(`(min-width: ${SPREAD_MIN_WIDTH}px)`).matches
+      : false,
   );
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(`(min-width: ${SPREAD_MIN_WIDTH}px)`);
+    const on = () => setWide(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return wide ? 2 : 1;
 }
 
-function LeafRow({ k, v, note }: { k: string; v?: string; note?: string }) {
+function Leaf({ page }: { page: BookletPage }) {
   return (
-    <div className="passport-leaf__row flex items-baseline gap-3 py-1.5 last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-semibold">{k}</div>
-        {note && <div className="passport-leaf__note mt-0.5 text-[10px] leading-snug">{note}</div>}
+    <article className="passport-leaf flex aspect-[470/648] min-w-0 flex-1 flex-col p-6">
+      <span aria-hidden="true" className="passport-leaf__guilloche" />
+      <span aria-hidden="true" className="passport-leaf__frame-outer" />
+      <span aria-hidden="true" className="passport-leaf__frame-inner" />
+
+      <header className="relative flex-none text-center">
+        <div className="passport-leaf__kicker">{page.kicker}</div>
+        <h3 className="passport-leaf__title">{page.title}</h3>
+        <div className="passport-leaf__divider mx-auto my-2 w-1/2" />
+        {page.sub && <p className="passport-leaf__sub m-0 text-[9.5px] leading-relaxed">{page.sub}</p>}
+      </header>
+
+      <div className="relative mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
+        {page.blocks.map((b, i) => (
+          <BookletBlockView key={`${page.id}-${b.kind}-${i}`} block={b} />
+        ))}
       </div>
-      {v && <span className="passport-leaf__muted text-[10px]">{v}</span>}
-    </div>
+
+      <footer className="passport-leaf__faint relative mt-2 flex-none text-center text-[8px] tracking-[0.2em]">
+        {page.numeral ?? ""}
+      </footer>
+    </article>
   );
 }
 
@@ -53,212 +88,108 @@ export function PassportBooklet({
   view: PassportView;
   onClose: () => void;
 }) {
-  const [index, setIndex] = useState(0);
-  const [turning, setTurning] = useState<"fwd" | "back" | null>(null);
+  const pages = useMemo(() => buildBooklet(view), [view]);
+  const perSpread = useLeavesPerSpread();
+  const spreads = useMemo(() => bookletSpreads(pages.length, perSpread), [pages.length, perSpread]);
+  const [spreadIndex, setSpreadIndex] = useState(0);
 
-  const leaves = useMemo<Leaf[]>(() => {
-    const h = view.header;
-    const out: Leaf[] = [];
+  // Reflowing from one leaf to two must keep the reader on the page they were
+  // reading, not reset them to the cover.
+  useEffect(() => {
+    setSpreadIndex((i) => Math.min(i, Math.max(0, spreads.length - 1)));
+  }, [spreads.length]);
 
-    out.push({
-      key: "identity",
-      kicker: "Bearer",
-      title: "Identity",
-      sub: "The customer this Passport was issued for.",
-      body: (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-          {view.identity.fields.slice(0, 8).map((f) => (
-            <LeafField key={f.key} k={f.label} v={f.value} />
-          ))}
-        </div>
-      ),
-    });
+  const spread = spreads[spreadIndex] ?? [];
+  const label = bookletLabel(spread, pages.length);
+  const titles = spread.map((i) => pages[i]?.title).filter(Boolean).join(" · ");
 
-    out.push({
-      key: "journey",
-      kicker: "How it was built",
-      title: "Compliance Journey",
-      sub: `${view.journey.recorded} of ${view.journey.total} milestones recorded.`,
-      body: (
-        <div>
-          <div className="passport-progress mb-3 h-1.5 overflow-hidden rounded-full">
-            <div
-              className="passport-progress__bar h-full rounded-full"
-              style={{ width: `${view.journey.percent}%` }}
-            />
-          </div>
-          {view.journey.phases.map((p) => (
-            <LeafRow
-              key={p.phase}
-              k={p.label}
-              v={`${p.recorded}/${p.total}`}
-              note={p.milestones.filter((m) => m.recorded).map((m) => m.title).join(" · ") || undefined}
-            />
-          ))}
-        </div>
-      ),
-    });
-
-    if (view.verification.parties.length > 0) {
-      out.push({
-        key: "verification",
-        kicker: "How it was proven",
-        title: "Verification",
-        body: (
-          <div>
-            {view.verification.parties.map((p) => (
-              <LeafRow
-                key={p.party}
-                k={p.party}
-                v={p.verified ? "VERIFIED" : "INCOMPLETE"}
-                note={p.method ?? undefined}
-              />
-            ))}
-          </div>
-        ),
-      });
-    }
-
-    if (view.stamps.length > 0) {
-      out.push({
-        key: "stamps",
-        kicker: "What it certifies",
-        title: "Seals",
-        body: (
-          <div className="flex flex-wrap justify-center gap-4 pt-2">
-            {view.stamps.slice(0, 6).map((s) => (
-              <Wax
-                key={`${s.code}-${s.at}`}
-                tone={s.tone as "gold" | "green" | "navy" | "blue" | "red"}
-                title={s.title}
-                caption={s.portal}
-                size={84}
-              />
-            ))}
-          </div>
-        ),
-      });
-    }
-
-    out.push({
-      key: "authority",
-      kicker: "Issued under",
-      title: "Authority",
-      body: (
-        <div className="space-y-3">
-          <p className="passport-leaf__statement text-center text-[13px] leading-relaxed">
-            The issuer certifies that the customer due diligence recorded in this Passport was
-            carried out under its AML/CTF programme.
-          </p>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-            <LeafField k="Credential" v={h.credential ?? "—"} />
-            <LeafField k="Version" v={h.current_version_label ?? "—"} />
-            <LeafField k="Fingerprint" v={h.evidence_fingerprint_short ?? "—"} />
-            <LeafField
-              k="Issued"
-              v={h.last_issued_at ? formatPassportDate(h.last_issued_at) : "—"}
-            />
-            <LeafField k="Issuer" v={h.issuer_org} />
-            <LeafField k="Officer" v={h.officer_label ?? "—"} />
-          </div>
-          <div className="passport-leaf__aside">
-            <div className="passport-leaf__k">Reliance</div>
-            <p className="mt-1 text-[10px] leading-relaxed">
-              A partner relying on this Passport remains responsible for its own obligations. An
-              issued version is immutable; material change supersedes it.
-            </p>
-          </div>
-        </div>
-      ),
-    });
-
-    return out;
-  }, [view]);
-
-  const total = leaves.length + 1; // cover + leaves
-  const go = (delta: number) => {
-    const next = Math.min(total - 1, Math.max(0, index + delta));
-    if (next === index) return;
-    setTurning(delta > 0 ? "fwd" : "back");
-    setIndex(next);
-    window.setTimeout(() => setTurning(null), 420);
+  const goToPage = (pageIndex: number) => {
+    const target = spreads.findIndex((s) => s.includes(pageIndex));
+    if (target >= 0) setSpreadIndex(target);
   };
-
-  const leaf = index === 0 ? null : leaves[index - 1];
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="passport-scope max-w-[560px] border-none bg-transparent p-0 shadow-none">
+      <DialogContent
+        className="passport-scope max-w-[1120px] gap-0 overflow-hidden p-0"
+        onKeyDown={(e) => {
+          if (e.key === "ArrowRight") setSpreadIndex((i) => Math.min(spreads.length - 1, i + 1));
+          if (e.key === "ArrowLeft") setSpreadIndex((i) => Math.max(0, i - 1));
+        }}
+      >
         <DialogTitle className="sr-only">
           Digital Compliance Passport for {view.header.subject ?? "this customer"}
         </DialogTitle>
 
-        <div
-          className={cn(
-            "relative mx-auto w-full",
-            turning === "fwd" && "passport-turn-fwd",
-            turning === "back" && "passport-turn-back",
-          )}
-          style={{ perspective: 1400 }}
-        >
-          {index === 0 ? (
-            <div className="passport-cover relative flex aspect-[470/648] flex-col items-center justify-center rounded-xl p-8 text-center">
-              <span aria-hidden="true" className="passport-cover__frame" />
-              <div className="passport-kicker">Aurixa Systems</div>
-              <h2 className="passport-display mt-3 text-2xl font-semibold uppercase tracking-[0.14em] text-[color:var(--passport-gold-soft)]">
-                Compliance
-                <br />
-                Passport
-              </h2>
-              <div className="passport-cover__rule my-5 w-2/3" />
-              <div className="passport-mono text-xs text-[color:var(--passport-gold-faint)]">
-                {view.header.credential ?? "NOT ISSUED"}
-              </div>
-              <p className="passport-mono mt-2 text-[10px] text-[color:var(--passport-gold-faint)]">
-                AML/CTF · {view.header.issuer_org}
-              </p>
+        {/* ── bar ── */}
+        <div className="passport-bookbar flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <div className="passport-display text-sm font-semibold uppercase tracking-[0.12em]">
+              AML/CTF Compliance Passport
             </div>
-          ) : (
-            <div className="passport-leaf relative flex aspect-[470/648] flex-col p-6">
-              <span aria-hidden="true" className="passport-leaf__guilloche" />
-              <span aria-hidden="true" className="passport-leaf__frame-outer" />
-              <span aria-hidden="true" className="passport-leaf__frame-inner" />
-
-              <div className="relative flex-none text-center">
-                <div className="passport-leaf__kicker">{leaf!.kicker}</div>
-                <h3 className="passport-leaf__title">{leaf!.title}</h3>
-                <div className="passport-leaf__divider mx-auto my-2 w-1/2" />
-                {leaf!.sub && (
-                  <p className="passport-leaf__sub text-[10px] leading-relaxed">{leaf!.sub}</p>
-                )}
-              </div>
-
-              <div className="relative mt-3 min-h-0 flex-1 overflow-y-auto pr-1">{leaf!.body}</div>
-
-              <div className="passport-leaf__faint relative mt-2 flex-none text-center text-[8px] tracking-[0.2em]">
-                AURIXA SYSTEMS · {view.header.credential ?? "—"}
-              </div>
+            <div className="passport-mono passport-faint mt-0.5 truncate text-[10px]">
+              {[
+                view.header.credential,
+                view.header.current_version_label,
+                view.header.subject,
+              ]
+                .filter(Boolean)
+                .join("  ·  ")}
             </div>
-          )}
+          </div>
+          <span className="passport-sync">
+            <span aria-hidden="true">◈</span>
+            Synchronised with journey
+          </span>
         </div>
 
-        <div className="mt-4 flex items-center justify-between gap-3">
+        {/* ── page chips ── */}
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-[color:var(--passport-hairline)] px-4 py-2.5">
+          {pages.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              className="passport-pagechip"
+              aria-current={spread.includes(i)}
+              aria-label={`Page ${i + 1}: ${p.title}`}
+              onClick={() => goToPage(i)}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+
+        {/* ── board ── */}
+        <div className="max-h-[70vh] overflow-y-auto p-4">
+          <div className="passport-board mx-auto flex w-full max-w-[980px] items-stretch gap-0 p-4">
+            {spread.map((pageIndex, n) => (
+              <div key={pages[pageIndex].id} className="flex min-w-0 flex-1 items-stretch">
+                {n > 0 && <span aria-hidden="true" className="passport-board__spine mx-3" />}
+                <Leaf page={pages[pageIndex]} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── turn ── */}
+        <div className="flex items-center justify-between gap-3 border-t border-[color:var(--passport-hairline)] px-4 py-3">
           <button
             type="button"
             className="passport-action w-auto"
-            onClick={() => go(-1)}
-            disabled={index === 0}
+            onClick={() => setSpreadIndex((i) => Math.max(0, i - 1))}
+            disabled={spreadIndex === 0}
           >
             ← Previous
           </button>
-          <span className="passport-faint passport-mono text-xs">
-            {index + 1} / {total}
-          </span>
+          <div className="min-w-0 text-center">
+            <div className="passport-display truncate text-[13px]">{titles}</div>
+            <div className="passport-faint passport-mono text-[10px] tracking-[0.14em]">{label}</div>
+          </div>
           <button
             type="button"
-            className="passport-action w-auto"
-            onClick={() => go(1)}
-            disabled={index === total - 1}
+            className="passport-action passport-action--primary w-auto"
+            onClick={() => setSpreadIndex((i) => Math.min(spreads.length - 1, i + 1))}
+            disabled={spreadIndex >= spreads.length - 1}
           >
             Next →
           </button>
