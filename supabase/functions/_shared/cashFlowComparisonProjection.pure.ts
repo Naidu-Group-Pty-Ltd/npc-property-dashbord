@@ -272,7 +272,7 @@ export function projectCashFlowComparison(
       if (!p) return null;
       return { ...p, rank: i + 1 };
     })
-    .filter((p): p is NonNullable<typeof p> => p !== null);
+    .filter((p) => p !== null);
   if (ranked.length) out.ranked = ranked;
 
   const scoreboard: Record<string, unknown> = {};
