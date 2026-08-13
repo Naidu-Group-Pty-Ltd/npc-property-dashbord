@@ -7,10 +7,13 @@
  * and the server's allowlist decides what lands. The DOCX export is built in
  * the browser from the same locked content module.
  */
+import { useCallback, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
+import { useAgreementSync, type AgreementSyncState } from '@/hooks/useAgreementSync';
+import type { AgreementSyncStamp } from '@/lib/agreements';
 import {
   agreementRenderServiceState,
   type AgreementDelivery,
@@ -24,6 +27,8 @@ import {
   type AgreementRenderServiceState,
   type AgreementStatus,
   type AgreementTemplateKey,
+  type PartnerNotifyOutcome,
+  type PortalReceiptState,
 } from '@/lib/agreements';
 import {
   buildAgreementDocx,
@@ -98,6 +103,13 @@ export interface AgreementDetailPayload {
   /** Whether the counterparty can reach this. Absent on an older deployment. */
   partner_portal_access?: PartnerPortalAccess;
   delivery?: AgreementDelivery;
+  /**
+   * Whether anything in the partner's portal ever announced this agreement.
+   * Null when the count could not be taken, absent on an older deployment —
+   * both mean "unknown", and the UI shows nothing rather than a false alarm.
+   */
+  portal_receipt?: PortalReceiptState | null;
+  portal_notification_count?: number | null;
 }
 
 export interface IssuerDefaults {
@@ -216,6 +228,63 @@ export function useAgreementCentreDetail(id: string | null) {
     queryKey: ['agreement-centre', 'detail', id],
     enabled: !!id,
     queryFn: async () => call<AgreementDetailPayload>({ action: 'get', id }),
+  });
+}
+
+/**
+ * The Command Centre half of the cross-portal cursor.
+ *
+ * Poll a stamp; when it moves, invalidate the register (and the one agreement
+ * being looked at). That is the whole mechanism — see `useAgreementSync` for
+ * why it is a poll and `syncStamp.pure.ts` for what is in the stamp.
+ *
+ * Pass an id on a detail page so the cursor watches that agreement rather than
+ * the whole register: a partner accepting agreement A should not refetch the
+ * page somebody has open on agreement B.
+ *
+ * A deployment whose function predates this action answers `unknown_action`.
+ * That is not an error worth showing anybody — it means the page is simply back
+ * to the manual Refresh button it had last week — so the cursor notices once
+ * and stops asking rather than failing every twenty seconds for ever.
+ */
+export function useAgreementCentreSync(agreementId?: string | null): AgreementSyncState {
+  const queryClient = useQueryClient();
+  const [supported, setSupported] = useState(true);
+
+  const fetchStamp = useCallback(async () => {
+    try {
+      const data = await call<{ stamp: AgreementSyncStamp }>({
+        action: 'sync',
+        ...(agreementId ? { agreement_id: agreementId } : {}),
+      });
+      return data.stamp ?? null;
+    } catch (error) {
+      const code = (error as Error & { code?: string })?.code;
+      if (code === 'unknown_action' || code === 'unknown_operation') {
+        setSupported(false);
+        return null;
+      }
+      // Anything else is a real failure and is rethrown, so the query goes to
+      // `isError` and the indicator says "Reconnecting…". Swallowing it would
+      // leave the page claiming to be live while its cursor was dead — the
+      // precise dishonesty this whole change exists to remove.
+      throw error;
+    }
+  }, [agreementId]);
+
+  const onChange = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'list'] });
+    queryClient.invalidateQueries({ queryKey: ['partner-agreements'] });
+    if (agreementId) {
+      queryClient.invalidateQueries({ queryKey: ['agreement-centre', 'detail', agreementId] });
+    }
+  }, [queryClient, agreementId]);
+
+  return useAgreementSync({
+    scope: ['command-centre', agreementId ?? 'register'],
+    enabled: supported,
+    fetchStamp,
+    onChange,
   });
 }
 
@@ -388,6 +457,7 @@ export function useAgreementCentreMutations() {
         agreement: PartnerAgreement;
         version: AgreementIssuedVersion;
         delivery?: AgreementDelivery;
+        portal_notify?: PartnerNotifyOutcome;
       }>({ action: 'issue_to_partner', id }),
     onSuccess: (res) => {
       invalidate(res.agreement.id);
@@ -399,6 +469,16 @@ export function useAgreementCentreMutations() {
           `Version ${res.version.version_label} issued — held for the partner until they activate `
           + 'their portal account.',
         );
+      } else if (res.portal_notify === 'failed') {
+        // The agreement IS issued — the version is frozen and the partner's
+        // list will show it. What did not happen is the announcement, and that
+        // is a warning rather than a success because somebody has to act on it.
+        toast.warning(`Version ${res.version.version_label} issued`, {
+          description:
+            'The agreement is in the partner\'s portal, but the notification telling them so could '
+            + 'not be raised. Use Send to announce it again.',
+          duration: 15_000,
+        });
       } else {
         toast.success(`Version ${res.version.version_label} issued to the partner portal`);
       }

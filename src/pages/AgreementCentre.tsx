@@ -44,8 +44,10 @@ import {
   downloadTemplateDocx,
   useAgreementCentreList,
   useAgreementCentreMutations,
+  useAgreementCentreSync,
   useIssuerDefaults,
 } from '@/hooks/useAgreementCentre';
+import { SyncIndicator } from '@/components/agreement-centre/SyncIndicator';
 import { loadDocxLogo } from '@/lib/agreements/docx';
 import { useBrand } from '@/branding/BrandProvider';
 import type { PartnerAgreement } from '@/hooks/usePartnerAgreements';
@@ -83,6 +85,10 @@ export default function AgreementCentre() {
   const { data, isLoading, isFetching, refetch } = useAgreementCentreList(
     view === 'archived' ? 'only' : 'exclude',
   );
+  // The register is a wallboard as much as a list — it is left open while
+  // partners review, accept and sign on the other side of the wall. The cursor
+  // is what makes those arrive here instead of waiting for somebody to reload.
+  const sync = useAgreementCentreSync();
   const agreements = data?.agreements ?? [];
   const archivedCount = data?.archivedCount ?? 0;
   const { data: issuer } = useIssuerDefaults();
@@ -159,9 +165,16 @@ export default function AgreementCentre() {
             <p className="text-sm text-muted-foreground">
               Manage, issue, review and track partner agreements.
             </p>
+            <SyncIndicator sync={sync} />
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={() => refetch()} disabled={isFetching} aria-label="Refresh">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => { void refetch(); sync.syncNow(); }}
+              disabled={isFetching}
+              aria-label="Refresh"
+            >
               <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
             </Button>
             <Button

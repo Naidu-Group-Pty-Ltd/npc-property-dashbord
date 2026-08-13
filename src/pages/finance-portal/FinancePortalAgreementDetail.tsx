@@ -33,6 +33,8 @@ import AnnotationRail from '@/components/agreement-centre/AnnotationRail';
 import { useAgreementAnnotations } from '@/hooks/useAgreementAnnotations';
 import AgreementTimeline from '@/components/agreement-centre/AgreementTimeline';
 import SignatureDialog from '@/components/agreement-centre/SignatureDialog';
+import { SyncIndicator } from '@/components/agreement-centre/SyncIndicator';
+import { useFinanceAgreementSync } from '@/hooks/useFinanceAgreementSync';
 import { PARTNER_STATUS_LABELS, partnerStatusBadge } from './FinancePortalAgreements';
 
 interface RoomPayload {
@@ -69,6 +71,11 @@ export default function FinancePortalAgreementDetail() {
   const [requestSection, setRequestSection] = useState<string>('commercial_schedule');
   const [requestComment, setRequestComment] = useState('');
   const [downloading, setDownloading] = useState(false);
+
+  // The room a partner leaves open while they read. Without this it showed the
+  // status it had on mount for as long as the tab lived — including after the
+  // issuer withdrew the agreement or answered a change request they had raised.
+  const sync = useFinanceAgreementSync(id ?? null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['finance-portal-agreement', id],
@@ -239,6 +246,7 @@ export default function FinancePortalAgreementDetail() {
               {agreement.issued_at ? ` · ${format(new Date(String(agreement.issued_at)), 'd MMM yyyy')}` : ''}
               {data?.current_version ? ` · Version ${data.current_version.version_label}` : ''}
             </p>
+            <SyncIndicator sync={sync} className="mt-1.5" />
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="outline" className={partnerStatusBadge(status)}>

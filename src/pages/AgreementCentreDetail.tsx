@@ -14,6 +14,7 @@ import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -33,6 +34,9 @@ import {
   agreementDeliveryNote,
   agreementDispositionFromRow,
   agreementTemplate,
+  PORTAL_RECEIPT_LABELS,
+  PORTAL_RECEIPT_NOTES,
+  portalReceiptNeedsAttention,
   templateKeyForDirection,
   projectFieldValues,
   type AgreementStatus,
@@ -40,6 +44,7 @@ import {
 import {
   useAgreementCentreDetail,
   useAgreementCentreMutations,
+  useAgreementCentreSync,
   docxBrandFrom,
   downloadAgreementDocx,
   downloadAgreementPdf,
@@ -54,6 +59,7 @@ import { loadDocxLogo } from '@/lib/agreements/docx';
 import { useBrand } from '@/branding/BrandProvider';
 import DigitalAgreementView, { agreementSectionNav } from '@/components/agreement-centre/DigitalAgreementView';
 import AgreementStatusBadge from '@/components/agreement-centre/AgreementStatusBadge';
+import { SyncIndicator } from '@/components/agreement-centre/SyncIndicator';
 import AgreementTimeline from '@/components/agreement-centre/AgreementTimeline';
 import VersionHistory from '@/components/agreement-centre/VersionHistory';
 import SignatureDialog from '@/components/agreement-centre/SignatureDialog';
@@ -66,6 +72,11 @@ export default function AgreementCentreDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data, isLoading } = useAgreementCentreDetail(id ?? null);
+  // Scoped to this agreement: a partner accepting a different one should not
+  // pull the page out from under whoever is reading this one. The pins in the
+  // annotation rail come with it — a change request raised while the issuer has
+  // the document open now appears without a reload.
+  const sync = useAgreementCentreSync(id ?? null);
   const { data: issuer } = useIssuerDefaults();
   const { settings: brandSettings } = useBrand();
   const {
@@ -124,6 +135,9 @@ export default function AgreementCentreDetail() {
   const partnerAccess = data?.partner_portal_access ?? 'active';
   const delivery = data?.delivery ?? 'delivered';
   const deliveryNote = data?.delivery ? agreementDeliveryNote(data.delivery) : '';
+  // Null on an older deployment, and null when the count could not be taken.
+  // Both mean "say nothing" — an absent receipt must never read as a failed one.
+  const portalReceipt = data?.portal_receipt ?? null;
   const { invite: invitePartner, reinstate: reinstatePartner } = usePartnerPortalAccess();
   const partnerAccessBusy = invitePartner.isPending || reinstatePartner.isPending;
   const sendAgreement = useSendAgreement();
@@ -332,6 +346,7 @@ export default function AgreementCentreDetail() {
             {(agreement as { agreement_owner_label?: string | null }).agreement_owner_label ? (
               <span>· Owner: {(agreement as { agreement_owner_label?: string | null }).agreement_owner_label}</span>
             ) : null}
+            <SyncIndicator sync={sync} />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -482,6 +497,34 @@ export default function AgreementCentreDetail() {
               {delivery === 'access_revoked'
                 ? 'Reinstate access'
                 : partnerAccess === 'invited' ? 'Resend invitation' : 'Invite to portal'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Whether anything actually told them. Separate from the banner above,
+          which is about whether they COULD open it — an agreement issued to a
+          partner who can sign in and was never announced looks, from their
+          chair, exactly like one that was never sent. See
+          `portalReceipt.pure.ts`. */}
+      {portalReceipt && portalReceipt !== 'not_issued' ? (
+        <div className={cn(
+          'flex flex-col gap-2 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between',
+          portalReceiptNeedsAttention(portalReceipt)
+            ? 'border-warning/40 bg-warning/10'
+            : 'border-border bg-muted/30',
+        )}>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              {PORTAL_RECEIPT_LABELS[portalReceipt]}
+            </p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {PORTAL_RECEIPT_NOTES[portalReceipt]}
+            </p>
+          </div>
+          {portalReceiptNeedsAttention(portalReceipt) && canSend ? (
+            <Button variant="outline" size="sm" className="shrink-0" onClick={() => setSendOpen(true)}>
+              <Send className="mr-1.5 h-4 w-4" /> Announce again
             </Button>
           ) : null}
         </div>

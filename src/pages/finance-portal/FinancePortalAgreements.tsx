@@ -15,6 +15,8 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowRight, FileSignature, Loader2, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
+import { useFinanceAgreementSync } from '@/hooks/useFinanceAgreementSync';
+import { SyncIndicator } from '@/components/agreement-centre/SyncIndicator';
 
 export interface PartnerAgreementSummary {
   id: string;
@@ -39,6 +41,10 @@ export const PARTNER_STATUS_LABELS: Record<string, string> = {
   withdrawn: 'Withdrawn',
   terminated: 'Terminated',
   superseded: 'Superseded',
+  // A voided agreement is partner-visible on purpose — being told the document
+  // is dead is the point — and without a label here it rendered as the raw
+  // enum value, `void`.
+  void: 'Void',
 };
 
 export function partnerStatusBadge(status: string): string {
@@ -60,6 +66,12 @@ const ATTENTION_STATUSES = new Set(['partner_review', 'sent_for_signature', 'cha
 export default function FinancePortalAgreements() {
   const { invokeFinanceFunction } = useFinancePortalAuth();
   const [refreshing, setRefreshing] = useState(false);
+
+  // Shares the layout's cursor rather than starting a second one — the query
+  // key is the same, so this is one poll for the whole portal. It is called
+  // here as well because this page is what a person stares at while waiting
+  // for an agreement to arrive, and it wants the indicator.
+  const sync = useFinanceAgreementSync();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['finance-portal-agreements'],
@@ -91,9 +103,18 @@ export default function FinancePortalAgreements() {
           <p className="text-sm text-muted-foreground">
             Review, accept and execute agreements issued to your organisation.
           </p>
+          <SyncIndicator sync={sync} />
         </div>
         <Button variant="outline" size="icon" aria-label="Refresh"
-          onClick={async () => { setRefreshing(true); await refetch(); setRefreshing(false); }}>
+          onClick={async () => {
+            setRefreshing(true);
+            // Both, and in this order: the list is what the person is looking
+            // at, and re-arming the cursor stops the next tick reporting the
+            // change they have just pulled in as news.
+            await refetch();
+            sync.syncNow();
+            setRefreshing(false);
+          }}>
           <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
         </Button>
       </header>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,16 @@ interface NotificationItem {
 
 const POLL_INTERVAL = 60_000; // 60s
 
-export function FinancePortalNotificationBell() {
+export function FinancePortalNotificationBell({
+  /**
+   * An opaque value that changes when something the portal already knows about
+   * has moved — today, the agreement sync cursor's stamp. The badge re-reads
+   * immediately rather than waiting out the rest of its minute, which is what
+   * stops an agreement appearing in the list before the bell admits it exists.
+   * Optional: without it the bell behaves exactly as it did.
+   */
+  refreshSignal,
+}: { refreshSignal?: string } = {}) {
   const { invokeFinanceFunction, user } = useFinancePortalAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -72,6 +81,18 @@ export function FinancePortalNotificationBell() {
   useEffect(() => {
     if (open) void fetchList();
   }, [open, fetchList]);
+
+  // …and again the moment the agreement cursor reports a change. Skipped on
+  // the first render — `refreshSignal` arriving is not a change, and the mount
+  // effect above has already read the count.
+  const lastSignal = useRef<string | undefined>(refreshSignal);
+  useEffect(() => {
+    if (!user || refreshSignal === undefined) return;
+    if (lastSignal.current === refreshSignal) return;
+    lastSignal.current = refreshSignal;
+    void fetchUnreadCount();
+    if (open) void fetchList();
+  }, [refreshSignal, user, open, fetchUnreadCount, fetchList]);
 
   const handleClick = async (item: NotificationItem) => {
     if (!item.is_read) {

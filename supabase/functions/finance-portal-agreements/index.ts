@@ -10,6 +10,7 @@
  * as an edit.
  *
  * Operations
+ *   sync                       cheap cursor: has anything changed for me?
  *   list                       agreements issued to this partner org
  *   get { id }                 full review payload; records first view
  *   download { id, kind }      signed URL — 'issued' or 'executed' PDF
@@ -42,12 +43,14 @@ import {
   agreementTemplate,
   templateKeyForDirection,
   CHANGE_REQUEST_SECTIONS,
+  PARTNER_ATTENTION_STATUSES,
   agreementContentForValues,
   anchorForPath,
   commentWithAnchorPrefix,
   projectFieldValues,
 } from '../_shared/agreements/index.pure.ts';
 import { agreementAnchorsSupported } from '../_shared/agreements/anchorColumns.ts';
+import type { AgreementSyncStamp } from '../_shared/agreements/index.pure.ts';
 import { agreementDownloadFileName } from '../_shared/agreements/documentHtml.pure.ts';
 import {
   AGREEMENTS_BUCKET,
@@ -248,6 +251,56 @@ Deno.serve(async (req) => {
       if (!data) return null;
       if (!isPartnerVisible(data.status, data.issued_at as string | null)) return null;
       return data;
+    }
+
+    // ─── SYNC (the cheap cursor) ────────────────────────────
+    // Four scalars describing what this partner can see. Polled on a short
+    // interval and on every tab focus so the portal notices an agreement
+    // arriving without being reloaded — see `syncStamp.pure.ts` for why this
+    // exists rather than a realtime subscription (the portal authenticates
+    // with a bespoke session token, so it has no Supabase socket to use).
+    if (operation === 'sync') {
+      // One projection over the partner's own register — `id`, `status`,
+      // `updated_at` and nothing else. Three of the four scalars are derived
+      // from it in memory rather than asked for separately, because a partner
+      // organisation holds a handful of agreements and three head-counts over
+      // the same index cost more than one narrow read of them.
+      const { data: rows, error: rowsError } = await supabase.from(TABLE)
+        .select('id, status, updated_at')
+        .eq('finance_agent_contact_id', financeContactId)
+        // The same two halves as `isPartnerVisible`, as a query — the stamp
+        // must count exactly what `list` would return, or the portal would
+        // refetch on a change to something it cannot see.
+        .in('status', PARTNER_VISIBLE_STATUSES as unknown as string[])
+        .not('issued_at', 'is', null);
+      if (rowsError) throw rowsError;
+
+      const visible = (rows ?? []) as { id: string; status: string; updated_at: string | null }[];
+      const ids = visible.map((row) => row.id);
+
+      // Open change requests across those agreements. Skipped entirely when
+      // there is nothing to scope it to: `in.()` with an empty list is not a
+      // query PostgREST accepts, and the answer is knowably zero.
+      let openRequests = 0;
+      if (ids.length) {
+        const { count, error } = await supabase.from(CHANGE_REQUESTS_TABLE)
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'open')
+          .in('agreement_id', ids);
+        if (error) throw error;
+        openRequests = count ?? 0;
+      }
+
+      const stamp: AgreementSyncStamp = {
+        count: visible.length,
+        latest: visible.reduce<string | null>(
+          (latest, row) => (row.updated_at && (!latest || row.updated_at > latest) ? row.updated_at : latest),
+          null,
+        ),
+        openRequests,
+        attention: visible.filter((row) => PARTNER_ATTENTION_STATUSES.includes(row.status)).length,
+      };
+      return json({ stamp });
     }
 
     // ─── LIST ───────────────────────────────────────────────

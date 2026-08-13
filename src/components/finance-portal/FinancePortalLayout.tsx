@@ -15,6 +15,8 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { FinancePortalNotificationBell } from './FinancePortalNotificationBell';
+import { useFinanceAgreementSync } from '@/hooks/useFinanceAgreementSync';
+import { stampKey } from '@/lib/agreements';
 import { FinanceCommandPalette } from './FinanceCommandPalette';
 import { QuickAddFab } from './QuickAddFab';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
@@ -92,6 +94,13 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // The cross-portal cursor lives at the layout so it covers every page, not
+  // just the agreement ones — an agreement issued while the partner is on their
+  // dashboard has to reach the bell and the action card there. Pages that also
+  // call it share this exact query; React Query runs one poll, not two.
+  // See `useAgreementSync`.
+  const agreementSync = useFinanceAgreementSync();
 
   // Batch 13 #66 — boot theme/density from cached prefs on mount.
   // The palette lives on <html>, so it is global state and has to be torn
@@ -226,7 +235,11 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
                   <span className="text-xs">Search…</span>
                   <kbd className="hidden lg:inline-flex pointer-events-none h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium">⌘K</kbd>
                 </Button>
-                <FinancePortalNotificationBell />
+                {/* The bell polls its own count on a minute. That is fine for
+                    everything else the portal notifies about, and too slow for
+                    the one thing the cursor already knows about — so the stamp
+                    doubles as a nudge: when it moves, the badge re-reads. */}
+                <FinancePortalNotificationBell refreshSignal={stampKey(agreementSync.stamp)} />
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
