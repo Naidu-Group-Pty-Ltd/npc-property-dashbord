@@ -1103,7 +1103,7 @@ export default function Calendar() {
                     <div className="flex items-center gap-2">
                       <div
                         className="h-3 w-3 rounded-full shrink-0 ring-2 ring-black/30 shadow-sm"
-                        style={{ backgroundColor: cal.eventColor || '#3b82f6' }}
+                        style={{ backgroundColor: getCalendarColor(cal.id) }}
                       />
                       <span className="truncate max-w-[120px]">{cal.name}</span>
                     </div>
@@ -1929,7 +1929,7 @@ export default function Calendar() {
                     <div className="flex items-center gap-2">
                       <div
                         className="h-3.5 w-3.5 rounded-full shrink-0 ring-2 ring-black/30 shadow-sm"
-                        style={{ backgroundColor: calendar.eventColor || '#3b82f6' }}
+                        style={{ backgroundColor: getCalendarColor(calendar.id) }}
                       />
                       <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-foreground">{calendar.name}</span>
                     </div>
