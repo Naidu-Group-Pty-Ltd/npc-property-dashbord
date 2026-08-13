@@ -151,12 +151,15 @@ describe('client projection — strict boundary', () => {
   it('cannot receive screening, PEP or sanctions material', () => {
     expect(json).not.toMatch(/pep_result|not_pep|possible_match|confirmed_match|adverse_media|watchlist|sanction/i);
     expect(json).not.toContain('Possible PEP match');
-    // "Screening" may appear in exactly two places: the closed-vocabulary
-    // stamp title (the FACT screening completed is client-safe transparency;
-    // its content never is) and that stamp's source reference. Nothing else.
+    // "Screening" may appear ONLY as closed-vocabulary machine identifiers and
+    // the stamp title — the FACT that screening completed is client-safe
+    // transparency (the attestation states it to partners too); its CONTENT
+    // never is. Everything scrubbed here is an identifier or that one title;
+    // no candidate, match, list or determination text may survive.
     const scrubbed = json
       .replaceAll('SCREENING COMPLETED', '')
       .replaceAll('screening_completed', '')
+      .replaceAll('"code":"screening"', '')
       .replaceAll('aml.party_screening_subjects', '');
     expect(scrubbed).not.toMatch(/screening/i);
   });
@@ -209,6 +212,15 @@ describe('client projection — strict boundary', () => {
     expect(view.stamps.length).toBeGreaterThan(3);
     expect(view.open_requests).toHaveLength(1);
     expect(view.transactions).toHaveLength(1);
+  });
+
+  it('the client journey states facts in the client\'s words, never operational vocabulary', () => {
+    const titles = view.journey.phases.flatMap((p) => p.milestones.map((m) => `${m.title} ${m.detail} ${m.feeds}`));
+    for (const text of titles) {
+      expect(text).not.toMatch(/sanction|\bPEP\b|risk assessment|MLRO|service gate|EDD/i);
+    }
+    // …while still telling them the milestone happened.
+    expect(titles.join(' ')).toMatch(/Background checks completed/);
   });
 
   it('the tripwire passes on the shipped view', () => {

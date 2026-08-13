@@ -11,6 +11,9 @@ import type { PassportStamp, PassportView } from "@/lib/aml/passport";
 import { PassportStateBadge } from "./PassportStateBadge";
 import { StampSeal } from "./StampSeal";
 import { classifyPassportLoadFailure } from "./loadState";
+import { PassportControls } from "./PassportControls";
+import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { cn } from "@/lib/utils";
 import {
   formatPassportCurrency as formatCurrency,
   formatPassportDate as formatDate,
@@ -22,10 +25,11 @@ import {
  * Command Centre Compliance Passport — the RESULTING RECORD of the AML/CTF
  * journey, projected server-side by `get_passport_view`.
  *
- * Read-only by design: every action that changes what this shows (issue,
- * grant, revoke, gate decisions, client requests) already has an owner —
- * the Compliance Sharing panel and the case workspace — and this section
- * links the eye to those rather than duplicating their buttons.
+ * Reading and acting are separated: the pages present the record, and
+ * `PassportControls` invokes the EXISTING canonical operations (client
+ * request, attestation issue, grant, service-gate decision). No control
+ * here writes state directly, and every restricted action carries the
+ * server's own MLRO gate plus a mandatory reason.
  *
  * When the `aml_passport_command_view` flag is off the server answers 404
  * `passport_disabled` and this component renders NOTHING — the workspace
@@ -43,6 +47,7 @@ export function CommandPassportSection({
 }: { caseId: string; initialPage?: string }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [openStamp, setOpenStamp] = useState<PassportStamp | null>(null);
+  const access = useAmlAccess();
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });
@@ -129,6 +134,8 @@ export function CommandPassportSection({
         </CardContent>
       </Card>
 
+      <PassportControls caseId={caseId} view={view} isMlro={access.isMlro} onChanged={() => void load()} />
+
       {header.state.reasons.length > 0 && header.state.code !== "issued_current" ? (
         <p className="text-xs text-muted-foreground">
           Derivation: {header.state.reasons.join(" · ")}
@@ -138,9 +145,13 @@ export function CommandPassportSection({
       {/* ── pages ─────────────────────────────────────────────────────── */}
       <Tabs defaultValue={initialPage}>
         <TabsList className="flex h-auto flex-wrap justify-start">
+          <TabsTrigger value="journey">Journey</TabsTrigger>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="identity">Identity</TabsTrigger>
           <TabsTrigger value="verification">Verification</TabsTrigger>
+          <TabsTrigger value="ownership">Ownership &amp; Control</TabsTrigger>
+          <TabsTrigger value="screening">Screening</TabsTrigger>
+          <TabsTrigger value="funding">Funding &amp; EDD</TabsTrigger>
           <TabsTrigger value="evidence">Evidence</TabsTrigger>
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
           <TabsTrigger value="partners">Partner access</TabsTrigger>
@@ -299,10 +310,27 @@ export function CommandPassportSection({
                   <p className="text-xs text-muted-foreground">
                     A partner decision records that organisation's position only — it never alters this case's assessment.
                   </p>
+                  <DisclosureMatrix view={view} />
                 </div>
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="journey" className="mt-4">
+          <JourneyPage view={view} />
+        </TabsContent>
+
+        <TabsContent value="ownership" className="mt-4">
+          <OwnershipPage view={view} />
+        </TabsContent>
+
+        <TabsContent value="screening" className="mt-4">
+          <ScreeningPage view={view} />
+        </TabsContent>
+
+        <TabsContent value="funding" className="mt-4">
+          <FundingPage view={view} />
         </TabsContent>
 
         <TabsContent value="stamps" className="mt-4">
@@ -498,6 +526,7 @@ function OverviewPage({ view }: { view: PassportView }) {
           {view.header.last_issued_at ? (
             <span className="text-xs text-muted-foreground">Sealed {formatDateTime(view.header.last_issued_at)}</span>
           ) : null}
+          {view.header.evidence_fingerprint ? <AuthenticityDialog view={view} /> : null}
         </CardContent>
       </Card>
 
@@ -511,6 +540,399 @@ function OverviewPage({ view }: { view: PassportView }) {
         </Alert>
       ) : null}
     </div>
+  );
+}
+
+/* ── journey (design page 00) ──────────────────────────────────────────── */
+
+function JourneyPage({ view }: { view: PassportView }) {
+  const j = view.journey;
+  return (
+    <div className="space-y-4">
+      <Card className="glass-panel">
+        <CardContent className="flex flex-wrap items-center gap-4 py-4">
+          <ShieldCheck className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+          <div className="min-w-0 flex-1 basis-72">
+            <div className="text-sm font-medium">
+              The Passport is generated from this journey — it is not a separate record.
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Every milestone below is recorded only when its underlying evidence exists. Completing one updates the
+              Passport in the same moment.
+            </p>
+          </div>
+          <div className="text-right">
+            <div className="text-sm font-semibold tabular-nums">{j.recorded} of {j.total}</div>
+            <div className="text-xs text-muted-foreground">milestones recorded</div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div
+        className="h-2 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuenow={j.percent}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${j.recorded} of ${j.total} milestones recorded`}
+      >
+        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${j.percent}%` }} />
+      </div>
+
+      {j.phases.map((phase) => (
+        <section key={phase.phase} className="space-y-2">
+          <div className="flex items-center gap-3">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {phase.label}
+            </h3>
+            <span className="h-px flex-1 bg-border" />
+            <span className="font-mono text-[11px] text-muted-foreground">
+              {phase.recorded}/{phase.total}
+            </span>
+          </div>
+          <div className="space-y-2">
+            {phase.milestones.map((m) => (
+              <Card key={m.code} className={m.recorded ? "glass-panel" : "border-dashed"}>
+                <CardContent className="flex flex-wrap items-start gap-x-4 gap-y-2 py-3">
+                  <span
+                    className={cn(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border font-mono text-[11px]",
+                      m.recorded ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground",
+                    )}
+                    aria-hidden="true"
+                  >
+                    {m.ordinal}
+                  </span>
+                  <div className="min-w-0 flex-1 basis-64">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{m.title}</span>
+                      <Badge variant="outline" className="text-[10px]">{m.portal}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{m.detail}</p>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      <span aria-hidden="true">↳ </span>Populates <span className="text-primary">{m.feeds}</span>
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <Badge variant="outline" className={m.recorded ? "border-success/40 text-success" : "text-muted-foreground"}>
+                      {m.recorded ? "Recorded" : "Pending"}
+                    </Badge>
+                    <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                      {m.at ? formatDateTime(m.at) : "—"}
+                    </div>
+                    {m.actor ? <div className="text-[11px] text-muted-foreground">{m.actor}</div> : null}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/* ── ownership & control (design page 04) ──────────────────────────────── */
+
+function OwnershipPage({ view }: { view: PassportView }) {
+  const parties = view.ownership;
+  const ubos = parties.filter((p) => p.is_ubo).length;
+  const controllers = parties.filter((p) => p.party_kind === "authorised_representative").length;
+  const verified = parties.filter((p) => p.verified).length;
+
+  return (
+    <div className="space-y-4">
+      <Card className="glass-panel">
+        <CardHeader className="flex-row items-baseline justify-between space-y-0">
+          <CardTitle className="text-base">Control structure</CardTitle>
+          {parties.length > 0 ? (
+            <Badge variant="outline" className={verified === parties.length ? "border-success/40 text-success" : "text-muted-foreground"}>
+              {verified === parties.length ? "Ownership & control verified" : `${verified} of ${parties.length} verified`}
+            </Badge>
+          ) : null}
+        </CardHeader>
+        <CardContent>
+          {parties.length === 0 ? (
+            <EmptyNote text="No beneficial owners or controllers have been recorded for this customer." />
+          ) : (
+            <div className="space-y-1.5">
+              {parties.map((p, i) => (
+                <div
+                  key={`${p.name}-${i}`}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/40 py-2 text-sm last:border-0"
+                >
+                  <span className="min-w-0 flex-1 basis-48">
+                    <span className="font-medium">{p.name}</span>
+                    {p.relationship ? (
+                      <span className="ml-2 text-xs capitalize text-muted-foreground">
+                        {p.relationship.replaceAll("_", " ")}
+                      </span>
+                    ) : null}
+                  </span>
+                  {p.is_ubo ? <Badge variant="secondary" className="text-[10px]">UBO</Badge> : null}
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {typeof p.ownership_percent === "number" ? `${p.ownership_percent}%` : "—"}
+                  </span>
+                  <Badge variant="outline" className={p.verified ? "border-success/40 text-success" : "text-muted-foreground"}>
+                    {(p.verification_state ?? "unverified").replaceAll("_", " ")}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {parties.length > 0 ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[
+            { k: "Parties", v: String(parties.length) },
+            { k: "Beneficial owners", v: String(ubos) },
+            { k: "Representatives", v: String(controllers) },
+          ].map((t) => (
+            <Card key={t.k} className="glass-panel">
+              <CardContent className="py-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t.k}</div>
+                <div className="mt-1 text-lg font-semibold tabular-nums">{t.v}</div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ── screening (design page 05) ────────────────────────────────────────── */
+
+const NEVER_SHARED = [
+  "Candidate matches", "Dismissed matches", "Match scores", "Internal suspicion",
+  "MLRO reasoning", "Suspicious matter reporting", "Law-enforcement correspondence",
+];
+
+function ScreeningPage({ view }: { view: PassportView }) {
+  const s = view.screening;
+  if (!s) return <EmptyNote text="Screening detail is not available in this view." />;
+
+  const lists = Object.entries(s.list_freshness ?? {});
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Card className="glass-panel">
+          <CardHeader><CardTitle className="text-sm">Screening performed</CardTitle></CardHeader>
+          <CardContent className="space-y-1.5 text-sm">
+            <Row k="Subjects screened" v={`${s.subjects_completed} of ${s.subjects_total}`} />
+            <Row k="Last completed" v={s.last_completed_at ? formatDateTime(s.last_completed_at) : "—"} />
+            <Row k="Outcome" v={s.performed ? "Recorded against every identified party" : "Not yet performed"} />
+          </CardContent>
+        </Card>
+        <Card className="glass-panel">
+          <CardHeader><CardTitle className="text-sm">PEP determination</CardTitle></CardHeader>
+          <CardContent className="space-y-1.5 text-sm">
+            <Row k="Result" v={s.pep_result ? s.pep_result.replaceAll("_", " ") : "Not determined"} />
+            <Row k="Determined" v={s.pep_determined_at ? formatDateTime(s.pep_determined_at) : "—"} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {lists.length > 0 ? (
+        <Card className="glass-panel">
+          <CardHeader><CardTitle className="text-sm">List currency</CardTitle></CardHeader>
+          <CardContent className="space-y-1.5 text-sm">
+            {lists.map(([code, at]) => (
+              <Row key={code} k={code.toUpperCase()} v={formatDate(at)} />
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* The design's internal-boundary panel — honest copy over a guarantee
+          the attestation contract already enforces. */}
+      <Card className="border-dashed">
+        <CardHeader>
+          <CardTitle className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+            Internal boundary — not part of the Passport
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="mb-3 max-w-prose text-xs text-muted-foreground">
+            The Passport records that required screening occurred. It is not the investigation file. The following is
+            held in the AML case, never in a Passport view, and never disclosed to a partner portal.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {NEVER_SHARED.map((n) => (
+              <span key={n} className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground">
+                <span aria-hidden="true">✕ </span>{n}
+              </span>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ── funding & EDD (design page 06) ────────────────────────────────────── */
+
+function FundingPage({ view }: { view: PassportView }) {
+  const f = view.funding;
+  if (!f) return <EmptyNote text="Funding detail is not available in this view." />;
+  const nothing = f.sof_total === 0 && f.sow_total === 0 && !f.edd_present;
+
+  return (
+    <div className="space-y-4">
+      {nothing ? (
+        <EmptyNote text="No source of funds, source of wealth or enhanced due diligence has been recorded for this customer." />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Card className="glass-panel">
+            <CardHeader><CardTitle className="text-sm">Source of funds</CardTitle></CardHeader>
+            <CardContent className="space-y-1.5 text-sm">
+              <Row k="Components recorded" v={String(f.sof_total)} />
+              <Row k="Evidenced" v={`${f.sof_verified} of ${f.sof_total}`} />
+            </CardContent>
+          </Card>
+          <Card className="glass-panel">
+            <CardHeader><CardTitle className="text-sm">Source of wealth</CardTitle></CardHeader>
+            <CardContent className="space-y-1.5 text-sm">
+              <Row k="Components recorded" v={String(f.sow_total)} />
+              <Row k="Evidenced" v={`${f.sow_verified} of ${f.sow_total}`} />
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <Card className="glass-panel">
+        <CardHeader><CardTitle className="text-sm">Compliance position</CardTitle></CardHeader>
+        <CardContent className="space-y-1.5 text-sm">
+          <Row
+            k="Enhanced due diligence"
+            v={f.edd_present ? (f.edd_completed ? "Completed" : "Open") : "Not required"}
+          />
+          <p className="pt-2 text-xs text-muted-foreground">
+            Evidence collected and the compliance decision made on it are recorded separately. The decision and its
+            reasoning remain internal to the AML case.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0">
+      <span className="text-xs text-muted-foreground">{k}</span>
+      <span className="text-right text-sm capitalize">{v}</span>
+    </div>
+  );
+}
+
+/* ── disclosure matrix (design page 09) ────────────────────────────────── */
+
+function DisclosureMatrix({ view }: { view: PassportView }) {
+  const partners = view.partners ?? [];
+  const withManifest = partners.filter((p) => (p.disclosure ?? []).length > 0);
+  if (withManifest.length === 0) {
+    return (
+      <p className="pt-3 text-xs text-muted-foreground">
+        No disclosure manifest is recorded for the connected organisations. A manifest exists once the Passport is
+        shared under attestation v2 — until then, disclosure is governed by the arrangement itself.
+      </p>
+    );
+  }
+
+  const classes = [...new Set(withManifest.flatMap((p) => (p.disclosure ?? []).map((d) => d.code)))].sort();
+
+  return (
+    <div className="pt-3">
+      <h4 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Disclosure matrix</h4>
+      <p className="mt-1 max-w-prose text-xs text-muted-foreground">
+        The Passport is shared; not every organisation receives every evidence class. Disclosure is set per
+        organisation and read from the stored manifest.
+      </p>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-[420px] border-collapse text-sm">
+          <caption className="sr-only">Authorised disclosure by organisation and evidence class</caption>
+          <thead>
+            <tr>
+              <th scope="col" className="border-b border-border py-2 pr-3 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Evidence class
+              </th>
+              {withManifest.map((p, i) => (
+                <th key={i} scope="col" className="border-b border-border px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {p.org_name ?? "Partner"}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {classes.map((code) => (
+              <tr key={code}>
+                <th scope="row" className="border-b border-border/40 py-2 pr-3 text-left font-normal capitalize">
+                  {code.replaceAll("_", " ")}
+                </th>
+                {withManifest.map((p, i) => {
+                  const cell = (p.disclosure ?? []).find((d) => d.code === code);
+                  const state = cell?.state ?? "withheld";
+                  return (
+                    <td key={i} className="border-b border-border/40 px-2 py-2 text-center">
+                      <Badge
+                        variant="outline"
+                        className={
+                          state === "granted" ? "border-success/40 text-success"
+                            : state === "limited" ? "border-warning/40 text-warning"
+                              : "text-muted-foreground"
+                        }
+                      >
+                        {state === "granted" ? "Granted" : state === "limited" ? "Limited" : "Withheld"}
+                      </Badge>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ── authenticity ──────────────────────────────────────────────────────── */
+
+function AuthenticityDialog({ view }: { view: PassportView }) {
+  const [open, setOpen] = useState(false);
+  const h = view.header;
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Verify integrity
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Digitally verified by {h.issuer_org}</DialogTitle>
+            <DialogDescription>
+              The fingerprint is a SHA-256 over the sealed evidence manifest of this version. An issued version is
+              immutable, so a matching fingerprint proves the content has not changed since it was sealed.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="space-y-1.5 text-sm">
+            <StampRow k="Credential" v={h.credential ?? "—"} mono />
+            <StampRow k="Version" v={h.current_version_label ?? "—"} mono />
+            <StampRow k="Sealed" v={h.last_issued_at ? formatDateTime(h.last_issued_at) : "—"} />
+            <StampRow k="State" v={h.state.label} />
+          </dl>
+          <div className="rounded-md border border-border bg-muted/40 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Evidence fingerprint
+            </div>
+            <div className="mt-1 break-all font-mono text-xs">{h.evidence_fingerprint}</div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

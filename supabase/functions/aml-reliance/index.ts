@@ -1441,10 +1441,43 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // Beneficial owners hang off entities, which link to the case through
         // entity_case_links — a two-step read, not a PostgREST embed.
         const entityIds = [...new Set((entityLinks ?? []).map((l: any) => l.entity_id).filter(Boolean))];
-        const { data: owners } = entityIds.length
-          ? await admin.schema("aml").from("beneficial_owners")
-              .select("verification_state, updated_at").in("entity_id", entityIds)
-          : { data: [] as any[] };
+        const [{ data: owners }, { data: reps }, { data: entityRows }] = entityIds.length
+          ? await Promise.all([
+              admin.schema("aml").from("beneficial_owners")
+                .select("full_name, ownership_percent, control_type, is_ubo, verification_state, updated_at")
+                .in("entity_id", entityIds),
+              admin.schema("aml").from("authorised_representatives")
+                .select("full_name, role_title, is_director, is_signatory, verification_state")
+                .in("entity_id", entityIds),
+              admin.schema("aml").from("entities")
+                .select("legal_name, entity_type, abn, acn, jurisdiction, registered_address")
+                .in("id", entityIds),
+            ])
+          : [{ data: [] as any[] }, { data: [] as any[] }, { data: [] as any[] }];
+
+        // Control structure: owners and representatives as ONE party list.
+        // Names and roles only — risk flags, PEP linkage and notes stay in
+        // the case file and are never projected.
+        const ownership = [
+          ...(owners ?? []).map((o: any) => ({
+            name: o.full_name ?? "Beneficial owner",
+            party_kind: "beneficial_owner",
+            relationship: o.control_type ?? null,
+            ownership_percent: typeof o.ownership_percent === "number" ? o.ownership_percent : null,
+            control_type: o.control_type ?? null,
+            is_ubo: o.is_ubo ?? null,
+            verification_state: o.verification_state ?? null,
+          })),
+          ...(reps ?? []).map((r: any) => ({
+            name: r.full_name ?? "Authorised representative",
+            party_kind: "authorised_representative",
+            relationship: r.role_title ?? (r.is_director ? "Director" : r.is_signatory ? "Signatory" : null),
+            ownership_percent: null,
+            control_type: r.is_director ? "director" : r.is_signatory ? "signatory" : null,
+            is_ubo: false,
+            verification_state: r.verification_state ?? null,
+          })),
+        ];
 
         const attFacts = (attRows ?? []).map((a: any) => ({
           version: a.version,
@@ -1474,6 +1507,40 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             if (v.grant_id && !lastViewByGrant.has(v.grant_id)) lastViewByGrant.set(v.grant_id, v.created_at);
           }
         }
+        // Authorised disclosure per organisation. Read from the stored v2
+        // manifest: allowed codes minus denied classes, with denied winning.
+        // A v1 grant has no manifest and therefore discloses no matrix — the
+        // page says so rather than implying an empty matrix means "nothing".
+        const manifestByGrant = new Map<string, any>();
+        if ((grants ?? []).length > 0) {
+          const { data: manifests } = await admin.schema("aml").from("disclosure_manifests")
+            .select("grant_id, allowed_attribute_codes, allowed_record_classes, denied_classes, revoked_at")
+            .in("grant_id", (grants ?? []).map((g: any) => g.id));
+          for (const m of (manifests ?? [])) {
+            if (!m.revoked_at) manifestByGrant.set(m.grant_id, m);
+          }
+        }
+        const disclosureFor = (grantId: string | null | undefined) => {
+          const m = grantId ? manifestByGrant.get(grantId) : null;
+          if (!m) return [];
+          const denied = new Set<string>((m.denied_classes ?? []) as string[]);
+          const codes = [
+            ...((m.allowed_attribute_codes ?? []) as string[]),
+            ...((m.allowed_record_classes ?? []) as string[]),
+          ];
+          const seen = new Set<string>();
+          const out: Array<{ code: string; state: "granted" | "limited" | "withheld" }> = [];
+          for (const code of codes) {
+            if (seen.has(code)) continue;
+            seen.add(code);
+            out.push({ code, state: denied.has(code) ? "withheld" : "granted" });
+          }
+          for (const code of denied) {
+            if (!seen.has(code)) { seen.add(code); out.push({ code, state: "withheld" }); }
+          }
+          return out;
+        };
+
         const grantByOrg = new Map<string, any>();
         for (const g of grantView) {
           const org = (g as any).reliance_agreements?.partner_org_name ?? "";
@@ -1504,11 +1571,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             assessment_status: a?.status ?? null,
             assessment_decided_at: a?.decided_at ?? null,
             assessor_name: a?.assessor_name ?? null,
+            disclosure: disclosureFor(g?.id),
           };
         });
 
         const reqById = new Map<string, any>((reqs ?? []).map((r: any) => [r.id, r]));
         const issuerOrg = tenant?.display_name ?? "NPC Services command centre";
+        const entityDetailsTyped = await questionnairePayload(admin, caseId, "entity_details");
         const view = buildPassportView("command", {
           issuer_org: issuerOrg,
           officer_label: tenant?.mlro_contact_name ?? null,
@@ -1517,7 +1586,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           material_inputs_current: materialCurrent,
           open_refresh_obligations: (refreshObs ?? []).filter((r: any) => r.status === "open").length,
           personal_details: await questionnairePayload(admin, caseId, "personal_details"),
-          entity_details: await questionnairePayload(admin, caseId, "entity_details"),
+          // The entity REGISTER is canonical for particulars; the questionnaire
+          // is what the client typed. Register values win where both exist.
+          entity_details: (() => {
+            const typed = entityDetailsTyped ?? {};
+            const reg = (entityRows ?? [])[0];
+            if (!reg) return Object.keys(typed).length ? typed : null;
+            return {
+              ...typed,
+              entity_name: reg.legal_name ?? typed.entity_name,
+              abn_acn: reg.acn ?? reg.abn ?? typed.abn_acn,
+              registration_place: reg.jurisdiction ?? typed.registration_place,
+              registered_address: reg.registered_address ?? typed.registered_address,
+            };
+          })(),
           documents: (docs ?? []).map((d: any) => ({
             id: d.id,
             requirement_label: reqById.get(d.requirement_id)?.label ?? null,
@@ -1528,6 +1610,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             version_number: d.version_number,
           })),
           transactions: txns ?? [],
+          ownership,
           screening: {
             subjects: (subjects ?? []).map((s: any) => ({
               state: s.state,
@@ -1567,6 +1650,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             owners: (owners ?? []).map((o: any) => ({
               verification_state: o.verification_state, verified_at: o.updated_at ?? null,
             })),
+
             source_of_funds: (sof ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
             source_of_wealth: (sow ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
             edd_cases: (edd ?? []).map((e: any) => ({ status: e.status, completed_at: e.completed_at })),
