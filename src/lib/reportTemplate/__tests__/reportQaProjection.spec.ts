@@ -52,13 +52,13 @@ function doc(over: Record<string, unknown> = {}) {
     ...(over.meta as object ?? {}),
   };
   return {
-    meta,
     grounding: { reportNames: ['12 Marlborough St.pdf'], reportCount: 1 },
     turns: [turn(1), turn(2)],
     ...over,
     meta,
   } as any;
 }
+
 
 describe('the answer stays Markdown', () => {
   it('publishes source, not formatted text or HTML', () => {
