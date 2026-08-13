@@ -1,4 +1,6 @@
 import { investmentReportAdapter } from './investmentReportAdapter';
+import { borrowingCapacityAdapter } from './borrowingCapacityAdapter';
+import { portfolioAdapter } from './portfolioAdapter';
 import type { ReportTemplateAdapter } from './types';
 
 function previewOnlyAdapter(reportType: string, label: string, reason = 'Production adapter has not been configured yet.'): ReportTemplateAdapter {
@@ -14,9 +16,13 @@ function previewOnlyAdapter(reportType: string, label: string, reason = 'Product
 
 export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   investmentReportAdapter,
-  previewOnlyAdapter('portfolio', 'Portfolio Analysis'),
+  // Second production adapter. `borrowing_capacity_assessments` is a typed table
+  // with 143 real rows, so these templates can render an actual assessment
+  // rather than only a preview. See `borrowingCapacityAdapter.ts`.
+  borrowingCapacityAdapter,
+  // Third production adapter, reading `portfolio_analysis_reports` (21 rows).
+  portfolioAdapter,
   previewOnlyAdapter('cashflow', 'Cash Flow'),
-  previewOnlyAdapter('borrowing_capacity', 'Borrowing Capacity'),
   previewOnlyAdapter('qa', 'Q&A Export'),
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),

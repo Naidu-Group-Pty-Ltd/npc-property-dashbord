@@ -10,14 +10,33 @@ describe('report template adapter registry', () => {
     expect(supportsProduction('property_investment')).toBe(true);
   });
 
-  it('marks future report types as preview-only until adapters are implemented', () => {
-    const previewOnlyTypes = ['portfolio', 'cashflow', 'borrowing_capacity', 'qa', 'suburb', 'postcode', 'statewide', 'comparison', 'formara'];
+  it('supports production for the report types that have a real data source', () => {
+    // `borrowing_capacity` joined `investment` here when its adapter was built
+    // against `borrowing_capacity_assessments` — a typed 35-column table with
+    // 143 real rows — and `portfolio` followed against
+    // `portfolio_analysis_reports` (21 stored reports). This list is the gate
+    // `deriveEntryFacts` reads for `production_ready`, so adding a type to it
+    // without a working `buildBindingContext` marks templates report-ready that
+    // cannot render one.
+    for (const reportType of ['investment', 'borrowing_capacity', 'portfolio']) {
+      const adapter = getAdapter(reportType);
+      expect(adapter?.supportsProduction, reportType).toBe(true);
+      // Still names a fallback: the legacy generator stays until a template is
+      // activated for the type.
+      expect(adapter?.legacyFallback?.reason, reportType).toBeTruthy();
+    }
+    expect(supportsProduction('borrowing')).toBe(true);
+  });
 
-    expect(listAdapters().map((adapter) => adapter.reportType)).toEqual(expect.arrayContaining(['investment', ...previewOnlyTypes]));
+  it('marks the remaining report types preview-only until adapters are implemented', () => {
+    const previewOnlyTypes = ['cashflow', 'qa', 'suburb', 'postcode', 'statewide', 'comparison', 'formara'];
+
+    expect(listAdapters().map((adapter) => adapter.reportType))
+      .toEqual(expect.arrayContaining(['investment', 'borrowing_capacity', 'portfolio', ...previewOnlyTypes]));
     for (const reportType of previewOnlyTypes) {
       const adapter = getAdapter(reportType);
-      expect(adapter?.supportsProduction).toBe(false);
-      expect(adapter?.legacyFallback?.reason).toBeTruthy();
+      expect(adapter?.supportsProduction, reportType).toBe(false);
+      expect(adapter?.legacyFallback?.reason, reportType).toBeTruthy();
     }
   });
 

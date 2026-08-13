@@ -4,7 +4,7 @@
   "edge_function_count": 423,
   "config_declared_function_count": 333,
   "registry_function_count": 421,
-  "verify_jwt_false_count": 242,
+  "verify_jwt_false_count": 243,
   "exposure_class_counts": {
     "authenticated-or-service": 1,
     "authenticated-staff": 6,

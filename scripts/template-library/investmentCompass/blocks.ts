@@ -48,6 +48,7 @@ import {
 } from './family';
 import {
   calloutKind,
+  strengthsWatchStyle,
   chartPlan,
   coverPlan,
   hasRail,
@@ -237,6 +238,96 @@ export function flow(items: FlowItem[], startY?: number): BlockDef[] {
     });
   }
   return out;
+}
+
+/**
+ * Points of height a bound paragraph of `chars` characters needs.
+ *
+ * ## Why a height has to be measured rather than assumed
+ *
+ * Every height in this file is a promise: `flow()` stacks the next block at
+ * `y + height`, and the renderer positions absolutely, so a block whose text
+ * sets taller than its declared height does not push the page down — it lays
+ * over whatever comes next. The overflow guard cannot see that, because the
+ * page's own bottom is never crossed. Two blocks can be printed on top of each
+ * other and every arithmetic check passes.
+ *
+ * That is exactly what the Portfolio masters did on their first render: 463
+ * overlapping pairs across 50 templates, because a definition list reserved one
+ * line per item while the analysis writes 131-456 characters into each. The
+ * lengths are not guessable from the field names — `financialHealth.lvrRisk` is
+ * 3-6 characters ("Low") and `financialHealth.analysis` is 458-1620.
+ *
+ * So a format that binds model-authored prose passes the character count it
+ * measured against production, and gets a height that fits it.
+ *
+ * The ratio is the average advance width of the body faces this catalogue
+ * uses, as a fraction of the type size — 0.5 is the conventional figure for a
+ * serif or humanist sans at text sizes, and reading it slightly wide is the
+ * safe direction here.
+ */
+export function textHeight(chars: number, opts?: {
+  size?: number;
+  width?: number;
+  lineHeight?: number;
+  extra?: number;
+}): number {
+  const c = ctx();
+  const size = opts?.size ?? c.scale.body;
+  const width = opts?.width ?? c.contentWidth;
+  const lineHeight = opts?.lineHeight ?? 1.6;
+  const perLine = Math.max(1, Math.floor(width / (size * 0.5)));
+  const lines = Math.max(1, Math.ceil(chars / perLine));
+  return Math.round(lines * size * lineHeight) + (opts?.extra ?? 0);
+}
+
+/**
+ * Keep a trailing block only on the variants that have room for it.
+ *
+ * The ten families are the same page size and do not have the same measure: a
+ * deeper running head, a taller section opener and a looser spacing scale
+ * compound, and the gap between the roomiest variant and the tightest is over
+ * 150pt — two blocks' worth. So a block sized to complete one variant's page
+ * runs another's past the footer, and a block sized to fit every variant leaves
+ * the roomy ones half empty.
+ *
+ * Neither is the right trade for an *optional* block — one that adds context
+ * rather than carrying the argument. This measures what is left after the
+ * required items and keeps as many of the optional ones as actually fit. Pass
+ * the same `startY` that `flow()` will be given, or the arithmetic is against a
+ * different page.
+ *
+ * Optional items are trailing by construction: they are appended after the
+ * required ones. A block that must appear in the middle of a page is not
+ * optional, and belongs in `required`.
+ *
+ * `SLACK` is why the arithmetic is not "does it fit". Every declared height is
+ * an estimate of how tall type will set — a KPI band whose label wraps to a
+ * second line, a note that runs on — and the estimates are good to within about
+ * a line. A *required* block absorbs that: it is on the page either way. An
+ * optional one placed with nothing to spare turns a 20pt estimate error into a
+ * block printed over the one above it, which is the failure this whole
+ * mechanism exists to avoid. So an optional block has to fit comfortably, and
+ * a line and a half is what "comfortably" was measured to need.
+ */
+const SLACK = 36;
+
+export function ifItFits(
+  required: FlowItem[],
+  optional: FlowItem[],
+  startY?: number,
+): FlowItem[] {
+  const c = ctx();
+  let y = startY ?? c.margin;
+  for (const item of required) y += item.height + (item.gap ?? c.spacing.gap);
+
+  const kept: FlowItem[] = [];
+  for (const item of optional) {
+    if (y + item.height + SLACK > c.contentBottom) break;
+    kept.push(item);
+    y += item.height + (item.gap ?? c.spacing.gap);
+  }
+  return [...required, ...kept];
 }
 
 export function page(name: string, blocks: BlockDef[], background = 'token:surface'): PageDef {
@@ -658,7 +749,23 @@ export function sectionHeading(opts: {
   }
 
   if (kind === 'band') {
-    const height = opts.height ?? Math.round(c.scale.heading * 2.4) + 24;
+    // A band is a `hero`, and a hero centres its content in its own box: a
+    // heading that wraps to more lines than the band is deep does not overflow
+    // downwards, it overflows in BOTH directions, and the first line is lost
+    // above the band's top edge. On the Portfolio holdings page that printed
+    // "Every property, and what it" into the running head and left the word
+    // "contributes" alone inside a black band.
+    //
+    // So the depth is measured from the heading itself. The floor keeps every
+    // band that already fitted exactly where it was.
+    const headingLines = Math.max(1, Math.ceil(
+      opts.heading.length / Math.max(1, Math.floor((c.contentWidth - 48) / (c.scale.heading * 0.52))),
+    ));
+    const standfirstDepth = opts.standfirst
+      ? textHeight(opts.standfirst.length, { size: c.scale.body, width: c.contentWidth - 48 })
+      : 0;
+    const measured = Math.round(c.scale.heading * 1.3 * headingLines) + 34 + standfirstDepth;
+    const height = opts.height ?? Math.max(Math.round(c.scale.heading * 2.4) + 24, measured);
     return {
       height,
       block: (y) => block('hero', {
@@ -803,6 +910,15 @@ export function kpis(items: KpiItem[]): FlowItem {
     labelSize: c.scale.kpiLabel,
     noteSize: c.scale.kpiNote,
     labelTracking: TRACKING.label,
+    // A KPI band is read across, so the figures have to sit on one baseline.
+    // From four-up the cells are narrow enough that a two-word label wraps —
+    // "WEEKLY POSITION" beside "WEEKLY RENT" — and that column's value drops a
+    // line below its neighbours. Reserving the second line costs a little white
+    // above the short labels and keeps the row aligned. `rows` and `stacked`
+    // set the label beside the value, so they need no reservation.
+    labelLines: plan.variant === 'rows' || plan.variant === 'stacked'
+      ? 1
+      : (plan.columns >= 4 ? 2 : 1),
     valueColor: 'token:ink',
     labelColor: 'token:muted',
     ruleColor: 'token:line',
@@ -812,9 +928,22 @@ export function kpis(items: KpiItem[]): FlowItem {
     width: c.contentWidth,
   };
 
+  /**
+   * A note sets on its own line under the figure, and none of the heights
+   * below reserved it.
+   *
+   * The KPI grid is given an explicit `height`, so its box is exactly what is
+   * declared — and its content is not clipped, it spills. Measured on the
+   * Portfolio overview: a five-row ledger declared 142pt and set 177, a
+   * six-row one declared 162 and set 207, and in each case the block below was
+   * printed across the last two figures. Nothing in the arithmetic guard could
+   * see it, because the page bottom was never crossed.
+   */
+  const noteLine = shown.some((k) => k.note) ? Math.round(c.scale.kpiNote * 1.7) : 0;
+
   if (plan.variant === 'display') {
     const rows = Math.ceil(shown.length / plan.columns);
-    const height = 24 + rows * Math.round(c.scale.kpiValue * 2.4);
+    const height = 24 + rows * (Math.round(c.scale.kpiValue * 2.4) + noteLine);
     return {
       height,
       block: (y) => block('kpi-grid', {
@@ -825,7 +954,7 @@ export function kpis(items: KpiItem[]): FlowItem {
   }
 
   if (plan.variant === 'rows') {
-    const height = 12 + shown.length * Math.round(c.scale.kpiValue * 0.72 + 16);
+    const height = 12 + shown.length * (Math.round(c.scale.kpiValue * 0.72 + 16) + noteLine);
     return {
       height,
       block: (y) => block('kpi-grid', {
@@ -836,7 +965,7 @@ export function kpis(items: KpiItem[]): FlowItem {
   }
 
   if (plan.variant === 'stacked') {
-    const height = shown.length * Math.round(c.scale.kpiValue * 0.8 + 26);
+    const height = shown.length * (Math.round(c.scale.kpiValue * 0.8 + 26) + noteLine);
     return {
       height,
       block: (y) => block('kpi-grid', {
@@ -874,7 +1003,7 @@ export function kpis(items: KpiItem[]): FlowItem {
     : plan.columns === 5
       ? Math.round(c.scale.kpiValue * 0.74)
       : c.scale.kpiValue;
-  const height = rows * (c.density === 'compact' ? 62 : 78);
+  const height = rows * ((c.density === 'compact' ? 62 : 78) + noteLine);
   return {
     height,
     block: (y) => block('kpi-grid', {
@@ -968,15 +1097,30 @@ export function callout(title: string, body: string, height?: number): FlowItem 
   };
 }
 
-/** The risk presentation, per `risk_display`. */
+/**
+ * The risk presentation, per `risk_display`.
+ *
+ * `chars` is the longest of the per-row prose fields — `why` and the
+ * verification action — measured rather than assumed. The register kind prints
+ * both under the hazard, so a row is at least two paragraphs deep, and the flat
+ * 46pt it reserved was right only for a one-line pair. On the Investment
+ * Compass risk page that put the register across the recommendation beneath it
+ * on 23 of the 50 masters, by up to 47pt.
+ *
+ * The `bars` kind draws a label and a bar and needs none of this.
+ */
 export function risks(
   title: string,
   items: Array<{ risk: string; rating: string; confidence: string; why: string; ddAction: string; note?: string }>,
+  chars?: number,
 ): FlowItem {
   const c = ctx();
   const bars = riskKind(c.manifest.risk_display) === 'bars';
+  const rowHeight = chars === undefined
+    ? 46
+    : Math.max(46, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.74 }) * 2 + 22);
   return {
-    height: bars ? 26 + items.length * 24 : 44 + items.length * 46,
+    height: bars ? 26 + items.length * 24 : 44 + items.length * rowHeight,
     block: (y) => block('risk-register', {
       title,
       items,
@@ -1067,32 +1211,78 @@ export function recommendation(heading: string, body: string): FlowItem {
   };
 }
 
-export function strengthsWatch(strengths: string[], watch: string[]): FlowItem {
+/**
+ * Two marked columns — what is working against what to keep an eye on.
+ *
+ * The titles are overridable because the shape outlives the words: a portfolio's
+ * risk page pairs its mitigations against its exposures, which is the same
+ * positive/caution reading with different labels. Defaulting them keeps every
+ * existing call site unchanged.
+ */
+export function strengthsWatch(
+  strengths: string[],
+  watch: string[],
+  titles?: { strengths: string; watch: string },
+  chars?: number,
+): FlowItem {
   const c = ctx();
+  // Each column is half the measure less the gap, so an item wraps at roughly
+  // half the characters the same sentence would take across the page. `chars`
+  // is the longest item the caller expects; see `textHeight`.
+  const rowHeight = chars === undefined
+    ? 32
+    : Math.max(32, textHeight(chars, {
+      size: c.scale.cell,
+      width: c.contentWidth * 0.5 - 22,
+      extra: 8,
+    }));
   return {
-    height: 36 + Math.max(strengths.length, watch.length) * 32,
+    height: 36 + Math.max(strengths.length, watch.length) * rowHeight,
     block: (y) => block('strengths-watch', {
-      strengthsTitle: 'Strengths',
+      strengthsTitle: titles?.strengths ?? 'Strengths',
       strengths,
-      watchTitle: 'Considerations',
+      watchTitle: titles?.watch ?? 'Considerations',
       watch,
       positiveColor: 'token:positive',
       cautionColor: 'token:negative',
       onFillColor: 'token:surface',
       color: 'token:ink',
+      // Marked the way this family marks a callout, rather than a solid band on
+      // all fifty masters. See `strengthsWatchStyle`.
+      style: strengthsWatchStyle(c.manifest.callout_style),
+      titleFont: 'token:heading',
+      titleSize: c.scale.columnHead,
+      titleTracking: TRACKING.label,
+      bodyFont: 'token:body',
+      bodySize: c.scale.cell,
+      ruleWeight: c.manifest.border_treatment === 'rule_2px' ? RULE_WEIGHTS.heavy : RULE_WEIGHTS.hairline,
       radius: c.radius,
       x: c.contentLeft, y, width: c.contentWidth,
     }),
   };
 }
 
+/**
+ * A term/definition list.
+ *
+ * `chars` is the longest definition this list expects to be given, measured
+ * against production rather than guessed. Without it every row is reserved a
+ * single line — right for the one-word statuses this block was written for
+ * ("Positive", "Comfortable"), and wrong by a factor of five for a paragraph.
+ * See `textHeight`.
+ */
 export function definitions(
   title: string,
   items: Array<{ term: string; definition: string }>,
+  chars?: number,
 ): FlowItem {
   const c = ctx();
+  const rowHeight = chars === undefined
+    ? 26
+    // The definition sets beside its term, on roughly two thirds of the measure.
+    : Math.max(26, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.66, extra: 8 }));
   return {
-    height: 30 + items.length * 26,
+    height: 30 + items.length * rowHeight,
     block: (y) => block('definition-list', {
       title, items, x: c.contentLeft, y, width: c.contentWidth,
     }),

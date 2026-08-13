@@ -344,6 +344,45 @@ export function calloutKind(value: string): CalloutKind {
   return kind;
 }
 
+/** How the strengths/considerations labels are marked. */
+export type StrengthsWatchStyle = 'band' | 'rule' | 'plain';
+
+/**
+ * Strengths and considerations are a callout in everything but name, so they
+ * are marked the way this family marks a callout rather than carrying a
+ * vocabulary of their own.
+ *
+ * Before this they were one treatment for all fifty masters: a solid band of
+ * full-strength green and red with the label reversed out. It rendered
+ * identically in Swiss Minimal and Institutional Research — two families whose
+ * entire difference is how loudly they mark a section — and put two saturated
+ * rectangles on the most-read page of every report in the catalogue.
+ *
+ * **No family gets the filled band**, and that is a deliberate correction of a
+ * first attempt. Mapping `block` callouts to the band looked principled and put
+ * the loudest treatment on the four Swiss Minimal variants — the most restrained
+ * family in the catalogue — because its `flat_block` callout is a *neutral*
+ * tinted panel, the grey box its pages already use. The fill colour there is a
+ * surface tint; ours would have been full-strength `positive`/`negative`. The
+ * axis was right and the endpoint was wrong: a saturated rectangle is an alert
+ * in every one of the ten families, so the choice is only how quietly to mark
+ * the label, not whether to shout.
+ *
+ * `band` therefore survives only as the block's own default, which is what keeps
+ * the 43 pre-existing voice templates rendering exactly as they did.
+ */
+export function strengthsWatchStyle(calloutStyle: string): StrengthsWatchStyle {
+  switch (calloutKind(calloutStyle)) {
+    // A family that boxes or bars its callouts gets a rule under the label.
+    case 'block':
+    case 'bar':
+      return 'rule';
+    // A family whose callouts live in the margin marks nothing at all.
+    case 'margin':
+      return 'plain';
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Risk
 // ─────────────────────────────────────────────────────────────────────────────

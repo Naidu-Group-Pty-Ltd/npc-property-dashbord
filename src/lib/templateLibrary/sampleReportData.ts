@@ -81,6 +81,92 @@ const NEXT_STEPS = [
   action('Exchange with a 10% deposit and 42-day settlement', 'Conveyancer', 'Within 14 days'),
 ];
 
+/**
+ * The same four holdings the voice templates print, in the vocabulary
+ * `portfolioProjection.pure.ts` publishes for a Portfolio Performance Review.
+ *
+ * ## Derived, not transcribed
+ *
+ * `portfolio.holdings` below already states each property's value, debt, yield
+ * and **annual** net position, and the Compass masters need the same portfolio
+ * expressed **monthly**, per-property and totalled. Writing that out twice is
+ * how two pages of one preview come to disagree, so everything monthly here is
+ * computed from the annual figures rather than typed beside them.
+ *
+ * The annuals are the anchors because they are anchored elsewhere: the
+ * Leichhardt holding's −$21,476 is −$413 a week × 52, which `cashflow` states
+ * and several templates print. A 52-week year does not divide into twelfths, so
+ * the monthly figures carry cents; every template sets them with `| currency`,
+ * which rounds to whole dollars, and the rounded rows total the rounded total.
+ *
+ * `monthlyExpenses` is the residual — rent less the net position — and so
+ * includes debt servicing. At $2.088m of debt that is about $10.4k a month of
+ * interest plus roughly $2.4k of holding costs, which is the shape a real
+ * portfolio of this gearing has.
+ */
+const PORTFOLIO_HOLDINGS = [
+  {
+    address: '9/44 Regent Street, Newtown', propertyType: 'Apartment',
+    value: 1125000, loan: 612000, grossYield: 3.9, annualCashflow: 2100,
+    lenderName: 'Westpac', interestRate: 5.89, isOwnerOccupied: true,
+  },
+  {
+    address: ADDRESS, propertyType: 'House',
+    value: 1285000, loan: 1028000, grossYield: 3.84, annualCashflow: -21476,
+    lenderName: 'Meridian Mutual', interestRate: 6.14, isOwnerOccupied: false,
+  },
+  {
+    address: '7 Wardell Road, Dulwich Hill', propertyType: 'House',
+    value: 640000, loan: 288000, grossYield: 4.6, annualCashflow: 3400,
+    lenderName: 'CommBank', interestRate: 6.02, isOwnerOccupied: false,
+  },
+  {
+    address: '12/3 Denison Road, Lewisham', propertyType: 'Apartment',
+    value: 360000, loan: 160000, grossYield: 4.9, annualCashflow: 1776,
+    lenderName: 'CommBank', interestRate: 6.02, isOwnerOccupied: false,
+  },
+].map((h) => {
+  const monthlyRentalIncome = (h.value * h.grossYield) / 100 / 12;
+  const netMonthlyCashflow = h.annualCashflow / 12;
+  return {
+    ...h,
+    equity: h.value - h.loan,
+    lvr: (h.loan / h.value) * 100,
+    monthlyRentalIncome,
+    netMonthlyCashflow,
+    monthlyExpenses: monthlyRentalIncome - netMonthlyCashflow,
+    cashOnCashReturn: (h.annualCashflow / (h.value - h.loan)) * 100,
+    ownershipPercentage: 100,
+    portfolioContribution: 0, // replaced below, once the total is known
+  };
+});
+
+/** Portfolio totals, summed from the holdings so they cannot drift from them. */
+const PORTFOLIO_TOTALS = (() => {
+  const sum = (pick: (h: typeof PORTFOLIO_HOLDINGS[number]) => number) =>
+    PORTFOLIO_HOLDINGS.reduce((t, h) => t + pick(h), 0);
+  const mean = (pick: (h: typeof PORTFOLIO_HOLDINGS[number]) => number) =>
+    sum(pick) / PORTFOLIO_HOLDINGS.length;
+  const value = sum((h) => h.value);
+  for (const h of PORTFOLIO_HOLDINGS) h.portfolioContribution = (h.equity / sum((x) => x.equity)) * 100;
+  return {
+    value,
+    debt: sum((h) => h.loan),
+    equity: sum((h) => h.equity),
+    monthlyRentalIncome: sum((h) => h.monthlyRentalIncome),
+    monthlyExpenses: sum((h) => h.monthlyExpenses),
+    monthlyCashflow: sum((h) => h.netMonthlyCashflow),
+    annualCashflow: sum((h) => h.annualCashflow),
+    // The mean of the per-property figures, which is what
+    // `portfolio_analysis_reports.average_lvr` / `average_yield` store — NOT
+    // the portfolio-weighted ratios `portfolio.lvr` and `portfolio.grossYield`
+    // carry for the voice templates. Both are correct and they are not equal
+    // (55.96% against 61.2%), so they keep separate names.
+    averageLvr: mean((h) => h.lvr),
+    averageYield: mean((h) => h.grossYield),
+  };
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -283,6 +369,36 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     ],
     for: 'Land value, catchment, and a second dwelling the numbers already support.',
     against: 'Thin entry yield and near-term capital works.',
+
+    // ── Portfolio Performance Review ───────────────────────────────────────
+    //
+    // `analysis.executiveSummary` on a stored `portfolio_analysis_reports` row.
+    // `healthScore` is a score **out of 100** (25–90 across the 21 stored
+    // reports), not a percentage — the masters set it with `| fixed:0` and
+    // label it, and setting it with `| percent` would print "68%" of nothing.
+    healthScore: 68,
+    overallHealth: 'Moderate',
+    // 147-459 characters across the stored reports, so a sentence rather than a
+    // headline — which is why the overview sets it as a callout at body size
+    // instead of a display-scale verdict.
+    primaryRecommendation:
+      'Diversify the next acquisition outside the inner west and into a higher-yielding price '
+      + 'band, funded from the usable equity rather than new savings. That addresses the two '
+      + 'weaknesses at once — geographic concentration and a negative monthly position — '
+      + 'without increasing the portfolio LVR.',
+    // Three and two: the observed minimums across the 21 stored reports (3-6
+    // strengths, 2-5 concerns). A sample shorter than the minimum previews a
+    // column the real data always fills, which is how the first render of these
+    // masters came to show a bullet with nothing beside it.
+    strengths: [
+      'Weighted growth of 5.4% is ahead of the metro average',
+      'Portfolio LVR of 61% leaves headroom for one further purchase',
+      'Two of the four holdings are income-positive without depreciation',
+    ],
+    concerns: [
+      'All four assets sit within 6km — concentrated by geography',
+      'Net position is negative and funded from surplus income',
+    ],
   },
 
   risk: {
@@ -298,6 +414,48 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     capacityNote:
       'Surplus covers the modelled shortfall 9x over, and reserves cover eight months '
       + 'of holding costs with the property vacant.',
+
+    // ── Portfolio Performance Review ───────────────────────────────────────
+    //
+    // `analysis.riskAssessment`, under the stored leaf names. The shortened
+    // names would have collided: `risk.vacancy` above already means "reaction
+    // to three months vacancy" — a client tolerance, not a portfolio exposure —
+    // and one key cannot carry both senses. See `portfolioProjection.pure.ts`.
+    // Three sentences and two LISTS, which is what the live table holds — read
+    // across all 21 stored reports, not inferred from the names. The two that
+    // pluralise are arrays (2-4 market risks, 4-5 mitigations); the three that
+    // read like they would are not. A sample that flattened them to prose would
+    // preview cleanly and render blank on every real report, because the
+    // projection refuses a non-string leaf rather than printing `[object
+    // Object]`.
+    overallRiskLevel: 'Moderate',
+    // 131-456 characters each across the stored reports — paragraphs, not the
+    // one-liners the four `financialHealth` statuses are.
+    concentrationRisk:
+      'Four assets inside a 6km radius of the inner west, sharing one council area and one '
+      + 'tenant catchment. A single-market correction moves the whole portfolio together, no '
+      + 'other capital city is represented, and three of the four are exposed to the same '
+      + 'rental demand drivers.',
+    vacancyRisk:
+      'Three of the four are single-dwelling and let individually, so income is stepped rather '
+      + 'than smooth: one vacancy removes a quarter of the rent rather than a fraction of it. '
+      + 'Suburb vacancy of 1.4% and a 12-day average letting time keep the expected exposure '
+      + 'short, but the shape of the risk is binary.',
+    interestRateSensitivity:
+      'A 100bp rise adds roughly $1,740 a month across the four facilities, which is more than '
+      + 'the current shortfall again. Two facilities roll off fixed rates inside a year, and '
+      + 'both would reprice at the top of the cycle on current forward curves.',
+    marketRisks: [
+      'Inner-west median prices have run ahead of rents for six years',
+      'The portfolio is positioned for growth and is exposed if the market turns income-led',
+      'All four assets share one council area and one tenant catchment',
+    ],
+    mitigationStrategies: [
+      'Fix the majority of the debt before the next roll-off',
+      'Hold six months of holding costs in offset rather than in equity',
+      'Place the next acquisition in a different capital city',
+      'Buy the next holding in a higher-yielding price band',
+    ],
   },
 
   risks: RISKS,
@@ -444,6 +602,33 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     count: 4, value: 3410000, debt: 2088000, equity: 1322000, lvr: 61.2,
     grossYield: 4.12, growth12m: 5.4, netCashFlow: -14200,
     avgYield: 4.12, avgGrowth: 5.4, avgNet: -3550, avgMaintenance: 2180,
+
+    // ── The Portfolio Performance Review's own vocabulary ──────────────────
+    //
+    // The 50 Compass masters bind what `portfolioProjection.pure.ts` publishes,
+    // which describes this same portfolio in monthly terms and mean-of-property
+    // averages. Summed from `PORTFOLIO_HOLDINGS` rather than typed, so the
+    // holdings table and the totals table on the facing page cannot disagree.
+    propertyCount: PORTFOLIO_HOLDINGS.length,
+    investmentCount: PORTFOLIO_HOLDINGS.filter((h) => !h.isOwnerOccupied).length,
+    ownerOccupiedCount: PORTFOLIO_HOLDINGS.filter((h) => h.isOwnerOccupied).length,
+    averageLvr: PORTFOLIO_TOTALS.averageLvr,
+    averageYield: PORTFOLIO_TOTALS.averageYield,
+    monthlyCashflow: PORTFOLIO_TOTALS.monthlyCashflow,
+    annualCashflow: PORTFOLIO_TOTALS.annualCashflow,
+    monthlyRentalIncome: PORTFOLIO_TOTALS.monthlyRentalIncome,
+    monthlyExpenses: PORTFOLIO_TOTALS.monthlyExpenses,
+    // Whole property rows on the stored report, projected down to what the
+    // callout prints. Best and worst by monthly position, which is the axis the
+    // format's own generator ranks on.
+    bestPerformer: {
+      address: '7 Wardell Road, Dulwich Hill', propertyType: 'House',
+      value: 640000, netMonthlyCashflow: 3400 / 12, lender: 'CommBank',
+    },
+    worstPerformer: {
+      address: ADDRESS, propertyType: 'House',
+      value: 1285000, netMonthlyCashflow: -21476 / 12, lender: 'Meridian Mutual',
+    },
     holdings: [
       { address: '9/44 Regent Street, Newtown', value: 1125000, debt: 612000, equity: 513000, yield: 3.9, net: 2100 },
       { address: ADDRESS, value: 1285000, debt: 1028000, equity: 257000, yield: 3.84, net: -21476 },
@@ -975,6 +1160,165 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       afterTaxSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Math.round(r.afterTax) })),
     };
   })(),
+
+  // ── Borrowing Capacity Snapshot ───────────────────────────────────────────
+  //
+  // The namespaces `borrowingCapacityProjection.pure.ts` publishes, so the 50
+  // Borrowing Capacity masters preview with figures rather than blanks.
+  //
+  // Shapes and units follow the live `borrowing_capacity_assessments` table
+  // rather than what reads nicely: rates are whole-number percent (the
+  // `percent` filter does not multiply), `capacity.dti` is a MULTIPLE of income
+  // and is set with `| fixed`, and `income.items` / `liabilities.items` are
+  // arrays with the element keys the table actually stores. A sample written in
+  // a convenient shape is how a catalogue passes preview and renders empty on
+  // real data — which is precisely what happened to the Investment Compass
+  // masters before the projection landed.
+  capacity: {
+    borrowing: 1180000,
+    stressTested: 1042000,
+    monthlySurplus: 1290,
+    annualSurplus: 15480,
+    band: 'amber',
+    bandLabel: 'Serviceable with limited headroom',
+    // Total debt over assessable income: (612,000 + 4,200 + 18,600 existing
+    // + 1,032,000 proposed) / 280,000 = 5.95. A MULTIPLE, not a percentage —
+    // the column is `dti_ratio` and reads like a rate, which is why the
+    // templates set it with `| fixed` and label it "x assessable income".
+    dti: 5.95,
+    depositAmount: 258000,
+    propertyValueEstimate: 1290000,
+    // `netPurchase` is deliberately absent: populated on 3 of 143 rows, so the
+    // sample shows what the common case looks like.
+  },
+  // The totals RECONCILE against the components, and that is not decoration:
+  // the income page prints the lines and the total on the same table, so a
+  // sample whose total does not equal its parts renders a visibly wrong
+  // financial document in every preview and every screenshot. The first draft
+  // of this had four lines summing to $280,000 under a $245,000 total, which
+  // the render showed immediately.
+  //   gross  118,000 + 82,000 + 46,800 + 33,200 = 280,000
+  //   shaded 118,000 + 82,000 + 35,100 + 28,220 = 263,320
+  income: {
+    gross: 280000,
+    shaded: 263320,
+    shadingApplied: 16680,
+    items: [
+      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 0 },
+      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 0 },
+      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25 },
+      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 15 },
+    ],
+  },
+  expenses: {
+    monthly: 6420,
+    annual: 77040,
+    method: 'hem',
+    methodLabel: 'HEM benchmark',
+    declared: 5900,
+    hemBenchmark: 6420,
+  },
+  liabilities: {
+    monthly: 1840,
+    annual: 22080,
+    items: [
+      { type: 'Owner-occupier home loan', balance: 612000, limit: 612000, monthlyServicing: 1540 },
+      { type: 'Credit card', balance: 4200, limit: 15000, monthlyServicing: 300 },
+      { type: 'Novated lease', balance: 18600, limit: 18600, monthlyServicing: 0 },
+    ],
+  },
+  loan: {
+    proposed: 1032000,
+    lvr: 80,
+    termYears: 30,
+    interestRate: 6.14,
+    bufferRate: 3,
+    assessmentRate: 9.14,
+    lender: 'Meridian Mutual',
+  },
+  // Empty on 140 of 143 assessments, so the LMI block stays conditional and the
+  // sample exercises the common path.
+  lmi: {},
+  // Kept inside the lengths production actually writes: 43-70 characters a
+  // recommendation across 270 stored ones, 35-59 a warning across 63. The
+  // templates reserve height for those maxima, and a sample longer than
+  // production overlaps the block below it in every preview — which is what the
+  // first draft of these strings did.
+  recommendations: [
+    'Cutting the credit card limit to $5,000 adds about $46,000',
+    'Closing the novated lease removes $18,600 of liabilities',
+    'A 30-year term is already the most favourable modelled',
+  ],
+  warnings: [
+    'Includes a 3.00% buffer over the quoted rate',
+    'Rental income shaded at 25% by lender policy',
+  ],
+
+  // ── Portfolio Performance Review ──────────────────────────────────────────
+  //
+  // The remaining namespaces `portfolioProjection.pure.ts` publishes. The rest
+  // of the format's figures extend `portfolio`, `summary` and `risk` in place,
+  // because those namespaces already exist and a second key of the same name in
+  // one object literal silently discards the first.
+  //
+  // The inventory is exactly four rows, which is what the masters draw and the
+  // observed maximum across all 21 stored reports.
+  properties: PORTFOLIO_HOLDINGS,
+
+  // `analysis.financialHealth` — five strings, no figures, and their lengths
+  // are not what the names suggest. Measured across the 21 stored reports:
+  // `cashflowStatus` is 7-8 characters, `debtServiceability` 8-11,
+  // `equityPosition` 6-8 and `lvrRisk` 3-6 — single words — while `analysis`,
+  // in the same object, is 458-1620.
+  //
+  // The first draft here wrote a sentence into each of the four, and every page
+  // that printed them overlapped the block below: a definition list reserves
+  // one line per row, which is right for the data and wrong for the sample. A
+  // sample longer than production is the same defect as a sample shorter than
+  // it, and it is caught by the same measure.
+  health: {
+    analysis:
+      'The portfolio is performing on growth and under-performing on income, which is the '
+      + 'expected shape for four inner-ring assets bought inside six years. The shortfall of '
+      + '$1,183 a month is covered comfortably from surplus income rather than from reserves, '
+      + 'and it has narrowed in each of the last three years as rents have moved faster than '
+      + 'holding costs. Equity of $1.32m against $3.41m of value leaves the portfolio at a '
+      + '61% loan-to-value ratio, with roughly $640k usable at an 80% ceiling — enough to fund '
+      + 'a further acquisition without new savings. The binding constraint is not equity or '
+      + 'serviceability but concentration: all four holdings sit inside one council area and '
+      + 'one tenant catchment, so the portfolio moves as a single asset would.',
+    cashflowStatus: 'Negative',
+    debtServiceability: 'Comfortable',
+    equityPosition: 'Strong',
+    lvrRisk: 'Low',
+  },
+
+  // `analysis.strategicRecommendations` — four LISTS, not a list and three
+  // statements. The horizons carry 1-4 actions each across the stored reports.
+  actions: {
+    priority: [
+      'Refinance the Newtown facility before its fixed rate expires in March',
+      'Obtain a depreciation schedule for the Leichhardt purchase and amend the prior return',
+      'Place the next acquisition outside the inner west, in a higher-yielding price band',
+    ],
+    // 74-345 characters an item across the stored reports — longer than the
+    // priority actions above them, which is why the horizons get their own page.
+    shortTerm: [
+      'Refinance the two facilities rolling off fixed rates in the next twelve months and rebuild '
+      + 'the offset balance to six months of holding costs before adding any further debt.',
+      'Order a depreciation schedule for the Leichhardt purchase',
+    ],
+    mediumTerm: [
+      'Add one income-positive holding in a different capital city, funded from the usable equity '
+      + 'rather than new savings, to bring the portfolio to a neutral monthly position without '
+      + 'lifting the portfolio LVR above 65%.',
+    ],
+    longTerm: [
+      'Hold to the ten-year horizon and review each holding against its original thesis at the '
+      + 'annual review. The Lewisham apartment is the smallest contributor and the first '
+      + 'candidate to recycle if the concentration is to be reduced by sale rather than purchase.',
+    ],
+  },
 };
 
 /**
