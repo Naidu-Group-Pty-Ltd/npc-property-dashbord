@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "source": "repository-static-analysis",
-  "edge_function_count": 421,
-  "config_declared_function_count": 332,
+  "edge_function_count": 423,
+  "config_declared_function_count": 333,
   "registry_function_count": 421,
-  "verify_jwt_false_count": 242,
+  "verify_jwt_false_count": 243,
   "exposure_class_counts": {
     "authenticated-or-service": 1,
     "authenticated-staff": 6,
@@ -535,6 +535,7 @@
     ],
     "internalCall.ts": [
       "agent-task-runner/index.ts",
+      "aml-client-portal/index.ts",
       "ghl-marketing-dump-enqueue/index.ts",
       "ghl-marketing-dump-worker/index.ts",
       "ghl-migrate-conversations-reset-phantoms/index.ts",
@@ -576,6 +577,8 @@
     "requestSecurity.ts": [
       "_shared/errorResponse.ts",
       "agent-planner/index.ts",
+      "aml-idv-retention/index.ts",
+      "aml-verification-processor/index.ts",
       "client-legal-workspace/index.ts",
       "commercial-bc-scenario-agent/index.ts",
       "dispatch-marketing-reports/index.ts",

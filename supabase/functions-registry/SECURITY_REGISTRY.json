@@ -1988,11 +1988,10 @@
       "reviewed_in": "wp-02-market-ai-containment"
     },
     "mcp": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
-      "reviewed": true,
-      "wp14_auto_classified": true
+      "reviewed": true
     },
     "message-governance": {
       "verify_jwt": false,
