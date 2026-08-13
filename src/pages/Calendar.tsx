@@ -189,13 +189,20 @@ export default function Calendar() {
           display: none;
         }
 
-        /* Tooltip, context-menu and drag decorations sit above the grid; the wheel
-           must reach the scroll container underneath them rather than stopping on
-           the icon the cursor happens to be over. */
+        /* Tooltips are portaled to <body>, so a wheel event that lands on one
+           has no scrollable ancestor and is swallowed — which reads as "the page
+           stops scrolling when the cursor is over that icon". Tooltips are purely
+           decorative, so they never take the pointer. */
+        body.${bodyClass} [data-radix-tooltip-content],
+        body.${bodyClass} [data-radix-popper-content-wrapper]:has([data-radix-tooltip-content]) {
+          pointer-events: none !important;
+        }
+
         body.${bodyClass} [data-radix-popper-content-wrapper],
         body.${bodyClass} .calendar-scroll-transparent {
           overscroll-behavior: contain;
         }
+
 
         body.${bodyClass} .dashboard-main,
         body.${bodyClass} .dashboard-content,
