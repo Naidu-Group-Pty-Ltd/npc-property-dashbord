@@ -124,7 +124,7 @@
     {
       "rule": "secdef_execute",
       "object": "aml.tg_emit_verification_requested",
-      "reason": "NOT an exemption from the revoke — 20260913200000 performs it. This entry exists because the rule is file-scoped: the defining migration (20260911000000) is already applied in production, so the grant could only be removed by a follow-up migration, which that rule cannot see. Check that migration, not this reason. The object is a trigger function (RETURNS trigger), so it was never PostgREST-callable either.",
+      "reason": "NOT an exemption from the revoke — 20260913200000 performs it, and the rule is file-scoped so it cannot see that follow-up. Note for whoever reviews this: the object never held the grant. Measured proacl before the revoke was `postgres=X | service_role=X`, because ALTER DEFAULT PRIVILEGES on the `aml` schema grants new functions to service_role only — unlike `public`, whose default grants anon and authenticated. The rule's premise is the Postgres default and does not hold in this schema. It is also a trigger function (RETURNS trigger), so it was never PostgREST-callable.",
       "review_by": "2027-02-09"
     }
   ]
