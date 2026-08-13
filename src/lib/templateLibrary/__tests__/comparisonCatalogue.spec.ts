@@ -216,4 +216,67 @@ describe('rendering', () => {
     // The recommendation itself still stands.
     expect(bare).toContain('22 Chapel Street');
   });
+  it('joins the whole risk list, so one risk leaves no trailing separator', () => {
+    /*
+     * The register used to bind `specificRisks.0` and `.1` with a literal ` · `
+     * between them. Measured across the 67 risk entries in production, that was
+     * right for 10 of them: 8 carry a single risk and printed "…analysis. ·"
+     * with nothing after the separator, and 49 carry three to six, of which
+     * everything past the second never reached the page.
+     */
+    const t = COMPARISON_TEMPLATES[0];
+
+    const one = renderTemplateToHtml(t.schema as any, {
+      data: {
+        ...SAMPLE,
+        comparison: {
+          ...comparison,
+          risks: [{ ...comparison.risks[0], specificRisks: ['Only one risk here.'] }],
+        },
+      },
+    }).html;
+    expect(one).toContain('Only one risk here.');
+    expect(one).not.toContain('Only one risk here. ·');
+
+    const many = renderTemplateToHtml(t.schema as any, {
+      data: {
+        ...SAMPLE,
+        comparison: {
+          ...comparison,
+          risks: [{
+            ...comparison.risks[0],
+            specificRisks: ['Risk one.', 'Risk two.', 'Risk three.', 'Risk four.'],
+          }],
+        },
+      },
+    }).html;
+    // Everything past the second used to be dropped; the modal entry has four.
+    for (const r of ['Risk one.', 'Risk two.', 'Risk three.', 'Risk four.']) {
+      expect(many, `lost ${r}`).toContain(r);
+    }
+  });
+
+  it('clips the joined risk list so it cannot outgrow the box it declares', () => {
+    // A block that sets taller than its declared height does not overflow the
+    // page — it prints over the next block, which `flow()` cannot see. The
+    // longest joined entry in production is 398 characters against a budget of
+    // 260, so the binding truncates and shows an ellipsis where it clips.
+    const t = COMPARISON_TEMPLATES[0];
+    const html = renderTemplateToHtml(t.schema as any, {
+      data: {
+        ...SAMPLE,
+        comparison: {
+          ...comparison,
+          risks: [{
+            ...comparison.risks[0],
+            specificRisks: Array.from({ length: 12 }, (_, i) => `Specific risk number ${i} runs on.`),
+          }],
+        },
+      },
+    }).html;
+    expect(html).toContain('…');
+    expect(html).toContain('Specific risk number 0 runs on.');
+    // The tail is clipped rather than laid over the block beneath it.
+    expect(html).not.toContain('Specific risk number 11 runs on.');
+  });
 });

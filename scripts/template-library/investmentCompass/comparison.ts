@@ -102,9 +102,43 @@ const LENGTHS = {
   investorReasoning: 399,
   rankingBullet: 123,
   bestSuitedFor: 142,
-  specificRisk: 106,
+  /*
+   * The whole risk list, joined — not one entry.
+   *
+   * The register used to bind `specificRisks.0` and `.1` with a literal ` · `
+   * between them, which was wrong at both ends of the real distribution. Across
+   * the 67 risk entries in production: 8 carry a single risk and printed a
+   * trailing separator with nothing after it, and 49 carry three to six, of
+   * which everything past the second was silently dropped from a client's risk
+   * register. Only 10 of 67 rendered as the author intended.
+   *
+   * Binding the array through `join` fixes both, so the budget is now the
+   * joined length rather than twice one entry: measured p50 168, p90 268,
+   * max 398.
+   *
+   * 260 rather than 398 because 398 does not fit. The three spacious variants
+   * (`pb-03`, `le-03`, `ap-03`) set the same characters into more vertical
+   * space, and the seed builder's overflow guard rejected the page by 100-114pt
+   * on each; 260 is the largest budget all thirty variants take. The binding is
+   * therefore truncated to `RISK_CLIP` so the text cannot exceed the height it
+   * declares — a block that sets taller does not overflow the page, it prints
+   * over the next one, which `flow()` cannot see.
+   */
+  specificRisks: 260,
   flagConcern: 145,
 } as const;
+
+/**
+ * Where the joined risk list is clipped, in characters.
+ *
+ * Held just inside `LENGTHS.specificRisks` so the resolved string can never be
+ * taller than the box the block declares — `truncate` appends an ellipsis, so
+ * the clip is visible on the page rather than a sentence that stops. About one
+ * risk entry in ten reaches it (p90 is 268 against a 398 maximum); the rest
+ * print in full, where before, three quarters of them lost everything past the
+ * second risk.
+ */
+const RISK_CLIP = 255;
 
 const COMPARISON_FORMAT: ReportFormat = {
   key: 'comparison-analysis',
@@ -418,8 +452,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...perProperty(
         (i) => callout(
           '{{comparison.risks.' + i + '.shortAddress}} · {{comparison.risks.' + i + '.level}}',
-          `{{comparison.risks.${i}.specificRisks.0}} · {{comparison.risks.${i}.specificRisks.1}}`,
-          textHeight(LENGTHS.specificRisk * 2, { size: c.scale.cell, extra: 30 }),
+          `{{comparison.risks.${i}.specificRisks | join:' · ' | truncate:${RISK_CLIP}}}`,
+          textHeight(LENGTHS.specificRisks, { size: c.scale.cell, extra: 30 }),
         ),
         (i) => `comparison && comparison.risks && comparison.risks[${i}]`,
       ),
