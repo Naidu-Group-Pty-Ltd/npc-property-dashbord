@@ -33,6 +33,8 @@ export const CATEGORY_OPTIONS: TaxonomyOption<TemplateLibraryCategory>[] = [
   { value: 'cash_flow', label: 'Cash flow', description: 'Detailed cash flow projections' },
   { value: 'client_form', label: 'Client form', description: 'Client-facing forms and fact finds' },
   { value: 'compliance', label: 'Compliance', description: 'Compliance, audit and governance' },
+  { value: 'finance', label: 'Finance', description: 'Borrowing capacity and serviceability' },
+  { value: 'portfolio', label: 'Portfolio', description: 'Portfolio performance and holdings review' },
 ];
 
 export const STYLE_OPTIONS: TaxonomyOption<TemplateLibraryStyle>[] = [
