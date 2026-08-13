@@ -9,6 +9,7 @@ import { requireModulePermission, permForAction } from '../_shared/authz.ts';
 import { logSecurityEvent } from '../_shared/auth_v2.ts';
 import { isSuperadmin } from '../_shared/wp08Guards.ts';
 import { COMPLIANCE_SERVICE_ONLY_FIELDS, isValidComplianceStatusTx, pickAllowed } from '../_shared/wp09Guards.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 interface Body {
   action: 'list' | 'get' | 'create_version' | 'update_status' | 'pack_export' | 'list_packs' | 'delete';
@@ -161,7 +162,7 @@ Deno.serve(async (req) => {
     return j({ success: false, error: 'Unknown action' }, 400);
   } catch (e) {
     console.error('[manage-compliance-records]', e);
-    return new Response(JSON.stringify({ success: false, error: (e as Error).message }), {
+    return new Response(JSON.stringify({ ...internalError(e, 'manage-compliance-records'), success: false }), {
       status: 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
     });

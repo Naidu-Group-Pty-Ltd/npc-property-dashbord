@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import {
   verifyAuth,
   createForbiddenResponse,
@@ -6,6 +6,7 @@ import {
   createCorsHeaders,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
   enforceActorQuota,
@@ -19,13 +20,42 @@ import {
 import { assertPublicUrl } from '../_shared/ssrfGuard.ts';
 import {
   imageSetFingerprint,
-  isRefreshDue,
   nextRefreshAt,
   normaliseImageCandidates,
+  orderCandidatesForDisplay,
+  parseImageUrlList,
   imageIdentity,
+  IMAGE_ORIGIN_RANK,
   type ImageCandidate,
   type ImageOrigin,
 } from '../_shared/listingImages.pure.ts';
+import {
+  identitiesToRetire,
+  isHarvestDue,
+  planPositions,
+  type HeldImage,
+  type Reconciliation,
+} from '../_shared/listingImageReconcile.pure.ts';
+import {
+  isPlausiblePhotographSize,
+  looksLikeChromeUrl,
+} from '../_shared/listingImageChrome.pure.ts';
+import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
+
+/**
+ * The client type these helpers actually receive.
+ *
+ * They used to say `ReturnType<typeof createClient>`, which looks equivalent but
+ * is not: `createClient` is generic, and `ReturnType` instantiates a generic
+ * function's type parameters from their CONSTRAINTS, not their defaults.
+ * `SchemaName extends string & keyof Database` with `Database` unresolved
+ * collapses to `never`, so the parameter type became
+ * `SupabaseClient<unknown, never, GenericSchema>` while every call site passes
+ * the inferred `SupabaseClient<any, 'public', any>`. `'public'` is not
+ * assignable to `never`, which was the TS2345 reported at each of the seven
+ * call sites. Naming the type directly picks up the intended defaults.
+ */
+type ListingImagesClient = SupabaseClient;
 
 /**
  * Listing image library.
@@ -43,6 +73,12 @@ import {
  *                  and re-harvest only what actually changed.
  *   op: 'sync'     (service role) — push the durable URLs back into Airtable so
  *                  the enrichment column stays current for downstream consumers.
+ *   op: 'harvest'  (service role) — store an explicit candidate set handed over
+ *                  by `listing-enrichment`. The other ops discover candidates by
+ *                  reading Airtable, which yields nothing here: all four
+ *                  attachment columns on the intake table are empty on every one
+ *                  of the 1,441 records. The photos are on the agency's listing
+ *                  page, and the enrichment sweep is what goes and finds them.
  *
  * The bytes live in the private `listing-images` bucket. The browser only ever
  * receives short-lived signed URLs, never a bucket path and never a source URL.
@@ -87,6 +123,22 @@ interface ListingInput {
   id: string;
   images?: unknown;
   listedAt?: string | number | null;
+  /** When intake last captured this image set, if it recorded one. */
+  capturedAt?: string | number | null;
+}
+
+/**
+ * The date the refresh tiers should be measured from.
+ *
+ * `Images Captured At` when we have it, because the premise of the tiers is
+ * that a photo set churns hardest while it is new — and "new" means the photos,
+ * not the record. A listing filed a year ago whose gallery was re-scraped
+ * yesterday has a day-old image set and belongs on the fast tier; keying off
+ * the record date alone put it on the 60-day tier and left the page showing
+ * last year's photographs for two months.
+ */
+function imageAgeAnchor(capturedAt: unknown, listedAt: unknown): number | null {
+  return epochMs(capturedAt) ?? epochMs(listedAt);
 }
 
 interface StoredImageRow {
@@ -122,7 +174,12 @@ function epochMs(value: unknown): number | null {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  // `BufferSource` requires a view over a plain ArrayBuffer. A `Uint8Array` is
+  // generic over its backing buffer, which may be a `SharedArrayBuffer`, so the
+  // unnarrowed type is not assignable. Copying into a fresh view both satisfies
+  // the contract and guarantees the digest reads a non-shared buffer.
+  const view = new Uint8Array(bytes);
+  const digest = await crypto.subtle.digest('SHA-256', view);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
@@ -157,6 +214,8 @@ async function storagePathFor(
 async function fetchImageBytes(
   candidate: ImageCandidate,
 ): Promise<{ bytes: Uint8Array; contentType: string } | { error: string }> {
+  if (looksLikeChromeUrl(candidate.url)) return { error: 'page_furniture' };
+
   let safeUrl: URL;
   try {
     safeUrl = await assertPublicUrl(candidate.url, dnsResolver);
@@ -199,6 +258,15 @@ async function fetchImageBytes(
   const bytes = new Uint8Array(buffer);
   if (bytes.byteLength > MAX_IMAGE_BYTES) return { error: 'too_large' };
   if (bytes.byteLength < MIN_IMAGE_BYTES) return { error: 'too_small' };
+  /*
+   * The size test no URL rule can replace.
+   *
+   * A spec-row glyph is 680 bytes; the smallest genuine photograph in this
+   * corpus is 6,517. The old floor of 512 admitted every icon on every agency
+   * template, and they sorted to position 0 because the spec row appears above
+   * the gallery in the markup.
+   */
+  if (!isPlausiblePhotographSize(bytes.byteLength)) return { error: 'not_a_photograph' };
 
   return { bytes, contentType };
 }
@@ -216,13 +284,15 @@ interface HarvestOutcome {
  * Photos whose checksum is unchanged are left completely alone — no upload, no
  * row rewrite — which is what makes an hourly sweep affordable. Photos that
  * have disappeared from the source are marked `gone` rather than deleted, so a
- * report generated last quarter still resolves the image it referenced.
+ * report generated last quarter still resolves the image it referenced — and
+ * only when `reconcile` is `'full'`; see `Reconciliation`.
  */
 async function harvestListing(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   listingId: string,
   candidates: ImageCandidate[],
   listedAt: number | null,
+  reconcile: Reconciliation = 'additive',
 ): Promise<HarvestOutcome> {
   const capped = candidates.slice(0, MAX_IMAGES_PER_LISTING);
   const fingerprint = imageSetFingerprint(capped);
@@ -230,26 +300,70 @@ async function harvestListing(
 
   const { data: existingRows } = await supabase
     .from('listing_images')
-    .select('image_identity, checksum, status, storage_path')
+    .select('image_identity, checksum, status, storage_path, origin, position')
     .eq('listing_id', listingId);
 
-  const existing = new Map<string, { checksum: string | null; status: string }>();
+  const existing = new Map<string, HeldImage>();
+  /** checksum -> the row already holding those exact bytes. */
+  const byChecksum = new Map<string, { identity: string; storagePath: string }>();
   for (const row of (existingRows ?? []) as Array<{
     image_identity: string;
     checksum: string | null;
     status: string;
+    origin: string | null;
+    position: number | null;
+    storage_path: string | null;
   }>) {
-    existing.set(row.image_identity, { checksum: row.checksum, status: row.status });
+    existing.set(row.image_identity, {
+      checksum: row.checksum,
+      status: row.status,
+      origin: row.origin,
+      position: row.position,
+    });
+    if (row.checksum && row.storage_path) {
+      // First writer wins, so the oldest identity for a photograph is the one
+      // that survives re-signing rather than a fresh row each pass.
+      if (!byChecksum.has(row.checksum)) {
+        byChecksum.set(row.checksum, { identity: row.image_identity, storagePath: row.storage_path });
+      }
+    }
   }
+
+  const heldCount = Array.from(existing.values()).filter((r) => r.status === 'stored').length;
+
+  /*
+   * "I found nothing" is not "there is nothing".
+   *
+   * An empty candidate set means this source had nothing to say — an empty
+   * Airtable column, a scrape that failed, a listing with no web link. Treating
+   * it as authority to retire is what turned a quiet upstream into a blank
+   * gallery. Re-arm the schedule and leave every stored row exactly as it is.
+   */
+  if (capped.length === 0) {
+    await supabase.from('listing_image_sets').upsert(
+      {
+        listing_id: listingId,
+        image_count: heldCount,
+        stored_count: heldCount,
+        listed_at: listedAt ? new Date(listedAt).toISOString() : null,
+        last_harvested_at: new Date(now).toISOString(),
+        refresh_after: new Date(nextRefreshAt({ listedAt, errorCount: 0, now })).toISOString(),
+      },
+      { onConflict: 'listing_id' },
+    );
+    return { stored: heldCount, failed: 0, fingerprint, error: null };
+  }
+
+  const plan = planPositions(capped, existing, reconcile);
 
   let stored = 0;
   let failed = 0;
   let firstError: string | null = null;
   const seen = new Set<string>();
 
-  for (let position = 0; position < capped.length; position += 1) {
-    const candidate = capped[position];
+  for (const candidate of capped) {
     const identity = imageIdentity(candidate);
+    const position = plan.get(identity) ?? 0;
     seen.add(identity);
 
     const prior = existing.get(identity);
@@ -287,6 +401,37 @@ async function harvestListing(
     }
 
     const checksum = await sha256Hex(fetched.bytes);
+
+    /*
+     * The same photograph, arriving under a new identity.
+     *
+     * Airtable rotates the signature inside the URL *path*, so a re-read of an
+     * unchanged attachment produces a URL that shares nothing with the last
+     * one. Keyed on that, every pass filed a fresh row and retired the previous
+     * copy — which is how one listing came to hold nine rows of a single photo
+     * and how 4,076 rows ended up `gone`. The bytes are the only thing that
+     * did not change, so they are what settles it: adopt the row already
+     * holding them rather than storing them again.
+     */
+    const twin = byChecksum.get(checksum);
+    if (twin && twin.identity !== identity) {
+      seen.add(twin.identity);
+      await supabase
+        .from('listing_images')
+        .update({
+          status: 'stored',
+          position,
+          source_url: candidate.url.slice(0, 2048),
+          last_verified_at: new Date(now).toISOString(),
+          error_count: 0,
+          last_error: null,
+        })
+        .eq('listing_id', listingId)
+        .eq('image_identity', twin.identity);
+      stored += 1;
+      continue;
+    }
+
     const path = await storagePathFor(listingId, identity, fetched.contentType);
 
     const { error: uploadError } = await supabase.storage
@@ -325,12 +470,14 @@ async function harvestListing(
       firstError ??= `row_failed: ${rowError.message}`;
       continue;
     }
+    byChecksum.set(checksum, { identity, storagePath: path });
     stored += 1;
   }
 
-  // Retire anything the source no longer offers. Marked, not deleted: a report
-  // rendered months ago may still reference it.
-  const vanished = Array.from(existing.keys()).filter((identity) => !seen.has(identity));
+  let carried = 0;
+  // Marked, not deleted: a report rendered months ago may still reference it.
+  // Empty unless this caller owns the set — see `Reconciliation`.
+  const vanished = identitiesToRetire(seen, existing, reconcile);
   if (vanished.length > 0) {
     await supabase
       .from('listing_images')
@@ -338,14 +485,41 @@ async function harvestListing(
       .eq('listing_id', listingId)
       .in('image_identity', vanished);
   }
+  if (reconcile === 'additive') {
+    // Held-over photos keep their place in the merged order. Only rows whose
+    // position actually moved are written, so a resolve over an unchanged
+    // listing still costs nothing.
+    for (const [identity, row] of existing) {
+      if (seen.has(identity) || row.status !== 'stored') continue;
+      carried += 1;
+      const position = plan.get(identity);
+      if (position === undefined || position === row.position) continue;
+      await supabase
+        .from('listing_images')
+        .update({ position })
+        .eq('listing_id', listingId)
+        .eq('image_identity', identity);
+    }
+  }
 
-  const errorCount = stored === 0 && failed > 0 ? 1 : 0;
+  const total = stored + carried;
+  const errorCount = total === 0 && failed > 0 ? 1 : 0;
   await supabase.from('listing_image_sets').upsert(
     {
       listing_id: listingId,
-      fingerprint,
-      image_count: capped.length,
-      stored_count: stored,
+      /*
+       * `fingerprint` is written only by the pass that owns the set.
+       *
+       * It is the "has the source changed" key, and two callers with different
+       * inputs comparing against one column is a loop: the sweep writes the
+       * Airtable-derived fingerprint, enrichment overwrites it with the scraped
+       * one, each then reads the other's value, concludes everything changed,
+       * and re-harvests. An additive pass contributes photos without claiming
+       * to be the source of record, so it leaves the key alone.
+       */
+      ...(reconcile === 'full' ? { fingerprint } : {}),
+      image_count: capped.length + carried,
+      stored_count: total,
       listed_at: listedAt ? new Date(listedAt).toISOString() : null,
       last_harvested_at: new Date(now).toISOString(),
       refresh_after: new Date(nextRefreshAt({ listedAt, errorCount, now })).toISOString(),
@@ -355,12 +529,42 @@ async function harvestListing(
     { onConflict: 'listing_id' },
   );
 
-  return { stored, failed, fingerprint, error: firstError };
+  return { stored: total, failed, fingerprint, error: firstError };
+}
+
+/**
+ * The identities already held as `stored`, per listing.
+ *
+ * This replaces a fingerprint comparison as the "is there anything to do" test.
+ * `listing_image_sets.fingerprint` cannot answer it once more than one source
+ * contributes: it holds whatever the last pass wrote, so a browser comparing an
+ * Airtable-derived fingerprint against the one enrichment left always concludes
+ * everything changed and re-harvests on every page load. Asking which
+ * identities are stored is exact, indexed on `listing_id`, and one query for
+ * the whole batch.
+ */
+async function storedIdentities(
+  supabase: ListingImagesClient,
+  listingIds: string[],
+): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  if (listingIds.length === 0) return out;
+  const { data } = await supabase
+    .from('listing_images')
+    .select('listing_id, image_identity')
+    .in('listing_id', listingIds)
+    .eq('status', 'stored');
+  for (const row of (data ?? []) as Array<{ listing_id: string; image_identity: string }>) {
+    (out.get(row.listing_id) ?? out.set(row.listing_id, new Set()).get(row.listing_id)!).add(
+      row.image_identity,
+    );
+  }
+  return out;
 }
 
 /** Signs every stored image for the requested listings. */
 async function signStoredImages(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   listingIds: string[],
 ): Promise<Record<string, Array<Record<string, unknown>>>> {
   const out: Record<string, Array<Record<string, unknown>>> = {};
@@ -447,12 +651,30 @@ async function readAirtableImages(
   };
   for (const record of payload.records ?? []) {
     const fields = record.fields ?? {};
+    // Read the columns this table actually has. The previous names — `Images`,
+    // `Property_Images`, `Listed_Date`, `Date_Listed`, `ReceivedAt` — exist on
+    // none of them, so every sweep read `[]`, fingerprinted every listing as
+    // empty, and re-armed the schedule having done nothing. The sweep has been
+    // running hourly and harvesting nothing since it shipped.
+    //
+    // `??` was also the wrong operator between the attachment columns: it takes
+    // the first non-nullish one rather than the union, so a record carrying both
+    // would have lost half its photos. They are concatenated now, and the
+    // scraped URL column — where photographs actually arrive — is read too.
     out.set(record.id, {
-      images: fields.Images ?? fields.Property_Images ?? fields.images ?? [],
+      images: [
+        ...normaliseImageCandidates(fields[INTAKE_FIELDS.listingImages], 'airtable'),
+        ...normaliseImageCandidates(fields[INTAKE_FIELDS.additionalAttachments], 'airtable'),
+        ...normaliseImageCandidates(
+          parseImageUrlList(fields[INTAKE_FIELDS.listingImageUrls]),
+          'scraped',
+        ),
+      ],
       listedAt:
-        epochMs(fields.Listed_Date) ??
-        epochMs(fields.Date_Listed) ??
-        epochMs(fields.ReceivedAt) ??
+        // Image freshness first — see `imageAgeAnchor`.
+        epochMs(fields[INTAKE_FIELDS.imagesCapturedAt]) ??
+        epochMs(fields[INTAKE_FIELDS.createdTime]) ??
+        epochMs(fields[INTAKE_FIELDS.availabilityDate]) ??
         epochMs(record.createdTime),
     });
   }
@@ -467,7 +689,7 @@ async function readAirtableImages(
  * the point of enriching it. Airtable caps a batch at 10 records.
  */
 async function syncAirtable(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ListingImagesClient,
   config: AirtableConfig,
   listingIds: string[],
 ): Promise<{ synced: number; error: string | null }> {
@@ -546,7 +768,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    // Read the body once as text. The internal HMAC signature binds a hash of
+    // the exact bytes, so `verifyInternal` needs them — a re-serialised object
+    // is a different string and would never verify.
+    const rawBody = await req.text().catch(() => '');
+    let body: Record<string, unknown> = {};
+    try { body = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : {}; } catch { body = {}; }
     const op = typeof body.op === 'string' ? body.op : 'resolve';
 
     if (killSwitchActive('LISTING_IMAGES_KILL_SWITCH')) {
@@ -554,13 +781,68 @@ Deno.serve(async (req) => {
     }
 
     /* -- Cron / service-role operations ---------------------------------- */
-    if (op === 'refresh' || op === 'sync') {
-      // These carry no user; they are only reachable with the service-role key,
-      // which cron holds and a browser never does.
-      const authHeader = req.headers.get('authorization') || '';
-      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-      if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
-        return createUnauthorizedResponse('Service role required', corsHeaders);
+    if (op === 'refresh' || op === 'sync' || op === 'harvest') {
+      if (op === 'harvest') {
+        /*
+         * `harvest` has exactly one caller — the enrichment sweep — and it used
+         * to authenticate by presenting the service-role key as a Bearer token.
+         * That spreads the crown jewels across an inter-function hop: anything
+         * that captured the request held full database access, not permission
+         * to file photographs. `scan-auth-patterns.mjs` R6 exists to forbid it
+         * and the allowlist for it is empty.
+         *
+         * Now an HMAC-signed envelope (method, path, timestamp, nonce, caller,
+         * body hash) with a receiver-side allowlist of one. Nothing reusable
+         * crosses the wire, and a captured request is useless against any other
+         * endpoint.
+         */
+        const gate = await verifyInternal(supabase, req, rawBody, {
+          allowedCallers: ['listing-enrichment'],
+        });
+        if (!gate.ok) {
+          console.warn('[listing-images] internal harvest denied', { errorCode: gate.errorCode });
+          return createUnauthorizedResponse('Internal caller required', corsHeaders);
+        }
+      } else {
+        // `refresh` and `sync` are cron-driven and still arrive with the
+        // service-role key the scheduler holds. Untouched deliberately: this
+        // change is about the inter-function hop, and moving cron's own
+        // credential is a separate decision with its own blast radius.
+        const authHeader = req.headers.get('authorization') || '';
+        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+        if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
+          return createUnauthorizedResponse('Service role required', corsHeaders);
+        }
+      }
+
+      /**
+       * Harvest an explicit candidate set, supplied by the enrichment sweep.
+       *
+       * The other two ops discover candidates by reading Airtable. That is no
+       * use here: the four attachment columns on the intake table are empty on
+       * every one of the 1,441 records, so there is nothing to discover. The
+       * photos exist on the agency's listing page, and `listing-enrichment`
+       * is what goes and finds them — this op is how it hands them over, so
+       * that storage, deduplication, checksums and the refresh schedule stay
+       * owned by one module.
+       */
+      if (op === 'harvest') {
+        const listingId = cleanId(body.listingId);
+        if (!listingId) return j({ success: false, error: 'invalid_listing_id' }, 400);
+
+        const candidates = normaliseImageCandidates(body.candidates, 'scraped');
+        if (candidates.length === 0) return j({ success: true, op, stored: 0, failed: 0 });
+
+        // The only caller that saw the whole gallery, so the only one allowed
+        // to retire what is no longer in it.
+        const outcome = await harvestListing(
+          supabase,
+          listingId,
+          candidates,
+          epochMs(body.listedAt),
+          'full',
+        );
+        return j({ success: true, op, listingId, ...outcome });
       }
 
       const config = airtableConfig();
@@ -600,12 +882,7 @@ Deno.serve(async (req) => {
       let errors = 0;
       try {
         const fresh = await readAirtableImages(config, dueIds);
-        const priorFingerprints = new Map(
-          (due ?? []).map((r: { listing_id: string; fingerprint: string | null }) => [
-            r.listing_id,
-            r.fingerprint,
-          ]),
-        );
+        const held = await storedIdentities(supabase, dueIds);
 
         for (const listingId of dueIds) {
           const record = fresh.get(listingId);
@@ -624,12 +901,33 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const candidates = normaliseImageCandidates(record.images, 'airtable');
-          const fingerprint = imageSetFingerprint(candidates.slice(0, MAX_IMAGES_PER_LISTING));
+          // `readAirtableImages` has already classified each candidate by the
+          // column it came from, so no origin is forced here.
+          const candidates = orderCandidatesForDisplay(
+            normaliseImageCandidates(record.images),
+          ).slice(0, MAX_IMAGES_PER_LISTING);
 
-          if (fingerprint === priorFingerprints.get(listingId)) {
-            // Nothing changed upstream: re-arm the schedule without touching a
-            // single byte. This is the case that makes hourly sweeps cheap.
+          /*
+           * Airtable offered nothing, or offered nothing new.
+           *
+           * Either way there is no work: re-arm and move on. The first case is
+           * the one that matters. Airtable's image columns are empty on records
+           * intake has not reached yet, and this branch used to fall through to
+           * a reconciliation against `[]` — which marked every photograph
+           * `listing-enrichment` had scraped as `gone`, on whatever schedule
+           * `refresh_after` came round. The sweep reported success while
+           * emptying galleries.
+           */
+          if (
+            !isHarvestDue({
+              candidates,
+              stored: held.get(listingId) ?? new Set<string>(),
+              // The sweep only ever looks at listings whose window has already
+              // elapsed, so the question left is purely "is any of this new".
+              refreshAfter: Number.POSITIVE_INFINITY,
+              now: Date.now(),
+            })
+          ) {
             unchanged += 1;
             await supabase
               .from('listing_image_sets')
@@ -643,7 +941,15 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const outcome = await harvestListing(supabase, listingId, candidates, record.listedAt);
+          // Additive: Airtable is one contributor to this listing's gallery,
+          // not the whole of it.
+          const outcome = await harvestListing(
+            supabase,
+            listingId,
+            candidates,
+            record.listedAt,
+            'additive',
+          );
           harvested += 1;
           if (outcome.error) errors += 1;
         }
@@ -692,7 +998,12 @@ Deno.serve(async (req) => {
       const entry = raw as ListingInput;
       const id = cleanId(entry?.id);
       if (!id) continue;
-      listings.push({ id, images: entry.images, listedAt: entry.listedAt ?? null });
+      listings.push({
+        id,
+        images: entry.images,
+        listedAt: entry.listedAt ?? null,
+        capturedAt: entry.capturedAt ?? null,
+      });
     }
     if (listings.length === 0) return j({ success: true, images: {}, pending: [] });
 
@@ -710,21 +1021,41 @@ Deno.serve(async (req) => {
         refresh_after: string | null;
       }>).map((row) => [row.listing_id, row]),
     );
+    const held = await storedIdentities(supabase, ids);
 
     const now = Date.now();
     const pending: string[] = [];
     let budget = MAX_HARVESTS_PER_REQUEST;
 
     for (const listing of listings) {
-      const candidates = normaliseImageCandidates(listing.images, 'airtable');
+      // No forced origin: the client has already classified each candidate, and
+      // overriding that to 'airtable' collapsed the ranking that decides which
+      // shot leads a card. A Street View frame relabelled as an agent's own
+      // photograph outranks nothing, so the kerb stayed the hero.
+      const candidates = orderCandidatesForDisplay(
+        normaliseImageCandidates(listing.images),
+      ).slice(0, MAX_IMAGES_PER_LISTING);
       if (candidates.length === 0) continue;
 
-      const fingerprint = imageSetFingerprint(candidates.slice(0, MAX_IMAGES_PER_LISTING));
+      /*
+       * Due when this browser is offering a photograph we do not already hold.
+       *
+       * Not a fingerprint comparison. `listing_image_sets.fingerprint` records
+       * whatever the last pass wrote, and enrichment writes the fingerprint of
+       * the gallery it scraped from the agency page. Comparing an
+       * Airtable-derived fingerprint against that one never matches, so every
+       * listing looked due on every page load. The identity check asks the
+       * question actually being asked — "is there anything here I have not
+       * stored" — and answers it exactly.
+       */
       const state = stateById.get(listing.id);
-      const due =
-        !state ||
-        state.fingerprint !== fingerprint ||
-        isRefreshDue(state.refresh_after ? Date.parse(state.refresh_after) : null, now);
+      const due = isHarvestDue({
+        candidates,
+        stored: held.get(listing.id) ?? new Set<string>(),
+        refreshAfter: state?.refresh_after ? Date.parse(state.refresh_after) : null,
+        now,
+        known: Boolean(state),
+      });
 
       if (!due) continue;
       if (budget <= 0) {
@@ -734,7 +1065,16 @@ Deno.serve(async (req) => {
         continue;
       }
       budget -= 1;
-      await harvestListing(supabase, listing.id, candidates, epochMs(listing.listedAt));
+      // Additive, always. The browser sees only what Airtable holds; the
+      // photographs on the page were scraped from the agency's own listing
+      // page by `listing-enrichment` and are not in this payload.
+      await harvestListing(
+        supabase,
+        listing.id,
+        candidates,
+        imageAgeAnchor(listing.capturedAt, listing.listedAt),
+        'additive',
+      );
     }
 
     const images = await signStoredImages(supabase, ids);

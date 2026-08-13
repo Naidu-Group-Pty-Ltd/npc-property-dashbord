@@ -133,7 +133,7 @@ const NOTIFICATIONS_FN = 'notifications-feed-v2';
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const navigate = useNavigate();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   // Data now moves over `notifications-feed` (staff session cookie). This client
   // is kept ONLY for the realtime subscription, which is a best-effort "something
   // changed" hint — if its JWT is absent the socket simply never delivers, and
@@ -189,27 +189,20 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   // Load notifications from Supabase on mount and when user changes
   useEffect(() => {
+    // Signed out there is no feed to read: `notifications-feed-v2` answers 401
+    // and the failure surfaced as a runtime error on /auth. The staff session
+    // cookie is unreadable from JS, so a resolved `user` from
+    // custom-auth-verify-v2 is the browser's evidence that one exists.
+    if (!user) {
+      setNotifications([]);
+      return;
+    }
     fetchNotifications();
     
-    // Subscribe to real-time changes (RLS applies; authorize with the JWT)
-    if (accessToken) {
-      try { supabase.realtime.setAuth(accessToken); } catch { /* non-fatal */ }
-    }
-    const channel = supabase
-      .channel('notifications-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'notifications'
-        },
-        () => {
-          fetchNotifications();
-        }
-      )
-      .subscribe();
-
+    // Realtime removed with the HS256 token (ES256 remediation). `postgres_changes`
+    // authorises via a project JWT, and the browser no longer holds one — under
+    // RLS the socket would deliver nothing while still looking healthy. The
+    // bounded poll below was already the reliable path and is now the only one.
     // Realtime is a best-effort transport, not a guarantee: corporate proxies
     // block WebSockets outright, the socket dies silently on sleep/resume, and
     // a CHANNEL_ERROR surfaces nowhere the user can see. When it fails the bell
@@ -227,9 +220,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       window.clearInterval(poll);
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
-      supabase.removeChannel(channel);
     };
-  }, [fetchNotifications, supabase, accessToken]);
+  }, [fetchNotifications, user?.id]);
 
 
   /**

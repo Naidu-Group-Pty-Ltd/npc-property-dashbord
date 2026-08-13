@@ -88,6 +88,60 @@ describe('DOM evaluators', () => {
     const clip = evaluateClipping({ clientWidth: 100, clientHeight: 20, scrollWidth: 100, scrollHeight: 20, overflowX: 'hidden', overflowY: 'hidden', lineRectsPx: [{ x: 120, y: 0, width: 40, height: 16 }], clipRectPx: { x: 0, y: 0, width: 100, height: 20 } });
     expect(clip.clippedLineCount).toBe(1); expect(clip.clipped).toBe(true);
   });
+  // W0 — the defect that was structurally invisible. The export renderer
+  // (blocks/_shared.html.ts) sets `overflow` only under `maxLines`, so a text
+  // box too small for its content spilled under `overflow: visible` and the
+  // gate measured it as perfectly fine. Overflow is now measured regardless of
+  // mode, then classified: clipping mode loses content, visible mode spills it.
+  it('overflow under visible overflow is measured, not ignored', () => {
+    const clip = evaluateClipping({
+      clientWidth: 100, clientHeight: 20, scrollWidth: 100, scrollHeight: 64,
+      overflowX: 'visible', overflowY: 'visible',
+      lineRectsPx: [], clipRectPx: { x: 0, y: 0, width: 100, height: 20 },
+    });
+    expect(clip.overflowing).toBe(true);
+    expect(clip.overflowHeightPx).toBe(44);
+    // It spills, it is not cut off — the two must not be conflated.
+    expect(clip.clipped).toBe(false);
+    expect(clip.clippedHeightPx).toBe(0);
+  });
+
+  it('the same geometry under a clipping overflow reports clipped, not overflowing', () => {
+    const clip = evaluateClipping({
+      clientWidth: 100, clientHeight: 20, scrollWidth: 100, scrollHeight: 64,
+      overflowX: 'hidden', overflowY: 'hidden',
+      lineRectsPx: [], clipRectPx: { x: 0, y: 0, width: 100, height: 20 },
+    });
+    expect(clip.clipped).toBe(true);
+    expect(clip.clippedHeightPx).toBe(44);
+    expect(clip.overflowing).toBe(false);
+  });
+
+  it('a spilling line box under visible overflow counts as overflow, not clipping', () => {
+    const clip = evaluateClipping({
+      clientWidth: 100, clientHeight: 20, scrollWidth: 100, scrollHeight: 20,
+      overflowX: 'visible', overflowY: 'visible',
+      lineRectsPx: [{ x: 0, y: 24, width: 90, height: 16 }],
+      clipRectPx: { x: 0, y: 0, width: 100, height: 20 },
+    });
+    expect(clip.overflowLineCount).toBe(1);
+    expect(clip.overflowing).toBe(true);
+    expect(clip.clippedLineCount).toBe(0);
+  });
+
+  it('a fitting box is neither clipped nor overflowing under either mode', () => {
+    for (const mode of ['visible', 'hidden'] as const) {
+      const clip = evaluateClipping({
+        clientWidth: 100, clientHeight: 20, scrollWidth: 100, scrollHeight: 20,
+        overflowX: mode, overflowY: mode,
+        lineRectsPx: [{ x: 0, y: 2, width: 90, height: 16 }],
+        clipRectPx: { x: 0, y: 0, width: 100, height: 20 },
+      });
+      expect(clip.clipped, mode).toBe(false);
+      expect(clip.overflowing, mode).toBe(false);
+    }
+  });
+
   it('critical content off-page detected; subpixel tolerated', () => {
     expect(evaluateOffPage({ x: 590, y: 10, width: 40, height: 10 }, { x: 0, y: 0, width: 595, height: 842 })).toBe(true);
     expect(evaluateOffPage({ x: -0.4, y: 10, width: 40, height: 10 }, { x: 0, y: 0, width: 595, height: 842 })).toBe(false);

@@ -4,11 +4,14 @@
 // outgoings line items) grounded in Australian commercial market norms.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { buildNoiPromptSnapshot } from "./promptSnapshot.ts";
 import { consumeRateLimit } from "../_shared/requestSecurity.ts";
 import { isRequestBody, readBoundedJson, RequestTooLargeError } from "./requestGuards.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface Snapshot {
   propertyId?: string;
   address?: string;
@@ -139,8 +142,13 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: false, error: 'Invalid request body' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     const body = parsedBody;
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    // Commercial & Industrial is a Scale-or-add-on capability — enforced
+    // server-side, not just hidden in the UI.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'commercial-industrial');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     // The database-backed bucket is shared across isolates, so horizontal scaling
     // cannot bypass the paid-AI allowance. Fail closed if metering is unavailable.
@@ -202,7 +210,7 @@ Deno.serve(async (req) => {
       },
     }];
 
-    const aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResp = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -251,6 +259,6 @@ Deno.serve(async (req) => {
     if (err?.message === 'Rate limit unavailable') {
       return new Response(JSON.stringify({ success: false, error: 'Estimate service temporarily unavailable' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
-    return new Response(JSON.stringify({ success: false, error: err?.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ ...internalError(err, 'estimate-commercial-noi'), success: false }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

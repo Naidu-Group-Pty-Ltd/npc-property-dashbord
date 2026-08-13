@@ -57,6 +57,13 @@ export interface RenderedTextEvidenceV1 {
   clientWidth: number; clientHeight: number; scrollWidth: number; scrollHeight: number;
   computedStyle: RenderedTextComputedStyleV1;
   visible: boolean; clipped: boolean; clippedWidthPx: number; clippedHeightPx: number;
+  /**
+   * Text that is visible but outside its box — it spills and collides with what
+   * sits below, rather than being cut off. Optional so evidence captured before
+   * this contract gained the field still parses; absent means "not measured",
+   * which is NOT the same as "measured zero".
+   */
+  overflowing?: boolean; overflowWidthPx?: number; overflowHeightPx?: number;
   offPage: boolean; occlusionRatio: number | null; contrastRatio: number | null;
   /** true when this run is E6 hidden-semantic (must NOT count as visible text). */
   hiddenSemantic: boolean;

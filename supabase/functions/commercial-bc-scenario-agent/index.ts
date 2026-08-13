@@ -4,10 +4,12 @@
 // cascaded into the calculator state on the client.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { consumeRateLimit, enforceJsonBodyLimit } from "../_shared/requestSecurity.ts";
 import { extractOpenAIUsage, logApiUsage } from "../_shared/logApiUsage.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface ChatTurn { role: 'user' | 'assistant'; content: string; }
 
 interface Snapshot {
@@ -103,8 +105,13 @@ Deno.serve(async (req) => {
     const boundedBody = await enforceJsonBodyLimit<RequestBody>(req, MAX_REQUEST_BYTES);
     if (!boundedBody.ok) return jsonError(corsHeaders, boundedBody.error.status, boundedBody.error.status === 413 ? 'request is too large' : 'invalid JSON request');
     const body = boundedBody.value;
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    // Commercial & Industrial is a Scale-or-add-on capability — enforced
+    // server-side, not just hidden in the UI.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'commercial-industrial');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
     if (!prompt) {
@@ -239,6 +246,6 @@ ${prompt}`;
     return new Response(JSON.stringify({ success: true, assistantText, scenarios }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err: any) {
     console.error('[commercial-bc-scenario-agent] fatal', err);
-    return new Response(JSON.stringify({ success: false, error: err?.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ ...internalError(err, 'commercial-bc-scenario-agent'), success: false }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

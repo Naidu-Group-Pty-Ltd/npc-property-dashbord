@@ -33,6 +33,39 @@ export interface TemplateListFilters {
   sort: TemplateSortOption;
 }
 
+/**
+ * What a card on the list needs from a template row.
+ *
+ * Wider than `TemplateListRecord` because the card also reads the two lock
+ * flags. Structural rather than the generated row type, so a card can be handed
+ * a record from either query without a cast.
+ */
+export interface TemplateRowLike {
+  id: string;
+  name: string;
+  description?: string | null;
+  report_type?: string | null;
+  tier?: string | null;
+  version?: number | string | null;
+  is_active?: boolean | null;
+  locked_for_review?: boolean | null;
+  updated_at?: string | null;
+}
+
+/**
+ * Why this template cannot be deleted, or null when it can.
+ *
+ * One function rather than a condition repeated at each call site. The rule —
+ * active templates and templates locked for review are undeletable — is
+ * enforced in the database too; this exists so the UI can say *which* of the
+ * two it is instead of just greying a button out.
+ */
+export function deleteBlockedReason(template: TemplateRowLike): string | null {
+  if (template.is_active) return 'Deactivate the template before deleting it.';
+  if (template.locked_for_review) return 'Unlock the review before deleting it.';
+  return null;
+}
+
 export const DEFAULT_TEMPLATE_LIST_FILTERS: TemplateListFilters = {
   search: '',
   reportType: 'all',

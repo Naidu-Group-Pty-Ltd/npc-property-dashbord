@@ -1,27 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePortalAuth } from './usePortalAuth';
+import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
 
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
-const PORTAL_SESSION_KEY = 'portal_session_token';
-
-function getSessionToken(): string | null {
-  try { return sessionStorage.getItem(PORTAL_SESSION_KEY) || localStorage.getItem(PORTAL_SESSION_KEY); }
-  catch { try { return localStorage.getItem(PORTAL_SESSION_KEY); } catch { return null; } }
-}
-
 export async function invokePortalEdge(functionName: string, body: Record<string, any>) {
-  const sessionToken = getSessionToken();
   const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'apikey': SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      ...(sessionToken ? { 'x-portal-session-token': sessionToken } : {}),
+      ...portalSessionHeaders(),
     },
-    credentials: 'omit',
-    body: JSON.stringify({ ...body, portal_session_token: sessionToken, session_token: sessionToken }),
+    // The HttpOnly session cookie must be attached; see src/lib/portalSession.ts.
+    credentials: 'include',
+    body: JSON.stringify({ ...body, ...portalSessionBodyFields() }),
   });
   const data = await response.json();
   if (!response.ok || !data.success) {

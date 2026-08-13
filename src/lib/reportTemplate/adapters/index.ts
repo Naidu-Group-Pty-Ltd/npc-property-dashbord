@@ -1,4 +1,12 @@
 import { investmentReportAdapter } from './investmentReportAdapter';
+import { borrowingCapacityAdapter } from './borrowingCapacityAdapter';
+import { portfolioAdapter } from './portfolioAdapter';
+import { comparisonAdapter } from './comparisonAdapter';
+import { cashFlowAdapter } from './cashFlowAdapter';
+import { qaAdapter } from './qaAdapter';
+import { commercialCapacityAdapter } from './commercialCapacityAdapter';
+import { marketIntelligenceAdapter } from './marketIntelligenceAdapter';
+import { clientDetailsAdapter } from './clientDetailsAdapter';
 import type { ReportTemplateAdapter } from './types';
 
 function previewOnlyAdapter(reportType: string, label: string, reason = 'Production adapter has not been configured yet.'): ReportTemplateAdapter {
@@ -14,15 +22,69 @@ function previewOnlyAdapter(reportType: string, label: string, reason = 'Product
 
 export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   investmentReportAdapter,
-  previewOnlyAdapter('portfolio', 'Portfolio Analysis'),
-  previewOnlyAdapter('cashflow', 'Cash Flow'),
-  previewOnlyAdapter('borrowing_capacity', 'Borrowing Capacity'),
-  previewOnlyAdapter('qa', 'Q&A Export'),
+  // Second production adapter. `borrowing_capacity_assessments` is a typed table
+  // with 143 real rows, so these templates can render an actual assessment
+  // rather than only a preview. See `borrowingCapacityAdapter.ts`.
+  borrowingCapacityAdapter,
+  // Third production adapter, reading `portfolio_analysis_reports` (21 rows).
+  portfolioAdapter,
+  // Fourth, reading `property_comparisons` (50 rows) through the normaliser the
+  // format's own render route already uses.
+  comparisonAdapter,
+  // Fifth, and the only one that does not read the table named after it:
+  // `cash_flow_analyses` holds 0 rows by design, so this reads the stored
+  // `financial_calculations.projections` on `investment_reports` (162 of 1,182)
+  // and returns null for the rest. See `cashFlowAdapter.ts`.
+  cashFlowAdapter,
+  // Sixth. Nine tables through the normaliser the format's own render route
+  // uses — 742 of the 775 clients hold nothing financial, which is what the
+  // masters are built around rather than in spite of.
+  clientDetailsAdapter,
+  /**
+   * Preview-only, and not for want of an adapter.
+   *
+   * A Cash Flow Comparison has nothing an adapter could read: the projections
+   * are the browser's and are never persisted, the analysis is never persisted
+   * and structurally cannot be (`cash_flow_analyses` holds 0 rows and its
+   * INSERT policy refuses this application's own sign-in), and the render
+   * ledger holds 0 rows, stores neither, and is superadmin-only. The stored
+   * `financial_calculations.projections` cannot stand in: every headline
+   * measure here is built on `afterTaxAnnual` and that series models no tax.
+   * `cashFlowComparisonProjection.pure.ts` carries the detail, and is what an
+   * adapter would call the day a comparison is persisted.
+   */
+  previewOnlyAdapter(
+    'cash_flow_comparison',
+    'Cash Flow Comparison',
+    'No comparison is persisted anywhere a template can read: the projections are the '
+    + 'browser’s, the analysis table refuses every write, and the render ledger stores neither.',
+  ),
+  /**
+   * Seventh production adapter. Reads `report_qa_conversations` and
+   * `report_qa_messages` through the normaliser the format's own render route
+   * uses. This was preview-only until `markdown-block` existed: the vocabulary
+   * had no way to set model-authored Markdown as structure, so an answer bound
+   * to a `text-block` printed its own source.
+   */
+  qaAdapter,
+  /**
+   * Eighth. Reads the stored calculation run through the normaliser the
+   * format's own render route uses, and declines the thirteen of sixteen
+   * assessments that have no run — there are no figures for a document to
+   * carry, and this format's first rule is that every figure comes from the
+   * stored run rather than a recomputation.
+   */
+  commercialCapacityAdapter,
+  /**
+   * Ninth, and the last of the migrated formats to get one. Goes through the
+   * normaliser rather than the row because three editorial strips live there —
+   * the model's data-limitations hedging, its empty regulatory sections and the
+   * brand tagline it repeats under the letterhead.
+   */
+  marketIntelligenceAdapter,
   previewOnlyAdapter('suburb', 'Suburb Analysis'),
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
-  previewOnlyAdapter('comparison', 'Comparison Report'),
-  previewOnlyAdapter('formara', 'Formara / Client Form'),
 ];
 
 const ALIASES: Record<string, string> = {
@@ -31,6 +93,12 @@ const ALIASES: Record<string, string> = {
   investment_report: 'investment',
   property_investment: 'investment',
   borrowing: 'borrowing_capacity',
+  // Both spellings reach `PRODUCTION_REPORT_TEMPLATE_TYPES` in the broker,
+  // which matches the raw `report_type` and does not run it through this map.
+  // Without the alias the two gates would disagree about `cash_flow`.
+  cash_flow: 'cashflow',
+  clientdetails: 'client_details',
+  formara: 'client_details',
 };
 
 export function normaliseReportType(reportType?: string | null): string {

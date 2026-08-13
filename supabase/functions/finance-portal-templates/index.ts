@@ -5,6 +5,7 @@
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -165,6 +166,6 @@ Deno.serve(async (req) => {
     return json({ error: `Unknown operation: ${operation}` }, 400);
   } catch (e: any) {
     console.error('[finance-portal-templates] error', e);
-    return json({ error: e.message || 'Internal error' }, 500);
+    return json({ ...internalError(e, 'finance-portal-templates') }, 500);
   }
 });

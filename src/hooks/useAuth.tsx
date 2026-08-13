@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { logActivity } from '@/hooks/useActivityLogger';
-import { resetAuthFailures } from '@/lib/secureInvoke';
+import { resetAuthFailures, AUTH_EXHAUSTED_EVENT } from '@/lib/secureInvoke';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
@@ -180,20 +180,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isSuperadmin = roles.includes('superadmin') || user?.role === 'super_admin';
   const isAdmin = roles.includes('admin') || isSuperadmin || user?.role === 'sub_admin';
 
-  // Authenticate the shared realtime connection with the staff JWT so
-  // postgres_changes subscriptions run as `authenticated` (Phase 7). Tables
-  // whose anon SELECT grant is revoked (report_qa_*, agent_messages,
-  // client_portal_*) only deliver realtime events to staff after this.
-  useEffect(() => {
-    try {
-      supabase.realtime.setAuth(accessToken ?? SUPABASE_ANON_KEY);
-    } catch { /* non-fatal */ }
-  }, [accessToken]);
+  // The realtime setAuth call was removed with the HS256 token (ES256
+  // remediation): there is no project JWT to authorise the socket with, and
+  // passing the anon key only made an unauthorised socket look authorised.
+  // Surfaces that relied on it poll through the authenticated gateway instead.
 
   // Check for existing session on mount
   useEffect(() => {
     checkSession();
   }, []);
+
+  // A revoked/expired session makes every poller 401 (balance, internal
+  // messaging, market updates…). When the circuit breaker trips, clear local
+  // auth state so ProtectedRoute sends the user to /auth instead of leaving a
+  // blank screen behind a dead session.
+  useEffect(() => {
+    const onExhausted = () => clearAuthState();
+    window.addEventListener(AUTH_EXHAUSTED_EVENT, onExhausted);
+    return () => window.removeEventListener(AUTH_EXHAUSTED_EVENT, onExhausted);
+  }, []);
+
 
   // Heartbeat the registered device every 5 min while signed in.
   const heartbeatRef = useRef<number | null>(null);

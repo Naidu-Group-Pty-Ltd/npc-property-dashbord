@@ -21,17 +21,20 @@ import {
   formatModuleAwarenessForAI,
   getAllSectionIds,
 } from '../userGuideKnowledge';
-import { ADDITIONAL_GUIDE_SECTIONS } from '../userGuideSections';
+import { GUIDE_SECTIONS } from '../userGuideContent';
 import { MODULE_TIERS } from '../pricing/planEntitlements';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const readRepoFile = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8');
 
-/** Section ids the guide page renders, read from its source. */
+/**
+ * Section ids the guide page renders. The page renders `GUIDE_SECTIONS`
+ * verbatim (filtered only by entitlement), so the content module is the
+ * page's section list — including the sections from `userGuideSections.ts`,
+ * which it appends itself.
+ */
 function pageSectionIds(): string[] {
-  const src = readRepoFile('src/pages/UserGuide.tsx');
-  const inline = [...src.matchAll(/^ {6}id: '([a-z0-9-]+)',$/gm)].map((m) => m[1]);
-  return [...inline, ...ADDITIONAL_GUIDE_SECTIONS.map((s) => s.id)];
+  return GUIDE_SECTIONS.map((s) => s.id);
 }
 
 describe('guide page and AI knowledge base agree', () => {
@@ -153,13 +156,24 @@ describe('formatModuleAwarenessForAI', () => {
     expect(launch).toContain('Launch plan');
     expect(launch).toContain('Included in this plan');
     expect(launch).toContain('requires an upgrade');
-    // AML is a Launch baseline; Finance Portal is Scale-only.
+    // Finance Portal is Scale-only; AML follows the purchased SKU, so with
+    // no add-ons stated it sits in the add-on section, not "included".
     const included = launch.slice(
       launch.indexOf('### Included in this plan'),
       launch.indexOf('### Not included'),
     );
-    expect(included).toContain('AML / CTF Compliance');
     expect(included).not.toContain('Finance Portal');
+    expect(included).not.toContain('AML / CTF Compliance');
+    const addonSection = launch.slice(launch.indexOf('### Available as a paid add-on'));
+    expect(addonSection).toContain('AML / CTF Compliance');
+    // A snapshot that carries the slug (every headline SKU) reports AML as
+    // included — a paying customer is never told to buy it twice.
+    const withAml = formatModuleAwarenessForAI('launch', ['aml-ctf']);
+    const includedWithAml = withAml.slice(
+      withAml.indexOf('### Included in this plan'),
+      withAml.indexOf('### Not included'),
+    );
+    expect(includedWithAml).toContain('AML / CTF Compliance');
   });
 
   it('names the plan that unlocks something the current plan lacks', () => {

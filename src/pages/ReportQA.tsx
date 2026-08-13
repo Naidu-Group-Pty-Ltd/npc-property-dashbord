@@ -11,7 +11,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
+import {
+  describeAuthError,
+  invokeSecureFunction,
+  isAuthFailureResponse,
+  refreshAccessToken,
+  resolveAuthBearer,
+} from '@/lib/secureInvoke';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useAuth } from '@/hooks/useAuth';
 import { MessageReportEditor } from '@/components/report-qa/MessageReportEditor';
@@ -71,6 +77,7 @@ import { ConversationClientLinker } from '@/components/report-qa/ConversationCli
 import { ConversationTags } from '@/components/report-qa/ConversationTags';
 import { type Theme } from '@/components/report-qa/ChatThemeSelector';
 import { ConversationExport } from '@/components/report-qa/ConversationExport';
+import { ReportQaDownloadButton } from '@/components/report-qa/ReportQaDownloadButton';
 import { MessageThreading, useMessageThreads } from '@/components/report-qa/MessageThreading';
 import { AutoSummarize } from '@/components/report-qa/AutoSummarize';
 import { PinConversation, usePinnedConversations } from '@/components/report-qa/PinConversation';
@@ -471,6 +478,15 @@ export default function ReportQA() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const viewport = scrollAreaRef.current?.querySelector<HTMLElement>('[data-radix-scroll-area-viewport]');
+    if (viewport) {
+      viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+      return;
+    }
+    chatEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+  }, []);
+
   // Custom hooks
   const { addReply, getReplies } = useMessageThreads();
   const { getPinnedIds, togglePin, isPinned } = usePinnedConversations();
@@ -495,8 +511,8 @@ export default function ReportQA() {
 
   // Scroll to bottom handler
   const handleScrollToBottom = useCallback(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+    scrollChatToBottom('smooth');
+  }, [scrollChatToBottom]);
 
   // Toggle reports panel
   const handleToggleReportsPanel = useCallback(() => {
@@ -528,10 +544,16 @@ export default function ReportQA() {
     } catch {}
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Keep the active turn inside the chat viewport without scrolling the page
+  // shell. `scrollIntoView` could move every scrollable ancestor (including the
+  // dashboard), while streaming text did not trigger the old messages-only
+  // effect at all.
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const frame = window.requestAnimationFrame(() => {
+      scrollChatToBottom(reducedMotion ? 'auto' : 'smooth');
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [failedMessage, isProcessing, messages, reducedMotion, scrollChatToBottom, streamingContent]);
 
   // Auto-resize textarea when inputMessage changes (e.g., from transcription)
   useEffect(() => {
@@ -695,43 +717,74 @@ export default function ReportQA() {
         let pageImages: Array<{ pageNumber: number; base64: string; width: number; height: number; mimeType: string }> = [];
         try {
           const conv = await convertPdfToImages(file, (current, total) => {
-            const pct = 85 + Math.round((current / Math.max(total, 1)) * 10);
-            updateProgress(Math.min(pct, 95), 'processing');
+            const pct = 85 + Math.round((current / Math.max(total, 1)) * 5);
+            updateProgress(Math.min(pct, 90), 'processing');
           });
 
           if (conv.success) {
             pageImages = conv.images
-              .slice(0, 8)
+              .slice(0, 24)
               .map((img) => ({
                 pageNumber: img.pageNumber,
                 base64: img.base64,
                 width: img.width,
                 height: img.height,
-                mimeType: 'image/png',
+                // Use the real encoding — mislabelling a JPEG as PNG made the
+                // vision provider reject every page.
+                mimeType: img.mimeType,
               }));
+          } else if (conv.error) {
+            console.warn('[ReportQA] Rasterisation reported an error:', conv.error);
           }
         } catch (err) {
           console.warn('PDF page image pre-render failed:', err);
         }
 
         if (pageImages.length > 0) {
-          const reader = new FileReader();
-          const base64 = await new Promise<string>((resolve, reject) => {
-            reader.onload = (e) => resolve(e.target?.result as string);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
+          // Send pages in small batches. A whole flattened report rendered at
+          // print quality is tens of megabytes, so the previous single request
+          // (PDF bytes + 8 full-page images) was rejected before it ever reached
+          // the function — which surfaced as "could not extract text".
+          const BATCH_SIZE = 3;
+          const ocrChunks: string[] = [];
+          let lastOcrError: string | null = null;
 
-          const { data, error } = await invokeSecureFunction('report-qa', {
-            action: 'extract',
-            fileData: base64,
-            fileName: file.name,
-            pageImages,
-          });
+          for (let i = 0; i < pageImages.length; i += BATCH_SIZE) {
+            const batch = pageImages.slice(i, i + BATCH_SIZE);
+            const { data, error } = await invokeSecureFunction('report-qa', {
+              // Raster OCR is deliberately conversation-independent: a user
+              // must be able to read a flattened PDF before the first chat is
+              // created. `extract` is a storage mutation and correctly
+              // requires an existing writable conversation.
+              action: 'ocr-pages',
+              fileName: file.name,
+              pageImages: batch,
+            });
 
-          if (!error && data?.success && data.extractedText?.length > extractedText.length) {
-            extractedText = data.extractedText;
+            if (error) {
+              lastOcrError = error.message || 'OCR request failed';
+              console.warn(`[ReportQA] OCR batch ${i / BATCH_SIZE + 1} failed:`, error);
+              // Keep whatever earlier batches produced rather than aborting.
+              break;
+            }
+            if (data?.success && typeof data.extractedText === 'string' && data.extractedText.trim()) {
+              ocrChunks.push(data.extractedText.trim());
+            } else if (data?.error) {
+              lastOcrError = data.error;
+            }
+
+            const done = Math.min(i + BATCH_SIZE, pageImages.length);
+            updateProgress(90 + Math.round((done / pageImages.length) * 9), 'processing');
           }
+
+          const ocrText = ocrChunks.join('\n\n');
+          if (ocrText.length > extractedText.length) {
+            extractedText = `[Document: ${file.name}]\n[Pages OCR'd: ${Math.min(pageImages.length, ocrChunks.length * 3)}]\n\n${ocrText}`;
+          } else if (lastOcrError && extractedText.length < 50) {
+            throw new Error(`This PDF has no readable text layer and OCR failed: ${lastOcrError}`);
+          }
+        } else if (extractedText.length < 50) {
+          throw new Error('This PDF has no readable text layer and its pages could not be rendered for OCR. Please re-export it as a text-based PDF.');
         }
       }
 
@@ -1142,7 +1195,7 @@ export default function ReportQA() {
       } : c));
       setShowHistory(false);
       setLiveAnnouncement(`Conversation ${conversation.title || conv.title} loaded`);
-      requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }));
+      requestAnimationFrame(() => scrollChatToBottom('auto'));
 
 
       toast({ title: 'Conversation loaded', description: conversation.title || conv.title });
@@ -1335,56 +1388,82 @@ export default function ReportQA() {
       // Ground retrieval and fallback context only in the reports selected for this chat.
       const reportsToUse = selectedReports;
 
-      // WP-11B/C cookie-only: report-qa uses wildcard CORS (no cookies), so it
-      // authenticates via the access-token JWT Bearer (verifyAuth JWT path).
-      // The raw session token is no longer read or sent.
-      const accessToken = sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token');
-      const bearerToken = accessToken || SUPABASE_KEY;
-
       const { formatted: chatHistoryForRequest, needsSummary, totalMessages } = buildChatHistoryForRequest(messages);
 
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/report-qa`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${bearerToken}`,
-        },
-        credentials: 'omit', // Avoid CORS issues with wildcard origins
-        body: JSON.stringify({
-          action: 'chat',
-          // Send report contents as fallback in case RAG indexing hasn't completed
-          reportContents: reportsToUse.map(r => r.content),
-          reportNames: reportsToUse.map(r => r.name),
-          selectedReportNames: reportsToUse.map(r => r.name),
-          question: messageContent,
-          chatHistory: chatHistoryForRequest,
-          conversationId: activeConversationId,
-          stream: true,
-          
-          agentKey: selectedAgentKey,
-          modelProvider: selectedAgentKey,
-          needsConversationSummary: needsSummary,
-          totalMessageCount: totalMessages,
-          agentMode: effectiveAgentMode,
-        }),
-        signal: streamController.signal,
+      const requestPayload = JSON.stringify({
+        action: 'chat',
+        // Send report contents as fallback in case RAG indexing hasn't completed
+        reportContents: reportsToUse.map(r => r.content),
+        reportNames: reportsToUse.map(r => r.name),
+        selectedReportNames: reportsToUse.map(r => r.name),
+        question: messageContent,
+        chatHistory: chatHistoryForRequest,
+        conversationId: activeConversationId,
+        stream: true,
+
+        agentKey: selectedAgentKey,
+        modelProvider: selectedAgentKey,
+        needsConversationSummary: needsSummary,
+        totalMessageCount: totalMessages,
+        agentMode: effectiveAgentMode,
       });
 
-      if (!response.ok) {
-        let errorMessage = `HTTP ${response.status}`;
+      // WP-11B/C cookie-only: the chat streams, so it cannot go through
+      // `invokeSecureFunction` (that helper reads the whole body as JSON). It
+      // still follows the same authentication contract: the access-token JWT
+      // Bearer is useful while fresh, but the authoritative staff session is
+      // the HttpOnly `__Host-session_token` cookie.
+      //
+      // Omitting credentials here was the failure: every JSON action worked via
+      // the cookie, while chat depended solely on a short-lived tab JWT and told
+      // a still-signed-in user to sign in again. Include the cookie; report-qa's
+      // CSRF guard validates the exact first-party Origin before mutation.
+      const sendChatRequest = (bearerToken: string) =>
+        fetch(`${SUPABASE_URL}/functions/v1/report-qa`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${bearerToken}`,
+          },
+          credentials: 'include',
+          body: requestPayload,
+          signal: streamController.signal,
+        });
 
-        try {
-          const payload = await response.json();
-          errorMessage = payload?.error || payload?.message || errorMessage;
-        } catch {
-          const rawText = await response.text();
-          if (rawText?.trim()) {
-            errorMessage = rawText;
+      const { token: bearerToken, authenticated } = await resolveAuthBearer({ refreshIfMissing: true });
+      let response = await sendChatRequest(bearerToken);
+
+      if (!response.ok) {
+        // The body can only be read once, so read it here and decide from the
+        // text — a retry re-sends the request and gets a fresh body of its own.
+        const readFailure = async (res: Response) => {
+          const rawText = await res.text().catch(() => '');
+          try {
+            const payload = JSON.parse(rawText);
+            return String(payload?.error?.message || payload?.error || payload?.message || `HTTP ${res.status}`);
+          } catch {
+            return rawText.trim() || `HTTP ${res.status}`;
+          }
+        };
+
+        let errorMessage = await readFailure(response);
+
+        // Skipped when the resolver already came back empty-handed: the cookie
+        // was asked a moment ago and had nothing to give.
+        if (authenticated && isAuthFailureResponse(response.status, errorMessage)) {
+          const refreshed = await refreshAccessToken();
+          if (refreshed) {
+            response = await sendChatRequest(refreshed);
+            if (!response.ok) errorMessage = await readFailure(response);
           }
         }
 
-        throw new Error(errorMessage);
+        if (!response.ok) {
+          // A session that cannot be refreshed is a person who has to sign in
+          // again, and saying so beats handing them the server's word for it.
+          throw new Error(describeAuthError(errorMessage) ?? errorMessage);
+        }
       }
 
       if (!response.body) {
@@ -2235,15 +2314,15 @@ export default function ReportQA() {
           </p>
         </div>
         <div className="report-qa-header-actions flex flex-wrap items-center gap-2 sm:gap-2.5 md:justify-end">
-          <Button onClick={handleNewChat} className="report-qa-new-chat gap-1.5 h-9 rounded-full px-3 text-xs font-semibold sm:h-10 sm:px-4 sm:text-sm" size="sm">
+          <Button onClick={handleNewChat} className="report-qa-new-chat h-9 gap-1.5 rounded-xl px-3 text-xs font-semibold sm:h-10 sm:px-4 sm:text-sm" size="sm">
             <Plus className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">New Chat</span>
           </Button>
-          <Button ref={historyButtonRef} variant="outline" onClick={() => setShowHistory(true)} className="report-qa-history-button gap-1.5 h-9 rounded-full border-primary/20 bg-background/80 px-3 text-xs font-semibold shadow-sm transition-all hover:border-primary/40 hover:bg-primary/5 hover:shadow-md sm:h-10 sm:px-4 sm:text-sm" size="sm">
+          <Button ref={historyButtonRef} variant="outline" onClick={() => setShowHistory(true)} className="report-qa-history-button h-9 gap-1.5 rounded-xl px-3 text-xs font-semibold sm:h-10 sm:px-4 sm:text-sm" size="sm">
             <History className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">History</span>
             {savedConversations.length > 0 && (
-              <Badge variant="secondary" className="report-qa-history-badge ml-0.5 h-5 min-w-5 rounded-full border border-primary/20 bg-primary text-primary-foreground px-1.5 text-[10px] font-bold tabular-nums shadow-sm sm:h-5 sm:px-1.5 sm:text-xs">
+              <Badge variant="secondary" className="report-qa-history-badge ml-0.5 h-5 min-w-5 rounded-full px-1.5 text-[10px] font-semibold tabular-nums sm:h-5 sm:px-1.5 sm:text-xs">
                 {savedConversations.length}
               </Badge>
             )}
@@ -2263,6 +2342,25 @@ export default function ReportQA() {
               )}
               <span className="hidden sm:inline">Export PDF</span>
             </Button>
+          )}
+          {/*
+            Beside the raster export, not in place of it. The button above still
+            calls `generate-qa-pdf` and still posts its pdf-lib document into the
+            chat; this one produces the typeset document through WeasyPrint and
+            can post the same attachment shape, so the in-place email composer
+            reaches either.
+          */}
+          {messages.length > 0 && conversationId && (
+            <ReportQaDownloadButton
+              conversationId={conversationId}
+              className="h-8 text-xs sm:h-9 sm:text-sm"
+              onAttached={() => {
+                // Reload so the attachment message the route wrote appears in
+                // the thread, the same way the legacy button's does.
+                const open = savedConversations.find((c) => c.id === conversationId);
+                if (open) void loadConversation(open);
+              }}
+            />
           )}
           {uploadedReports.length > 0 && (
             <Button variant="outline" onClick={clearAll} className="gap-1.5 h-8 text-xs sm:h-9 sm:text-sm" size="sm">
@@ -2295,7 +2393,7 @@ export default function ReportQA() {
                   onAdd={handleLibraryAdd}
                   existingNames={uploadedReports.map((r) => r.name)}
                   disabled={isUploading}
-                  className="report-qa-library-button h-8 shrink-0 rounded-full border-primary/35 bg-primary/10 px-3 text-xs font-semibold text-primary hover:bg-primary/15 hover:text-primary"
+                  className="report-qa-library-button h-8 shrink-0 rounded-lg px-3 text-xs font-semibold"
                 />
               </div>
               <p className="text-[11px] leading-4 text-muted-foreground">
@@ -2303,7 +2401,7 @@ export default function ReportQA() {
               </p>
             </div>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 sm:px-4 sm:pb-4">
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4 lg:overflow-hidden">
             <div className="report-qa-panel-section space-y-2">
               <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                 <span>Document intake</span>
@@ -2312,8 +2410,8 @@ export default function ReportQA() {
                   hasUploadError
                     ? "border-destructive/25 bg-destructive/10 text-destructive"
                     : uploadProgress.some((item) => item.status === 'uploading' || item.status === 'processing')
-                      ? "border-brand-500/25 bg-brand-500/10 text-brand-600 dark:text-brand-300"
-                      : "border-success/25 bg-success/10 text-success dark:text-success"
+                      ? "border-warning/25 bg-warning/10 text-warning"
+                      : "border-success/25 bg-success/10 text-success"
                 )}>
                   {hasUploadError
                     ? 'Needs attention'
@@ -2355,7 +2453,7 @@ export default function ReportQA() {
               {isUploading ? (
                 <div className="flex flex-col items-center justify-center gap-2">
                   <span className="report-qa-upload-icon flex h-11 w-11 items-center justify-center rounded-2xl sm:h-12 sm:w-12">
-                    <Loader2 className="h-7 w-7 animate-spin text-brand-300" />
+                    <Loader2 className="h-7 w-7 animate-spin text-primary" />
                   </span>
                   <p className="text-sm font-semibold text-foreground sm:text-base">Processing report…</p>
                   <p className="max-w-[16rem] text-xs leading-5 text-muted-foreground">Extracting content for AI retrieval</p>
@@ -2366,7 +2464,7 @@ export default function ReportQA() {
                     {hasUploadError ? (
                       <AlertCircle className="h-7 w-7 text-destructive transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
                     ) : isUploadComplete ? (
-                      <CheckCircle2 className="h-7 w-7 text-success-foreground0 transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
+                      <CheckCircle2 className="h-7 w-7 text-success transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
                     ) : (
                       <Upload className="h-7 w-7 text-primary transition-transform group-hover:-translate-y-0.5 sm:h-8 sm:w-8" />
                     )}
@@ -2424,7 +2522,7 @@ export default function ReportQA() {
             )}
 
             {/* Reports in this chat — primary flexible list */}
-            <div className="report-qa-loaded-reports flex min-h-0 flex-1 basis-0 flex-col gap-2">
+            <div className="report-qa-loaded-reports flex min-h-0 shrink-0 flex-col gap-2 lg:flex-1 lg:basis-0 lg:shrink">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                   <span>Reports in this chat</span>
                   <span className="normal-case tracking-normal text-primary">{selectedReports.length > 1 ? `Comparing ${selectedReports.length}` : selectedReports.length === 1 ? '1 selected' : 'Select reports'}</span>
@@ -2478,8 +2576,8 @@ export default function ReportQA() {
                         </div>
                         <Button
                           variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 shrink-0 rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                          size="sm"
+                          className="h-8 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
                           aria-label={`Remove ${report.name} from this chat`}
                           title="Remove report from this chat"
                           onClick={(e) => {
@@ -2487,7 +2585,8 @@ export default function ReportQA() {
                             void removeReport(report.name);
                           }}
                         >
-                          <X className="h-3.5 w-3.5" />
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="hidden 2xl:inline">Remove</span>
                         </Button>
                       </div>
                     );
@@ -2495,7 +2594,7 @@ export default function ReportQA() {
                     </div>
                   </ScrollArea>
                 ) : (
-                  <div className="rounded-xl border border-dashed border-border/60 px-3 py-3 text-[11px] leading-4 text-muted-foreground">
+                  <div className="flex items-center justify-center rounded-xl border border-dashed border-border/60 px-3 py-3 text-center text-[11px] leading-4 text-muted-foreground lg:min-h-[5rem] lg:flex-1">
                     Reports you upload or pick from the library will appear here for selection and removal.
                   </div>
                 )}
@@ -2735,7 +2834,7 @@ export default function ReportQA() {
                     className="text-xs text-muted-foreground"
                   >
                     {isLoadingOlder ? (
-                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Loading older messages...</>
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Loading older messages…</>
                     ) : (
                       <>↑ Load older messages ({totalMessageCount - messages.length} remaining)</>
                     )}
@@ -2757,7 +2856,6 @@ export default function ReportQA() {
                   <div className="report-qa-empty-card space-y-3">
                     <div className="report-qa-empty-icon-wrap" aria-hidden="true">
                       <MessageSquare className="report-qa-empty-icon" />
-                      <Sparkles className="report-qa-empty-sparkle" />
                     </div>
                     <div className="space-y-2">
                       <p className="report-qa-empty-title">
@@ -3054,8 +3152,8 @@ export default function ReportQA() {
 
             {/* Indexing indicator */}
             {isIndexing && (
-              <div className="flex shrink-0 items-center gap-3 rounded-2xl border border-brand-500/25 bg-brand-500/10 px-3 py-2.5 text-sm text-brand-700 shadow-sm dark:text-brand-200">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl border border-brand-500/25 bg-brand-500/15">
+              <div className="flex shrink-0 items-center gap-3 rounded-xl border border-primary/25 bg-primary/10 px-3 py-2.5 text-sm text-foreground">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
                   <Loader2 className="h-4 w-4 animate-spin" />
                 </span>
                 <span className="font-medium">Indexing reports for intelligent retrieval… <span className="font-normal text-muted-foreground">Chat will be available shortly.</span></span>
@@ -3731,7 +3829,7 @@ export default function ReportQA() {
                   {isValidatingPDF ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                   ) : pdfValidationError ? (
-                    <Badge variant="outline" className="text-brand-600 border-brand-300 bg-brand-50">
+                    <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning">
                       Warning
                     </Badge>
                   ) : (
@@ -3768,8 +3866,8 @@ export default function ReportQA() {
 
               {/* Validation warning */}
               {pdfValidationError && (
-                <div className="p-3 bg-brand-50 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-800 rounded-md">
-                  <p className="text-xs text-brand-700 dark:text-brand-400">{pdfValidationError}</p>
+                <div className="rounded-md border border-warning/30 bg-warning/10 p-3">
+                  <p className="text-xs text-warning">{pdfValidationError}</p>
                 </div>
               )}
             </div>
@@ -3864,6 +3962,7 @@ export default function ReportQA() {
           }}
           content={editingMessage.content}
           messageId={editingMessage.id}
+          conversationId={conversationId}
           title={uploadedReports.length > 1
             ? 'Property Comparison Summary'
             : uploadedReports.length === 1

@@ -1,21 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Loader2, ShieldAlert, Plus, RefreshCw, ShieldCheck } from "lucide-react";
+import { ChevronRight, Loader2, Plus, Search, ShieldAlert, ShieldCheck } from "lucide-react";
 
 import { ActivateClientDialog } from "@/components/aml/ActivateClientDialog";
-import { CaseWorkspaceTabs } from "@/components/aml/CaseWorkspaceTabs";
+import { AmlCaseWorkspaceDialog } from "@/components/aml/AmlCaseWorkspaceDialog";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import {
-  amlCasesApi, AmlCase, AmlCaseEvent, AmlCaseStatus, AmlRiskRating,
+  amlCasesApi, AmlCase, AmlCaseStatus, AmlRiskRating,
 } from "@/lib/aml/amlCasesApi";
+import { CASE_STATUS_LABELS } from "@/lib/aml/caseDimensions";
 import {
-  CASE_STAGE_LABELS, caseStage, serviceGateStatus,
-} from "@/lib/aml/caseDimensions";
+  deriveAmlCaseAttention, deriveAmlMacroPhase, MACRO_PHASE_LABELS,
+  serviceReadinessLabel,
+} from "@/lib/aml/workspaceViewModel";
+import { ATTENTION_TEXT, READINESS_TEXT } from "@/components/aml/workspace";
+import { displayRelative } from "@/lib/aml/displayDate";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -23,68 +27,68 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
-import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
-
-const STATUS_LABELS: Record<AmlCaseStatus, string> = {
-  draft: "Draft", kyc_in_progress: "Onboarding in progress", kyc_complete: "Submission received",
-  edd_required: "Additional information required", under_review: "Under review",
-  escalated_mlro: "Awaiting decision", cleared: "Cleared", blocked: "Blocked", closed: "Closed",
-};
+import {
+  AmlAccessGate,
+  AmlEmptyState,
+  AmlErrorState,
+  AmlPageHeader,
+  AmlRefreshButton,
+  AmlRiskBadge,
+} from "@/components/aml/primitives";
 
 const SUBJECT_TYPE_LABELS: Record<string, string> = {
   individual: "Individual", entity: "Entity / company", trust: "Trust",
 };
 
-/**
- * Risk rating escalates through tone *and* weight rather than four unrelated
- * hues: the two "bad" ratings share the destructive token and are separated by
- * fill strength, so `prohibited` is unmistakably the loudest pill in the table.
- * All four consume semantic tokens, so they hold up in both themes.
- */
-const RISK_STYLES: Record<AmlRiskRating, string> = {
-  low: "bg-success/20 text-success border-success/40",
-  medium: "bg-warning/20 text-warning border-warning/40",
-  high: "bg-destructive/15 text-destructive border-destructive/40",
-  prohibited: "border-destructive bg-destructive text-destructive-foreground",
-};
-
-const NEXT_STATUSES: Record<AmlCaseStatus, AmlCaseStatus[]> = {
-  draft: ["kyc_in_progress", "closed"],
-  kyc_in_progress: ["kyc_complete", "edd_required", "blocked", "closed"],
-  kyc_complete: ["under_review", "edd_required", "cleared", "closed"],
-  edd_required: ["under_review", "escalated_mlro", "blocked", "closed"],
-  under_review: ["cleared", "escalated_mlro", "edd_required", "blocked", "closed"],
-  escalated_mlro: ["cleared", "blocked", "closed"],
-  cleared: ["under_review", "closed"],
-  blocked: ["under_review", "closed"],
-  closed: [],
+const RISK_FILTER_LABELS: Record<string, string> = {
+  low: "Low", medium: "Medium", high: "High", prohibited: "Prohibited",
 };
 
 /**
  * Saved views (directive §10.3): one-click presets over the register filters.
+ * Also addressable as `?view=<key>` so Compliance Home metrics can deep-link
+ * to the exact queue a count was computed from — every key that has ever been
+ * linked is preserved, only the labels were made plainer.
+ *
+ * Almost every view is a server filter. "Needs attention" is the exception:
+ * there is no server-side predicate for it, so it refines the rows the
+ * register already loaded using the same row-only reading the Attention
+ * column shows. When the register is truncated the page says so rather than
+ * implying the count is the whole register.
  */
 const SAVED_VIEWS: Array<{
-  key: string; label: string;
+  key: string;
+  label: string;
   filters: { status?: string; risk?: string; assignedToMe?: boolean };
+  /** Applied to the loaded page, not the query. */
+  refine?: (c: AmlCase) => boolean;
 }> = [
   { key: "all", label: "All open", filters: {} },
-  { key: "my_queue", label: "My queue", filters: { assignedToMe: true } },
+  { key: "my_queue", label: "My cases", filters: { assignedToMe: true } },
+  {
+    key: "needs_attention",
+    label: "Needs attention",
+    filters: {},
+    refine: (c) => deriveAmlCaseAttention(c).needsAttention,
+  },
+  { key: "onboarding", label: "Awaiting client", filters: { status: "kyc_in_progress" } },
   { key: "awaiting_review", label: "Awaiting review", filters: { status: "kyc_complete" } },
-  { key: "additional_info", label: "Additional information", filters: { status: "edd_required" } },
-  { key: "awaiting_decision", label: "Awaiting decision", filters: { status: "escalated_mlro" } },
+  { key: "additional_info", label: "Information outstanding", filters: { status: "edd_required" } },
+  { key: "awaiting_decision", label: "Ready for decision", filters: { status: "escalated_mlro" } },
   { key: "high_risk", label: "High risk", filters: { risk: "high" } },
+  { key: "blocked", label: "Blocked", filters: { status: "blocked" } },
   { key: "cleared", label: "Cleared", filters: { status: "cleared" } },
   { key: "closed", label: "Closed", filters: { status: "closed" } },
 ];
+
+const PAGE_LIMIT = 100;
 
 export default function AmlCasesPage() {
   const access = useAmlAccess();
@@ -93,16 +97,33 @@ export default function AmlCasesPage() {
   const [cases, setCases] = useState<AmlCase[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<string>("all");
-  const [risk, setRisk] = useState<string>("all");
-  const [assignedToMe, setAssignedToMe] = useState(false);
-  const [view, setView] = useState("all");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Saved-view deep link: ?view=<key> seeds the initial filters
+  // synchronously, so a deep-linked mount issues exactly one fetch with the
+  // right parameters — never an unfiltered fetch racing the filtered one.
+  const [initialViewFilters] = useState(() => {
+    const v = searchParams.get("view");
+    const preset = SAVED_VIEWS.find((s) => s.key === v) ?? SAVED_VIEWS[0];
+    return { key: preset.key, ...preset.filters };
+  });
+  const [status, setStatus] = useState<string>(initialViewFilters.status ?? "all");
+  const [risk, setRisk] = useState<string>(initialViewFilters.risk ?? "all");
+  const [assignedToMe, setAssignedToMe] = useState(Boolean(initialViewFilters.assignedToMe));
+  const [view, setView] = useState(initialViewFilters.key);
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [activateOpen, setActivateOpen] = useState(false);
+  // Route-based activation handoff: /admin/aml/cases?activateClientId=<id>.
+  // Only the client ID travels in the URL — the dialog loads the name and
+  // active status server-side from the authoritative record.
+  const [activateClientId, setActivateClientId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [initialTab, setInitialTab] = useState<string | undefined>(undefined);
-  const [searchParams, setSearchParams] = useSearchParams();
+  // Guards against out-of-order responses when filters change in quick
+  // succession: only the newest request may write state.
+  const loadSeq = useRef(0);
 
   const applyView = (key: string) => {
     const v = SAVED_VIEWS.find((s) => s.key === key);
@@ -111,6 +132,24 @@ export default function AmlCasesPage() {
     setStatus(v.filters.status ?? "all");
     setRisk(v.filters.risk ?? "all");
     setAssignedToMe(Boolean(v.filters.assignedToMe));
+  };
+
+  const selectView = (key: string) => {
+    applyView(key);
+    const next = new URLSearchParams(searchParams);
+    if (key === "all") next.delete("view");
+    else next.set("view", key);
+    setSearchParams(next, { replace: true });
+  };
+
+  /** Manual filter changes leave saved-view territory: clear the chip + param. */
+  const leaveView = () => {
+    setView("");
+    if (searchParams.has("view")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("view");
+      setSearchParams(next, { replace: true });
+    }
   };
 
   const openCase = (c: AmlCase) => {
@@ -134,23 +173,50 @@ export default function AmlCasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Activation handoff from the client record: ?activateClientId=<client-id>
+  // opens the activation dialog preselected on that exact client. The server
+  // validates the ID and supplies name/status; an invalid or inaccessible ID
+  // surfaces as a clear error inside the dialog rather than a silent no-op.
+  useEffect(() => {
+    const activateId = searchParams.get("activateClientId");
+    if (activateId) {
+      setActivateClientId(activateId);
+      setActivateOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const load = async () => {
+  const clearActivateParam = () => {
+    const next = new URLSearchParams(searchParams);
+    if (next.has("activateClientId")) {
+      next.delete("activateClientId");
+      setSearchParams(next, { replace: true });
+    }
+  };
+
+
+  const load = async (opts?: { searchOverride?: string }) => {
+    const q = opts?.searchOverride ?? search;
+    const seq = ++loadSeq.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await amlCasesApi.list({
         status: status !== "all" ? (status as AmlCaseStatus) : undefined,
         risk: risk !== "all" ? (risk as AmlRiskRating) : undefined,
         assigned_to_me: assignedToMe || undefined,
-        search: search || undefined,
-        limit: 100,
+        search: q || undefined,
+        limit: PAGE_LIMIT,
       });
+      if (seq !== loadSeq.current) return;
       setCases(res.cases);
       setTotal(res.total);
+      setAppliedSearch(q);
     } catch (e: any) {
-      toast({ title: "Failed to load cases", description: e.message, variant: "destructive" });
+      if (seq !== loadSeq.current) return;
+      setLoadError(e?.message ?? "The case register could not be loaded.");
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
@@ -159,56 +225,89 @@ export default function AmlCasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access.hasAnyRole, access.flagEnabled, status, risk, assignedToMe]);
 
+  // The active view may refine the loaded page (see SAVED_VIEWS). Rows are
+  // never invented — this only hides rows the reading says are quiet.
+  const refine = SAVED_VIEWS.find((v) => v.key === view)?.refine;
+  const visibleCases = useMemo(
+    () => (refine ? cases.filter(refine) : cases),
+    [cases, refine],
+  );
+  const refinedFromTruncatedPage = Boolean(refine) && total > cases.length;
+
+  const activeFilterLabels = useMemo(() => {
+    const labels: string[] = [];
+    if (status !== "all") labels.push(`Status: ${CASE_STATUS_LABELS[status as AmlCaseStatus] ?? status}`);
+    if (risk !== "all") labels.push(`Risk: ${RISK_FILTER_LABELS[risk] ?? risk}`);
+    if (assignedToMe) labels.push("Assigned to me");
+    if (appliedSearch) labels.push(`Search: "${appliedSearch}"`);
+    return labels;
+  }, [status, risk, assignedToMe, appliedSearch]);
+
+  const hasActiveFilters = activeFilterLabels.length > 0;
+
+  const clearFilters = () => {
+    setSearch("");
+    selectView("all");
+    // The filter effect reloads for status/risk/assignedToMe; if the preset
+    // was already "all" with only a search applied, reload explicitly.
+    if (status === "all" && risk === "all" && !assignedToMe) {
+      void load({ searchOverride: "" });
+    }
+  };
+
   if (access.loading) {
-    return <div className="flex items-center justify-center h-64">
-      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-    </div>;
+    return (
+      <div className="flex h-64 items-center justify-center" role="status">
+        <Loader2 aria-hidden="true" className="h-6 w-6 animate-spin text-muted-foreground" />
+        <span className="sr-only">Checking your access…</span>
+      </div>
+    );
   }
 
   if (!access.flagEnabled) {
-    return <EmptyGate
+    return <AmlAccessGate
       title="AML/CTF is not enabled"
       body="The AML/CTF module isn't switched on for your organisation yet. Contact your administrator to enable it."
     />;
   }
 
   if (!access.hasAnyRole) {
-    return <EmptyGate
+    return <AmlAccessGate
       title="You don't have access to AML cases yet"
       body="Ask your compliance administrator to grant you AML access. The case register appears automatically once access is granted."
     />;
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">AML / CTF Cases</h1>
-          <p className="text-sm text-muted-foreground">
-            {total} case{total === 1 ? "" : "s"}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
-          </Button>
-          {access.canWrite && (
-            <Button size="sm" onClick={() => setActivateOpen(true)}>
-              <ShieldCheck className="h-4 w-4 mr-2" /> Activate client
-            </Button>
-          )}
-          {/* Manual creation is an authorised exception, not an ordinary
-              pathway (directive §10.4) — MLRO only, with a recorded reason. */}
-          {access.isMlro && (
-            <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" /> Exception case
-            </Button>
-          )}
-        </div>
-      </div>
+    <div className="space-y-4">
+      <AmlPageHeader
+        title="Case register"
+        description="Every customer compliance case — search, filter and continue the work."
+        icon={ShieldCheck}
+        actions={
+          <>
+            <AmlRefreshButton onClick={() => void load()} loading={loading} />
+            {access.canWrite && (
+              <Button
+                size="sm"
+                onClick={() => { setActivateClientId(null); setActivateOpen(true); }}
+              >
+                <ShieldCheck aria-hidden="true" className="mr-2 h-4 w-4" /> Activate client
+              </Button>
+            )}
+            {/* Manual creation is an authorised exception, not an ordinary
+                pathway (directive §10.4) — MLRO only, with a recorded reason. */}
+            {access.isMlro && (
+              <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)}>
+                <Plus aria-hidden="true" className="mr-2 h-4 w-4" /> Exception case
+              </Button>
+            )}
+          </>
+        }
+      />
 
       {/* Saved views */}
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Saved views">
+      <div className="rounded-xl border border-border/60 bg-card/45 p-2 shadow-sm"><div className="flex flex-wrap gap-2" role="group" aria-label="Saved views">
         {SAVED_VIEWS.map((v) => (
           <Button
             key={v.key}
@@ -216,105 +315,226 @@ export default function AmlCasesPage() {
             variant={view === v.key ? "default" : "outline"}
             className="h-7 rounded-full px-3 text-xs"
             aria-pressed={view === v.key}
-            onClick={() => applyView(v.key)}
+            onClick={() => selectView(v.key)}
           >
             {v.label}
           </Button>
         ))}
       </div>
-
-      <div className="flex flex-wrap gap-3">
-        <Input
-          placeholder="Search subject or case ref…"
-          value={search} onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && load()}
-          className="max-w-xs"
-        />
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Status" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {Object.entries(STATUS_LABELS).map(([k, v]) => (
-              <SelectItem key={k} value={k}>{v}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={risk} onValueChange={setRisk}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Risk" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All risk</SelectItem>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="prohibited">Prohibited</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Case register</CardTitle></CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="py-12 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>
-          ) : cases.length === 0 ? (
-            <div className="py-12 text-center space-y-1">
-              <p className="text-sm text-muted-foreground">
-                {status !== "all" || risk !== "all" || search
-                  ? "No cases match the current filters. Clear a filter to widen the search."
-                  : "No cases yet. Open a client's record and choose Start Client Compliance, or use Activate client above."}
-              </p>
+      {/* Search + filters as one toolbar */}
+      <div role="search" aria-label="Filter the case register" className="rounded-xl border border-border/60 bg-card/45 p-3 shadow-sm space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+            <Input
+              placeholder="Search subject or case ref…"
+              aria-label="Search subject or case reference"
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
+              className="w-full sm:w-64"
+            />
+            <Button variant="outline" size="sm" onClick={() => void load()} aria-label="Search">
+              <Search aria-hidden="true" className="h-4 w-4" />
+            </Button>
+          </div>
+          <Select value={status} onValueChange={(v) => { leaveView(); setStatus(v); }}>
+            <SelectTrigger className="w-full sm:w-48" aria-label="Filter by status">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              {Object.entries(CASE_STATUS_LABELS).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{v}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={risk} onValueChange={(v) => { leaveView(); setRisk(v); }}>
+            <SelectTrigger className="w-full sm:w-40" aria-label="Filter by risk rating">
+              <SelectValue placeholder="Risk" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All risk</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+              <SelectItem value="prohibited">Prohibited</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Result count + active filters, with a way out. */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
+          <span>
+            {loading
+              ? "Loading cases…"
+              : refine
+                ? `${visibleCases.length} of ${cases.length} loaded case${cases.length === 1 ? "" : "s"} need attention`
+                : total > cases.length
+                  ? `Showing the first ${cases.length} of ${total} cases`
+                  : `${total} case${total === 1 ? "" : "s"}`}
+          </span>
+          {activeFilterLabels.map((label) => (
+            <span key={label} className="rounded-full bg-muted px-2 py-0.5">{label}</span>
+          ))}
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={clearFilters}
+            >
+              Clear filters
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {loadError && (
+        <AmlErrorState
+          title="The case register could not be loaded"
+          message={loadError}
+          detail="Nothing was changed. Your filters are still applied."
+          onRetry={() => void load()}
+        />
+      )}
+
+      <Card className="overflow-hidden border-border/70 bg-card/50 shadow-md">
+        <CardContent className="p-0">
+          {/* Skeleton whenever a load is in flight with nothing to show —
+              a refetch from an empty result must never flash a false
+              "no matches" for data that hasn't arrived yet. */}
+          {loading && cases.length === 0 ? (
+            <div className="space-y-2" role="status">
+              <span className="sr-only">Loading the case register</span>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" aria-hidden="true" />
+              ))}
             </div>
+          ) : visibleCases.length === 0 && !loadError ? (
+            refine ? (
+              <AmlEmptyState
+                title="Nothing needs attention"
+                body={
+                  refinedFromTruncatedPage
+                    ? `None of the ${cases.length} loaded cases is waiting on a decision or a chase. The register holds ${total} in total — narrow the filters to check the rest.`
+                    : "No case in the register is waiting on a decision or a chase."
+                }
+                action={
+                  <Button size="sm" variant="outline" onClick={() => selectView("all")}>
+                    Show all open cases
+                  </Button>
+                }
+              />
+            ) : hasActiveFilters ? (
+              <AmlEmptyState
+                title="No cases match the current filters"
+                body="Widen the search or clear a filter to see more of the register."
+                action={
+                  <Button size="sm" variant="outline" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                }
+              />
+            ) : (
+              <AmlEmptyState
+                title="No cases yet"
+                body="Open a client's record and choose Start Client Compliance, or use Activate client above."
+              />
+            )
           ) : (
             <>
-              {/* Desktop: commercial data table (directive §10.1) */}
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
+              {/* Desktop: the work queue. Columns answer, left to right:
+                  who, where in the process, how risky, may the service
+                  proceed, what is waiting — then ownership and freshness.
+                  Phase and owner fold away on narrower laptops rather than
+                  squeezing the first five into an unreadable width. */}
+              <div className="hidden max-h-[58vh] overflow-auto md:block">
+                <Table aria-label="Case register">
+                  <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
                     <TableRow>
-                      <TableHead>Client / subject</TableHead>
-                      <TableHead>Reference</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Stage</TableHead>
-                      <TableHead>Risk</TableHead>
-                      <TableHead>Service gate</TableHead>
-                      <TableHead>Updated</TableHead>
+                      <TableHead scope="col">Customer</TableHead>
+                      <TableHead scope="col" className="hidden lg:table-cell">Phase</TableHead>
+                      <TableHead scope="col">Risk</TableHead>
+                      <TableHead scope="col">Service</TableHead>
+                      <TableHead scope="col">Attention</TableHead>
+                      <TableHead scope="col" className="hidden xl:table-cell">Owner</TableHead>
+                      <TableHead scope="col">Updated</TableHead>
+                      <TableHead scope="col" className="hidden xl:table-cell">
+                        <span className="sr-only">Open</span>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {cases.map((c) => {
-                      const gate = serviceGateStatus(c);
+                    {visibleCases.map((c) => {
+                      const attention = deriveAmlCaseAttention(c);
+                      const readiness = serviceReadinessLabel(c);
+                      const phase = deriveAmlMacroPhase({ caseRow: c }).phase;
                       return (
                         <TableRow
                           key={c.id}
                           tabIndex={0}
                           role="link"
-                          aria-label={`Open case ${c.case_reference} for ${c.subject_display_name}`}
-                          className="cursor-pointer"
+                          aria-label={`Open case ${c.case_reference} for ${c.subject_display_name} — ${attention.detail}`}
+                          className="cursor-pointer border-l-2 border-l-transparent transition-colors hover:border-l-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
                           onClick={() => openCase(c)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCase(c); }
                           }}
                         >
-                          <TableCell className="font-medium">{c.subject_display_name}</TableCell>
-                          <TableCell className="text-muted-foreground">{c.case_reference}</TableCell>
-                          <TableCell>{SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{CASE_STAGE_LABELS[caseStage(c)]}</Badge>
+                          <TableCell className="max-w-[280px]">
+                            <span className="block truncate font-medium" title={c.subject_display_name}>
+                              {c.subject_display_name}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {c.case_reference} · {SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type}
+                              {c.purchase_file_id ? " · purchase file" : ""}
+                            </span>
                           </TableCell>
-                          <TableCell>
-                            {c.risk_rating ? (
-                              <Badge variant="outline" className={RISK_STYLES[c.risk_rating]}>
-                                {c.risk_rating.toUpperCase()}
-                              </Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Unrated</span>
-                            )}
+                          <TableCell className="hidden whitespace-nowrap text-sm lg:table-cell">
+                            {MACRO_PHASE_LABELS[phase]}
                           </TableCell>
-                          <TableCell className="text-xs capitalize text-muted-foreground">
-                            {gate.replace(/_/g, " ")}
+                          <TableCell><AmlRiskBadge risk={c.risk_rating} /></TableCell>
+                          <TableCell
+                            className={cn("whitespace-nowrap text-sm", READINESS_TEXT[readiness.level])}
+                          >
+                            {readiness.label}
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">
-                            {new Date(c.updated_at).toLocaleDateString()}
+                          {/* The attention label wraps rather than
+                              truncating — "Conditions outstan…" is not a
+                              status anybody can act on, and the row is
+                              already two lines tall. */}
+                          <TableCell className="max-w-[220px]">
+                            <span
+                              className={cn("block text-sm", ATTENTION_TEXT[attention.level])}
+                              title={attention.detail}
+                            >
+                              {attention.needsAttention && (
+                                <span aria-hidden className="mr-1.5">•</span>
+                              )}
+                              {attention.label}
+                            </span>
+                          </TableCell>
+                          <TableCell className="hidden whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
+                            {c.assigned_analyst_id || c.assigned_mlro_id ? "Assigned" : "Unassigned"}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {displayRelative(c.updated_at)}
+                          </TableCell>
+                          <TableCell className="hidden text-right xl:table-cell">
+                            {/* Explicit action alongside the row-as-link, for
+                                anyone who misses the row affordance. It folds
+                                away below xl, where the columns that carry
+                                actual information need the width. */}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              tabIndex={-1}
+                              aria-hidden="true"
+                              className="pointer-events-none text-muted-foreground"
+                            >
+                              Open <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                            </Button>
                           </TableCell>
                         </TableRow>
                       );
@@ -325,26 +545,45 @@ export default function AmlCasesPage() {
 
               {/* Mobile: responsive cards (directive §6.2) */}
               <div className="space-y-2 md:hidden">
-                {cases.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => openCase(c)}
-                    className="w-full text-left flex flex-wrap items-center gap-3 p-3 rounded-lg border border-border bg-card hover:bg-accent transition"
-                  >
-                    <div className="flex-1 min-w-[200px]">
-                      <div className="font-medium">{c.subject_display_name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {c.case_reference} · {SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type} · opened {new Date(c.opened_at).toLocaleDateString()}
+                {visibleCases.map((c) => {
+                  const attention = deriveAmlCaseAttention(c);
+                  const readiness = serviceReadinessLabel(c);
+                  const phase = deriveAmlMacroPhase({ caseRow: c }).phase;
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => openCase(c)}
+                      className="w-full rounded-xl border border-border bg-card/60 p-3 text-left shadow-sm transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      aria-label={`Open case ${c.case_reference} for ${c.subject_display_name} — ${attention.detail}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{c.subject_display_name}</div>
+                          <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {c.case_reference} · {SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type}
+                          </div>
+                        </div>
+                        <ChevronRight aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
                       </div>
-                    </div>
-                    <Badge variant="outline">{CASE_STAGE_LABELS[caseStage(c)]}</Badge>
-                    {c.risk_rating && (
-                      <Badge variant="outline" className={RISK_STYLES[c.risk_rating]}>
-                        {c.risk_rating.toUpperCase()}
-                      </Badge>
-                    )}
-                  </button>
-                ))}
+                      <div className={cn("mt-2 text-sm", ATTENTION_TEXT[attention.level])}>
+                        {attention.needsAttention && <span aria-hidden className="mr-1.5">•</span>}
+                        {attention.label}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <span>{MACRO_PHASE_LABELS[phase]}</span>
+                        <span aria-hidden>·</span>
+                        <span className={READINESS_TEXT[readiness.level]}>
+                          Service: {readiness.label}
+                        </span>
+                        <span aria-hidden>·</span>
+                        <span>Updated {displayRelative(c.updated_at)}</span>
+                      </div>
+                      <div className="mt-1.5">
+                        <AmlRiskBadge risk={c.risk_rating} prefix />
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </>
           )}
@@ -359,11 +598,25 @@ export default function AmlCasesPage() {
 
       <ActivateClientDialog
         open={activateOpen}
-        onOpenChange={setActivateOpen}
-        onActivated={(c) => { load(); openCase(c); }}
+        onOpenChange={(o) => {
+          setActivateOpen(o);
+          if (!o) {
+            setActivateClientId(null);
+            clearActivateParam();
+          }
+        }}
+        clientId={activateClientId ?? undefined}
+        onActivated={(c) => {
+          clearActivateParam();
+          setActivateClientId(null);
+          load();
+          openCase(c);
+        }}
       />
 
-      <CaseDetailSheet
+      {/* Centred case workspace (replaces the legacy right-side Sheet).
+          Radix restores focus to the case row that opened it on close. */}
+      <AmlCaseWorkspaceDialog
         caseId={activeId}
         initialTab={initialTab}
         onClose={() => { setActiveId(null); setInitialTab(undefined); }}
@@ -372,16 +625,6 @@ export default function AmlCasesPage() {
         canInvestigate={access.canWrite}
       />
 
-    </div>
-  );
-}
-
-function EmptyGate({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="p-8 max-w-xl mx-auto text-center">
-      <ShieldAlert className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-      <h2 className="text-lg font-semibold mb-2">{title}</h2>
-      <p className="text-sm text-muted-foreground">{body}</p>
     </div>
   );
 }
@@ -445,7 +688,7 @@ function CreateCaseDialog({
               case's audit history.
             </AlertDescription>
           </Alert>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label>Exception type</Label>
               <Select value={category} onValueChange={(v: any) => setCategory(v)}>
@@ -473,7 +716,7 @@ function CreateCaseDialog({
             <Label>Subject name</Label>
             <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Full legal name or entity" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label>Subject type</Label>
               <Select value={subjectType} onValueChange={(v: any) => setSubjectType(v)}>
@@ -507,106 +750,10 @@ function CreateCaseDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={submit} disabled={saving || !canSubmit}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Open exception case
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Open exception case
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CaseDetailSheet({
-  caseId, onClose, onChanged, canWrite, canInvestigate, initialTab,
-}: { caseId: string | null; onClose: () => void; onChanged: () => void; canWrite: boolean; canInvestigate: boolean; initialTab?: string }) {
-
-  const [caseRow, setCaseRow] = useState<AmlCase | null>(null);
-  const [events, setEvents] = useState<AmlCaseEvent[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [transitioning, setTransitioning] = useState(false);
-  const [reason, setReason] = useState("");
-
-  const load = async (id: string) => {
-    setLoading(true);
-    try {
-      const res = await amlCasesApi.get(id);
-      setCaseRow(res.case); setEvents(res.events);
-    } catch (e: any) {
-      toast({ title: "Failed to load case", description: e.message, variant: "destructive" });
-    } finally { setLoading(false); }
-  };
-
-  useEffect(() => {
-    if (caseId) load(caseId); else { setCaseRow(null); setEvents([]); setReason(""); }
-  }, [caseId]);
-
-  const nextOptions = useMemo(
-    () => (caseRow ? NEXT_STATUSES[caseRow.status] : []),
-    [caseRow],
-  );
-
-  const transition = async (to: AmlCaseStatus) => {
-    if (!caseRow) return;
-    setTransitioning(true);
-    try {
-      await amlCasesApi.transition(caseRow.id, to, reason || undefined);
-      toast({
-        title: "Status updated",
-        description: `${STATUS_LABELS[caseRow.status]} → ${STATUS_LABELS[to]}`,
-      });
-      setReason(""); await load(caseRow.id); onChanged();
-    } catch (e: any) {
-      toast({ title: "Transition failed", description: e.message, variant: "destructive" });
-    } finally { setTransitioning(false); }
-  };
-
-  return (
-    <Sheet open={!!caseId} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full sm:max-w-2xl overflow-hidden flex flex-col">
-        <SheetHeader>
-          <SheetTitle>{caseRow?.subject_display_name ?? "Case"}</SheetTitle>
-          {caseRow && (
-            <p className="text-xs text-muted-foreground">
-              {caseRow.case_reference} · {STATUS_LABELS[caseRow.status]}
-              {caseRow.risk_rating ? ` · risk ${caseRow.risk_rating.toUpperCase()}` : ""}
-            </p>
-          )}
-        </SheetHeader>
-
-        <ScrollArea className="flex-1 mt-4 pr-4">
-          {loading || !caseRow ? (
-            <div className="py-10 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>
-          ) : (
-            <div className="space-y-4">
-              {canWrite && nextOptions.length > 0 && (
-                <Card>
-                  <CardHeader><CardTitle className="text-sm">Advance status</CardTitle></CardHeader>
-                  <CardContent className="space-y-3">
-                    <Input placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-                    <div className="flex flex-wrap gap-2">
-                      {nextOptions.map((s) => (
-                        <Button key={s} size="sm" variant="outline"
-                          disabled={transitioning} onClick={() => transition(s)}>
-                          → {STATUS_LABELS[s]}
-                        </Button>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <CaseWorkspaceTabs
-                caseRow={caseRow}
-                events={events}
-                canWrite={canWrite}
-                canInvestigate={canInvestigate}
-                initialTab={initialTab}
-                onChanged={() => { void load(caseRow.id); onChanged(); }}
-              />
-
-            </div>
-          )}
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
   );
 }

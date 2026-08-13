@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchiveOutcome, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import { invokeSecureFunction, isAuthFailureResponse, resolveAuthBearer } from '@/lib/secureInvoke';
+import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQADepth, MarketQAMessage, MarketQAStage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue, SetMarketNewsArchiveStateInput, SetMarketNewsArchiveStateResult } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -155,34 +155,45 @@ export async function setMarketUpdateHidden(updateId: string, hidden: boolean): 
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
 }
 
-export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
-  // Use the same authoritative transport that already loads the visible feed.
-  // The dedicated archive endpoint remains a deployment-safe fallback.
-  const primary = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-status', { action:'archive_write', updateId });
-  if (!primary.error && (primary.data?.outcome === 'archived' || primary.data?.outcome === 'already_archived')) return primary.data.outcome;
-  const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'archive', id:updateId });
-  if (!direct.error && (direct.data?.outcome === 'archived' || direct.data?.outcome === 'already_archived')) return direct.data.outcome;
-  try {
-    const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'archive', updateId });
-    if (error) throw error;
-    const outcome = data?.outcome;
-    if (outcome !== 'archived' && outcome !== 'already_archived') throw new Error('Archive operation returned an invalid outcome.');
-    return outcome;
-  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+export async function setMarketNewsArchiveState(input:SetMarketNewsArchiveStateInput):Promise<SetMarketNewsArchiveStateResult> {
+  // Use a versioned, single-purpose transport. The previous status/archive
+  // deployments could both resolve to stale bundles that rejected their newer
+  // actions with HTTP 400, even after a same-name redeploy.
+  const primary=await invokeSecureFunction<SetMarketNewsArchiveStateResult>('market-news-archive-v2',{
+    action:'set_archive_state',
+    updateId:input.updateId,
+    archived:input.archived,
+  });
+  const expectedOutcomes=input.archived?['archived','already_archived']:['restored','already_restored'];
+  if(!primary.error&&primary.data?.id===input.updateId&&expectedOutcomes.includes(String(primary.data.outcome))){
+    return {
+      id:primary.data.id,
+      isArchived:input.archived,
+      archivedAt:input.archived?primary.data.archivedAt??null:null,
+      outcome:primary.data.outcome,
+      correlationId:primary.data.correlationId??crypto.randomUUID(),
+    };
+  }
+
+  // Keep the previous dedicated endpoint as temporary rollback coverage. Both
+  // operations are idempotent, so retrying cannot duplicate a transition.
+  const direct=await invokeSecureFunction<{ok?:boolean;data?:Omit<SetMarketNewsArchiveStateResult,'correlationId'>;correlationId?:string}>('market-updates-archive',{
+    action:'set_archive_state',
+    updateId:input.updateId,
+    archived:input.archived,
+  });
+  if(!direct.error&&direct.data?.ok&&direct.data.data&&typeof direct.data.correlationId==='string'){
+    return {...direct.data.data,correlationId:direct.data.correlationId};
+  }
+  throw operationalError('function',primary.error??direct.error??new Error('Archive operation returned an invalid response.'),'market-news-archive-v2');
 }
 
-export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
-  const primary = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-status', { action:'restore_write', updateId });
-  if (!primary.error && (primary.data?.outcome === 'restored' || primary.data?.outcome === 'already_restored')) return primary.data.outcome;
-  const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'restore', id:updateId });
-  if (!direct.error && (direct.data?.outcome === 'restored' || direct.data?.outcome === 'already_restored')) return direct.data.outcome;
-  try {
-    const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'restore', updateId });
-    if (error) throw error;
-    const outcome = data?.outcome;
-    if (outcome !== 'restored' && outcome !== 'already_restored') throw new Error('Restore operation returned an invalid outcome.');
-    return outcome;
-  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+export async function archiveMarketUpdate(updateId:string):Promise<SetMarketNewsArchiveStateResult> {
+  return setMarketNewsArchiveState({updateId,archived:true});
+}
+
+export async function restoreMarketUpdate(updateId:string):Promise<SetMarketNewsArchiveStateResult> {
+  return setMarketNewsArchiveState({updateId,archived:false});
 }
 
 /** Promotes a held candidate into the published feed. Server-authoritative. */
@@ -279,10 +290,16 @@ export async function answerMarketUpdateQuestion(
   history?: Array<{ role: 'user' | 'assistant'; content: string }>,
   segment?: string,
   conversation_id?: string | null,
+  depth?: MarketQADepth,
 ): Promise<MarketQAMessage> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-qa', { body: { question, updateIds, history, segment, conversation_id } });
+    // Staff identity in this app lives in the custom-auth session (HttpOnly
+    // cookie + stored access token), NOT in supabase.auth — `db.functions.invoke`
+    // therefore sent the anon key and the function replied 401
+    // authentication_required. invokeSecureFunction carries the real credentials.
+    const { data, error } = await invokeSecureFunction<any>('market-updates-qa', { question, updateIds, history, segment, conversation_id, depth }, { timeoutMs: 180000 });
     if (error) throw error;
+    if (!data) throw new Error('Market Q&A returned no answer.');
     return {
       id: crypto.randomUUID(),
       correlation_id:data.correlation_id,
@@ -303,8 +320,25 @@ export async function answerMarketUpdateQuestion(
       retrieved: Array.isArray(data.retrieved) ? data.retrieved : [],
       question_id: data.question_id ?? null,
       rate_limited: Boolean(data.rate_limited),
+      ...researchFields(data),
     };
   } catch (e) { throw operationalError('qa', e, 'market-updates-qa'); }
+}
+
+/** Deep-research fields the Q&A endpoint returns alongside the answer. Shared
+ *  by the streaming and non-streaming paths so they cannot drift apart. */
+function researchFields(source: any): Partial<MarketQAMessage> {
+  return {
+    depth_mode: ['brief','standard','deep'].includes(source?.depth_mode) ? source.depth_mode : undefined,
+    implications: source?.implications && typeof source.implications === 'object' ? source.implications : undefined,
+    timeline: Array.isArray(source?.timeline) ? source.timeline : [],
+    watch_items: safeArray(source?.watch_items),
+    contrarian_view: typeof source?.contrarian_view === 'string' ? source.contrarian_view : undefined,
+    retrieval_mode: source?.retrieval_mode,
+    context_size: typeof source?.context_size === 'number' ? source.context_size : undefined,
+    strategies: safeArray(source?.strategies),
+    research_plan: source?.research_plan && typeof source.research_plan === 'object' ? source.research_plan : undefined,
+  };
 }
 
 /** SSE-streaming variant. `onDelta` receives the accumulated answer text as it streams.
@@ -316,25 +350,39 @@ export async function streamMarketUpdateQuestion(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     segment?: string;
     conversation_id?: string | null;
+    depth?: MarketQADepth;
     onDelta?: (acc: string) => void;
+    /** Live retrieval progress, so a deeper answer does not read as a hang. */
+    onStage?: (stage: MarketQAStage) => void;
     signal?: AbortSignal;
   } = {},
 ): Promise<MarketQAMessage> {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-qa`;
-  const session = (await supabase.auth.getSession()).data.session;
-  const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  // Cookie-authenticated path (ES256 remediation). This block hand-rolled the
+  // same storage → native-session → publishable-key ladder that
+  // `resolveAuthBearer` already owns, and its final `||` was a silent anon
+  // fallback: a signed-in user with no stored token sent the publishable key
+  // and got a 401 that read as a server fault. The shared resolver also
+  // re-mints from the HttpOnly cookie, which this never did.
+  //
+  // Authority rests with the server: the browser cannot read an HttpOnly
+  // cookie, so it cannot know it is signed in. The request goes out and a 401
+  // is surfaced as an auth failure below — which is also why this stays
+  // correct once the access token is retired and the cookie is sole carrier.
+  const { token: bearer } = await resolveAuthBearer({ refreshIfMissing: true });
   const correlationId=crypto.randomUUID();
   try {
     const res = await fetch(url, {
       method: 'POST',
       signal: opts.signal,
+      credentials: 'include',
       // `correlation_id` travels in the body, not a header: a custom header
       // would need every reachable edge function redeployed with it in
       // `Access-Control-Allow-Headers` before the browser would allow the
       // request at all. See src/lib/secureInvoke.ts for the full rationale.
       headers: {
         'content-type': 'application/json',
-        'authorization': `Bearer ${token}`,
+        'authorization': `Bearer ${bearer}`,
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
       },
       body: JSON.stringify({
@@ -344,10 +392,19 @@ export async function streamMarketUpdateQuestion(
         history: opts.history,
         segment: opts.segment,
         conversation_id: opts.conversation_id,
+        depth: opts.depth,
         stream: true,
       }),
     });
-    if (!res.ok || !res.body) throw new Error(`Stream failed (${res.status})`);
+    if (!res.ok || !res.body) {
+      // A 401 here means the session, not the stream, failed. Reported as
+      // `unauthorised` it reaches the user as "sign in again"; reported as a
+      // bare stream failure it reads as a Market News Feed outage.
+      if (isAuthFailureResponse(res.status)) {
+        throw operationalError('database', { status: res.status, code: 'unauthorised', correlationId }, 'market-updates-qa');
+      }
+      throw new Error(`Stream failed (${res.status})`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -376,6 +433,8 @@ export async function streamMarketUpdateQuestion(
             opts.onDelta?.(acc);
           } else if (event === 'metadata') {
             metadata = parsed;
+          } else if (event === 'stage') {
+            opts.onStage?.(parsed as MarketQAStage);
           } else if (event === 'error') {
             streamError = typeof parsed.message === 'string' ? parsed.message : 'Market Q&A stream failed.';
           }
@@ -403,10 +462,11 @@ export async function streamMarketUpdateQuestion(
       retrieved: Array.isArray(metadata?.retrieved) ? metadata.retrieved : [],
       question_id: metadata?.question_id ?? null,
       rate_limited: Boolean(metadata?.rate_limited),
+      ...researchFields(metadata),
     };
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
     warnMissing('Market Q&A streaming failed; falling back to non-streaming.', e);
-    return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id);
+    return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id, opts.depth);
   }
 }

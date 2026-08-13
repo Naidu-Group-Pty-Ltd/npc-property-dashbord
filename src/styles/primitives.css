@@ -203,6 +203,28 @@
   line-height: 1.35;
 }
 
+/* When the card is taller than the popup's ceiling, Leaflet scrolls it with
+   the browser's default scrollbar — a wide grey slab that sat on top of the
+   photo and cut the action row in half. Thin, token-coloured, and out of the
+   content's way. */
+.listings-map .leaflet-popup-content {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+}
+
+.listings-map .leaflet-popup-content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.listings-map .leaflet-popup-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.listings-map .leaflet-popup-content::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.45);
+  border-radius: 9999px;
+}
+
 .listings-map .leaflet-container a.leaflet-popup-close-button {
   color: hsl(var(--muted-foreground));
   padding: 0.35rem 0.4rem 0 0;
@@ -218,6 +240,7 @@
   background: hsl(var(--background) / 0.82);
   color: hsl(var(--muted-foreground));
   border-radius: 0.5rem 0 0 0;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -229,6 +252,7 @@
   background: hsl(var(--background) / 0.82);
   border-color: hsl(var(--border));
   color: hsl(var(--foreground));
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -254,34 +278,46 @@
   --pin-fg: hsl(var(--primary-foreground));
 }
 
-/* Price bands run cool → hot on the same four stops as the heat ramp, and for
-   the same reason `ListingsHeatLayer` gives: the brand `--primary` must stay
-   out of an ordered scale. A tenant hue lands wherever the tenant puts it, and
-   in this palette's dark theme `--primary` and `--warning` are the same colour
-   — with `mid` on the brand, two of the four bands were indistinguishable for
-   every dark-theme user. These four are Category B, fixed by design. */
-/* Scoped to match the base rule above. An unscoped `.listing-pin--top` loses to
+/* Price bands ride the configured brand ramp.
+
+   `--brand-50 … --brand-950` is generated at runtime from the White-Label brand
+   colour (src/branding/token-resolver.ts): one hue, one saturation, a fixed
+   lightness ladder. That makes it the only token family in the system that is
+   both *branded* and *ordered*, which is what a price scale needs — a
+   sequential variable wants a single-hue ramp, not four unrelated status hues.
+
+   Steps of roughly 20 lightness points keep the four bands apart at pin scale
+   whatever hue a tenant configures, and each band pairs with the ramp end that
+   contrasts against it.
+
+   `--primary` is deliberately not used even though it is also a brand token: it
+   is a single point rather than a scale, and in this palette's dark theme it is
+   byte-identical to `--warning`.
+
+   Scoped to match the base rule above. An unscoped `.listing-pin--top` loses to
    `.listings-map .listing-pin`, and every pin on the map silently falls back to
-   the default brand colour — the price bands stop existing. */
+   one flat colour — the bands stop existing. */
 .listings-map .listing-pin--unknown {
+  /* Not part of the ramp: "no price on record" is a gap in the data, not a
+     cheap listing, so it must not read as the bottom of the scale. */
   --pin-bg: hsl(var(--muted-foreground));
   --pin-fg: hsl(var(--background));
 }
 .listings-map .listing-pin--low {
-  --pin-bg: hsl(var(--info));
-  --pin-fg: hsl(var(--info-foreground));
+  --pin-bg: hsl(var(--brand-200));
+  --pin-fg: hsl(var(--brand-950));
 }
 .listings-map .listing-pin--mid {
-  --pin-bg: hsl(var(--success));
-  --pin-fg: hsl(var(--success-foreground));
+  --pin-bg: hsl(var(--brand-500));
+  --pin-fg: hsl(var(--brand-950));
 }
 .listings-map .listing-pin--high {
-  --pin-bg: hsl(var(--warning));
-  --pin-fg: hsl(var(--warning-foreground));
+  --pin-bg: hsl(var(--brand-800));
+  --pin-fg: hsl(var(--brand-50));
 }
 .listings-map .listing-pin--top {
-  --pin-bg: hsl(var(--destructive));
-  --pin-fg: hsl(var(--destructive-foreground));
+  --pin-bg: hsl(var(--brand-950));
+  --pin-fg: hsl(var(--brand-50));
 }
 
 .listings-map .listing-pin--ghost {
@@ -493,6 +529,82 @@
   border-radius: 0.9rem;
 }
 
+/* --- Pin hover card ------------------------------------------------------
+   The tooltip a pin shows before anyone commits to a click: price, address,
+   spec line — the gallery card's reading order, on the map. Overrides
+   Leaflet's default tooltip chrome with the app's own tokens so it re-themes
+   with the palette and dark mode like every other surface. */
+.listings-map .listings-pin-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.65rem;
+  background: hsl(var(--background) / 0.96);
+  color: hsl(var(--foreground));
+  box-shadow: 0 10px 28px hsl(var(--foreground) / 0.18);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.listings-map .listings-pin-tip::before {
+  border-top-color: hsl(var(--background) / 0.96);
+}
+
+.listings-pin-tip__photo {
+  width: 13rem;
+  max-width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 0.45rem;
+  margin-bottom: 0.25rem;
+  background: hsl(var(--muted));
+}
+
+.listings-pin-tip__price {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: hsl(var(--primary));
+}
+
+.listings-pin-tip__address {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+  max-width: 15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listings-pin-tip__specs {
+  font-size: 0.625rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.listings-pin-tip__note {
+  color: hsl(var(--warning));
+  font-weight: 600;
+}
+
+/* A suburb-centroid pin wears a dashed halo: visibly a region claim, not a
+   rooftop claim. The halo inherits the pin's own rounding so it fits chips
+   and dot pins alike. */
+.listings-map .listing-pin--approx {
+  opacity: 0.9;
+}
+
+.listings-map .listing-pin--approx::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px dashed hsl(var(--warning) / 0.85);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 /* --- Clusters -----------------------------------------------------------
    A cluster carries two facts, not one: how many listings it hides (the
    count) and what they are worth (a band-mix ring plus the median price).
@@ -507,10 +619,10 @@
   align-items: center;
   justify-content: center;
   overflow: visible;
-  --tier-low: hsl(var(--info));
-  --tier-mid: hsl(var(--success));
-  --tier-high: hsl(var(--warning));
-  --tier-top: hsl(var(--destructive));
+  --tier-low: hsl(var(--brand-200));
+  --tier-mid: hsl(var(--brand-500));
+  --tier-high: hsl(var(--brand-800));
+  --tier-top: hsl(var(--brand-950));
   --tier-unknown: hsl(var(--muted-foreground));
 }
 
@@ -577,19 +689,19 @@
 
 .listings-cluster__price--low {
   background: var(--tier-low);
-  color: hsl(var(--info-foreground));
+  color: hsl(var(--brand-950));
 }
 .listings-cluster__price--mid {
   background: var(--tier-mid);
-  color: hsl(var(--success-foreground));
+  color: hsl(var(--brand-950));
 }
 .listings-cluster__price--high {
   background: var(--tier-high);
-  color: hsl(var(--warning-foreground));
+  color: hsl(var(--brand-50));
 }
 .listings-cluster__price--top {
   background: var(--tier-top);
-  color: hsl(var(--destructive-foreground));
+  color: hsl(var(--brand-50));
 }
 
 .listings-cluster--ghost .listings-cluster__ring {
@@ -681,16 +793,16 @@
 }
 
 .listings-tier-swatch--low {
-  background: hsl(var(--info));
+  background: hsl(var(--brand-200));
 }
 .listings-tier-swatch--mid {
-  background: hsl(var(--success));
+  background: hsl(var(--brand-500));
 }
 .listings-tier-swatch--high {
-  background: hsl(var(--warning));
+  background: hsl(var(--brand-800));
 }
 .listings-tier-swatch--top {
-  background: hsl(var(--destructive));
+  background: hsl(var(--brand-950));
 }
 
 /* --- Results panel rows -------------------------------------------------
@@ -716,20 +828,20 @@
 }
 
 .listings-row-mark--low {
-  background: hsl(var(--info));
-  color: hsl(var(--info-foreground));
+  background: hsl(var(--brand-200));
+  color: hsl(var(--brand-950));
 }
 .listings-row-mark--mid {
-  background: hsl(var(--success));
-  color: hsl(var(--success-foreground));
+  background: hsl(var(--brand-500));
+  color: hsl(var(--brand-950));
 }
 .listings-row-mark--high {
-  background: hsl(var(--warning));
-  color: hsl(var(--warning-foreground));
+  background: hsl(var(--brand-800));
+  color: hsl(var(--brand-50));
 }
 .listings-row-mark--top {
-  background: hsl(var(--destructive));
-  color: hsl(var(--destructive-foreground));
+  background: hsl(var(--brand-950));
+  color: hsl(var(--brand-50));
 }
 
 /* Property-type key — the same glyph the pins carry, at legend scale. */

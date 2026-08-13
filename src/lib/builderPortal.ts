@@ -11,6 +11,8 @@
  * `__Host-builder_session_token` cookie, attached by `credentials: 'include'`.
  */
 
+import type { PortalAcknowledgementKey } from './portalAgreement';
+
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
@@ -67,6 +69,8 @@ export interface BuilderTermsVersion {
   version: string;
   title: string;
   content_markdown: string;
+  /** SHA-256 of the text, shown on the consent wall and recorded with the acceptance. */
+  document_hash?: string | null;
   effective_at: string;
 }
 
@@ -192,8 +196,17 @@ export function builderLoadGovernance() {
   }>('builder-portal-verify', { action: 'get_governance' });
 }
 
-export function builderAcceptTerms() {
-  return invokeBuilderFunction('builder-portal-verify', { action: 'accept_current_terms' });
+/**
+ * The acknowledgments the accepting person asserted travel with the acceptance:
+ * they are contractual statements, and the agreement records them as
+ * acknowledgment history. The server rejects an acceptance that is missing any
+ * of them, so this argument is not advisory.
+ */
+export function builderAcceptTerms(acknowledgements: PortalAcknowledgementKey[]) {
+  return invokeBuilderFunction('builder-portal-verify', {
+    action: 'accept_current_terms',
+    acknowledgements,
+  });
 }
 
 export function builderCompleteOnboarding(stepKey?: string) {

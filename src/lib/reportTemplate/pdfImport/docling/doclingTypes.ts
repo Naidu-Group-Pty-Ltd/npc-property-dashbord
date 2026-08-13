@@ -59,6 +59,28 @@ export interface DoclingTextItem {
   };
   /** Phase 2: text alignment inferred from span x-extents (PyMuPDF pass). */
   text_align?: 'left' | 'center' | 'right' | 'justify';
+  /**
+   * W1 — the measurement the client cannot make for itself: how much space this
+   * text occupies in the SOURCE's own font, per line, with per-span extents.
+   * Span char-counts double as WORD-BOUNDARY evidence for tracked (letter-
+   * spaced) text, where the extracted string has lost its word gaps.
+   */
+  source_measure?: {
+    version?: string;
+    lineCount?: number;
+    measuredWidthPt?: number;
+    totalCharCount?: number;
+    lines?: Array<{
+      widthPt?: number;
+      charCount?: number;
+      sizePt?: number;
+      /** source-measure-v2. Where the line sits; absent on v1 artifacts. */
+      x0Pt?: number;
+      x1Pt?: number;
+      baselineYPt?: number;
+      spans?: Array<{ width?: number; chars?: number; size?: number; font?: string }>;
+    }>;
+  };
   confidence?: number;
   /** Docling reading-order model index; lower values should be read first. */
   reading_order?: number;
@@ -168,9 +190,12 @@ export interface DoclingVectorItem {
 
 /**
  * Phase 3: a document font surfaced by the PyMuPDF pass. `base64` is present
- * only when the program is safely reusable as `@font-face` (non-subset + has a
- * unicode cmap); otherwise the font is name-only and the frontend matches it to
- * a web font via the catalog.
+ * only when the program is safely reusable as `@font-face`: a font whose cmap
+ * coverage was read (subset or full — `coverage_ranges` carries it, and the
+ * face must be scoped by `unicode-range` to exactly those codepoints), or a
+ * full font whose coverage was unreadable. A subset with unreadable coverage
+ * never embeds — an unscoped face claims codepoints it lacks. Name-only fonts
+ * are matched to a web font via the catalog.
  */
 export interface DoclingEmbeddedFont {
   basename: string;         // tag-stripped font name, e.g. "Unbounded-Bold"
@@ -184,6 +209,28 @@ export interface DoclingEmbeddedFont {
   italic?: boolean;
   bytes?: number;
   base64?: string;          // present only when embeddable
+  /** R2: CSS unicode-range segments the font's cmap actually maps, e.g. ["U+0041-005A"]. */
+  coverage_ranges?: string[];
+  /**
+   * B5: Unicode→glyph entries the sidecar ADDED to this program's cmap before
+   * embedding it, from the PDF's own ToUnicode CMap.
+   *
+   * A PDF subset selects glyphs by CID, so its cmap need not be complete — and
+   * a web font is looked up by Unicode, so whatever the cmap omits is
+   * unreachable. Diagnostic only; the widened `coverage_ranges` above is what
+   * the renderer acts on.
+   */
+  cmapRepairedCodepoints?: number;
+  /**
+   * D1: the program's own hhea metrics, in em (descender as a magnitude).
+   *
+   * CSS puts a line's first baseline at
+   * `(lineHeight - (ascender + descender)) / 2 + ascender` below the box top,
+   * so these are what let the importer place a block by its BASELINE instead of
+   * by its ink top. Absent on pre-D1 sidecar payloads.
+   */
+  ascender?: number;
+  descender?: number;
 }
 
 export interface DoclingPageSize {

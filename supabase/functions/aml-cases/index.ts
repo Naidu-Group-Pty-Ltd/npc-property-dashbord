@@ -18,9 +18,27 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+import {
+  diffSubmissions, submissionDiffIsMaterial,
+  CLIENT_SAFE_REJECTION_REASONS, CLIENT_SAFE_REJECTION_COPY, isClientSafeRejectionReason,
+} from "../_shared/aml/submissionReview.ts";
+import {
+  CLIENT_SEARCH_SELECT,
+  buildClientSearchOrFilter,
+  sanitizeClientSearchQuery,
+  selectActivationMatches,
+  tokenizeClientSearch,
+  toActivationClientResult,
+  type ClientSearchRow,
+} from "../_shared/aml/clientSearchMatch.pure.ts";
+import {
+  isPartyScreeningMissing,
+  projectPartyScreeningState,
+} from "../_shared/aml/partyScreening.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token',
@@ -108,6 +126,19 @@ function isMissingColumnError(error: any): boolean {
   return error?.code === 'PGRST204'
     || /column .* does not exist/i.test(msg)
     || /Could not find the '.*' column/i.test(msg);
+}
+
+/**
+ * True when an RPC call failed only because the function has not been migrated
+ * in this environment yet (edge functions deploy independently of migrations).
+ * Same fail-open-on-schema, never-on-authorization posture as
+ * isMissingColumnError above.
+ */
+function isMissingFunctionError(error: any): boolean {
+  const msg = String(error?.message ?? '');
+  return error?.code === 'PGRST202'
+    || /Could not find the function/i.test(msg)
+    || /function .* does not exist/i.test(msg);
 }
 
 function jsonResponse(data: any, status = 200) {
@@ -389,7 +420,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jsonResponse({ error: 'Human confirmation is required to open an AML case' }, 400);
         }
 
-        // Verify the client exists and is active before creating an AML case.
+        // Verify the client exists. An inactive client is NOT rejected here:
+        // this human-confirmed form is the sanctioned place an authorised user
+        // confirms an existing client is active, so the flip to active happens
+        // atomically with case creation below instead of being demanded of
+        // some other screen first.
         const { data: client, error: clientErr } = await admin
           .from('clients')
           .select('id, is_active')
@@ -397,9 +432,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .maybeSingle();
         if (clientErr) throw clientErr;
         if (!client) return jsonResponse({ error: 'Client not found' }, 404);
-        if (client.is_active !== true) {
-          return jsonResponse({ error: 'Client is not active; cannot activate for AML' }, 409);
-        }
+        const clientWasInactive = client.is_active !== true;
 
         // Duplicate-open guard: one open case per client at a time.
         const { data: existing } = await admin
@@ -445,6 +478,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           reason,
           program_version: programVersion,
           human_confirmed: true,
+          client_was_inactive: clientWasInactive,
           activated_by: userId,
           activated_by_email: userEmail,
           activated_at: new Date().toISOString(),
@@ -477,26 +511,76 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           created_by: userId,
           metadata: { activation },
         };
-        let { data: created, error: createErr } = await admin
-          .schema('aml').from('cases')
-          .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
-        if (createErr && isMissingColumnError(createErr)) {
-          ({ data: created, error: createErr } = await admin
-            .schema('aml').from('cases').insert(baseInsert).select('*').single());
-        }
-        if (createErr) {
-          // Partial unique index aml_cases_one_open_per_client closes the
-          // read-then-write race above; surface it as the same 409 contract.
-          if (createErr.code === '23505') {
-            return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+        let created: any = null;
+        let clientMarkedActive = false;
+
+        if (clientWasInactive) {
+          // Atomic path ONLY (Part 5): mark the client active and open the
+          // case in ONE database transaction. The RPC locks the client row,
+          // flips is_active, inserts the case and rolls the whole thing back
+          // on any error — including the duplicate-open unique index, which
+          // still surfaces as the same 409 contract.
+          //
+          // There is deliberately NO non-transactional fallback. A compensated
+          // flip/insert/revert sequence can race a concurrent activation into
+          // deactivating a client who holds a valid open case, and its revert
+          // can itself fail, leaving an active client with no case. If the RPC
+          // has not been installed yet, this path fails closed with a clear
+          // configuration error and mutates nothing.
+          const { data: txResult, error: txErr } = await admin.rpc(
+            'aml_activate_client_open_case',
+            { p_client_id: clientId, p_case: { ...baseInsert, ...dimensionFields } },
+          );
+          if (txErr) {
+            if (isMissingFunctionError(txErr)) {
+              // Fail closed: no client update, no case insert, no case event.
+              // Deployment order requires the migration installing the RPC to
+              // be applied before this function serves inactive activations.
+              return jsonResponse({
+                error: 'AML client activation is temporarily unavailable because the required database function has not been installed.',
+                code: 'aml_activation_rpc_unavailable',
+              }, 503);
+            }
+            if (txErr.code === '23505' || /aml_cases_one_open_per_client|already exists/i.test(String(txErr.message ?? ''))) {
+              return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+            }
+            if (txErr.code === 'P0002') return jsonResponse({ error: 'Client not found' }, 404);
+            throw txErr;
           }
-          throw createErr;
+          created = (txResult as any)?.case ?? null;
+          clientMarkedActive = Boolean((txResult as any)?.client_marked_active);
+          if (!created) throw new Error('Activation transaction returned no case');
+        } else {
+          // Already-active client: existing case-creation behaviour unchanged.
+          let { data: createdRow, error: createErr } = await admin
+            .schema('aml').from('cases')
+            .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
+          if (createErr && isMissingColumnError(createErr)) {
+            ({ data: createdRow, error: createErr } = await admin
+              .schema('aml').from('cases').insert(baseInsert).select('*').single());
+          }
+          if (createErr) {
+            // Partial unique index aml_cases_one_open_per_client closes the
+            // read-then-write race above; surface it as the same 409 contract.
+            if (createErr.code === '23505') {
+              return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+            }
+            throw createErr;
+          }
+          created = createdRow;
         }
 
+        const clientActivation = {
+          was_inactive: clientWasInactive,
+          marked_active: clientMarkedActive,
+        };
+
         await appendEvent(admin, created.id, 'case_created',
-          `Case ${ref} activated (Model ${model}) for ${displayName}`,
+          `Case ${ref} activated (Model ${model}) for ${displayName}` +
+            (clientMarkedActive ? ' — client record marked active' : ''),
           {
             activation, client_id: clientId,
+            client_activation: clientActivation,
             activation_contract: {
               activation_timing: dimensionFields.activation_timing,
               agreement_state: dimensionFields.agreement_state,
@@ -560,7 +644,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           { client_portal: portalAccess, action_url: '/client/aml' },
           userId, userEmail);
 
-        return jsonResponse({ case: created, activation, client_portal: portalAccess });
+        return jsonResponse({
+          case: created,
+          activation,
+          client_activation: clientActivation,
+          client_portal: portalAccess,
+        });
       }
 
       case 'update': {
@@ -735,27 +824,33 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // AML-role action, so this op provides its own minimal, AML-gated
         // lookup instead of widening that broker.
         //
-        // Deliberately narrow: active clients only, name match only, capped
-        // result set, and a projection carrying no financial or contact data.
+        // Deliberately narrow: canonical `clients` table only, tokenised name
+        // match, capped result set, identification projection only (never
+        // financial data). Both ACTIVE and INACTIVE clients are returned and
+        // selectable — the activation form is the sanctioned place an
+        // authorised user confirms an existing client is active, so inactive
+        // records are offered (clearly labelled) instead of hidden behind a
+        // "mark them active somewhere else first" dead end. Matching lives in
+        // _shared/aml/clientSearchMatch.pure.ts so it is unit-testable.
         if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
-        const q = String(body.query ?? '').trim();
-        if (q.length < 2) return jsonResponse({ clients: [] });
+        const q = sanitizeClientSearchQuery(body.query);
+        const terms = tokenizeClientSearch(q);
+        if (q.length < 2 || terms.length === 0) return jsonResponse({ clients: [] });
 
-        const safe = q.replace(/[%,()]/g, ' ').trim();
-        if (!safe) return jsonResponse({ clients: [] });
-
-        const { data: rows, error: searchErr } = await admin
+        const { data: candidates, error: searchErr } = await admin
           .from('clients')
-          .select('id, primary_first_name, primary_surname, is_active')
-          .eq('is_active', true)
-          .or(`primary_first_name.ilike.%${safe}%,primary_surname.ilike.%${safe}%`)
+          .select(CLIENT_SEARCH_SELECT)
+          .or(buildClientSearchOrFilter(terms))
           .order('primary_surname', { ascending: true })
-          .limit(20);
+          .limit(200);
         if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
+
+        const matched = selectActivationMatches(
+          (candidates ?? []) as ClientSearchRow[], q);
 
         // Flag clients that already hold an open case so the operator does not
         // start a duplicate (the unique index would reject it at 409 anyway).
-        const ids = (rows ?? []).map((r: any) => r.id);
+        const ids = matched.map((r) => r.id);
         let openCaseIds = new Set<string>();
         if (ids.length > 0) {
           const { data: openCases } = await admin.schema('aml').from('cases')
@@ -766,14 +861,47 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         return jsonResponse({
-          clients: (rows ?? []).map((r: any) => ({
-            id: r.id,
-            label: [r.primary_first_name, r.primary_surname].filter(Boolean).join(' ').trim() || 'Unnamed client',
-            is_active: r.is_active,
-            has_open_case: openCaseIds.has(String(r.id)),
-          })),
+          clients: matched.map((r) =>
+            toActivationClientResult(r, openCaseIds.has(String(r.id)))),
         });
       }
+
+      case 'get_client_for_activation': {
+        // Route-based handoff (…/admin/aml/cases?activateClientId=<id>): the
+        // browser supplies ONLY the client ID; the display name, contact
+        // details and active status are loaded here from the authoritative
+        // record, so the URL carries no personal information and cannot
+        // misrepresent the client's status.
+        if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
+        const clientId = String(body.client_id ?? '').trim();
+        if (!/^[0-9a-f-]{36}$/i.test(clientId)) {
+          return jsonResponse({ error: 'client_id must be a UUID' }, 400);
+        }
+        const { data: row, error: rowErr } = await admin
+          .from('clients')
+          .select(CLIENT_SEARCH_SELECT)
+          .eq('id', clientId)
+          .maybeSingle();
+        if (rowErr) throw rowErr;
+        if (!row) return jsonResponse({ error: 'Client not found' }, 404);
+
+        const { data: openCase } = await admin.schema('aml').from('cases')
+          .select('id, case_reference, status')
+          .eq('client_id', clientId)
+          .not('status', 'in', '("cleared","blocked","closed")')
+          .limit(1)
+          .maybeSingle();
+
+        return jsonResponse({
+          client: {
+            ...toActivationClientResult(row as unknown as ClientSearchRow, Boolean(openCase)),
+            open_case: openCase
+              ? { id: openCase.id, case_reference: openCase.case_reference }
+              : null,
+          },
+        });
+      }
+
 
       case 'client_summary': {
         // Phase 4 — persistent AML summary for the master client record.
@@ -948,9 +1076,37 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!['additional_info','new_document','clarification','re_consent'].includes(r.kind)) {
           return jsonResponse({ error: 'Invalid kind' }, 400);
         }
+        // Closed action vocabulary. An unrecognised code is dropped rather than
+        // stored, so the portal can never be handed a route it does not know.
+        const CLIENT_ACTION_CODES = [
+          'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
+          'review_consent', 'provide_clarification', 'review_and_submit',
+        ];
+        const actionCode = CLIENT_ACTION_CODES.includes(String(r.action_code ?? ''))
+          ? String(r.action_code) : null;
+        // Routing is whitelisted fields only — never a URL.
+        const actionTarget = {
+          target_step: typeof r.action_target?.target_step === 'string'
+            ? r.action_target.target_step.slice(0, 60) : null,
+          requirement_id: typeof r.action_target?.requirement_id === 'string'
+            ? r.action_target.requirement_id : null,
+        };
+
+        // Idempotency: one unresolved request per action on a case. A repeated
+        // click (or a double-submit) returns the request that already exists
+        // instead of creating a second one the client would see twice.
+        if (actionCode) {
+          const { data: existing } = await admin.schema('aml').from('client_requests')
+            .select('*').eq('case_id', r.case_id).eq('action_code', actionCode)
+            .not('status', 'in', '("resolved","cancelled")')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (existing) return jsonResponse({ request: existing, deduplicated: true });
+        }
+
         const { data, error } = await admin.schema('aml').from('client_requests').insert({
           case_id: r.case_id, kind: r.kind, subject: String(r.subject).slice(0, 200),
           message: String(r.message), request_payload: r.request_payload ?? {},
+          action_code: actionCode, action_target: actionTarget,
           requested_by: userId, requested_by_label: userEmail,
         }).select('*').single();
         if (error) throw error;
@@ -970,12 +1126,790 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jsonResponse({ request: data });
       }
 
+      /* ═══════════ Submission review (Stage 3) ═══════════ */
+      case 'get_submission_review': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('*').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        const { data: versions } = await admin.schema('aml').from('submission_versions')
+          .select('*').eq('case_id', caseId).order('version_number', { ascending: false });
+        const all = versions ?? [];
+        const requested = body.version_number ? Number(body.version_number) : null;
+        const current = requested ? all.find((v: any) => v.version_number === requested) : all[0];
+        if (!current) {
+          return jsonResponse({ submission: null, versions: [], message: 'No client submission yet.' });
+        }
+        const previous = all.find((v: any) => v.version_number < current.version_number) ?? null;
+
+        const snap = (current.snapshot ?? {}) as any;
+        const prevSnap = (previous?.snapshot ?? {}) as any;
+        const diff = diffSubmissions(snap.sections ?? [], prevSnap.sections ?? []);
+
+        const [{ data: reqs }, { data: docs }, { data: consents }, { data: recon },
+               { data: checks }, { data: screening }, { data: openReqs }, { data: assessment },
+               { data: pepDets }] = await Promise.all([
+          admin.schema('aml').from('document_requirements').select('*').eq('case_id', caseId),
+          admin.schema('aml').from('documents')
+            .select('id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, reviewed_at, client_safe_rejection_reason, internal_review_note, version_number, previous_document_id, replacement_document_id')
+            .eq('case_id', caseId).order('uploaded_at', { ascending: false }),
+          admin.schema('aml').from('consents').select('kind, version, accepted_at, document_hash').eq('case_id', caseId),
+          admin.schema('aml').from('party_reconciliation_items').select('*').eq('case_id', caseId),
+          admin.schema('aml').from('verification_checks')
+            .select('id, party_id, party_label, check_type, status, processing_status, attempt_consumed, authoritative, execution_mode, provider, completed_at, provider_error_category')
+            .eq('case_id', caseId).order('created_at', { ascending: false }),
+          admin.schema('aml').from('party_screening_subjects').select('*').eq('case_id', caseId),
+          admin.schema('aml').from('client_requests').select('id, kind, subject, status, action_code, created_at')
+            .eq('case_id', caseId).in('status', ['open', 'responded']),
+          admin.schema('aml').from('risk_assessments').select('id, created_at, rating, score')
+            .eq('case_id', caseId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          admin.schema('aml').from('pep_determinations')
+            .select('id, determined_at').eq('case_id', caseId),
+        ]);
+
+        // Risk staleness: any canonical verification outcome or reconciliation
+        // change after the latest assessment makes it stale, with reasons.
+        const staleReasons: string[] = [];
+        if (assessment?.created_at) {
+          const since = new Date(assessment.created_at).getTime();
+          if ((checks ?? []).some((c: any) => c.completed_at && new Date(c.completed_at).getTime() > since)) staleReasons.push('verification_changed');
+          if ((recon ?? []).some((r: any) => new Date(r.updated_at ?? r.created_at).getTime() > since)) staleReasons.push('party_reconciliation_changed');
+          if ((screening ?? []).some((s: any) => s.adjudicated_at && new Date(s.adjudicated_at).getTime() > since)) staleReasons.push('screening_adjudicated');
+          if ((pepDets ?? []).some((d: any) => d.determined_at && new Date(d.determined_at).getTime() > since)) staleReasons.push('pep_determination_recorded');
+          if (new Date(current.submitted_at).getTime() > since) staleReasons.push('new_submission');
+          if (submissionDiffIsMaterial(diff)) staleReasons.push('material_information_changed');
+        } else {
+          staleReasons.push('no_assessment');
+        }
+
+        const missing: string[] = [];
+        for (const r of (reqs ?? [])) {
+          if (r.required && !['uploaded', 'accepted'].includes(r.status)) missing.push(`document:${r.code}`);
+        }
+        for (const r of (recon ?? [])) {
+          if (r.resolution_status === 'open') missing.push(`party_reconciliation:${r.declared_name}`);
+        }
+        // Every non-terminal state is outstanding — queued and processing are
+        // work not yet done, and a technical error must stay outstanding and
+        // retryable, never read as clear. A satisfied screening past its
+        // refresh date is outstanding again. (Shared rule: partyScreening.pure.ts.)
+        const nowIso = new Date().toISOString();
+        for (const s of (screening ?? [])) {
+          if (isPartyScreeningMissing(s, nowIso)) missing.push(`screening:${s.screened_name}`);
+        }
+
+        return jsonResponse({
+          case: {
+            id: caseRow.id, reference: caseRow.case_reference, subject: caseRow.subject_display_name,
+            status: caseRow.status, case_stage: caseRow.case_stage,
+            client_portal_status: caseRow.client_portal_status,
+            // Read-only context: acceptance never moves the gate.
+            service_gate_status: caseRow.service_gate_status,
+          },
+          submission: {
+            id: current.id, version_number: current.version_number,
+            review_status: current.review_status ?? 'submitted',
+            submitted_at: current.submitted_at, submitted_by_type: current.submitted_by_type,
+            submitted_by: current.submitted_by,
+            review_reason: current.review_reason ?? null,
+            reviewed_at: current.review_decided_at ?? current.reviewed_at ?? null,
+            questionnaire_version: snap.questionnaire_version ?? null,
+            consent_version: snap.consent_version ?? null,
+            applicable_sections: snap.applicable_sections ?? [],
+            sections: snap.sections ?? [],
+            superseded_at: current.superseded_at ?? null,
+          },
+          previous_version: previous ? { id: previous.id, version_number: previous.version_number, submitted_at: previous.submitted_at } : null,
+          differences: diff,
+          differences_material: submissionDiffIsMaterial(diff),
+          versions: all.map((v: any) => ({
+            id: v.id, version_number: v.version_number, submitted_at: v.submitted_at,
+            review_status: v.review_status ?? 'submitted',
+          })),
+          consent_evidence: (consents ?? []).map((c: any) => ({
+            kind: c.kind, version: c.version, accepted_at: c.accepted_at, document_hash: c.document_hash,
+          })),
+          related_parties: (recon ?? []).map((r: any) => ({
+            id: r.id, declared_role: r.declared_role, declared_name: r.declared_name,
+            change_kind: r.change_kind, resolution_status: r.resolution_status,
+            resolved_party_type: r.resolved_party_type, resolved_party_id: r.resolved_party_id,
+            verification_required: r.verification_required, screening_required: r.screening_required,
+            conflicts: r.conflicts ?? [], similarity_candidates: r.similarity_candidates ?? [],
+            exact_candidate_id: r.exact_candidate_id, exact_candidate_type: r.exact_candidate_type,
+          })),
+          requirements: reqs ?? [],
+          documents: (docs ?? []).map((d: any) => ({
+            ...d,
+            // Internal reviewer reasoning is staff-only; auditors and analysts
+            // may read it, but it never leaves this staff response.
+            internal_review_note: canWrite || roles.has('auditor') ? d.internal_review_note : null,
+          })),
+          verification: (checks ?? []).map((c: any) => ({
+            id: c.id, party_id: c.party_id, party_label: c.party_label, check_type: c.check_type,
+            status: c.status, processing_status: c.processing_status,
+            authoritative: c.authoritative, execution_mode: c.execution_mode,
+            attempt_consumed: c.attempt_consumed, provider: c.provider,
+            completed_at: c.completed_at, provider_error_category: c.provider_error_category,
+          })),
+          screening: screening ?? [],
+          open_requests: openReqs ?? [],
+          missing_mandatory: missing,
+          risk: { latest_assessment_at: assessment?.created_at ?? null, stale: staleReasons.length > 0, stale_reasons: staleReasons },
+        });
+      }
+
+      case 'accept_submission':
+      case 'request_submission_changes':
+      case 'request_submission_document':
+      case 'request_submission_clarification':
+      case 'escalate_submission':
+      case 'supersede_submission': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const needsReviewer = op === 'accept_submission' || op === 'escalate_submission';
+        if (needsReviewer && !(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const submissionId = String(body.submission_id ?? '');
+        const reason = String(body.reason ?? '').trim();
+        if (!submissionId) return jsonResponse({ error: 'submission_id required' }, 400);
+        if (op !== 'accept_submission' && reason.length < 10) {
+          return jsonResponse({ error: 'A reason of at least 10 characters is required' }, 400);
+        }
+        const { data: sub } = await admin.schema('aml').from('submission_versions')
+          .select('*, cases:case_id(id, status, case_stage)').eq('id', submissionId).maybeSingle();
+        if (!sub) return jsonResponse({ error: 'Submission not found' }, 404);
+        if (body.case_id && String(body.case_id) !== String(sub.case_id)) {
+          return jsonResponse({ error: 'Submission does not belong to that case' }, 403);
+        }
+
+        const nextStatus = op === 'accept_submission' ? 'accepted'
+          : op === 'escalate_submission' ? 'escalated'
+          : op === 'supersede_submission' ? 'superseded'
+          : 'changes_requested';
+
+        const patch: Record<string, unknown> = {
+          review_status: nextStatus,
+          review_decided_by: userId,
+          review_decided_at: new Date().toISOString(),
+          review_reason: reason || null,
+        };
+        if (op === 'supersede_submission') {
+          patch.superseded_at = new Date().toISOString();
+          patch.superseded_reason = reason;
+        }
+        // The snapshot column is NEVER written here: prior submitted content
+        // is immutable by contract.
+        const { data: updated, error: upErr } = await admin.schema('aml').from('submission_versions')
+          .update(patch).eq('id', submissionId).select('*').single();
+        if (upErr) throw upErr;
+
+        // Client-safe workflow state. The service gate is deliberately absent:
+        // only an authorised reviewer/MLRO decision moves it, elsewhere.
+        const casePatch: Record<string, unknown> = {};
+        if (op === 'accept_submission') {
+          casePatch.client_portal_status = 'under_review';
+          casePatch.case_stage = 'staff_review';
+        } else if (op === 'escalate_submission') {
+          casePatch.client_portal_status = 'under_review';
+        } else if (nextStatus === 'changes_requested') {
+          casePatch.client_portal_status = 'additional_info_required';
+        }
+        if (Object.keys(casePatch).length > 0) {
+          const { error: caseErr } = await admin.schema('aml').from('cases').update(casePatch).eq('id', sub.case_id);
+          if (caseErr) await admin.schema('aml').from('cases')
+            .update({ client_portal_status: casePatch.client_portal_status }).eq('id', sub.case_id);
+        }
+
+        // Changes/document/clarification requests create the actionable client
+        // request; its trigger writes the notification and outbox event in the
+        // same transaction.
+        let createdRequest: any = null;
+        if (['request_submission_changes', 'request_submission_document', 'request_submission_clarification'].includes(op)) {
+          const actionCode = op === 'request_submission_document' ? 'upload_document'
+            : op === 'request_submission_clarification' ? 'provide_clarification'
+            : 'review_and_submit';
+          const actionTarget: Record<string, unknown> = {};
+          if (body.requirement_id) actionTarget.requirement_id = String(body.requirement_id);
+          if (body.section_code) actionTarget.section_code = String(body.section_code);
+          actionTarget.target_step = op === 'request_submission_document' ? 'documents'
+            : op === 'request_submission_clarification' ? 'review' : 'review';
+          const { data: reqRow, error: reqErr } = await admin.schema('aml').from('client_requests').insert({
+            case_id: sub.case_id,
+            kind: op === 'request_submission_document' ? 'new_document'
+              : op === 'request_submission_clarification' ? 'clarification' : 'additional_info',
+            subject: String(body.subject ?? 'Information needed on your submission').slice(0, 200),
+            message: String(body.client_message ?? reason).slice(0, 4000),
+            action_code: actionCode,
+            action_target: actionTarget,
+            requested_by: userId, requested_by_label: userEmail,
+          }).select('*').single();
+          if (reqErr) throw reqErr;
+          createdRequest = reqRow;
+        }
+
+        await appendEvent(admin, sub.case_id, 'edd_note',
+          `Submission v${sub.version_number} ${nextStatus.replace('_', ' ')}`,
+          { submission_id: submissionId, review_status: nextStatus, reason: reason || null,
+            client_request_id: createdRequest?.id ?? null,
+            service_gate_unchanged: true },
+          userId, userEmail);
+
+        return jsonResponse({ submission: updated, client_request: createdRequest });
+      }
+
+      /* ═══════════ Document review with dual reasons (Stage 9) ═══════════ */
+      case 'review_document_v2': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const documentId = String(body.document_id ?? '');
+        const decision = String(body.decision ?? '');
+        if (!documentId || !['accepted', 'rejected'].includes(decision)) {
+          return jsonResponse({ error: 'document_id and decision (accepted|rejected) required' }, 400);
+        }
+        const { data: doc } = await admin.schema('aml').from('documents')
+          .select('*').eq('id', documentId).maybeSingle();
+        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+
+        const internalNote = String(body.internal_review_note ?? '').trim();
+        const safeReasonCode = String(body.client_safe_reason_code ?? '');
+        if (decision === 'rejected') {
+          if (!isClientSafeRejectionReason(safeReasonCode)) {
+            return jsonResponse({
+              error: 'A client-safe rejection reason code is required',
+              allowed: CLIENT_SAFE_REJECTION_REASONS,
+            }, 400);
+          }
+          if (internalNote.length < 5) {
+            return jsonResponse({ error: 'An internal review reason is required' }, 400);
+          }
+        }
+        const safeCopy = decision === 'rejected'
+          ? String(body.client_safe_message ?? CLIENT_SAFE_REJECTION_COPY[safeReasonCode]).slice(0, 500)
+          : null;
+
+        const { data: updated, error: docErr } = await admin.schema('aml').from('documents').update({
+          status: decision,
+          // Legacy column keeps the client-safe text so older readers stay
+          // correct; internal reasoning lives only in internal_review_note.
+          rejection_reason: safeCopy,
+          client_safe_rejection_reason: safeCopy,
+          internal_review_note: internalNote || null,
+          reviewed_by: userId, reviewed_at: new Date().toISOString(),
+        }).eq('id', documentId).select('*').single();
+        if (docErr) throw docErr;
+
+        if (doc.requirement_id) {
+          await admin.schema('aml').from('document_requirements')
+            .update({ status: decision === 'accepted' ? 'accepted' : 'outstanding' })
+            .eq('id', doc.requirement_id);
+        }
+
+        let createdRequest: any = null;
+        if (decision === 'rejected') {
+          const { data: reqRow } = await admin.schema('aml').from('client_requests').insert({
+            case_id: doc.case_id, kind: 'new_document',
+            subject: 'A document needs replacing',
+            message: safeCopy ?? 'Please upload a replacement document.',
+            action_code: 'upload_document',
+            action_target: { requirement_id: doc.requirement_id ?? null, target_step: 'documents' },
+            requested_by: userId, requested_by_label: userEmail,
+          }).select('*').single();
+          createdRequest = reqRow ?? null;
+        }
+
+        await appendEvent(admin, doc.case_id, 'system',
+          `Document ${decision}: ${doc.filename}`,
+          { document_id: documentId, decision, client_safe_reason_code: decision === 'rejected' ? safeReasonCode : null,
+            requirement_id: doc.requirement_id ?? null, client_request_id: createdRequest?.id ?? null },
+          userId, userEmail);
+
+        return jsonResponse({ document: updated, client_request: createdRequest });
+      }
+
+      /* ═══════════ Party reconciliation (Stages 13/14) ═══════════ */
+      case 'list_party_reconciliation': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data } = await admin.schema('aml').from('party_reconciliation_items')
+          .select('*').eq('case_id', caseId).order('created_at', { ascending: true });
+        return jsonResponse({ items: data ?? [] });
+      }
+
+      case 'resolve_party_reconciliation': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const itemId = String(body.item_id ?? '');
+        const resolution = String(body.resolution ?? '');
+        const rationale = String(body.rationale ?? '').trim();
+        const allowed = ['linked', 'created', 'manual_only', 'rejected', 'superseded', 'conflict'];
+        if (!itemId || !allowed.includes(resolution)) {
+          return jsonResponse({ error: `item_id and resolution (${allowed.join('|')}) required` }, 400);
+        }
+        if (rationale.length < 5) return jsonResponse({ error: 'A rationale is required' }, 400);
+        const { data: item } = await admin.schema('aml').from('party_reconciliation_items')
+          .select('*').eq('id', itemId).maybeSingle();
+        if (!item) return jsonResponse({ error: 'Item not found' }, 404);
+
+        let partyType = item.resolved_party_type;
+        let partyId = item.resolved_party_id;
+        if (resolution === 'linked') {
+          partyType = String(body.party_type ?? '');
+          partyId = String(body.party_id ?? '');
+          if (!partyType || !partyId) return jsonResponse({ error: 'party_type and party_id required to link' }, 400);
+          // Cross-case / cross-tenant linking is refused: the canonical party
+          // must belong to an entity on THIS case.
+          const { data: owner } = await admin.schema('aml')
+            .from(partyType === 'beneficial_owner' ? 'beneficial_owners' : 'authorised_representatives')
+            .select('id, entity_id, aml_entities:entity_id(case_id)').eq('id', partyId).maybeSingle();
+          const ownerCase = (owner as any)?.aml_entities?.case_id ?? null;
+          if (!owner || (ownerCase && String(ownerCase) !== String(item.case_id))) {
+            return jsonResponse({ error: 'That party does not belong to this case', code: 'cross_case_denied' }, 403);
+          }
+        }
+
+        const { data: updated, error } = await admin.schema('aml').from('party_reconciliation_items').update({
+          resolution_status: resolution,
+          resolved_party_type: partyType ?? null,
+          resolved_party_id: partyId ?? null,
+          resolution_rationale: rationale,
+          resolved_by: userId,
+          resolved_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq('id', itemId).select('*').single();
+        if (error) throw error;
+
+        // Field-level provenance for every declared value at resolution time.
+        const provenance = Object.entries((item.declared_payload ?? {}) as Record<string, unknown>)
+          .filter(([, v]) => v !== null && v !== undefined && typeof v !== 'object')
+          .slice(0, 40)
+          .map(([field, value]) => ({
+            case_id: item.case_id, reconciliation_item_id: item.id,
+            party_type: partyType ?? null, party_id: partyId ?? null,
+            source_submission_id: item.submission_id, source_section: 'related_parties',
+            source_field: field, submitted_value: String(value).slice(0, 500),
+            canonical_value: resolution === 'linked' || resolution === 'created' ? String(value).slice(0, 500) : null,
+            resolution_status: resolution, actor_id: userId, actor_label: userEmail, rationale,
+          }));
+        if (provenance.length > 0) {
+          await admin.schema('aml').from('party_field_provenance').insert(provenance);
+        }
+
+        // Screening work follows reconciliation, never precedes it. The
+        // subject carries every identifying detail the declaration already
+        // holds — matching on a bare display name wastes the matcher's
+        // DOB/alias tolerance. Nothing is invented: absent stays absent.
+        if (['linked', 'created'].includes(resolution) && item.screening_required) {
+          const declared = (item.declared_payload ?? {}) as Record<string, unknown>;
+          const declaredDob = typeof declared.date_of_birth === 'string' ? declared.date_of_birth : null;
+          const declaredCountry = typeof declared.country === 'string' ? declared.country
+            : typeof declared.nationality === 'string' ? declared.nationality : null;
+          const declaredAliases = Array.isArray(declared.aliases)
+            ? declared.aliases.filter((a) => typeof a === 'string').slice(0, 20)
+            : [];
+          await admin.schema('aml').from('party_screening_subjects').insert({
+            case_id: item.case_id, party_type: partyType ?? item.declared_role,
+            party_id: partyId ?? null, reconciliation_item_id: item.id,
+            screened_name: item.declared_name, required: true, state: 'not_started',
+            aliases: declaredAliases,
+            date_of_birth: declaredDob,
+            country: declaredCountry,
+          });
+        }
+
+        await appendEvent(admin, item.case_id, 'system',
+          `Party reconciliation ${resolution}: ${item.declared_name}`,
+          { reconciliation_item_id: itemId, resolution, party_type: partyType, party_id: partyId },
+          userId, userEmail);
+        return jsonResponse({ item: updated });
+      }
+
+      /* ═══════════ Party verification links (Stage 15) ═══════════ */
+      case 'list_party_verification_links': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const [{ data: links }, { data: checks }] = await Promise.all([
+          admin.schema('aml').from('party_verification_links')
+            .select('*').eq('case_id', caseId).is('unlinked_at', null),
+          admin.schema('aml').from('verification_checks')
+            .select('id, party_label, check_type, status, authoritative, execution_mode, completed_at')
+            .eq('case_id', caseId).order('created_at', { ascending: false }),
+        ]);
+        return jsonResponse({ links: links ?? [], eligible_checks: (checks ?? []).filter((c: any) => c.authoritative !== false) });
+      }
+
+      case 'link_party_verification': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const caseId = String(body.case_id ?? '');
+        const partyType = String(body.party_type ?? '');
+        const checkId = String(body.verification_check_id ?? '');
+        if (!caseId || !partyType || !checkId) {
+          return jsonResponse({ error: 'case_id, party_type and verification_check_id required' }, 400);
+        }
+        const { data: check } = await admin.schema('aml').from('verification_checks')
+          .select('id, case_id, status, authoritative, execution_mode, check_type').eq('id', checkId).maybeSingle();
+        if (!check) return jsonResponse({ error: 'Verification check not found' }, 404);
+        // Cross-case linking is impossible by contract.
+        if (String(check.case_id) !== caseId) {
+          return jsonResponse({ error: 'That check belongs to a different case', code: 'cross_case_denied' }, 403);
+        }
+        if (check.execution_mode === 'simulation' || check.authoritative === false) {
+          return jsonResponse({ error: 'A simulated or non-authoritative check cannot be evidence', code: 'not_authoritative' }, 409);
+        }
+        const { data: link, error } = await admin.schema('aml').from('party_verification_links').insert({
+          case_id: caseId, party_type: partyType, party_id: body.party_id ? String(body.party_id) : null,
+          verification_check_id: checkId, relationship: String(body.relationship ?? 'identity_evidence'),
+          authoritative: check.authoritative !== false, linked_by: userId,
+          metadata: { check_type: check.check_type, linked_status: check.status },
+        }).select('*').single();
+        if (error) throw error;
+        // Convenience pointer on the canonical party row — derived, never a
+        // substitute for the link evidence.
+        if (body.party_id && ['beneficial_owner', 'authorised_representative'].includes(partyType)) {
+          await admin.schema('aml')
+            .from(partyType === 'beneficial_owner' ? 'beneficial_owners' : 'authorised_representatives')
+            .update({ verification_check_id: checkId }).eq('id', String(body.party_id));
+        }
+        await appendEvent(admin, caseId, 'system', 'Party verification evidence linked',
+          { party_type: partyType, party_id: body.party_id ?? null, verification_check_id: checkId },
+          userId, userEmail);
+        return jsonResponse({ link });
+      }
+
+      case 'unlink_party_verification': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const linkId = String(body.link_id ?? '');
+        const reason = String(body.reason ?? '').trim();
+        if (!linkId) return jsonResponse({ error: 'link_id required' }, 400);
+        if (reason.length < 5) return jsonResponse({ error: 'An unlink reason is required' }, 400);
+        const { data: link, error } = await admin.schema('aml').from('party_verification_links')
+          .update({ unlinked_at: new Date().toISOString(), unlink_reason: reason })
+          .eq('id', linkId).is('unlinked_at', null).select('*').single();
+        if (error) throw error;
+        await appendEvent(admin, link.case_id, 'system', 'Party verification evidence unlinked',
+          { link_id: linkId, reason }, userId, userEmail);
+        return jsonResponse({ link });
+      }
+
+      /* ═══════════ Party-scoped screening (Stage 16) ═══════════ */
+      case 'list_party_screening': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const [{ data: subjects }, { data: determinations }] = await Promise.all([
+          admin.schema('aml').from('party_screening_subjects')
+            .select('*').eq('case_id', caseId).order('created_at', { ascending: true }),
+          admin.schema('aml').from('pep_determinations')
+            .select('id, party_screening_subject_id, subject_name, result, pep_type, pep_relationship, determined_at, determined_by_label, review_due_at, superseded_at')
+            .eq('case_id', caseId).is('superseded_at', null),
+        ]);
+        // Staff adjudicate the actual canonical candidates, so the panel
+        // needs to show them. Staff-side only — this response never reaches
+        // the Client or Finance portals.
+        const checkIds = (subjects ?? []).map((s: any) => s.screening_check_id).filter(Boolean);
+        let matchesByCheck: Record<string, any[]> = {};
+        if (checkIds.length > 0) {
+          const { data: matches } = await admin.schema('aml').from('screening_matches')
+            .select('id, screening_check_id, match_type, list_name, matched_name, score, jurisdiction, status, details')
+            .in('screening_check_id', checkIds).order('score', { ascending: false });
+          for (const m of matches ?? []) {
+            (matchesByCheck[m.screening_check_id] ??= []).push(m);
+          }
+        }
+        const detBySubject = new Map<string, any>();
+        for (const d of determinations ?? []) {
+          if (d.party_screening_subject_id) detBySubject.set(String(d.party_screening_subject_id), d);
+        }
+        const caseLevelPep = (determinations ?? []).find((d: any) => !d.party_screening_subject_id) ?? null;
+        return jsonResponse({
+          subjects: (subjects ?? []).map((s: any) => ({
+            ...s,
+            matches: s.screening_check_id ? (matchesByCheck[s.screening_check_id] ?? []) : [],
+            pep_determination: detBySubject.get(String(s.id)) ?? null,
+          })),
+          case_pep_determination: caseLevelPep,
+        });
+      }
+
+      case 'queue_party_screening': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const subjectId = String(body.subject_id ?? '');
+        if (!subjectId) return jsonResponse({ error: 'subject_id required' }, 400);
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+        // Already in flight — the queued event exists; do not emit another.
+        if (['queued', 'processing'].includes(subject.state)) {
+          return jsonResponse({ skipped: true, code: 'already_in_progress', subject });
+        }
+        // Candidates must be adjudicated through the canonical matches, not
+        // papered over by a re-screen.
+        if (['possible_match', 'confirmed_match'].includes(subject.state)) {
+          return jsonResponse({
+            error: 'This subject has candidate or confirmed matches — adjudicate them before re-screening',
+            code: 'adjudication_required',
+          }, 409);
+        }
+        // Freshness window: do not re-screen the same party inside it.
+        const freshnessDays = Math.min(Math.max(Number(body.freshness_days ?? 90) || 90, 1), 365);
+        if (subject.last_screened_at &&
+            Date.now() - new Date(subject.last_screened_at).getTime() < freshnessDays * 864e5 &&
+            ['completed', 'false_positive'].includes(subject.state)) {
+          return jsonResponse({ skipped: true, code: 'within_freshness_window', subject });
+        }
+        // The transition to 'queued' emits aml.screening.requested through the
+        // transactional outbox trigger; the cross-portal worker executes it
+        // against the canonical screening engine.
+        const { data: updated, error } = await admin.schema('aml').from('party_screening_subjects')
+          .update({ state: 'queued', error_category: null, updated_at: new Date().toISOString() })
+          .eq('id', subjectId).select('*').single();
+        if (error) throw error;
+        await appendEvent(admin, subject.case_id, 'system',
+          `Party screening queued: ${subject.screened_name}`,
+          { party_screening_subject_id: subjectId }, userId, userEmail);
+        return jsonResponse({ subject: updated });
+      }
+
+      case 'adjudicate_party_screening': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        // Adjudication happens on the CANONICAL screening match, exactly as
+        // aml-verification resolve_match does it — hash-chained resolution
+        // row, match status change, then the party state is re-derived from
+        // the full canonical match set. Updating party_screening_subjects
+        // alone can no longer manufacture or bury a sanctions finding.
+        const subjectId = String(body.subject_id ?? '');
+        const matchId = String(body.match_id ?? '');
+        const outcome = String(body.outcome ?? '');
+        const note = String(body.note ?? '').trim();
+        if (!subjectId || !['confirmed_match', 'false_positive'].includes(outcome)) {
+          return jsonResponse({ error: 'subject_id and outcome (confirmed_match|false_positive) required' }, 400);
+        }
+        if (!matchId) {
+          return jsonResponse({
+            error: 'match_id required — party adjudication resolves the canonical screening match, not the projection',
+            code: 'canonical_match_required',
+          }, 400);
+        }
+        if (note.length < 5) return jsonResponse({ error: 'An adjudication note is required' }, 400);
+
+        const { data: subject } = await admin.schema('aml').from('party_screening_subjects')
+          .select('*').eq('id', subjectId).maybeSingle();
+        if (!subject) return jsonResponse({ error: 'Subject not found' }, 404);
+        if (!subject.screening_check_id) {
+          return jsonResponse({
+            error: 'No canonical screening exists for this subject yet — run the screening first',
+            code: 'no_canonical_screening',
+          }, 409);
+        }
+        const { data: match } = await admin.schema('aml').from('screening_matches')
+          .select('*').eq('id', matchId).maybeSingle();
+        if (!match) return jsonResponse({ error: 'Match not found' }, 404);
+        if (String(match.screening_check_id) !== String(subject.screening_check_id)) {
+          return jsonResponse({ error: 'That match does not belong to this subject\'s screening', code: 'cross_check_denied' }, 403);
+        }
+
+        const disposition = outcome === 'confirmed_match' ? 'confirmed' : 'dismissed';
+        const { data: prevRes } = await admin.schema('aml').from('match_resolutions')
+          .select('row_hash').eq('match_id', matchId).order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const prevHash = prevRes?.row_hash ?? null;
+        const now = new Date().toISOString();
+        const resHashInput = JSON.stringify({
+          match_id: matchId, case_id: match.case_id, disposition, rationale: note,
+          resolved_by: userId, prev_hash: prevHash, created_at: now,
+        });
+        const resHashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(resHashInput));
+        const rowHash = Array.from(new Uint8Array(resHashBuf)).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+        const { data: resolution, error: resErr } = await admin.schema('aml').from('match_resolutions').insert({
+          match_id: matchId, case_id: match.case_id, disposition, rationale: note,
+          resolved_by: userId, resolved_by_label: userEmail,
+          prev_hash: prevHash, row_hash: rowHash, created_at: now,
+        }).select('*').single();
+        if (resErr) throw resErr;
+        await admin.schema('aml').from('screening_matches')
+          .update({ status: disposition }).eq('id', matchId);
+
+        // Party state is a projection of the canonical match set.
+        const { data: allMatches } = await admin.schema('aml').from('screening_matches')
+          .select('status').eq('screening_check_id', subject.screening_check_id);
+        const projected = projectPartyScreeningState((allMatches ?? []).map((m: any) => m.status));
+        const { data: updated, error } = await admin.schema('aml').from('party_screening_subjects').update({
+          state: projected, adjudicated_by: userId, adjudicated_at: now,
+          adjudication_note: note, updated_at: now,
+        }).eq('id', subjectId).select('*').single();
+        if (error) throw error;
+
+        await appendEvent(admin, updated.case_id, 'mlro_decision',
+          `Party screening match ${match.matched_name} ${disposition} for ${updated.screened_name} → ${projected}`,
+          { party_screening_subject_id: subjectId, match_id: matchId, disposition,
+            resolution_id: resolution?.id, projected_state: projected }, userId, userEmail);
+        return jsonResponse({ subject: updated, match: { ...match, status: disposition }, resolution });
+      }
+
+      /* ═══════════ PEP determinations (screening repair) ═══════════ */
+      // A determination records who was assessed, the result, how it was
+      // reached, by whom, when, and why the conclusion was reasonable —
+      // AUSTRAC's "records to show how you've established if a person is a
+      // PEP". Staff-side only; never projected to Client or Finance portals.
+      case 'list_pep_determinations': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data } = await admin.schema('aml').from('pep_determinations')
+          .select('*').eq('case_id', caseId).order('determined_at', { ascending: false });
+        return jsonResponse({ determinations: data ?? [] });
+      }
+
+      case 'record_pep_determination': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        const subjectName = String(body.subject_name ?? '').trim();
+        const result = String(body.result ?? '');
+        const rationale = String(body.rationale ?? '').trim();
+        const pepType = body.pep_type ? String(body.pep_type) : null;
+        const pepRelationship = body.pep_relationship ? String(body.pep_relationship) : null;
+        const methods = Array.isArray(body.methods) ? body.methods : [];
+        const partySubjectId = body.party_screening_subject_id ? String(body.party_screening_subject_id) : null;
+
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        if (!['not_pep', 'pep'].includes(result)) {
+          return jsonResponse({ error: 'result must be not_pep or pep' }, 400);
+        }
+        if (result === 'pep') {
+          if (!['foreign', 'domestic', 'international_organisation'].includes(pepType ?? '')) {
+            return jsonResponse({ error: 'pep_type (foreign|domestic|international_organisation) is required for a pep result' }, 400);
+          }
+          if (!['self', 'family_member', 'close_associate'].includes(pepRelationship ?? '')) {
+            return jsonResponse({ error: 'pep_relationship (self|family_member|close_associate) is required for a pep result' }, 400);
+          }
+        }
+        if (rationale.length < 10) {
+          return jsonResponse({ error: 'A rationale of at least 10 characters is required — record why the conclusion was reasonable' }, 400);
+        }
+        // Sources/methods are the evidence trail: at least one, references
+        // and metadata only. A "not PEP" with no recorded method is a guess,
+        // not a determination.
+        const cleanMethods = methods
+          .filter((m: any) => m && typeof m === 'object' && typeof m.source === 'string' && m.source.trim())
+          .map((m: any) => ({
+            source: String(m.source).slice(0, 300),
+            reference: typeof m.reference === 'string' ? m.reference.slice(0, 500) : null,
+            note: typeof m.note === 'string' ? m.note.slice(0, 500) : null,
+          })).slice(0, 20);
+        if (cleanMethods.length === 0) {
+          return jsonResponse({ error: 'At least one method/source (e.g. list checked, register consulted) is required' }, 400);
+        }
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, tenant_id, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Subject identity is DERIVED, never asserted: the determination is
+        // evidence about a specific person, and a caller-supplied name could
+        // attach an assessment of X to the record of Y. The party subject row
+        // (or the case subject) is the identity; a mismatched caller name is
+        // an error, not an override.
+        let derivedName = String(caseRow.subject_display_name ?? '').trim();
+        let derivedPartyType: string | null = null;
+        let derivedPartyId: string | null = null;
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml').from('party_screening_subjects')
+            .select('id, case_id, screened_name, party_type, party_id').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({ error: 'party_screening_subject_id does not belong to this case' }, 400);
+          }
+          derivedName = String(partySubject.screened_name ?? '').trim();
+          derivedPartyType = partySubject.party_type ?? null;
+          derivedPartyId = partySubject.party_id ?? null;
+        }
+        if (!derivedName) {
+          return jsonResponse({ error: 'The subject has no recorded name to determine against' }, 409);
+        }
+        if (subjectName && subjectName.toLowerCase() !== derivedName.toLowerCase()) {
+          return jsonResponse({
+            error: `subject_name does not match the recorded subject ("${derivedName}") — the determination is recorded against the canonical identity`,
+            code: 'subject_identity_mismatch',
+          }, 400);
+        }
+
+        const now = new Date().toISOString();
+        // Freshness: reconsidered during ongoing CDD. Default review cycle 12
+        // months; callers may set an earlier date but never disable review.
+        const reviewMonths = Math.min(Math.max(Number(body.review_months ?? 12) || 12, 1), 36);
+        const reviewDue = new Date();
+        reviewDue.setUTCMonth(reviewDue.getUTCMonth() + reviewMonths);
+
+        // Hash-chain within the case, like match_resolutions.
+        const { data: prevDet } = await admin.schema('aml').from('pep_determinations')
+          .select('id, row_hash').eq('case_id', caseId)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        const detHashInput = JSON.stringify({
+          case_id: caseId, party_screening_subject_id: partySubjectId, subject_name: derivedName,
+          result, pep_type: pepType, pep_relationship: pepRelationship,
+          methods: cleanMethods, rationale, determined_by: userId,
+          prev_hash: prevDet?.row_hash ?? null, created_at: now,
+        });
+        const detHashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(detHashInput));
+        const detRowHash = Array.from(new Uint8Array(detHashBuf)).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+        // Supersession of the prior current determination is NOT done here:
+        // the BEFORE INSERT trigger closes it in the same transaction as this
+        // insert, and the partial unique index guarantees a single current
+        // determination per subject scope even under concurrent writes.
+        const { data: determination, error: detErr } = await admin.schema('aml').from('pep_determinations').insert({
+          tenant_id: caseRow.tenant_id ?? 'default',
+          case_id: caseId,
+          party_screening_subject_id: partySubjectId,
+          party_type: derivedPartyType,
+          party_id: derivedPartyId,
+          subject_name: derivedName.slice(0, 300),
+          result,
+          pep_type: result === 'pep' ? pepType : null,
+          pep_relationship: result === 'pep' ? pepRelationship : null,
+          position_held: typeof body.position_held === 'string' ? body.position_held.slice(0, 300) : null,
+          jurisdiction: typeof body.jurisdiction === 'string' ? body.jurisdiction.slice(0, 100) : null,
+          holds_position_currently: typeof body.holds_position_currently === 'boolean'
+            ? body.holds_position_currently : null,
+          methods: cleanMethods,
+          rationale,
+          determined_by: userId,
+          determined_by_label: userEmail,
+          determined_at: now,
+          review_due_at: reviewDue.toISOString(),
+          prev_hash: prevDet?.row_hash ?? null,
+          row_hash: detRowHash,
+        }).select('*').single();
+        if (detErr) {
+          if (String((detErr as any).code) === '23505') {
+            return jsonResponse({
+              error: 'Another determination for this subject was recorded at the same moment — reload and review it before recording again',
+              code: 'concurrent_determination',
+            }, 409);
+          }
+          throw detErr;
+        }
+
+        await appendEvent(admin, caseId, result === 'pep' ? 'pep_sanctions_hit' : 'mlro_decision',
+          result === 'pep'
+            ? `PEP determination recorded for ${derivedName}: ${pepType} PEP (${pepRelationship})`
+            : `PEP determination recorded for ${derivedName}: not a PEP`,
+          {
+            pep_determination_id: determination.id,
+            party_screening_subject_id: partySubjectId,
+            result, pep_type: result === 'pep' ? pepType : null,
+            pep_relationship: result === 'pep' ? pepRelationship : null,
+            methods: cleanMethods, review_due_at: determination.review_due_at,
+          }, userId, userEmail);
+
+        return jsonResponse({ determination });
+      }
+
       default:
         return jsonResponse({ error: `Unknown op: ${op}` }, 400);
     }
   } catch (err: any) {
     console.error('aml-cases error', err);
-    return jsonResponse({ error: err?.message ?? String(err) }, 500);
+    return jsonResponse({ ...internalError(err, 'aml-cases') }, 500);
   }
 });
 

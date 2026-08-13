@@ -31,6 +31,7 @@ import {
   type SplitRoute,
 } from '../_shared/reportSplitRegistry.ts';
 import { scoreFinancial, scorePropertyFundamentals } from '../_shared/investmentScoreEngine.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 interface ParsedSection {
   rawHeading: string;
@@ -399,7 +400,7 @@ Deno.serve(async (req) => {
     );
   } catch (err: any) {
     console.error('[fork-investment-report]', err);
-    return new Response(JSON.stringify({ error: err?.message || String(err) }), {
+    return new Response(JSON.stringify(internalError(err, 'fork-investment-report')), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

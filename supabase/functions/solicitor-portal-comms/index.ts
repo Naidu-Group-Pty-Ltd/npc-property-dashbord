@@ -18,6 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
 import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 import {
   resolveSolicitorSession,
   solicitorGovernanceError,
@@ -519,7 +520,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[solicitor-portal-comms] error:', error);
     return new Response(
-      JSON.stringify({ error: (error as Error)?.message || 'Unexpected error' }),
+      JSON.stringify(internalError(error, 'solicitor-portal-comms')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

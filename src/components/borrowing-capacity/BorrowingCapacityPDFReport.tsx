@@ -20,6 +20,8 @@ import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
 import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
+import { auditDelta, auditMeasures } from '@/lib/reports/borrowingCapacity/audit.pure';
+import { formatMeasure } from '@/lib/reportDesign/measure.pure';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { format } from 'date-fns';
 import { smartCapitalize } from '@/utils/nameFormatting';
@@ -1030,11 +1032,26 @@ export async function generateBorrowingCapacityPDF(data: BorrowingCapacityExport
         const ruleText = (entry.rule || '').length > 25 ? entry.rule.substring(0, 23) + '...' : entry.rule || '';
         const labelText = (entry.label || '').length > 35 ? entry.label.substring(0, 33) + '...' : entry.label || '';
 
+        // ── An audit value is not always dollars ──────────────────────────
+        //
+        // `fmt` is a currency formatter, and every value went through it — so
+        // this table told a client their assessment rate went from $7 to $6
+        // when it went from 6.5% to 6.24%, and printed the -0.26 difference as
+        // `-$0`. `policy/override_applied` is declared `percent` on both sides
+        // in `audit.pure.ts`, and a credit-card row's raw value is a balance
+        // while its assessed value is a monthly repayment. `auditMeasures`
+        // already knew; it was not being asked.
+        const measures = auditMeasures(entry as never);
+        const delta = auditDelta(entry as never);
+
         y = drawTableRow(doc, y, [
           { text: labelText, x: MARGIN + 3, maxWidth: 68 },
-          { text: fmt(entry.rawValue), x: MARGIN + 80, align: 'right', color: GRAY },
-          { text: fmt(entry.assessedValue), x: MARGIN + 110, align: 'right', bold: true },
-          { text: entry.delta !== 0 ? `${deltaPrefix}${fmt(entry.delta)}` : '—', x: MARGIN + 138, align: 'right', color: deltaColor },
+          { text: formatMeasure(measures.raw), x: MARGIN + 80, align: 'right', color: GRAY },
+          { text: formatMeasure(measures.assessed), x: MARGIN + 110, align: 'right', bold: true },
+          // No delta when the two sides do not share a unit — subtracting a
+          // monthly repayment from a balance is not a number, and an em dash is
+          // the honest output.
+          { text: delta ? `${deltaPrefix}${formatMeasure(delta).replace(/^[-+]/, '')}` : '—', x: MARGIN + 138, align: 'right', color: deltaColor },
           { text: ruleText, x: MARGIN + CONTENT_W - 3, align: 'right', color: GRAY },
         ], bg);
       }

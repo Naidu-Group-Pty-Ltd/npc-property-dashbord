@@ -1,101 +1,15 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { extractSessionToken, createCorsHeaders, createClearSessionCookie } from "../_shared/auth.ts"
-import { hashSessionToken, isSessionHashConfigured } from "../_shared/sessionHash.ts"
+/**
+ * Command Centre staff logout — the current entrypoint.
+ *
+ * The handler is `_shared/customAuth/logout.ts`, shared with the other entrypoint
+ * for this operation. Both URLs are deployed and both mint or consume a staff
+ * session; only one of them used to have source here, and the one that did not
+ * stopped receiving every hardening the other got. See
+ * `docs/security/WP28_CUSTOM_AUTH_V1.md`.
+ *
+ * Keep this file a shim. Anything added here is by definition something the
+ * other entrypoint does not do.
+ */
+import { handleStaffLogout } from '../_shared/customAuth/logout.ts';
 
-Deno.serve(async (req) => {
-  const origin = req.headers.get('origin');
-  const corsHeaders = createCorsHeaders(origin);
-  if (origin === 'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com') {
-    corsHeaders['Access-Control-Allow-Origin'] = origin;
-  }
-
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders })
-  }
-
-  try {
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
-
-    // Try to get session token from body for backwards compatibility
-    let sessionToken: string | null = null;
-    try {
-      const body = await req.json();
-      sessionToken = extractSessionToken(req.headers, body);
-    } catch {
-      // If body parsing fails, try to extract from headers/cookies only
-      sessionToken = extractSessionToken(req.headers);
-    }
-
-    if (!sessionToken) {
-      // Still return success and clear cookie even if no token found
-      return new Response(
-        JSON.stringify({ success: true }), 
-        { 
-          status: 200, 
-          headers: { 
-            ...corsHeaders, 
-            'Content-Type': 'application/json',
-            'Set-Cookie': createClearSessionCookie()
-          } 
-        }
-      )
-    }
-
-    // Revoke the session. Match on the peppered hash first (hash-only sessions
-    // have no plaintext at rest) and the legacy plaintext column as a fallback,
-    // so logout revokes regardless of which representation the row carries.
-    const hash = isSessionHashConfigured() ? await hashSessionToken(sessionToken) : null;
-    const deletionErrors = [];
-    if (hash) {
-      const { error } = await supabase
-        .from('user_sessions')
-        .delete()
-        .eq('token_hash', hash);
-      if (error) deletionErrors.push(error);
-    }
-
-    const { error: plaintextDeletionError } = await supabase
-      .from('user_sessions')
-      .delete()
-      .eq('session_token', sessionToken);
-    if (plaintextDeletionError) deletionErrors.push(plaintextDeletionError);
-
-    if (deletionErrors.length > 0) {
-      console.error('Logout error:', deletionErrors)
-      // Still clear cookie even if database delete fails
-    }
-
-    // Clear the HttpOnly session cookie
-    return new Response(
-      JSON.stringify({ success: true }),
-      { 
-        status: 200, 
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json',
-          'Set-Cookie': createClearSessionCookie()
-        } 
-      }
-    )
-
-  } catch (error) {
-    console.error('Logout error:', error)
-    return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
-      { 
-        status: 500, 
-        headers: { 
-          ...corsHeaders, 
-          'Content-Type': 'application/json',
-          'Set-Cookie': createClearSessionCookie()
-        } 
-      }
-    )
-  }
-})
-
-// Auth bundle epoch 2026-07-31T17:15Z — forces shared CORS/JWT helpers into deployment.
+Deno.serve((req: Request) => handleStaffLogout(req, 'v2'));

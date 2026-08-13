@@ -5,6 +5,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 import { requireAdmin, requireModulePermission } from '../_shared/authz.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 import { marketCorrelationId } from '../_shared/marketUpdatesObservability.ts';
@@ -58,6 +59,9 @@ Deno.serve(async (req) => {
   correlationId = marketCorrelationId(req.headers, body);
   if (auth.error || !auth.userId) auth = await verifyAuth(sb, req.headers, body);
   if (auth.error || !auth.userId) return json({ error:'Authentication required', code:'market_updates_auth_required', correlation_id:correlationId, retryable:false }, 401, cors, correlationId);
+  // Market News Feed is a Scale-or-add-on capability — enforced server-side.
+  const entitlement = await requireWorkspaceCapability(sb, auth, 'market-updates');
+  if (!entitlement.ok) return entitlementDeniedResponse(entitlement, cors);
   const permission = await requireModulePermission(sb, { userId:auth.userId, authMethod:auth.authMethod }, 'market_updates', 'can_view');
   if (!permission.ok) return json({ error:'Market Updates view permission required', code:'market_updates_view_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
 
@@ -156,7 +160,10 @@ Deno.serve(async (req) => {
         const adminPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
         if (!adminPermission.ok) return json({ error:'Admin privilege required to review unpublished updates', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
       }
-      const limit = Math.max(1, Math.min(200, Number(body.limit) || 200));
+      // The published archive grows past a few hundred rows, so the ceiling here
+      // must not double as the feed's page size — a 200 cap silently truncated
+      // the front end at exactly 200 articles no matter how many were published.
+      const limit = Math.max(1, Math.min(1000, Number(body.limit) || 200));
       // Shadow rows share the 'candidate' status but are not the operator's review
       // queue, so a caller has to ask for them explicitly.
       const visibility = body.visibility === 'shadow' ? 'shadow' : 'public';

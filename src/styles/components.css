@@ -1119,11 +1119,11 @@
   }
 
   .reports-overrides-scroll-desktop {
-    height: clamp(520px, 60dvh, 760px);
+    height: clamp(620px, 74dvh, 1040px);
   }
 
   .reports-overrides-scroll-mobile {
-    height: clamp(420px, 64dvh, 620px);
+    height: clamp(480px, 70dvh, 760px);
   }
 
   .reports-overrides-tab-content {
@@ -1610,45 +1610,46 @@
 }
 
 @layer components {
-  /* Premium Report Q&A workspace shell — presentation only. */
+  /* ────────────────────────────────────────────────────────────────
+     AURIXA INTELLIGENCE HUB — workspace surface
+
+     This file used to give the hub a look of its own: brand-tinted
+     radial washes on every pane, glow shadows, pill buttons and a
+     stack of `!important` overrides that painted straight over the
+     glass system. On a white-labelled deployment it read as a
+     different product to the dashboard around it.
+
+     What is left here is LAYOUT, DENSITY and STATE. The material —
+     fill, edge, sheen, shadow — comes from the glass scale in
+     src/styles/tokens.css via the `dashboard-theme-*` classes the
+     page already uses, so the hub re-themes with the brand like
+     every other surface. Rules that only restate the platform
+     default have been removed rather than re-expressed.
+
+     If you add something here, keep it to structure or state. A new
+     gradient or glow belongs in glass.css, applied to every pane,
+     or nowhere.
+     ──────────────────────────────────────────────────────────────── */
+
+  /* The page shell paints nothing: the ambient field on <body> is what
+     the panes above it refract. */
   .report-qa-premium {
-    background:
-      radial-gradient(circle at 16% 8%, hsl(var(--brand) / 0.14), transparent 32rem),
-      radial-gradient(circle at 88% 18%, hsl(var(--primary) / 0.08), transparent 28rem),
-      linear-gradient(135deg, hsl(var(--background)), hsl(var(--card)) 44%, hsl(var(--background)));
+    background: transparent;
   }
 
   .report-qa-hero {
     position: relative;
     overflow: hidden;
-    border: 1px solid hsl(var(--brand) / 0.28);
-    border-radius: 1.25rem;
-    background:
-      radial-gradient(circle at 8% 0%, hsl(var(--brand) / 0.2), transparent 18rem),
-      linear-gradient(135deg, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.026)),
-      linear-gradient(90deg, hsl(var(--brand) / 0.12), transparent 45%);
-    box-shadow: 0 18px 50px hsl(0 0% 0% / 0.32), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-    backdrop-filter: blur(16px);
-  }
-
-  .report-qa-hero::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, hsl(var(--brand) / 0.78), transparent);
-    pointer-events: none;
   }
 
   .report-qa-eyebrow {
-    border: 1px solid hsl(var(--brand) / 0.22);
-    background: hsl(var(--brand) / 0.1);
-    color: hsl(var(--brand));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.06);
+    border: 1px solid hsl(var(--primary) / 0.22);
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--dashboard-primary-strong, var(--primary)));
   }
 
   .report-qa-subtitle {
-    color: hsl(var(--brand) / 0.72);
+    color: hsl(var(--muted-foreground));
   }
 
   .report-qa-header-actions {
@@ -1656,95 +1657,29 @@
     z-index: 1;
   }
 
-  .report-qa-new-chat {
-    border: 1px solid hsl(var(--brand) / 0.5) !important;
-    background: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-700))) !important;
-    color: hsl(var(--brand-foreground)) !important;
-    box-shadow: 0 14px 32px hsl(var(--brand) / 0.32), inset 0 1px 0 hsl(0 0% 100% / 0.28);
-  }
-
-  .report-qa-new-chat:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 18px 42px hsl(var(--brand) / 0.42), 0 0 0 1px hsl(var(--brand) / 0.32), inset 0 1px 0 hsl(0 0% 100% / 0.32);
-  }
-
-  .report-qa-history-button,
-  .report-qa-icon-button {
-    border-color: hsl(var(--brand) / 0.34) !important;
-    background: hsl(0 0% 100% / 0.045) !important;
-    color: hsl(var(--brand) / 0.9) !important;
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.06);
-  }
-
-  .report-qa-history-button:hover,
-  .report-qa-icon-button:hover {
-    border-color: hsl(var(--brand) / 0.55) !important;
-    background: hsl(var(--brand) / 0.1) !important;
-    color: hsl(var(--brand)) !important;
-    transform: translateY(-1px);
-    box-shadow: 0 12px 28px hsl(var(--brand) / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
+  /* Header buttons are plain shadcn buttons. The gradient, the glow and
+     the pill radius they used to carry are gone; `New Chat` is the
+     primary variant and the rest are outlines, as everywhere else. */
   .report-qa-history-badge {
-    border: 1px solid hsl(var(--brand) / 0.36);
-    background: hsl(var(--brand) / 0.18) !important;
-    color: hsl(var(--brand)) !important;
-  }
-
-  .report-qa-panel {
-    position: relative;
-    border-color: hsl(var(--brand) / 0.28) !important;
-    background:
-      linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(0 0% 100% / 0.025)),
-      hsl(var(--card) / 0.94) !important;
-    box-shadow: 0 24px 70px hsl(0 0% 0% / 0.4), inset 0 1px 0 hsl(0 0% 100% / 0.07) !important;
-    backdrop-filter: blur(18px);
-  }
-
-  .report-qa-panel::before {
-    content: "";
-    position: absolute;
-    inset: 0 0 auto;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, hsl(var(--brand) / 0.55), transparent);
-    pointer-events: none;
+    border: 1px solid hsl(var(--primary) / 0.28);
+    background: hsl(var(--primary) / 0.14);
+    color: hsl(var(--dashboard-primary-strong, var(--primary)));
   }
 
   .report-qa-workspace-grid {
     grid-template-rows: minmax(0, 1fr);
   }
 
-  .report-qa-chat-header {
-    border-bottom: 1px solid hsl(var(--brand) / 0.22);
-    background:
-      radial-gradient(circle at 10% 0%, hsl(var(--brand) / 0.16), transparent 18rem),
-      linear-gradient(180deg, hsl(var(--brand) / 0.095), hsl(0 0% 100% / 0.018) 72%, transparent);
+  /* Panels are `dashboard-theme-section` panes. Nothing to add but the
+     stacking context their absolutely-positioned children need. */
+  .report-qa-panel {
+    position: relative;
   }
 
   .report-qa-chat-panel {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-color: hsl(var(--brand) / 0.34) !important;
-    background:
-      radial-gradient(circle at 78% -12%, hsl(var(--brand) / 0.13), transparent 22rem),
-      radial-gradient(circle at 4% 42%, hsl(var(--brand) / 0.08), transparent 19rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.085), hsl(0 0% 100% / 0.027)),
-      hsl(var(--card) / 0.97) !important;
-    box-shadow:
-      0 32px 90px hsl(0 0% 0% / 0.46),
-      0 0 0 1px hsl(var(--brand) / 0.08),
-      inset 0 1px 0 hsl(0 0% 100% / 0.09) !important;
-  }
-
-  .report-qa-chat-panel::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      linear-gradient(90deg, transparent, hsl(var(--brand) / 0.08), transparent) 0 0 / 100% 1px no-repeat,
-      radial-gradient(circle at 50% 0%, hsl(var(--brand) / 0.08), transparent 26rem);
   }
 
   .report-qa-chat-panel > * {
@@ -1752,20 +1687,27 @@
     z-index: 1;
   }
 
-  .report-qa-chat-title-icon {
-    border: 1px solid hsl(var(--brand) / 0.28);
-    background: linear-gradient(135deg, hsl(var(--brand) / 0.22), hsl(var(--brand) / 0.07));
+  .report-qa-chat-header,
+  .report-qa-reports-header {
+    border-bottom: 1px solid var(--glass-stroke);
+  }
+
+  /* Icon tiles — one tint, one weight, used for every icon that sits
+     next to a heading on this page. */
+  .report-qa-chat-title-icon,
+  .report-qa-reports-icon,
+  .report-qa-upload-icon {
+    border: 1px solid hsl(var(--primary) / 0.22);
+    background: hsl(var(--primary) / 0.1);
     color: hsl(var(--primary));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.1), 0 12px 28px hsl(var(--brand) / 0.18);
   }
 
   .report-qa-chat-title {
     color: hsl(var(--foreground));
-    text-shadow: 0 1px 0 hsl(0 0% 0% / 0.28);
   }
 
   .report-qa-chat-subtitle {
-    color: hsl(var(--muted-foreground) / 0.92);
+    color: hsl(var(--muted-foreground));
     line-height: 1.45;
   }
 
@@ -1773,148 +1715,90 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden;
-    padding-top: 0.9rem;
-    background: linear-gradient(180deg, hsl(0 0% 0% / 0.06), transparent 7rem);
+    padding-top: 0.75rem;
   }
 
+  /* The conversation is a well pressed into the panel, not another
+     floating card: recessed fill, hairline edge, no blur (it is inside
+     a pane that is already refracting). */
   .report-qa-message-area {
     position: relative;
     flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid hsl(var(--brand) / 0.18);
-    border-radius: 1.35rem;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 1rem;
     padding: clamp(0.75rem, 1.4vw, 1rem) clamp(0.35rem, 0.8vw, 0.65rem) clamp(0.75rem, 1.4vw, 1rem) clamp(0.75rem, 1.4vw, 1rem);
-    background:
-      radial-gradient(circle at 16% 0%, hsl(var(--brand) / 0.08), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.04), hsl(0 0% 100% / 0.018));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.055),
-      inset 0 -1px 0 hsl(0 0% 0% / 0.18);
+    background-color: var(--glass-fill-subtle);
+    box-shadow: inset 0 1px 2px 0 hsl(var(--foreground) / 0.05);
   }
 
+  /* Toolbars use the rail recipe: same bar language as the tab rails and
+     filter bars on the rest of the dashboard. */
   .report-qa-toolbar {
     max-width: 100%;
-    border: 1px solid hsl(var(--brand) / 0.28);
-    border-radius: 1.25rem;
+    gap: 0.35rem;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.875rem;
     padding: 0.35rem;
-    background:
-      radial-gradient(circle at 8% 0%, hsl(var(--brand) / 0.12), transparent 14rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.085), hsl(0 0% 100% / 0.032));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.075),
-      0 14px 34px hsl(0 0% 0% / 0.16);
+    background-color: var(--glass-fill-subtle);
   }
 
   .report-qa-toolbar-control {
     min-height: 2rem;
-    border: 1px solid hsl(var(--brand) / 0.28) !important;
-    border-radius: 0.875rem !important;
-    background: hsl(var(--card) / 0.62) !important;
-    color: hsl(var(--foreground) / 0.88) !important;
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.055);
-    transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+    min-width: 2.25rem;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.625rem;
+    background-color: var(--glass-fill);
+    color: hsl(var(--muted-foreground));
+    transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
   }
 
   .report-qa-toolbar-control:hover {
-    border-color: hsl(var(--brand) / 0.52) !important;
-    background: hsl(var(--brand) / 0.12) !important;
-    color: hsl(var(--brand)) !important;
-    box-shadow: 0 10px 24px hsl(var(--brand) / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
-  .report-qa-toolbar-control:focus-visible {
-    outline: 2px solid hsl(var(--brand) / 0.78) !important;
-    outline-offset: 2px;
+    border-color: var(--glass-stroke-strong);
+    background-color: var(--glass-fill-hover);
+    color: hsl(var(--foreground));
   }
 
   .report-qa-toolbar-control[data-active="true"],
   .report-qa-toolbar-control[aria-pressed="true"] {
-    border-color: hsl(var(--brand) / 0.62) !important;
-    background: linear-gradient(135deg, hsl(var(--brand) / 0.24), hsl(var(--brand) / 0.1)) !important;
-    color: hsl(var(--brand)) !important;
+    border-color: var(--glass-stroke-accent);
+    background-color: var(--glass-fill-accent);
+    color: hsl(var(--dashboard-primary-strong, var(--primary)));
   }
 
   .report-qa-toolbar-control:disabled {
     cursor: not-allowed;
-    border-color: hsl(var(--brand) / 0.18) !important;
-    background: hsl(var(--card) / 0.38) !important;
-    color: hsl(var(--muted-foreground) / 0.48) !important;
+    color: hsl(var(--muted-foreground) / 0.5);
     opacity: 1;
     box-shadow: none;
   }
 
-  .report-qa-toolbar button:hover,
-  .report-qa-toolbar [role="button"]:hover {
-    transform: translateY(-1px);
-  }
-
-  .report-qa-reports-panel {
-    background:
-      radial-gradient(circle at 20% 0%, hsl(var(--brand) / 0.13), transparent 19rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(0 0% 100% / 0.025)),
-      hsl(var(--card) / 0.96) !important;
-  }
-
-  .report-qa-reports-header {
-    border-bottom: 1px solid hsl(var(--brand) / 0.2);
-    background: linear-gradient(180deg, hsl(var(--brand) / 0.075), transparent);
-  }
-
-  .report-qa-reports-icon,
-  .report-qa-upload-icon {
-    border: 1px solid hsl(var(--brand) / 0.24);
-    background: linear-gradient(135deg, hsl(var(--brand) / 0.22), hsl(var(--brand) / 0.07));
-    color: hsl(var(--primary));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.08), 0 10px 24px hsl(var(--brand) / 0.18);
-  }
-
-  .report-qa-library-button {
-    box-shadow: 0 10px 22px hsl(var(--brand) / 0.12), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
-  .report-qa-library-button:hover {
-    box-shadow: 0 0 0 1px hsl(var(--brand) / 0.22), 0 14px 30px hsl(var(--brand) / 0.2);
-    transform: translateY(-1px);
-  }
-
   .report-qa-panel-section {
-    border: 1px solid hsl(var(--brand) / 0.18);
-    border-radius: 1rem;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.875rem;
     padding: 0.75rem;
-    background: hsl(0 0% 100% / 0.025);
+    background-color: var(--glass-fill-subtle);
   }
 
+  /* The dropzone is the one surface that has to advertise itself, so it
+     keeps a dashed edge and a tint — but it is a recessed well, not a
+     glowing slab, and its states are the semantic colours the rest of
+     the app uses for the same meanings. */
   .report-qa-dropzone {
     position: relative;
-    min-height: clamp(11rem, 18vh, 14rem);
+    min-height: clamp(9rem, 15vh, 11.5rem);
     width: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    border-color: hsl(var(--brand) / 0.46) !important;
-    background:
-      radial-gradient(circle at 50% 0%, hsl(var(--brand) / 0.18), transparent 12rem),
-      linear-gradient(145deg, hsl(var(--brand) / 0.13), hsl(var(--card) / 0.35) 48%, hsl(var(--brand) / 0.06)),
-      hsl(var(--card) / 0.78);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.08),
-      inset 0 0 0 1px hsl(var(--brand) / 0.08),
-      0 16px 36px hsl(0 0% 0% / 0.18);
-  }
-
-  .report-qa-dropzone::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(90deg, transparent, hsl(var(--brand) / 0.12), transparent),
-      radial-gradient(circle at 18% 20%, hsl(var(--brand) / 0.13), transparent 8rem);
-    opacity: 0;
-    transition: opacity 180ms ease;
-    pointer-events: none;
+    border-style: dashed;
+    border-color: hsl(var(--primary) / 0.35);
+    border-radius: 1rem;
+    background-color: var(--glass-fill-subtle);
+    box-shadow: inset 0 1px 2px 0 hsl(var(--foreground) / 0.05);
   }
 
   .report-qa-dropzone > * {
@@ -1924,97 +1808,60 @@
 
   .report-qa-dropzone:hover,
   .report-qa-dropzone:focus-visible {
-    border-color: hsl(var(--brand) / 0.78) !important;
-    box-shadow:
-      0 0 0 1px hsl(var(--brand) / 0.24),
-      0 0 34px hsl(var(--brand) / 0.18),
-      0 18px 42px hsl(0 0% 0% / 0.24),
-      inset 0 1px 0 hsl(0 0% 100% / 0.1);
-    transform: translateY(-2px);
-  }
-
-  .report-qa-dropzone:hover::before,
-  .report-qa-dropzone:focus-visible::before {
-    opacity: 1;
+    border-color: hsl(var(--primary) / 0.6);
+    background-color: var(--glass-fill-hover);
   }
 
   .report-qa-dropzone:focus-visible {
-    outline: 2px solid hsl(var(--brand) / 0.92);
-    outline-offset: 3px;
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 
   .report-qa-dropzone.is-drag-over {
-    border-color: hsl(var(--brand) / 0.95) !important;
-    background:
-      radial-gradient(circle at 50% 0%, hsl(var(--brand) / 0.26), transparent 13rem),
-      linear-gradient(145deg, hsl(var(--brand) / 0.18), hsl(var(--card) / 0.28) 45%, hsl(var(--brand) / 0.1)),
-      hsl(var(--card) / 0.84);
-    box-shadow:
-      0 0 0 1px hsl(var(--brand) / 0.42),
-      0 0 48px hsl(var(--brand) / 0.32),
-      0 20px 50px hsl(0 0% 0% / 0.28),
-      inset 0 1px 0 hsl(0 0% 100% / 0.12);
-    transform: translateY(-2px) scale(1.01);
-  }
-
-  .report-qa-dropzone.is-drag-over::before {
-    opacity: 1;
+    border-color: hsl(var(--primary));
+    background-color: var(--glass-fill-accent);
   }
 
   .report-qa-dropzone.is-processing {
-    border-color: hsl(var(--warning) / 0.78) !important;
-    box-shadow: 0 0 34px hsl(var(--warning) / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+    border-color: hsl(var(--warning) / 0.55);
   }
 
   .report-qa-dropzone.is-ready {
-    border-color: hsl(var(--success) / 0.5) !important;
+    border-color: hsl(var(--success) / 0.5);
   }
 
   .report-qa-dropzone.is-error {
-    border-color: hsl(var(--destructive) / 0.72) !important;
-    box-shadow: 0 0 30px hsl(var(--destructive) / 0.13), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+    border-color: hsl(var(--destructive) / 0.6);
+  }
+
+  .report-qa-dropzone .report-qa-upload-icon {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.875rem;
   }
 
   .report-qa-empty-docs {
-    border-color: hsl(var(--brand) / 0.2);
-    background: linear-gradient(135deg, hsl(var(--brand) / 0.07), hsl(0 0% 100% / 0.025));
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
   }
 
   .report-qa-report-list {
-    border-radius: 1rem;
+    border-radius: 0.875rem;
   }
 
   .report-qa-report-item {
-    background: linear-gradient(135deg, hsl(0 0% 100% / 0.045), hsl(0 0% 100% / 0.018));
+    background-color: var(--glass-fill-subtle);
   }
 
   .report-qa-report-item:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 12px 28px hsl(0 0% 0% / 0.22);
+    background-color: var(--glass-fill-hover);
   }
 
   .report-qa-suggestions {
     position: relative;
     overflow: hidden;
-    border-color: hsl(var(--brand) / 0.3) !important;
-    background:
-      radial-gradient(circle at 12% 0%, hsl(var(--brand) / 0.16), transparent 34%),
-      linear-gradient(135deg, hsl(var(--brand) / 0.075), hsl(0 0% 100% / 0.035) 52%, hsl(0 0% 100% / 0.02));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.08), 0 14px 30px hsl(0 0% 0% / 0.08);
-  }
-
-  .report-qa-suggestions::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(90deg, hsl(var(--brand) / 0.18), transparent 42%);
-    opacity: 0;
-    transition: opacity 180ms ease;
-  }
-
-  .report-qa-suggestions[data-state='open']::before {
-    opacity: 1;
+    border: 1px solid var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
   }
 
   .report-qa-suggestions-trigger,
@@ -2026,108 +1873,56 @@
 
   .report-qa-suggestion-chip {
     min-height: 2rem;
-    border-color: hsl(var(--brand) / 0.36);
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.035));
+    border-radius: 0.625rem;
+    padding: 0.45rem 0.7rem;
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill);
     color: hsl(var(--foreground));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.08), 0 5px 14px hsl(0 0% 0% / 0.06);
   }
 
   .report-qa-suggestion-chip:hover {
-    border-color: hsl(var(--brand) / 0.72);
-    background: linear-gradient(180deg, hsl(var(--brand) / 0.16), hsl(var(--brand) / 0.06));
-    transform: translateY(-1px);
-    box-shadow: 0 12px 24px hsl(var(--brand) / 0.16), inset 0 1px 0 hsl(0 0% 100% / 0.1);
+    border-color: var(--glass-stroke-accent);
+    background-color: var(--glass-fill-accent);
   }
 
-  .report-qa-suggestion-chip:active {
-    transform: translateY(0);
-    box-shadow: 0 6px 14px hsl(var(--brand) / 0.12), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
+  /* ── Empty state ─────────────────────────────────────────────────
+     Was a 36rem card with a double border, a glow ring and a haloed
+     icon. It is now the same empty state the rest of the dashboard
+     shows: one tile, a line, a helper, an optional cue. */
   .report-qa-empty-state {
     min-height: 100%;
   }
 
   .report-qa-empty-card {
     position: relative;
-    width: min(100%, 32rem);
-    max-width: 32rem;
-    overflow: hidden;
-    border: 1px solid hsl(var(--brand) / 0.34);
-    border-radius: clamp(1.5rem, 3vw, 2rem);
-    padding: clamp(1.5rem, 4vw, 2.75rem);
-    background:
-      radial-gradient(circle at 50% 0%, hsl(var(--brand) / 0.18), transparent 42%),
-      radial-gradient(circle at 8% 88%, hsl(var(--brand) / 0.09), transparent 30%),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.035));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.1),
-      0 22px 58px hsl(0 0% 0% / 0.18);
-  }
-
-  .report-qa-empty-card::before {
-    content: '';
-    position: absolute;
-    inset: 0.75rem;
-    pointer-events: none;
-    border: 1px solid hsl(var(--brand) / 0.12);
-    border-radius: calc(clamp(1.5rem, 3vw, 2rem) - 0.45rem);
-  }
-
-  .report-qa-empty-card::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 1.15rem;
-    width: 8rem;
-    height: 1px;
-    pointer-events: none;
-    background: linear-gradient(90deg, transparent, hsl(var(--brand) / 0.5), transparent);
-    transform: translateX(-50%);
-  }
-
-  .report-qa-empty-card > * {
-    position: relative;
-    z-index: 1;
+    width: min(100%, 30rem);
+    max-width: 30rem;
+    border-radius: 1rem;
+    padding: clamp(1.25rem, 3vw, 2rem);
   }
 
   .report-qa-empty-icon-wrap {
     position: relative;
     display: grid;
-    width: clamp(4.25rem, 12vw, 5.5rem);
-    height: clamp(4.25rem, 12vw, 5.5rem);
+    width: 3.5rem;
+    height: 3.5rem;
     margin: 0 auto;
     place-items: center;
-    border: 1px solid hsl(var(--brand) / 0.3);
-    border-radius: 1.5rem;
-    background:
-      radial-gradient(circle at 35% 25%, hsl(var(--brand) / 0.32), transparent 46%),
-      linear-gradient(145deg, hsl(var(--brand) / 0.15), hsl(0 0% 100% / 0.05));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.12),
-      0 16px 30px hsl(var(--brand) / 0.18);
+    border: 1px solid hsl(var(--primary) / 0.22);
+    border-radius: 0.875rem;
+    background: hsl(var(--primary) / 0.1);
   }
 
   .report-qa-empty-icon {
-    width: clamp(2rem, 6vw, 2.6rem);
-    height: clamp(2rem, 6vw, 2.6rem);
-    color: hsl(var(--brand) / 0.82);
-    filter: drop-shadow(0 8px 18px hsl(var(--brand) / 0.22));
-  }
-
-  .report-qa-empty-sparkle {
-    position: absolute;
-    right: -0.35rem;
-    top: -0.3rem;
-    width: 1.35rem;
-    height: 1.35rem;
-    color: hsl(var(--brand) / 0.78);
+    width: 1.6rem;
+    height: 1.6rem;
+    color: hsl(var(--primary));
   }
 
   .report-qa-empty-title {
     color: hsl(var(--foreground));
-    font-size: clamp(1rem, 2.2vw, 1.2rem);
-    font-weight: 700;
+    font-size: 1rem;
+    font-weight: 600;
     letter-spacing: -0.01em;
   }
 
@@ -2135,7 +1930,7 @@
     max-width: 25rem;
     margin: 0 auto;
     color: hsl(var(--muted-foreground));
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     line-height: 1.6;
   }
 
@@ -2143,21 +1938,24 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.45rem;
-    border: 1px solid hsl(var(--brand) / 0.28);
+    gap: 0.4rem;
+    border: 1px solid var(--glass-stroke);
     border-radius: 999px;
-    padding: 0.45rem 0.8rem;
-    color: hsl(var(--brand) / 0.9);
-    background: linear-gradient(180deg, hsl(var(--brand) / 0.12), hsl(0 0% 100% / 0.035));
+    padding: 0.35rem 0.75rem;
+    color: hsl(var(--muted-foreground));
+    background-color: var(--glass-fill-subtle);
     font-size: 0.75rem;
     font-weight: 600;
   }
 
+  /* ── Message content ─────────────────────────────────────────────
+     Widths, wrapping and prose rhythm — unchanged behaviour, minus the
+     gradients the bubbles used to carry. */
   .report-qa-chat-panel .qa-chat-bubble-assistant {
     width: min(96%, 70rem);
     max-width: min(96%, 70rem) !important;
-    border-color: hsl(var(--brand) / 0.25);
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.075), hsl(0 0% 100% / 0.035));
+    border: 1px solid var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
   }
 
   .report-qa-chat-panel .report-qa-message-frame:has(.qa-chat-bubble-assistant) {
@@ -2185,101 +1983,133 @@
     overflow-x: auto;
   }
 
+  /* The one place the brand still fills a shape: the user's own turn,
+     flat in the primary colour rather than a gradient with a halo. */
   .report-qa-chat-panel .qa-chat-bubble-user {
     max-width: 80%;
-    background: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-700)));
-    box-shadow: 0 12px 30px hsl(var(--brand) / 0.26);
+    border: 1px solid hsl(var(--primary) / 0.45);
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
   }
 
+  /* ── Composer ────────────────────────────────────────────────────── */
   .report-qa-composer {
     position: relative;
-    border-color: hsl(var(--brand) / 0.28) !important;
-    margin-inline: -0.35rem;
-    padding: 1rem 0.45rem 0.15rem;
-    background:
-      radial-gradient(circle at 12% 0%, hsl(var(--brand) / 0.12), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.055), hsl(var(--card) / 0.28));
-  }
-
-  .report-qa-composer::before {
-    content: '';
-    position: absolute;
-    inset: 0.55rem 0.25rem auto;
-    height: 1px;
-    pointer-events: none;
-    background: linear-gradient(90deg, transparent, hsl(var(--brand) / 0.34), transparent);
+    max-height: min(12.5rem, 32dvh);
+    margin-inline: -0.1rem;
+    border-top: 1px solid var(--glass-stroke);
+    border-radius: 0;
+    padding: 0.75rem 0.65rem 0.15rem;
   }
 
   .report-qa-composer textarea,
   .report-qa-composer-input {
-    color: hsl(var(--foreground) / 0.96);
-    border: 1px solid hsl(var(--brand) / 0.32);
-    background:
-      linear-gradient(180deg, hsl(var(--card) / 0.96), hsl(var(--card) / 0.94));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.08),
-      inset 0 -1px 0 hsl(0 0% 0% / 0.18),
-      0 16px 34px hsl(0 0% 0% / 0.18);
-    transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease, opacity 180ms ease;
+    max-height: 7rem;
+    color: hsl(var(--foreground));
+    border: 1px solid var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
+    box-shadow: inset 0 1px 2px 0 hsl(var(--foreground) / 0.05);
+    transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
   }
 
   .report-qa-composer textarea::placeholder,
   .report-qa-composer-input::placeholder {
-    color: hsl(var(--muted-foreground) / 0.68);
-    letter-spacing: 0.005em;
+    color: hsl(var(--muted-foreground) / 0.8);
+  }
+
+  .report-qa-composer textarea:focus-visible,
+  .report-qa-composer-input:focus-visible {
+    outline: none;
+    border-color: var(--glass-stroke-accent);
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.22),
+      inset 0 1px 2px 0 hsl(var(--foreground) / 0.05);
   }
 
   .report-qa-composer textarea:disabled,
   .report-qa-composer-input:disabled {
     cursor: not-allowed;
-    border-color: hsl(var(--brand) / 0.2);
-    background: linear-gradient(180deg, hsl(var(--card) / 0.72), hsl(var(--card) / 0.7));
     opacity: 0.72;
   }
 
   .report-qa-composer-control {
-    border-radius: 1rem;
-    border: 1px solid hsl(var(--brand) / 0.28);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.1), 0 12px 26px hsl(0 0% 0% / 0.16);
-    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease, background 160ms ease, opacity 160ms ease;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.75rem;
+    background-color: var(--glass-fill);
+    transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
   }
 
   .report-qa-composer-control:not(:disabled):hover {
-    transform: translateY(-1px);
-    border-color: hsl(var(--brand) / 0.52);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.14), 0 16px 32px hsl(0 0% 0% / 0.2), 0 0 18px hsl(var(--brand) / 0.12);
+    border-color: var(--glass-stroke-strong);
+    background-color: var(--glass-fill-hover);
   }
 
   .report-qa-mic-button,
   .report-qa-composer-control-secondary {
-    color: hsl(var(--brand) / 0.94);
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.035));
+    color: hsl(var(--muted-foreground));
+  }
+
+  .report-qa-mic-button:not(:disabled):hover,
+  .report-qa-composer-control-secondary:not(:disabled):hover {
+    color: hsl(var(--foreground));
   }
 
   .report-qa-send-button {
     color: hsl(var(--primary-foreground));
-    border-color: hsl(var(--brand) / 0.58);
-    background: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-700)));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.28), 0 16px 34px hsl(var(--brand) / 0.3), 0 0 24px hsl(var(--brand) / 0.18);
+    border-color: hsl(var(--primary) / 0.45);
+    background-color: hsl(var(--primary));
+  }
+
+  .report-qa-send-button:not(:disabled):hover {
+    border-color: hsl(var(--primary));
+    background-color: hsl(var(--primary-hover, var(--primary)));
   }
 
   .report-qa-send-button:disabled,
   .report-qa-composer-control:disabled {
-    transform: none;
-    color: hsl(var(--muted-foreground) / 0.42);
-    border-color: hsl(var(--brand) / 0.18);
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.045), hsl(0 0% 100% / 0.02));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.05);
+    color: hsl(var(--muted-foreground) / 0.5);
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
+    box-shadow: none;
     opacity: 0.62;
+  }
+
+  .report-qa-citations {
+    border-color: var(--glass-stroke);
+    border-radius: 0.875rem;
+    padding: 0.75rem;
+    background-color: var(--glass-fill-subtle);
+  }
+
+  .report-qa-citations button,
+  .report-qa-citations a {
+    border-radius: 999px;
+  }
+
+  .report-qa-message-actions {
+    border-color: var(--glass-stroke) !important;
+  }
+
+  .report-qa-streaming-state {
+    margin-top: 0.25rem;
+  }
+
+  .report-qa-streaming-state > div:last-child {
+    max-width: min(80%, 58rem);
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.875rem;
+    background-color: var(--glass-fill-subtle);
+  }
+
+  .report-qa-streaming-state p {
+    max-height: min(44vh, 32rem);
+    overflow: auto;
+    line-height: 1.7;
+    color: hsl(var(--foreground) / 0.92);
   }
 
   @media (max-width: 1023px) {
     .report-qa-premium {
       overscroll-behavior: contain;
-    }
-
-    .report-qa-hero {
-      border-radius: 1rem;
     }
 
     .report-qa-header-actions > button,
@@ -2319,13 +2149,9 @@
   }
 
   @media (max-width: 640px) {
-    .report-qa-premium {
-      border-radius: 0;
-    }
-
     .report-qa-message-area {
       padding: 0.65rem 0.15rem 0.65rem 0.65rem;
-      border-radius: 1rem;
+      border-radius: 0.875rem;
     }
 
     .report-qa-message-stack {
@@ -2343,7 +2169,7 @@
     }
 
     .report-qa-dropzone {
-      min-height: 9rem;
+      min-height: 8rem;
     }
 
     .report-qa-composer {
@@ -2358,8 +2184,7 @@
     }
   }
 
-
-  /* Phase 9 — premium chat message presentation for Report Q&A only. */
+  /* ── Chat message presentation ───────────────────────────────────── */
   .report-qa-message-stack {
     padding-right: 0.45rem;
   }
@@ -2373,13 +2198,12 @@
   }
 
   .report-qa-message-avatar {
-    border: 1px solid hsl(var(--brand) / 0.24);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.1), 0 10px 24px hsl(0 0% 0% / 0.16);
+    border: 1px solid var(--glass-stroke);
   }
 
   .report-qa-message-avatar-user {
-    background: linear-gradient(135deg, hsl(var(--brand) / 0.7), hsl(var(--card) / 0.86)) !important;
-    color: hsl(var(--brand));
+    background-color: hsl(var(--primary) / 0.14) !important;
+    color: hsl(var(--dashboard-primary-strong, var(--primary)));
   }
 
   .report-qa-message-bubble {
@@ -2387,42 +2211,11 @@
     overflow: hidden;
     line-height: 1.65;
     letter-spacing: -0.003em;
-    box-shadow: 0 16px 38px hsl(0 0% 0% / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
-  .report-qa-message-bubble::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.08), transparent 32%);
-    opacity: 0.7;
-  }
-
-  .report-qa-message-bubble > * {
-    position: relative;
-    z-index: 1;
   }
 
   .report-qa-message-meta {
     line-height: 1.2;
     letter-spacing: 0.01em;
-  }
-
-  .report-qa-chat-panel .qa-chat-bubble-assistant {
-    border-color: hsl(var(--brand) / 0.32);
-    background:
-      radial-gradient(circle at 0% 0%, hsl(var(--brand) / 0.08), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.085), hsl(0 0% 100% / 0.034));
-  }
-
-  .report-qa-chat-panel .qa-chat-bubble-user {
-    border: 1px solid hsl(var(--brand) / 0.34);
-    background:
-      radial-gradient(circle at 0% 0%, hsl(0 0% 100% / 0.22), transparent 14rem),
-      linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-700)));
-    color: hsl(var(--brand-foreground));
-    box-shadow: 0 16px 34px hsl(var(--brand) / 0.3), inset 0 1px 0 hsl(0 0% 100% / 0.25);
   }
 
   .report-qa-assistant-content {
@@ -2443,8 +2236,19 @@
     margin-bottom: 0;
   }
 
+  /* Tailwind's preflight strips list markers, so a model's bulleted answer
+     used to render as unmarked indented lines. */
   .report-qa-assistant-content :where(ul, ol) {
     padding-left: 1.25rem;
+    list-style-position: outside;
+  }
+
+  .report-qa-assistant-content :where(ul) {
+    list-style-type: disc;
+  }
+
+  .report-qa-assistant-content :where(ol) {
+    list-style-type: decimal;
   }
 
   .report-qa-assistant-content :where(li) {
@@ -2461,28 +2265,28 @@
   }
 
   .report-qa-assistant-content :where(blockquote) {
-    border-left: 3px solid hsl(var(--brand) / 0.55);
-    border-radius: 0.6rem;
+    border-left: 3px solid hsl(var(--primary) / 0.45);
+    border-radius: 0.5rem;
     padding: 0.55rem 0.8rem;
-    background: hsl(var(--brand) / 0.08);
+    background: hsl(var(--primary) / 0.06);
     color: hsl(var(--foreground) / 0.82);
   }
 
   .report-qa-assistant-content :where(code) {
-    border: 1px solid hsl(var(--brand) / 0.22);
-    border-radius: 0.4rem;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.375rem;
     padding: 0.08rem 0.32rem;
-    background: hsl(var(--card) / 0.5);
+    background-color: var(--glass-fill-subtle);
     font-size: 0.88em;
   }
 
   .report-qa-assistant-content :where(pre) {
     max-width: 100%;
     overflow-x: auto;
-    border: 1px solid hsl(var(--brand) / 0.22);
-    border-radius: 0.9rem;
+    border: 1px solid var(--glass-stroke);
+    border-radius: 0.75rem;
     padding: 0.85rem;
-    background: hsl(var(--card) / 0.72);
+    background-color: var(--glass-fill-subtle);
   }
 
   .report-qa-assistant-content :where(pre code) {
@@ -2502,142 +2306,47 @@
     line-height: 1.6;
     font-weight: 500;
   }
-
-  .report-qa-citations {
-    border-color: hsl(var(--brand) / 0.22);
-    border-radius: 0.95rem;
-    padding: 0.75rem;
-    background: linear-gradient(135deg, hsl(var(--brand) / 0.08), hsl(0 0% 100% / 0.025));
-  }
-
-  .report-qa-citations button,
-  .report-qa-citations a {
-    border-radius: 999px;
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
-  .report-qa-message-actions {
-    border-color: hsl(var(--brand) / 0.2) !important;
-  }
-
-  .report-qa-streaming-state {
-    margin-top: 0.25rem;
-  }
-
-  .report-qa-streaming-state > div:last-child {
-    max-width: min(80%, 58rem);
-    border: 1px solid hsl(var(--brand) / 0.28);
-    border-radius: 1rem;
-    background:
-      radial-gradient(circle at 0% 0%, hsl(var(--brand) / 0.09), transparent 15rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.08), hsl(0 0% 100% / 0.032));
-    box-shadow: 0 14px 34px hsl(0 0% 0% / 0.16), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
-  .report-qa-streaming-state p {
-    max-height: min(44vh, 32rem);
-    overflow: auto;
-    line-height: 1.7;
-    color: hsl(var(--foreground) / 0.92);
-  }
-
-  .report-qa-chat-panel [class*='bg-destructive\/10'] {
-    border-color: hsl(var(--destructive) / 0.34) !important;
-    background: linear-gradient(135deg, hsl(var(--destructive) / 0.14), hsl(0 0% 100% / 0.035)) !important;
-    box-shadow: 0 12px 30px hsl(var(--destructive) / 0.14), inset 0 1px 0 hsl(0 0% 100% / 0.08);
-  }
-
-  .report-qa-composer textarea:focus-visible,
-  .report-qa-composer-input:focus-visible {
-    border-color: hsl(var(--brand) / 0.72);
-    box-shadow:
-      0 0 0 1px hsl(var(--brand) / 0.52),
-      0 0 0 5px hsl(var(--brand) / 0.1),
-      0 0 30px hsl(var(--brand) / 0.18),
-      inset 0 1px 0 hsl(0 0% 100% / 0.1);
-  }
 }
 
 @layer components {
-  /* Phase 14 — restrained Report Q&A micro-interactions only. */
+  /* Interaction — one focus ring, one press response, no lift.
+     Panels are containers and do not move; only the things you can
+     actually click respond to being clicked. */
   .report-qa-premium :where(button, [role='button'], a, input, textarea) {
     -webkit-tap-highlight-color: transparent;
   }
 
   .report-qa-premium :where(button, [role='button'], a, input, textarea, [tabindex]):focus-visible {
-    outline: 2px solid hsl(var(--brand) / 0.86);
-    outline-offset: 3px;
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 
-  .report-qa-panel {
-    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
-  }
-
-  .report-qa-panel:hover {
-    border-color: hsl(var(--brand) / 0.38) !important;
-    box-shadow:
-      0 30px 82px hsl(0 0% 0% / 0.44),
-      0 0 0 1px hsl(var(--brand) / 0.1),
-      inset 0 1px 0 hsl(0 0% 100% / 0.085) !important;
-    transform: translateY(-1px);
-  }
-
-  .report-qa-new-chat,
-  .report-qa-history-button,
-  .report-qa-icon-button,
-  .report-qa-library-button {
-    transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
-  }
-
-  .report-qa-new-chat:active,
-  .report-qa-history-button:active,
-  .report-qa-icon-button:active,
-  .report-qa-library-button:active,
-  .report-qa-toolbar-control:active,
-  .report-qa-composer-control:not(:disabled):active {
-    transform: translateY(0) scale(0.985);
-  }
-
-  .report-qa-dropzone {
-    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
-  }
-
-  .report-qa-dropzone .report-qa-upload-icon {
-    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
-  }
-
-  .report-qa-dropzone:hover .report-qa-upload-icon,
-  .report-qa-dropzone:focus-visible .report-qa-upload-icon,
-  .report-qa-dropzone.is-drag-over .report-qa-upload-icon {
-    transform: translateY(-1px) scale(1.025);
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.12), 0 14px 30px hsl(var(--brand) / 0.24), 0 0 24px hsl(var(--brand) / 0.14);
+  .report-qa-toolbar-control:focus-visible,
+  .report-qa-suggestion-chip:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 
   .report-qa-report-item,
   .report-qa-library-row,
-  .report-qa-history-row {
-    transition: transform 170ms ease, border-color 170ms ease, background 170ms ease, box-shadow 170ms ease, opacity 170ms ease;
+  .report-qa-history-row,
+  .report-qa-suggestion-chip,
+  .report-qa-dropzone {
+    transition: border-color 170ms ease, background-color 170ms ease, color 170ms ease;
   }
 
   .report-qa-library-row:not(:disabled):hover,
   .report-qa-history-row:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 14px 30px hsl(0 0% 0% / 0.18), 0 0 0 1px hsl(var(--brand) / 0.08);
+    background-color: var(--glass-fill-hover);
   }
 
+  .report-qa-toolbar-control:active,
+  .report-qa-composer-control:not(:disabled):active,
+  .report-qa-suggestion-chip:active,
+  .report-qa-report-item:active,
   .report-qa-library-row:not(:disabled):active,
-  .report-qa-history-row:active,
-  .report-qa-report-item:active {
-    transform: translateY(0) scale(0.995);
-  }
-
-  .report-qa-suggestions {
-    transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
-  }
-
-  .report-qa-suggestions:hover {
-    border-color: hsl(var(--brand) / 0.42) !important;
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.09), 0 18px 38px hsl(0 0% 0% / 0.13);
+  .report-qa-history-row:active {
+    transform: scale(0.99);
   }
 
   .report-qa-suggestions [data-radix-collapsible-content] {
@@ -2645,47 +2354,18 @@
     animation: reportQaCollapseIn 180ms ease-out;
   }
 
-  .report-qa-suggestion-chip {
-    will-change: transform;
-  }
-
-  .report-qa-suggestion-chip:focus-visible {
-    box-shadow: 0 0 0 1px hsl(var(--brand) / 0.5), 0 0 0 5px hsl(var(--brand) / 0.12), 0 12px 24px hsl(var(--brand) / 0.16);
-  }
-
-  .report-qa-composer:focus-within {
-    background:
-      radial-gradient(circle at 12% 0%, hsl(var(--brand) / 0.16), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.065), hsl(var(--card) / 0.3));
-  }
-
-  .report-qa-send-button:not(:disabled):hover {
-    border-color: hsl(var(--brand) / 0.72);
-    background: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-700)));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.32), 0 18px 38px hsl(var(--brand) / 0.36), 0 0 30px hsl(var(--brand) / 0.22);
-  }
-
   .report-qa-message-row {
-    animation: reportQaMessageIn 220ms ease-out both;
-  }
-
-  .report-qa-message-bubble {
-    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease, background 180ms ease;
-  }
-
-  .report-qa-message-bubble:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 18px 38px hsl(0 0% 0% / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.08);
+    animation: reportQaMessageIn 200ms ease-out both;
   }
 
   @keyframes reportQaMessageIn {
     from {
       opacity: 0;
-      transform: translateY(6px) scale(0.995);
+      transform: translateY(4px);
     }
     to {
       opacity: 1;
-      transform: translateY(0) scale(1);
+      transform: translateY(0);
     }
   }
 
@@ -2710,190 +2390,14 @@
       transition-duration: 1ms !important;
     }
 
-    .report-qa-panel:hover,
-    .report-qa-dropzone:hover,
-    .report-qa-dropzone:focus-visible,
-    .report-qa-dropzone.is-drag-over,
-    .report-qa-message-bubble:hover,
-    .report-qa-library-row:not(:disabled):hover,
-    .report-qa-history-row:hover,
-    .report-qa-report-item:hover {
+    .report-qa-toolbar-control:active,
+    .report-qa-composer-control:not(:disabled):active,
+    .report-qa-suggestion-chip:active,
+    .report-qa-report-item:active,
+    .report-qa-library-row:not(:disabled):active,
+    .report-qa-history-row:active {
       transform: none !important;
     }
-  }
-}
-
-@layer components {
-  /* Phase 16 — final premium SaaS polish for Report Q&A only. */
-  .report-qa-premium {
-    background:
-      radial-gradient(circle at 12% 6%, hsl(var(--brand) / 0.18), transparent 30rem),
-      radial-gradient(circle at 86% 14%, hsl(var(--brand) / 0.12), transparent 24rem),
-      radial-gradient(circle at 52% 100%, hsl(var(--card) / 0.18), transparent 30rem),
-      linear-gradient(135deg, hsl(var(--background)), hsl(var(--card)) 46%, hsl(var(--background)));
-  }
-
-  .report-qa-panel {
-    border-color: hsl(var(--brand) / 0.34) !important;
-    box-shadow:
-      0 26px 74px hsl(0 0% 0% / 0.44),
-      0 0 0 1px hsl(var(--brand) / 0.07),
-      inset 0 1px 0 hsl(0 0% 100% / 0.08) !important;
-  }
-
-  .report-qa-reports-panel {
-    background:
-      radial-gradient(circle at 20% 0%, hsl(var(--brand) / 0.16), transparent 19rem),
-      radial-gradient(circle at 96% 100%, hsl(var(--brand) / 0.08), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.085), hsl(0 0% 100% / 0.028)),
-      hsl(var(--card) / 0.97) !important;
-  }
-
-  .report-qa-panel-section {
-    border-color: hsl(var(--brand) / 0.26);
-    background:
-      linear-gradient(180deg, hsl(0 0% 100% / 0.045), hsl(0 0% 100% / 0.018));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.055);
-  }
-
-  .report-qa-dropzone {
-    min-height: clamp(13.75rem, 24vh, 17.5rem);
-    border-style: dashed !important;
-    border-color: hsl(var(--brand) / 0.66) !important;
-    background:
-      radial-gradient(circle at 50% -8%, hsl(var(--brand) / 0.28), transparent 14rem),
-      radial-gradient(circle at 18% 90%, hsl(var(--brand) / 0.13), transparent 11rem),
-      linear-gradient(145deg, hsl(var(--brand) / 0.16), hsl(var(--card) / 0.42) 48%, hsl(var(--brand) / 0.09)),
-      hsl(var(--card) / 0.86);
-    box-shadow:
-      0 0 0 1px hsl(var(--brand) / 0.18),
-      0 18px 42px hsl(0 0% 0% / 0.24),
-      0 0 38px hsl(var(--brand) / 0.12),
-      inset 0 1px 0 hsl(0 0% 100% / 0.11);
-  }
-
-  .report-qa-dropzone::after {
-    content: '';
-    position: absolute;
-    inset: 0.7rem;
-    border: 1px solid hsl(var(--brand) / 0.13);
-    border-radius: 1rem;
-    pointer-events: none;
-  }
-
-  .report-qa-dropzone .report-qa-upload-icon {
-    width: 4.5rem;
-    height: 4.5rem;
-    border-radius: 1.35rem;
-    background:
-      radial-gradient(circle at 34% 20%, hsl(var(--brand) / 0.34), transparent 48%),
-      linear-gradient(145deg, hsl(var(--brand) / 0.24), hsl(var(--brand) / 0.08));
-  }
-
-  .report-qa-chat-panel {
-    box-shadow:
-      0 34px 96px hsl(0 0% 0% / 0.5),
-      0 0 0 1px hsl(var(--brand) / 0.12),
-      0 0 56px hsl(var(--brand) / 0.08),
-      inset 0 1px 0 hsl(0 0% 100% / 0.1) !important;
-  }
-
-  .report-qa-message-area {
-    border-color: hsl(var(--brand) / 0.28);
-    background:
-      radial-gradient(circle at 16% 0%, hsl(var(--brand) / 0.1), transparent 18rem),
-      radial-gradient(circle at 90% 100%, hsl(var(--brand) / 0.08), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.052), hsl(0 0% 100% / 0.02));
-  }
-
-  .report-qa-toolbar {
-    gap: 0.45rem;
-    padding: 0.45rem;
-    border-color: hsl(var(--brand) / 0.34);
-    background:
-      radial-gradient(circle at 6% 0%, hsl(var(--brand) / 0.16), transparent 14rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.1), hsl(0 0% 100% / 0.036));
-  }
-
-  .report-qa-toolbar-control {
-    min-width: 2.25rem;
-    border-radius: 0.95rem !important;
-    border-color: hsl(var(--brand) / 0.36) !important;
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.075), hsl(var(--card) / 0.66)) !important;
-  }
-
-  .report-qa-suggestions {
-    border-color: hsl(var(--brand) / 0.38) !important;
-    background:
-      radial-gradient(circle at 8% 0%, hsl(var(--brand) / 0.2), transparent 38%),
-      radial-gradient(circle at 92% 100%, hsl(var(--brand) / 0.1), transparent 34%),
-      linear-gradient(135deg, hsl(var(--brand) / 0.09), hsl(0 0% 100% / 0.045) 54%, hsl(0 0% 100% / 0.022));
-  }
-
-  .report-qa-suggestion-chip {
-    border-radius: 0.95rem;
-    padding: 0.55rem 0.75rem;
-    border-color: hsl(var(--brand) / 0.42);
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.095), hsl(0 0% 100% / 0.036));
-  }
-
-  .report-qa-empty-card {
-    width: min(100%, 36rem);
-    max-width: 36rem;
-    border-color: hsl(var(--brand) / 0.4);
-    background:
-      radial-gradient(circle at 50% -5%, hsl(var(--brand) / 0.24), transparent 44%),
-      radial-gradient(circle at 8% 88%, hsl(var(--brand) / 0.11), transparent 31%),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.095), hsl(0 0% 100% / 0.038));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.12),
-      0 28px 68px hsl(0 0% 0% / 0.24),
-      0 0 44px hsl(var(--brand) / 0.08);
-  }
-
-  .report-qa-empty-helper,
-  .report-qa-subtitle,
-  .report-qa-chat-subtitle {
-    color: hsl(var(--brand) / 0.78);
-  }
-
-  .report-qa-chat-panel .qa-chat-bubble-assistant {
-    border: 1px solid hsl(var(--brand) / 0.3);
-    background:
-      radial-gradient(circle at 0% 0%, hsl(var(--brand) / 0.08), transparent 14rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.085), hsl(0 0% 100% / 0.036));
-    box-shadow: 0 14px 34px hsl(0 0% 0% / 0.18), inset 0 1px 0 hsl(0 0% 100% / 0.075);
-  }
-
-  .report-qa-composer {
-    max-height: min(12.5rem, 32dvh);
-    margin-inline: -0.1rem;
-    border-color: hsl(var(--brand) / 0.34) !important;
-    border-radius: 1.25rem 1.25rem 0 0;
-    padding-inline: 0.65rem;
-    background:
-      radial-gradient(circle at 12% 0%, hsl(var(--brand) / 0.14), transparent 18rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(var(--card) / 0.34));
-  }
-
-  .report-qa-composer textarea,
-  .report-qa-composer-input {
-    max-height: 7rem;
-    border-color: hsl(var(--brand) / 0.42) !important;
-  }
-
-  .report-qa-composer-control {
-    border: 1px solid hsl(var(--brand) / 0.36) !important;
-    border-radius: 1rem !important;
-    background: linear-gradient(180deg, hsl(0 0% 100% / 0.08), hsl(var(--card) / 0.68)) !important;
-    color: hsl(var(--brand) / 0.92) !important;
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.075), 0 10px 24px hsl(0 0% 0% / 0.16);
-  }
-
-  .report-qa-send-button {
-    border-color: hsl(var(--brand) / 0.52) !important;
-    background: linear-gradient(135deg, hsl(var(--brand)), hsl(var(--brand-700))) !important;
-    color: hsl(var(--brand-foreground)) !important;
   }
 }
 
@@ -3243,243 +2747,30 @@
 }
 
 @layer components {
-  :root:not(.dark) .dashboard-shell {
-    background-image:
-      radial-gradient(circle at 20% 0%, hsl(var(--dashboard-primary-soft) / 0.10), transparent 22%),
-      radial-gradient(circle at 90% 20%, hsl(var(--primary) / 0.025), transparent 18%),
-      linear-gradient(180deg, hsl(var(--background)) 0%, hsl(var(--dashboard-surface-elevated)) 45%, hsl(var(--dashboard-surface-muted)) 100%);
-  }
+  /* ── Light-mode dashboard refinements ─────────────────────────────
+     Surface painting for these classes now lives in src/styles/glass.css
+     and applies to both themes. What remains here is what glass does not
+     own: navigation state, text colour, and focus affordance — the parts
+     of the light theme that are about legibility rather than material. */
 
-  :root:not(.dark) .dashboard-shell::before {
-    opacity: 0.16;
-    background-image:
-      linear-gradient(hsl(var(--dashboard-border-strong) / 0.12) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--dashboard-border-strong) / 0.1) 1px, transparent 1px);
-  }
-
-  :root:not(.dark) .dashboard-panel,
-  :root:not(.dark) .dashboard-toolbar,
-  :root:not(.dark) .dashboard-kpi-card,
-  :root:not(.dark) .dashboard-theme-card,
-  :root:not(.dark) .dashboard-theme-premium-card,
-  :root:not(.dark) .dashboard-theme-chart-card,
-  :root:not(.dark) .dashboard-page-frame {
-    border-color: #e5d8c4;
-    background: linear-gradient(145deg, #fffcf7 0%, #fbf6ea 100%);
-    box-shadow: 0 12px 30px rgba(80, 60, 20, 0.08);
-  }
-
-  :root:not(.dark) .dashboard-theme-hero {
-    border-color: rgba(214, 190, 149, 0.92);
-    background:
-      radial-gradient(circle at top right, rgba(231, 200, 115, 0.26), transparent 34%),
-      linear-gradient(135deg, #fffcf7 0%, #fbf6ea 58%, #f4ebdd 100%);
-    box-shadow: 0 18px 44px rgba(80, 60, 20, 0.1);
-  }
-
-  :root:not(.dark) .dashboard-theme-section,
-  :root:not(.dark) .dashboard-panel-muted {
-    border-color: rgba(229, 216, 196, 0.88);
-    background: linear-gradient(145deg, rgba(255, 252, 247, 0.9), rgba(247, 242, 232, 0.84));
-    box-shadow: 0 14px 34px rgba(80, 60, 20, 0.075);
-  }
-
-  :root:not(.dark) .dashboard-theme-section-accent {
-    border-color: rgba(166, 120, 0, 0.28);
-    background:
-      radial-gradient(circle at top left, rgba(231, 200, 115, 0.24), transparent 30%),
-      linear-gradient(145deg, rgba(255, 252, 247, 0.96), rgba(251, 246, 234, 0.9));
-    box-shadow: 0 16px 38px rgba(120, 85, 20, 0.1);
-  }
-
-  :root:not(.dark) .dashboard-surface-panel,
-  :root:not(.dark) .dashboard-surface-panel-strong,
-  :root:not(.dark) .dashboard-surface-control,
-  :root:not(.dark) .dashboard-empty-state,
-  :root:not(.dark) .dashboard-icon-button,
-  :root:not(.dark) .dashboard-input-control,
-  :root:not(.dark) .dashboard-mobile-nav-toggle {
-    border-color: rgba(210, 190, 160, 0.86);
-    background: rgba(255, 252, 247, 0.78);
-    box-shadow: 0 12px 28px rgba(80, 60, 20, 0.07);
-  }
-
-  :root:not(.dark) .dashboard-surface-control:hover,
-  :root:not(.dark) .dashboard-icon-button:hover,
-  :root:not(.dark) .dashboard-input-control:hover,
-  :root:not(.dark) .dashboard-mobile-nav-toggle:hover {
-    border-color: rgba(166, 120, 0, 0.32);
-    background: rgba(255, 252, 247, 0.94);
-    box-shadow: 0 14px 30px rgba(120, 85, 20, 0.11);
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface {
-    border-bottom: 1px solid rgba(210, 190, 160, 0.82);
-    background:
-      linear-gradient(180deg, rgba(255, 252, 247, 0.9), rgba(255, 250, 241, 0.76)),
-      hsl(var(--topbar-background) / 0.82);
-    box-shadow: 0 14px 34px rgba(80, 60, 20, 0.08);
-    backdrop-filter: blur(22px) saturate(1.08);
-  }
-
-  :root:not(.dark) .dashboard-topbar-inner {
-    color: hsl(var(--foreground));
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-icon-button,
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control {
-    border-color: rgba(210, 190, 160, 0.78);
-    background: rgba(255, 252, 247, 0.84);
-    box-shadow: 0 10px 24px rgba(80, 60, 20, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-icon-button svg,
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control svg {
-    color: hsl(var(--foreground) / 0.72);
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-icon-button:hover,
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control:hover {
-    border-color: rgba(166, 120, 0, 0.34);
-    background: rgba(255, 252, 247, 0.96);
-    box-shadow: 0 12px 28px rgba(120, 85, 20, 0.1);
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-icon-button:hover svg {
-    color: hsl(var(--primary));
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control:focus-within,
-  :root:not(.dark) .dashboard-topbar-surface input.dashboard-input-control:focus-visible {
-    border-color: rgba(166, 120, 0, 0.48);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2), 0 12px 28px rgba(120, 85, 20, 0.08);
-  }
-
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control [data-radix-avatar-fallback],
-  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control .bg-primary\/10 {
-    background-color: rgba(231, 200, 115, 0.18);
-    color: hsl(var(--primary));
-  }
-
-  :root:not(.dark) .dashboard-mobile-nav {
-    border-top-color: rgba(210, 190, 160, 0.82);
-    background: rgba(255, 252, 247, 0.94);
-    box-shadow: 0 -14px 34px rgba(80, 60, 20, 0.08);
-    backdrop-filter: blur(22px) saturate(1.08);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-surface,
-  :root:not(.dark) .dashboard-mobile-sheet {
-    border-color: rgba(210, 190, 160, 0.88);
-    background:
-      radial-gradient(circle at top left, rgba(231, 200, 115, 0.18), transparent 34%),
-      linear-gradient(180deg, rgba(255, 252, 247, 0.97), rgba(246, 237, 219, 0.96)),
-      hsl(var(--sidebar-surface));
-    box-shadow: 18px 0 42px hsl(var(--brand-700) / 0.1);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-content::-webkit-scrollbar-thumb {
-    background-color: rgba(166, 120, 0, 0.22);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-header {
-    border-color: hsl(var(--dashboard-border-soft) / 0.82);
-    background: linear-gradient(180deg, hsl(var(--dashboard-primary-soft) / 0.6), hsl(var(--dashboard-surface) / 0));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-group {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-group {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-group {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-group {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-group {
-    color: hsl(var(--sidebar-foreground));
-  }
-
-  :root:not(.dark) .dashboard-sidebar-group {
-    color: hsl(var(--sidebar-foreground));
-  }
-
+  :root:not(.dark) .dashboard-sidebar-content,
   :root:not(.dark) .dashboard-sidebar-group {
     color: hsl(var(--sidebar-foreground));
   }
 
   :root:not(.dark) .dashboard-sidebar-group-trigger {
-    color: rgba(111, 84, 43, 0.82);
+    color: hsl(var(--sidebar-foreground) / 0.82);
     letter-spacing: 0.18em;
   }
 
   :root:not(.dark) .dashboard-sidebar-group-trigger:hover {
-    background-color: rgba(231, 200, 115, 0.22);
-    color: #6f542b;
+    background-color: var(--glass-fill-accent);
+    color: hsl(var(--foreground));
   }
 
   :root:not(.dark) .dashboard-sidebar-group-trigger-active,
   :root:not(.dark) .dashboard-sidebar-admin-trigger {
-    color: #8f6500;
+    color: hsl(var(--primary));
   }
 
   :root:not(.dark) .dashboard-sidebar-menu-button {
@@ -3492,15 +2783,18 @@
 
   :root:not(.dark) .dashboard-sidebar-menu-button:hover,
   :root:not(.dark) .dashboard-sidebar-menu-button-admin:hover {
-    background-color: rgba(231, 200, 115, 0.22);
+    background-color: var(--glass-fill-accent);
     color: hsl(var(--foreground));
   }
 
   :root:not(.dark) .dashboard-sidebar-menu-button:hover svg,
   :root:not(.dark) .dashboard-sidebar-menu-button-admin:hover svg {
-    color: hsl(var(--dashboard-primary-strong));
+    color: hsl(var(--primary));
   }
 
+  /* The selected nav item stays a solid brand pill. It is the one
+     unambiguous "you are here" marker in the shell, so it opts out of
+     the glass and keeps its contrast guarantee. */
   :root:not(.dark) .dashboard-sidebar-menu-button-active,
   :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active {
     border-color: hsl(var(--sidebar-primary) / 0.34);
@@ -3511,500 +2805,122 @@
 
   :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
   :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
+    color: hsl(var(--sidebar-primary-foreground));
   }
 
   :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
-  :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
-  }
-
-  :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
-  :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
-  }
-
-  :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
-  :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
-  }
-
-  :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
-  :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
-  }
-
-  :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
-  :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
-  }
-
-  :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
-  }
-
-  :root:not(.dark) .dashboard-sidebar-menu-button-active svg,
-  :root:not(.dark) .dashboard-sidebar-menu-button-admin.dashboard-sidebar-menu-button-active svg {
-    color: #fffaf1;
-  }
-
-  :root:not(.dark) .dashboard-sidebar-admin-divider {
-    border-top-color: rgba(210, 190, 160, 0.82);
+    border-top-color: var(--glass-stroke);
   }
 
   :root:not(.dark) .dashboard-sidebar-admin-group,
   :root:not(.dark) .dashboard-sidebar-admin-group-collapsed {
-    border-color: rgba(210, 190, 160, 0.76);
-    background:
-      linear-gradient(180deg, rgba(244, 225, 181, 0.4), rgba(255, 252, 247, 0.4)),
-      rgba(255, 252, 247, 0.52);
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
   }
 
-  :root:not(.dark) .dashboard-shell .border.bg-card,
-  :root:not(.dark) .dashboard-shell .bg-card.border,
-  :root:not(.dark) .dashboard-section-band {
-    border-color: hsl(var(--dashboard-border-soft) / 0.82);
-    background: linear-gradient(145deg, hsl(var(--dashboard-surface) / 0.92), hsl(var(--dashboard-surface-elevated) / 0.88));
-    box-shadow: 0 14px 32px hsl(var(--brand-700) / 0.07);
-  }
-
-  :root:not(.dark) .dashboard-shell input,
-  :root:not(.dark) .dashboard-shell textarea,
-  :root:not(.dark) .dashboard-shell button[role="combobox"] {
-    border-color: hsl(var(--dashboard-border-soft) / 0.82);
-    background-color: hsl(var(--dashboard-surface) / 0.86);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-
-  :root:not(.dark) .dashboard-shell input:focus,
-  :root:not(.dark) .dashboard-shell textarea:focus,
-  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
-    border-color: rgba(166, 120, 0, 0.46);
-    box-shadow: 0 0 0 3px rgba(231, 200, 115, 0.2);
-  }
-}
-
-@layer components {
-  :root:not(.dark) .luxury-card {
-    border-color: hsl(var(--dashboard-border-soft) / 0.86);
-    background: linear-gradient(145deg, hsl(var(--card) / 0.96), hsl(var(--dashboard-surface-muted) / 0.34));
-    box-shadow: 0 14px 34px rgba(80, 60, 20, 0.07);
-  }
-
-  :root:not(.dark) .luxury-card:hover {
-    border-color: hsl(var(--primary) / 0.24);
-    box-shadow: 0 18px 44px rgba(80, 60, 20, 0.095);
-  }
-
-  :root:not(.dark) .luxury-button {
-    border-radius: 0.85rem;
-  }
-
-  :root:not(.dark) .luxury-button:hover {
-    box-shadow: 0 10px 22px rgba(80, 60, 20, 0.08);
-  }
-
-  :root:not(.dark) .luxury-button:focus-visible {
-    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.18), 0 12px 24px rgba(120, 85, 20, 0.12);
-  }
-
-  :root:not(.dark) .luxury-button.bg-primary,
-  :root:not(.dark) .luxury-button[class*="bg-primary"] {
-    background: linear-gradient(180deg, hsl(var(--dashboard-primary-strong)), hsl(var(--primary-hover)));
-    box-shadow: 0 12px 24px rgba(120, 85, 20, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.22);
-  }
-
-  :root:not(.dark) .luxury-button.border-input,
-  :root:not(.dark) .luxury-button[class*="variant-outline"] {
-    border-color: hsl(var(--dashboard-border-soft) / 0.86);
-    background: linear-gradient(180deg, hsl(var(--dashboard-surface) / 0.92), hsl(var(--dashboard-surface-muted) / 0.46));
-    color: hsl(var(--foreground));
-  }
-
-  :root:not(.dark) .luxury-button.border-input:hover,
-  :root:not(.dark) .luxury-button[class*="variant-outline"]:hover,
-  :root:not(.dark) .luxury-button[data-variant="ghost"]:hover {
-    border-color: hsl(var(--primary) / 0.36);
-    background: hsl(var(--dashboard-primary-soft) / 0.38);
-    color: hsl(var(--foreground));
-  }
-
-  :root:not(.dark) .luxury-input,
-  :root:not(.dark) .luxury-textarea,
-  :root:not(.dark) .luxury-select-trigger {
-    border-color: hsl(var(--dashboard-border-soft) / 0.9);
-    background-color: hsl(var(--dashboard-surface) / 0.88);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 8px 18px rgba(80, 60, 20, 0.045);
-  }
-
-  :root:not(.dark) .luxury-input::file-selector-button {
-    color: hsl(var(--primary));
-  }
-
-  :root:not(.dark) .luxury-input::placeholder,
-  :root:not(.dark) .luxury-textarea::placeholder {
-    color: hsl(var(--muted-foreground) / 0.72);
-  }
-
-  :root:not(.dark) .luxury-input:focus-visible,
-  :root:not(.dark) .luxury-textarea:focus-visible,
-  :root:not(.dark) .luxury-select-trigger:focus-visible,
-  :root:not(.dark) .luxury-tabs-trigger:focus-visible {
-    border-color: hsl(var(--primary) / 0.58);
-    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.16), 0 8px 18px rgba(80, 60, 20, 0.055);
-  }
-
-  :root:not(.dark) .luxury-tabs-list {
-    border: 1px solid hsl(var(--dashboard-border-soft) / 0.76);
-    background: linear-gradient(180deg, hsl(var(--dashboard-surface-muted) / 0.72), hsl(var(--dashboard-surface) / 0.76));
-  }
-
-  :root:not(.dark) .luxury-tabs-trigger:hover:not([data-state="active"]) {
-    background: hsl(var(--dashboard-primary-soft) / 0.34);
-    color: hsl(var(--foreground));
-  }
-
-  :root:not(.dark) .luxury-tabs-trigger[data-state="active"] {
-    border-color: hsl(var(--primary) / 0.28);
-    background: linear-gradient(180deg, hsl(var(--primary)), hsl(var(--primary) / 0.88));
-    color: hsl(var(--primary-foreground));
-    box-shadow: 0 10px 22px rgba(120, 85, 20, 0.18);
-  }
-
-  :root:not(.dark) .luxury-dialog-content,
-  :root:not(.dark) .luxury-alert-dialog-content,
-  :root:not(.dark) .luxury-popover-content,
-  :root:not(.dark) .luxury-select-content,
-  :root:not(.dark) .luxury-dropdown-content,
-  :root:not(.dark) .luxury-tooltip-content {
-    border-color: hsl(var(--dashboard-border-soft) / 0.9);
-    background: linear-gradient(145deg, hsl(var(--popover) / 0.98), hsl(var(--dashboard-surface-elevated) / 0.94));
-    box-shadow: 0 24px 54px rgba(80, 60, 20, 0.14);
-  }
-
-  :root:not(.dark) .luxury-dialog-content,
-  :root:not(.dark) .luxury-alert-dialog-content {
-    outline: 1px solid rgba(255, 255, 255, 0.45);
-  }
-
-  :root:not(.dark) .luxury-dialog-overlay,
-  :root:not(.dark) .luxury-alert-dialog-overlay {
-    background: rgba(48, 39, 24, 0.32);
-    backdrop-filter: blur(6px);
-  }
-
-  :root:not(.dark) .luxury-select-item:focus,
-  :root:not(.dark) .luxury-dropdown-item:focus,
-  :root:not(.dark) .luxury-dropdown-item[data-highlighted],
-  :root:not(.dark) .luxury-select-item[data-highlighted],
-  :root:not(.dark) .luxury-select-item[data-state="checked"] {
-    background-color: hsl(var(--dashboard-primary-soft) / 0.52);
-    color: hsl(var(--foreground));
-  }
-
-  :root:not(.dark) .luxury-table-wrapper {
-    border-color: hsl(var(--dashboard-border-soft) / 0.82);
-    background: linear-gradient(145deg, hsl(var(--card) / 0.78), hsl(var(--dashboard-surface-muted) / 0.34));
-    box-shadow: 0 12px 28px rgba(80, 60, 20, 0.06);
-  }
-
-  :root:not(.dark) .luxury-table-header {
-    background: linear-gradient(180deg, hsl(var(--dashboard-surface-muted) / 0.76), hsl(var(--dashboard-surface) / 0.66));
-    color: hsl(var(--foreground));
-  }
-
-  :root:not(.dark) .luxury-table th,
-  :root:not(.dark) .luxury-table td {
-    border-color: hsl(var(--dashboard-border-soft) / 0.72);
-  }
-
-  :root:not(.dark) .luxury-table-row:hover {
-    background-color: hsl(var(--dashboard-primary-soft) / 0.3);
-  }
-
-  :root:not(.dark) .luxury-badge {
-    border-color: hsl(var(--dashboard-border-soft) / 0.76);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
-  }
-
+  :root:not(.dark) .dashboard-topbar-inner,
   :root:not(.dark) .recharts-wrapper,
   :root:not(.dark) .recharts-responsive-container,
   :root:not(.dark) .dashboard-chart-container {
     color: hsl(var(--foreground));
   }
 
-  :root:not(.dark) .recharts-cartesian-grid line {
-    stroke: hsl(var(--dashboard-border-soft) / 0.78);
+  :root:not(.dark) .dashboard-topbar-surface .dashboard-icon-button svg,
+  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control svg {
+    color: hsl(var(--foreground) / 0.72);
   }
 
-  :root:not(.dark) .recharts-tooltip-wrapper .recharts-default-tooltip {
-    border-color: hsl(var(--dashboard-border-soft) / 0.9) !important;
-    border-radius: 1rem !important;
-    background: linear-gradient(145deg, hsl(var(--popover) / 0.98), hsl(var(--dashboard-surface-elevated) / 0.94)) !important;
-    box-shadow: 0 18px 40px rgba(80, 60, 20, 0.14) !important;
+  :root:not(.dark) .dashboard-topbar-surface .dashboard-icon-button:hover svg {
+    color: hsl(var(--primary));
   }
 
-  :root:not(.dark) .dashboard-upload-zone,
-  :root:not(.dark) [data-brand-upload-zone="true"] {
-    border-color: hsl(var(--dashboard-border-soft) / 0.92);
-    background: linear-gradient(145deg, hsl(var(--dashboard-surface) / 0.78), hsl(var(--dashboard-surface-muted) / 0.54));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 12px 26px rgba(80, 60, 20, 0.055);
+  :root:not(.dark) .dashboard-topbar-surface .dashboard-input-control [data-radix-avatar-fallback] {
+    background-color: var(--glass-fill-accent);
+    color: hsl(var(--primary));
   }
 
-  :root:not(.dark) .dashboard-upload-zone:hover,
-  :root:not(.dark) [data-brand-upload-zone="true"]:hover {
-    border-color: hsl(var(--primary) / 0.42);
-    background: linear-gradient(145deg, hsl(var(--dashboard-primary-soft) / 0.34), hsl(var(--dashboard-surface) / 0.84));
+  :root:not(.dark):not([data-palette='dark']) .luxury-input::file-selector-button {
+    color: hsl(var(--primary));
   }
 
-  :root:not(.dark) .dashboard-upload-zone:focus-visible,
-  :root:not(.dark) [data-brand-upload-zone="true"]:focus-visible {
-    outline: none;
-    border-color: hsl(var(--primary) / 0.56);
-    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.16), 0 14px 30px rgba(120, 85, 20, 0.1);
+  /* Raw controls inside the shell that predate the primitives. */
+  :root:not(.dark) .dashboard-shell input,
+  :root:not(.dark) .dashboard-shell textarea,
+  :root:not(.dark) .dashboard-shell button[role="combobox"] {
+    border-color: var(--glass-stroke);
+    background-color: var(--glass-fill-subtle);
   }
 
-  :root:not(.dark) .dashboard-upload-zone[class*="border-primary"],
-  :root:not(.dark) [data-brand-upload-zone="true"][class*="border-primary"] {
-    border-color: hsl(var(--primary) / 0.58);
-    background: linear-gradient(145deg, hsl(var(--dashboard-primary-soft) / 0.46), hsl(var(--dashboard-surface-elevated) / 0.88));
+  :root:not(.dark) .dashboard-shell input:focus,
+  :root:not(.dark) .dashboard-shell textarea:focus,
+  :root:not(.dark) .dashboard-shell button[role="combobox"]:focus {
+    border-color: var(--glass-stroke-accent);
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.22);
   }
 }
 
 @layer components {
-  .dark .dashboard-shell:has(.overview-obsidian-shell) {
-    background:
-      radial-gradient(circle at top left, hsl(var(--brand-primary, 281 100% 37%) / 0.14), transparent 34%),
-      radial-gradient(circle at top right, hsl(var(--brand-highlight, 45 90% 56%) / 0.055), transparent 30%),
-      linear-gradient(135deg, #15101D 0%, #0F0C16 42%, #07070B 100%);
-  }
+  /* ── Overview "obsidian" variant (dark) ───────────────────────────
+     The Overview page runs a deeper, more cinematic field than the rest
+     of the dashboard. Surface material for .overview-* is owned by
+     src/styles/glass.css; what stays here is the field tint and the
+     handful of accents that are specific to this page. */
 
-  .dark .dashboard-page-shell:has(.overview-obsidian-shell) {
-    color: #F5F2FA;
-  }
-
-  .dark .overview-hero {
-    border: 1px solid hsl(var(--brand-primary, 281 100% 37%) / 0.18);
-    background:
-      radial-gradient(circle at top left, hsl(var(--brand-primary, 281 100% 37%) / 0.13), transparent 36%),
-      linear-gradient(145deg, rgba(18,14,26,0.98), rgba(9,8,14,0.98));
-    box-shadow: 0 24px 70px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.05);
+  .dark .dashboard-shell:has(.overview-obsidian-shell)::before {
+    background-image:
+      radial-gradient(circle at top left, hsl(var(--primary) / 0.16), transparent 34%),
+      radial-gradient(circle at top right, hsl(var(--brand) / 0.07), transparent 30%);
+    opacity: 1;
   }
 
   .dark .overview-command-badge {
-    border: 1px solid hsl(var(--brand-highlight, 45 90% 56%) / 0.30);
-    background: hsl(var(--brand-highlight, 45 90% 56%) / 0.10);
-    color: hsl(var(--brand-highlight, 45 90% 56%));
+    border: 1px solid hsl(var(--brand) / 0.30);
+    background-color: hsl(var(--brand) / 0.10);
+    color: hsl(var(--brand));
   }
 
-  .dark .overview-toolbar {
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.035);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-
-  .dark .overview-section-frame {
-    border: 1px solid hsl(var(--brand-primary, 281 100% 37%) / 0.14);
-    background: linear-gradient(145deg, rgba(18,14,26,0.96), rgba(9,8,14,0.98));
-    box-shadow: 0 22px 60px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-
-  .dark .overview-section-accent {
-    border-color: hsl(var(--brand-primary, 281 100% 37%) / 0.16);
-  }
-
-  .dark .overview-section-frame h2,
-  .dark .overview-section-frame h3,
-  .dark .overview-section-frame h4 {
-    color: #F5F2FA;
-  }
-
-  .dark .overview-section-frame p,
-  .dark .overview-section-frame .text-muted-foreground,
-  .dark .overview-section-frame [class*="text-muted-foreground"] {
-    color: #B4ADBF;
-  }
-
-  .dark .overview-kpi-card {
-    border: 1px solid rgba(255,255,255,0.08);
-    border-top: 1px solid hsl(var(--brand-primary, 281 100% 37%) / 0.28);
-    background: linear-gradient(145deg, rgba(27,24,36,0.94), rgba(15,13,22,0.96));
-    box-shadow: 0 16px 42px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.045);
-  }
-
+  /* A brand bloom in the top-right corner of each KPI tile, sitting
+     above the pane fill but under its content. */
   .dark .overview-kpi-card::after {
     content: '';
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: radial-gradient(circle at top right, hsl(var(--brand-primary, 281 100% 37%) / 0.08), transparent 34%);
+    background-image: radial-gradient(circle at top right, hsl(var(--primary) / 0.10), transparent 34%);
   }
 
   .dark .overview-kpi-card:hover {
     transform: translateY(-0.125rem);
-    border-color: hsl(var(--brand-primary, 281 100% 37%) / 0.30);
-    box-shadow: 0 20px 50px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.055);
-  }
-
-  .dark .overview-kpi-warning {
-    border-color: hsl(var(--brand-highlight, 45 90% 56%) / 0.30);
-    background:
-      radial-gradient(circle at top right, hsl(var(--brand-highlight, 45 90% 56%) / 0.12), transparent 34%),
-      linear-gradient(145deg, rgba(27,24,36,0.94), rgba(15,13,22,0.96));
-  }
-
-  .dark .overview-premium-card,
-  .dark .overview-chart-card {
-    border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(145deg, rgba(20,18,26,0.96), rgba(12,11,17,0.98));
-    box-shadow: 0 18px 48px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-
-  .dark .overview-chart-card:hover {
-    border-color: hsl(var(--brand-primary, 281 100% 37%) / 0.30);
-    box-shadow: 0 22px 54px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.05);
   }
 
   .dark .overview-chart-header {
-    border-color: rgba(255,255,255,0.06);
-    background: linear-gradient(90deg, rgba(255,255,255,0.035), transparent);
-  }
-
-  .dark .overview-pie-legend {
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.045);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
-  }
-
-  .dark .overview-glass-button {
-    border: 1px solid rgba(255,255,255,0.09);
-    background: rgba(255,255,255,0.045);
-    color: #F5F2FA;
-  }
-
-  .dark .overview-glass-button:hover {
-    border-color: hsl(var(--brand-primary, 281 100% 37%) / 0.32);
-    background: hsl(var(--brand-primary, 281 100% 37%) / 0.10);
-    color: #F5F2FA;
-  }
-
-  .dark .overview-empty-state {
-    border-color: hsl(var(--brand-primary, 281 100% 37%) / 0.28);
-    background: linear-gradient(145deg, rgba(22,18,28,0.78), rgba(10,9,14,0.94));
-  }
-
-  .dark .overview-activity-row {
-    border-color: rgba(255,255,255,0.08);
-    background: linear-gradient(145deg, rgba(22,20,29,0.92), rgba(12,11,16,0.96));
-    box-shadow: 0 12px 30px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.035);
-  }
-
-  .dark .overview-activity-row:hover {
-    border-color: hsl(var(--brand-primary, 281 100% 37%) / 0.30);
-    background: linear-gradient(145deg, rgba(28,25,36,0.94), rgba(14,13,19,0.98));
-    box-shadow: 0 16px 38px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.045);
+    border-color: var(--glass-stroke);
+    background-image: linear-gradient(90deg, var(--glass-specular), transparent);
   }
 
   .dark .overview-activity-row > div:first-child {
-    background: hsl(var(--brand-primary, 281 100% 37%) / 0.34);
+    background-color: hsl(var(--primary) / 0.34);
   }
 
-  .dark .overview-portfolio-zone > div {
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    background: linear-gradient(145deg, rgba(20,18,26,0.96), rgba(13,12,18,0.98)) !important;
-    box-shadow: 0 18px 48px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.04) !important;
-  }
-
+  /* The portfolio zone renders third-party children that set their own
+     inline surface, so these have to out-rank them. */
+  .dark .overview-portfolio-zone > div,
   .dark .overview-portfolio-zone .rounded-md {
-    border-color: rgba(255,255,255,0.075) !important;
-    background: linear-gradient(145deg, rgba(16,15,21,0.96), rgba(11,10,15,0.96)) !important;
+    border: 1px solid var(--glass-stroke) !important;
+    background-color: var(--glass-fill) !important;
+    background-image: var(--glass-sheen) !important;
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) !important;
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate)) !important;
+    box-shadow: var(--glass-shadow), var(--glass-inner) !important;
   }
 }
 
 @layer components {
-  /* Report Q&A chat containment refinements — scoped to the Q&A page only. */
+  /* Report Q&A chat containment — scoped to the Q&A page only.
+
+     Sizing and containment for the chat column. The material used to be
+     re-declared here on top of the block above; it now comes from the
+     glass system, so what is left is geometry. */
   .report-qa-workspace-grid {
     align-items: stretch;
   }
@@ -4012,17 +2928,7 @@
   .report-qa-chat-panel {
     min-height: 0;
     overflow: hidden;
-    border-radius: 1.35rem;
-    border-color: hsl(var(--brand) / 0.26) !important;
-    background:
-      radial-gradient(circle at 78% -10%, hsl(var(--brand) / 0.075), transparent 19rem),
-      radial-gradient(circle at 5% 36%, hsl(var(--brand) / 0.04), transparent 17rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.065), hsl(0 0% 100% / 0.022)),
-      hsl(var(--card) / 0.96) !important;
-    box-shadow:
-      0 22px 60px hsl(0 0% 0% / 0.38),
-      0 0 0 1px hsl(var(--brand) / 0.055),
-      inset 0 1px 0 hsl(0 0% 100% / 0.08) !important;
+    border-radius: 1.25rem;
   }
 
   @media (min-width: 1024px) {
@@ -4031,83 +2937,39 @@
     }
   }
 
-  .report-qa-chat-panel::after {
-    background:
-      linear-gradient(90deg, transparent, hsl(var(--brand) / 0.045), transparent) 0 0 / 100% 1px no-repeat,
-      radial-gradient(circle at 50% 0%, hsl(var(--brand) / 0.045), transparent 22rem);
-  }
-
-  .report-qa-chat-header {
-    border-bottom-color: hsl(var(--brand) / 0.18);
-    background:
-      radial-gradient(circle at 10% 0%, hsl(var(--brand) / 0.08), transparent 15rem),
-      linear-gradient(180deg, hsl(var(--brand) / 0.06), hsl(0 0% 100% / 0.012) 78%, transparent);
-  }
-
   .report-qa-chat-content {
     padding-top: 0.65rem;
-    background: linear-gradient(180deg, hsl(0 0% 0% / 0.035), transparent 5.5rem);
   }
 
   .report-qa-message-area {
-    border-radius: 1.15rem;
+    border-radius: 0.875rem;
     padding: 0.65rem 0.2rem 0.65rem 0.65rem;
-    border-color: hsl(var(--brand) / 0.16);
-    background:
-      radial-gradient(circle at 18% 0%, hsl(var(--brand) / 0.045), transparent 15rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.035), hsl(0 0% 100% / 0.014));
   }
 
   .report-qa-message-area-empty {
     flex: 0 1 auto;
-    min-height: clamp(20rem, 42vh, 27rem);
+    min-height: clamp(18rem, 38vh, 24rem);
     overflow: visible;
-  }
-
-  .report-qa-empty-card {
-    width: min(100%, 40rem);
-    max-width: 40rem;
-    border-radius: 1.25rem;
-    padding: clamp(1.5rem, 3vw, 2rem);
-    border: 1px solid hsl(var(--brand) / 0.28);
-    background:
-      radial-gradient(circle at 50% -8%, hsl(var(--brand) / 0.13), transparent 40%),
-      radial-gradient(circle at 8% 88%, hsl(var(--brand) / 0.055), transparent 29%),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.07), hsl(0 0% 100% / 0.028));
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.08),
-      0 18px 44px hsl(0 0% 0% / 0.18),
-      0 0 28px hsl(var(--brand) / 0.045);
   }
 
   .report-qa-toolbar {
     max-width: 100%;
     gap: 0.3rem;
     padding: 0.28rem;
-    border-radius: 1rem;
-    border-color: hsl(var(--brand) / 0.22);
-    background:
-      radial-gradient(circle at 8% 0%, hsl(var(--brand) / 0.07), transparent 12rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.062), hsl(0 0% 100% / 0.024));
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.055), 0 10px 24px hsl(0 0% 0% / 0.12);
+    border-radius: 0.875rem;
   }
 
   .report-qa-toolbar-control {
     min-width: 2rem;
     min-height: 2rem;
-    border-radius: 0.8rem !important;
-    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.045) !important;
+    border-radius: 0.5rem;
   }
 
   .report-qa-composer {
     max-height: min(11rem, 28dvh);
     margin-inline: 0;
-    border-color: hsl(var(--brand) / 0.24) !important;
-    border-radius: 1rem 1rem 0 0;
+    border-radius: 0;
     padding-inline: 0.45rem;
-    background:
-      radial-gradient(circle at 12% 0%, hsl(var(--brand) / 0.075), transparent 15rem),
-      linear-gradient(180deg, hsl(0 0% 100% / 0.05), hsl(var(--card) / 0.26));
   }
 }
 
@@ -4118,21 +2980,8 @@
     --report-qa-panel-pad: 0.75rem;
   }
 
-  .report-qa-density-shell.report-qa-premium {
-    background:
-      radial-gradient(circle at 14% 7%, hsl(var(--brand) / 0.12), transparent 24rem),
-      radial-gradient(circle at 86% 12%, hsl(var(--brand) / 0.075), transparent 20rem),
-      radial-gradient(circle at 52% 100%, hsl(var(--card) / 0.12), transparent 24rem),
-      linear-gradient(135deg, hsl(var(--background)), hsl(var(--card)) 46%, hsl(var(--background)));
-  }
-
   .report-qa-density-shell .report-qa-hero {
     border-radius: 1rem;
-    box-shadow: 0 12px 34px hsl(0 0% 0% / 0.28), inset 0 1px 0 hsl(0 0% 100% / 0.07);
-    background:
-      radial-gradient(circle at 8% 0%, hsl(var(--brand) / 0.13), transparent 14rem),
-      linear-gradient(135deg, hsl(0 0% 100% / 0.068), hsl(0 0% 100% / 0.022)),
-      linear-gradient(90deg, hsl(var(--brand) / 0.09), transparent 42%);
   }
 
   .report-qa-density-shell .report-qa-eyebrow {
@@ -4154,18 +3003,6 @@
 
   .report-qa-density-shell .report-qa-panel {
     border-radius: var(--report-qa-radius);
-    box-shadow:
-      0 18px 52px hsl(0 0% 0% / 0.38),
-      0 0 0 1px hsl(var(--brand) / 0.055),
-      inset 0 1px 0 hsl(0 0% 100% / 0.07) !important;
-  }
-
-  .report-qa-density-shell .report-qa-chat-panel {
-    box-shadow:
-      0 22px 64px hsl(0 0% 0% / 0.42),
-      0 0 0 1px hsl(var(--brand) / 0.09),
-      0 0 36px hsl(var(--brand) / 0.055),
-      inset 0 1px 0 hsl(0 0% 100% / 0.09) !important;
   }
 
   .report-qa-density-shell .report-qa-panel-section {
@@ -4175,17 +3012,12 @@
 
   .report-qa-density-shell .report-qa-dropzone {
     min-height: clamp(8.75rem, 17vh, 11rem);
-    box-shadow:
-      0 0 0 1px hsl(var(--brand) / 0.14),
-      0 12px 28px hsl(0 0% 0% / 0.18),
-      0 0 26px hsl(var(--brand) / 0.08),
-      inset 0 1px 0 hsl(0 0% 100% / 0.09);
   }
 
   .report-qa-density-shell .report-qa-dropzone .report-qa-upload-icon {
-    width: 3rem;
-    height: 3rem;
-    border-radius: 1rem;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 0.75rem;
   }
 
   .report-qa-density-shell .report-qa-dropzone svg {
@@ -4196,7 +3028,7 @@
   .report-qa-density-shell .report-qa-chat-title-icon {
     width: 2rem;
     height: 2rem;
-    border-radius: 0.85rem;
+    border-radius: 0.625rem;
   }
 
   .report-qa-density-shell .report-qa-chat-title {
@@ -4206,18 +3038,18 @@
   .report-qa-density-shell .report-qa-toolbar {
     gap: 0.3rem;
     padding: 0.3rem;
-    border-radius: 1rem;
+    border-radius: 0.875rem;
     max-width: 100%;
   }
 
   .report-qa-density-shell .report-qa-toolbar-control {
     min-width: 2rem;
     min-height: 2rem;
-    border-radius: 0.75rem !important;
+    border-radius: 0.5rem;
   }
 
   .report-qa-density-shell .report-qa-message-area {
-    border-radius: 1rem;
+    border-radius: 0.875rem;
     padding: 0.58rem 0.2rem 0.58rem 0.58rem;
   }
 
@@ -4235,30 +3067,21 @@
   }
 
   .report-qa-density-shell .report-qa-empty-card {
-    width: min(100%, 30rem);
-    max-width: 30rem;
-    border-radius: 1.25rem;
+    width: min(100%, 28rem);
+    max-width: 28rem;
+    border-radius: 1rem;
     padding: clamp(1.15rem, 2.4vw, 1.8rem);
-    box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.1),
-      0 18px 44px hsl(0 0% 0% / 0.2),
-      0 0 28px hsl(var(--brand) / 0.055);
   }
 
   .report-qa-density-shell .report-qa-empty-icon-wrap {
-    width: clamp(3.25rem, 7vw, 4rem);
-    height: clamp(3.25rem, 7vw, 4rem);
-    border-radius: 1.1rem;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.75rem;
   }
 
   .report-qa-density-shell .report-qa-empty-icon {
-    width: clamp(1.55rem, 4vw, 1.95rem);
-    height: clamp(1.55rem, 4vw, 1.95rem);
-  }
-
-  .report-qa-density-shell .report-qa-empty-sparkle {
-    width: 1.05rem;
-    height: 1.05rem;
+    width: 1.4rem;
+    height: 1.4rem;
   }
 
   .report-qa-density-shell .report-qa-empty-title {
@@ -4274,10 +3097,6 @@
   .report-qa-density-shell .report-qa-empty-upload-cue {
     padding: 0.35rem 0.7rem;
     font-size: 0.7rem;
-  }
-
-  .report-qa-density-shell .report-qa-composer {
-    border-color: hsl(var(--brand) / 0.22);
   }
 
   .report-qa-density-shell .report-qa-composer-input {
@@ -4349,5 +3168,27 @@
   }
   .template-reader-scroll::-webkit-scrollbar-thumb:hover {
     @apply bg-primary/80;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Template converter — brand-colour swatches.
+
+   A design system's brand colour is *document* data, not application theme:
+   it is the accent a generated PDF will print in, chosen per system, and the
+   whole point of the swatch is to show the actual value. So it cannot come
+   from a token — but it also must not be an inline `backgroundColor`, which
+   is what the style ratchet counts and rightly so.
+
+   The component sets `--converter-swatch` and these classes read it. The raw
+   value stays data all the way through, and no hardcoded colour enters a
+   component.
+   ──────────────────────────────────────────────────────────────── */
+@layer components {
+  .converter-swatch {
+    background-color: var(--converter-swatch, transparent);
+  }
+  .converter-swatch-ink {
+    color: var(--converter-swatch, currentColor);
   }
 }

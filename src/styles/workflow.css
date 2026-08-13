@@ -71,7 +71,7 @@
    same spot. The entrance animation therefore lives on .wf-node-body. */
 .wf-node {
   position: absolute;
-  width: 17rem;
+  width: 14rem;
   border-radius: var(--radius-lg);
   border: 1px solid hsl(var(--border));
   background: hsl(var(--card));
@@ -120,17 +120,70 @@
 .wf-node-icon {
   display: grid;
   place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2rem;
+  height: 2rem;
   border-radius: var(--radius-md);
   color: hsl(var(--wf-accent));
   background: hsl(var(--wf-accent) / 0.12);
   border: 1px solid hsl(var(--wf-accent) / 0.22);
 }
 
-/* Triggers are where a run begins, so they read as a distinct shape rather than
-   relying on colour alone. */
-.wf-node[data-kind='trigger'] { border-left: 3px solid hsl(var(--wf-accent)); }
+/* Triggers are where a run begins, so they read as a distinct *shape* rather
+   than relying on colour alone — the rounded left edge says "nothing connects
+   into this" without a legend, and survives both themes and colour-blindness. */
+.wf-node[data-kind='trigger'] {
+  border-radius: 1.75rem var(--radius-lg) var(--radius-lg) 1.75rem;
+  border-left-color: hsl(var(--wf-accent) / 0.6);
+}
+
+.wf-node[data-kind='trigger'] .wf-node-body { padding-left: 0.6rem; }
+
+/* Corner marks: credential, skip and last-run state.
+   Absolutely positioned so a node that fails is exactly the size of one that
+   does not. Inline chips grew the card and reflowed the canvas at the moment
+   somebody was reading it to work out what went wrong. */
+.wf-node-marks {
+  position: absolute;
+  top: -0.45rem;
+  right: 0.55rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  pointer-events: auto;
+}
+
+.wf-node-mark {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--muted-foreground));
+  box-shadow: var(--elevation-1);
+}
+
+.wf-node-mark-warning {
+  border-color: hsl(var(--warning) / 0.55);
+  color: hsl(var(--warning));
+}
+
+/* The step menu, floated over the card so it costs no layout width. */
+.wf-node-menu {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: var(--radius-sm);
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--card) / 0.9);
+}
+
+.wf-node-menu:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
 
 /* --- Ports and edges ------------------------------------------------------ */
 
@@ -177,6 +230,11 @@
 .wf-edge-group[data-traced='true'] .wf-edge-path { stroke: hsl(var(--primary)); }
 
 /* Delete affordance at an edge's midpoint, revealed on hover. */
+/* Direction, at the target end of every connection. */
+.wf-edge-arrow { fill: hsl(var(--border-strong)); stroke: none; }
+.wf-edge-group[data-traced='true'] .wf-edge-arrow,
+.wf-edge-group[data-selected='true'] .wf-edge-arrow { fill: hsl(var(--primary)); }
+
 .wf-edge-action { cursor: pointer; }
 .wf-edge-action circle {
   fill: hsl(var(--card));
@@ -185,6 +243,12 @@
 }
 .wf-edge-action path { stroke: hsl(var(--destructive)); stroke-width: 1.6; stroke-linecap: round; }
 .wf-edge-action:hover circle { fill: hsl(var(--destructive) / 0.12); stroke: hsl(var(--destructive)); }
+
+/* Insert reads as an ordinary action, not a destructive one — it is the button
+   people are meant to reach for, and painting it in the delete colour would
+   make the common case look dangerous. */
+.wf-edge-action-add path { stroke: hsl(var(--primary)); }
+.wf-edge-action-add:hover circle { fill: hsl(var(--primary) / 0.14); stroke: hsl(var(--primary)); }
 
 /* Branch path names, sitting outside the step's right edge. The edge carries the
    same name at its midpoint once connected; this one is what tells you which
@@ -226,6 +290,7 @@
   background: hsl(var(--card) / 0.9);
   box-shadow: var(--elevation-1);
   cursor: pointer;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 

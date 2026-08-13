@@ -432,6 +432,9 @@ const __chartAnalysisHandler = async (req: Request): Promise<Response> => {
     // Call OpenAI API with enhanced configuration
     const openAIResponse = await callLLMRaw({
       agentKey: 'chart_analysis',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: await getSystemPrompt(chartData.type) },
         { role: 'user', content: prompt },

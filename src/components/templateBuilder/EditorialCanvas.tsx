@@ -1,15 +1,24 @@
 /**
  * EditorialCanvas — Canva/Adobe-style WYSIWYG editor.
  *
- * Replaces the tldraw-based TemplateCanvas with a direct-manipulation surface:
- *  - Renders the active page via the real HTML renderer in a sandboxed iframe
- *    (so what you see is exactly what exports).
- *  - Overlays an absolute "selection layer" sized to the page in PDF points,
- *    with one positioned handle box per overlay.
+ * R3 — SINGLE RENDERER. The sandboxed iframe renders the ENTIRE page — blocks
+ * AND overlays — through the same `renderTemplateToHtml` the preview and the
+ * WeasyPrint export use. The React layer above it paints no overlay pixels at
+ * all: it is transparent hit-targets, selection chrome, guides and the inline
+ * text editor. The editor therefore cannot disagree with the export about
+ * fonts, letter-spacing, runs, weights or wrapping — the two used to be
+ * separate renderers, and every one of those disagreed.
+ *
+ *  - Live drag/resize never rebuilds the iframe: geometry is mirrored straight
+ *    onto the iframe DOM via the renderer's `data-overlay-id` stamp.
+ *  - Committed changes re-render the srcDoc through a DOUBLE-BUFFERED iframe
+ *    pair — the old page stays visible until the new one has loaded, so the
+ *    canvas never flashes white mid-edit.
  *  - Click selects. Shift/Cmd-click toggles multi-select.
  *  - Drag any handle box to move. 8 corner/edge handles to resize.
  *    Top rotation grip to rotate. Alt-drag to clone.
- *  - Double-click a text overlay to inline-edit (contentEditable).
+ *  - Double-click a text overlay to inline-edit (textarea, styled through the
+ *    same shared declaration builder as the export path).
  *  - Arrow keys nudge (1pt; +Shift = 10pt). Delete removes.
  *  - Smart alignment guides snap to other overlays' edges/centres (4pt threshold).
  *  - Optional snap-to-grid driven by template.canvas.snapToGrid + gridSize.
@@ -20,9 +29,12 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
-import { makeCanvasRenderKey, pageWithoutOverlays } from '@/lib/reportTemplate/previewCache';
+import { makeCanvasRenderKey } from '@/lib/reportTemplate/previewCache';
+import { tokensToFontFaceCss } from '@/lib/reportTemplate/cssTokens';
 import { normalizePageSize } from '@/lib/reportTemplate/rendering/pageGeometry';
+import { PT_TO_PX } from '@/lib/templateLibrary/pageGeometry';
 import { overlayPaintOrder } from '@/lib/reportTemplate/paintOrder';
+import { buildTextOverlayCssDecls, cssDeclsToReactStyle } from '@/lib/reportTemplate/rendering/textOverlayStyle.pure';
 import { screenToPagePoint, PALETTE_DRAG_MIME, parsePaletteDrag } from '@/lib/reportTemplate/overlayDropFactory';
 import type { Overlay, Page, ReportTemplate } from '@/lib/reportTemplate/templateSchema';
 import { templateEditorActions, useEditorTemplate, useTemplateEditorStore } from '@/stores/templateEditorStore';
@@ -175,10 +187,9 @@ function EditorialCanvasImpl({
   );
   const html = useMemo(() => {
     try {
-      // Overlays are rendered by the React handle layer below. Exclude them from
-      // srcDoc as well as its cache key so stale rich HTML can never survive an
-      // overlay edit while the background iframe remains memoized.
-      const visible: ReportTemplate = { ...template, pages: [pageWithoutOverlays(viewPage)] };
+      // R3 — the iframe renders the FULL page, overlays included: one renderer
+      // for editor, preview and export. The React layer above draws no pixels.
+      const visible: ReportTemplate = { ...template, pages: [viewPage] };
       const r = renderTemplateToHtml(visible, {
         data: sampleData,
         customCss,
@@ -187,6 +198,12 @@ function EditorialCanvasImpl({
         // underlays (dim source raster) so overlays can be aligned to the
         // original; every preview/print/export path renders without them.
         showReferenceUnderlay: true,
+        // On a RASTER-ONLY page final output is the source raster and native
+        // layers are suppressed — but the canvas exists to EDIT those layers,
+        // and its raster URL is resolved only at export time. Without this
+        // opt-in every raster-only page rendered as nothing at all (the
+        // post-merge "no text on any page but the cover" outage).
+        showReconstructedLayers: true,
       });
       // Inject CSS so the page lays out without the editor's drop-shadow chrome.
       return r.html.replace(
@@ -195,17 +212,104 @@ function EditorialCanvasImpl({
           html,body{margin:0!important;padding:0!important;background:transparent!important}
           .tpl-doc,.tpl-pages,.tpl-page-wrap{margin:0!important;padding:0!important;background:transparent!important;box-shadow:none!important}
           .tpl-page{box-shadow:none!important;margin:0!important;outline:none!important;border:0!important;background:transparent!important}
-          .tpl-overlay{display:none!important}
           a{pointer-events:none}
         </style></head>`,
       );
     } catch (e: any) {
       return `<!doctype html><body style="font:13px sans-serif;color:#b91c1c;padding:24px">Preview error: ${String(e?.message ?? e)}</body>`;
     }
-    // template/page/sampleData/customCss are encoded in renderKey (overlays
-    // excluded on purpose); depend on it alone to reuse the cached HTML.
-     
+    // template/page/sampleData/customCss (overlays INCLUDED) are encoded in
+    // renderKey; depend on it alone to reuse the cached HTML.
+
   }, [renderKey]);
+
+  // ── R3: double-buffered srcDoc ────────────────────────────────────────────
+  // A committed overlay change produces new html. Swapping srcDoc on a single
+  // iframe blanks the document while the new one parses and refetches images —
+  // a white flash on every commit. Instead the new document loads into the
+  // HIDDEN buffer and becomes visible only when its load event fires.
+  const iframeARef = useRef<HTMLIFrameElement | null>(null);
+  const iframeBRef = useRef<HTMLIFrameElement | null>(null);
+  const [buf, setBuf] = useState<{ a: string; b: string; front: 'a' | 'b' }>(() => ({ a: html, b: '', front: 'a' }));
+
+  useEffect(() => {
+    setBuf((s) => {
+      const frontHtml = s.front === 'a' ? s.a : s.b;
+      if (frontHtml === html) return s;
+      const backHtml = s.front === 'a' ? s.b : s.a;
+      if (backHtml === html) return s; // already loading it
+      return s.front === 'a' ? { ...s, b: html } : { ...s, a: html };
+    });
+  }, [html]);
+
+  // Counts iframe load events so the geometry-sync effect re-runs when a fresh
+  // document appears even without a buffer swap (e.g. the very first load).
+  const [loadTick, setLoadTick] = useState(0);
+  const handleBufferLoad = useCallback((which: 'a' | 'b') => {
+    setBuf((s) => {
+      const backWhich = s.front === 'a' ? 'b' : 'a';
+      if (which !== backWhich) return s;              // front (re)loaded — no swap
+      const backHtml = backWhich === 'a' ? s.a : s.b;
+      if (!backHtml) return s;                        // the empty initial buffer
+      return { ...s, front: backWhich };
+    });
+    setLoadTick((t) => t + 1);
+  }, []);
+
+  // ── R3: live geometry mirroring ───────────────────────────────────────────
+  // During a drag the template is untouched (transient patches only), so the
+  // srcDoc cannot know the new geometry. Mirror it straight onto the rendered
+  // overlay elements — both buffers, so a mid-drag swap can't show stale
+  // positions. Chart overlays translate as a whole (their wrapper sits at 0,0
+  // and the SVG positions itself); everything else moves box-for-box.
+  const syncOverlaysToIframes = useCallback(() => {
+    for (const ref of [iframeARef, iframeBRef]) {
+      const doc = ref.current?.contentDocument;
+      if (!doc) continue;
+      for (const f of overlays) {
+        const o = f.overlay as Overlay & { opacity?: number };
+        const src = sourceOverlays.find((s) => s.overlay.id === o.id)?.overlay;
+        const id = String(o.id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const el = doc.querySelector<HTMLElement>(`[data-overlay-id="${id}"]`);
+        if (!el) continue;
+        const rotate = `rotate(${o.rotation || 0}deg)`;
+        if (o.type === 'chart') {
+          const dx = src ? o.x - src.x : 0;
+          const dy = src ? o.y - src.y : 0;
+          el.style.transform = dx || dy ? `translate(${dx}pt, ${dy}pt) ${rotate}` : rotate;
+        } else {
+          el.style.left = `${o.x}pt`;
+          el.style.top = `${o.y}pt`;
+          el.style.width = `${o.width}pt`;
+          el.style.height = `${o.height}pt`;
+          el.style.transform = rotate;
+        }
+        el.style.opacity = String(o.opacity ?? 1);
+        // The inline editor replaces the rendered text while it is open.
+        el.style.visibility = editingId === o.id ? 'hidden' : '';
+      }
+    }
+  }, [overlays, sourceOverlays, editingId]);
+
+  useEffect(() => { syncOverlaysToIframes(); }, [syncOverlaysToIframes, buf.front, loadTick]);
+
+  // ── R3: parent-document fonts ─────────────────────────────────────────────
+  // The inline-edit textarea is the one piece of text living OUTSIDE the
+  // iframe, so give the parent document the template's @font-face rules
+  // (embedded data: fonts included) — otherwise editing swaps the real font
+  // for a substitute mid-edit.
+  const fontFaceCss = useMemo(
+    () => tokensToFontFaceCss((template.tokens ?? {}) as Parameters<typeof tokensToFontFaceCss>[0]),
+    [template.tokens],
+  );
+  useEffect(() => {
+    if (!fontFaceCss) return;
+    const el = document.createElement('style');
+    el.setAttribute('data-editorial-canvas-fonts', '');
+    el.textContent = fontFaceCss;
+    document.head.appendChild(el);
+    return () => { el.remove(); };
+  }, [fontFaceCss]);
 
   // ── Zoom controls ─────────────────────────────────────────────────────────
   const fitToViewport = useCallback(() => {
@@ -581,13 +685,39 @@ function EditorialCanvasImpl({
               height: pageH * zoom,
             }}
           >
-            {/* Iframe with the rendered page (visual only, pointer-events disabled) */}
-            <iframe
-              title="Editor preview"
-              srcDoc={html}
-              sandbox="allow-same-origin"
-              className="absolute inset-0 w-full h-full border-0 pointer-events-none"
-            />
+            {/* R3 — double-buffered iframes with the rendered page (visual only,
+                pointer-events disabled). The hidden buffer receives each new
+                srcDoc and is promoted on load, so commits never flash white.
+
+                The stage is sized in POINTS × zoom, but the document inside the
+                iframe lays out at `${size.width}pt`, and CSS fixes 1pt at 4/3 px.
+                Sized at `w-full h-full` the document was therefore 1.333× wider
+                than its viewport — overflowing, cut off, and permanently
+                misaligned with the overlay handles, which position at 1 CSS px
+                per point. Worse, the iframe content did not respond to `zoom` at
+                all, so the mismatch was constant at every zoom level.
+
+                Give each iframe its NATURAL pixel size and scale it back down by
+                zoom/PT_TO_PX, so one point on the handle layer is one point in
+                the document. Same pattern as TemplateDocumentPreview and
+                LiveHtmlPreview, which both got this right. */}
+            {(['a', 'b'] as const).map((which) => (
+              <iframe
+                key={which}
+                ref={which === 'a' ? iframeARef : iframeBRef}
+                title={`Editor page (buffer ${which})`}
+                srcDoc={which === 'a' ? buf.a : buf.b}
+                sandbox="allow-same-origin"
+                onLoad={() => handleBufferLoad(which)}
+                className="absolute left-0 top-0 border-0 pointer-events-none origin-top-left"
+                style={{
+                  width: pageW * PT_TO_PX,
+                  height: pageH * PT_TO_PX,
+                  transform: `scale(${zoom / PT_TO_PX})`,
+                  visibility: buf.front === which ? 'visible' : 'hidden',
+                }}
+              />
+            ))}
 
             {/* Alignment guides — magenta lines with a coordinate pill so
                 designers see exactly where the snap landed (pt). */}
@@ -673,12 +803,15 @@ function EditorialCanvasImpl({
                     </div>
                   )}
 
-                  {/* Render a soft preview of the overlay so it's always visible */}
-                  <OverlayPreview
+                  {/* R3 — no pixels here: the iframe below paints the overlay.
+                      This layer contributes only the inline text editor, an
+                      empty-text affordance and review badges. */}
+                  <OverlayEditLayer
                     overlay={o}
                     zoom={zoom}
                     editing={editing}
                     tokenColors={(template.tokens?.colors ?? {}) as Record<string, string>}
+                    tokenFonts={(template.tokens?.fonts ?? {}) as Record<string, string>}
                     onCommit={(v) => finishInlineEdit(o, v)}
                   />
 
@@ -765,177 +898,132 @@ function EditorialCanvasImpl({
   );
 }
 
-function OverlayPreview({
+/**
+ * R3 — the iframe paints every overlay; this layer paints NOTHING that the
+ * document already shows. It contributes exactly three things:
+ *  - the inline text editor (a textarea styled through the SAME declaration
+ *    builder as the export renderer, so editing keeps the rendered metrics);
+ *  - a faint affordance for an EMPTY text overlay, which renders no pixels in
+ *    the document and would otherwise be unfindable;
+ *  - the chart needs-review badge.
+ * Painting overlays here as well was the two-renderers bug: the copies
+ * disagreed on fonts, wrapping and weight, and only this one loaded no
+ * embedded @font-face at all.
+ */
+function OverlayEditLayer({
   overlay: o,
   zoom,
   editing,
   onCommit,
   tokenColors,
-}: { overlay: Overlay; zoom: number; editing: boolean; tokenColors: Record<string, string>; onCommit: (v: string) => void }) {
+  tokenFonts,
+}: { overlay: Overlay; zoom: number; editing: boolean; tokenColors: Record<string, string>; tokenFonts: Record<string, string>; onCommit: (v: string) => void }) {
   if (o.type === 'text') {
     const t: any = o;
-    const color = previewCssColor(t.color, tokenColors, '#111111');
-    const style: React.CSSProperties = {
-      width: '100%', height: '100%',
-      padding: 0,
-      margin: 0,
-      fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
-      fontSize: (Number(t.fontSize) || 12) * zoom,
-      fontWeight: t.fontWeight === 'bold' ? 700 : 400,
-      fontStyle: t.fontStyle || 'normal',
-      color,
-      textAlign: t.align || 'left',
-      lineHeight: t.lineHeight || 1.3,
-      letterSpacing: (t.letterSpacing || 0) * zoom,
-      overflow: 'hidden',
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
-      opacity: o.opacity ?? 1,
-      background: 'transparent',
-      border: 'none',
-      outline: 'none',
-      resize: 'none',
-      display: 'block',
-    };
-    if (editing) {
+    const isEmpty = !String(t.content ?? '').trim()
+      && !t.rich
+      && !(Array.isArray(t.runs) && t.runs.length);
+    if (!editing) {
+      if (!isEmpty) return null;
       return (
-        <textarea
-          autoFocus
-          defaultValue={String(t.content ?? '')}
-          onBlur={(e) => onCommit(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur();
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.target as HTMLTextAreaElement).blur();
+        <div
+          style={{
+            width: '100%', height: '100%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: '1px dashed rgba(113,113,122,0.5)',
+            color: 'rgba(113,113,122,0.8)',
+            fontSize: Math.max(9, 10 * zoom), fontFamily: 'sans-serif',
+            pointerEvents: 'none',
           }}
-          onPointerDown={(e) => e.stopPropagation()}
-          style={style}
-        />
+        >
+          text
+        </div>
       );
     }
+    const color = previewCssColor(t.color, tokenColors, '#111111');
+    const shared = cssDeclsToReactStyle(buildTextOverlayCssDecls({
+      // An imported overlay now carries `token:heading` here (Stage 4). Passing
+      // that through as a literal family would set the editing caret in a font
+      // that does not exist, while the iframe beneath it renders the resolved
+      // one — the editor/export divergence R3 exists to prevent.
+      fontFamily: previewCssFont(t.fontFamily, tokenFonts, 'inherit'),
+      fontSizePt: Number(t.fontSize) || 12,
+      color,
+      fontWeightNumeric: t.fontWeightNumeric,
+      fontWeight: t.fontWeight,
+      fontStyle: t.fontStyle,
+      align: t.align,
+      lineHeight: t.lineHeight,
+      letterSpacingPt: t.letterSpacing,
+      paddingPt: {
+        top: t.paddingTop, right: t.paddingRight,
+        bottom: t.paddingBottom, left: t.paddingLeft,
+      },
+      verticalAlign: t.verticalAlign,
+      whiteSpace: t.whiteSpace,
+      textDecoration: t.textDecoration,
+      textTransform: t.textTransform,
+      hyphens: t.hyphens,
+      columns: t.columns,
+      columnGapPt: t.columnGap,
+      fontVariantNumeric: t.fontVariantNumeric,
+      maxLines: t.maxLines,
+      overflowPolicy: t.overflowPolicy,
+    }, { unit: 'px', scale: zoom }));
     return (
-      <div style={{ ...style, pointerEvents: 'none' }}>
-        {String(t.content ?? '')}
-      </div>
-    );
-  }
-  if (o.type === 'image') {
-    const src = typeof (o as any).src === 'string' && !(o as any).src.includes('{{') ? (o as any).src : '';
-    return src ? (
-      <img
-        src={src}
-        alt=""
-        draggable={false}
+      <textarea
+        autoFocus
+        defaultValue={String(t.content ?? '')}
+        onBlur={(e) => onCommit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') (e.target as HTMLTextAreaElement).blur();
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) (e.target as HTMLTextAreaElement).blur();
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
         style={{
           width: '100%', height: '100%',
-          objectFit: ((o as any).fit ?? 'cover') as any,
+          margin: 0,
+          ...(shared as React.CSSProperties),
+          wordBreak: 'break-word',
           opacity: o.opacity ?? 1,
-          pointerEvents: 'none',
+          background: 'transparent',
+          border: 'none',
+          outline: 'none',
+          resize: 'none',
         }}
       />
-    ) : (
-      <div style={{
-        width: '100%', height: '100%',
-        background: 'repeating-linear-gradient(45deg,#f4f4f5 0 8px,#e4e4e7 8px 16px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: '#71717a', fontSize: 11, fontFamily: 'sans-serif',
-        opacity: o.opacity ?? 1, pointerEvents: 'none',
-      }}>image</div>
     );
   }
-  if (o.type === 'table') {
-    const t: any = o;
-    const cols: any[] = Array.isArray(t.columns) ? t.columns : [];
-    const rows: string[][] = Array.isArray(t.rows) ? t.rows : [];
-    const showHeader = t.showHeader !== false && cols.length > 0;
-    const fontSize = (Number(t.fontSize) || 10) * zoom;
-    const headerBg = previewCssColor(t.headerBg, tokenColors, 'rgba(0,0,0,0.06)');
-    const headerColor = previewCssColor(t.headerColor, tokenColors, '#111111');
-    const rowColor = previewCssColor(t.rowColor, tokenColors, '#111111');
-    const altRowBg = t.altRowBg ? previewCssColor(t.altRowBg, tokenColors, 'transparent') : null;
-    const borderColor = previewCssColor(t.borderColor, tokenColors, 'rgba(0,0,0,0.15)');
-    const border = `${(Number(t.borderWidth ?? 0.5)) * zoom}px solid ${borderColor}`;
-    const pad = (Number(t.cellPadding ?? 6)) * zoom;
-    const cell: React.CSSProperties = {
-      padding: `${pad / 2}px ${pad}px`, border,
-      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
-    };
+  if (o.type === 'chart') {
+    // W3 — marker for a reconstruction not corroborated against printed labels.
+    const preservation = (o as any).chartPreservation as
+      | { manualReviewRequired?: boolean; renderMode?: string } | undefined;
     return (
-      <div style={{ width: '100%', height: '100%', overflow: 'hidden', opacity: o.opacity ?? 1, pointerEvents: 'none' }}>
-        <table style={{
-          width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontSize,
-          fontFamily: typeof t.fontFamily === 'string' && !t.fontFamily.includes('{{') ? t.fontFamily : 'inherit',
-        }}>
-          {showHeader && (
-            <thead>
-              <tr>
-                {cols.map((c, ci) => (
-                  <th key={ci} style={{ ...cell, background: headerBg, color: headerColor, fontWeight: t.headerFontWeight === 'normal' ? 400 : 700, textAlign: (c.align || 'left') }}>
-                    {String(c.label ?? '')}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          )}
-          <tbody>
-            {rows.map((r, ri) => (
-              <tr key={ri} style={{ background: altRowBg && ri % 2 === 1 ? altRowBg : 'transparent' }}>
-                {cols.map((c, ci) => (
-                  <td key={ci} style={{ ...cell, color: rowColor, textAlign: (c.align || 'left') }}>
-                    {String(r?.[ci] ?? '')}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div
+        style={{ width: '100%', height: '100%', pointerEvents: 'none' }}
+        title={preservation?.renderMode ? `Chart · ${preservation.renderMode}` : 'Chart'}
+      >
+        {preservation?.manualReviewRequired ? (
+          <div
+            aria-label="Chart values need review"
+            className="absolute right-0 top-0 rounded-full bg-warning"
+            style={{ width: 8 * zoom, height: 8 * zoom }}
+          />
+        ) : null}
       </div>
     );
   }
-  if (o.type === 'vector') {
-    const v: any = o;
-    const paths: any[] = Array.isArray(v.paths) ? v.paths : [];
-    return (
-      <svg
-        viewBox={typeof v.viewBox === 'string' ? v.viewBox : '0 0 100 100'}
-        preserveAspectRatio={v.preserveAspectRatio || 'xMidYMid meet'}
-        width="100%" height="100%"
-        style={{ display: 'block', opacity: o.opacity ?? 1, pointerEvents: 'none' }}
-      >
-        {paths.map((p, pi) => (
-          <path
-            key={pi}
-            d={String(p.d ?? '')}
-            fill={p.fill ? previewCssColor(p.fill, tokenColors, '#000000') : 'none'}
-            stroke={p.stroke ? previewCssColor(p.stroke, tokenColors, 'none') : 'none'}
-            strokeWidth={p.strokeWidth ?? 0}
-            fillRule={p.fillRule || 'nonzero'}
-            strokeDasharray={p.strokeDasharray || undefined}
-            strokeLinecap={p.strokeLinecap || undefined}
-            strokeLinejoin={p.strokeLinejoin || undefined}
-            opacity={p.opacity ?? 1}
-          />
-        ))}
-      </svg>
-    );
-  }
-  // shape
-  const s: any = o;
-  const fill = previewCssColor(s.fill, tokenColors, 'rgba(0,0,0,0.08)');
-  const stroke = previewCssColor(s.stroke, tokenColors, 'transparent');
-  return (
-    <div
-      style={{
-        width: '100%', height: '100%',
-        background: s.shape === 'line' ? 'transparent' : fill,
-        border: `${(s.strokeWidth || 0) * zoom}px solid ${stroke}`,
-        borderRadius: s.shape === 'ellipse' ? '50%' : (s.borderRadius || 0) * zoom,
-        opacity: o.opacity ?? 1,
-        pointerEvents: 'none',
-      }}
-    />
-  );
+  return null;
 }
 
+
+function previewCssFont(value: unknown, tokenFonts: Record<string, string>, fallback: string): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return fallback;
+  if (raw.startsWith('token:')) return tokenFonts[raw.slice(6)] || fallback;
+  if (raw.includes('{{')) return fallback;
+  return raw;
+}
 
 function previewCssColor(value: unknown, tokenColors: Record<string, string>, fallback: string): string {
   const raw = typeof value === 'string' ? value.trim() : '';

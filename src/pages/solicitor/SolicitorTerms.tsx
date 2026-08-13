@@ -1,31 +1,27 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Loader2, Lock, Shield } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Shield } from 'lucide-react';
 import { useBrand } from '@/branding/useBrand';
 import { useToast } from '@/hooks/use-toast';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { PortalAgreementConsent } from '@/components/portal/PortalAgreementConsent';
+import type { PortalAcknowledgementKey, PortalTermsVersion } from '@/lib/portalAgreement';
 import { invokeSolicitorFunction } from '@/lib/solicitorPortal';
 
-interface TermsVersion { title: string; version: string; content_markdown: string }
-interface GovernanceResponse { terms?: TermsVersion }
+interface GovernanceResponse { terms?: PortalTermsVersion }
 
 /**
- * Terms & privileged-data consent for the Solicitor Portal. Mirrors the Client
- * Portal consent wall (`PortalConsentWall`) and the Finance Portal terms gate:
- * branded header, scrollable agreement, explicit consent checkboxes, and a
- * footer confirming the acceptance is recorded.
+ * Terms & privileged-data consent for the Solicitor Portal.
+ *
+ * The agreement, the acknowledgments, the notice and the button are
+ * `PortalAgreementConsent`, shared with the Builder/Developer and Finance
+ * portals — one agreement presented one way. This page owns only what is
+ * particular to the Solicitor Portal: its chrome, where the acceptance is sent,
+ * and where the solicitor goes next.
  */
 export default function SolicitorTerms() {
-  const [terms, setTerms] = useState<TermsVersion | null>(null);
+  const [terms, setTerms] = useState<PortalTermsVersion | null>(null);
   const [loading, setLoading] = useState(true);
-  const [agreedTerms, setAgreedTerms] = useState(false);
-  const [agreedPrivilege, setAgreedPrivilege] = useState(false);
   const [busy, setBusy] = useState(false);
   const { acceptTerms } = useSolicitorPortalAuth();
   const { settings: brandSettings } = useBrand();
@@ -43,13 +39,10 @@ export default function SolicitorTerms() {
       });
   }, [toast]);
 
-  const canProceed = Boolean(terms) && agreedTerms && agreedPrivilege && !busy;
-
-  const accept = async () => {
-    if (!canProceed) return;
+  const accept = async (acknowledgements: PortalAcknowledgementKey[]) => {
     setBusy(true);
     try {
-      await acceptTerms();
+      await acceptTerms(acknowledgements);
       navigate('/solicitor/onboarding', { replace: true });
     } catch (error) {
       toast({
@@ -80,88 +73,13 @@ export default function SolicitorTerms() {
           </p>
         </div>
 
-        {/* Content */}
         <div className="space-y-6 px-6 py-5 md:px-8 md:py-6">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-primary" aria-hidden />
-                <h2 className="text-sm font-semibold text-foreground">{terms?.title || 'Solicitor Portal Terms'}</h2>
-              </div>
-              <span className="text-xs text-muted-foreground">Version {terms?.version || 'current'}</span>
-            </div>
-            <ScrollArea className="h-64 rounded-xl border border-border bg-muted/20 p-4 md:h-72">
-              <div
-                className="whitespace-pre-wrap pr-4 text-sm leading-relaxed text-muted-foreground"
-                aria-live="polite"
-              >
-                {loading ? (
-                  <div className="space-y-2" aria-hidden>
-                    <Skeleton className="h-4 w-2/3" />
-                    <Skeleton className="h-4 w-full" />
-                    <Skeleton className="h-4 w-11/12" />
-                    <Skeleton className="h-4 w-5/6" />
-                    <Skeleton className="h-4 w-full" />
-                  </div>
-                ) : (
-                  terms?.content_markdown || 'The current terms could not be loaded. Please refresh and try again.'
-                )}
-              </div>
-            </ScrollArea>
-          </div>
-
-          <Separator />
-
-          {/* Consent */}
-          <div className="space-y-4">
-            <div className="flex items-start gap-3">
-              <Checkbox
-                id="agree-terms"
-                checked={agreedTerms}
-                onCheckedChange={(checked) => setAgreedTerms(checked === true)}
-                disabled={!terms}
-                className="mt-0.5"
-              />
-              <Label htmlFor="agree-terms" className="cursor-pointer text-sm leading-relaxed text-foreground">
-                I have read and agree to the {terms?.title || 'Solicitor Portal Terms'}
-                {terms?.version ? ` (version ${terms.version})` : ''} of {companyName}.
-              </Label>
-            </div>
-
-            <div className="flex items-start gap-3">
-              <Checkbox
-                id="agree-privilege"
-                checked={agreedPrivilege}
-                onCheckedChange={(checked) => setAgreedPrivilege(checked === true)}
-                disabled={!terms}
-                className="mt-0.5"
-              />
-              <Label htmlFor="agree-privilege" className="cursor-pointer text-sm leading-relaxed text-foreground">
-                I acknowledge that matter data in this portal is confidential and may be privileged, that my access is
-                limited to matters shared with my practice, and that every action I take here is logged and auditable.
-              </Label>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex flex-col items-center justify-between gap-3 border-t border-border bg-muted/30 px-6 py-4 sm:flex-row md:px-8 md:py-5">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground/60">
-            <Lock className="h-3 w-3" aria-hidden />
-            <span>Your consent is recorded securely against version {terms?.version || 'current'}</span>
-          </div>
-          <Button
-            onClick={() => void accept()}
-            disabled={!canProceed}
-            size="lg"
-            className="w-full min-w-[200px] sm:w-auto"
-          >
-            {busy ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> Recording acceptance…</>
-            ) : (
-              'Accept & Continue'
-            )}
-          </Button>
+          <PortalAgreementConsent
+            terms={terms}
+            loading={loading}
+            busy={busy}
+            onAccept={(acknowledgements) => void accept(acknowledgements)}
+          />
         </div>
       </div>
     </main>

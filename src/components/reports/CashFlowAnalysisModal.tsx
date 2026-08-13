@@ -17,10 +17,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useCapability } from '@/hooks/useCapability';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
+import { readBaseFinancials } from '@/lib/reports/cashFlow/readBaseFinancials';
+import { toWireComparison, type WireComparison } from '@/lib/reports/cashFlowComparison/toWireComparison';
+import { CashFlowComparisonDownloadButton } from '@/components/cash-flow/modal/CashFlowComparisonDownloadButton';
 import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
 import { Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
@@ -240,8 +244,26 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const yieldChartRef = useRef<HTMLDivElement>(null);
   const comparisonChartRef = useRef<HTMLDivElement>(null);
 
+  // Cash-Flow Comparisons are commercialised independently of the standard
+  // 10-year analysis (Growth+ or the add-on). Without the capability the
+  // toggle is removed, comparison mode cannot activate, and neither
+  // comparison query effect runs (both are comparisonMode-gated).
+  const cashflowComparisonsEnabled = useCapability('cashflow.comparisons').enabled;
+
   // Comparison mode state - support up to 5 properties (1 primary + 4 comparison)
-  const [comparisonMode, setComparisonMode] = useState(false);
+  const [comparisonMode, setComparisonModeRaw] = useState(false);
+  const setComparisonMode = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      setComparisonModeRaw((prev) => {
+        const value = typeof next === 'function' ? next(prev) : next;
+        return cashflowComparisonsEnabled ? value : false;
+      });
+    },
+    [cashflowComparisonsEnabled],
+  );
+  useEffect(() => {
+    if (!cashflowComparisonsEnabled) setComparisonModeRaw(false);
+  }, [cashflowComparisonsEnabled]);
   const [availableReports, setAvailableReports] = useState<InvestmentReport[]>([]);
   const [selectedComparisonReportIds, setSelectedComparisonReportIds] = useState<string[]>([]);
   const [comparisonReports, setComparisonReports] = useState<InvestmentReport[]>([]);
@@ -671,93 +693,23 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   }, [comparisonReports]);
 
   // Extract base financial data from report
-  const baseFinancialData = useMemo(() => {
-    if (!report) return null;
-
-    const fc = report.financial_calculations || {};
-    const mo = report.manual_overrides || {};
-    const cashFlow = fc.cashFlow || {};
-    const assumptions = fc.assumptions || {};
-    const initialCosts = fc.initialCosts || {};
-
-    // Check if depreciation should be included in cash flow analysis
-    const includeDepreciation = mo.includeDepreciationInCashFlow !== false;
-
-    // CRITICAL: capitalGrowth may be stored in multiple locations:
-    // 1. manual_overrides.capitalGrowth (flat override - highest priority)
-    // 2. financial_calculations.assumptions.capitalGrowth (nested from save mapping)
-    // 3. financial_calculations.capitalGrowth (root - legacy)
-    const capitalGrowthValue = mo.capitalGrowth ?? assumptions.capitalGrowth ?? fc.capitalGrowth ?? 5;
-    
-    // CRITICAL: marketValueNow/propertyValue may be stored in multiple locations:
-    // 1. manual_overrides.marketValueNow (flat override - highest priority for current value)
-    // 2. cashFlow.marketValueNow (nested)
-    // 3. manual_overrides.purchasePrice (purchase time value)
-    // 4. initialCosts.propertyValue (nested from save mapping)
-    // 5. financial_calculations.purchasePrice (root - legacy)
-    const purchasePrice = mo.purchasePrice ?? initialCosts.propertyValue ?? fc.purchasePrice ?? fc.propertyValue ?? 0;
-    const marketValueNow = mo.marketValueNow ?? cashFlow.marketValueNow ?? purchasePrice;
-
-    return {
-      // Purchase & Loan
-      purchasePrice,
-      landPrice: mo.landPrice ?? initialCosts.landPrice ?? fc.landPrice ?? 0,
-      buildPrice: mo.buildPrice ?? initialCosts.buildPrice ?? fc.buildPrice ?? 0,
-      marketValueNow,
-      depositValue: mo.depositValue ?? initialCosts.deposit ?? fc.depositValue ?? 0,
-      // Loan amount: use override, or cash flow value, or dynamically calculate from purchase price × LVR
-      loanAmount: mo.loanAmount ?? cashFlow.loanAmount ?? 
-        (purchasePrice * ((mo.loanToValueRatio ?? fc.loanToValueRatio ?? 80) / 100)),
-      loanToValueRatio: mo.loanToValueRatio ?? fc.loanToValueRatio ?? 80,
-      loanType: (mo.loanType ?? cashFlow.loanType ?? 'interest_only') as LoanType,
-      loanTermYears: mo.loanTermYears ?? cashFlow.loanTermYears ?? 30,
-      interestRate: mo.interestRate ?? fc.interestRate ?? 5.5,
-      capitalGrowth: capitalGrowthValue,
-      
-      // New mortgage calculator fields
-      interestOnlyPeriodYears: mo.interestOnlyPeriodYears ?? 0,
-      repaymentFrequency: (mo.repaymentFrequency ?? 'monthly') as RepaymentFrequency,
-      extraRepaymentPerMonth: mo.extraRepaymentPerMonth ?? 0,
-      offsetBalance: mo.offsetBalance ?? 0,
-
-      // Rental Income
-      weeklyRent: mo.weeklyRent ?? fc.weeklyRent ?? 0,
-      occupancyRate: mo.occupancyRate ?? cashFlow.occupancyRate ?? 52,
-
-      // Expenses
-      stampDuty: mo.stampDuty ?? fc.stampDuty ?? 0,
-      bodyCorporateFees: mo.bodyCorporateFees ?? fc.bodyCorporateFees ?? 0,
-      landTax: mo.landTax ?? fc.landTax ?? 0,
-      councilRates: mo.councilRates ?? fc.councilRates ?? 0,
-      waterRates: mo.waterRates ?? fc.waterRates ?? 0,
-      solicitorFees: mo.solicitorFees ?? fc.solicitorFees ?? 0,
-      buildingLandlordInsurance: mo.buildingLandlordInsurance ?? fc.buildingLandlordInsurance ?? 0,
-      propertyManagementFees: mo.propertyManagementFees ?? fc.propertyManagementFees ?? 7,
-      repairsMaintenance: mo.repairsMaintenance ?? fc.repairsMaintenance ?? 0,
-      lettingFees: mo.lettingFees ?? fc.lettingFees ?? 0,
-      agentFee: mo.agentFee ?? fc.agentFee ?? 0,
-
-      // Tax & Growth
-      // CPI Growth: independent macro indicator — fallback to 2.5% (RBA target midpoint)
-      cpiGrowthRate: mo.cpiGrowthRate ?? cashFlow.cpiGrowthRate ?? 2.5,
-      depreciation: includeDepreciation ? (mo.depreciation ?? cashFlow.depreciation ?? 6000) : 0,
-      taxRate: mo.taxRate ?? cashFlow.taxRate ?? 30,
-      constructionYear: mo.constructionYear ?? cashFlow.constructionYear ?? new Date().getFullYear(),
-      
-      // 10-Year Depreciation Schedule (from calculator)
-      depreciationSchedule: mo.depreciationSchedule as Record<number, number> | undefined,
-      depreciationMethod: mo.depreciationMethod as 'dv' | 'pc' | undefined,
-      
-      // Construction Settings
-      constructionDurationMonths: mo.constructionDurationMonths ?? 7,
-      
-      // LMI (one-off Year 1 acquisition cost)
-      lmiAmount: mo.lmiAmount ?? 0,
-      
-      // Toggle state
-      includeDepreciationInCashFlow: includeDepreciation,
-    };
-  }, [report]);
+  /**
+   * The cascade that reads this position now lives in `readBaseFinancials`, and
+   * this is a call to it rather than a copy of it.
+   *
+   * Moved so that the properties in a comparison can be read by the same code as
+   * the one this modal has open. They were not: `compBaseData` below reads a
+   * shorter, differently-ordered set of the same fields, which is how the
+   * primary's return-on-capital came to be divided by a cost base including LMI
+   * while every property it was ranked against had theirs divided by one without.
+   *
+   * The body is unchanged. The only difference is that the current year is
+   * passed in.
+   */
+  const baseFinancialData = useMemo(
+    () => (report ? readBaseFinancials(report, new Date().getFullYear()) : null),
+    [report],
+  );
 
   // Generate 10-year loan projection using amortisation engine
   const loanProjections = useMemo(() => {
@@ -1827,12 +1779,24 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
             }
             
             pdf.setFont('helvetica', 'bold');
-            pdf.text(`#${ranking.rank} - ${ranking.propertyAddress}`, margin, yPos);
+            // `address`, not `propertyAddress`: the producer's schema emits the
+            // former (`compare-cash-flow-reports/index.ts:192`) and this line
+            // read the latter, so every ranking in this PDF printed
+            // "#1 - undefined". The old key is kept as a fallback in case a
+            // future prompt emits it.
+            pdf.text(`#${ranking.rank} - ${ranking.address ?? ranking.propertyAddress ?? ''}`, margin, yPos);
             yPos += 5;
-            
+
             pdf.setFont('helvetica', 'normal');
-            pdf.text(`Score: ${ranking.overallScore}/100`, margin + 5, yPos);
-            yPos += 4;
+            // Same story for `score`, and the `/100` is gone with it. The schema
+            // states no scale, so printing a denominator asserts something the
+            // record does not support — fixing the key while keeping `/100`
+            // would turn "undefined" into a confidently wrong number.
+            const rankingScore = ranking.score ?? ranking.overallScore;
+            if (rankingScore !== undefined && rankingScore !== null) {
+              pdf.text(`Score: ${rankingScore}`, margin + 5, yPos);
+              yPos += 4;
+            }
             
             if (ranking.strengths && ranking.strengths.length > 0) {
               pdf.text(`Strengths: ${ranking.strengths.join(', ')}`, margin + 5, yPos);
@@ -1860,25 +1824,39 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           yPos += 7;
 
           pdf.setFontSize(9);
+          // `balanced`, not `balancedApproach`. The producer's schema (`:185`)
+          // emits the former and both generators asked for the latter, so the
+          // Balanced recommendation has never appeared in a client's PDF. The
+          // old key stays as a fallback.
           const recommendations = [
-            { key: 'growthFocused', label: 'Growth Focused' },
-            { key: 'incomeFocused', label: 'Income Focused' },
-            { key: 'balancedApproach', label: 'Balanced Approach' },
-            { key: 'riskAverse', label: 'Risk Averse' },
+            { keys: ['growthFocused'], label: 'Growth Focused' },
+            { keys: ['incomeFocused'], label: 'Income Focused' },
+            { keys: ['balanced', 'balancedApproach'], label: 'Balanced Approach' },
+            { keys: ['riskAverse'], label: 'Risk Averse' },
           ];
 
           for (const rec of recommendations) {
-            const recData = aiAnalysis.investorRecommendations[rec.key];
+            const recData = rec.keys
+              .map((key) => aiAnalysis.investorRecommendations[key])
+              .find(Boolean);
             if (recData) {
               if (yPos + 15 > pageHeight - margin) {
                 pdf.addPage();
                 yPos = margin;
               }
-              
+
+              // The label alone. The schema gives `{propertyNumber, reason}` and
+              // no `recommendation`, so this printed "N/A" for all four
+              // profiles. `propertyNumber` is not substituted in its place: it
+              // indexes `propertiesData`, which is built by mapping over the
+              // result of an `IN` query whose row order Postgres does not
+              // guarantee, so it names an ordering nobody recorded. The
+              // on-screen panel prints the reason and no property for the same
+              // reason.
               pdf.setFont('helvetica', 'bold');
-              pdf.text(`${rec.label}: ${recData.recommendation || 'N/A'}`, margin, yPos);
+              pdf.text(`${rec.label}`, margin, yPos);
               yPos += 4.5;
-              
+
               if (recData.reason) {
                 pdf.setFont('helvetica', 'normal');
                 addWrappedText(recData.reason, 8, pageWidth - (margin * 2) - 5, 4);
@@ -1890,19 +1868,26 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         }
 
         // Overall Recommendation
-        if (aiAnalysis.overallRecommendation) {
+        //
+        // `.bestProperty.reason`, not the object. The schema (`:199`) makes this
+        // `{bestProperty, avoid, alternativeScenarios}` and this line handed the
+        // whole object to `pdf.splitTextToSize`. The on-screen panel reads it
+        // correctly, so the same object was being read three different ways in
+        // one file.
+        const bestOverall = aiAnalysis.overallRecommendation?.bestProperty?.reason;
+        if (bestOverall) {
           if (yPos > pageHeight - 40) {
             pdf.addPage();
             yPos = margin;
           }
-          
+
           pdf.setFontSize(12);
           pdf.setFont('helvetica', 'bold');
           pdf.text('Overall Recommendation', margin, yPos);
           yPos += 7;
-          
+
           pdf.setFont('helvetica', 'normal');
-          addWrappedText(aiAnalysis.overallRecommendation, 9, pageWidth - (margin * 2), 4.5);
+          addWrappedText(bestOverall, 9, pageWidth - (margin * 2), 4.5);
         }
       }
 
@@ -2028,13 +2013,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           
           pdf.setFontSize(11);
           pdf.setFont('helvetica', 'bold');
-          pdf.text(`#${ranking.rank} - ${ranking.propertyAddress || ranking.address}`, margin + 3, yPos);
+          // The schema's key first. This read `propertyAddress` first and fell
+          // through, which happened to work; the order now matches the producer.
+          pdf.text(`#${ranking.rank} - ${ranking.address ?? ranking.propertyAddress ?? ''}`, margin + 3, yPos);
           yPos += 6;
-          
+
           pdf.setFontSize(9);
           pdf.setFont('helvetica', 'normal');
-          if (ranking.overallScore || ranking.score) {
-            pdf.text(`Overall Score: ${ranking.overallScore || ranking.score}/100`, margin + 5, yPos);
+          // No `/100`: the schema names no scale. `??` rather than `||`, so a
+          // genuine score of 0 prints instead of being treated as absent.
+          const overallScore = ranking.score ?? ranking.overallScore;
+          if (overallScore !== undefined && overallScore !== null) {
+            pdf.text(`Overall Score: ${overallScore}`, margin + 5, yPos);
             yPos += 4;
           }
           
@@ -2067,30 +2057,36 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         pdf.text('Investor Profile Recommendations', margin, yPos);
         yPos += 8;
 
+        // `balanced` first, `balancedApproach` as a fallback — see the same fix
+        // in `exportComparisonPDF`.
         const recommendations = [
-          { key: 'growthFocused', label: 'Growth Focused', color: [59, 130, 246] },
-          { key: 'incomeFocused', label: 'Income Focused', color: [34, 197, 94] },
-          { key: 'balancedApproach', label: 'Balanced Approach', color: [168, 85, 247] },
-          { key: 'riskAverse', label: 'Risk Averse', color: [249, 115, 22] },
+          { keys: ['growthFocused'], label: 'Growth Focused', color: [59, 130, 246] },
+          { keys: ['incomeFocused'], label: 'Income Focused', color: [34, 197, 94] },
+          { keys: ['balanced', 'balancedApproach'], label: 'Balanced Approach', color: [168, 85, 247] },
+          { keys: ['riskAverse'], label: 'Risk Averse', color: [249, 115, 22] },
         ];
 
         for (const rec of recommendations) {
-          const recData = aiAnalysis.investorRecommendations[rec.key];
+          const recData = rec.keys
+            .map((key) => aiAnalysis.investorRecommendations[key])
+            .find(Boolean);
           if (recData) {
             if (yPos + 20 > pageHeight - margin) {
               pdf.addPage();
               yPos = margin;
             }
-            
+
             pdf.setFontSize(10);
             pdf.setFont('helvetica', 'bold');
             pdf.setTextColor(rec.color[0], rec.color[1], rec.color[2]);
-            pdf.text(`${rec.label}:`, margin, yPos);
+            // The label alone. `recData.recommendation` is not in the schema and
+            // printed "N/A" for every profile; `propertyNumber` is not put in
+            // its place because it indexes an ordering nobody recorded.
+            pdf.text(`${rec.label}`, margin, yPos);
             pdf.setTextColor(0, 0, 0);
             pdf.setFont('helvetica', 'normal');
-            pdf.text(` ${recData.recommendation || 'N/A'}`, margin + pdf.getTextWidth(`${rec.label}: `), yPos);
             yPos += 5;
-            
+
             if (recData.reason) {
               addWrappedText(recData.reason, 9, pageWidth - (margin * 2) - 5, 4.5);
             }
@@ -2100,20 +2096,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         yPos += 5;
       }
 
-      // Overall Recommendation
-      if (aiAnalysis.overallRecommendation) {
+      // Overall Recommendation — the object's `bestProperty.reason`, not the
+      // object. See the same fix in `exportComparisonPDF`.
+      const bestOverall = aiAnalysis.overallRecommendation?.bestProperty?.reason;
+      if (bestOverall) {
         if (yPos > pageHeight - 50) {
           pdf.addPage();
           yPos = margin;
         }
-        
+
         pdf.setFontSize(14);
         pdf.setFont('helvetica', 'bold');
         pdf.text('Overall Recommendation', margin, yPos);
         yPos += 8;
-        
+
         pdf.setFont('helvetica', 'normal');
-        addWrappedText(aiAnalysis.overallRecommendation, 10, pageWidth - (margin * 2), 5);
+        addWrappedText(bestOverall, 10, pageWidth - (margin * 2), 5);
       }
 
       // Disclaimer
@@ -3566,6 +3564,42 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
    * `exportSingleReportPDF` is passed as the fallback and is *only* reached
    * when the route is not deployed. It stays in the menu in its own right.
    */
+  /**
+   * The comparison as the render route wants it, or null when there is not one.
+   *
+   * Built at press time rather than held in state, for the reason
+   * `requestCashFlowPdf` gives about the single-property document: the
+   * projections on screen include overrides the adviser has not saved, and those
+   * are the ten years they just reviewed.
+   *
+   * The written analysis rides along if there is one and is simply absent if
+   * there is not. Unlike `exportAiAnalysisPDF`, this path does not require it.
+   */
+  const buildWireComparison = useCallback((): WireComparison | null => {
+    if (!report || projections.length < 2) return null;
+    const peers = allComparisonProjections
+      .filter(({ projections: peerYears }) => peerYears.length > 1)
+      .map(({ report: peerReport, projections: peerYears }) => ({
+        report: peerReport,
+        projections: peerYears,
+      }));
+    if (!peers.length) return null;
+
+    const currentYear = new Date().getFullYear();
+    return toWireComparison({
+      primary: { report, projections },
+      peers,
+      investorProfile,
+      analysis: aiAnalysis,
+      firstCalendarYear: currentYear + 1,
+      currentYear,
+    });
+  }, [report, projections, allComparisonProjections, investorProfile, aiAnalysis]);
+
+  const comparisonUnavailableReason = comparisonReports.length === 0
+    ? 'Add at least one comparison property first.'
+    : undefined;
+
   const exportServerCashFlowPDF = useCallback(async () => {
     if (!report || !baseFinancialData || !projections.length) return;
     if (isExportingServerPdf) return;
@@ -4108,6 +4142,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
             <CashFlowControlPanel
               comparisonMode={comparisonMode}
+              comparisonsAvailable={cashflowComparisonsEnabled}
               onComparisonModeChange={setComparisonMode}
               selectedComparisonReportIds={selectedComparisonReportIds}
               availableReports={availableReports}
@@ -4860,6 +4895,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-semibold">Investment Metrics Comparison ({comparisonReports.length + 1} Properties)</h4>
                       <div className="flex items-center gap-2">
+                        {/*
+                          Beside the existing export, not instead of it. This one
+                          typesets every property's full projection server-side;
+                          the one next to it rasterises the charts on this screen
+                          and prints eight metric rows. They are different
+                          documents and both are worth having.
+                        */}
+                        <CashFlowComparisonDownloadButton
+                          build={buildWireComparison}
+                          unavailableReason={comparisonUnavailableReason}
+                        />
                         <Button
                           variant="outline"
                           size="sm"
@@ -5144,6 +5190,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               )}
                               {savedAnalysisId ? 'Update' : 'Save'}
                             </Button>
+                            {/*
+                              The analysis panel gets it too, because this is
+                              where an adviser is when they have just generated
+                              one — and the typeset document is the only one of
+                              the three that carries both the prose and the
+                              figures it was written from.
+                            */}
+                            <CashFlowComparisonDownloadButton
+                              build={buildWireComparison}
+                              unavailableReason={comparisonUnavailableReason}
+                              label="Typeset"
+                            />
                             <Button
                               size="sm"
                               variant="outline"

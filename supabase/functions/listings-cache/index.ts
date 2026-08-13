@@ -1,0 +1,616 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import {
+  verifyAuth,
+  createForbiddenResponse,
+  createUnauthorizedResponse,
+  createCorsHeaders,
+} from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import {
+  enforceActorQuota,
+  enforceIpQuota,
+  fetchWithTimeout,
+  getClientIp,
+  killSwitchActive,
+  redactError,
+} from '../_shared/publicAbuseControls.ts';
+import {
+  orderLooksSorted,
+  planReconciliation,
+  toCacheRow,
+  type CachedListingRow,
+} from '../_shared/listingsCache.pure.ts';
+import {
+  allowlistAdmits,
+  buildAllowlist,
+  canonicalTableKey,
+  looksLikeTableId,
+  normaliseName,
+  parseTableAliases,
+} from '../_shared/airtableTableKey.pure.ts';
+import { INTAKE_SORT_FIELD } from '../_shared/airtableIntakeFields.pure.ts';
+
+/**
+ * Server-side listings cache.
+ *
+ * Overview and Listings both need the whole property table. Reading it from
+ * Airtable costs `ceil(N/100)` **sequential** round trips — the offset for page
+ * N+1 only exists once page N has returned — and every user paid that, on every
+ * device, every time. A browser cache could not fix it: it does nothing for a
+ * first visit, a new device, or a cleared profile, which is most of the load
+ * that actually hurts.
+ *
+ *   op: 'read'  (a signed-in user) — one Postgres read returns the whole set.
+ *   op: 'sync'  (service role, cron) — walks Airtable once for everybody and
+ *               brings the cache in line, deletions included.
+ *
+ * The cache **mirrors** Airtable, it does not archive it. Airtable prunes the
+ * intake table 30 days after a record's Created Time; the sync's reconciliation
+ * step propagates that here, so the dashboard settles into a rolling window of
+ * current stock. That makes reconciliation the most dangerous code in this file
+ * — it is the one operation that can destroy data for every user at once, on a
+ * schedule, unattended — so the decision to run it is made by
+ * `planReconciliation` from evidence, and is refused by default.
+ */
+
+const CIRCUIT_SCOPE = 'listings_cache_read';
+
+/** Airtable's own per-request ceiling. */
+const AIRTABLE_PAGE_SIZE = 100;
+/**
+ * Walk safety stop. Well past the current 1,441 records, and its only job is to
+ * stop a paging bug looping forever. Hitting it marks the walk incomplete, which
+ * blocks reconciliation — an early exit must never look like a deletion.
+ */
+const MAX_PAGES = 200;
+/** Rows per Postgres round trip. */
+const WRITE_CHUNK = 500;
+/** PostgREST caps a single select; the read pages through with `.range()`. */
+const READ_PAGE = 1000;
+
+interface SyncState {
+  record_count: number | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Table identity                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Display name → table id, learned from Airtable and held for the isolate's
+ * lifetime.
+ *
+ * The alternative was a new env var every deployment would have to set before
+ * the fix took effect. Asking Airtable is self-configuring: the schema endpoint
+ * is the authority on what a table is called, the answer never changes in
+ * practice, and one request per cold isolate is nothing against the fifteen this
+ * whole function exists to remove.
+ */
+let aliasCache: Map<string, string> | null = null;
+
+async function tableAliases(): Promise<Map<string, string>> {
+  if (aliasCache) return aliasCache;
+
+  // An explicit override skips the lookup entirely, for a deployment that would
+  // rather not grant schema access or wants to pin the mapping.
+  const configured = parseTableAliases(Deno.env.get('AIRTABLE_TABLE_ALIASES'));
+  if (configured.size > 0) {
+    aliasCache = configured;
+    return aliasCache;
+  }
+
+  const token = Deno.env.get('AIRTABLE_TOKEN');
+  const baseId = Deno.env.get('AIRTABLE_BASE_ID');
+  if (!token || !baseId) return new Map();
+
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      10_000,
+    );
+    if (!response.ok) {
+      // Not fatal. Resolution falls back to the raw string, which is what the
+      // code did before this existed.
+      console.warn('[listings-cache] table metadata unavailable', response.status);
+      return new Map();
+    }
+    const payload = (await response.json()) as { tables?: Array<{ id?: string; name?: string }> };
+    const learned = new Map<string, string>();
+    for (const table of payload.tables ?? []) {
+      if (table?.id && table?.name && looksLikeTableId(table.id)) {
+        learned.set(normaliseName(table.name), table.id);
+      }
+    }
+    // Only cache a useful answer, so a transient empty response does not pin an
+    // empty map for the isolate's whole life.
+    if (learned.size > 0) aliasCache = learned;
+    return learned;
+  } catch (error) {
+    console.warn('[listings-cache] table metadata lookup failed', redactError(error));
+    return new Map();
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Airtable                                                                    */
+/* -------------------------------------------------------------------------- */
+
+interface AirtableConfig {
+  token: string;
+  baseId: string;
+  table: string;
+}
+
+interface WalkResult {
+  records: Array<{ id: string; createdTime?: string; fields?: Record<string, unknown> }>;
+  complete: boolean;
+  sorted: boolean;
+  error: string | null;
+}
+
+/**
+ * Reads the entire table, newest first.
+ *
+ * `complete` is the field that matters: it is false whenever the walk stopped
+ * for any reason other than Airtable saying there is no more data — an HTTP
+ * error, a timeout, the page cap. Everything downstream treats an incomplete
+ * walk as "these records might exist and I simply did not see them", which is
+ * the difference between a cache that mirrors deletions and one that invents
+ * them.
+ */
+async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
+  const records: WalkResult['records'] = [];
+  let offset: string | undefined;
+  let sortRejected = false;
+  let pages = 0;
+
+  while (pages < MAX_PAGES) {
+    pages += 1;
+    const url = new URL(
+      `https://api.airtable.com/v0/${config.baseId}/${encodeURIComponent(config.table)}`,
+    );
+    url.searchParams.set('pageSize', String(AIRTABLE_PAGE_SIZE));
+    if (offset) url.searchParams.set('offset', offset);
+    if (!sortRejected) {
+      url.searchParams.set('sort[0][field]', INTAKE_SORT_FIELD);
+      url.searchParams.set('sort[0][direction]', 'desc');
+    }
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(
+        url.toString(),
+        { headers: { Authorization: `Bearer ${config.token}` } },
+        20_000,
+      );
+    } catch (error) {
+      return { records, complete: false, sorted: !sortRejected, error: redactError(error) };
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      // A table without a `Created` field rejects the sort. `airtable-proxy`
+      // retries without it and tells the caller nothing; here the retry is the
+      // same but the fact is carried out to the sync row, because a walk that
+      // silently stopped being newest-first breaks the client's incremental
+      // path even though it does not break this one.
+      const unknownSortField =
+        !sortRejected &&
+        (response.status === 422 ||
+          /UNKNOWN_FIELD_NAME|INVALID_SORT_FIELD|not a valid field|unknown field/i.test(body));
+      if (unknownSortField) {
+        sortRejected = true;
+        pages -= 1;
+        continue;
+      }
+      return {
+        records,
+        complete: false,
+        sorted: !sortRejected,
+        error: `airtable_${response.status}`,
+      };
+    }
+
+    const payload = (await response.json()) as {
+      records?: WalkResult['records'];
+      offset?: string;
+    };
+    records.push(...(payload.records ?? []));
+
+    offset = payload.offset;
+    // No offset is Airtable saying "that was everything" — the only clean exit.
+    if (!offset) return { records, complete: true, sorted: !sortRejected, error: null };
+  }
+
+  return { records, complete: false, sorted: !sortRejected, error: 'page_cap_reached' };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sync                                                                        */
+/* -------------------------------------------------------------------------- */
+
+type Supabase = ReturnType<typeof createClient>;
+
+/** Every fingerprint currently held for a table, paged past PostgREST's cap. */
+async function loadFingerprints(
+  supabase: Supabase,
+  tableKey: string,
+): Promise<Map<string, string | null>> {
+  const held = new Map<string, string | null>();
+  for (let from = 0; ; from += READ_PAGE) {
+    const { data, error } = await supabase
+      .from('listings_cache')
+      .select('listing_id, fingerprint')
+      .eq('table_key', tableKey)
+      .range(from, from + READ_PAGE - 1);
+    if (error) throw new Error(`fingerprint_read_failed: ${error.message}`);
+    const rows = (data ?? []) as Array<{ listing_id: string; fingerprint: string | null }>;
+    for (const row of rows) held.set(row.listing_id, row.fingerprint);
+    if (rows.length < READ_PAGE) return held;
+  }
+}
+
+async function writeChanged(supabase: Supabase, rows: CachedListingRow[]): Promise<void> {
+  for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
+    const { error } = await supabase
+      .from('listings_cache')
+      .upsert(rows.slice(i, i + WRITE_CHUNK), { onConflict: 'listing_id' });
+    if (error) throw new Error(`upsert_failed: ${error.message}`);
+  }
+}
+
+/**
+ * Re-stamps records the walk saw but which have not changed.
+ *
+ * This is what makes a 15-minute sync affordable: an unchanged record costs one
+ * timestamp in a bulk update instead of rewriting a JSONB blob of 205 fields.
+ * It is also load-bearing for correctness — reconciliation deletes by
+ * `last_verified_at`, so a record that was seen and skipped still has to be
+ * stamped or the next sweep would delete it.
+ */
+async function stampUnchanged(
+  supabase: Supabase,
+  tableKey: string,
+  ids: string[],
+  verifiedAt: string,
+): Promise<void> {
+  for (let i = 0; i < ids.length; i += WRITE_CHUNK) {
+    const { error } = await supabase
+      .from('listings_cache')
+      .update({ last_verified_at: verifiedAt })
+      .eq('table_key', tableKey)
+      .in('listing_id', ids.slice(i, i + WRITE_CHUNK));
+    if (error) throw new Error(`stamp_failed: ${error.message}`);
+  }
+}
+
+async function recordSyncState(
+  supabase: Supabase,
+  tableKey: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await supabase
+    .from('listings_cache_sync')
+    .upsert({ table_key: tableKey, ...patch }, { onConflict: 'table_key' });
+}
+
+interface SyncOutcome {
+  fetched: number;
+  changed: number;
+  unchanged: number;
+  deleted: number;
+  reconciled: boolean;
+  reconcileReason: string;
+  sorted: boolean;
+  status: string;
+  error: string | null;
+}
+
+async function runSync(
+  supabase: Supabase,
+  config: AirtableConfig,
+  tableKey: string,
+): Promise<SyncOutcome> {
+  const startedAt = new Date().toISOString();
+
+  const { data: stateRow } = await supabase
+    .from('listings_cache_sync')
+    .select('record_count')
+    .eq('table_key', tableKey)
+    .maybeSingle();
+  const previousCount = (stateRow as SyncState | null)?.record_count ?? null;
+
+  await recordSyncState(supabase, tableKey, { status: 'syncing', last_sync_at: startedAt });
+
+  const walk = await walkAirtable(config);
+
+  // Deduplicate by id and drop anything without a usable one. Airtable does not
+  // repeat a record within a walk, but an offset served during a concurrent
+  // write can, and a duplicate would make the upsert conflict with itself.
+  const rowsById = new Map<string, CachedListingRow>();
+  for (const record of walk.records) {
+    const row = toCacheRow(record, tableKey, startedAt);
+    if (row) rowsById.set(row.listing_id, row);
+  }
+  const rows = Array.from(rowsById.values());
+
+  const held = await loadFingerprints(supabase, tableKey);
+  const changed: CachedListingRow[] = [];
+  const unchanged: string[] = [];
+  for (const row of rows) {
+    if (held.get(row.listing_id) === row.fingerprint) unchanged.push(row.listing_id);
+    else changed.push(row);
+  }
+
+  await writeChanged(supabase, changed);
+  await stampUnchanged(supabase, tableKey, unchanged, startedAt);
+
+  const verdict = planReconciliation({
+    walkComplete: walk.complete,
+    fetchedCount: rows.length,
+    previousCount,
+  });
+
+  let deleted = 0;
+  if (verdict.allowed) {
+    // Anything not re-stamped by this run is gone from Airtable. This is the
+    // only path by which an upstream deletion reaches the cache.
+    const { data, error } = await supabase
+      .from('listings_cache')
+      .delete()
+      .eq('table_key', tableKey)
+      .lt('last_verified_at', startedAt)
+      .select('listing_id');
+    if (error) throw new Error(`reconcile_failed: ${error.message}`);
+    deleted = (data ?? []).length;
+  }
+
+  const sorted = orderLooksSorted(rows.slice(0, 200).map((row) => row.created_time));
+  const status = walk.complete ? (verdict.allowed ? 'ok' : 'partial') : 'partial';
+  const notes = [
+    walk.error,
+    verdict.allowed ? null : `reconcile skipped: ${verdict.reason}`,
+    sorted ? null : 'walk did not come back newest-first',
+  ].filter(Boolean) as string[];
+
+  await recordSyncState(supabase, tableKey, {
+    last_sync_at: startedAt,
+    // Only a clean, fully reconciled run may move the baseline the next run
+    // compares against. A partial run that wrote here would teach the guard a
+    // count it never actually verified.
+    ...(status === 'ok'
+      ? { last_full_sync_at: startedAt, record_count: rows.length }
+      : {}),
+    status,
+    reconciled: verdict.allowed,
+    error_count: notes.length,
+    last_error: notes.length ? notes.join('; ').slice(0, 500) : null,
+  });
+
+  return {
+    fetched: rows.length,
+    changed: changed.length,
+    unchanged: unchanged.length,
+    deleted,
+    reconciled: verdict.allowed,
+    reconcileReason: verdict.reason,
+    sorted,
+    status,
+    error: notes.length ? notes.join('; ') : null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Read                                                                        */
+/* -------------------------------------------------------------------------- */
+
+interface ReadRow {
+  listing_id: string;
+  fields: Record<string, unknown>;
+  created_time: string | null;
+}
+
+/**
+ * The whole cached set for one table, newest first.
+ *
+ * Returned as Airtable-shaped records rather than projected listings: the
+ * projection is pure and the client already owns a copy of it, so sending
+ * `fields` alone halves the payload against sending both, and keeps this
+ * function free of any opinion about how a listing is displayed.
+ */
+async function readCache(supabase: Supabase, tableKey: string) {
+  const records: Array<{ id: string; createdTime: string | null; fields: Record<string, unknown> }> =
+    [];
+  for (let from = 0; ; from += READ_PAGE) {
+    const { data, error } = await supabase
+      .from('listings_cache')
+      .select('listing_id, fields, created_time')
+      .eq('table_key', tableKey)
+      .order('created_time', { ascending: false, nullsFirst: false })
+      .order('listing_id', { ascending: true })
+      .range(from, from + READ_PAGE - 1);
+    if (error) throw new Error(`read_failed: ${error.message}`);
+    const rows = (data ?? []) as ReadRow[];
+    for (const row of rows) {
+      records.push({
+        id: row.listing_id,
+        createdTime: row.created_time,
+        fields: row.fields ?? {},
+      });
+    }
+    if (rows.length < READ_PAGE) return records;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Handler                                                                     */
+/* -------------------------------------------------------------------------- */
+
+Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  const j = (payload: unknown, status = 200) =>
+    new Response(JSON.stringify(payload), {
+      status,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const op = typeof body.op === 'string' ? body.op : 'read';
+
+    if (killSwitchActive('LISTINGS_CACHE_KILL_SWITCH')) {
+      return j({ success: false, error: 'temporarily_unavailable' }, 503);
+    }
+
+    const defaultTable = (Deno.env.get('AIRTABLE_TABLE_NAME') || '').trim();
+    const requested = typeof body.tableName === 'string' ? body.tableName.trim() : '';
+
+    // Both sides of the storage key and the allowlist go through the same
+    // resolution. Cron passes no table name and so writes under the configured
+    // default (an id); the Listings page passes the display name. Without this
+    // they were two different keys for one table, the read matched nothing, and
+    // the client silently fell back to walking Airtable.
+    const aliases = await tableAliases();
+    const tableKey = canonicalTableKey({ requested, fallback: defaultTable, aliases });
+    if (!tableKey) return j({ success: false, error: 'no_table_configured' }, 400);
+
+    // Same allowlist the proxy enforces, so the cache cannot become a way to
+    // read a table the proxy would have refused.
+    const allowlist = buildAllowlist(defaultTable, Deno.env.get('AIRTABLE_TABLE_ALLOWLIST'), aliases);
+    if (!allowlistAdmits(allowlist, tableKey)) {
+      return j({ success: false, error: 'table_not_permitted' }, 403);
+    }
+
+    /* -- Cron / service-role sync ---------------------------------------- */
+    if (op === 'sync') {
+      // Carries no user; only reachable with the service-role key, which cron
+      // holds and a browser never does.
+      const authHeader = req.headers.get('authorization') || '';
+      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+      if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
+        return createUnauthorizedResponse('Service role required', corsHeaders);
+      }
+
+      const token = Deno.env.get('AIRTABLE_TOKEN');
+      const baseId = Deno.env.get('AIRTABLE_BASE_ID');
+      if (!token || !baseId) return j({ success: false, error: 'airtable_not_configured' }, 500);
+
+      try {
+        const outcome = await runSync(supabase, { token, baseId, table: tableKey }, tableKey);
+        return j({ success: true, op, tableKey, ...outcome });
+      } catch (error) {
+        const message = redactError(error);
+        await recordSyncState(supabase, tableKey, {
+          status: 'failed',
+          reconciled: false,
+          last_error: message.slice(0, 500),
+        });
+        return j({ success: false, op, error: message }, 502);
+      }
+    }
+
+    /* -- User-facing read ------------------------------------------------- */
+    const { error: authError, userId, authMethod } = await verifyAuth(
+      supabase,
+      req.headers,
+      body as { session_token?: string },
+    );
+    if (authError || !userId) {
+      return createUnauthorizedResponse(authError || 'Authentication required', corsHeaders);
+    }
+    const permission = await requireModulePermission(
+      supabase,
+      { userId, authMethod },
+      'listings',
+      'can_view',
+    );
+    if (!permission.ok) {
+      return createForbiddenResponse(permission.error || 'Listings access required', corsHeaders);
+    }
+
+    const actorQuota = await enforceActorQuota(supabase, userId, CIRCUIT_SCOPE, {
+      limit: 60,
+      windowMs: 60_000,
+    });
+    const ipQuota = await enforceIpQuota(supabase, getClientIp(req), CIRCUIT_SCOPE, {
+      limit: 120,
+      windowMs: 60_000,
+    });
+    if (!actorQuota.ok || !ipQuota.ok) return j({ success: false, error: 'rate_limited' }, 429);
+
+    /**
+     * One record, for a deep link.
+     *
+     * `/listings/:id` opened in a fresh tab has no warm cache and no in-memory
+     * set to read from. Without this it would have to pull the whole table —
+     * or, worse, fall back to walking Airtable — to render a single property.
+     */
+    if (op === 'record') {
+      const listingId = typeof body.listingId === 'string' ? body.listingId.trim() : '';
+      if (!/^[A-Za-z0-9_-]{3,64}$/.test(listingId)) {
+        return j({ success: false, error: 'invalid_listing_id' }, 400);
+      }
+      const { data: row, error: rowError } = await supabase
+        .from('listings_cache')
+        .select('listing_id, fields, created_time')
+        .eq('listing_id', listingId)
+        .eq('table_key', tableKey)
+        .maybeSingle();
+      if (rowError) return j({ success: false, error: 'read_failed' }, 500);
+      if (!row) return j({ success: false, error: 'not_found' }, 404);
+
+      const record = row as { listing_id: string; fields: Record<string, unknown>; created_time: string | null };
+      const { data: overlay } = await supabase
+        .from('listing_enrichment')
+        .select('values, provenance, status, last_enriched_at')
+        .eq('listing_id', listingId)
+        .maybeSingle();
+
+      return j({
+        success: true,
+        op,
+        tableKey,
+        record: {
+          id: record.listing_id,
+          createdTime: record.created_time,
+          fields: record.fields ?? {},
+        },
+        enrichment: overlay ?? null,
+      });
+    }
+
+    const records = await readCache(supabase, tableKey);
+    const { data: state } = await supabase
+      .from('listings_cache_sync')
+      .select('last_sync_at, last_full_sync_at, status, reconciled, record_count')
+      .eq('table_key', tableKey)
+      .maybeSingle();
+
+    return j({
+      success: true,
+      op: 'read',
+      tableKey,
+      records,
+      total: records.length,
+      // Surfaced rather than swallowed: a caller that gets an empty set because
+      // the cache has never synced should be able to tell that apart from a
+      // table that genuinely has no listings.
+      sync: state ?? null,
+    });
+  } catch (error) {
+    console.error('[listings-cache] unhandled', redactError(error));
+    return j({ success: false, error: 'internal_error' }, 500);
+  }
+});

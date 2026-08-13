@@ -23,6 +23,7 @@ import {
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { compileFigmaToReportTemplate } from '../_shared/figmaCompiler.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const FIGMA_BASE = 'https://api.figma.com';
 
@@ -297,7 +298,7 @@ Deno.serve(async (req) => {
             })
             .eq('id', id);
           await logSync(supabase, id, 'sync', 'error', userId, null, dur, e?.message || String(e));
-          return json({ error: e?.message || String(e) }, corsHeaders, 500);
+          return json({ ...internalError(e, 'figma-template-sync') }, corsHeaders, 500);
         }
       }
 
@@ -357,7 +358,7 @@ Deno.serve(async (req) => {
         }, corsHeaders, 400);
     }
   } catch (e: any) {
-    return json({ error: e?.message || String(e) }, createCorsHeaders(origin), 500);
+    return json({ ...internalError(e, 'figma-template-sync') }, createCorsHeaders(origin), 500);
   }
 });
 

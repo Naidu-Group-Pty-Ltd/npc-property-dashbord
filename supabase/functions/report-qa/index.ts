@@ -219,8 +219,11 @@ function buildChatCompletionBody(assignment: ReportQAModelAssignment, messages: 
 
 const MAX_PDF_SIZE_FOR_FULL_PARSE = 500000; // 500KB - limit for full parsing
 const MAX_TEXT_MATCHES = 2000; // Limit matches to prevent infinite loops
-const MAX_IMAGES_TO_OCR = 5; // Limit number of page images to process for OCR
-const MAX_IMAGE_SIZE_FOR_OCR = 2000000; // 2MB max per image
+const MAX_IMAGES_TO_OCR = 6; // Limit number of page images to process per request
+// A flattened A4 page rasterised for OCR is ~0.3-1.5MB; 6MB per page leaves
+// generous headroom instead of silently dropping every page of a print-quality
+// render (the old 2MB ceiling skipped them all and produced "no text").
+const MAX_IMAGE_SIZE_FOR_OCR = 6_000_000;
 
 type PageImageInput = {
   pageNumber: number;
@@ -263,7 +266,9 @@ async function extractPdfText(
     let ocrText = '';
     let imagesProcessed = 0;
     
-    if (openaiApiKey && extractedText.length < 500) {
+    // OCR no longer depends on an OpenAI key: `performOcrOnImage` prefers the
+    // Lovable AI gateway and only falls back to OpenAI when a key is present.
+    if (extractedText.length < 500) {
       if (pageImages && pageImages.length > 0) {
         console.log(
           `[PDF-Extract] Low text content (${extractedText.length} chars), attempting OCR on ${pageImages.length} provided page images...`
@@ -310,7 +315,7 @@ function estimateBytesFromBase64Length(base64: string): number {
 
 async function extractTextFromProvidedImages(
   pageImages: PageImageInput[],
-  openaiApiKey: string
+  openaiApiKey?: string
 ): Promise<{ text: string; imagesProcessed: number }> {
   const start = Date.now();
   const ocrTexts: string[] = [];
@@ -350,58 +355,88 @@ async function extractTextFromProvidedImages(
   return { text: ocrTexts.join('\n\n'), imagesProcessed: processed };
 }
 
-async function performOcrOnImage(
-  base64Image: string,
-  mimeType: string,
-  pageNumber: number,
-  openaiApiKey: string
-): Promise<string | null> {
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Extract ALL text visible on this page image (page ${pageNumber}). Include:
+const OCR_PROMPT = (pageNumber: number) => `Extract ALL text visible on this page image (page ${pageNumber}). Include:
 - All headings, titles, and labels
 - All body text and paragraphs
 - All numbers, prices, and data
 - All table content (format as markdown tables)
 - All bullet points and lists
 
-Return plain text/markdown only (no JSON).`,
-              },
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:${mimeType};base64,${base64Image}`,
-                  detail: 'high',
-                },
-              },
-            ],
-          },
-        ],
-        max_tokens: 1200,
-      }),
-    });
+Return plain text/markdown only (no JSON).`;
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[PDF-OCR] Vision API error: ${response.status} - ${errorText}`);
-      return null;
+async function callVisionOcr(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  base64Image: string,
+  mimeType: string,
+  pageNumber: number,
+): Promise<string | null> {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: OCR_PROMPT(pageNumber) },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } },
+          ],
+        },
+      ],
+      max_tokens: 2000,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[PDF-OCR] Vision API error (${model}): ${response.status} - ${errorText.slice(0, 300)}`);
+    return null;
+  }
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content;
+  return typeof text === 'string' && text.trim() ? text : null;
+}
+
+/**
+ * OCR one rasterised page. The Lovable AI gateway is tried first so a flattened
+ * (image-only) report can always be read even when no OpenAI key is configured
+ * for this project — the previous OpenAI-only path silently produced no text at
+ * all in that case, which surfaced to the user as "could not extract text".
+ */
+async function performOcrOnImage(
+  base64Image: string,
+  mimeType: string,
+  pageNumber: number,
+  openaiApiKey?: string
+): Promise<string | null> {
+  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  try {
+    if (lovableKey) {
+      const viaGateway = await callVisionOcr(
+        'https://ai.gateway.lovable.dev/v1/chat/completions',
+        lovableKey,
+        'google/gemini-3.6-flash',
+        base64Image,
+        mimeType,
+        pageNumber,
+      );
+      if (viaGateway) return viaGateway;
     }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || null;
+    if (openaiApiKey) {
+      return await callVisionOcr(
+        'https://api.openai.com/v1/chat/completions',
+        openaiApiKey,
+        'gpt-4o-mini',
+        base64Image,
+        mimeType,
+        pageNumber,
+      );
+    }
+    console.error('[PDF-OCR] No vision provider configured (LOVABLE_API_KEY / OPENAI_API_KEY absent)');
+    return null;
   } catch (error) {
     console.error('[PDF-OCR] Vision API call failed:', error);
     return null;
@@ -515,6 +550,7 @@ function decodePdfStringFast(str: string): string {
 }
 // CORS headers sourced from shared helper (uses ALLOWED_ORIGINS env var with safe legacy fallback).
 import { createCorsHeaders } from '../_shared/auth.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 /**
  * Decode base64 to Uint8Array - simple and reliable approach
@@ -1239,6 +1275,11 @@ Deno.serve(async (req) => {
       // conversation row exists. Module permission + paid rate limits still
       // apply; there is simply no conversation resource to authorize.
       'transcribe': { access: 'none', permission: 'can_edit', paid: true },
+      // OCR only converts caller-supplied page images to text. It does not
+      // access or persist a conversation, so it must work before a new chat
+      // has a conversation id. The separate `extract` action remains a
+      // write-authorized storage path.
+      'ocr-pages': { access: 'none', permission: 'can_edit', paid: true },
       'extract': { access: 'write', permission: 'can_edit', paid: true },
       'index-reports': { access: 'write', permission: 'can_edit', paid: true },
       'update-conversation': { access: 'admin', permission: 'can_edit' },
@@ -1422,60 +1463,102 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Handle PDF text extraction with RAG storage (Step 5)
-    if (action === "extract") {
-      const { fileData, fileName, conversationId, enableRAG = true, enableOCR = true, pageImages } = body;
+    // Handle standalone raster OCR or PDF extraction with RAG storage (Step 5).
+    // `ocr-pages` is intentionally unable to persist or resolve stored data.
+    if (action === "extract" || action === "ocr-pages") {
+      const isOcrOnlyAction = action === "ocr-pages";
+      const { fileData, fileName, conversationId, enableOCR = true, pageImages } = body;
+      const enableRAG = isOcrOnlyAction ? false : body.enableRAG ?? true;
       console.log(`[report-qa] Extracting text from: ${fileName}, RAG enabled: ${enableRAG}, OCR enabled: ${enableOCR}`);
       
+      if (!Array.isArray(pageImages) && pageImages !== undefined) {
+        return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (typeof fileName !== 'string' || fileName.length < 1 || fileName.length > 255) {
+        return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const imagesOnly = (!fileData || typeof fileData !== 'string' || fileData.length === 0)
+        && Array.isArray(pageImages) && pageImages.length > 0;
+
+      if (isOcrOnlyAction && !imagesOnly) {
+        return new Response(JSON.stringify({ error: 'OCR pages are required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       // Accept either a full data URL or raw base64.
       const base64Data = (typeof fileData === 'string' && fileData.includes(','))
         ? (fileData.split(',').pop() || '')
         : (fileData || '');
-      const boundedPdf = enforceBase64Limit(base64Data, Math.ceil(REPORT_QA_MAX_PDF_BYTES * 4 / 3) + 16, REPORT_QA_MAX_PDF_BYTES);
-      if (!boundedPdf.ok) return boundedPdf.error;
-      if (typeof fileName !== 'string' || fileName.length < 1 || fileName.length > 255) {
-        return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      let normalizedPdf = '';
+      if (!imagesOnly) {
+        const boundedPdf = enforceBase64Limit(base64Data, Math.ceil(REPORT_QA_MAX_PDF_BYTES * 4 / 3) + 16, REPORT_QA_MAX_PDF_BYTES);
+        if (!boundedPdf.ok) return boundedPdf.error;
+        normalizedPdf = boundedPdf.normalized;
       }
-      if (!Array.isArray(pageImages) && pageImages !== undefined) {
-        return new Response(JSON.stringify({ error: 'Invalid request' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-      
+
       let extractedText = "";
       let imagesProcessed = 0;
       let totalPages = 0;
       let fileSizeBytes = 0;
-      
+      let ocrOnlyText = '';
+
       try {
-        // Convert base64 to Uint8Array for PDF parsing
-        const binaryString = atob(boundedPdf.normalized);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        fileSizeBytes = bytes.length;
-        console.log(`[report-qa] PDF size: ${fileSizeBytes} bytes`);
-        
-        // Use our custom PDF text extraction function with optional OCR
-        const ocrKey = enableOCR ? OPENAI_API_KEY : undefined;
-        const result = await extractPdfText(bytes, ocrKey, Array.isArray(pageImages) ? pageImages : undefined);
-        const { text, totalPages: pages, imagesProcessed: imgCount } = result;
-        imagesProcessed = imgCount;
-        totalPages = pages;
-        
-        console.log(`[report-qa] Extracted text from ${totalPages} pages, OCR'd ${imagesProcessed} images`);
-        
-        if (text && text.trim().length > 0) {
-          extractedText = `[Document: ${fileName}]\n[Pages: ${totalPages}]${imagesProcessed > 0 ? `\n[Images OCR'd: ${imagesProcessed}]` : ''}\n\n${text}`;
-          console.log(`[report-qa] Successfully extracted ${extractedText.length} characters`);
+        if (imagesOnly) {
+          // OCR-only batch: the client rasterised the PDF and is streaming a few
+          // pages per request, so a whole print-quality document never has to fit
+          // in one edge payload (which is what used to fail outright).
+          console.log(`[report-qa] OCR-only batch: ${pageImages.length} page images`);
+          const ocr = await extractTextFromProvidedImages(pageImages, enableOCR ? OPENAI_API_KEY : undefined);
+          ocrOnlyText = ocr.text;
+          imagesProcessed = ocr.imagesProcessed;
+          totalPages = pageImages.length;
+          if (ocrOnlyText.trim()) {
+            extractedText = ocrOnlyText;
+          } else {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: 'OCR returned no readable text for these pages.',
+                imagesProcessed,
+              }),
+              { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+          }
         } else {
-          // PDF might be image-based (scanned), provide fallback message
-          console.log(`[report-qa] No text extracted - PDF may be image-based or encrypted`);
-          extractedText = `[Document: ${fileName}]\n[Pages: ${totalPages}]\n\nThis PDF appears to be image-based (scanned) or encrypted and text content could not be automatically extracted. The document has been uploaded but you may need to manually enter key details.`;
+          // Convert base64 to Uint8Array for PDF parsing
+          const binaryString = atob(normalizedPdf);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+
+          fileSizeBytes = bytes.length;
+          console.log(`[report-qa] PDF size: ${fileSizeBytes} bytes`);
+
+          // Use our custom PDF text extraction function with optional OCR
+          const ocrKey = enableOCR ? OPENAI_API_KEY : undefined;
+          const result = await extractPdfText(bytes, ocrKey, Array.isArray(pageImages) ? pageImages : undefined);
+          const { text, totalPages: pages, imagesProcessed: imgCount } = result;
+          imagesProcessed = imgCount;
+          totalPages = pages;
+
+          console.log(`[report-qa] Extracted text from ${totalPages} pages, OCR'd ${imagesProcessed} images`);
+
+          if (text && text.trim().length > 0) {
+            extractedText = `[Document: ${fileName}]\n[Pages: ${totalPages}]${imagesProcessed > 0 ? `\n[Images OCR'd: ${imagesProcessed}]` : ''}\n\n${text}`;
+            console.log(`[report-qa] Successfully extracted ${extractedText.length} characters`);
+          } else {
+            // PDF might be image-based (scanned), provide fallback message
+            console.log(`[report-qa] No text extracted - PDF may be image-based or encrypted`);
+            extractedText = `[Document: ${fileName}]\n[Pages: ${totalPages}]\n\nThis PDF appears to be image-based (scanned) or encrypted and text content could not be automatically extracted. The document has been uploaded but you may need to manually enter key details.`;
+          }
         }
       } catch (pdfError) {
         console.error(`[report-qa] PDF extraction error:`, pdfError);
-        
+
         // Provide informative fallback
         extractedText = `[Document: ${fileName}]\n\nPDF text extraction encountered an error: ${pdfError.message}. The document has been uploaded but raw text could not be automatically extracted.`;
       }
@@ -4366,7 +4449,7 @@ ${cleanContent.length + 500}
   } catch (error) {
     console.error("[report-qa] Error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify(internalError(error, 'report-qa')),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

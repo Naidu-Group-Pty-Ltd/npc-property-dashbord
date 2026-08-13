@@ -1,11 +1,46 @@
 import { inlineXlsxPlugin } from "./vite-inline-xlsx";
-import { defineConfig } from "vitest/config";
+import { defineConfig, type Plugin } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
+/**
+ * Lets a test import a `supabase/functions/_shared` module that uses a Deno
+ * `npm:` specifier.
+ *
+ * Those modules are shared deliberately — the report client, the workflow
+ * engine, the metering wrapper — and `src/` unit tests import them so that one
+ * implementation is tested once. But Deno resolves `npm:@supabase/supabase-js@2.55.0`
+ * from the registry and Vite has no idea what that is, so any test whose import
+ * graph reaches one dies at collection with "Failed to resolve import" — a
+ * failure about the *bundler*, in a file that has nothing wrong with it.
+ *
+ * That had taken out `reportDesign`'s conformance and provenance specs, which
+ * reach `meteredFetch.ts` through `weasyprintClient.ts`. Nobody had seen it:
+ * the `verify` job died at an earlier step, so the one that runs them had never
+ * been reached.
+ *
+ * Stripping the prefix and the version pins resolution back at the node_modules
+ * copy, which is the same package. Test-time only — nothing here reaches a
+ * bundle or the Deno deploy, where the specifier is correct as written.
+ */
+function denoNpmSpecifiers(): Plugin {
+  return {
+    name: "deno-npm-specifiers",
+    enforce: "pre",
+    resolveId(id) {
+      if (!id.startsWith("npm:")) return null;
+      const bare = id.slice("npm:".length);
+      // Scoped packages keep their leading @; only a trailing @version goes.
+      const at = bare.lastIndexOf("@");
+      const name = at > 0 ? bare.slice(0, at) : bare;
+      return this.resolve(name, undefined, { skipSelf: true });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [inlineXlsxPlugin(), react()],
-  assetsInclude: ["**/*.xlsx"],
+  plugins: [denoNpmSpecifiers(), inlineXlsxPlugin(), react()],
+  assetsInclude: ["**/*.xlsx", "**/*.docx"],
   test: {
     environment: "jsdom",
     globals: true,
@@ -13,6 +48,29 @@ export default defineConfig({
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
   },
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+
+      // Edge functions are Deno modules, and several of them are imported by
+      // tests under `src/` — the report design system is shared source, not a
+      // copy. Deno addresses packages as `npm:pkg@version` or
+      // `https://esm.sh/pkg@version`; Vite cannot resolve either, so a single
+      // module reached transitively fails the whole suite with
+      // "Failed to resolve import … Does the file exist?".
+      //
+      // That is what `src/lib/reportDesign/__tests__/{conformance,provenance}.spec.ts`
+      // hit through `_shared/meteredFetch.ts`, taking the `verify` job — and with
+      // it every step after it, including `npm run build` — red on main.
+      //
+      // Mapping the specifier onto the installed package is correct rather than
+      // a shim: `@supabase/supabase-js` is a real dependency here at a compatible
+      // version, and edge functions resolve the same library from the registry at
+      // deploy time. Scoped names are matched first so `@scope/name` keeps its
+      // slash.
+      { find: /^npm:(@[^/]+\/[^@]+)@.+$/, replacement: "$1" },
+      { find: /^npm:([^@][^@]*)@.+$/, replacement: "$1" },
+      { find: /^https:\/\/esm\.sh\/(@[^/]+\/[^@]+)@[^/]+$/, replacement: "$1" },
+      { find: /^https:\/\/esm\.sh\/([^@/][^@]*)@[^/]+$/, replacement: "$1" },
+    ],
   },
 });

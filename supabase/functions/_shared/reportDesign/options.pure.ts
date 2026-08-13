@@ -29,6 +29,8 @@ export type ReportChapterStyle = 'classic' | 'opener_band' | 'minimal';
 export type ReportTableStyle = 'classic' | 'ledger' | 'minimal';
 /** How the cover is composed. */
 export type ReportCoverStyle = 'image' | 'title_overlay' | 'editorial';
+/** Ink on paper, or content in containers. See `ReportDesignOptions`. */
+export type ReportSurfaceStyle = 'flat' | 'raised';
 
 export interface ReportDesignOptions {
   preset: ReportPreset;
@@ -48,6 +50,42 @@ export interface ReportDesignOptions {
   showDropCaps: boolean;
   showSectionNumbers: boolean;
   justifyText: boolean;
+  /**
+   * Crop marks and a bleed-extended sheet, for a document going to a press.
+   *
+   * Off by default, and it must stay that way: a screen PDF with crop marks on
+   * it looks like a proof somebody sent by mistake, and the page is 6mm larger
+   * in each dimension than the paper anybody would print it on.
+   *
+   * Three named pages already declare `bleed: true`, and that flag paints the
+   * field colour and suppresses the running chrome — it does **not** extend the
+   * trim. So a full-bleed obsidian cover trimmed with any tolerance at all
+   * shows a white hairline down the edge it was trimmed short on. This is the
+   * half that fixes it: `bleed: 3mm` extends the sheet past the trim so the
+   * field runs off it, and `marks: crop cross` tells the press where the trim
+   * is. Verified against the pinned engine — MediaBox 603.8 x 850.4pt around a
+   * TrimBox of 595.3 x 841.9.
+   */
+  pressMarks: boolean;
+  /**
+   * How much the design system is allowed to lift off the page.
+   *
+   * `flat` is every rule this repo shipped for its first nine formats: hairline
+   * dividers, banded rows, ink on paper and nothing between them. `raised`
+   * gives the same content rounded, tinted, gradient-filled containers — KPI
+   * cards rather than a KPI strip, a table with a shell around it, a tinted
+   * badge inside a cell, a section head with a rule beside it, and a faint
+   * grid on the paper.
+   *
+   * A separate axis rather than a fifth `preset` because it is orthogonal to
+   * paper and ink: any of the four presets, and any imported set of neutrals,
+   * can be set flat or raised.
+   *
+   * **Defaults to `flat`.** Eight production formats have golden renders taken
+   * against it, and a document that quietly restyles itself because somebody
+   * added a field is worse than one that stays plain.
+   */
+  surfaceStyle: ReportSurfaceStyle;
 }
 
 export const DEFAULT_REPORT_DESIGN_OPTIONS: ReportDesignOptions = {
@@ -61,6 +99,8 @@ export const DEFAULT_REPORT_DESIGN_OPTIONS: ReportDesignOptions = {
   showDropCaps: false,
   showSectionNumbers: true,
   justifyText: true,
+  pressMarks: false,
+  surfaceStyle: 'flat',
 };
 
 /**
@@ -103,6 +143,7 @@ const DENSITIES: readonly ReportDensity[] = ['compact', 'balanced', 'spacious'];
 const CHAPTER_STYLES: readonly ReportChapterStyle[] = ['classic', 'opener_band', 'minimal'];
 const TABLE_STYLES: readonly ReportTableStyle[] = ['classic', 'ledger', 'minimal'];
 const COVER_STYLES: readonly ReportCoverStyle[] = ['image', 'title_overlay', 'editorial'];
+const SURFACE_STYLES: readonly ReportSurfaceStyle[] = ['flat', 'raised'];
 
 /**
  * Coerce anything into a complete, in-range options object.
@@ -121,6 +162,7 @@ export function normalizeReportDesignOptions(
     chapterStyle: pick(o.chapterStyle, CHAPTER_STYLES, DEFAULT_REPORT_DESIGN_OPTIONS.chapterStyle),
     tableStyle: pick(o.tableStyle, TABLE_STYLES, DEFAULT_REPORT_DESIGN_OPTIONS.tableStyle),
     coverStyle: pick(o.coverStyle, COVER_STYLES, DEFAULT_REPORT_DESIGN_OPTIONS.coverStyle),
+    surfaceStyle: pick(o.surfaceStyle, SURFACE_STYLES, DEFAULT_REPORT_DESIGN_OPTIONS.surfaceStyle),
     bodyScale: clamp(
       o.bodyScale,
       BODY_SCALE_RANGE.min,
@@ -131,6 +173,7 @@ export function normalizeReportDesignOptions(
     showDropCaps: o.showDropCaps ?? DEFAULT_REPORT_DESIGN_OPTIONS.showDropCaps,
     showSectionNumbers: o.showSectionNumbers ?? DEFAULT_REPORT_DESIGN_OPTIONS.showSectionNumbers,
     justifyText: o.justifyText ?? DEFAULT_REPORT_DESIGN_OPTIONS.justifyText,
+    pressMarks: o.pressMarks ?? DEFAULT_REPORT_DESIGN_OPTIONS.pressMarks,
   };
 }
 

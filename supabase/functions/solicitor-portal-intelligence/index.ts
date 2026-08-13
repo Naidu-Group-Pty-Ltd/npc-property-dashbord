@@ -22,7 +22,9 @@ import {
   solicitorGovernanceError,
   resolveSolicitorMatterAccess,
   resolveMatterPermissions,
+  resolveClientPermissions,
   listAccessibleMatterIds,
+  listAssignedClientIds,
   logSolicitorActivity,
   requestIp,
   can,
@@ -46,6 +48,8 @@ import {
   computePortfolioKpis,
   normaliseAnalysisPayload,
 } from "../_shared/legalIntelligence.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MODEL = "google/gemini-3.6-flash";
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -113,13 +117,39 @@ Deno.serve(async (req) => {
       return { ok: true, matter, perms };
     };
 
-    /** All matters this solicitor may see, with client display names attached. */
+    /**
+     * All matters this solicitor may see, with client display names attached.
+     *
+     * Two independent checks, deliberately, in this order:
+     *
+     *  1. the **client** assignment matrix must grant `matters.view`, resolved
+     *     per client via `resolveClientPermissions`;
+     *  2. the matter must be in `accessibleMatterIds`, i.e. matter-level access.
+     *
+     * The second alone is not enough. `listAccessibleMatterIds` only applies a
+     * permission filter on its `SOLICITOR_MATTER_ACCESS_V1` path; its legacy
+     * fallback (flag set to `false`) returns every matter of every assigned
+     * client with no permission check at all, so a solicitor assigned to a
+     * client but denied `matters.view` would read the whole portfolio. Resolving
+     * the client matrix here keeps that fallback closed, and matches the
+     * repo-wide rule that a single access source is never the sole gate.
+     */
     const loadVisibleMatters = async () => {
       if (!accessibleMatterIds.length) return [] as any[];
+
+      const assignedClientIds = await listAssignedClientIds(supabase, me.id);
+      const visibleClientIds: string[] = [];
+      for (const clientId of assignedClientIds) {
+        const permissions = await resolveClientPermissions(supabase, me.id, clientId);
+        if (permissions && can(permissions, 'matters', 'view')) visibleClientIds.push(clientId);
+      }
+      if (!visibleClientIds.length) return [] as any[];
+
       const { data, error } = await supabase
         .from('legal_matters')
         .select(MATTER_SELECT)
         .in('id', accessibleMatterIds)
+        .in('client_id', visibleClientIds)
         .eq('firm_id', me.firm_id)
         .limit(1000);
       if (error) throw error;
@@ -306,7 +336,7 @@ Deno.serve(async (req) => {
         const estimatedInputTokens=Math.ceil(bytes.length/3); if(estimatedInputTokens>policy.max_input_tokens)throw new Error('AI_INPUT_TOKEN_CAP');
         const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),Math.min(120,policy.timeout_seconds)*1000);
         const requestBody=JSON.stringify({model,max_tokens:policy.max_output_tokens,messages:[{role:'system',content:prompt.content},{role:'user',content:[{type:'text',text:`Review this Australian contract for jurisdiction ${matter.property_state||'AU'}. Assistive output only.`},filePart]}],tools:[CONTRACT_ANALYSIS_TOOL],tool_choice:{type:'function',function:{name:CONTRACT_ANALYSIS_TOOL.function.name}}});
-        let aiResponse:Response|undefined; try { for(let attempt=0;attempt<2;attempt++){aiResponse=await fetch('https://ai.gateway.lovable.dev/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json','X-Correlation-ID':correlationId},body:requestBody});if(!(aiResponse.status===429||aiResponse.status>=500)||attempt===1)break;await new Promise(resolve=>setTimeout(resolve,500));} } finally { clearTimeout(timeout); }
+        let aiResponse:Response|undefined; try { for(let attempt=0;attempt<2;attempt++){aiResponse=await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json','X-Correlation-ID':correlationId},body:requestBody});if(!(aiResponse.status===429||aiResponse.status>=500)||attempt===1)break;await new Promise(resolve=>setTimeout(resolve,500));} } finally { clearTimeout(timeout); }
         if(!aiResponse)throw new Error('AI_PROVIDER_NO_RESPONSE');
         if(!aiResponse.ok)throw new Error(`AI_PROVIDER_${aiResponse.status}`);
         const aiData=await aiResponse.json(); const toolCall=aiData?.choices?.[0]?.message?.tool_calls?.[0]; if(!toolCall)throw new Error('AI_STRUCTURED_OUTPUT_MISSING');
@@ -414,7 +444,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[solicitor-portal-intelligence] error:', error);
     return new Response(
-      JSON.stringify({ error: error?.message || 'Unexpected error' }),
+      JSON.stringify(internalError(error, 'solicitor-portal-intelligence')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }

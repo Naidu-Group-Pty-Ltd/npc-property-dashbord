@@ -7,6 +7,7 @@ import {
 } from '../_shared/auth.ts';
 import { actorIsSuperadmin } from '../_shared/authz.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -314,7 +315,7 @@ Deno.serve(async (req) => {
 
   } catch (error: any) {
     console.error('[bulk-sync] Error:', error);
-    return new Response(JSON.stringify({ error: error.message, success: false }), {
+    return new Response(JSON.stringify({ ...internalError(error, 'one-time-bulk-conversation-sync'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }

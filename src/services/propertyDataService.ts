@@ -1,4 +1,19 @@
 import { airtableService, PropertyListing } from '@/lib/airtable';
+import { listingsCacheApi } from '@/lib/listingsCacheApi';
+import { INTAKE_SORT_FIELD } from '@/lib/airtableIntakeFields';
+import {
+  clearListingCache,
+  isCacheUsable,
+  mergeIncremental,
+  mergeRawFields,
+  pageIsFullyKnown,
+  planRefresh,
+  readListingCache,
+  readListingRawFields,
+  writeListingCache,
+  type CachedListingSet,
+  type RefreshMode,
+} from '@/lib/listingCache';
 
 export interface PropertyDataOptions {
   maxRecords?: number;
@@ -25,119 +40,372 @@ export interface PropertyDataResult {
   };
 }
 
+/** Notified when a background revalidation replaces the set the caller was given. */
+export type RevalidateListener = (result: PropertyDataResult) => void;
+
+interface MemoryEntry {
+  listings: PropertyListing[];
+  savedAt: number;
+  fullReadAt: number;
+}
+
 /**
- * Unified property data service that ensures consistent data fetching,
- * processing, and deduplication across dashboard and reports
+ * Key used before the server's default table name is known.
+ *
+ * Overview asks for "the listings" and passes no table name; Listings passes
+ * `'Property Intake Master'` explicitly. The proxy resolves the first to the
+ * second, so it is one table — but the client cached it twice under two keys,
+ * which meant the two pages never shared a cache entry and never coalesced a
+ * request, and every navigation between them paid for a fresh walk.
+ */
+const FALLBACK_TABLE_KEY = '__default__';
+
+/**
+ * Where the resolved name is remembered between visits.
+ *
+ * Only the very first load of a fresh profile can be ambiguous; after that the
+ * name is known before the first request goes out, so both pages agree on the
+ * key from the start. A stale value is harmless — the worst case is one wasted
+ * cache entry, which the schema version or the 24 h age limit clears.
+ */
+const DEFAULT_TABLE_STORAGE_KEY = 'npc:listings:default-table';
+
+function readStoredDefaultTable(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(DEFAULT_TABLE_STORAGE_KEY) || null;
+  } catch {
+    return null; // Private mode, disabled storage — the fallback key still works.
+  }
+}
+
+/**
+ * Unified property data service: one fetch path, one cache, shared by Overview,
+ * Listings and the report generators.
+ *
+ * A cold read is `ceil(N/100)` **sequential** trips through `airtable-proxy` —
+ * the offset for page N+1 only exists once page N has come back, so there is no
+ * parallelism to find. The wins therefore have to come from not doing the walk:
+ *
+ *  0. **Not walking at all.** The `listings-cache` edge function keeps a
+ *     Postgres mirror of the table, refreshed by cron, so the normal path is one
+ *     request rather than fifteen — and unlike everything below it, that holds
+ *     on a first visit, a new device and a cleared profile too. The Airtable
+ *     walk survives as the fallback for when the cache cannot answer.
+ *  1. **Coalescing.** Overview and Listings mount within milliseconds of each
+ *     other and both asked for everything, so the whole walk ran twice, in
+ *     parallel, against the same rate limit. Concurrent callers now share one
+ *     promise per table.
+ *  2. **Persistence.** The cache used to be a field on this singleton, so it
+ *     died with the page. A reload, a new tab, or a restored session each paid
+ *     full price. It now lives in IndexedDB and is handed back on the first call
+ *     while the network work happens behind the render.
+ *  3. **Incremental revalidation.** Airtable is read newest-first, so a warm
+ *     session only needs to walk until it recognises a page — one request rather
+ *     than twenty. `planRefresh` decides when that is safe and when a full
+ *     reconcile is due (see `listingCache.ts` for why both exist).
  */
 class PropertyDataService {
-  private cache: {
-    data: PropertyListing[] | null;
-    timestamp: number;
-    ttl: number;
-    tableKey: string | null;
-  } = {
-    data: null,
-    timestamp: 0,
-    ttl: 5 * 60 * 1000, // 5 minutes
-    tableKey: null,
-  };
+  private memory = new Map<string, MemoryEntry>();
+  /** One in-flight network walk per table, shared by every concurrent caller. */
+  private inFlight = new Map<string, Promise<PropertyListing[]>>();
+  /** Set once per table so hydration from disk is attempted exactly once. */
+  private hydrated = new Map<string, Promise<MemoryEntry | null>>();
+  private listeners = new Map<string, Set<RevalidateListener>>();
+  /** The server's resolved default table name, once anything has told us. */
+  private defaultTableKey: string | null = readStoredDefaultTable();
+
+  /** The cache key for a request, collapsing "no table name" onto the real one. */
+  private keyFor(tableName?: string): string {
+    return tableName || this.defaultTableKey || FALLBACK_TABLE_KEY;
+  }
 
   /**
-   * Fetch all property listings with consistent processing and caching
+   * Records what the server resolved "no table name" to, and moves anything
+   * already filed under the placeholder across so the pages converge within the
+   * same visit rather than at the next reload.
    */
-  async fetchAllListings(options: PropertyDataOptions = {}): Promise<PropertyDataResult> {
-    const startTime = Date.now();
-    const { maxRecords, includeDebugInfo = false, bypassCache = false, tableName } = options;
-    const tableKey = tableName || '__default__';
-
-    const now = Date.now();
-
-    // Use cache if valid, same table, and not bypassed
-    if (
-      !bypassCache &&
-      this.cache.data &&
-      this.cache.tableKey === tableKey &&
-      (now - this.cache.timestamp) < this.cache.ttl
-    ) {
-      console.log('Using cached property data:', this.cache.data.length, 'records');
-      let listings = this.cache.data;
-      if (maxRecords) {
-        listings = listings.slice(0, maxRecords);
-      }
-      return this.buildResult(listings, startTime, includeDebugInfo, true);
-    }
-
+  private learnDefaultTable(resolved: string): void {
+    if (!resolved || this.defaultTableKey === resolved) return;
+    this.defaultTableKey = resolved;
     try {
-      let allRecords: PropertyListing[] = [];
-      let offset: string | undefined;
-      let pageCount = 0;
-      const maxPages = maxRecords ? Math.ceil(maxRecords / 100) : Infinity;
-
-      console.log('Fetching fresh property data from Airtable...', { tableName: tableName || '(default)' });
-
-      do {
-        const response = await airtableService.getRecords({
-          pageSize: 100,
-          offset,
-          sortField: 'Created',
-          sortDirection: 'desc',
-          tableName,
-        });
-
-
-
-        allRecords = [...allRecords, ...response.records];
-        offset = response.offset;
-        pageCount++;
-
-        console.log(`Fetched page ${pageCount}, total records: ${allRecords.length}`);
-
-        if (maxRecords && allRecords.length >= maxRecords) {
-          allRecords = allRecords.slice(0, maxRecords);
-          break;
-        }
-
-        if (pageCount >= maxPages) {
-          break;
-        }
-      } while (offset);
-
-      console.log(`Raw data fetched: ${allRecords.length} records in ${Date.now() - startTime}ms`);
-
-      const processedListings = this.processAndDeduplicateListings(allRecords);
-
-      // Only complete table reads are safe to reuse for later unlimited requests.
-      if (!maxRecords) {
-        this.cache = {
-          data: processedListings,
-          timestamp: now,
-          ttl: this.cache.ttl,
-          tableKey,
-        };
-      }
-
-
-      console.log(`Processed data: ${processedListings.length} unique records`);
-
-      return this.buildResult(processedListings, startTime, includeDebugInfo, false);
-
-    } catch (error) {
-      console.error('Error fetching property data:', error);
-      throw error;
+      globalThis.localStorage?.setItem(DEFAULT_TABLE_STORAGE_KEY, resolved);
+    } catch {
+      // Storage unavailable; the in-memory value still unifies this session.
+    }
+    for (const map of [this.memory, this.hydrated, this.listeners] as Array<Map<string, unknown>>) {
+      const held = map.get(FALLBACK_TABLE_KEY);
+      if (held === undefined) continue;
+      map.delete(FALLBACK_TABLE_KEY);
+      if (!map.has(resolved)) map.set(resolved, held);
     }
   }
 
   /**
-   * Clear the cache to force fresh data fetch
+   * Subscribe to background revalidations for a table.
+   *
+   * Stale-while-revalidate means the first caller is answered from disk before
+   * the network has been touched; this is how it finds out the fresh set landed.
    */
-  clearCache(): void {
-    this.cache = {
-      data: null,
-      timestamp: 0,
-      ttl: this.cache.ttl,
-      tableKey: null,
-    };
+  subscribe(tableName: string | undefined, listener: RevalidateListener): () => void {
+    const key = this.keyFor(tableName);
+    const set = this.listeners.get(key) ?? new Set();
+    set.add(listener);
+    this.listeners.set(key, set);
+    return () => set.delete(listener);
+  }
 
+  private emit(tableKey: string, listings: PropertyListing[]): void {
+    // A refresh that started before the default table name was resolved emits
+    // under the placeholder key, but its listeners have since been moved.
+    const set =
+      this.listeners.get(tableKey) ??
+      (tableKey === FALLBACK_TABLE_KEY && this.defaultTableKey
+        ? this.listeners.get(this.defaultTableKey)
+        : undefined);
+    if (!set?.size) return;
+    const result = this.buildResult(listings, Date.now(), true, false);
+    for (const listener of set) {
+      try {
+        listener(result);
+      } catch (error) {
+        console.warn('[propertyDataService] revalidate listener threw', error);
+      }
+    }
+  }
+
+  /** Whatever is already in memory for this table, with no I/O of any kind. */
+  peek(tableName?: string): PropertyListing[] | null {
+    return this.memory.get(this.keyFor(tableName))?.listings ?? null;
+  }
+
+  private async hydrate(tableKey: string): Promise<MemoryEntry | null> {
+    const existing = this.hydrated.get(tableKey);
+    if (existing) return existing;
+
+    const promise = (async () => {
+      const entry: CachedListingSet | null = await readListingCache(tableKey);
+      if (!isCacheUsable(entry, Date.now())) return null;
+      const loaded: MemoryEntry = {
+        listings: entry!.listings,
+        savedAt: entry!.savedAt,
+        fullReadAt: entry!.fullReadAt,
+      };
+      // Only adopt the disk copy if nothing fresher arrived while we were reading.
+      if (!this.memory.has(tableKey)) this.memory.set(tableKey, loaded);
+
+      // The raw Airtable mirror is stored apart from the listings because it is
+      // two thirds of the bytes and feeds one on-demand panel. Fold it back in
+      // once the page already has something to draw.
+      void readListingRawFields(tableKey).then((rawById) => {
+        if (!rawById) return;
+        const current = this.memory.get(tableKey);
+        if (!current) return;
+        const merged = mergeRawFields(current.listings, rawById);
+        if (merged !== current.listings) this.memory.set(tableKey, { ...current, listings: merged });
+      });
+
+      return loaded;
+    })();
+
+    this.hydrated.set(tableKey, promise);
+    return promise;
+  }
+
+  /**
+   * Reads the whole set from the server-side cache.
+   *
+   * This is the fast path and it is one request: the `listings-cache` edge
+   * function keeps a Postgres mirror of the Airtable table, refreshed by cron,
+   * so a page load costs a single Postgres read instead of `ceil(N/100)`
+   * sequential Airtable trips. Unlike the browser cache it also helps a first
+   * visit, a new device and a cleared profile, which is most of the load worth
+   * fixing.
+   *
+   * Returns null when the cache cannot answer — not deployed, never synced,
+   * erroring — and the caller falls back to walking Airtable. The cache is an
+   * optimisation; a blank dashboard is worse than a slow one.
+   */
+  private async readServerCache(tableName: string | undefined): Promise<PropertyListing[] | null> {
+    const result = await listingsCacheApi.read(tableName);
+    if (!result) return null;
+    // The response says which table the server resolved the request to, which is
+    // the only authoritative answer to what `__default__` means.
+    if (!tableName && result.tableKey) this.learnDefaultTable(result.tableKey);
+    return this.processAndDeduplicateListings(result.listings);
+  }
+
+  /**
+   * Walks Airtable pages newest-first.
+   *
+   * `stopWhenKnown` turns the walk into an incremental one: it ends at the first
+   * page holding nothing new, which for an append-heavy table is page one.
+   */
+  private async walk(
+    tableName: string | undefined,
+    opts: { maxRecords?: number; stopWhenKnown?: ReadonlySet<string> } = {},
+  ): Promise<PropertyListing[]> {
+    const { maxRecords, stopWhenKnown } = opts;
+    const collected: PropertyListing[] = [];
+    let offset: string | undefined;
+    let pageCount = 0;
+    const maxPages = maxRecords ? Math.ceil(maxRecords / 100) : Infinity;
+
+    do {
+      const response = await airtableService.getRecords({
+        pageSize: 100,
+        offset,
+        // `Created` does not exist on this table; `Created Time` does. The wrong
+        // name never failed loudly — the proxy answers a 422 by silently
+        // retrying without any sort — but this walk's `stopWhenKnown` shortcut
+        // is only correct on a newest-first read, so it had quietly stopped
+        // being safe.
+        sortField: INTAKE_SORT_FIELD,
+        sortDirection: 'desc',
+        tableName,
+      });
+
+      const page = this.processAndDeduplicateListings(response.records);
+      collected.push(...page);
+      offset = response.offset;
+      pageCount += 1;
+
+      if (stopWhenKnown && pageIsFullyKnown(page, stopWhenKnown)) break;
+      if (maxRecords && collected.length >= maxRecords) return collected.slice(0, maxRecords);
+      if (pageCount >= maxPages) break;
+    } while (offset);
+
+    return collected;
+  }
+
+  /** Runs a refresh, sharing one in-flight promise across concurrent callers. */
+  private refresh(
+    tableKey: string,
+    tableName: string | undefined,
+    mode: Exclude<RefreshMode, 'none'>,
+    opts: { skipServerCache?: boolean } = {},
+  ): Promise<PropertyListing[]> {
+    const running = this.inFlight.get(tableKey);
+    if (running) return running;
+
+    const promise = (async () => {
+      const cached = this.memory.get(tableKey);
+      const now = Date.now();
+
+      // One request for the whole set, so there is no incremental variant to
+      // choose here — a server-cache read is always a complete read.
+      //
+      // Skipped when the user pressed Refresh. The server cache is at most one
+      // sync interval behind Airtable, which is right for a page load and wrong
+      // for someone who just clicked a button to get current data — they would
+      // be handed the same stale set they were already looking at.
+      const served = opts.skipServerCache ? null : await this.readServerCache(tableName);
+      if (served) {
+        const key = this.keyFor(tableName);
+        this.memory.set(key, { listings: served, savedAt: now, fullReadAt: now });
+        void writeListingCache(key, served, { savedAt: now, fullReadAt: now });
+        return served;
+      }
+
+      if (mode === 'incremental' && cached?.listings.length) {
+        const knownIds = new Set(cached.listings.map((l) => l.id));
+        const fetched = await this.walk(tableName, { stopWhenKnown: knownIds });
+        const merged = mergeIncremental(cached.listings, fetched);
+        const entry: MemoryEntry = { listings: merged, savedAt: now, fullReadAt: cached.fullReadAt };
+        this.memory.set(tableKey, entry);
+        void writeListingCache(tableKey, merged, { savedAt: now, fullReadAt: cached.fullReadAt });
+        return merged;
+      }
+
+      const listings = await this.walk(tableName);
+      this.memory.set(tableKey, { listings, savedAt: now, fullReadAt: now });
+      void writeListingCache(tableKey, listings, { savedAt: now, fullReadAt: now });
+      return listings;
+    })().finally(() => {
+      this.inFlight.delete(tableKey);
+    });
+
+    this.inFlight.set(tableKey, promise);
+    return promise;
+  }
+
+  /**
+   * Fetch all property listings.
+   *
+   * Returns as soon as there is something usable to draw. When that came from
+   * cache and a refresh is warranted, the refresh runs behind the render and
+   * `subscribe` callers are told when it lands.
+   */
+  async fetchAllListings(options: PropertyDataOptions = {}): Promise<PropertyDataResult> {
+    const startTime = Date.now();
+    const { maxRecords, includeDebugInfo = false, bypassCache = false, tableName } = options;
+    const tableKey = this.keyFor(tableName);
+
+    // A bounded read is a different question from "the whole table" and must not
+    // be answered from, or written to, the full-table cache.
+    if (maxRecords) {
+      const listings = await this.walk(tableName, { maxRecords });
+      return this.buildResult(listings, startTime, includeDebugInfo, false);
+    }
+
+    if (bypassCache) {
+      // An explicit refresh goes all the way to Airtable. Every cache layer is
+      // bypassed, including the server one — otherwise the button would hand
+      // back data up to a sync interval old, which is what the user pressed it
+      // to get away from.
+      const listings = await this.refresh(tableKey, tableName, 'full', { skipServerCache: true });
+      return this.buildResult(listings, startTime, includeDebugInfo, false);
+    }
+
+    let entry = this.memory.get(tableKey) ?? null;
+    if (!entry) entry = await this.hydrate(tableKey);
+    // Hydration may have merged rawFields in behind us; take the current copy.
+    entry = this.memory.get(tableKey) ?? entry;
+
+    const mode = planRefresh({
+      savedAt: entry?.savedAt ?? null,
+      fullReadAt: entry?.fullReadAt ?? null,
+      now: Date.now(),
+    });
+
+    if (entry && mode === 'none') {
+      return this.buildResult(entry.listings, startTime, includeDebugInfo, true);
+    }
+
+    if (entry && mode !== 'none') {
+      // Stale-while-revalidate: answer from cache now, catch up behind the render.
+      void this.refresh(tableKey, tableName, mode)
+        .then((listings) => this.emit(tableKey, listings))
+        .catch((error) => console.warn('[propertyDataService] background refresh failed', error));
+      return this.buildResult(entry.listings, startTime, includeDebugInfo, true);
+    }
+
+    if (entry) return this.buildResult(entry.listings, startTime, includeDebugInfo, true);
+
+    const listings = await this.refresh(tableKey, tableName, 'full');
+    return this.buildResult(listings, startTime, includeDebugInfo, false);
+  }
+
+  /**
+   * Clear one table's cache so the next read goes to the network.
+   *
+   * Scoped deliberately. This used to wipe the entire IndexedDB store when
+   * called without a table name, which is what the Listings refresh button and
+   * the data-validation panel both do — so hitting Refresh on Listings also
+   * reset Overview to cold, and the next visit there paid for a full walk it
+   * had not asked for.
+   */
+  clearCache(tableName?: string): void {
+    const key = this.keyFor(tableName);
+    this.memory.delete(key);
+    this.hydrated.delete(key);
+    void clearListingCache(key);
+  }
+
+  /** Drop every table. Only for teardown — see `clearCache` for the usual case. */
+  clearAllCaches(): void {
+    this.memory.clear();
+    this.hydrated.clear();
+    void clearListingCache();
   }
 
   /**
@@ -160,6 +428,16 @@ class PropertyDataService {
       || raw.Images || raw.Property_Images || raw.property_images 
       || raw.Attachments || raw.attachments || raw.Photos || raw.photos || [];
 
+    // Legacy server projections stamp literal sentinels instead of nulls. The
+    // current projection stopped, but the deployed proxy can lag this bundle by
+    // days, and every consumer downstream — dedup, facets, the contact
+    // resolver, the cards — is written for null-means-unknown. Scrub at the
+    // door so one stale server cannot resurrect "Unknown Agent" in the UI.
+    const scrub = (value: unknown): string | undefined => {
+      if (typeof value !== 'string') return value as undefined;
+      return /^unknown(\s+(address|suburb|agent|agency))?$/i.test(value.trim()) ? undefined : value;
+    };
+
     // Resolve floorplans from multiple possible field names
     const resolvedFloorplans = listing.floorplans 
       || raw.Floorplans || raw.Floor_Plans || raw.floor_plans 
@@ -167,14 +445,22 @@ class PropertyDataService {
 
     return {
       ...listing,
+      address: scrub(listing.address),
+      agentName: scrub((listing as any).agentName),
+      agencyName: scrub((listing as any).agencyName),
       propertyType: this.standardizePropertyType(listing.propertyType),
-      suburb: this.standardizeSuburb(listing.suburb || listing.location),
+      suburb: this.standardizeSuburb(scrub(listing.suburb) || scrub(listing.location)),
       price: this.standardizePrice(listing.price),
       beds: this.standardizeBedBath(listing.beds || listing.bedrooms),
       baths: this.standardizeBedBath(listing.baths || listing.bathrooms),
       receivedAt: listing.receivedAt || listing.createdAt || listing.createdTime,
-      // Normalize images/floorplans - Airtable returns attachment objects or URL strings
-      images: this.normalizeAttachments(resolvedImages),
+      // Attachment OBJECTS pass through untouched; only non-arrays are dropped.
+      // Flattening them to bare URLs (the old behaviour) destroyed the stable
+      // attachment id, and Airtable rotates attachment URLs roughly two-hourly —
+      // so the image pipeline saw a "new" set every rotation and re-harvested
+      // bytes it already stored. `normaliseImageCandidates` handles both shapes
+      // and keeps the id as the identity.
+      images: Array.isArray(resolvedImages) ? resolvedImages.filter(Boolean) : [],
       floorplans: this.normalizeAttachments(resolvedFloorplans),
       dataQuality: this.calculateDataQualityScore(listing),
       isValidPrice: this.isValidPrice(listing.price),
@@ -215,16 +501,24 @@ class PropertyDataService {
     if (this.isValidLocation(listing.address || listing.location)) score += weights.address;
     if ((listing.beds || listing.bedrooms) && (listing.beds || listing.bedrooms)! > 0) score += weights.bedrooms;
     if ((listing.baths || listing.bathrooms) && (listing.baths || listing.bathrooms)! > 0) score += weights.bathrooms;
-    if (listing.propertyType && listing.propertyType !== 'Unknown') score += weights.propertyType;
-    if (listing.suburb && listing.suburb !== 'Unknown') score += weights.suburb;
+    if (listing.propertyType) score += weights.propertyType;
+    if (listing.suburb) score += weights.suburb;
     if (listing.agent || listing.agentName) score += weights.agent;
     if (listing.description && listing.description.length > 20) score += weights.description;
 
     return score;
   }
 
-  private standardizePropertyType(type?: string): string {
-    if (!type) return 'Unknown';
+  /**
+   * Absent stays absent.
+   *
+   * These used to substitute the string 'Unknown', which is not a property type
+   * and not a suburb — it became a selectable value in the filter facets, a
+   * group in every report's "by suburb" breakdown, and a value that passed every
+   * `if (listing.suburb)` check downstream.
+   */
+  private standardizePropertyType(type?: string | null): string | null {
+    if (!type) return null;
     const normalized = type.toLowerCase().trim();
     if (normalized.includes('house') || normalized.includes('home')) return 'House';
     if (normalized.includes('apartment') || normalized.includes('unit')) return 'Apartment';
@@ -235,8 +529,8 @@ class PropertyDataService {
     return type;
   }
 
-  private standardizeSuburb(suburb?: string): string {
-    if (!suburb) return 'Unknown';
+  private standardizeSuburb(suburb?: string | null): string | null {
+    if (!suburb) return null;
     return suburb.trim().replace(/\s+/g, ' ')
       .split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
   }
@@ -281,7 +575,7 @@ class PropertyDataService {
         withPrice: listings.filter(l => this.isValidPrice(l.price)).length,
         withLocation: listings.filter(l => this.isValidLocation(l.address || l.location)).length,
         withBedrooms: listings.filter(l => (l.beds || l.bedrooms) && (l.beds || l.bedrooms)! > 0).length,
-        withPropertyType: listings.filter(l => l.propertyType && l.propertyType !== 'Unknown').length,
+        withPropertyType: listings.filter(l => Boolean(l.propertyType)).length,
       },
       fromCache,
     } : {

@@ -346,7 +346,7 @@ export function RunPanel({
                   {workflowIsLive
                     ? totalCaptured > 0
                       ? `${totalCaptured} event${totalCaptured === 1 ? '' : 's'} captured across all workflows, but none this trigger accepts — check the filters on the trigger step.`
-                      : 'Events are captured the moment a matching record changes. Nothing has happened yet.'
+                      : 'Events are captured the moment a matching record changes, and dispatched about a minute later. Nothing has happened yet.'
                     : 'Events are only captured for live workflows. Set the status to Live to start recording them.'}
                 </p>
               </div>

@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { buildResimacRates, RESIMAC_LENDER } from './resimacRates.ts';
 import { isSafeCdrUrl } from './cdrUrlSafety.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ============================================
 // MANUAL (non-CDR) lender registry
@@ -834,7 +835,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("[CDR] Error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'cdr-lending-rates-service'), success: false }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

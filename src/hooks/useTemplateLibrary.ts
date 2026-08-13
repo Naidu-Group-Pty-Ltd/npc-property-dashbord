@@ -52,6 +52,13 @@ function toListEntry(raw: any): TemplateLibraryListEntry {
       compatibilityVersion: raw.compatibility_version ?? 1,
       engine: raw.engine ?? 'weasyprint',
     },
+    // `{}` is what a non-family entry carries, and `null` is what the app means
+    // by "not part of a design family". Collapsing the two here keeps every
+    // consumer from having to know that the column is NOT NULL.
+    designMeta: raw.design_meta && typeof raw.design_meta === 'object'
+      && Object.keys(raw.design_meta).length > 0
+      ? raw.design_meta
+      : null,
     thumbnailPath: raw.thumbnail_path ?? null,
     previewImagePaths: raw.preview_image_paths ?? [],
     sourceTemplateId: raw.source_template_id ?? null,
@@ -148,17 +155,25 @@ export function useTemplateLibraryEvents(entryId: string | undefined) {
 export function useCreateWorkingCopy() {
   const qc = useQueryClient();
   return useMutation<CreateWorkingCopyResult, Error, CreateWorkingCopyInput>({
-    mutationFn: async ({ entryId, name, description }) => {
+    mutationFn: async ({ entryId, name, description, colourwayId }) => {
       const { data, error } = await invokeSecureFunction('manage-template-library', {
         operation: 'instantiate',
         entryId,
         name,
         description,
+        // The server validates this against the entry's own colourway list and
+        // rejects anything else, so sending it is a request rather than an
+        // instruction.
+        ...(colourwayId ? { colourwayId } : {}),
       });
       if (error) throw new Error(error.message);
       const templateId = (data as any)?.templateId;
       if (!templateId) throw new Error('Template copy returned no id');
-      return { templateId, instantiationId: (data as any)?.instantiationId ?? '' };
+      return {
+        templateId,
+        instantiationId: (data as any)?.instantiationId ?? '',
+        colourwayId: (data as any)?.colourwayId ?? null,
+      };
     },
     onSuccess: () => {
       // The new copy belongs in the Builder list, and the entry's usage count moved.

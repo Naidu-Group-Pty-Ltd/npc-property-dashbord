@@ -35,7 +35,12 @@ SELECT
             WHERE p.tenant_id = t.tenant_id AND p.capability = 'idv'), 0) + 1,
   0,
   'AUD',
-  true,
+  -- Seeded INACTIVE. This row used to be seeded active in simulator mode so
+  -- that go-live was "a toggle"; in production that showed an active identity
+  -- provider on the configuration screen while every request refused to
+  -- execute it, because production must never run the simulator. See
+  -- 20260807000000_no_simulator_idv_in_production.sql.
+  false,
   'simulator',
   'AML_VERIFICATION_SERVICE_TOKEN',
   jsonb_build_object(

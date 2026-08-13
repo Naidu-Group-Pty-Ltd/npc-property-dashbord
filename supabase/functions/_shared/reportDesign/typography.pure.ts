@@ -90,8 +90,21 @@ export interface ContainerFontFile {
  * (family, weight) pair this table cannot answer exactly.
  */
 export const CONTAINER_FONT_FILES: Record<string, ContainerFontFile> = {
-  // Cover titles and the closing lockup only, and only ever bold.
-  'Cinzel-Bold.ttf': { family: 'Cinzel', weight: 700 },
+  // Cover titles and the closing lockup, and nowhere else.
+  //
+  // Regular and SemiBold, where this was Bold alone. Cinzel is an inscriptional
+  // roman cut after Trajan-column capitals, and those are light: the cover title
+  // is set Regular and the closing wordmark SemiBold, which is what the face was
+  // drawn for. It had been Bold in both places because Bold was the only weight
+  // in the image — a typographic decision made by an omission in a Dockerfile.
+  //
+  // Bold is gone rather than kept "in case": the rule below is that a file
+  // nothing requests does not ship, and inventing a use for 77KB to keep it
+  // would be the same mistake in the other direction. Both new files came out
+  // of public/fonts/Cinzel_Playfair_Display.zip, the archive the Bold came from,
+  // where they had been sitting unused all along.
+  'Cinzel-Regular.ttf': { family: 'Cinzel', weight: 400 },
+  'Cinzel-SemiBold.ttf': { family: 'Cinzel', weight: 600 },
 
   // Display and accent. The italic is a separate file and a separate decision:
   // without a real italic the engine synthesises a slant from the upright.
@@ -181,6 +194,35 @@ export const PRINT_STACK = {
 export const NUMERIC_FEATURES = 'font-variant-numeric: tabular-nums lining-nums;';
 
 /**
+ * Applied to figures in running prose, which is the other half of the rule.
+ *
+ * `tabular-nums` is right in a table and wrong in a sentence: it sets every
+ * digit on the same advance, so `1` carries the width of `0` and a year or a
+ * percentage inside a paragraph opens a gap on both sides of the narrow digits.
+ * The face's proportional figures are what the text was drawn with.
+ *
+ * Nothing in this system set them, so body copy took whatever the face
+ * defaulted to and inherited `tabular-nums` wherever a numeric rule was an
+ * ancestor. This says the intent instead of leaving it to inheritance.
+ */
+export const PROSE_NUMERIC_FEATURES = 'font-variant-numeric: proportional-nums lining-nums;';
+
+/**
+ * Applied to the italic editorial voices — the lede and the pull quote.
+ *
+ * Old-style figures sit on the x-height with ascenders and descenders, which is
+ * what a serif italic is drawn to carry, and they are the reason a date in a
+ * standfirst reads as part of the sentence rather than as a number stuck into
+ * it. Playfair Display ships them; a face that does not will fall back to
+ * lining, which is the current behaviour and no worse.
+ *
+ * Only these two. Old-style figures in body copy at this size are a
+ * nineteenth-century book, not a financial report, and in a table they are
+ * unreadable down the column.
+ */
+export const EDITORIAL_NUMERIC_FEATURES = 'font-variant-numeric: oldstyle-nums proportional-nums;';
+
+/**
  * The brand signature in print: a wide uppercase eyebrow over a tight-tracked
  * title. Carried from `--tracking-eyebrow` / `--tracking-tight`.
  */
@@ -230,4 +272,45 @@ export function missingFamilies(stack: string): string[] {
 export function effectiveFamily(stack: string): string | null {
   const installed = new Set<string>(CONTAINER_INSTALLED_FAMILIES);
   return familiesInStack(stack).find((f) => installed.has(f)) ?? null;
+}
+
+// ── Fitting a cover title ───────────────────────────────────────────────────
+
+/**
+ * How hard a cover title has to work to fit.
+ *
+ * `coverTitle` is 56pt Cinzel Bold against a 165mm measure — about a dozen
+ * characters to the line. That is right for *Borrowing Capacity Snapshot* and
+ * wrong for a title three times as long, which sets five lines deep and lands
+ * in the meta block.
+ *
+ * CSS cannot measure a string, so the decision is made here, where it can be
+ * tested, and arrives at the stylesheet as a class. The thresholds are
+ * character counts rather than an em measure because Cinzel sets lowercase as
+ * small capitals, so its advance widths are far more even than a normal face's
+ * and a count is a good enough proxy.
+ */
+export type CoverTitleFit = 'full' | 'medium' | 'long' | 'longest';
+
+export const COVER_TITLE_FITS: readonly CoverTitleFit[] = [
+  'full', 'medium', 'long', 'longest',
+];
+
+/** Multipliers applied to `coverTitle`. One line each, at the measure. */
+export const COVER_TITLE_SCALE: Record<CoverTitleFit, number> = {
+  full: 1,
+  medium: 0.72,
+  long: 0.55,
+  longest: 0.42,
+};
+
+export function coverTitleFit(title: string, subtitle?: string | null): CoverTitleFit {
+  // A subtitle sets at 0.66em under the title and costs a line of its own, so a
+  // title with one has less room before it starts pushing the meta block down.
+  const chars = String(title ?? '').trim().length
+    + (subtitle ? Math.round(String(subtitle).trim().length * 0.66) : 0);
+  if (chars <= 26) return 'full';
+  if (chars <= 46) return 'medium';
+  if (chars <= 72) return 'long';
+  return 'longest';
 }

@@ -10,7 +10,7 @@ Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
 delivered. The design system is complete.
 
-**Formats migrated:** four, each with its own contract document, payload,
+**Formats migrated:** six, each with its own contract document, payload,
 document, brand snapshot, server-side render route and tests, and each keeping
 its legacy generator reachable rather than retiring it.
 
@@ -27,6 +27,18 @@ its legacy generator reachable rather than retiring it.
    its content back out of a model response that was cut off mid-write, and the
    only one whose migration makes downloading a saved document *free* — the path
    it sits beside asks a model to rewrite the report on every download.
+5. The Cash Flow Comparison Analysis — [`CASH_FLOW_COMPARISON.md`](./CASH_FLOW_COMPARISON.md).
+   Two to five 10 Year Cash Flow Analyses side by side, so its payload is N of
+   another format's and it imports that format rather than restating it. The
+   first comparison with real deterministic figures, the only format with
+   *nothing* persisted about its subject, and the first migration to edit the
+   legacy path it sits beside rather than only leaving it reachable.
+6. The Client Details report — [`CLIENT_DETAILS.md`](./CLIENT_DETAILS.md). The
+   only format whose subject is a person rather than a transaction, the only one
+   where the ordinary record has most of its sections empty (26 of 771 clients
+   hold any property), and the only one replacing a generator that rasterised
+   every page with html2canvas — so it is also the only migration whose headline
+   result is simply that the document is text.
 
 Each new route needs its function deployed and its migration applied before its
 call sites do anything; both are manual.
@@ -124,7 +136,7 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
   structure.pure.ts    ✅ REPORT_ARCHETYPES, buildSpine(), validateSpine()
   assets.pure.ts       ✅ inline policy, slot fallback chains, budget
   snapshot.pure.ts     ✅ ReportBrandSnapshot, fingerprint, palette/contact adapters
-  defaultAssets.generated.ts ✅ GENERATED — the house cover art and mark, inlined
+  (the house cover art and mark are NOT here — see "Where the house artwork lives")
   charts.pure.ts       ✅ 16 SVG charts, palette-driven, sized in points
 
 src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
@@ -141,10 +153,37 @@ src/lib/reportDesign/__tests__/reportSnapshot.spec.ts         ← fingerprint co
 src/branding/__tests__/brandAssetSlots.spec.ts                ← the two resolvers agree
 scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for CI)
 scripts/reportDesign/buildDefaultAssets.ts   ← asset inliner (+ `--check` for CI)
+scripts/reportDesign/generated/defaultAssets.generated.ts ← its output (NOT under supabase/functions/)
 scripts/reportDesign/buildSpecimen.ts        ← `npm run reportkit:specimen`
 supabase/migrations/20260813000000_report_brand_snapshots.sql
 weasyprint-service/fonts/                    ← the three brand faces, OFL licences, PROVENANCE.md
 ```
+
+### Where the house artwork lives
+
+The house cover art and mark are ~490 KB of base64 between them. They used to sit
+in `supabase/functions/_shared/reportDesign/defaultAssets.generated.ts`, and that
+was a deploy-blocking mistake rather than a tidy one: **every file under
+`supabase/functions/` is uploaded with every function**, so those bytes counted
+against all ~349 of them. Three unrelated functions —
+`manage-partner-agreements`, `aml-client-portal` and `generate-investment-report`
+— went past Supabase's ~4.5 MB bundle cap and could not be deployed at all,
+which is invisible until you try to ship a fix to one of them.
+
+So the bytes live in `public.report_default_assets`, keyed by `asset_key`
+(`npc_house_cover_art`, `npc_house_mark`), and `render-investment-report-pdf`
+loads the cover at request time via `loadHouseCoverArt()` — cached per isolate,
+returning `null` on failure so a missing photograph degrades to the gradient/foil
+cover instead of failing the render. It is still a `data:` URI by the time
+WeasyPrint sees it, so the no-network policy in `assets.pure.ts` is intact.
+
+The generator remains the source of truth: `npm run reportkit:assets` writes
+`scripts/reportDesign/generated/defaultAssets.generated.ts` and
+`reportkit:assets:check` gates it in CI. Re-seeding the table after a regenerate
+is a manual step — stage a throwaway edge function that imports the generated
+file and upserts the two rows, run it once, then delete it. Do **not** re-add the
+generated file anywhere under `supabase/functions/`.
+
 
 `premiumPdfDesign.ts` (the design panel's option contract) and
 `src/utils/pdfDisclaimerPage.ts` (the jsPDF and pdf-lib closing pages) are now
@@ -174,9 +213,27 @@ and non-obvious:
 - **Contrast floors by size** (see the skill's `reports/REPORT_RULES.md` §2).
   `--brand` on ivory is 2.10:1 and fails at the 8.5pt eyebrow — the single most
   important adjustment, and the reason eight golds exist.
-- **Category B darkens, never brand-derives.** `PRINT_SEMANTIC` is frozen and
-  `resolveReportPalette` accepts no override for it, so tenant leakage is a type
-  error rather than a code-review question.
+- **Category B keeps its hue, never brand-derives.** `PRINT_SEMANTIC` is frozen
+  and `resolveReportPalette` accepts no override for it, so tenant leakage is a
+  type error rather than a code-review question.
+
+  It used to be spread in as literals, which was right while the grounds were
+  four permutations of three values we chose. The four clear 4.5:1 on NPC's
+  darkest stock by about a percent — `negative` is 4.58:1 on `#F2EBDE` — so they
+  stopped being safe as literals the moment a design system could bring its own
+  paper: any panel slightly darker pushed all four under the floor. They now go
+  through `ensureContrast` against whichever ground they read worst against,
+  which walks lightness and preserves hue. Risk is still red, the hue still
+  comes from a frozen constant, and no input reaches it. For all four presets it
+  is a no-op, and `printContrast.spec.ts` proves that byte for byte.
+- **The token derivation is executable, not only documented.** Every statement
+  of the form "`paper` is `--background`" above is mirrored by an entry in
+  `brandDesign/import.pure.ts › NEUTRAL_SOURCES`, and
+  `src/lib/brandDesign/__tests__/import.spec.ts` runs it over the real
+  `_ds_manifest.json` pulled from claude.ai/design, requiring every print token
+  to come back byte-identical. `npm run brand:sync` is the same check on the
+  command line. That is what makes importing somebody else's design system
+  possible: it is this derivation over their tokens instead of ours.
 - **Screen-only constructs are dropped, not translated** — gradient text,
   `box-shadow`, blur, motion.
 
@@ -362,8 +419,33 @@ PDFs from live form state; there is no row for a server to read.
 
 | Target | For | Path |
 | --- | --- | --- |
-| **A** — server-side | data already persisted: investment, market intelligence, portfolio, borrowing capacity | edge function reads the row → builds HTML → WeasyPrint |
-| **B** — client-side HTML | data that exists only in browser state: cash flow, Formara, Q&A | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
+| **A** — server-side | data already persisted: investment, **market intelligence**, portfolio, borrowing capacity, property comparison, cash flow comparison, client details, **Report Q&A** | edge function reads the row → builds HTML → WeasyPrint |
+| **B** — client-side HTML | data that exists only in browser state: the cash flow modal's live overrides | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
+
+**Q&A moved from B to A**, and the move is the interesting part of that format.
+It was classified client-side because the browser holds the conversation, but
+every message is a row in `report_qa_messages` and the write-up is a column on
+`report_qa_conversations` — so the browser had nothing the database did not.
+Reading server-side is not only tidier: a transcript the caller posts up is a
+transcript the caller can edit, and that document's whole claim is that it is a
+record of what was asked and what was said. See [`QA.md`](./QA.md).
+
+The Client Details form moved for the same reason and is no longer "Formara" in
+this table: its nine tables are read by `render-client-details-pdf`.
+
+**Market Intelligence was always Target A on paper and had nothing implementing
+it.** The archetype had been declared years before anything rendered against it,
+and its note described a locality report — comparables and commentary for a
+suburb — which is not that document and never was. It reads as having been
+written from the archetype's name rather than from the generator, which is the
+hazard of declaring an archetype before something implements it. The band was
+wrong in the same way and is now pinned by render. See
+[`MARKET_INTELLIGENCE.md`](./MARKET_INTELLIGENCE.md).
+
+That format is also where the design system's own contents page ran out: it is
+the first with enough chapters to need two, so `buildSpine` gained an optional
+`contentsPages` and `.toc-row` gained `break-inside: avoid` after a render put a
+contents entry's title on the page after its number.
 
 ### The first format: Borrowing Capacity Snapshot
 
@@ -446,17 +528,118 @@ either impossible by construction or asserted by a test.
 | Running foot wrapped to two lines | The `@bottom-left` box is a third of the measure; company + document name does not fit in letterspaced mono | `mastheadFor()` returns the company name alone; the document name lives on the cover, in the PDF title and in the running head |
 | The drop cap printed on top of the words it opened | WeasyPrint places a floated `::first-letter` but does not shorten the first line box around it | Ships a raised initial instead; `reportCss.spec.ts` fails on `float: left` |
 
-One caveat on that render, stated because it bounds what it proves: it was
-produced by WeasyPrint 69 on this workspace, not by the container
-(`weasyprint-service` pins 62.3). **Phase 4 closed the font half of this
-caveat** — the faces are now installed and the specimen re-rendered with Inter,
-Playfair Display (upright and italic), Cinzel and IBM Plex Mono. What remains
-unverified is engine-version parity, which needs the container itself.
+That render was produced by WeasyPrint 69 on this workspace rather than by the
+container, and for a long time that was a real caveat: the container pinned
+**62.3**, and the two disagree — 62.3 rejects `width: calc(210mm - 44mm)`,
+drops the declaration and renders on, which is how the cover's masthead printed
+the classification and the reference as one word in every shipped copy with
+nothing red anywhere.
+
+**Both halves of that caveat are now closed.** The faces are installed in the
+image and the specimen re-renders with Inter, Playfair Display (upright and
+italic), Cinzel and IBM Plex Mono; and `weasyprint-service/requirements.txt`
+pins `weasyprint==69.0`, the version this workspace runs. The two cannot drift
+silently again — `PINNED_ENGINE` in `engineSupport.pure.ts` mirrors that line,
+`engineSupport.spec.ts` reads the requirements file and fails if they differ,
+and CI's `render-container` job asserts the installed version against the pin
+inside the built image.
+
+What that pin does **not** prove is which image is *deployed*. There is no
+deploy workflow; see [`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md), whose
+first step is asking the running service what engine it has.
 
 The specimen is also the re-skin proof: the same content rendered with
 `--preset=minimal_ink --brand='#00A3FF' --density=compact --table=ledger
 --chapter=opener_band` changes stock, rhythm, rules and every brand mark, while
 the negative figures stay the one red and the positives the one green.
+
+### Every format, rendered and read
+
+Until this table existed, **two of the ten formats had ever been rendered and
+looked at**: the Borrowing Capacity Snapshot, whose render spec wrote its HTML,
+and the converter, done by hand. The other eight were asserted with `toContain`
+against an in-memory string — which cannot see a page, and every real defect
+this programme has fixed was found by looking at one.
+
+```
+npx tsx scripts/reports/renderAll.mts
+```
+
+Renders all ten from their fixtures, measures each page with `measure_pages.py`,
+judges each with `judgeDocument`, and leaves the page images under
+`reports/pages/<format>/`. The ink column is the fastest signal: **a natively
+designed page in this system measures 0.133 to 0.221**, and a document whose
+body pages sit at 0.05 does not have one sparse page, it has no page economy.
+
+| format | pp | median body ink | in band | high | medium | outline | validates |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| borrowing-capacity | 12 | 0.131 ↓ | 2/10 | 0 | 3 | 14 | PDF/UA-1 |
+| cash-flow-projection | 10 | 0.167 | 5/8 | 0 | 1 | 6 | PDF/UA-1 |
+| cash-flow-comparison | 21 | 0.093 ↓ | 3/19 | 0 | 9 | 23 | PDF/UA-1 |
+| client-details | 14 | 0.119 ↓ | 5/12 | 0 | 4 | 14 | PDF/UA-1 |
+| investment-compass | 28 | 0.096 ↓ | 5/26 | 0 | 7 | 44 | PDF/UA-1 |
+| market-intelligence | 22 | 0.060 ↓ | 2/20 | 0 | 12 | 44 | PDF/UA-1 |
+| portfolio-performance | 26 | 0.173 | 5/24 | 0 | 6 | 28 | PDF/UA-1 |
+| property-comparison | 15 | 0.070 ↓ | 1/13 | 0 | 8 | 22 | PDF/UA-1 |
+| report-qa | 9 | 0.121 ↓ | 3/7 | 0 | 2 | 18 | PDF/UA-1 |
+| converted | 10 | 0.091 ↓ | 1/8 | 0 | 3 | 13 | PDF/UA-1 |
+
+**Zero `high` findings across all ten, and zero engine warnings.** The last two
+columns come from `scripts/reports/validateUa.mts` rather than `renderAll.mts`;
+every one of the ten had an outline of **zero** until `bookmark-level` reached
+the stylesheet, and none of them had ever been through a validator.
+
+The `medium` column is almost entirely `sparse-page`, and the `↓` on median ink
+is the page economy this programme has **not** finished with. Eight of the ten
+sit below the 0.133 floor — several spend a sheet on two-thirds of a sheet's
+content. Reading the pages says where it comes from, and it is one thing rather
+than eight: `.chapter { page-break-before: always }` is global, the chapter
+opener's furniture is about a third of a sheet on its own, and a chapter with
+less than two-thirds of a sheet of content therefore leaves the rest blank —
+`market-intelligence` page 5 is a 40pt title, a dek, a rule, five one-line
+bullets and 55% empty paper. Two formats already solved it for themselves
+(Investment groups 36 prose sections into four chapters; the converter packs
+thin chapters through `packThin`), and neither fix is available to the other
+eight. That is the next thing to work on and it is stated here rather than left
+to be rediscovered.
+
+Two of these numbers moved for a reason worth recording. Borrowing Capacity was
+eleven pages at 0.151, inside the band; it is twelve at 0.131 because its
+subheads moved from `h3` to `h2` to satisfy PDF/UA clause 7.4.2, and `h2` — the
+design system's actual subhead — carries 3pt more type and 16pt more air than
+the `h3` six formats had each invented for themselves. The document is correct
+now and costs a page for it. Investment lost a page and Portfolio gained one
+from the same change.
+
+Three things this table taught, none of which was visible from the code:
+
+- **A section is not a chapter.** Investment gave each of the generator's 36
+  numbered prose sections its own chapter, `.chapter` carries
+  `page-break-before: always`, and a corpus section runs to about two
+  paragraphs. A full report was 46 sheets at 4.1% ink. The archetype band said
+  43–53 and the document sat inside it, which is what a band cannot tell you.
+- **The measurer was wrong twice**, both producing `high` findings on correct
+  documents — a trim band derived from the portrait constants on a landscape
+  sheet, and a full-bleed test that exempted a tinted page from the trim rule.
+  `scripts/reports/test_measure_pages.py` now guards both.
+- **The rubric's only `high` rule was fully occupied by fixture noise.** Every
+  `duplicate-block` finding across four formats came from a fixture repeating
+  itself, so the strongest check in the harness could not have caught a real
+  repetition on any of them.
+
+### What the engine says about the stylesheet
+
+Two declarations added on the strength of the specification alone are **unknown
+properties on WeasyPrint 69.0**, and only rendering found them:
+
+| declaration | what happens | what to write instead |
+| --- | --- | --- |
+| `font-synthesis: none` | ignored; the engine still emboldens a face with no such cut | pin `font-weight` to a cut that ships |
+| `hyphenate-limit-lines` | ignored; `hyphenate-limit-chars` beside it is accepted | nothing — this engine has no ladder control |
+
+Both are in `UNSUPPORTED` in `engineSupport.pure.ts` and in the container's
+`DEFAULT_PROBES`, so a reintroduction fails a test rather than a render whose
+stderr nobody reads.
 
 ## 10 · Known hazards
 
@@ -475,7 +658,14 @@ the negative figures stay the one red and the positives the one green.
    Api2PDF fallback is disabled when WeasyPrint is configured, so a render failure
    is user-visible. The README is stale.
 4. **PDF/A + tagged output** constrain markup: heading levels must be semantically
-   correct, and external references are forbidden.
+   correct, and external references are forbidden. ~~And the output was tagged.~~
+   **It was not.** The service read `tagged` from the request body, defaulted it
+   to true, and never passed anything to the engine — the option that writes a
+   structure tree is `pdf_tags`, and it does not exist before WeasyPrint 63.
+   Every report the programme shipped was untagged: valid, printable, and
+   unnavigable to a screen reader. Fixed with the engine upgrade; asserted by
+   `X-Pdf-Tagged` in CI and by a service test that renders uncompressed and
+   looks for `/StructTreeRoot`.
 5. **Three divergent `InvestmentReport` types** bridged by a hand-maintained
    `overrideMapping` table. The system needs one payload contract or it inherits
    the drift.
@@ -487,3 +677,266 @@ the negative figures stay the one red and the positives the one green.
 7. **Server-side generation changes delivery** — a Blob download becomes an
    authenticated invocation plus a storage object plus a signed URL, with Cloud Run
    cold-start latency. The UI needs progress states.
+8. ~~**`page_count` is null on every render in the programme.**~~ **Resolved.**
+   `countPdfPages` scanned the raw bytes for `/Type /Page`; WeasyPrint packs its
+   page objects into a compressed object stream, so the token appears nowhere
+   outside `/Type /ObjStm … /Filter /FlateDecode` and the scan found zero
+   matches — and, by its own rule, returned null. It was not wrong, it was
+   blind, and it had been blind since the first migrated format shipped.
+   `countPdfPagesAsync` inflates the object streams with `DecompressionStream`
+   and counts inside; all nine render routes now call it. Verified against a
+   WeasyPrint PDF whose true page count is four. Slicing the stream at
+   `endstream` overshoots by the end-of-line the spec requires before the
+   keyword, and one trailing byte makes a deflate stream fail outright rather
+   than inflate what it can — so the dictionary's `/Length` is used when it has
+   one. That single byte is why the first attempt at the fix also counted zero.
+
+---
+
+## 11 · The render engine
+
+Everything above assumes the stylesheet reaches the page. It does not
+automatically, and the ways it fails to are all silent.
+
+### 11.1 The version split
+
+The stylesheet was written and visually reviewed against WeasyPrint **69**, on a
+developer machine. `weasyprint-service` pinned **62.3**. Those two do not agree,
+and the disagreement was invisible in exactly the way that costs the most:
+
+```
+WARNING: Ignored `width: calc(210mm - 44mm)` at 665:5, invalid value.
+```
+
+62.3 rejects `calc()` in a width. The declaration was dropped, the cover's
+masthead row had no width for its `table-layout: fixed` to fix to, the row
+auto-sized to its content, and the classification and the document reference
+printed as **one word**. The fix for that had shipped a day earlier and been
+verified — against 69. The render succeeded. Nothing was red.
+
+The container is now on 69.0, and the pin is mirrored by `PINNED_ENGINE` in
+`reportDesign/engineSupport.pure.ts` with a spec that reads
+`requirements.txt` and fails on drift. The `calc()` itself is gone regardless:
+every length in the sheet derives from a constant TypeScript already holds, so
+`calc()` buys nothing and costs a dependency on which engine is installed.
+
+### 11.2 Three lists, and where each is checked
+
+`engineSupport.pure.ts` carries them:
+
+| List | Meaning | Checked by |
+| --- | --- | --- |
+| `UNSUPPORTED` | the engine drops it | a spec sweeping all 1,296 generatable stylesheets |
+| `DISCOURAGED` | it renders, and must not be written anyway (`calc()`) | the same sweep |
+| `LOAD_BEARING` | the engine **must** render it — flex, grid, radius, gradients, hyphens, `break-inside`, `string()` | the container's own answer |
+
+The nine unsupported constructs were found by rendering probes, not by reading a
+support table: `box-shadow`, `filter`, `backdrop-filter`,
+`word-break: break-word`, `position: sticky`, `text-wrap`, `aspect-ratio`,
+`mix-blend-mode`, `writing-mode`.
+
+### 11.3 The list cannot rot
+
+A list of what an engine cannot do goes stale the moment the engine moves, and a
+stale one gets worked around rather than updated. So the engine grades the list,
+not the reverse: `POST /capabilities` answers, for a supplied set of probe
+declarations, which ones it ignored. `reconcileCapabilities` compares that to
+the three lists and distinguishes **broken** (a load-bearing construct dropped —
+the reports will not lay out) from **stale** (something listed as unsupported
+that now renders — news, and a prompt to move the entry).
+
+```bash
+npm run reportkit:engine:capabilities                    # the local binary
+npx tsx scripts/reports/engineCheck.mts \
+  --service $URL --token $TOKEN --capabilities *.html    # the deployed one
+```
+
+### 11.4 What is not on any list
+
+The defect that started this was not on a list, because nobody had met it yet.
+So `/render` returns the engine's warnings —
+`X-WeasyPrint-Warnings`, `X-WeasyPrint-Warning-Count` — and CI fails the
+Borrowing Capacity render if the count is not zero. `strict: true` turns any
+warning into a 422 for callers that want it. Before this, every one of those
+lines went to a container's stderr and no caller ever saw one.
+
+Two things the engine does **not** warn about, and how each is caught instead:
+
+- **A `font-family` naming nothing installed.** No log line at all. Caught by
+  the Dockerfile's build-time `fc-list` assertion, by CI's `pdffonts` check on a
+  real report, and now at runtime by `/capabilities`, which asks fontconfig as
+  the unprivileged user that actually renders — a face root can see and uid
+  10001 cannot is a substitution that happens only in production.
+- **A page that is technically correct and badly composed.** Nothing mechanical
+  sees it. That is what `critique.pure.ts`, `measure_pages.py` and the
+  `report-critic` agent are for.
+
+### 11.5 A typographic decision made by an omission
+
+`Cinzel-Bold.ttf` was the only weight of the brand cover face in the image, so
+the cover title and the closing wordmark were both set Bold — and
+`typography.pure.ts` recorded the face as "confined to the two places set large
+and short" *because of it*. That reads as a design rule. It was a Dockerfile.
+
+Cinzel is an inscriptional roman cut after Trajan-column capitals, and those are
+light. At 34pt the Bold reads as blunt rather than grand, and it blooms on the
+obsidian ground a cover is set on, because light-on-dark type optically gains
+weight. Regular and SemiBold were sitting unused in
+`public/fonts/Cinzel_Playfair_Display.zip` — the same committed archive the Bold
+came from — the whole time.
+
+The cover title is now **Regular**, the closing wordmark **SemiBold**, and Bold
+is gone: `reportTypography.spec.ts` fails on a shipped file nothing requests,
+and inventing a use to keep 77KB would be the same mistake in the other
+direction.
+
+Two things now hold that open:
+
+- **`PROVENANCE.md`'s hashes are checked.** A font is a binary in a repository:
+  nothing about it is reviewable in a diff, and it is copied into the image that
+  renders every client's document. The table used to claim a SHA-256 per file
+  and nothing verified it. The spec now hashes each file, fails on a mismatch,
+  and fails on a file the table does not record.
+- **`selfcheck.py` proves resolution, not just presence.** It walks the font
+  directory, reads each file's own family, weight and italic flag out of its
+  `name` and `OS/2` tables, asks the engine for exactly that, and checks the face
+  that came back is the file that asked. Shipping a file is not the same as being
+  able to reach it: `Cinzel SemiBold` answers to `font-family: Cinzel;
+  font-weight: 600` only because it carries a typographic-family record, and when
+  that resolution fails fontconfig returns the nearest weight in silence. There is
+  no manifest to keep in step — the fonts are the source of truth about themselves.
+
+### 11.6 Render options: what was measured, and what not to change
+
+Measured against the real eleven-page Borrowing Capacity Snapshot, so these are
+numbers rather than opinions. Recorded because each one looks like an easy
+quality win and is not.
+
+| Option | Measured | Verdict |
+| --- | --- | --- |
+| `optimize_images` | 157,498 vs 157,502 bytes | **Irrelevant.** The reports embed *no raster images at all* — every figure is SVG. `jpeg_quality` and `dpi` are moot for the same reason. |
+| `full_fonts` | 157KB → **1.69MB** | No. Subsetting does not change how a glyph draws; this is 10× the file for nothing a reader can see. |
+| `hinting` | +7KB (4.5%) | No. Modern viewers rasterise with their own hinting and ignore the embedded instructions. |
+| `pdf_variant: pdf/a-2b` | **pixel-identical** to plain across all 11 pages | Superseded — see 11.7. The variant is now `pdf/ua-1`. |
+
+One artefact worth not chasing: under `pdf/a-2b`, poppler prints `Bad color
+space 'srgb'` ten times. WeasyPrint defines a named `/srgb` colour space in the
+page resources and its transparency-group XObjects reference it from their own
+resource dictionaries, where it is not defined. It is upstream, it affects
+nothing — the pixel diff above was taken with those warnings present — and the
+only way to avoid it would be to stop emitting SVG.
+
+The `optimize_images` row above is **wrong**, and the way it got that way is
+the more useful part: it was measured on a fixture with no cover art, and the
+"the reports embed no raster images at all" premise it rests on is true of the
+*figures* and false of the *document*. See 11.7 for the re-measurement.
+
+### 11.7 The conformance claim, and the sheet a press can trim
+
+A conformance claim that fails validation is worse than no claim: it tells a
+procurement officer, a screen-reader user and an accessibility auditor that the
+document is navigable, and none of them finds out otherwise until they try. So
+the validator came first.
+
+**veraPDF 1.30.2 is in the image**, installed headlessly beside `default-jre`,
+and `selfcheck.py` fails the build if the specimen does not validate as
+PDF/UA-1. `scripts/reports/validateUa.mts` is the same check over all ten
+formats; CI runs veraPDF against the Borrowing Capacity Snapshot it already
+renders through the container.
+
+Its first run said `FAIL … ua1` on documents this repo had been tagging as
+accessible for months — clause 7.4.2, heading level 2 skipped in a descending
+sequence, on six of ten formats. Each had grown its own `const h3 = …` helper
+for "a subhead" while the design system's own subhead, `h2`, went unused in all
+six. That defect was reachable from the code and nobody had reached it.
+
+**The variant is `pdf/ua-1`**, and that was a choice between two claims rather
+than a free addition. Measured:
+
+| rendered as | PDF/UA-1 | PDF/A-2A | PDF/A-2B |
+| --- | --- | --- | --- |
+| `pdf/a-2b` (what shipped) | fail | fail | **pass** |
+| `pdf/a-2a` | fail | **pass** | **pass** |
+| `pdf/ua-1` | **pass** | fail | fail |
+
+The middle row is the interesting one: `pdf/a-2a` fails UA-1 on exactly **one**
+rule and one check — clause 5, the PDF/UA identification schema in the XMP.
+Everything structural passes on both. So these documents already satisfy both
+standards' *content* rules and can carry only one standard's *declaration*. It
+went to accessibility; nothing asks these reports to be archival, and fonts
+stay embedded 168 of 168 either way.
+
+Three things the switch cost or exposed, each now closed:
+
+- **`pdf/ua-1` drops the output intent** the PDF/A variants added for free,
+  because accessibility says nothing about colour. `output_intent: "srgb"` is
+  now sent by name and is in `REQUIRED_OPTIONS`, so an engine that stopped
+  honouring it would be caught rather than silently shipping colourless files.
+  `srgb` is a **keyword** the engine resolves to its own bundled `sRGB2014.icc`
+  — a path matches nothing and produces no intent at all, which is what the
+  first attempt did.
+- **A chart was unreachable and validated clean anyway.** Probed three ways,
+  only one produces a `/Figure` with `/Alt`: an inline `<svg role="img"
+  aria-label>` lands under `/NonStruct`, an inline `<svg><title>` likewise, and
+  a `data:` URI `<img alt>` is the only one that tags. With the drawing under
+  `/NonStruct` there is no figure for a validator to demand alternative text
+  for — **the document passes PDF/UA with every chart in it unreachable**. The
+  validator cannot catch this one; `conformance.spec.ts` does.
+- **`pdf-1.7` is not a variant the engine has.** `weasyprint.pdf.VARIANTS`
+  holds eighteen names and that is not among them; asking for it raises
+  `KeyError` and the service returns a 500. The Export Pipeline dialog has
+  offered it as "PDF 1.7 (standard)" the whole time, so that option had never
+  produced a file. It now means "send no variant", which is the engine's way of
+  saying the same thing, and its default version is already 1.7.
+
+**A PDF now names the row it came from.** `custom_metadata` copies the
+document's own `<meta name=…>` tags into the file, and the render routes put
+`npc-format`, `npc-render-id` and `npc-source-id` in the head. The engine
+lowercases the key and strips everything that is not a letter or a digit, so
+`npc-render-id` arrives as `/npcrenderid`, and the entries land in the Info
+dictionary rather than the XMP packet — fine for UA, and not for PDF/A, which
+requires the two to agree.
+
+**Press marks are behind `pressMarks`, off by default**, because crop marks on
+a client document read as a proof. On, the base `@page` emits `marks: crop
+cross` and `bleed: 3mm`, which measured as MediaBox `-8.5 -8.5 603.8 850.4`
+around a TrimBox of `0 0 595.3 841.9` — 8.5pt is 3mm, the trade convention. The
+three named pages that already declare `bleed: true` only paint the field
+colour and suppress the running chrome; they never extended the trim, so until
+now a full-bleed obsidian cover trimmed short showed a white hairline.
+
+**`dpi` and `jpeg_quality` stay unset, and this is the measurement.** Taken on a
+document with the house cover art spliced in — a 224 KB JPEG data URI, the only
+raster a report carries:
+
+| setting | file |
+| --- | ---: |
+| `optimize_images` off | 320.1 KB |
+| `optimize_images` on | **254.9 KB** ← ships |
+| `dpi: 300` | 254.9 KB |
+| `dpi: 150` | 254.9 KB |
+| `dpi: 96` | 247.9 KB |
+| `dpi: 72` | 218.1 KB |
+| `dpi: 36` | 181.4 KB |
+| `jpeg_quality: 85` | 286.7 KB |
+
+So the cover art sits between 96 and 150 dpi on the page: 150 and 300 do
+nothing at all, and anything low enough to save bytes visibly degrades the one
+image a reader looks at first. `jpeg_quality` makes the file **larger** — it
+re-encodes an asset that is already a JPEG, paying a generation of loss to grow
+by 31 KB. `optimize_images` is worth 65 KB and is on.
+
+**The container ships on its own deploy.** `ci.yml` builds the image to test it
+and publishes nothing, so everything in this section that lives in
+`weasyprint-service/` — veraPDF, `output_intent`, `custom_metadata` — reaches
+production through `deploy-weasyprint-service.yml`, or by hand. The
+document-side half (heading levels, tagged chart figures, `bookmark-level`,
+`pressMarks`) ships with the edge functions and does not wait for it.
+
+That split has an order to it, and getting it wrong is not cosmetic: the render
+routes ask for `pdf/ua-1`, an engine that does not have that variant raises
+`KeyError` and the service returns a 500 on **every** report. So the container
+goes first, and the first thing to do is ask the running service what engine it
+has. The whole procedure — canary, verification, rollback, the edge-function
+half, and what to look for inside a delivered PDF — is
+[`CONTAINER_RELEASE.md`](./CONTAINER_RELEASE.md).

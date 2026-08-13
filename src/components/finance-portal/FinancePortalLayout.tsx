@@ -3,8 +3,8 @@ import { Link, NavLink, Outlet, useNavigate, useLocation } from 'react-router-do
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { Button } from '@/components/ui/button';
 import {
-  Building2, LayoutDashboard, Users, LogOut, Menu, MessageSquare, Wallet, X, Shield, Briefcase, BookOpen, BarChart3, Settings as SettingsIcon, Inbox, Layers, Trophy, ArrowLeft,
-  ArrowLeftRight,
+  Building2, LayoutDashboard, Users, LogOut, Menu, MessageSquare, Wallet, X, Shield, ShieldCheck, Briefcase, BookOpen, BarChart3, Settings as SettingsIcon, Inbox, Layers, Trophy, ArrowLeft,
+  ArrowLeftRight, FileSignature,
 } from 'lucide-react';
 
 import {
@@ -14,14 +14,16 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { FinancePortalOnboardingGate } from './FinancePortalOnboardingGate';
 import { FinancePortalNotificationBell } from './FinancePortalNotificationBell';
+import { useFinanceAgreementSync } from '@/hooks/useFinanceAgreementSync';
+import { stampKey } from '@/lib/agreements';
 import { FinanceCommandPalette } from './FinanceCommandPalette';
 import { QuickAddFab } from './QuickAddFab';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { FinanceOnboardingTour } from './FinanceOnboardingTour';
-import { bootFinanceAppearance } from '@/lib/finance-portal/theme';
+import { bootFinanceAppearance, clearFinanceAppearance } from '@/lib/finance-portal/theme';
 import { cn } from '@/lib/utils';
+import { usePartnerWorkspaceEnabled } from '@/lib/aml/usePartnerWorkspaceFlags';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const NAV_ITEMS = [
@@ -32,10 +34,15 @@ const NAV_ITEMS = [
   { to: '/finance/messages', label: 'Messages', icon: MessageSquare, end: false, tour: 'messages' },
   { to: '/finance/client-inbox', label: 'Client Inbox', icon: Inbox, end: false, tour: 'client-inbox' },
   { to: '/finance/referrals', label: 'Referrals', icon: ArrowLeftRight, end: false, tour: 'referrals' },
+  { to: '/finance/agreements', label: 'Agreements', icon: FileSignature, end: false },
   { to: '/finance/lender-intelligence', label: 'Lender Intelligence', icon: BookOpen, end: false, tour: 'lender-intelligence' },
   { to: '/finance/insights', label: 'Pipeline Insights', icon: Trophy, end: false, tour: 'insights' },
   { to: '/finance/reports', label: 'Reports & KPIs', icon: BarChart3, end: false },
   { to: '/finance/earnings', label: 'Earnings', icon: Wallet, end: false },
+  // Feature-flagged (aml_partner_compliance_workspace + finance surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/finance/compliance', label: 'Client Compliance', icon: ShieldCheck, end: false, partnerWorkspace: true },
   
 ];
 
@@ -52,9 +59,10 @@ function getInitials(name?: string | null, email?: string | null): string {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  const { enabled: partnerWorkspaceEnabled } = usePartnerWorkspaceEnabled('finance');
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {NAV_ITEMS.map(item => {
+      {NAV_ITEMS.filter(item => !('partnerWorkspace' in item) || partnerWorkspaceEnabled).map(item => {
         const Icon = item.icon;
         return (
           <NavLink
@@ -87,8 +95,23 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // The cross-portal cursor lives at the layout so it covers every page, not
+  // just the agreement ones — an agreement issued while the partner is on their
+  // dashboard has to reach the bell and the action card there. Pages that also
+  // call it share this exact query; React Query runs one poll, not two.
+  // See `useAgreementSync`.
+  const agreementSync = useFinanceAgreementSync();
+
   // Batch 13 #66 — boot theme/density from cached prefs on mount.
-  useEffect(() => { bootFinanceAppearance(); }, []);
+  // The palette lives on <html>, so it is global state and has to be torn
+  // down on unmount: without the cleanup it follows the user out of the
+  // portal and the Command Centre inherits finance dark surfaces while its
+  // own light-mode rules still apply. The preference itself is kept in
+  // localStorage and restored on the next visit.
+  useEffect(() => {
+    bootFinanceAppearance();
+    return () => { clearFinanceAppearance(); };
+  }, []);
 
   const handleLogout = async () => {
     await signOut();
@@ -98,8 +121,13 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
   const initials = getInitials(user?.name, user?.email);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <FinancePortalOnboardingGate />
+    <div className="finance-portal-theme flex min-h-screen flex-col">
+      {/*
+        Terms and onboarding are NOT here. They are routes the guard reaches
+        before this layout mounts (`FinancePortalProtectedRoute`), which is what
+        keeps the welcome tour below from opening on top of an agreement the
+        partner has not read.
+      */}
       <FinanceCommandPalette />
       <KeyboardShortcutsDialog />
       <QuickAddFab />
@@ -110,7 +138,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
       {/* ── Desktop Layout ── */}
       <div className="flex-1 flex">
         {/* Sidebar */}
-        <aside className="hidden md:flex md:w-64 flex-col border-r border-border bg-card/60 backdrop-blur-sm">
+        <aside className="finance-portal-sidebar hidden md:flex md:w-64 flex-col border-r">
           {/* Branded Header */}
           <div className="p-5 pb-4">
             <Link to="/finance" className="flex items-center gap-3">
@@ -169,7 +197,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
         {/* Main column */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* Top bar */}
-          <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+          <header className="finance-portal-topbar sticky top-0 z-30 border-b">
             <div className="flex h-14 items-center gap-3 px-4 md:px-6">
               {/* Mobile hamburger */}
               <Button variant="ghost" size="icon" className="md:hidden h-9 w-9" onClick={() => setMobileOpen(true)}>
@@ -207,7 +235,11 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
                   <span className="text-xs">Search…</span>
                   <kbd className="hidden lg:inline-flex pointer-events-none h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium">⌘K</kbd>
                 </Button>
-                <FinancePortalNotificationBell />
+                {/* The bell polls its own count on a minute. That is fine for
+                    everything else the portal notifies about, and too slow for
+                    the one thing the cursor already knows about — so the stamp
+                    doubles as a nudge: when it moves, the badge re-reads. */}
+                <FinancePortalNotificationBell refreshSignal={stampKey(agreementSync.stamp)} />
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -242,7 +274,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto">
+          <main className="finance-portal-main flex-1 overflow-auto">
             <AnimatePresence mode="wait">
               <motion.div
                 key={location.pathname}
@@ -264,7 +296,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
           <>
             {/* Backdrop */}
             <motion.div
-              className="md:hidden fixed inset-0 z-40 bg-background/60 backdrop-blur-sm"
+              className="glass-scrim md:hidden fixed inset-0 z-40"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -273,7 +305,7 @@ export function FinancePortalLayout({ children }: { children?: ReactNode }) {
             />
             {/* Drawer panel with swipe-to-close */}
             <motion.div
-              className="md:hidden fixed inset-y-0 left-0 z-50 w-72 bg-card border-r border-border shadow-2xl flex flex-col touch-pan-y"
+              className="finance-portal-sidebar md:hidden fixed inset-y-0 left-0 z-50 w-72 border-r flex flex-col touch-pan-y"
               initial={{ x: '-100%' }}
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}

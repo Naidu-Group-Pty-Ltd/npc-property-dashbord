@@ -1,8 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,11 +66,15 @@ const __formatComparisonReportHandler = async (req: Request): Promise<Response> 
     const body = await req.json();
     const { comparisonData } = body;
     
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[format-comparison-report] Auth failed:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
+
+    // Report Comparisons is a Growth/Scale capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'report-comparisons');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log(`[format-comparison-report] Authenticated user: ${userId}`);
     console.log('Formatting comparison report with Perplexity...');
 
@@ -291,6 +297,9 @@ Return ONLY the formatted markdown report. Do not include any commentary or expl
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'comparison_formatter',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         {
           role: 'system',
@@ -345,9 +354,9 @@ Return ONLY the formatted markdown report. Do not include any commentary or expl
   } catch (error) {
     console.error('Error in format-comparison-report:', error);
     return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        details: 'Failed to format comparison report'
+      JSON.stringify({
+        ...internalError(error, 'format-comparison-report'),
+        details: 'Failed to format comparison report',
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

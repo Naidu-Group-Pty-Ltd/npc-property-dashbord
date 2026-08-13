@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { buildFreeformEnvelope, pdfBytesToBase64, type FreeformRecipient, type FreeformTab } from '../_shared/docusign-freeform.ts';
@@ -10,6 +11,8 @@ const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 // ─── DocuSign JWT Grant Auth ──────────────────────────────
 import { SignJWT, importPKCS8 } from 'https://deno.land/x/jose@v5.2.2/index.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // Convert PKCS#1 PEM to PKCS#8 PEM
 function convertPkcs1ToPkcs8Pem(pem: string): string {
@@ -376,6 +379,11 @@ Deno.serve(async (req) => {
     if (authResult.error) {
       return createUnauthorizedResponse(authResult.error, corsHeaders);
     }
+
+    // Agreements is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, authResult, 'agreements');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
+
     const { action } = body;
 
     // ─── LIST AGREEMENTS ────────────────────────────────────
@@ -1200,7 +1208,7 @@ Deno.serve(async (req) => {
       } catch (dsError: any) {
         console.error('[DocuSign] API error:', dsError);
         return new Response(
-          JSON.stringify({ error: `DocuSign API error: ${dsError.message}` }),
+          JSON.stringify(internalError(dsError, 'manage-agency-agreements')),
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -1458,7 +1466,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[manage-agency-agreements] Error:', error);
     return new Response(
-      JSON.stringify({ error: error.message || 'Internal server error' }),
+      JSON.stringify(internalError(error, 'manage-agency-agreements')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -2028,6 +2028,10 @@ export type Database = {
           created_at: string
           endpoint: string | null
           id: string
+          mc_attempts: number
+          mc_billing_reason: string | null
+          mc_last_error: string | null
+          mc_reported_at: string | null
           metadata: Json | null
           model_used: string | null
           prompt_tokens: number | null
@@ -2044,6 +2048,10 @@ export type Database = {
           created_at?: string
           endpoint?: string | null
           id?: string
+          mc_attempts?: number
+          mc_billing_reason?: string | null
+          mc_last_error?: string | null
+          mc_reported_at?: string | null
           metadata?: Json | null
           model_used?: string | null
           prompt_tokens?: number | null
@@ -2060,6 +2068,10 @@ export type Database = {
           created_at?: string
           endpoint?: string | null
           id?: string
+          mc_attempts?: number
+          mc_billing_reason?: string | null
+          mc_last_error?: string | null
+          mc_reported_at?: string | null
           metadata?: Json | null
           model_used?: string | null
           prompt_tokens?: number | null
@@ -2657,6 +2669,68 @@ export type Database = {
           {
             foreignKeyName: "borrowing_capacity_renders_requested_by_fkey"
             columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      brand_design_systems: {
+        Row: {
+          brand_hex: string | null
+          brief: string
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          imported_at: string | null
+          is_active: boolean
+          name: string
+          neutrals: Json | null
+          options: Json
+          origin: string
+          slug: string
+          source_namespace: string
+          updated_at: string
+        }
+        Insert: {
+          brand_hex?: string | null
+          brief?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          imported_at?: string | null
+          is_active?: boolean
+          name: string
+          neutrals?: Json | null
+          options?: Json
+          origin?: string
+          slug: string
+          source_namespace?: string
+          updated_at?: string
+        }
+        Update: {
+          brand_hex?: string | null
+          brief?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          imported_at?: string | null
+          is_active?: boolean
+          name?: string
+          neutrals?: Json | null
+          options?: Json
+          origin?: string
+          slug?: string
+          source_namespace?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "brand_design_systems_created_by_fkey"
+            columns: ["created_by"]
             isOneToOne: false
             referencedRelation: "custom_users"
             referencedColumns: ["id"]
@@ -4694,22 +4768,7 @@ export type Database = {
           reason?: string | null
           user_agent?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "builder_portal_activity_log_builder_user_id_fkey"
-            columns: ["builder_user_id"]
-            isOneToOne: false
-            referencedRelation: "builder_portal_users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "builder_portal_activity_log_organisation_id_fkey"
-            columns: ["organisation_id"]
-            isOneToOne: false
-            referencedRelation: "builder_organisations"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       builder_portal_sessions: {
         Row: {
@@ -7065,6 +7124,94 @@ export type Database = {
           },
         ]
       }
+      cash_flow_comparison_renders: {
+        Row: {
+          ai_sections_missing: string[]
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          compared_report_ids: string[]
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          has_ai_analysis: boolean
+          id: string
+          investor_profile: string | null
+          primary_report_id: string
+          property_count: number | null
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          term_years: number | null
+        }
+        Insert: {
+          ai_sections_missing?: string[]
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          compared_report_ids?: string[]
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_ai_analysis?: boolean
+          id?: string
+          investor_profile?: string | null
+          primary_report_id: string
+          property_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Update: {
+          ai_sections_missing?: string[]
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          compared_report_ids?: string[]
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_ai_analysis?: boolean
+          id?: string
+          investor_profile?: string | null
+          primary_report_id?: string
+          property_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_flow_comparison_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_comparison_renders_primary_report_id_fkey"
+            columns: ["primary_report_id"]
+            isOneToOne: false
+            referencedRelation: "investment_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_comparison_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_flow_renders: {
         Row: {
           brand_gaps: string[]
@@ -7980,6 +8127,7 @@ export type Database = {
       client_deals: {
         Row: {
           build_price: number | null
+          builder_invoice_current_payment_id: string | null
           cash_out_purpose: string | null
           cash_out_verified: boolean | null
           clawback_expiry_date: string | null
@@ -8027,6 +8175,7 @@ export type Database = {
         }
         Insert: {
           build_price?: number | null
+          builder_invoice_current_payment_id?: string | null
           cash_out_purpose?: string | null
           cash_out_verified?: boolean | null
           clawback_expiry_date?: string | null
@@ -8074,6 +8223,7 @@ export type Database = {
         }
         Update: {
           build_price?: number | null
+          builder_invoice_current_payment_id?: string | null
           cash_out_purpose?: string | null
           cash_out_verified?: boolean | null
           clawback_expiry_date?: string | null
@@ -8121,6 +8271,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "client_deals_builder_invoice_current_payment_id_fkey"
+            columns: ["builder_invoice_current_payment_id"]
+            isOneToOne: false
+            referencedRelation: "build_progress_payments"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "client_deals_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
@@ -8154,6 +8311,82 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_purchase_file_deal_drift"
             referencedColumns: ["purchase_file_id"]
+          },
+        ]
+      }
+      client_details_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          client_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          property_count: number
+          requested_by: string | null
+          sections_included: string[]
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          property_count?: number
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          property_count?: number
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_details_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_details_renders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_details_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -8367,6 +8600,512 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "client_expenses_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_addresses: {
+        Row: {
+          address: string
+          address_type: string
+          applicant_number: number
+          display_order: number
+          fact_find_id: string
+          id: string
+          living_situation: string
+          moved_in_date: string | null
+        }
+        Insert: {
+          address?: string
+          address_type: string
+          applicant_number: number
+          display_order: number
+          fact_find_id: string
+          id?: string
+          living_situation?: string
+          moved_in_date?: string | null
+        }
+        Update: {
+          address?: string
+          address_type?: string
+          applicant_number?: number
+          display_order?: number
+          fact_find_id?: string
+          id?: string
+          living_situation?: string
+          moved_in_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_addresses_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_applicants: {
+        Row: {
+          applicant_number: number
+          date_of_birth: string | null
+          email: string
+          fact_find_id: string
+          first_name: string
+          gender: string
+          id: string
+          marital_status: string
+          middle_name: string
+          mobile: string
+          number_of_dependants: number | null
+          relationship: string
+          residency_status: string
+          surname: string
+          title: string
+        }
+        Insert: {
+          applicant_number: number
+          date_of_birth?: string | null
+          email?: string
+          fact_find_id: string
+          first_name?: string
+          gender?: string
+          id?: string
+          marital_status?: string
+          middle_name?: string
+          mobile?: string
+          number_of_dependants?: number | null
+          relationship: string
+          residency_status?: string
+          surname?: string
+          title?: string
+        }
+        Update: {
+          applicant_number?: number
+          date_of_birth?: string | null
+          email?: string
+          fact_find_id?: string
+          first_name?: string
+          gender?: string
+          id?: string
+          marital_status?: string
+          middle_name?: string
+          mobile?: string
+          number_of_dependants?: number | null
+          relationship?: string
+          residency_status?: string
+          surname?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_applicants_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_assets: {
+        Row: {
+          asset_type: string
+          current_value_cents: number
+          description_or_address: string
+          display_order: number
+          fact_find_id: string
+          financial_institution: string
+          id: string
+          interest_rate: number
+          loan_balance_cents: number
+          maturity_date: string | null
+          monthly_repayment_cents: number
+          owner: string
+          rental_or_other_income_cents: number
+        }
+        Insert: {
+          asset_type?: string
+          current_value_cents?: number
+          description_or_address?: string
+          display_order: number
+          fact_find_id: string
+          financial_institution?: string
+          id?: string
+          interest_rate?: number
+          loan_balance_cents?: number
+          maturity_date?: string | null
+          monthly_repayment_cents?: number
+          owner?: string
+          rental_or_other_income_cents?: number
+        }
+        Update: {
+          asset_type?: string
+          current_value_cents?: number
+          description_or_address?: string
+          display_order?: number
+          fact_find_id?: string
+          financial_institution?: string
+          id?: string
+          interest_rate?: number
+          loan_balance_cents?: number
+          maturity_date?: string | null
+          monthly_repayment_cents?: number
+          owner?: string
+          rental_or_other_income_cents?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_assets_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_brand_snapshots: {
+        Row: {
+          accent_colour: string
+          business_address: string
+          confidentiality_label: string
+          created_at: string
+          document_title: string
+          email: string
+          fact_find_id: string
+          id: string
+          logo_reference: string
+          organisation_name: string
+          phone: string
+          prepared_by: string
+          primary_colour: string
+          source_white_label_setting_id: string | null
+          tagline: string
+          trading_name: string
+          version: string
+          website: string
+        }
+        Insert: {
+          accent_colour: string
+          business_address?: string
+          confidentiality_label?: string
+          created_at?: string
+          document_title?: string
+          email?: string
+          fact_find_id: string
+          id?: string
+          logo_reference?: string
+          organisation_name?: string
+          phone?: string
+          prepared_by?: string
+          primary_colour: string
+          source_white_label_setting_id?: string | null
+          tagline?: string
+          trading_name?: string
+          version?: string
+          website?: string
+        }
+        Update: {
+          accent_colour?: string
+          business_address?: string
+          confidentiality_label?: string
+          created_at?: string
+          document_title?: string
+          email?: string
+          fact_find_id?: string
+          id?: string
+          logo_reference?: string
+          organisation_name?: string
+          phone?: string
+          prepared_by?: string
+          primary_colour?: string
+          source_white_label_setting_id?: string | null
+          tagline?: string
+          trading_name?: string
+          version?: string
+          website?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_brand_snapsh_source_white_label_setting_i_fkey"
+            columns: ["source_white_label_setting_id"]
+            isOneToOne: false
+            referencedRelation: "whitelabel_settings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_fact_find_brand_snapshots_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: true
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_employment: {
+        Row: {
+          applicant_number: number
+          base_salary_cents: number
+          bonus_cents: number
+          commission_cents: number
+          employer_address: string
+          employer_or_business: string
+          employment_type: string
+          fact_find_id: string
+          id: string
+          other_taxable_income_cents: number
+          overtime_cents: number
+          role_or_position: string
+          start_date: string | null
+        }
+        Insert: {
+          applicant_number: number
+          base_salary_cents?: number
+          bonus_cents?: number
+          commission_cents?: number
+          employer_address?: string
+          employer_or_business?: string
+          employment_type?: string
+          fact_find_id: string
+          id?: string
+          other_taxable_income_cents?: number
+          overtime_cents?: number
+          role_or_position?: string
+          start_date?: string | null
+        }
+        Update: {
+          applicant_number?: number
+          base_salary_cents?: number
+          bonus_cents?: number
+          commission_cents?: number
+          employer_address?: string
+          employer_or_business?: string
+          employment_type?: string
+          fact_find_id?: string
+          id?: string
+          other_taxable_income_cents?: number
+          overtime_cents?: number
+          role_or_position?: string
+          start_date?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_employment_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_expenses: {
+        Row: {
+          display_order: number
+          expense_key: string
+          fact_find_id: string
+          id: string
+          monthly_amount_cents: number
+          notes: string
+          workbook_category: string
+          workbook_item_label: string
+        }
+        Insert: {
+          display_order: number
+          expense_key: string
+          fact_find_id: string
+          id?: string
+          monthly_amount_cents?: number
+          notes?: string
+          workbook_category: string
+          workbook_item_label: string
+        }
+        Update: {
+          display_order?: number
+          expense_key?: string
+          fact_find_id?: string
+          id?: string
+          monthly_amount_cents?: number
+          notes?: string
+          workbook_category?: string
+          workbook_item_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_expenses_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_liabilities: {
+        Row: {
+          account_or_description: string
+          current_balance_cents: number
+          display_order: number
+          fact_find_id: string
+          id: string
+          interest_rate: number
+          lender: string
+          liability_type: string
+          limit_or_original_amount_cents: number
+          monthly_repayment_cents: number
+          notes: string
+          owner: string
+          remaining_term: string
+        }
+        Insert: {
+          account_or_description?: string
+          current_balance_cents?: number
+          display_order: number
+          fact_find_id: string
+          id?: string
+          interest_rate?: number
+          lender?: string
+          liability_type?: string
+          limit_or_original_amount_cents?: number
+          monthly_repayment_cents?: number
+          notes?: string
+          owner?: string
+          remaining_term?: string
+        }
+        Update: {
+          account_or_description?: string
+          current_balance_cents?: number
+          display_order?: number
+          fact_find_id?: string
+          id?: string
+          interest_rate?: number
+          lender?: string
+          liability_type?: string
+          limit_or_original_amount_cents?: number
+          monthly_repayment_cents?: number
+          notes?: string
+          owner?: string
+          remaining_term?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_liabilities_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_find_outputs: {
+        Row: {
+          branding_snapshot_id: string
+          created_at: string
+          fact_find_id: string
+          generated_at: string | null
+          id: string
+          output_hash: string | null
+          storage_path: string | null
+          template_version: string
+        }
+        Insert: {
+          branding_snapshot_id: string
+          created_at?: string
+          fact_find_id: string
+          generated_at?: string | null
+          id?: string
+          output_hash?: string | null
+          storage_path?: string | null
+          template_version: string
+        }
+        Update: {
+          branding_snapshot_id?: string
+          created_at?: string
+          fact_find_id?: string
+          generated_at?: string | null
+          id?: string
+          output_hash?: string | null
+          storage_path?: string | null
+          template_version?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_find_outputs_branding_snapshot_id_fkey"
+            columns: ["branding_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_find_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_fact_find_outputs_fact_find_id_fkey"
+            columns: ["fact_find_id"]
+            isOneToOne: false
+            referencedRelation: "client_fact_finds"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      client_fact_finds: {
+        Row: {
+          applicant_1_annual_income_cents: number
+          applicant_2_annual_income_cents: number
+          client_id: string
+          created_at: string
+          created_by: string
+          id: string
+          net_position_cents: number
+          revision: number
+          status: string
+          template_version: string
+          total_asset_linked_debt_cents: number
+          total_assets_cents: number
+          total_debt_cents: number
+          total_monthly_living_expenses_cents: number
+          total_other_liabilities_cents: number
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          applicant_1_annual_income_cents?: number
+          applicant_2_annual_income_cents?: number
+          client_id: string
+          created_at?: string
+          created_by: string
+          id?: string
+          net_position_cents?: number
+          revision?: number
+          status?: string
+          template_version: string
+          total_asset_linked_debt_cents?: number
+          total_assets_cents?: number
+          total_debt_cents?: number
+          total_monthly_living_expenses_cents?: number
+          total_other_liabilities_cents?: number
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          applicant_1_annual_income_cents?: number
+          applicant_2_annual_income_cents?: number
+          client_id?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          net_position_cents?: number
+          revision?: number
+          status?: string
+          template_version?: string
+          total_asset_linked_debt_cents?: number
+          total_assets_cents?: number
+          total_debt_cents?: number
+          total_monthly_living_expenses_cents?: number
+          total_other_liabilities_cents?: number
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_fact_finds_client_id_fkey"
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
@@ -10333,6 +11072,426 @@ export type Database = {
             columns: ["property_id"]
             isOneToOne: true
             referencedRelation: "commercial_properties"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessment_audit_events: {
+        Row: {
+          actor_id: string | null
+          assessment_id: string
+          created_at: string
+          detail: Json
+          event_type: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          actor_id?: string | null
+          assessment_id: string
+          created_at?: string
+          detail?: Json
+          event_type: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          actor_id?: string | null
+          assessment_id?: string
+          created_at?: string
+          detail?: Json
+          event_type?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_assessment_audit_event_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessment_client_links: {
+        Row: {
+          applied_changes: Json
+          assessment_id: string
+          client_id: string
+          id: string
+          linked_at: string
+          linked_by: string | null
+          reconciliation_items: Json
+          unlinked_at: string | null
+          unlinked_by: string | null
+          user_id: string
+        }
+        Insert: {
+          applied_changes?: Json
+          assessment_id: string
+          client_id: string
+          id?: string
+          linked_at?: string
+          linked_by?: string | null
+          reconciliation_items?: Json
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+          user_id: string
+        }
+        Update: {
+          applied_changes?: Json
+          assessment_id?: string
+          client_id?: string
+          id?: string
+          linked_at?: string
+          linked_by?: string | null
+          reconciliation_items?: Json
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_assessment_client_link_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessment_scenarios: {
+        Row: {
+          assessment_id: string
+          changed_assumption: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          label: string
+          latest_outputs: Json | null
+          parameters: Json
+          scenario_key: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assessment_id: string
+          changed_assumption?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label: string
+          latest_outputs?: Json | null
+          parameters?: Json
+          scenario_key: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assessment_id?: string
+          changed_assumption?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label?: string
+          latest_outputs?: Json | null
+          parameters?: Json
+          scenario_key?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_assessment_scenarios_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessments: {
+        Row: {
+          archived_at: string | null
+          assessment_type: string
+          binding_constraint: string | null
+          client_id: string | null
+          created_at: string
+          created_by: string | null
+          current_calculation_id: string | null
+          id: string
+          linked_at: string | null
+          linked_by: string | null
+          maximum_indicative_loan: number | null
+          outcome: string | null
+          payload: Json
+          proposed_dscr: number | null
+          proposed_lvr: number | null
+          reference: string
+          requested_loan: number | null
+          segment: string
+          status: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+          version: number
+        }
+        Insert: {
+          archived_at?: string | null
+          assessment_type?: string
+          binding_constraint?: string | null
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_calculation_id?: string | null
+          id?: string
+          linked_at?: string | null
+          linked_by?: string | null
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          payload?: Json
+          proposed_dscr?: number | null
+          proposed_lvr?: number | null
+          reference: string
+          requested_loan?: number | null
+          segment?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+          version?: number
+        }
+        Update: {
+          archived_at?: string | null
+          assessment_type?: string
+          binding_constraint?: string | null
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_calculation_id?: string | null
+          id?: string
+          linked_at?: string | null
+          linked_by?: string | null
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          payload?: Json
+          proposed_dscr?: number | null
+          proposed_lvr?: number | null
+          reference?: string
+          requested_loan?: number | null
+          segment?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ci_assessments_current_calculation_fkey"
+            columns: ["current_calculation_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_calculation_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_calculation_runs: {
+        Row: {
+          analysis: Json | null
+          assessment_id: string
+          binding_constraint: string | null
+          created_at: string
+          created_by: string | null
+          engine_version: string
+          id: string
+          inputs_snapshot: Json
+          maximum_indicative_loan: number | null
+          outcome: string | null
+          outputs: Json
+          policy_snapshot: Json
+          policy_version: string
+          scenario_key: string
+          user_id: string
+        }
+        Insert: {
+          analysis?: Json | null
+          assessment_id: string
+          binding_constraint?: string | null
+          created_at?: string
+          created_by?: string | null
+          engine_version: string
+          id?: string
+          inputs_snapshot: Json
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          outputs: Json
+          policy_snapshot: Json
+          policy_version: string
+          scenario_key?: string
+          user_id: string
+        }
+        Update: {
+          analysis?: Json | null
+          assessment_id?: string
+          binding_constraint?: string | null
+          created_at?: string
+          created_by?: string | null
+          engine_version?: string
+          id?: string
+          inputs_snapshot?: Json
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          outputs?: Json
+          policy_snapshot?: Json
+          policy_version?: string
+          scenario_key?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_calculation_runs_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_policy_profiles: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          id: string
+          is_active: boolean
+          label: string
+          policy_version: string
+          profile_key: string
+          settings: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          is_active?: boolean
+          label: string
+          policy_version: string
+          profile_key: string
+          settings?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          policy_version?: string
+          profile_key?: string
+          settings?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      commercial_industrial_report_renders: {
+        Row: {
+          analysis_note: string | null
+          assessment_id: string
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          calculation_run_id: string | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          has_analysis: boolean
+          id: string
+          page_count: number | null
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          user_id: string
+        }
+        Insert: {
+          analysis_note?: string | null
+          assessment_id: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          calculation_run_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_analysis?: boolean
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          user_id: string
+        }
+        Update: {
+          analysis_note?: string | null
+          assessment_id?: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          calculation_run_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_analysis?: boolean
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_report_renders_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_industrial_report_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_industrial_report_renders_calculation_run_id_fkey"
+            columns: ["calculation_run_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_calculation_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commercial_industrial_report_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
             referencedColumns: ["id"]
           },
         ]
@@ -15696,43 +16855,76 @@ export type Database = {
         Row: {
           body: string | null
           client_id: string | null
+          command_centre_authorised: boolean
+          correlation_id: string | null
           created_at: string
+          finance_file_id: string | null
           id: string
           integration_event_id: string | null
           is_read: boolean
           link_path: string | null
           metadata: Json | null
+          notification_domain: string
           notification_type: string
+          origin_portal: string
           portal_user_id: string
           read_at: string | null
+          recipient_organisation_id: string | null
+          recipient_role: string | null
+          recipient_team_id: string | null
+          related_entity_id: string | null
+          related_entity_type: string | null
+          target_portal: string
           title: string
         }
         Insert: {
           body?: string | null
           client_id?: string | null
+          command_centre_authorised?: boolean
+          correlation_id?: string | null
           created_at?: string
+          finance_file_id?: string | null
           id?: string
           integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
+          notification_domain?: string
           notification_type: string
+          origin_portal?: string
           portal_user_id: string
           read_at?: string | null
+          recipient_organisation_id?: string | null
+          recipient_role?: string | null
+          recipient_team_id?: string | null
+          related_entity_id?: string | null
+          related_entity_type?: string | null
+          target_portal?: string
           title: string
         }
         Update: {
           body?: string | null
           client_id?: string | null
+          command_centre_authorised?: boolean
+          correlation_id?: string | null
           created_at?: string
+          finance_file_id?: string | null
           id?: string
           integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
+          notification_domain?: string
           notification_type?: string
+          origin_portal?: string
           portal_user_id?: string
           read_at?: string | null
+          recipient_organisation_id?: string | null
+          recipient_role?: string | null
+          recipient_team_id?: string | null
+          related_entity_id?: string | null
+          related_entity_type?: string | null
+          target_portal?: string
           title?: string
         }
         Relationships: [
@@ -18286,8 +19478,10 @@ export type Database = {
           aggregate_type: string
           attempts: number
           available_at: string
+          causation_id: string | null
           correlation_id: string
           created_at: string
+          destination_class: string | null
           event_type: string
           event_version: number
           id: string
@@ -18296,7 +19490,10 @@ export type Database = {
           locked_at: string | null
           locked_by: string | null
           occurred_at: string
+          partner_case_link_id: string | null
+          partner_org_id: string | null
           payload: Json
+          payload_classification: string | null
           processed_at: string | null
         }
         Insert: {
@@ -18304,8 +19501,10 @@ export type Database = {
           aggregate_type: string
           attempts?: number
           available_at?: string
+          causation_id?: string | null
           correlation_id?: string
           created_at?: string
+          destination_class?: string | null
           event_type: string
           event_version?: number
           id?: string
@@ -18314,7 +19513,10 @@ export type Database = {
           locked_at?: string | null
           locked_by?: string | null
           occurred_at?: string
+          partner_case_link_id?: string | null
+          partner_org_id?: string | null
           payload?: Json
+          payload_classification?: string | null
           processed_at?: string | null
         }
         Update: {
@@ -18322,8 +19524,10 @@ export type Database = {
           aggregate_type?: string
           attempts?: number
           available_at?: string
+          causation_id?: string | null
           correlation_id?: string
           created_at?: string
+          destination_class?: string | null
           event_type?: string
           event_version?: number
           id?: string
@@ -18332,7 +19536,10 @@ export type Database = {
           locked_at?: string | null
           locked_by?: string | null
           occurred_at?: string
+          partner_case_link_id?: string | null
+          partner_org_id?: string | null
           payload?: Json
+          payload_classification?: string | null
           processed_at?: string | null
         }
         Relationships: []
@@ -18495,6 +19702,100 @@ export type Database = {
           },
         ]
       }
+      investment_report_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          chapters_dropped: number
+          chapters_included: string[]
+          chars_omitted: number
+          charts_drawn: number
+          charts_skipped: number
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          has_financials: boolean
+          has_score: boolean
+          id: string
+          page_count: number | null
+          report_id: string
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chapters_dropped?: number
+          chapters_included?: string[]
+          chars_omitted?: number
+          charts_drawn?: number
+          charts_skipped?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_financials?: boolean
+          has_score?: boolean
+          id?: string
+          page_count?: number | null
+          report_id: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chapters_dropped?: number
+          chapters_included?: string[]
+          chars_omitted?: number
+          charts_drawn?: number
+          charts_skipped?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_financials?: boolean
+          has_score?: boolean
+          id?: string
+          page_count?: number | null
+          report_id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investment_report_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investment_report_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "investment_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investment_report_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investment_reports: {
         Row: {
           brand_snapshot_id: string | null
@@ -18528,6 +19829,9 @@ export type Database = {
           report_scope: string | null
           report_tier: string
           report_variant: string
+          resume_attempts: number
+          resume_claimed_at: string | null
+          resume_worker_id: string | null
           sources_content: string | null
           status: string
           total_sections: number | null
@@ -18567,6 +19871,9 @@ export type Database = {
           report_scope?: string | null
           report_tier?: string
           report_variant?: string
+          resume_attempts?: number
+          resume_claimed_at?: string | null
+          resume_worker_id?: string | null
           sources_content?: string | null
           status?: string
           total_sections?: number | null
@@ -18606,6 +19913,9 @@ export type Database = {
           report_scope?: string | null
           report_tier?: string
           report_variant?: string
+          resume_attempts?: number
+          resume_claimed_at?: string | null
+          resume_worker_id?: string | null
           sources_content?: string | null
           status?: string
           total_sections?: number | null
@@ -21118,6 +22428,123 @@ export type Database = {
           },
         ]
       }
+      listing_enrichment: {
+        Row: {
+          attempt_count: number
+          error_count: number
+          first_enriched_at: string | null
+          last_enriched_at: string | null
+          last_error: string | null
+          lease_until: string | null
+          listing_id: string
+          next_attempt_at: string
+          priority: number
+          provenance: Json
+          stage: string | null
+          status: string
+          table_key: string
+          values: Json
+          writeback_at: string | null
+          writeback_fingerprint: string | null
+          writeback_state: string
+        }
+        Insert: {
+          attempt_count?: number
+          error_count?: number
+          first_enriched_at?: string | null
+          last_enriched_at?: string | null
+          last_error?: string | null
+          lease_until?: string | null
+          listing_id: string
+          next_attempt_at?: string
+          priority?: number
+          provenance?: Json
+          stage?: string | null
+          status?: string
+          table_key: string
+          values?: Json
+          writeback_at?: string | null
+          writeback_fingerprint?: string | null
+          writeback_state?: string
+        }
+        Update: {
+          attempt_count?: number
+          error_count?: number
+          first_enriched_at?: string | null
+          last_enriched_at?: string | null
+          last_error?: string | null
+          lease_until?: string | null
+          listing_id?: string
+          next_attempt_at?: string
+          priority?: number
+          provenance?: Json
+          stage?: string | null
+          status?: string
+          table_key?: string
+          values?: Json
+          writeback_at?: string | null
+          writeback_fingerprint?: string | null
+          writeback_state?: string
+        }
+        Relationships: []
+      }
+      listing_enrichment_budget: {
+        Row: {
+          day: string
+          geocodes: number
+          http_fetches: number
+          images_harvested: number
+          listings: number
+          runs: number
+          writebacks: number
+        }
+        Insert: {
+          day: string
+          geocodes?: number
+          http_fetches?: number
+          images_harvested?: number
+          listings?: number
+          runs?: number
+          writebacks?: number
+        }
+        Update: {
+          day?: string
+          geocodes?: number
+          http_fetches?: number
+          images_harvested?: number
+          listings?: number
+          runs?: number
+          writebacks?: number
+        }
+        Relationships: []
+      }
+      listing_enrichment_events: {
+        Row: {
+          created_at: string
+          detail: Json | null
+          id: number
+          listing_id: string
+          outcome: string
+          stage: string
+        }
+        Insert: {
+          created_at?: string
+          detail?: Json | null
+          id?: number
+          listing_id: string
+          outcome: string
+          stage: string
+        }
+        Update: {
+          created_at?: string
+          detail?: Json | null
+          id?: number
+          listing_id?: string
+          outcome?: string
+          stage?: string
+        }
+        Relationships: []
+      }
       listing_geocodes: {
         Row: {
           lat: number | null
@@ -21126,7 +22553,9 @@ export type Database = {
           precision: string | null
           provider: string
           resolved_at: string
+          state: string | null
           status: string
+          suburb: string | null
         }
         Insert: {
           lat?: number | null
@@ -21135,7 +22564,9 @@ export type Database = {
           precision?: string | null
           provider?: string
           resolved_at?: string
+          state?: string | null
           status?: string
+          suburb?: string | null
         }
         Update: {
           lat?: number | null
@@ -21144,7 +22575,177 @@ export type Database = {
           precision?: string | null
           provider?: string
           resolved_at?: string
+          state?: string | null
           status?: string
+          suburb?: string | null
+        }
+        Relationships: []
+      }
+      listing_image_sets: {
+        Row: {
+          airtable_sync_fingerprint: string | null
+          airtable_synced_at: string | null
+          error_count: number
+          fingerprint: string | null
+          image_count: number
+          last_error: string | null
+          last_harvested_at: string | null
+          listed_at: string | null
+          listing_id: string
+          refresh_after: string
+          stored_count: number
+        }
+        Insert: {
+          airtable_sync_fingerprint?: string | null
+          airtable_synced_at?: string | null
+          error_count?: number
+          fingerprint?: string | null
+          image_count?: number
+          last_error?: string | null
+          last_harvested_at?: string | null
+          listed_at?: string | null
+          listing_id: string
+          refresh_after?: string
+          stored_count?: number
+        }
+        Update: {
+          airtable_sync_fingerprint?: string | null
+          airtable_synced_at?: string | null
+          error_count?: number
+          fingerprint?: string | null
+          image_count?: number
+          last_error?: string | null
+          last_harvested_at?: string | null
+          listed_at?: string | null
+          listing_id?: string
+          refresh_after?: string
+          stored_count?: number
+        }
+        Relationships: []
+      }
+      listing_images: {
+        Row: {
+          bytes: number | null
+          checksum: string | null
+          content_type: string | null
+          error_count: number
+          first_seen_at: string
+          height: number | null
+          id: string
+          image_identity: string
+          last_error: string | null
+          last_verified_at: string | null
+          listing_id: string
+          origin: string
+          position: number
+          source_url: string | null
+          status: string
+          storage_path: string | null
+          width: number | null
+        }
+        Insert: {
+          bytes?: number | null
+          checksum?: string | null
+          content_type?: string | null
+          error_count?: number
+          first_seen_at?: string
+          height?: number | null
+          id?: string
+          image_identity: string
+          last_error?: string | null
+          last_verified_at?: string | null
+          listing_id: string
+          origin?: string
+          position?: number
+          source_url?: string | null
+          status?: string
+          storage_path?: string | null
+          width?: number | null
+        }
+        Update: {
+          bytes?: number | null
+          checksum?: string | null
+          content_type?: string | null
+          error_count?: number
+          first_seen_at?: string
+          height?: number | null
+          id?: string
+          image_identity?: string
+          last_error?: string | null
+          last_verified_at?: string | null
+          listing_id?: string
+          origin?: string
+          position?: number
+          source_url?: string | null
+          status?: string
+          storage_path?: string | null
+          width?: number | null
+        }
+        Relationships: []
+      }
+      listings_cache: {
+        Row: {
+          created_time: string | null
+          fields: Json
+          fingerprint: string | null
+          first_seen_at: string
+          last_modified_time: string | null
+          last_verified_at: string
+          listing_id: string
+          table_key: string
+        }
+        Insert: {
+          created_time?: string | null
+          fields: Json
+          fingerprint?: string | null
+          first_seen_at?: string
+          last_modified_time?: string | null
+          last_verified_at?: string
+          listing_id: string
+          table_key: string
+        }
+        Update: {
+          created_time?: string | null
+          fields?: Json
+          fingerprint?: string | null
+          first_seen_at?: string
+          last_modified_time?: string | null
+          last_verified_at?: string
+          listing_id?: string
+          table_key?: string
+        }
+        Relationships: []
+      }
+      listings_cache_sync: {
+        Row: {
+          error_count: number
+          last_error: string | null
+          last_full_sync_at: string | null
+          last_sync_at: string | null
+          reconciled: boolean
+          record_count: number
+          status: string
+          table_key: string
+        }
+        Insert: {
+          error_count?: number
+          last_error?: string | null
+          last_full_sync_at?: string | null
+          last_sync_at?: string | null
+          reconciled?: boolean
+          record_count?: number
+          status?: string
+          table_key: string
+        }
+        Update: {
+          error_count?: number
+          last_error?: string | null
+          last_full_sync_at?: string | null
+          last_sync_at?: string | null
+          reconciled?: boolean
+          record_count?: number
+          status?: string
+          table_key?: string
         }
         Relationships: []
       }
@@ -21393,6 +22994,103 @@ export type Database = {
           trigger_type?: string
         }
         Relationships: []
+      }
+      market_intelligence_renders: {
+        Row: {
+          audience_segment: string
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          chars_omitted: number
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          layers_empty: number
+          layers_shown: number
+          page_count: number | null
+          persisted: boolean
+          report_id: string
+          report_type: string
+          requested_by: string | null
+          sections_dropped: number
+          sections_included: string[]
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          audience_segment?: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chars_omitted?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          layers_empty?: number
+          layers_shown?: number
+          page_count?: number | null
+          persisted?: boolean
+          report_id: string
+          report_type?: string
+          requested_by?: string | null
+          sections_dropped?: number
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          audience_segment?: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chars_omitted?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          layers_empty?: number
+          layers_shown?: number
+          page_count?: number | null
+          persisted?: boolean
+          report_id?: string
+          report_type?: string
+          requested_by?: string | null
+          sections_dropped?: number
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_intelligence_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_intelligence_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "marketing_intelligence_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_intelligence_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       market_qa_digests: {
         Row: {
@@ -23358,6 +25056,95 @@ export type Database = {
           },
         ]
       }
+      partner_agreement_change_requests: {
+        Row: {
+          agreement_id: string
+          anchor_label: string | null
+          anchor_path: string | null
+          anchor_quote: string | null
+          comment: string
+          created_at: string
+          id: string
+          requested_by_label: string | null
+          requested_by_portal_user_id: string | null
+          resolution_note: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          resolved_by_label: string | null
+          resolved_in_version_id: string | null
+          section_key: string
+          status: string
+          version_id: string | null
+        }
+        Insert: {
+          agreement_id: string
+          anchor_label?: string | null
+          anchor_path?: string | null
+          anchor_quote?: string | null
+          comment: string
+          created_at?: string
+          id?: string
+          requested_by_label?: string | null
+          requested_by_portal_user_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_by_label?: string | null
+          resolved_in_version_id?: string | null
+          section_key: string
+          status?: string
+          version_id?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          anchor_label?: string | null
+          anchor_path?: string | null
+          anchor_quote?: string | null
+          comment?: string
+          created_at?: string
+          id?: string
+          requested_by_label?: string | null
+          requested_by_portal_user_id?: string | null
+          resolution_note?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_by_label?: string | null
+          resolved_in_version_id?: string | null
+          section_key?: string
+          status?: string
+          version_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_change_requests_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_change_requests_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_change_requests_resolved_in_version_id_fkey"
+            columns: ["resolved_in_version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_change_requests_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       partner_agreement_events: {
         Row: {
           actor_id: string | null
@@ -23406,11 +25193,217 @@ export type Database = {
           },
         ]
       }
+      partner_agreement_reviews: {
+        Row: {
+          agreement_id: string
+          created_at: string
+          decision: string
+          id: string
+          notes: string | null
+          reviewer_id: string | null
+          reviewer_label: string | null
+        }
+        Insert: {
+          agreement_id: string
+          created_at?: string
+          decision: string
+          id?: string
+          notes?: string | null
+          reviewer_id?: string | null
+          reviewer_label?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          created_at?: string
+          decision?: string
+          id?: string
+          notes?: string | null
+          reviewer_id?: string | null
+          reviewer_label?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_reviews_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_reviews_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_agreement_signatures: {
+        Row: {
+          agreement_id: string
+          id: string
+          ip_hash: string | null
+          legal_entity: string | null
+          party_role: string
+          portal_user_id: string | null
+          signatory_name: string
+          signatory_title: string | null
+          signature_method: string
+          signature_typed: string
+          signed_at: string
+          staff_user_id: string | null
+          user_agent_hash: string | null
+          version_id: string
+        }
+        Insert: {
+          agreement_id: string
+          id?: string
+          ip_hash?: string | null
+          legal_entity?: string | null
+          party_role: string
+          portal_user_id?: string | null
+          signatory_name: string
+          signatory_title?: string | null
+          signature_method?: string
+          signature_typed: string
+          signed_at?: string
+          staff_user_id?: string | null
+          user_agent_hash?: string | null
+          version_id: string
+        }
+        Update: {
+          agreement_id?: string
+          id?: string
+          ip_hash?: string | null
+          legal_entity?: string | null
+          party_role?: string
+          portal_user_id?: string | null
+          signatory_name?: string
+          signatory_title?: string | null
+          signature_method?: string
+          signature_typed?: string
+          signed_at?: string
+          staff_user_id?: string | null
+          user_agent_hash?: string | null
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_signatures_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_signatures_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_signatures_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_agreement_versions: {
+        Row: {
+          agreement_id: string
+          brand_snapshot: Json | null
+          changed_fields: Json
+          created_at: string
+          document_revision: number
+          executed_at: string | null
+          executed_pdf_bytes: number | null
+          executed_pdf_storage_path: string | null
+          field_values: Json
+          id: string
+          issue_sequence: number
+          issued_at: string
+          issued_by: string | null
+          issued_by_label: string | null
+          pdf_storage_path: string | null
+          status: string
+          template_content_hash: string
+          template_key: string
+          version_label: string
+        }
+        Insert: {
+          agreement_id: string
+          brand_snapshot?: Json | null
+          changed_fields?: Json
+          created_at?: string
+          document_revision?: number
+          executed_at?: string | null
+          executed_pdf_bytes?: number | null
+          executed_pdf_storage_path?: string | null
+          field_values?: Json
+          id?: string
+          issue_sequence: number
+          issued_at?: string
+          issued_by?: string | null
+          issued_by_label?: string | null
+          pdf_storage_path?: string | null
+          status?: string
+          template_content_hash: string
+          template_key: string
+          version_label: string
+        }
+        Update: {
+          agreement_id?: string
+          brand_snapshot?: Json | null
+          changed_fields?: Json
+          created_at?: string
+          document_revision?: number
+          executed_at?: string | null
+          executed_pdf_bytes?: number | null
+          executed_pdf_storage_path?: string | null
+          field_values?: Json
+          id?: string
+          issue_sequence?: number
+          issued_at?: string
+          issued_by?: string | null
+          issued_by_label?: string | null
+          pdf_storage_path?: string | null
+          status?: string
+          template_content_hash?: string
+          template_key?: string
+          version_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_versions_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_versions_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       partner_agreements: {
         Row: {
+          accepted_at: string | null
           accrued_entitlements_resolved_at: string | null
           accrued_entitlements_snapshot: Json | null
           activated_at: string | null
+          agreement_owner_id: string | null
+          agreement_owner_label: string | null
+          archive_reason: string | null
+          archived_at: string | null
+          archived_by: string | null
+          archived_by_label: string | null
           clawback_repayment_days: number | null
           clawback_treatment: string | null
           cleared_funds_required: boolean
@@ -23431,6 +25424,8 @@ export type Database = {
           duplicate_referral_rule: string | null
           effective_date: string | null
           exclusions: string | null
+          executed_at: string | null
+          executed_pdf_storage_path: string | null
           executed_under_s127: boolean
           fee_amount: number | null
           fee_cap: number | null
@@ -23438,6 +25433,7 @@ export type Database = {
           fee_model: Database["public"]["Enums"]["partner_fee_model"] | null
           fee_percentage: number | null
           finance_agent_contact_id: string | null
+          first_viewed_at: string | null
           governing_state: string
           gst_treatment:
             | Database["public"]["Enums"]["partner_gst_treatment"]
@@ -23447,6 +25443,8 @@ export type Database = {
           invoice_process:
             | Database["public"]["Enums"]["partner_invoice_process"]
             | null
+          issued_at: string | null
+          issued_version_id: string | null
           notes: string | null
           partner_abn: string | null
           partner_acl_number: string | null
@@ -23498,11 +25496,21 @@ export type Database = {
           updated_by: string | null
           upfront_share_pct: number | null
           version: number
+          void_reason: string | null
+          voided_at: string | null
+          withdrawn_at: string | null
         }
         Insert: {
+          accepted_at?: string | null
           accrued_entitlements_resolved_at?: string | null
           accrued_entitlements_snapshot?: Json | null
           activated_at?: string | null
+          agreement_owner_id?: string | null
+          agreement_owner_label?: string | null
+          archive_reason?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archived_by_label?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
           cleared_funds_required?: boolean
@@ -23523,6 +25531,8 @@ export type Database = {
           duplicate_referral_rule?: string | null
           effective_date?: string | null
           exclusions?: string | null
+          executed_at?: string | null
+          executed_pdf_storage_path?: string | null
           executed_under_s127?: boolean
           fee_amount?: number | null
           fee_cap?: number | null
@@ -23530,6 +25540,7 @@ export type Database = {
           fee_model?: Database["public"]["Enums"]["partner_fee_model"] | null
           fee_percentage?: number | null
           finance_agent_contact_id?: string | null
+          first_viewed_at?: string | null
           governing_state?: string
           gst_treatment?:
             | Database["public"]["Enums"]["partner_gst_treatment"]
@@ -23539,6 +25550,8 @@ export type Database = {
           invoice_process?:
             | Database["public"]["Enums"]["partner_invoice_process"]
             | null
+          issued_at?: string | null
+          issued_version_id?: string | null
           notes?: string | null
           partner_abn?: string | null
           partner_acl_number?: string | null
@@ -23590,11 +25603,21 @@ export type Database = {
           updated_by?: string | null
           upfront_share_pct?: number | null
           version?: number
+          void_reason?: string | null
+          voided_at?: string | null
+          withdrawn_at?: string | null
         }
         Update: {
+          accepted_at?: string | null
           accrued_entitlements_resolved_at?: string | null
           accrued_entitlements_snapshot?: Json | null
           activated_at?: string | null
+          agreement_owner_id?: string | null
+          agreement_owner_label?: string | null
+          archive_reason?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
+          archived_by_label?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
           cleared_funds_required?: boolean
@@ -23615,6 +25638,8 @@ export type Database = {
           duplicate_referral_rule?: string | null
           effective_date?: string | null
           exclusions?: string | null
+          executed_at?: string | null
+          executed_pdf_storage_path?: string | null
           executed_under_s127?: boolean
           fee_amount?: number | null
           fee_cap?: number | null
@@ -23622,6 +25647,7 @@ export type Database = {
           fee_model?: Database["public"]["Enums"]["partner_fee_model"] | null
           fee_percentage?: number | null
           finance_agent_contact_id?: string | null
+          first_viewed_at?: string | null
           governing_state?: string
           gst_treatment?:
             | Database["public"]["Enums"]["partner_gst_treatment"]
@@ -23631,6 +25657,8 @@ export type Database = {
           invoice_process?:
             | Database["public"]["Enums"]["partner_invoice_process"]
             | null
+          issued_at?: string | null
+          issued_version_id?: string | null
           notes?: string | null
           partner_abn?: string | null
           partner_acl_number?: string | null
@@ -23682,6 +25710,9 @@ export type Database = {
           updated_by?: string | null
           upfront_share_pct?: number | null
           version?: number
+          void_reason?: string | null
+          voided_at?: string | null
+          withdrawn_at?: string | null
         }
         Relationships: [
           {
@@ -25315,6 +27346,45 @@ export type Database = {
           },
         ]
       }
+      pdf_import_watchdog_config: {
+        Row: {
+          chunk_stall_grace: string
+          chunked_no_inflight_grace: string
+          id: boolean
+          monolithic_dispatched_grace: string
+          monolithic_undispatched_grace: string
+          note: string | null
+          recoverable_window: string
+          template_import_stale_grace: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          chunk_stall_grace?: string
+          chunked_no_inflight_grace?: string
+          id?: boolean
+          monolithic_dispatched_grace?: string
+          monolithic_undispatched_grace?: string
+          note?: string | null
+          recoverable_window?: string
+          template_import_stale_grace?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          chunk_stall_grace?: string
+          chunked_no_inflight_grace?: string
+          id?: boolean
+          monolithic_dispatched_grace?: string
+          monolithic_undispatched_grace?: string
+          note?: string | null
+          recoverable_window?: string
+          template_import_stale_grace?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       permission_invite_tokens: {
         Row: {
           created_at: string
@@ -25605,7 +27675,14 @@ export type Database = {
       portal_terms_acceptances: {
         Row: {
           accepted_at: string
+          acknowledgements: Json | null
+          agreement_brand_snapshot: Json | null
+          agreement_generated_at: string | null
+          agreement_party_snapshot: Json | null
+          agreement_pdf_bytes: number | null
+          agreement_storage_path: string | null
           builder_user_id: string | null
+          finance_user_id: string | null
           id: string
           ip_hash: string | null
           portal: string
@@ -25615,7 +27692,14 @@ export type Database = {
         }
         Insert: {
           accepted_at?: string
+          acknowledgements?: Json | null
+          agreement_brand_snapshot?: Json | null
+          agreement_generated_at?: string | null
+          agreement_party_snapshot?: Json | null
+          agreement_pdf_bytes?: number | null
+          agreement_storage_path?: string | null
           builder_user_id?: string | null
+          finance_user_id?: string | null
           id?: string
           ip_hash?: string | null
           portal: string
@@ -25625,7 +27709,14 @@ export type Database = {
         }
         Update: {
           accepted_at?: string
+          acknowledgements?: Json | null
+          agreement_brand_snapshot?: Json | null
+          agreement_generated_at?: string | null
+          agreement_party_snapshot?: Json | null
+          agreement_pdf_bytes?: number | null
+          agreement_storage_path?: string | null
           builder_user_id?: string | null
+          finance_user_id?: string | null
           id?: string
           ip_hash?: string | null
           portal?: string
@@ -25642,11 +27733,25 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "portal_terms_acceptances_finance_user_id_fkey"
+            columns: ["finance_user_id"]
+            isOneToOne: false
+            referencedRelation: "finance_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "portal_terms_acceptances_solicitor_user_id_fkey"
             columns: ["solicitor_user_id"]
             isOneToOne: false
             referencedRelation: "solicitor_portal_users"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_terms_acceptances_terms_version_id_fkey"
+            columns: ["terms_version_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_records"
+            referencedColumns: ["terms_version_id"]
           },
           {
             foreignKeyName: "portal_terms_acceptances_terms_version_id_fkey"
@@ -25662,6 +27767,7 @@ export type Database = {
           content_markdown: string
           created_at: string
           created_by: string | null
+          document_hash: string | null
           effective_at: string
           id: string
           portal: string
@@ -25674,6 +27780,7 @@ export type Database = {
           content_markdown: string
           created_at?: string
           created_by?: string | null
+          document_hash?: string | null
           effective_at?: string
           id?: string
           portal: string
@@ -25686,6 +27793,7 @@ export type Database = {
           content_markdown?: string
           created_at?: string
           created_by?: string | null
+          document_hash?: string | null
           effective_at?: string
           id?: string
           portal?: string
@@ -28306,6 +30414,36 @@ export type Database = {
           },
         ]
       }
+      report_default_assets: {
+        Row: {
+          asset_key: string
+          byte_length: number | null
+          created_at: string
+          data_uri: string
+          id: string
+          mime_type: string
+          updated_at: string
+        }
+        Insert: {
+          asset_key: string
+          byte_length?: number | null
+          created_at?: string
+          data_uri: string
+          id?: string
+          mime_type: string
+          updated_at?: string
+        }
+        Update: {
+          asset_key?: string
+          byte_length?: number | null
+          created_at?: string
+          data_uri?: string
+          id?: string
+          mime_type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       report_engine_audit: {
         Row: {
           after_value: Json | null
@@ -28987,6 +31125,107 @@ export type Database = {
           {
             foreignKeyName: "report_qa_messages_sent_by_fkey"
             columns: ["sent_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      report_qa_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          conversation_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          generated_summary: boolean
+          id: string
+          message_id: string | null
+          page_count: number | null
+          requested_by: string | null
+          sections_included: string[]
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          subject: string
+          truncated: boolean
+          turn_count: number
+          turns_shown: number
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          conversation_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          generated_summary?: boolean
+          id?: string
+          message_id?: string | null
+          page_count?: number | null
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          subject: string
+          truncated?: boolean
+          turn_count?: number
+          turns_shown?: number
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          conversation_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          generated_summary?: boolean
+          id?: string
+          message_id?: string | null
+          page_count?: number | null
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          subject?: string
+          truncated?: boolean
+          turn_count?: number
+          turns_shown?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_qa_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_qa_renders_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "report_qa_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_qa_renders_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "report_qa_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_qa_renders_requested_by_fkey"
+            columns: ["requested_by"]
             isOneToOne: false
             referencedRelation: "custom_users"
             referencedColumns: ["id"]
@@ -30326,37 +32565,52 @@ export type Database = {
       }
       stamp_duty_rates_cache: {
         Row: {
-          brackets: Json
+          brackets: Json | null
           created_at: string
           data_quality: string
           expires_at: string
           fetched_at: string
           id: string
+          last_verified_at: string | null
+          schedule: Json | null
           source_url: string | null
           state: string
           updated_at: string
+          verification_flagged: boolean
+          verification_note: string | null
+          verified_on: string | null
         }
         Insert: {
-          brackets: Json
+          brackets?: Json | null
           created_at?: string
           data_quality?: string
           expires_at?: string
           fetched_at?: string
           id?: string
+          last_verified_at?: string | null
+          schedule?: Json | null
           source_url?: string | null
           state: string
           updated_at?: string
+          verification_flagged?: boolean
+          verification_note?: string | null
+          verified_on?: string | null
         }
         Update: {
-          brackets?: Json
+          brackets?: Json | null
           created_at?: string
           data_quality?: string
           expires_at?: string
           fetched_at?: string
           id?: string
+          last_verified_at?: string | null
+          schedule?: Json | null
           source_url?: string | null
           state?: string
           updated_at?: string
+          verification_flagged?: boolean
+          verification_note?: string | null
+          verified_on?: string | null
         }
         Relationships: []
       }
@@ -30699,6 +32953,127 @@ export type Database = {
         }
         Relationships: []
       }
+      template_conversions: {
+        Row: {
+          appendix_sections: number
+          binding: Json | null
+          binding_source: string | null
+          bound_chapters: number
+          bound_format: string | null
+          brand_snapshot_id: string | null
+          bytes: number | null
+          created_at: string
+          design_system_id: string | null
+          duration_ms: number | null
+          enriched_chapters: number
+          enrichment_blocks: Json
+          enrichment_model: string | null
+          enrichment_notes: string[]
+          error: string | null
+          fidelity: string | null
+          file_name: string
+          id: string
+          page_count: number | null
+          requested_by: string | null
+          source_filename: string
+          source_markdown: string | null
+          source_size_bytes: number | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          structure: Json | null
+          unfilled_chapters: number
+          unstructured: boolean
+          updated_at: string
+        }
+        Insert: {
+          appendix_sections?: number
+          binding?: Json | null
+          binding_source?: string | null
+          bound_chapters?: number
+          bound_format?: string | null
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          design_system_id?: string | null
+          duration_ms?: number | null
+          enriched_chapters?: number
+          enrichment_blocks?: Json
+          enrichment_model?: string | null
+          enrichment_notes?: string[]
+          error?: string | null
+          fidelity?: string | null
+          file_name?: string
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          source_filename?: string
+          source_markdown?: string | null
+          source_size_bytes?: number | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          structure?: Json | null
+          unfilled_chapters?: number
+          unstructured?: boolean
+          updated_at?: string
+        }
+        Update: {
+          appendix_sections?: number
+          binding?: Json | null
+          binding_source?: string | null
+          bound_chapters?: number
+          bound_format?: string | null
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          design_system_id?: string | null
+          duration_ms?: number | null
+          enriched_chapters?: number
+          enrichment_blocks?: Json
+          enrichment_model?: string | null
+          enrichment_notes?: string[]
+          error?: string | null
+          fidelity?: string | null
+          file_name?: string
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          source_filename?: string
+          source_markdown?: string | null
+          source_size_bytes?: number | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          structure?: Json | null
+          unfilled_chapters?: number
+          unstructured?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "template_conversions_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "template_conversions_design_system_id_fkey"
+            columns: ["design_system_id"]
+            isOneToOne: false
+            referencedRelation: "brand_design_systems"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "template_conversions_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       template_events: {
         Row: {
           actor_id: string | null
@@ -30807,6 +33182,7 @@ export type Database = {
           custom_css: string | null
           deprecated_at: string | null
           description: string | null
+          design_meta: Json
           engine: string
           family_id: string
           id: string
@@ -30850,6 +33226,7 @@ export type Database = {
           custom_css?: string | null
           deprecated_at?: string | null
           description?: string | null
+          design_meta?: Json
           engine?: string
           family_id?: string
           id?: string
@@ -30893,6 +33270,7 @@ export type Database = {
           custom_css?: string | null
           deprecated_at?: string | null
           description?: string | null
+          design_meta?: Json
           engine?: string
           family_id?: string
           id?: string
@@ -32431,6 +34809,27 @@ export type Database = {
         }
         Relationships: []
       }
+      partner_agreement_records: {
+        Row: {
+          acceptance_id: string | null
+          accepted_at: string | null
+          accepted_by_email: string | null
+          accepted_by_name: string | null
+          acknowledgements: Json | null
+          agreement_generated_at: string | null
+          agreement_pdf_bytes: number | null
+          agreement_storage_path: string | null
+          document_hash: string | null
+          organisation_name: string | null
+          organisation_trading_name: string | null
+          portal: string | null
+          portal_user_id: string | null
+          terms_version_id: string | null
+          title: string | null
+          version: string | null
+        }
+        Relationships: []
+      }
       partner_agreement_retention_register: {
         Row: {
           days_until_retention_end: number | null
@@ -32682,6 +35081,12 @@ export type Database = {
           role_name: string
         }[]
       }
+      aml_activate_client_open_case: {
+        Args: { p_case: Json; p_client_id: string }
+        Returns: Json
+      }
+      api_usage_billing_breakdown: { Args: { _days?: number }; Returns: Json }
+      api_usage_forwarding_status: { Args: never; Returns: Json }
       append_migration_upload_chunk: {
         Args: {
           _chunk_index: number
@@ -32742,6 +35147,7 @@ export type Database = {
       }
       builder_accept_current_terms: {
         Args: {
+          _acknowledgements?: Json
           _builder_user_id: string
           _ip_hash?: string
           _session_id: string
@@ -32949,6 +35355,36 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      builder_admin_delete_membership: {
+        Args: {
+          _actor_type: string
+          _actor_user_id: string
+          _expected_version: number
+          _membership_id: string
+          _reason: string
+        }
+        Returns: Json
+      }
+      builder_admin_delete_organisation: {
+        Args: {
+          _actor_type: string
+          _actor_user_id: string
+          _expected_version: number
+          _organisation_id: string
+          _reason: string
+        }
+        Returns: Json
+      }
+      builder_admin_delete_user: {
+        Args: {
+          _actor_type: string
+          _actor_user_id: string
+          _builder_user_id: string
+          _expected_version: number
+          _reason: string
+        }
+        Returns: Json
       }
       builder_admin_revoke_membership: {
         Args: {
@@ -34881,6 +37317,10 @@ export type Database = {
         Args: { report_id: string }
         Returns: number
       }
+      can_access_client_fact_find: {
+        Args: { _fact_find_id: string }
+        Returns: boolean
+      }
       cancel_commission_payout: {
         Args: { p_actor_id: string; p_payout_id: string; p_reason: string }
         Returns: {
@@ -34933,6 +37373,20 @@ export type Database = {
         Returns: boolean
       }
       check_pdf_import_success_rate: { Args: never; Returns: undefined }
+      claim_api_usage_for_forwarding: {
+        Args: { _limit?: number }
+        Returns: {
+          created_at: string
+          endpoint: string
+          id: string
+          metadata: Json
+          model_used: string
+          request_count: number
+          service_name: string
+          status: string
+          tokens_used: number
+        }[]
+      }
       claim_builder_document_processing_jobs: {
         Args: { _limit?: number; _worker_id: string }
         Returns: {
@@ -34962,8 +37416,10 @@ export type Database = {
           aggregate_type: string
           attempts: number
           available_at: string
+          causation_id: string | null
           correlation_id: string
           created_at: string
+          destination_class: string | null
           event_type: string
           event_version: number
           id: string
@@ -34972,12 +37428,43 @@ export type Database = {
           locked_at: string | null
           locked_by: string | null
           occurred_at: string
+          partner_case_link_id: string | null
+          partner_org_id: string | null
           payload: Json
+          payload_classification: string | null
           processed_at: string | null
         }[]
         SetofOptions: {
           from: "*"
           to: "integration_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_listing_enrichment: {
+        Args: { p_lease_seconds?: number; p_limit: number; p_table_key: string }
+        Returns: {
+          attempt_count: number
+          error_count: number
+          first_enriched_at: string | null
+          last_enriched_at: string | null
+          last_error: string | null
+          lease_until: string | null
+          listing_id: string
+          next_attempt_at: string
+          priority: number
+          provenance: Json
+          stage: string | null
+          status: string
+          table_key: string
+          values: Json
+          writeback_at: string | null
+          writeback_fingerprint: string | null
+          writeback_state: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "listing_enrichment"
           isOneToOne: false
           isSetofReturn: true
         }
@@ -35030,6 +37517,30 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      claim_stalled_investment_reports: {
+        Args: { p_limit?: number; p_worker?: string }
+        Returns: {
+          id: string
+          last_completed_section: number
+          property_address: string
+          resume_attempts: number
+          total_sections: number
+        }[]
+      }
+      claim_workflow_trigger_events: {
+        Args: {
+          p_claimed_by?: string
+          p_limit?: number
+          p_stale_after?: string
+        }
+        Returns: {
+          attempts: number
+          id: string
+          occurred_at: string
+          payload: Json
+          trigger_type: string
+        }[]
       }
       cleanup_expired_census_cache: { Args: never; Returns: undefined }
       cleanup_expired_climate_cache: { Args: never; Returns: undefined }
@@ -35174,10 +37685,15 @@ export type Database = {
         Args: { p_email: string; p_max: number }
         Returns: {
           firm_id: string
+          invite_accepted_at: string
           reset_token: string
           status: string
           user_id: string
         }[]
+      }
+      create_advanced_client_fact_find: {
+        Args: { _actor_id: string; _client: Json; _payload: Json }
+        Returns: Json
       }
       create_document_record: {
         Args: {
@@ -35266,6 +37782,7 @@ export type Database = {
         Returns: undefined
       }
       extract_email_address: { Args: { raw_text: string }; Returns: string }
+      fail_abandoned_investment_reports: { Args: never; Returns: number }
       finalize_ghl_cutover: { Args: { p_job_id: string }; Returns: Json }
       finalize_migration_upload: {
         Args: { _upload_id: string }
@@ -35660,6 +38177,10 @@ export type Database = {
         }
         Returns: string
       }
+      mark_api_usage_forwarded: {
+        Args: { _failed?: Json; _reported?: Json }
+        Returns: Json
+      }
       mark_commission_payout_paid: {
         Args: {
           p_approval_note: string
@@ -35914,8 +38435,21 @@ export type Database = {
         }
         Returns: Json
       }
+      release_investment_report_resume: {
+        Args: { p_made_progress?: boolean; p_report_id: string }
+        Returns: undefined
+      }
       release_migration_job_lock: {
         Args: { p_job_id: string }
+        Returns: undefined
+      }
+      release_workflow_trigger_event: {
+        Args: {
+          p_id: string
+          p_last_error?: string
+          p_refund_attempt?: boolean
+          p_status: string
+        }
         Returns: undefined
       }
       reopen_legal_matter: {
@@ -36766,10 +39300,14 @@ export type Database = {
         | "terminated"
         | "superseded"
         | "void"
-      partner_commission_basis: "gross" | "net_of_aggregator"
+        | "approved_for_issue"
+        | "partner_review"
+        | "changes_requested"
+        | "withdrawn"
+      partner_commission_basis: "gross" | "net_of_aggregator" | "other"
       partner_fee_model: "fixed_fee" | "percentage_of_fee" | "tiered" | "other"
       partner_gst_treatment: "plus_gst" | "inclusive_of_gst" | "not_applicable"
-      partner_invoice_process: "tax_invoice" | "rcti"
+      partner_invoice_process: "tax_invoice" | "rcti" | "other"
       payout_status: "draft" | "pending" | "paid" | "cancelled"
       pf_client_task_status:
         | "pending"
@@ -37562,11 +40100,15 @@ export const Constants = {
         "terminated",
         "superseded",
         "void",
+        "approved_for_issue",
+        "partner_review",
+        "changes_requested",
+        "withdrawn",
       ],
-      partner_commission_basis: ["gross", "net_of_aggregator"],
+      partner_commission_basis: ["gross", "net_of_aggregator", "other"],
       partner_fee_model: ["fixed_fee", "percentage_of_fee", "tiered", "other"],
       partner_gst_treatment: ["plus_gst", "inclusive_of_gst", "not_applicable"],
-      partner_invoice_process: ["tax_invoice", "rcti"],
+      partner_invoice_process: ["tax_invoice", "rcti", "other"],
       payout_status: ["draft", "pending", "paid", "cancelled"],
       pf_client_task_status: [
         "pending",

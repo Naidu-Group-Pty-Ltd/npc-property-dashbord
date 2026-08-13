@@ -61,7 +61,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
-import { countPdfPages, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
+import { countPdfPagesAsync, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import {
   buildReportBrandSnapshot,
   REPORT_SNAPSHOT_VERSION,
@@ -332,7 +332,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       .maybeSingle();
     renderId = (renderRow?.id as string) ?? null;
 
-    const pdf = await renderPdf(weasyprint, html, { variant: 'pdf/a-2b', tagged: true });
+    const pdf = await renderPdf(weasyprint, html, {
+      variant: 'pdf/ua-1',
+      tagged: true,
+      // The ledger row and the source row, stamped into the PDF itself.
+      // See `DocumentProvenance` — a delivered file could not be traced
+      // back to the render that produced it.
+      provenance: {
+        format: 'portfolio-performance',
+        renderId: renderId,
+        sourceId: request.reportId,
+        renderedAt: now,
+      },
+    });
 
     const { error: uploadError } = await supabase.storage.from(PDF_BUCKET).upload(path, pdf, {
       contentType: 'application/pdf',
@@ -351,7 +363,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     const durationMs = Date.now() - started;
-    const pageCount = countPdfPages(pdf);
+    const pageCount = await countPdfPagesAsync(pdf);
 
     if (renderId) {
       await supabase

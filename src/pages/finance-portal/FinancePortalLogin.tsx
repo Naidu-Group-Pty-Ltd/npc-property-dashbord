@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +28,7 @@ const formVariants = {
 
 export default function FinancePortalLogin() {
   const { user, signIn, requestPasswordReset, verifyOTP, resetPassword, loading } = useFinancePortalAuth();
+  const location = useLocation();
   const { settings } = useWhiteLabel();
   const navigate = useNavigate();
   const formRef = useRef<HTMLDivElement>(null);
@@ -43,7 +44,7 @@ export default function FinancePortalLogin() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
+      <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
           <div className="flex flex-col items-center gap-3">
             <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
@@ -55,7 +56,18 @@ export default function FinancePortalLogin() {
     );
   }
 
-  if (user) return <Navigate to="/finance" replace />;
+  // Where the partner was actually going, if a guard sent them here. An email
+  // deep-link into an agreement hits sign-in first; without this it is lost and
+  // they land on the dashboard with no idea which document the email meant.
+  // Only in-portal paths are honoured — a `from` is attacker-supplied in
+  // principle, and an open redirect out of an authentication page is not worth
+  // the convenience.
+  const intended = (location.state as { from?: string } | null)?.from;
+  const destination = typeof intended === 'string' && /^\/finance(\/|$|\?)/.test(intended)
+    ? intended
+    : '/finance';
+
+  if (user) return <Navigate to={destination} replace />;
 
   const changeMode = (next: Mode) => {
     setMode(next);
@@ -74,8 +86,11 @@ export default function FinancePortalLogin() {
     try {
       const { error, mustChangePassword } = await signIn(email, password, turnstileToken || undefined);
       if (error) { toast.error(error); setTurnstileToken(null); }
-      else if (mustChangePassword) navigate('/finance/change-password', { replace: true });
-      else navigate('/finance', { replace: true });
+      else if (mustChangePassword) {
+        // The password gate keeps the destination travelling; the route guard
+        // hands it on through terms and onboarding after that.
+        navigate('/finance/change-password', { replace: true, state: { from: destination } });
+      } else navigate(destination, { replace: true });
     } finally { setSubmitting(false); }
   };
 
@@ -132,7 +147,7 @@ export default function FinancePortalLogin() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex">
       {/* ── Left branded panel (desktop only) ── */}
       <aside className="hidden lg:flex lg:w-[480px] xl:w-[520px] flex-col relative bg-gradient-to-br from-card via-card to-primary/5 border-r border-border overflow-hidden" aria-hidden="true">
         <div className="absolute top-0 right-0 w-[2px] h-full bg-gradient-to-b from-transparent via-primary/30 to-transparent" />

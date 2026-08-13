@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { smartCapitalize } from '@/lib/nameUtils';
 import { isAdvisorySourced } from '@/utils/propertySourcing';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -57,12 +57,15 @@ import {
 import { format } from 'date-fns';
 import { ClientNotes } from './ClientNotes';
 import { ClientAmlSummaryCard } from './ClientAmlSummaryCard';
+import { ClientAmlActivateAction } from './ClientAmlActivateAction';
 import { ClientTags } from './ClientTags';
 import { ClientReminders } from './ClientReminders';
 import { ClientActivityTimeline } from './ClientActivityTimeline';
 import { ClientFiles } from './ClientFiles';
 import { ClientScoreCard } from './ClientScoreCard';
 import { BorrowingCapacityCard, BorrowingCapacityModal } from '@/components/borrowing-capacity';
+import { ClientCommercialIndustrialTab } from './ClientCommercialIndustrialTab';
+import { ClientCommercialIndustrialSnapshot } from './ClientCommercialIndustrialSnapshot';
 import { ClientAIInsights } from './ClientAIInsights';
 import { ClientFormaraUpload } from './ClientFormaraUpload';
 import { ClientFormaraForms } from './ClientFormaraForms';
@@ -79,6 +82,7 @@ import { ExportFormaraButton } from './ExportFormaraButton';
 import { ClientEmailCompose } from './ClientEmailCompose';
 import { ClientReportsTab } from './ClientReportsTab';
 import { FormaraPDFGenerator } from './FormaraPDFGenerator';
+import { ClientDetailsDownloadButton } from './ClientDetailsDownloadButton';
 import { PropertyEditSheet } from './PropertyEditSheet';
 import { ClientPropertyInvestmentReport } from './ClientPropertyInvestmentReport';
 import { CGTCalculator } from './CGTCalculator';
@@ -102,6 +106,14 @@ import { LenderComparisonSheets } from '@/components/lenders/LenderComparisonShe
 import { FinancePartnersCard } from './FinancePartnersCard';
 import { ClientAssignmentsCard } from './ClientAssignmentsCard';
 import { toast } from 'sonner';
+import { useCapabilityResolver } from '@/hooks/useCapability';
+import type { CapabilityKey } from '@/lib/entitlements';
+import {
+  CLIENT_TABS,
+  CLIENT_ACTION_CAPABILITIES,
+  resolveClientTab,
+} from './clientWorkspaceRegistry';
+import { CLIENT_CI_TAB } from '@/lib/ciAssessment/clientRoute';
 interface ClientDetailsModalProps {
   client: {
     id: string;
@@ -109,6 +121,8 @@ interface ClientDetailsModalProps {
     primary_surname: string;
     primary_email: string | null;
     primary_mobile: string | null;
+    /** Real active status from `clients.is_active` — distinct from is_favorite. */
+    is_active?: boolean | null;
   };
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -118,6 +132,22 @@ interface ClientDetailsModalProps {
 
 export function ClientDetailsModal({ client, open, onOpenChange, initialTab, initialDealId }: ClientDetailsModalProps) {
   const isMobile = useIsMobile();
+  const { resolve: resolveCapability } = useCapabilityResolver();
+
+  // Capability gate for tabs and actions. While the entitlement snapshot is
+  // still loading the surface stays visible (no flash of an emptied
+  // workspace); once resolved the answer is exact and hidden tabs are
+  // removed from the trigger list, the swipe order and the a11y tree.
+  const can = useCallback(
+    (key: CapabilityKey | string) => {
+      const decision = resolveCapability(key);
+      return decision.enabled || decision.status === 'loading';
+    },
+    [resolveCapability],
+  );
+
+  const visibleTabs = useMemo(() => CLIENT_TABS.filter((tab) => can(tab.capability)), [can]);
+  const tabOrder = useMemo(() => visibleTabs.map((tab) => tab.value), [visibleTabs]);
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [pdfAttachment, setPdfAttachment] = useState<{ blob: Blob; fileName: string } | null>(null);
   const [isPreparingPortfolio, setIsPreparingPortfolio] = useState(false);
@@ -132,7 +162,21 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
   const [showAgreementDialog, setShowAgreementDialog] = useState(false);
   const [showPortalInviteDialog, setShowPortalInviteDialog] = useState(false);
   const [viewAsClientBusy, setViewAsClientBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState(initialTab || 'overview');
+  const [activeTab, setActiveTab] = useState(() => resolveClientTab(initialTab, tabOrder));
+
+  // A changed initialTab (deep link into an already-open workspace) and an
+  // entitlement resolution that removed the active tab both land on a valid
+  // tab — never a hidden pane, never a blank one.
+  useEffect(() => {
+    setActiveTab(resolveClientTab(initialTab, tabOrder));
+     
+  }, [initialTab, client.id]);
+  useEffect(() => {
+    if (!tabOrder.includes(activeTab)) {
+      setActiveTab(resolveClientTab(null, tabOrder));
+    }
+     
+  }, [tabOrder]);
 
   const handleViewAsClient = useCallback(async () => {
     if (viewAsClientBusy) return;
@@ -154,8 +198,9 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
     }
   }, [client.id, viewAsClientBusy]);
 
-  const tabOrder = ['overview', 'personal', 'properties', 'deals', 'employment', 'financials', 'reports', 'sent-reports', 'report-requests', 'emails', 'conversations', 'appointments', 'notes', 'reminders', 'formara-forms', 'files', 'activity', 'insights'];
-
+  // Swipe order IS the visible tab order — an entitlement change reshapes
+  // both together, and the handlers depend on tabOrder so they never close
+  // over a stale list.
   const tabSwipeHandlers = useSwipeGesture(
     useCallback(() => {
       // Swipe left = next tab
@@ -163,14 +208,14 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
         const idx = tabOrder.indexOf(prev);
         return idx < tabOrder.length - 1 ? tabOrder[idx + 1] : prev;
       });
-    }, []),
+    }, [tabOrder]),
     useCallback(() => {
       // Swipe right = previous tab
       setActiveTab(prev => {
         const idx = tabOrder.indexOf(prev);
         return idx > 0 ? tabOrder[idx - 1] : prev;
       });
-    }, []),
+    }, [tabOrder]),
     { threshold: 60 }
   );
 
@@ -213,7 +258,9 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
       liabilities: true,
       expenses: true,
       additionalContacts: true,
-      deals: true,
+      // Deals are a Growth-and-up (or add-on) capability: a workspace that
+      // does not hold it must not fetch deal records at all.
+      deals: can('client.deals'),
       attributions: true,
     },
     enabled: open,
@@ -233,6 +280,11 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
 
   // Build dynamic contact list for employment/income tabs
   const contacts = useClientContacts(fullClient || undefined, additionalContacts);
+
+  // Authoritative active status (clients.is_active). Never derived from
+  // is_favorite — favourite and active are separate concepts.
+  const clientIsActive: boolean | null =
+    (fullClient as any)?.is_active ?? client.is_active ?? null;
 
   // Refetch function for backward compatibility
   const refetchClient = () => {
@@ -266,41 +318,61 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
         isMobile ? "pb-2 border-b border-border mb-2" : "mr-10 pr-2"
       )}>
 
-        <FormaraPDFGenerator
-          data={{
-            client: (fullClient || {
-              id: client.id,
-              primary_first_name: client.primary_first_name,
-              primary_surname: client.primary_surname,
-              primary_email: client.primary_email,
-              primary_mobile: client.primary_mobile,
-            }) as any,
-            properties: properties as any[],
-            employment: employment as any[],
-            income: income as any[],
-            incomeSources: incomeSources as any[],
-            assets: assets as any[],
-            liabilities: liabilities as any[],
-            expenses: expenses as any[],
-          }}
-          clientName={`${client.primary_first_name} ${client.primary_surname}`}
-          onEmailClick={handlePdfEmailClick}
-          buttonLabel={isMobile ? "Finance" : "Send to Finance"}
-          variant="default"
-        />
+        {/*
+          First in the toolbar, beside the two buttons that already produce this
+          document rather than instead of them. It offers the same three
+          destinations — save, attach to an email, send through the Finance
+          Portal — and what arrives is selectable text rather than a stack of
+          page images. The server reads the record itself, so this needs only
+          the id.
+        */}
+        {can(CLIENT_ACTION_CAPABILITIES.downloadPdf) && (
+          <ClientDetailsDownloadButton
+            clientId={client.id}
+            clientName={`${client.primary_first_name} ${client.primary_surname}`}
+            onAttachToEmail={handlePdfEmailClick}
+          />
+        )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowReviewWizard(true)}
-          disabled={properties.length === 0}
-          title={properties.length === 0 ? 'Add properties to start a review' : 'Start portfolio review wizard'}
-        >
-          <ClipboardCheck className="h-4 w-4 mr-1.5" />
-          <span className={isMobile ? "text-xs" : ""}>Review</span>
-        </Button>
+        {can(CLIENT_ACTION_CAPABILITIES.sendToFinance) && (
+          <FormaraPDFGenerator
+            data={{
+              client: (fullClient || {
+                id: client.id,
+                primary_first_name: client.primary_first_name,
+                primary_surname: client.primary_surname,
+                primary_email: client.primary_email,
+                primary_mobile: client.primary_mobile,
+              }) as any,
+              properties: properties as any[],
+              employment: employment as any[],
+              income: income as any[],
+              incomeSources: incomeSources as any[],
+              assets: assets as any[],
+              liabilities: liabilities as any[],
+              expenses: expenses as any[],
+            }}
+            clientName={`${client.primary_first_name} ${client.primary_surname}`}
+            onEmailClick={handlePdfEmailClick}
+            buttonLabel={isMobile ? "Finance" : "Send to Finance"}
+            variant="default"
+          />
+        )}
 
-        {properties.length > 0 && (
+        {can(CLIENT_ACTION_CAPABILITIES.review) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowReviewWizard(true)}
+            disabled={properties.length === 0}
+            title={properties.length === 0 ? 'Add properties to start a review' : 'Start portfolio review wizard'}
+          >
+            <ClipboardCheck className="h-4 w-4 mr-1.5" />
+            <span className={isMobile ? "text-xs" : ""}>Review</span>
+          </Button>
+        )}
+
+        {can(CLIENT_ACTION_CAPABILITIES.portfolioAnalysis) && properties.length > 0 && (
           <PortfolioAnalysisPDFGenerator
             clientId={client.id}
             clientName={`${client.primary_first_name} ${client.primary_surname}`}
@@ -308,116 +380,100 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
           />
         )}
 
-        <FormaraPDFGenerator
-          data={{
-            client: (fullClient || client) as any,
-            properties: properties as any[], employment: employment as any[], income: income as any[], incomeSources: incomeSources as any[],
-            assets: assets as any[], liabilities: liabilities as any[], expenses: expenses as any[],
-          }}
-          clientName={`${client.primary_first_name} ${client.primary_surname}`}
-          buttonLabel={isMobile ? 'Download PDF' : 'Download Client Details PDF'}
-          action="download"
-        />
+        {can(CLIENT_ACTION_CAPABILITIES.downloadPdf) && (
+          <FormaraPDFGenerator
+            data={{
+              client: (fullClient || client) as any,
+              properties: properties as any[], employment: employment as any[], income: income as any[], incomeSources: incomeSources as any[],
+              assets: assets as any[], liabilities: liabilities as any[], expenses: expenses as any[],
+            }}
+            clientName={`${client.primary_first_name} ${client.primary_surname}`}
+            buttonLabel={isMobile ? 'Download PDF' : 'Download Client Details PDF'}
+            action="download"
+          />
+        )}
 
-        <Button
-          variant="default"
-          size="sm"
-          onClick={handleSendPortfolioToClient}
-          type="button"
-          disabled={isPreparingPortfolio}
-          title="Send a saved portfolio analysis report to the client portal"
-        >
-          {isPreparingPortfolio ? (
-            <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-          ) : (
-            <Send className="h-4 w-4 mr-1.5" />
-          )}
-          <span className={isMobile ? "text-xs" : ""}>{isPreparingPortfolio ? "Preparing Portfolio…" : isMobile ? "Send" : "Send Portfolio to Client"}</span>
-        </Button>
+        {can(CLIENT_ACTION_CAPABILITIES.sendPortfolio) && (
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleSendPortfolioToClient}
+            type="button"
+            disabled={isPreparingPortfolio}
+            title="Send a saved portfolio analysis report to the client portal"
+          >
+            {isPreparingPortfolio ? (
+              <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4 mr-1.5" />
+            )}
+            <span className={isMobile ? "text-xs" : ""}>{isPreparingPortfolio ? "Preparing Portfolio…" : isMobile ? "Send" : "Send Portfolio to Client"}</span>
+          </Button>
+        )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowAgreementDialog(true)}
-          disabled={!client.primary_email}
-          title={!client.primary_email ? 'Client has no email' : 'Send Buyer\'s Agent Agreement via DocuSign'}
-        >
-          <FileSignature className="h-4 w-4 mr-1.5" />
-          <span className={isMobile ? "text-xs" : ""}>{isMobile ? "Agreement" : "Send Agreement"}</span>
-        </Button>
+        {can(CLIENT_ACTION_CAPABILITIES.sendAgreement) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAgreementDialog(true)}
+            disabled={!client.primary_email}
+            title={!client.primary_email ? 'Client has no email' : 'Send Buyer\'s Agent Agreement via DocuSign'}
+          >
+            <FileSignature className="h-4 w-4 mr-1.5" />
+            <span className={isMobile ? "text-xs" : ""}>{isMobile ? "Agreement" : "Send Agreement"}</span>
+          </Button>
+        )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowPortalInviteDialog(true)}
-          title="Manage client portal access"
-        >
-          <UserCog className="h-4 w-4 mr-1.5" />
-          <span className={isMobile ? "text-xs" : ""}>{isMobile ? "Portal" : "Portal Access"}</span>
-        </Button>
+        {/* Direct AML/CTF activation entry point (route handoff — client ID
+            only in the URL). Status-aware: Activate / Start / Open AML Case.
+            Gated by the AML/CTF entitlement (SKU or add-on), then by the
+            component's own AML role checks. */}
+        {can('module.aml_ctf') && (
+          <ClientAmlActivateAction
+            clientId={client.id}
+            isActive={clientIsActive}
+            compact={isMobile}
+          />
+        )}
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleViewAsClient}
-          disabled={viewAsClientBusy}
-          title="Open the client portal in a new tab as this client"
-        >
-          {viewAsClientBusy
-            ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-            : <ExternalLink className="h-4 w-4 mr-1.5" />}
-          <span className={isMobile ? "text-xs" : ""}>{isMobile ? "View" : "View as Client"}</span>
-        </Button>
+        {can(CLIENT_ACTION_CAPABILITIES.portalAccess) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowPortalInviteDialog(true)}
+            title="Manage client portal access"
+          >
+            <UserCog className="h-4 w-4 mr-1.5" />
+            <span className={isMobile ? "text-xs" : ""}>{isMobile ? "Portal" : "Portal Access"}</span>
+          </Button>
+        )}
+
+        {can(CLIENT_ACTION_CAPABILITIES.viewAsClient) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleViewAsClient}
+            disabled={viewAsClientBusy}
+            title="Open the client portal in a new tab as this client"
+          >
+            {viewAsClientBusy
+              ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              : <ExternalLink className="h-4 w-4 mr-1.5" />}
+            <span className={isMobile ? "text-xs" : ""}>{isMobile ? "View" : "View as Client"}</span>
+          </Button>
+        )}
       </div>
       <Separator className="my-1" />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden w-full">
         <div className="sticky top-0 z-10 min-w-0 max-w-full flex-shrink-0 overflow-hidden bg-background pb-1">
           <TabsList className="!flex h-auto w-full max-w-full flex-wrap justify-start gap-1.5 !overflow-visible !snap-none p-1.5">
-
-            <TabsTrigger value="overview" className="min-h-9 px-3 py-1.5 text-sm font-medium">Overview</TabsTrigger>
-            <TabsTrigger value="personal" className="min-h-9 px-3 py-1.5 text-sm font-medium">Personal</TabsTrigger>
-            <TabsTrigger value="properties" className="min-h-9 px-3 py-1.5 text-sm font-medium">Properties ({properties.length})</TabsTrigger>
-            <TabsTrigger value="deals" className="min-h-9 px-3 py-1.5 text-sm font-medium">Deals</TabsTrigger>
-            <TabsTrigger value="employment" className="min-h-9 px-3 py-1.5 text-sm font-medium">Employment</TabsTrigger>
-            <TabsTrigger value="financials" className="min-h-9 px-3 py-1.5 text-sm font-medium">Financials</TabsTrigger>
-            <TabsTrigger value="reports" className="min-h-9 px-3 py-1.5 text-sm font-medium">Reports</TabsTrigger>
-            <TabsTrigger value="sent-reports" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <Send className="h-3 w-3 mr-0.5" />
-              Sent Reports
-            </TabsTrigger>
-            <TabsTrigger value="report-requests" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <Inbox className="h-3 w-3 mr-0.5" />
-              Requests
-            </TabsTrigger>
-            <TabsTrigger value="emails" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <Inbox className="h-3 w-3 mr-0.5" />
-              Emails
-            </TabsTrigger>
-            <TabsTrigger value="conversations" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <MessageSquare className="h-3 w-3 mr-0.5" />
-              Conversations
-            </TabsTrigger>
-            <TabsTrigger value="appointments" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <Calendar className="h-3 w-3 mr-0.5" />
-              Appointments
-            </TabsTrigger>
-            <TabsTrigger value="portal-messages" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <MessageSquare className="h-3 w-3 mr-0.5" />
-              Portal Messages
-            </TabsTrigger>
-            <TabsTrigger value="finance-messages" className="min-h-9 px-3 py-1.5 text-sm font-medium">
-              <MessageSquare className="h-3 w-3 mr-0.5" />
-              Finance Messages
-            </TabsTrigger>
-            <TabsTrigger value="notes" className="min-h-9 px-3 py-1.5 text-sm font-medium">Notes</TabsTrigger>
-            <TabsTrigger value="reminders" className="min-h-9 px-3 py-1.5 text-sm font-medium">Reminders</TabsTrigger>
-            <TabsTrigger value="formara-forms" className="min-h-9 px-3 py-1.5 text-sm font-medium">Client Forms</TabsTrigger>
-            <TabsTrigger value="files" className="min-h-9 px-3 py-1.5 text-sm font-medium">Files</TabsTrigger>
-            <TabsTrigger value="activity" className="min-h-9 px-3 py-1.5 text-sm font-medium">Activity / Documents</TabsTrigger>
-            <TabsTrigger value="borrowing" className="min-h-9 px-3 py-1.5 text-sm font-medium">Borrowing Capacity</TabsTrigger>
-            <TabsTrigger value="lenders" className="min-h-9 px-3 py-1.5 text-sm font-medium">Lenders</TabsTrigger>
-            <TabsTrigger value="insights" className="min-h-9 px-3 py-1.5 text-sm font-medium">AI</TabsTrigger>
+            {visibleTabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value} className="min-h-9 px-3 py-1.5 text-sm font-medium">
+                {tab.icon && <tab.icon className="h-3 w-3 mr-0.5" />}
+                {tab.showsPropertyCount ? `${tab.label} (${properties.length})` : tab.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
 
@@ -429,7 +485,18 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
               <ClientAmlSummaryCard
                 clientId={client.id}
                 clientName={`${smartCapitalize(client.primary_first_name || '')} ${smartCapitalize(client.primary_surname || '')}`.trim()}
+                isActive={clientIsActive}
               />
+
+              {/* Commercial & Industrial, when there is any. Renders nothing
+                  for a client without linked assessments, and nothing for a
+                  workspace that cannot see the module. */}
+              {visibleTabs.some((tab) => tab.value === CLIENT_CI_TAB) ? (
+                <ClientCommercialIndustrialSnapshot
+                  clientId={client.id}
+                  onOpenTab={() => setActiveTab(CLIENT_CI_TAB)}
+                />
+              ) : null}
 
               {/* Contact Info */}
               <div className="grid gap-4 md:grid-cols-2">
@@ -942,6 +1009,10 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
                 clientName={`${client.primary_first_name || ''} ${client.primary_surname || ''}`.trim()}
                 onOpenCalculator={() => setShowBorrowingCalculator(true)}
               />
+            </TabsContent>
+
+            <TabsContent value="commercial-industrial" className="mt-4 space-y-4">
+              <ClientCommercialIndustrialTab clientId={client.id} />
             </TabsContent>
 
             <TabsContent value="lenders" className="mt-4 space-y-4">

@@ -18,6 +18,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { withDecodedCharts } from '@/lib/reportDesign/__tests__/chartSvg';
 import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
 import { mastheadFor, resolveCompanyBlock } from '@/lib/reportDesign/companyBlock.pure';
 
@@ -122,12 +123,27 @@ withGolden('and against the captured golden', () => {
    * than "the new one is fine", because it fails if the old capture stops
    * exhibiting them and the comparison quietly becomes vacuous.
    */
-  it('drops the rate-as-currency rendering (F2)', () => {
-    // Same row, both documents. The shipping generator puts 6.15% → 8.65%
-    // through its currency formatter and prints "$6 → $9, +$3"; the rate
-    // itself never appears in its bytes.
+  /**
+   * F2 was fixed on **both** sides, so it is no longer a difference.
+   *
+   * The shipping generator used to put 6.15% → 8.65% through its currency
+   * formatter and print `$6 → $9, +$3`; the rate itself never appeared in its
+   * bytes. That was fixed in the legacy generator too — `AuditTrailPanel` and
+   * `BorrowingCapacityPDFReport` now go through `auditMeasures` and
+   * `formatMeasure` — which is the right outcome, because a client holding the
+   * legacy PDF should not be told a rate is seven dollars either.
+   *
+   * The assertion above it was `expect(golden).not.toContain('6.15%')`, written
+   * to fail if the old capture stopped exhibiting the defect and the comparison
+   * became vacuous. It did stop, the assertion did fail — and nobody saw it,
+   * because `reports/` is gitignored and the CI step that *writes* the golden
+   * ran after the one that reads it, so `existsSync` was false on every runner
+   * and this whole block was `describe.skip`. The guard worked; the gate was
+   * not running.
+   */
+  it('prints a rate as a rate, on both documents (F2)', () => {
     expect(golden).toContain('Interest Rate Override');
-    expect(golden).not.toContain('6.15%');
+    expect(golden).toContain('6.15%');
     expect(html).toContain('Interest Rate Override');
     expect(html).toContain('6.15%');
     expect(html).toContain('8.65%');
@@ -148,7 +164,10 @@ withGolden('and against the captured golden', () => {
   it('asks for a brand face first, everywhere (F8)', () => {
     expect(golden).toContain('/Helvetica');
 
-    const stacks = [...html.matchAll(/font-family="([^"]+)"/g)].map((m) => m[1]);
+    // Decoded: a chart's drawing is base64 inside an `img`, so the sweep has to
+    // reach through the payload or it finds no stacks and passes vacuously —
+    // which the message below was written for and which is what happened.
+    const stacks = [...withDecodedCharts(html).matchAll(/font-family="([^"]+)"/g)].map((m) => m[1]);
     expect(stacks.length, 'no font stacks found — has the chart markup changed?')
       .toBeGreaterThan(0);
     for (const stack of stacks) {

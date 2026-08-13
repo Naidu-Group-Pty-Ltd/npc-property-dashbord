@@ -1,0 +1,1639 @@
+/**
+ * Investment Compass — block helpers driven by a resolved manifest.
+ *
+ * ## How this differs from `scripts/template-library/blocks.ts`
+ *
+ * That module compiles the *voice* system: five studio voices keyed to the
+ * catalogue's `style` axis, which is what the forty original seeded templates
+ * are built in. This one compiles the *family* system from the approved
+ * Investment Compass catalogue, where a template's look is a resolved manifest
+ * of ~21 keys rather than a voice name.
+ *
+ * They are deliberately separate modules over one shared renderer. Merging them
+ * would mean either bending the manifest keys into voice fields — losing the
+ * distinctions the catalogue draws — or rewriting forty working templates to
+ * prove a point. The renderer, the schema, the publish gate and the seed
+ * pipeline are all shared; only the authoring vocabulary differs.
+ *
+ * ## The rules that hold
+ *
+ *  1. **Geometry is computed.** `flow()` stacks from the manifest's own margin,
+ *     so a density change moves every block rather than needing 300 `y` values
+ *     re-entered. Overflow past the footer is recorded and fails the build.
+ *  2. **No literal colours.** Every colour is `token:*`, which is what lets a
+ *     colourway repaint the document and keeps `isBrandSafe()` true.
+ *  3. **Type comes from the family, not the call site.** A helper never takes a
+ *     point size from its caller; it reads the family's measured scale at the
+ *     template's density.
+ *  4. **Every value a report supplies is a `{{binding}}`.**
+ *  5. **Nothing reads a manifest string directly.** Everything goes through
+ *     `resolvers.ts`, which throws on a value it has no mapping for. That is
+ *     what stops a new family silently rendering as somebody else's layout.
+ */
+import {
+  RULE_WEIGHTS,
+  TRACKING,
+  marginFor,
+  radiusFor,
+  scaleFor,
+  spacingFor,
+  typographyFor,
+  type Density,
+  type DesignFamily,
+  type FamilyTypography,
+  type SpacingScale,
+  type TemplateManifest,
+  type TypeScale,
+  type VariantDefinition,
+} from './family';
+import {
+  calloutKind,
+  strengthsWatchStyle,
+  chartPlan,
+  coverPlan,
+  hasRail,
+  kpiPlan,
+  railFooter,
+  recommendationKind,
+  riskKind,
+  sectionHeaderKind,
+  tablePlan,
+  type CoverPlan,
+} from './resolvers';
+
+export const PAGE = { width: 595, height: 842 } as const;
+
+/** Height of the footer band. */
+export const FOOTER_HEIGHT = 22;
+
+/**
+ * Space reserved at the foot of a content page.
+ *
+ * Deliberately larger than the footer's ink so a block that ends exactly at the
+ * limit still has air beneath it.
+ */
+export const FOOTER_RESERVE = 30;
+
+/** Width of the lane a vertical navigation rail occupies, including its gutter. */
+export const RAIL_LANE = 30;
+
+export interface BlockDef {
+  id: string;
+  type: string;
+  props: Record<string, unknown>;
+  overlays: never[];
+  name?: string;
+  /** Skip the block entirely when this evaluates falsy. */
+  conditional?: string;
+}
+
+export interface PageDef {
+  id: string;
+  name: string;
+  size: { width: number; height: number };
+  background: { color: string };
+  blocks: BlockDef[];
+  /** Drop the page entirely when this evaluates falsy. */
+  conditional?: string;
+}
+
+export interface FlowItem {
+  /**
+   * The block at this position — or several, all at the same position.
+   *
+   * More than one is for **mutually exclusive variants**: a ranking table drawn
+   * once for two properties, once for three, once for four and once for five,
+   * each carrying a `conditional` on the count, all placed at the same `y`. One
+   * renders and the rest do not exist.
+   *
+   * The alternative is a fixed five-row table, and on the seven stored
+   * comparisons that hold two properties that prints three empty rows — which
+   * reads as a document that failed to finish rather than one that compared two
+   * properties. Sizing to the smallest instead would silently drop three.
+   *
+   * The item's `height` must be the tallest variant's, so whatever follows
+   * clears all of them.
+   */
+  block: (y: number) => BlockDef | BlockDef[];
+  height: number;
+  /** Extra space after this block. Defaults to the manifest's spacing scale. */
+  gap?: number;
+  /**
+   * Render the block only when this evaluates truthy.
+   *
+   * The item still occupies its height in the flow. That is deliberate: blocks
+   * are absolutely positioned and nothing reflows, so a conditional item that
+   * collapsed would have to move every block below it — which it cannot. An
+   * absent item leaves space, and the placements are chosen so that space falls
+   * at the foot of a page rather than above its heading.
+   */
+  conditional?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Overflow log
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Overflow {
+  template: string;
+  page: string;
+  bottom: number;
+  overBy: number;
+}
+
+const overflows: Overflow[] = [];
+const UNNAMED = '(unnamed)';
+
+/**
+ * Drain the overflow log.
+ *
+ * The seed builder refuses to write a migration when this is non-empty. Without
+ * it, a density or type-scale change pushes content under the footer on some
+ * subset of fifty templates and the only symptom is a customer's report with a
+ * truncated table.
+ */
+export function takeCompassOverflows(): Overflow[] {
+  return overflows.splice(0, overflows.length);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The compass context
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Compass {
+  family: DesignFamily;
+  variant: VariantDefinition;
+  manifest: TemplateManifest;
+  type: FamilyTypography;
+  scale: TypeScale;
+  spacing: SpacingScale;
+  density: Density;
+  margin: number;
+  /** Usable width inside the margins, less any navigation rail. */
+  contentWidth: number;
+  /** Left edge of content, past any navigation rail. */
+  contentLeft: number;
+  contentBottom: number;
+  radius: number;
+  railed: boolean;
+  cover: CoverPlan;
+  /** `token:heading` / `token:body` / `token:mono`, per `numeric_typography`. */
+  numericFont: string;
+}
+
+let counter = 0;
+let active: Compass | null = null;
+
+/** Deterministic ids: a regenerated migration must produce identical SQL. */
+function id(type: string): string {
+  counter += 1;
+  return `ic-${type}-${counter.toString(36)}`;
+}
+
+export function beginCompassTemplate(
+  family: DesignFamily,
+  variant: VariantDefinition,
+  manifest: TemplateManifest,
+): Compass {
+  counter = 0;
+  const margin = marginFor(manifest);
+  const railed = hasRail(manifest.navigation_style);
+  const type = typographyFor(family.key);
+  const compass: Compass = {
+    family,
+    variant,
+    manifest,
+    type,
+    scale: scaleFor(family.key, manifest.density as Density),
+    spacing: spacingFor(manifest),
+    density: manifest.density as Density,
+    margin,
+    contentLeft: margin + (railed ? RAIL_LANE : 0),
+    contentWidth: PAGE.width - margin * 2 - (railed ? RAIL_LANE : 0),
+    contentBottom: PAGE.height - margin - FOOTER_RESERVE,
+    radius: radiusFor(manifest),
+    railed,
+    cover: coverPlan(manifest.cover_overlay),
+    numericFont: `token:${type.numericFace}`,
+  };
+  active = compass;
+  return compass;
+}
+
+function ctx(): Compass {
+  if (!active) throw new Error('beginCompassTemplate() must be called before any block helper');
+  return active;
+}
+
+function block(type: string, props: Record<string, unknown>, name?: string): BlockDef {
+  return { id: id(type), type, props, overlays: [], ...(name ? { name } : {}) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Flow
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Stack items down the page from `startY`, honouring the spacing scale. */
+export function flow(items: FlowItem[], startY?: number): BlockDef[] {
+  const c = ctx();
+  let y = startY ?? c.margin;
+  const out: BlockDef[] = [];
+  for (const item of items) {
+    const emitted = item.block(y);
+    for (const b of Array.isArray(emitted) ? emitted : [emitted]) {
+      // An item-level conditional applies to every variant; a variant that
+      // carries its own keeps it, because that is how the variants tell
+      // themselves apart.
+      out.push(item.conditional && !b.conditional ? { ...b, conditional: item.conditional } : b);
+    }
+    y += item.height + (item.gap ?? c.spacing.gap);
+  }
+  const last = items[items.length - 1];
+  const bottom = last ? y - (last.gap ?? c.spacing.gap) : y;
+  if (bottom > c.contentBottom) {
+    overflows.push({
+      template: c.variant.code,
+      page: UNNAMED,
+      bottom,
+      overBy: Math.round(bottom - c.contentBottom),
+    });
+  }
+  return out;
+}
+
+/**
+ * Points of height a bound paragraph of `chars` characters needs.
+ *
+ * ## Why a height has to be measured rather than assumed
+ *
+ * Every height in this file is a promise: `flow()` stacks the next block at
+ * `y + height`, and the renderer positions absolutely, so a block whose text
+ * sets taller than its declared height does not push the page down — it lays
+ * over whatever comes next. The overflow guard cannot see that, because the
+ * page's own bottom is never crossed. Two blocks can be printed on top of each
+ * other and every arithmetic check passes.
+ *
+ * That is exactly what the Portfolio masters did on their first render: 463
+ * overlapping pairs across 50 templates, because a definition list reserved one
+ * line per item while the analysis writes 131-456 characters into each. The
+ * lengths are not guessable from the field names — `financialHealth.lvrRisk` is
+ * 3-6 characters ("Low") and `financialHealth.analysis` is 458-1620.
+ *
+ * So a format that binds model-authored prose passes the character count it
+ * measured against production, and gets a height that fits it.
+ *
+ * The ratio is the average advance width of the body faces this catalogue
+ * uses, as a fraction of the type size — 0.5 is the conventional figure for a
+ * serif or humanist sans at text sizes, and reading it slightly wide is the
+ * safe direction here.
+ */
+export function textHeight(chars: number, opts?: {
+  size?: number;
+  width?: number;
+  lineHeight?: number;
+  extra?: number;
+}): number {
+  const c = ctx();
+  const size = opts?.size ?? c.scale.body;
+  const width = opts?.width ?? c.contentWidth;
+  const lineHeight = opts?.lineHeight ?? 1.6;
+  const perLine = Math.max(1, Math.floor(width / (size * 0.5)));
+  const lines = Math.max(1, Math.ceil(chars / perLine));
+  return Math.round(lines * size * lineHeight) + (opts?.extra ?? 0);
+}
+
+/**
+ * Keep a trailing block only on the variants that have room for it.
+ *
+ * The ten families are the same page size and do not have the same measure: a
+ * deeper running head, a taller section opener and a looser spacing scale
+ * compound, and the gap between the roomiest variant and the tightest is over
+ * 150pt — two blocks' worth. So a block sized to complete one variant's page
+ * runs another's past the footer, and a block sized to fit every variant leaves
+ * the roomy ones half empty.
+ *
+ * Neither is the right trade for an *optional* block — one that adds context
+ * rather than carrying the argument. This measures what is left after the
+ * required items and keeps as many of the optional ones as actually fit. Pass
+ * the same `startY` that `flow()` will be given, or the arithmetic is against a
+ * different page.
+ *
+ * Optional items are trailing by construction: they are appended after the
+ * required ones. A block that must appear in the middle of a page is not
+ * optional, and belongs in `required`.
+ *
+ * `SLACK` is why the arithmetic is not "does it fit". Every declared height is
+ * an estimate of how tall type will set — a KPI band whose label wraps to a
+ * second line, a note that runs on — and the estimates are good to within about
+ * a line. A *required* block absorbs that: it is on the page either way. An
+ * optional one placed with nothing to spare turns a 20pt estimate error into a
+ * block printed over the one above it, which is the failure this whole
+ * mechanism exists to avoid. So an optional block has to fit comfortably, and
+ * a line and a half is what "comfortably" was measured to need.
+ */
+const SLACK = 36;
+
+export function ifItFits(
+  required: FlowItem[],
+  optional: FlowItem[],
+  startY?: number,
+): FlowItem[] {
+  const c = ctx();
+  let y = startY ?? c.margin;
+  for (const item of required) y += item.height + (item.gap ?? c.spacing.gap);
+
+  const kept: FlowItem[] = [];
+  for (const item of optional) {
+    if (y + item.height + SLACK > c.contentBottom) break;
+    kept.push(item);
+    y += item.height + (item.gap ?? c.spacing.gap);
+  }
+  return [...required, ...kept];
+}
+
+export function page(name: string, blocks: BlockDef[], background = 'token:surface'): PageDef {
+  for (let i = overflows.length - 1; i >= 0; i -= 1) {
+    if (overflows[i].page !== UNNAMED) break;
+    overflows[i].page = name;
+  }
+  return {
+    id: id('page'),
+    name,
+    size: { width: PAGE.width, height: PAGE.height },
+    background: { color: background },
+    blocks,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page furniture
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Where the running head's rule sits — below two lines of label. */
+function runningHeadBottom(): number {
+  const c = ctx();
+  return c.margin + Math.round(c.scale.runningHead * 1.35 * 2) + 5;
+}
+
+/**
+ * The running head — the two-part rule across the top of every content page.
+ *
+ * Left names the document and the asset, right names the part. It is emitted as
+ * two text blocks plus a divider rather than one element because the halves
+ * align to opposite edges, and no primitive sets a line with a left and a right
+ * end.
+ *
+ * The label takes two thirds of the measure and the rule reserves two lines
+ * either way: `{{property.address}}` is one line for "Lot 60448 Cloverton" and
+ * three for a strata address with a building name, and a rule struck through
+ * the running head is the kind of defect that only shows on a real address.
+ */
+export function runningHead(documentLabel: string, part: string): BlockDef[] {
+  const c = ctx();
+  const labelWidth = Math.floor(c.contentWidth * 0.66);
+  const y = c.margin;
+  return [
+    block('text-block', {
+      body: documentLabel,
+      bodySize: c.scale.runningHead,
+      bodyFont: 'token:mono',
+      bodyTracking: TRACKING.runningHead,
+      bodyLineHeight: 1.35,
+      color: 'token:muted',
+      x: c.contentLeft, y, width: labelWidth,
+    }, 'Running head'),
+    block('text-block', {
+      body: part,
+      bodySize: c.scale.runningHead,
+      bodyFont: 'token:mono',
+      bodyAlign: 'right',
+      color: 'token:muted',
+      x: c.contentLeft + labelWidth, y, width: c.contentWidth - labelWidth,
+    }, 'Part marker'),
+    block('divider', {
+      color: 'token:line',
+      thickness: c.manifest.border_treatment === 'rule_2px' ? RULE_WEIGHTS.heavy : RULE_WEIGHTS.hairline,
+      x: c.contentLeft, y: runningHeadBottom(), width: c.contentWidth,
+    }),
+  ];
+}
+
+/**
+ * The vertical navigation rail.
+ *
+ * `navigation_style: vertical_rail` (and the caption/narrow rails) put
+ * orientation on a rule down the binding edge. On those variants the rail
+ * REPLACES the running head rather than joining it — drawing both puts the rail
+ * marker on top of the running head at the same `y`.
+ *
+ * The marker sits in the content column beside the rail, not in the 30pt lane:
+ * horizontal type does not fit a 30pt measure, and rotating it is not something
+ * the block vocabulary can express.
+ */
+export function navigationRail(part: string, section: string): BlockDef[] {
+  const c = ctx();
+  const top = c.margin;
+  return [
+    block('divider', {
+      orientation: 'vertical',
+      color: 'token:primary',
+      thickness: 2,
+      x: c.margin, y: top, height: c.contentBottom - top,
+    }, 'Navigation rail'),
+    block('text-block', {
+      eyebrow: part,
+      eyebrowSize: c.scale.eyebrow,
+      eyebrowFont: 'token:mono',
+      eyebrowTracking: TRACKING.eyebrow,
+      eyebrowColor: 'token:primary',
+      body: section,
+      bodySize: c.scale.runningHead,
+      bodyFont: 'token:mono',
+      bodyTracking: TRACKING.runningHead,
+      color: 'token:muted',
+      x: c.contentLeft, y: top, width: c.contentWidth,
+    }, 'Rail marker'),
+  ];
+}
+
+/** The furniture a content page needs, per the manifest. */
+export function furniture(documentLabel: string, part: string, section: string): BlockDef[] {
+  return ctx().railed ? navigationRail(part, section) : runningHead(documentLabel, part);
+}
+
+/** First usable y below the running head or rail marker. */
+export function contentTop(): number {
+  const c = ctx();
+  return runningHeadBottom() + c.spacing.sectionGap;
+}
+
+/**
+ * The standing footer.
+ *
+ * Inset to the template's own margin so its rule spans exactly the measure the
+ * content above it does — the block's 24pt default is a 33pt discrepancy on a
+ * 20mm page, which reads as a mistake on a document whose argument is precision.
+ */
+export function footer(text: string): BlockDef {
+  const c = ctx();
+  return block('footer', {
+    text,
+    // Left, because the page number takes the right end of the same line.
+    align: 'left',
+    bg: 'token:surface',
+    color: 'token:muted',
+    ruleColor: 'token:line',
+    inset: c.margin,
+    fontSize: c.scale.runningHead,
+    height: FOOTER_HEIGHT,
+  });
+}
+
+export function pageNumber(): BlockDef {
+  const c = ctx();
+  return block('page-number', {
+    color: 'token:muted',
+    align: 'right',
+    inset: c.margin,
+    size: c.scale.runningHead,
+    // Vertically centred in the footer band, so it reads as the other end of
+    // the footer line rather than as a separate element floating above it.
+    y: PAGE.height - FOOTER_HEIGHT + (FOOTER_HEIGHT - c.scale.runningHead) / 2 - 1,
+  });
+}
+
+/** Attach the furniture a content page needs. */
+export function withFurniture(p: PageDef, footerText: string): PageDef {
+  const c = ctx();
+  return {
+    ...p,
+    blocks: [
+      ...p.blocks,
+      footer(footerText),
+      // `rail_number` / `rail_progress` put the folio on the rail, so the
+      // footer carries the reference alone.
+      ...(railFooter(c.manifest.footer_style) ? [] : [pageNumber()]),
+    ],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cover
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CoverOptions {
+  wordmarkTop: string;
+  wordmarkBottom: string;
+  tagline: string;
+  /** Top-right marker, e.g. "Investment Compass". */
+  marker: string;
+  eyebrow: string;
+  title: string;
+  standfirst: string;
+  locations: string;
+  /** The four facts across the foot of the cover. */
+  facts: Array<{ label: string; value: string }>;
+}
+
+/**
+ * The cover.
+ *
+ * Composed from primitives rather than the `cover` block, on purpose. That
+ * block anchors its title at 55% of the page, fixes the eyebrow at 10pt/0.08em
+ * and draws a 60×3pt accent bar — a reasonable general cover, and not one of
+ * the twenty-nine the catalogue declares.
+ *
+ * `cover_overlay` resolves to one of three grounds plus three modifiers:
+ *
+ *   - `field`  — the whole page takes the field colour (Private Banking's
+ *     obsidian, Dark Executive's ground, the photographic scrims).
+ *   - `band`   — a field band at the head, paper below (letterheads, mastheads,
+ *     memo and contract headers, Wealth Management's obsidian band).
+ *   - `paper`  — no field at all; the cover works typographically (Swiss
+ *     Minimal's flat grid, the frontispieces, the framed drawing sets).
+ *
+ * plus `frame` (a rule around the page), `rail` (a rule down the binding edge)
+ * and `bleed` (the title runs to the full measure and sits lower).
+ *
+ * ## The geometry is computed upward from the foot
+ *
+ * The title is `{{property.address}}`, whose length is unknowable at build
+ * time. So the title gets a RESERVED area two lines deep and everything below
+ * it is placed against the fact band. Laying it out downward from a fixed title
+ * top is what put a gold hairline through the second line of a two-line address.
+ */
+export function cover(opts: CoverOptions): PageDef {
+  const c = ctx();
+  const plan = c.cover;
+  const onField = plan.ground === 'field';
+
+  const inset = plan.frame ? 16 : 0;
+  const left = c.margin + inset + (plan.rail ? RAIL_LANE : 0);
+  const width = PAGE.width - (c.margin + inset) * 2 - (plan.rail ? RAIL_LANE : 0);
+
+  // On a banded cover the head sits on the field and everything else on paper.
+  const headInk = onField || plan.ground === 'band' ? 'token:text' : 'token:ink';
+  const bodyInk = onField ? 'token:text' : 'token:ink';
+  const mutedInk = onField ? 'token:line' : 'token:muted';
+
+  const factsHeight = c.density === 'spacious' ? 92 : c.density === 'compact' ? 68 : 78;
+  const factsTop = PAGE.height - c.margin - inset - factsHeight;
+
+  const locationsHeight = 12;
+  const locationsTop = factsTop - c.spacing.sectionGap - locationsHeight;
+
+  // Three lines of standfirst: the summary narrative is a sentence or two, and
+  // reserving for one line is the same mistake in a different place.
+  const standfirstHeight = Math.round(c.scale.coverStandfirst * 1.4 * 3);
+  const standfirstTop = locationsTop - 14 - standfirstHeight;
+
+  const ruleY = standfirstTop - 16;
+
+  const titleHeight = Math.round(c.scale.coverTitle * 1.12 * 2) + 8;
+  const eyebrowHeight = Math.round(c.scale.coverEyebrow + 12);
+  const titleTop = ruleY - 14 - titleHeight - eyebrowHeight;
+
+  const blocks: BlockDef[] = [];
+
+  // ── Ground ───────────────────────────────────────────────────────────────
+  if (plan.ground === 'band') {
+    // A field band behind the head only. Emitted as a full-width `hero` so the
+    // colour is a block rather than a page background, which is what lets the
+    // rest of the page stay on paper.
+    blocks.push(block('hero', {
+      title: '',
+      bg: 'token:bg',
+      color: 'token:text',
+      height: 176,
+      x: 0, y: 0, width: PAGE.width,
+    }, 'Cover band'));
+  }
+
+  if (plan.frame) {
+    // A hairline frame around the whole sheet — the drawing set's border.
+    const f = c.margin;
+    const w = PAGE.width - f * 2;
+    const h = PAGE.height - f * 2;
+    blocks.push(
+      block('divider', { color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f, y: f, width: w }, 'Frame'),
+      block('divider', { color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f, y: f + h, width: w }),
+      block('divider', { orientation: 'vertical', color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f, y: f, height: h }),
+      block('divider', { orientation: 'vertical', color: 'token:line', thickness: RULE_WEIGHTS.hairline, x: f + w, y: f, height: h }),
+    );
+  }
+
+  if (plan.rail) {
+    blocks.push(block('divider', {
+      orientation: 'vertical',
+      color: 'token:primary',
+      thickness: 2,
+      x: c.margin + inset, y: c.margin + inset, height: PAGE.height - (c.margin + inset) * 2,
+    }, 'Cover rail'));
+  }
+
+  // ── Head: wordmark, rule, tagline, marker ────────────────────────────────
+  blocks.push(block('text-block', {
+    body: `${opts.wordmarkTop}\n${opts.wordmarkBottom}`,
+    bodySize: Math.max(8, Math.round(c.scale.coverEyebrow * 1.6)),
+    bodyFont: 'token:display',
+    bodyTracking: TRACKING.wordmark,
+    bodyLineHeight: 1.35,
+    color: headInk,
+    x: left, y: c.margin + inset, width: width - 140,
+  }, 'Wordmark'));
+
+  blocks.push(block('divider', {
+    color: 'token:primary',
+    thickness: 1,
+    x: left, y: c.margin + inset + 38, width: 74,
+  }));
+
+  blocks.push(block('text-block', {
+    body: opts.tagline,
+    bodySize: c.scale.coverEyebrow * 0.92,
+    bodyFont: 'token:mono',
+    bodyTracking: 0.24,
+    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    x: left, y: c.margin + inset + 46, width: width - 140,
+  }, 'Tagline'));
+
+  blocks.push(block('text-block', {
+    body: opts.marker,
+    bodySize: c.scale.coverEyebrow * 0.92,
+    bodyFont: 'token:mono',
+    bodyAlign: 'right',
+    color: plan.ground === 'paper' ? 'token:muted' : 'token:line',
+    x: left + width - 140, y: c.margin + inset, width: 140,
+  }, 'Cover marker'));
+
+  // ── Title block ──────────────────────────────────────────────────────────
+  blocks.push(block('text-block', {
+    eyebrow: opts.eyebrow,
+    eyebrowSize: c.scale.coverEyebrow,
+    eyebrowFont: 'token:mono',
+    eyebrowTracking: TRACKING.coverEyebrow,
+    eyebrowColor: 'token:primary',
+    heading: opts.title,
+    headingSize: c.scale.coverTitle,
+    headingFont: 'token:display',
+    headingWeight: 400,
+    headingLineHeight: 1.12,
+    headingColor: bodyInk,
+    x: left, y: titleTop, width: plan.bleed ? width : Math.round(width * 0.86),
+  }, 'Cover title'));
+
+  blocks.push(block('divider', {
+    color: 'token:primary',
+    thickness: RULE_WEIGHTS.hairline,
+    x: left, y: ruleY, width,
+  }));
+
+  blocks.push(block('text-block', {
+    body: opts.standfirst,
+    bodySize: c.scale.coverStandfirst,
+    bodyFont: 'token:heading',
+    bodyStyle: 'italic',
+    bodyLineHeight: 1.4,
+    color: mutedInk,
+    x: left, y: standfirstTop, width: Math.round(width * 0.86),
+  }, 'Standfirst'));
+
+  blocks.push(block('text-block', {
+    body: opts.locations,
+    bodySize: c.scale.runningHead * 1.12,
+    bodyFont: 'token:mono',
+    bodyTracking: 0.16,
+    color: mutedInk,
+    x: left, y: locationsTop, width,
+  }, 'Locations'));
+
+  // ── Foot: the ruled fact band ────────────────────────────────────────────
+  blocks.push(block('kpi-grid', {
+    variant: 'ruled',
+    items: opts.facts,
+    columns: opts.facts.length,
+    valueFont: 'token:heading',
+    labelFont: 'token:mono',
+    labelSize: c.scale.kpiLabel,
+    labelTracking: TRACKING.label,
+    valueSize: c.density === 'spacious' ? 14 : 11,
+    valueColor: bodyInk,
+    labelColor: mutedInk,
+    ruleColor: onField ? 'token:line' : 'token:line',
+    emphasisColor: onField ? 'token:line' : 'token:ink',
+    x: left, y: factsTop, width, height: factsHeight,
+  }, 'Cover facts'));
+
+  return page('Cover', blocks, onField ? 'token:bg' : 'token:surface');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section furniture
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A section opener, in whichever shape `section_header_style` declares.
+ *
+ * Six kinds across the catalogue: a tracked eyebrow over a display heading, an
+ * oversized numeral beside it, a heading alone (where the rail or masthead
+ * carries the label), a filled band behind it, a decimal clause number before
+ * it, and an italic standfirst under it.
+ */
+export function sectionHeading(opts: {
+  eyebrow: string;
+  heading: string;
+  numeral?: string;
+  standfirst?: string;
+  height?: number;
+}): FlowItem {
+  const c = ctx();
+  const kind = sectionHeaderKind(c.manifest.section_header_style);
+
+  if (kind === 'numeral' && opts.numeral) {
+    const height = opts.height ?? Math.round(c.scale.heading * 2.6) + 20;
+    return {
+      height,
+      block: (y) => block('two-column', {
+        leftHeading: opts.numeral,
+        leftBody: opts.eyebrow,
+        rightHeading: opts.heading,
+        rightBody: opts.standfirst ?? '',
+        ratio: 0.26,
+        gap: 26,
+        headingSize: c.scale.heading,
+        headingColor: 'token:ink',
+        bodySize: c.scale.eyebrow,
+        bodyColor: 'token:primary',
+        x: c.contentLeft, y, width: c.contentWidth,
+      }, 'Section opener'),
+    };
+  }
+
+  if (kind === 'band') {
+    // A band is a `hero`, and a hero centres its content in its own box: a
+    // heading that wraps to more lines than the band is deep does not overflow
+    // downwards, it overflows in BOTH directions, and the first line is lost
+    // above the band's top edge. On the Portfolio holdings page that printed
+    // "Every property, and what it" into the running head and left the word
+    // "contributes" alone inside a black band.
+    //
+    // So the depth is measured from the heading itself. The floor keeps every
+    // band that already fitted exactly where it was.
+    const headingLines = Math.max(1, Math.ceil(
+      opts.heading.length / Math.max(1, Math.floor((c.contentWidth - 48) / (c.scale.heading * 0.52))),
+    ));
+    const standfirstDepth = opts.standfirst
+      ? textHeight(opts.standfirst.length, { size: c.scale.body, width: c.contentWidth - 48 })
+      : 0;
+    const measured = Math.round(c.scale.heading * 1.3 * headingLines) + 34 + standfirstDepth;
+    const height = opts.height ?? Math.max(Math.round(c.scale.heading * 2.4) + 24, measured);
+    return {
+      height,
+      block: (y) => block('hero', {
+        eyebrow: opts.eyebrow,
+        title: opts.heading,
+        subtitle: opts.standfirst ?? '',
+        bg: 'token:bg',
+        color: 'token:text',
+        accent: 'token:primary',
+        titleSize: c.scale.heading,
+        x: c.contentLeft, y, width: c.contentWidth, height,
+      }, 'Section band'),
+    };
+  }
+
+  const height = opts.height ?? Math.round(c.scale.heading * 2.2) + 18;
+  const decimal = kind === 'decimal' && opts.numeral ? `${opts.numeral}  ` : '';
+  return {
+    height,
+    block: (y) => block('text-block', {
+      // `bare` moves the label to the rail or masthead, so the opener is
+      // heading only and the page reads from the rail inwards.
+      ...(kind === 'bare' ? {} : {
+        eyebrow: opts.eyebrow,
+        eyebrowSize: c.scale.eyebrow,
+        eyebrowFont: 'token:mono',
+        eyebrowTracking: TRACKING.eyebrow,
+        eyebrowColor: 'token:primary',
+      }),
+      heading: `${decimal}${opts.heading}`,
+      headingSize: c.scale.heading,
+      headingFont: 'token:heading',
+      headingWeight: 400,
+      headingLineHeight: 1.14,
+      headingColor: 'token:ink',
+      ...(kind === 'standfirst' && opts.standfirst ? {
+        body: opts.standfirst,
+        bodySize: c.scale.body,
+        bodyFont: 'token:body',
+        bodyStyle: 'italic',
+        bodyLineHeight: 1.5,
+        color: 'token:muted',
+      } : {}),
+      x: c.contentLeft, y, width: c.contentWidth,
+    }, 'Section opener'),
+  };
+}
+
+/** The verdict heading — the dashboard's oversized statement. */
+export function verdict(opts: { eyebrow: string; heading: string; body: string }): FlowItem {
+  const c = ctx();
+  const height = Math.round(c.scale.verdict * 2.2 + c.scale.body * 4.6) + 18;
+  return {
+    height,
+    block: (y) => block('text-block', {
+      eyebrow: opts.eyebrow,
+      eyebrowSize: c.scale.eyebrow,
+      eyebrowFont: 'token:mono',
+      eyebrowTracking: TRACKING.eyebrow,
+      eyebrowColor: 'token:primary',
+      heading: opts.heading,
+      headingSize: c.scale.verdict,
+      headingFont: 'token:heading',
+      headingWeight: 400,
+      headingLineHeight: 1.1,
+      headingColor: 'token:ink',
+      body: opts.body,
+      bodySize: c.scale.body,
+      bodyFont: 'token:body',
+      bodyLineHeight: 1.6,
+      color: 'token:ink',
+      x: c.contentLeft, y, width: c.contentWidth,
+    }, 'Verdict'),
+  };
+}
+
+export function prose(body: string, height?: number): FlowItem {
+  const c = ctx();
+  return {
+    height: height ?? 56,
+    block: (y) => block('text-block', {
+      body,
+      bodySize: c.scale.body,
+      bodyFont: 'token:body',
+      bodyLineHeight: 1.62,
+      // Justified for the editorial families; ragged right everywhere else,
+      // because justification without hyphenation opens rivers at this measure.
+      bodyAlign: c.type.body === 'Noto Serif' ? 'justify' : 'left',
+      color: 'token:ink',
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/**
+ * A page's worth of model-authored Markdown, set as structure.
+ *
+ * Unlike every other body helper this takes **source** rather than resolved
+ * text, because `markdown-block` renders it. That is what makes the content
+ * safe — the renderer escapes before it parses — and it is why the block is in
+ * `PRODUCTION_SAFE_BLOCK_TYPES` at all.
+ *
+ * `linesPerPage` has to be the same number the projection used to compute
+ * `qa.answerPages`, or a master will make a page conditional on a count that
+ * disagrees with what the block draws. Both default to
+ * `DEFAULT_LINES_PER_PAGE`, and neither should be overridden alone.
+ */
+export function markdown(
+  source: string,
+  pageIndex: number,
+  height: number,
+  linesPerPage: number = MARKDOWN_LINES_PER_PAGE,
+): FlowItem {
+  const c = ctx();
+  return {
+    height,
+    block: (y) => block('markdown-block', {
+      source,
+      pageIndex,
+      linesPerPage,
+      bodySize: c.scale.body,
+      bodyFont: 'token:body',
+      headingFont: 'token:heading',
+      lineHeight: 1.55,
+      color: 'token:ink',
+      headingColor: 'token:primary',
+      ruleColor: 'token:line',
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/**
+ * Lines per Markdown page, shared by the masters and the projection.
+ *
+ * Mirrors `DEFAULT_LINES_PER_PAGE` in `reports/markdownPaging.pure.ts`. It is
+ * restated rather than imported because this build script must stay free of
+ * runtime imports from the edge tree, and a spec asserts the two agree.
+ */
+export const MARKDOWN_LINES_PER_PAGE = 34;
+
+export function rule(weight: number = RULE_WEIGHTS.hairline): FlowItem {
+  const c = ctx();
+  return {
+    height: 2,
+    gap: c.spacing.headingGap,
+    block: (y) => block('divider', {
+      color: 'token:line',
+      style: 'solid',
+      thickness: weight,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KPIs
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface KpiItem {
+  label: string;
+  value: string;
+  note?: string;
+  accent?: string;
+}
+
+/** How many figures this template's KPI arrangement wants. */
+export function kpiCapacity(): number {
+  return kpiPlan(ctx().manifest.kpi_layout).items;
+}
+
+/**
+ * The KPI band, in whichever arrangement the manifest declares.
+ *
+ * This is the catalogue's principal structural variable — 31 declared layouts
+ * across ten families — and the axis on which masters within a family most
+ * visibly diverge. `resolvers.ts` maps each to a primitive and a column count.
+ */
+export function kpis(items: KpiItem[]): FlowItem {
+  const c = ctx();
+  const plan = kpiPlan(c.manifest.kpi_layout);
+  const shown = items.slice(0, plan.items);
+
+  const shared = {
+    items: shown,
+    valueFont: c.numericFont,
+    labelFont: 'token:mono',
+    noteFont: 'token:body',
+    labelSize: c.scale.kpiLabel,
+    noteSize: c.scale.kpiNote,
+    labelTracking: TRACKING.label,
+    // A KPI band is read across, so the figures have to sit on one baseline.
+    // From four-up the cells are narrow enough that a two-word label wraps —
+    // "WEEKLY POSITION" beside "WEEKLY RENT" — and that column's value drops a
+    // line below its neighbours. Reserving the second line costs a little white
+    // above the short labels and keeps the row aligned. `rows` and `stacked`
+    // set the label beside the value, so they need no reservation.
+    labelLines: plan.variant === 'rows' || plan.variant === 'stacked'
+      ? 1
+      : (plan.columns >= 4 ? 2 : 1),
+    valueColor: 'token:ink',
+    labelColor: 'token:muted',
+    ruleColor: 'token:line',
+    emphasisColor: 'token:ink',
+    valueWeight: 400,
+    x: c.contentLeft,
+    width: c.contentWidth,
+  };
+
+  /**
+   * A note sets on its own line under the figure, and none of the heights
+   * below reserved it.
+   *
+   * The KPI grid is given an explicit `height`, so its box is exactly what is
+   * declared — and its content is not clipped, it spills. Measured on the
+   * Portfolio overview: a five-row ledger declared 142pt and set 177, a
+   * six-row one declared 162 and set 207, and in each case the block below was
+   * printed across the last two figures. Nothing in the arithmetic guard could
+   * see it, because the page bottom was never crossed.
+   */
+  const noteLine = shown.some((k) => k.note) ? Math.round(c.scale.kpiNote * 1.7) : 0;
+
+  if (plan.variant === 'display') {
+    const rows = Math.ceil(shown.length / plan.columns);
+    const height = 24 + rows * (Math.round(c.scale.kpiValue * 2.4) + noteLine);
+    return {
+      height,
+      block: (y) => block('kpi-grid', {
+        ...shared, variant: 'display', columns: plan.columns,
+        valueSize: c.scale.kpiValue, y, height,
+      }, 'KPI display'),
+    };
+  }
+
+  if (plan.variant === 'rows') {
+    const height = 12 + shown.length * (Math.round(c.scale.kpiValue * 0.72 + 16) + noteLine);
+    return {
+      height,
+      block: (y) => block('kpi-grid', {
+        ...shared, variant: 'rows',
+        valueSize: Math.round(c.scale.kpiValue * 0.72), y, height,
+      }, 'KPI ledger'),
+    };
+  }
+
+  if (plan.variant === 'stacked') {
+    const height = shown.length * (Math.round(c.scale.kpiValue * 0.8 + 26) + noteLine);
+    return {
+      height,
+      block: (y) => block('kpi-grid', {
+        ...shared, variant: 'stacked',
+        accent: 'token:primary',
+        valueSize: Math.round(c.scale.kpiValue * 0.8), y, height,
+      }, 'KPI stack'),
+    };
+  }
+
+  if (plan.variant === 'tile') {
+    const height = 82;
+    return {
+      height,
+      block: (y) => block('kpi-grid', {
+        items: shown,
+        columns: plan.columns,
+        gap: 10,
+        tileBg: 'token:panel',
+        accent: 'token:primary',
+        labelColor: 'token:muted',
+        radius: c.radius,
+        valueSize: Math.round(c.scale.kpiValue * 0.7),
+        x: c.contentLeft, y, width: c.contentWidth, height,
+      }, 'KPI cards'),
+    };
+  }
+
+  // ruled — one or more rows of hairline-separated columns.
+  const rows = Math.ceil(shown.length / plan.columns);
+  // Six columns give each figure ~78pt of measure; a formatted currency value
+  // overruns the four-column size there, so the band steps down.
+  const valueSize = plan.columns >= 6
+    ? Math.round(c.scale.kpiValue * 0.62)
+    : plan.columns === 5
+      ? Math.round(c.scale.kpiValue * 0.74)
+      : c.scale.kpiValue;
+  const height = rows * ((c.density === 'compact' ? 62 : 78) + noteLine);
+  return {
+    height,
+    block: (y) => block('kpi-grid', {
+      ...shared, variant: 'ruled', columns: plan.columns,
+      ...(plan.cellBorders ? { cellBorders: true } : {}),
+      valueSize, y, height,
+    }, 'KPI band'),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tables
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A table in whichever treatment `table_style` declares. */
+export function table(opts: {
+  headers: string[];
+  rows: string[][];
+  columnWidths?: number[];
+  /** Indices of rows that close a total. */
+  totals?: number[];
+  numeric?: number[];
+}): FlowItem {
+  const c = ctx();
+  const plan = tablePlan(c.manifest.table_style);
+  const rowHeight = plan.tight ? c.spacing.rowHeight - 3 : c.spacing.rowHeight;
+  const numericColumns = opts.numeric ?? opts.headers.map((_, i) => i).slice(1);
+  const cellPadding = plan.tight ? Math.max(1.5, c.spacing.cellPadding - 1.5) : c.spacing.cellPadding;
+
+  return {
+    height: 24 + opts.rows.length * rowHeight,
+    block: (y) => block('data-table', {
+      headers: opts.headers,
+      rows: opts.rows.map((cells) => ({ cells })),
+      ...(opts.columnWidths ? { columnWidths: opts.columnWidths } : {}),
+      headerStyle: plan.headerStyle,
+      headerBg: 'token:primary',
+      headerFg: 'token:onPrimary',
+      headerFont: 'token:mono',
+      headerSize: c.scale.columnHead,
+      headerTracking: TRACKING.columnHead,
+      numericFont: c.numericFont,
+      numericColumns,
+      ...(plan.doubleRuleTotals && opts.totals?.length ? { totalRows: opts.totals } : {}),
+      rowRule: plan.rowRule,
+      outerBorder: plan.outerBorder,
+      ...(plan.gridLines ? { gridLines: true } : {}),
+      stripeBg: plan.stripe ? 'token:panel' : 'transparent',
+      cellFg: 'token:ink',
+      borderColor: 'token:line',
+      emphasisColor: 'token:ink',
+      negativeColor: 'token:negative',
+      fontSize: c.scale.cell,
+      cellPadding,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Callouts, risk, recommendation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A callout in whichever treatment `callout_style` declares. */
+export function callout(title: string, body: string, height?: number): FlowItem {
+  const c = ctx();
+  const kind = calloutKind(c.manifest.callout_style);
+  const style = kind === 'badge' ? 'badge' : kind === 'margin' ? 'margin' : 'bar';
+  return {
+    height: height ?? (kind === 'margin' ? 58 : 72),
+    block: (y) => block('callout', {
+      title,
+      body,
+      variant: 'info',
+      style,
+      accent: 'token:primary',
+      titleColor: 'token:primary',
+      // A flat block fills without an accent edge; a bar keeps the edge.
+      bg: kind === 'margin' ? 'transparent' : 'token:panel',
+      ...(kind === 'block' ? { barWidth: 0 } : {}),
+      ruleColor: 'token:primary',
+      color: 'token:ink',
+      titleFont: 'token:mono',
+      bodyFont: 'token:body',
+      titleSize: c.scale.kpiLabel,
+      titleTracking: TRACKING.label,
+      bodySize: c.scale.cell,
+      radius: c.radius,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/**
+ * The risk presentation, per `risk_display`.
+ *
+ * `chars` is the longest of the per-row prose fields — `why` and the
+ * verification action — measured rather than assumed. The register kind prints
+ * both under the hazard, so a row is at least two paragraphs deep, and the flat
+ * 46pt it reserved was right only for a one-line pair. On the Investment
+ * Compass risk page that put the register across the recommendation beneath it
+ * on 23 of the 50 masters, by up to 47pt.
+ *
+ * The `bars` kind draws a label and a bar and needs none of this.
+ */
+export function risks(
+  title: string,
+  items: Array<{ risk: string; rating: string; confidence: string; why: string; ddAction: string; note?: string }>,
+  chars?: number,
+): FlowItem {
+  const c = ctx();
+  const bars = riskKind(c.manifest.risk_display) === 'bars';
+  const rowHeight = chars === undefined
+    ? 46
+    : Math.max(46, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.74 }) * 2 + 22);
+  return {
+    height: bars ? 26 + items.length * 24 : 44 + items.length * rowHeight,
+    block: (y) => block('risk-register', {
+      title,
+      items,
+      ...(bars ? { display: 'bars' } : {}),
+      titleBg: 'token:bg',
+      titleFg: 'token:primary',
+      headerBg: 'token:panel',
+      headerFg: 'token:muted',
+      stripeBg: 'token:panel',
+      rowBg: 'token:surface',
+      cellFg: 'token:ink',
+      mutedColor: 'token:muted',
+      borderColor: 'token:line',
+      negativeColor: 'token:negative',
+      cautionColor: 'token:caution',
+      positiveColor: 'token:positive',
+      labelFont: 'token:mono',
+      bodyFont: 'token:body',
+      eyebrowFont: 'token:mono',
+      labelTracking: TRACKING.columnHead,
+      eyebrowTracking: TRACKING.label,
+      fontSize: c.scale.cell,
+      titleSize: c.scale.eyebrow,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/**
+ * The recommendation.
+ *
+ * Three kinds: a filled card on the field colour (the one place a content page
+ * carries the cover's ground), ruled type on paper set like the rest of the
+ * statement, and a bordered box.
+ */
+export function recommendation(heading: string, body: string): FlowItem {
+  const c = ctx();
+  const kind = recommendationKind(c.manifest.recommendation_style);
+
+  if (kind === 'statement') {
+    return {
+      height: 96,
+      block: (y) => block('text-block', {
+        eyebrow: 'Recommendation',
+        eyebrowSize: c.scale.kpiLabel,
+        eyebrowFont: 'token:mono',
+        eyebrowTracking: TRACKING.label,
+        eyebrowColor: 'token:primary',
+        heading,
+        headingSize: Math.round(c.scale.heading * 0.78),
+        headingFont: 'token:heading',
+        headingWeight: 400,
+        headingLineHeight: 1.2,
+        headingColor: 'token:ink',
+        body,
+        bodySize: c.scale.body,
+        bodyFont: 'token:body',
+        bodyLineHeight: 1.55,
+        color: 'token:ink',
+        x: c.contentLeft, y, width: c.contentWidth,
+      }, 'Recommendation'),
+    };
+  }
+
+  const onField = kind === 'card';
+  return {
+    height: 96,
+    block: (y) => block('decision-box', {
+      heading,
+      body,
+      // The 60-word default silently truncates an adviser's recommendation, and
+      // a client-facing sentence ending in an ellipsis is worse than a longer
+      // card.
+      maxWords: 90,
+      accent: 'token:primary',
+      bg: onField ? 'token:bg' : 'token:surface',
+      color: onField ? 'token:text' : 'token:ink',
+      headingColor: 'token:primary',
+      headingFont: 'token:mono',
+      headingSize: c.scale.kpiLabel,
+      headingTracking: TRACKING.label,
+      bodyFont: 'token:body',
+      bodySize: c.scale.body,
+      radius: c.radius,
+      barWidth: onField ? 2 : 1,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }, 'Recommendation'),
+  };
+}
+
+/**
+ * Two marked columns — what is working against what to keep an eye on.
+ *
+ * The titles are overridable because the shape outlives the words: a portfolio's
+ * risk page pairs its mitigations against its exposures, which is the same
+ * positive/caution reading with different labels. Defaulting them keeps every
+ * existing call site unchanged.
+ */
+export function strengthsWatch(
+  strengths: string[],
+  watch: string[],
+  titles?: { strengths: string; watch: string },
+  chars?: number,
+): FlowItem {
+  const c = ctx();
+  // Each column is half the measure less the gap, so an item wraps at roughly
+  // half the characters the same sentence would take across the page. `chars`
+  // is the longest item the caller expects; see `textHeight`.
+  const rowHeight = chars === undefined
+    ? 32
+    : Math.max(32, textHeight(chars, {
+      size: c.scale.cell,
+      width: c.contentWidth * 0.5 - 22,
+      extra: 8,
+    }));
+  return {
+    height: 36 + Math.max(strengths.length, watch.length) * rowHeight,
+    block: (y) => block('strengths-watch', {
+      strengthsTitle: titles?.strengths ?? 'Strengths',
+      strengths,
+      watchTitle: titles?.watch ?? 'Considerations',
+      watch,
+      positiveColor: 'token:positive',
+      cautionColor: 'token:negative',
+      onFillColor: 'token:surface',
+      color: 'token:ink',
+      // Marked the way this family marks a callout, rather than a solid band on
+      // all fifty masters. See `strengthsWatchStyle`.
+      style: strengthsWatchStyle(c.manifest.callout_style),
+      titleFont: 'token:heading',
+      titleSize: c.scale.columnHead,
+      titleTracking: TRACKING.label,
+      bodyFont: 'token:body',
+      bodySize: c.scale.cell,
+      ruleWeight: c.manifest.border_treatment === 'rule_2px' ? RULE_WEIGHTS.heavy : RULE_WEIGHTS.hairline,
+      radius: c.radius,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/**
+ * A term/definition list.
+ *
+ * `chars` is the longest definition this list expects to be given, measured
+ * against production rather than guessed. Without it every row is reserved a
+ * single line — right for the one-word statuses this block was written for
+ * ("Positive", "Comfortable"), and wrong by a factor of five for a paragraph.
+ * See `textHeight`.
+ */
+export function definitions(
+  title: string,
+  items: Array<{ term: string; definition: string }>,
+  chars?: number,
+): FlowItem {
+  const c = ctx();
+  const rowHeight = chars === undefined
+    ? 26
+    // The definition sets beside its term, on roughly two thirds of the measure.
+    : Math.max(26, textHeight(chars, { size: c.scale.cell, width: c.contentWidth * 0.66, extra: 8 }));
+  return {
+    height: 30 + items.length * rowHeight,
+    block: (y) => block('definition-list', {
+      title, items, x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
+/** A contents page, for the families whose `toc_style` is not `none`. */
+export function contents(entries: string[]): FlowItem {
+  const c = ctx();
+  return {
+    height: 40 + entries.length * 20,
+    block: (y) => block('toc', {
+      title: entries.join('\n'),
+      titleSize: c.scale.heading,
+      titleColor: 'token:ink',
+      color: 'token:ink',
+      indexColor: 'token:primary',
+      size: c.scale.body,
+      lineHeight: 20,
+      x: c.contentLeft, y, width: c.contentWidth,
+    }, 'Contents'),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Charts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The scenario chart, drawn by whichever block `chart_style` resolves to.
+ *
+ * `smallMultiples` families draw the series at panel size — the research
+ * exhibit and the analyst's small multiples — which here means a shorter block,
+ * since a panel is a fraction of a plate.
+ */
+export function scenarioChart(opts: {
+  title: string;
+  caption: string;
+  dataPath: string;
+  data: Array<{ label: string; value: number }>;
+  height?: number;
+  /**
+   * Which keys of a bound element carry the label and the figure.
+   *
+   * Default `label`/`value`, which is the shape the Investment Compass masters
+   * assume. A projection that publishes whole rows — the Cash Flow series is
+   * ten objects of eight fields each — names the two it wants plotted rather
+   * than being reshaped into a second array purely for the chart.
+   */
+  labelKey?: string;
+  valueKey?: string;
+}): FlowItem {
+  const c = ctx();
+  const plan = chartPlan(c.manifest.chart_style);
+  const base = c.density === 'compact' ? 158 : c.density === 'spacious' ? 224 : 186;
+  const height = opts.height
+    ?? (plan.block === 'sparkline' ? 92 : plan.smallMultiples ? Math.round(base * 0.72) : base);
+  // `sparkline` takes a bare series rather than a titled chart.
+  const isSparkline = plan.block === 'sparkline';
+  return {
+    height,
+    block: (y) => block(plan.block, {
+      ...(isSparkline ? {} : { title: opts.title, caption: opts.caption }),
+      dataPath: opts.dataPath,
+      data: opts.data,
+      labelKey: opts.labelKey ?? 'label',
+      valueKey: opts.valueKey ?? 'value',
+      accent: 'token:primary',
+      x: c.contentLeft, y, width: c.contentWidth, height,
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Image plates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Where a plate's photograph comes from.
+ *
+ * `property.images` is a forward-looking path: **no adapter emits it today**.
+ * That is deliberate rather than an oversight. A plate is a designed hole an
+ * operator fills in the Builder for a specific report — the archetype's own
+ * briefs say "Drop the hero photograph" — and binding it means the day an
+ * adapter does carry photographs, every plate in two families fills itself with
+ * no template change.
+ *
+ * Until then the binding resolves empty, and the plate prints nothing.
+ */
+function plateSrc(index: number): string {
+  return `{{property.images.${index}}}`;
+}
+
+/**
+ * The condition under which a plate renders at all.
+ *
+ * This is the whole answer to the catalogue's own warning — Monograph exists
+ * because "empty plates never print as holes". Three failure modes are covered
+ * by one expression:
+ *
+ *   - `property` absent entirely (a sparse report): `evalConditional` rejects an
+ *     expression naming an unbound identifier and returns false. No render.
+ *   - `property.images` absent: the guard is falsy. No render.
+ *   - `property.images[n]` present but an empty string: also falsy, which is why
+ *     the index is tested rather than the array's length.
+ */
+function plateConditional(index: number): string {
+  return `property && property.images && property.images[${index}]`;
+}
+
+/**
+ * A plate on its own page.
+ *
+ * ## Why a plate is a page and never a slot in the flow
+ *
+ * The archetype runs its narrative plate across the top of a content page with
+ * the heading reversed out of it. That is the better picture and the wrong
+ * shape for a fixed-position renderer with no reflow, for two reasons that
+ * pull in the same direction:
+ *
+ *   - The pages the plates belong to are already full. Dropping 90mm of
+ *     photograph into "The property" or "Investment thesis" overflowed eight of
+ *     the ten plated variants — up to 123pt past the content bottom on
+ *     `le-03`, which is a page and a half of prose pushed off the paper.
+ *   - Most reports carry no photographs at all. An inline plate reserves its
+ *     height whether or not it is filled, so the common case would be a hole in
+ *     the middle of the argument, or (worse) type set over blank space where a
+ *     picture was supposed to be.
+ *
+ * A page solves both. It always fits, because it is measured against nothing;
+ * and it carries the plate's `conditional` on the PAGE, so an unfilled plate
+ * costs no page rather than an empty one. `visiblePages` filters it out before
+ * anything is laid out, which is why this is the only placement that vanishes
+ * completely.
+ *
+ * ## The two treatments
+ *
+ * `bleed` is the family's difference, not a per-plate option. Luxury Editorial
+ * is a monograph — its plates run to the trim with the asset's name reversed
+ * out of a scrim at the foot, and the page ground is the field colour so an
+ * unfilled edge is never white. Architectural Property measures instead of
+ * bleeds: the plate is inset to the page margin and captioned "FIGURE N ·" in
+ * tracked mono, which is what its `four_measured` slot plan names.
+ */
+export function platePage(opts: {
+  index: number;
+  brief: string;
+  name: string;
+  caption?: string;
+  bleed: boolean;
+}): PageDef {
+  const blocks = opts.bleed ? bleedPlateBlocks(opts) : measuredPlateBlocks(opts);
+  const p = page(opts.name, blocks, opts.bleed ? 'token:bg' : 'token:surface');
+  return { ...p, conditional: plateConditional(opts.index) };
+}
+
+/** Luxury Editorial: to the trim, with a reversed caption band at the foot. */
+function bleedPlateBlocks(opts: {
+  index: number; brief: string; caption?: string;
+}): BlockDef[] {
+  const c = ctx();
+  // Deep enough for a tracked label over two lines of address at heading size,
+  // plus the run-up the fade needs: the scrim reaches full strength over the
+  // bottom two fifths, so a band sized to the type alone would ramp under it.
+  const band = c.margin * 2 + Math.round(c.scale.heading * 2.4) + 90;
+  return [
+    block('image', {
+      src: plateSrc(opts.index),
+      fit: 'cover',
+      // Never a grey "No image" rectangle on a client's report.
+      placeholder: false,
+      x: 0, y: 0, width: PAGE.width, height: PAGE.height,
+    }, opts.brief),
+    // `tint` rather than `bg`: the hero paints its tint at 0.55 opacity, which
+    // is what makes reversed type legible over an unknown photograph. `bg` is
+    // opaque and would hide the foot of the plate entirely — and `tintFade`
+    // ramps it in, because a flat band draws a hard edge across the picture.
+    block('hero', {
+      tintFade: true,
+      title: '{{property.address}}',
+      titleSize: c.scale.heading,
+      titleFont: 'token:heading',
+      titleColor: 'token:text',
+      ...(opts.caption
+        ? {
+          eyebrow: opts.caption,
+          eyebrowSize: c.scale.eyebrow,
+          eyebrowFont: 'token:mono',
+          eyebrowTracking: TRACKING.label,
+          eyebrowColor: 'token:primary',
+        }
+        : {}),
+      tint: 'token:bg',
+      padding: c.margin,
+      x: 0, y: PAGE.height - band, width: PAGE.width, height: band,
+    }, 'Plate caption'),
+  ];
+}
+
+/**
+ * Architectural Property: inset to the page margin and captioned.
+ *
+ * Symmetric on `margin` rather than the content measure: a plate page carries
+ * no running head and no rail, so there is no lane for it to align to, and a
+ * plate pushed 30pt right of centre to clear a rail that is not drawn reads as
+ * a mistake.
+ *
+ * The caption is the `image` block's own — it reserves its height inside the
+ * box, so the picture shortens to make room rather than the caption falling off
+ * the page.
+ */
+function measuredPlateBlocks(opts: {
+  index: number; brief: string; caption?: string;
+}): BlockDef[] {
+  const c = ctx();
+  return [
+    block('image', {
+      src: plateSrc(opts.index),
+      ...(opts.caption ? { caption: opts.caption } : {}),
+      captionColor: 'token:muted',
+      captionSize: c.scale.kpiNote,
+      captionFont: 'token:mono',
+      captionStyle: 'normal',
+      captionTransform: 'uppercase',
+      captionTracking: TRACKING.label,
+      fit: 'cover',
+      radius: c.radius,
+      placeholder: false,
+      x: c.margin,
+      y: c.margin,
+      width: PAGE.width - c.margin * 2,
+      height: PAGE.height - c.margin * 2,
+    }, opts.brief),
+  ];
+}
+
+/**
+ * The cover's photographic ground.
+ *
+ * Emitted as the first block on the cover so the wordmark, title and fact band
+ * paint over it. When it is absent the cover falls back to its field colour,
+ * which is exactly the typographic cover the `three_interior` and `none`
+ * variants use — so the two are one composition rather than two.
+ *
+ * The scrim is what makes reversed type legible over an unknown photograph. The
+ * archetype uses two gradients; this uses one flat tint at the same intent,
+ * because a `hero`'s `tint` is a solid and a gradient stop would have to be a
+ * literal colour, which `isBrandSafe()` would fail.
+ */
+export function coverHero(index: number, brief: string): BlockDef[] {
+  return [
+    block('image', {
+      src: plateSrc(index),
+      fit: 'cover',
+      placeholder: false,
+      x: 0, y: 0, width: PAGE.width, height: PAGE.height,
+    }, brief),
+    // `tint` rather than `bg`: the hero paints a tint at 0.55 opacity, which is
+    // what makes reversed type legible over an unknown photograph. `bg` is
+    // opaque and would hide the plate entirely.
+    block('hero', {
+      title: '',
+      tint: 'token:bg',
+      x: 0, y: 0, width: PAGE.width, height: PAGE.height,
+    }, 'Cover scrim'),
+  ].map((b) => ({ ...b, conditional: plateConditional(index) }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Appendix
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function disclaimerPage(text: string): PageDef {
+  return page('Important information', [
+    block('disclaimer', {
+      companyName: '{{org.name}}',
+      abn: '{{org.abn}}',
+      address: '{{org.address}}',
+      phone: '{{org.phone}}',
+      email: '{{org.email}}',
+      website: '{{org.website}}',
+      disclaimerText: text,
+      fontSize: 8,
+    }),
+  ]);
+}

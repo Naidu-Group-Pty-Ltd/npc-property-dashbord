@@ -63,6 +63,14 @@ function useUnsavedChangesBlocker(when: boolean): NavigationBlocker {
 
   return { state, proceed, reset };
 }
+import {
+  assetStatusLabel,
+  assetsAreValidating,
+  assetsBlockSave,
+  statusesOf,
+  BRAND_SLOT_ORDER,
+  type BrandAssetStatus,
+} from '@/branding/brand-asset-validation';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -140,8 +148,20 @@ import { PageHero } from '@/components/layout/PageHero';
 
 type SurfacePreview = 'auth' | 'sidebar' | 'browser';
 
+/**
+ * `empty` and `invalid` are deliberately distinct.
+ *
+ * An empty slot is a supported, intentional state: the brand resolver falls
+ * back down the chain and finally to the platform's own artwork, which is the
+ * only way a tenant can return to unbranded defaults. Classifying it as
+ * `invalid` — as this once did — made every removal un-saveable, because
+ * `hasInvalidAssets` disables the Save button.
+ *
+ * `invalid` means something stronger and much rarer: a URL *is* configured and
+ * the browser cannot load it. That genuinely should block a save.
+ */
 type AssetValidationState = {
-  status: 'idle' | 'validating' | 'valid' | 'invalid';
+  status: BrandAssetStatus;
   detail: string;
   src: string | null;
   meta?: {
@@ -162,9 +182,10 @@ const BRAND_SLOT_LABELS: Record<BrandAssetSlot, string> = {
   'report-mono': 'Report slot (dark ground)',
 };
 
-const BRAND_SLOT_ORDER: BrandAssetSlot[] = [
-  'auth', 'sidebar', 'sidebar-icon', 'favicon', 'report', 'report-mono',
-];
+/** Copy for a slot with nothing configured anywhere in its fallback chain. */
+const EMPTY_SLOT_DETAIL = (slot: BrandAssetSlot) =>
+  `No ${BRAND_SLOT_LABELS[slot].toLowerCase()} asset — this surface uses the platform default. Upload one to brand it.`;
+
 
 function createDefaultDraft() {
   return {
@@ -265,10 +286,11 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
   const uploadToSupabase = async (file: Blob, fileName: string): Promise<string> => {
     const fileExt = fileName.split('.').pop() || 'png';
     const filePath = `${logoType}/${Date.now()}.${fileExt}`;
-    
+
+    // No `upsert`: the mediated proxy generates a unique destination path for
+    // browser callers, and it rejects the flag as an unauthorized replace.
     const uploadResult = await secureStorageUpload('branding-assets', filePath, file, {
       contentType: file.type || 'image/png',
-      upsert: true
     });
 
     if (!uploadResult.success) throw new Error(uploadResult.error || 'Upload failed');
@@ -280,6 +302,7 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
 
     return urlData.publicUrl;
   };
+
 
   const processFile = async (file: File) => {
     // Validate file type
@@ -317,12 +340,16 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
       });
     } catch (error) {
       console.error('Error processing image:', error);
-      toast.error('Failed to process image', { 
-        description: removeBackgroundEnabled 
-          ? 'Background removal failed. Try uploading without background removal.' 
-          : 'Please try again with a different image.'
-      });
+      // The generic "try a different image" copy hid every real cause —
+      // permission denials, expired sessions, size/type rejections — and sent
+      // admins hunting for a fault in their artwork. Surface the actual reason.
+      const reason = error instanceof Error ? error.message : String(error ?? '');
+      const description = removeBackgroundEnabled && !reason
+        ? 'Background removal failed. Try uploading without background removal.'
+        : reason || 'Please try again with a different image.';
+      toast.error('Logo upload failed', { description });
     } finally {
+
       setIsProcessing(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -359,20 +386,16 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
     }
   }, [removeBackgroundEnabled]);
 
-  const handleRemove = async () => {
-    // Optionally delete from Supabase storage
-    if (currentLogo && currentLogo.includes('branding-assets')) {
-      try {
-        const path = currentLogo.split('branding-assets/')[1];
-        if (path) {
-          await supabase.storage.from('branding-assets').remove([path]);
-        }
-      } catch (error) {
-        console.error('Failed to delete from storage:', error);
-      }
-    }
+  const handleRemove = () => {
+    // Deliberately does NOT delete the stored object. Remove only edits the
+    // draft: the row still points at this file until "Save brand changes"
+    // succeeds, so destroying it here left every branded surface showing a
+    // broken image whenever the save was then rejected or discarded. An
+    // unreferenced object in the bucket is a far cheaper problem.
     onRemove();
-    toast.success('Logo removed');
+    toast.success('Logo removed from draft', {
+      description: 'Save brand changes to apply it.',
+    });
     logActivityDirect({
       actionType: 'whitelabel_logo_changed',
       entityType: 'whitelabel_settings',
@@ -576,19 +599,13 @@ function EmailBannerUpload({ currentBanner, onUpload, onRemove }: EmailBannerUpl
     }
   }, []);
 
-  const handleRemove = async () => {
-    if (currentBanner && currentBanner.includes('branding-assets')) {
-      try {
-        const path = currentBanner.split('branding-assets/')[1];
-        if (path) {
-          await supabase.storage.from('branding-assets').remove([path]);
-        }
-      } catch (error) {
-        console.error('Failed to delete from storage:', error);
-      }
-    }
+  const handleRemove = () => {
+    // See LogoUploadCard.handleRemove: the stored object is left in place
+    // until the row that references it has actually been updated.
     onRemove();
-    toast.success('Banner removed');
+    toast.success('Banner removed from draft', {
+      description: 'Save brand changes to apply it.',
+    });
   };
 
   return (
@@ -686,6 +703,7 @@ export default function WhiteLabel() {
     report: { status: 'idle', detail: 'Waiting for validation.', src: null },
     'report-mono': { status: 'idle', detail: 'Waiting for validation.', src: null },
   });
+  const [isSavingBrand, setIsSavingBrand] = useState(false);
   const [showLeavePrompt, setShowLeavePrompt] = useState(false);
   const [showResetPrompt, setShowResetPrompt] = useState(false);
   const [showPresetDialog, setShowPresetDialog] = useState(false);
@@ -815,10 +833,10 @@ export default function WhiteLabel() {
         const src = getBrandAssetSrc(draftSettings, slot);
         const resolvedFrom = getResolvedAssetField(draftSettings, slot, src);
         acc[slot] = {
-          status: src ? 'validating' : 'invalid',
+          status: src ? 'validating' : 'empty',
           detail: src
             ? `Checking ${BRAND_SLOT_LABELS[slot].toLowerCase()} asset${resolvedFrom && resolvedFrom !== slot ? ` via ${BRAND_SLOT_LABELS[resolvedFrom].toLowerCase()} fallback` : ''}.`
-            : `Upload an asset for ${BRAND_SLOT_LABELS[slot].toLowerCase()} before saving.`,
+            : EMPTY_SLOT_DETAIL(slot),
           src,
         };
         return acc;
@@ -834,9 +852,12 @@ export default function WhiteLabel() {
           const resolvedFrom = getResolvedAssetField(draftSettings, slot, src);
 
           if (!src) {
+            // Nothing configured anywhere in this slot's fallback chain. That
+            // is allowed — it is how a tenant returns to platform defaults —
+            // so it must not block saving.
             return [slot, {
-              status: 'invalid',
-              detail: `Upload an asset for ${BRAND_SLOT_LABELS[slot].toLowerCase()} before saving.`,
+              status: 'empty',
+              detail: EMPTY_SLOT_DETAIL(slot),
               src,
             }] as const;
           }
@@ -870,15 +891,19 @@ export default function WhiteLabel() {
   }, [assetValidationKey]);
 
 
-  const hasInvalidAssets = useMemo(
-    () => BRAND_SLOT_ORDER.some((slot) => assetValidation[slot].status !== 'valid'),
+  /**
+   * Only a *broken* asset blocks saving. This previously tested
+   * `status !== 'valid'`, which counted every empty slot as a failure — so
+   * removing a logo disabled the Save button and a tenant could never clear
+   * their branding or return to the platform defaults.
+   */
+  const assetStatuses = useMemo(
+    () => statusesOf(BRAND_SLOT_ORDER, (slot) => assetValidation[slot].status),
     [assetValidation]
   );
-  const isValidatingAssets = useMemo(
-    () => BRAND_SLOT_ORDER.some((slot) => assetValidation[slot].status === 'validating'),
-    [assetValidation]
-  );
-  const canSaveBranding = hasChanges && canEditWhiteLabel && !hasCriticalChecks && !hasInvalidAssets && !isValidatingAssets;
+  const hasInvalidAssets = useMemo(() => assetsBlockSave(assetStatuses), [assetStatuses]);
+  const isValidatingAssets = useMemo(() => assetsAreValidating(assetStatuses), [assetStatuses]);
+  const canSaveBranding = hasChanges && canEditWhiteLabel && !hasCriticalChecks && !hasInvalidAssets && !isValidatingAssets && !isSavingBrand;
   const canUndoLastChange = draftHistoryRef.current.length > 0;
   const handleSaveDraft = useCallback(() => {
     try {
@@ -987,35 +1012,61 @@ export default function WhiteLabel() {
     { value: 'system', label: 'System', icon: <Laptop className="h-4 w-4" />, description: 'Follow device settings' },
   ];
 
-  const handleSaveBranding = () => {
+  const handleSaveBranding = async () => {
     if (hasCriticalChecks) {
       toast.error('Resolve the critical brand checks before saving');
       return;
     }
 
-    if (isValidatingAssets || hasInvalidAssets) {
-      toast.error('Resolve the brand asset validation checks before saving');
+    if (isValidatingAssets) {
+      toast.error('Brand assets are still being checked — try again in a moment');
       return;
     }
 
-    updateSettings(draftSettings);
-    clearPersistedDraft();
-    setLastDraftSavedAt(null);
-    setAvailablePersistedDraft(null);
-    draftHistoryRef.current = [];
-    toast.success('Branding settings saved');
-    logActivityDirect({
-      actionType: 'whitelabel_settings_updated',
-      entityType: 'whitelabel_settings',
-      entityName: 'Brand System',
-      metadata: {
-        companyName: draftSettings.companyName,
-        hasAuthLogo: Boolean(draftSettings.authLogo),
-        hasSidebarLogo: Boolean(draftSettings.sidebarLogo),
-        hasSidebarIcon: Boolean(draftSettings.sidebarIcon),
-        hasFavicon: Boolean(draftSettings.favicon),
+    if (hasInvalidAssets) {
+      toast.error('An uploaded brand asset could not be loaded', {
+        description: 'Re-upload or remove the broken asset before saving.',
+      });
+      return;
+    }
+
+    if (isSavingBrand) return;
+    setIsSavingBrand(true);
+    try {
+      const result = await updateSettings(draftSettings);
+
+      // A save that the database never accepted must not look like one. This
+      // previously toasted success and cleared the draft unconditionally, so a
+      // rejected write reported "Branding settings saved" AND discarded the
+      // user's edits — which is how removing a logo appeared to do nothing.
+      if (!result.ok) {
+        toast.error('Branding changes were not saved', {
+          description: result.message,
+          duration: 10000,
+        });
+        return;
       }
-    });
+
+      clearPersistedDraft();
+      setLastDraftSavedAt(null);
+      setAvailablePersistedDraft(null);
+      draftHistoryRef.current = [];
+      toast.success('Branding settings saved');
+      logActivityDirect({
+        actionType: 'whitelabel_settings_updated',
+        entityType: 'whitelabel_settings',
+        entityName: 'Brand System',
+        metadata: {
+          companyName: draftSettings.companyName,
+          hasAuthLogo: Boolean(draftSettings.authLogo),
+          hasSidebarLogo: Boolean(draftSettings.sidebarLogo),
+          hasSidebarIcon: Boolean(draftSettings.sidebarIcon),
+          hasFavicon: Boolean(draftSettings.favicon),
+        }
+      });
+    } finally {
+      setIsSavingBrand(false);
+    }
   };
 
   const brandingDraftActions = (
@@ -1035,7 +1086,7 @@ export default function WhiteLabel() {
       <Badge variant="outline" className="min-h-10 rounded-full border-border/70 bg-card/75 px-4 py-2 text-muted-foreground shadow-sm">
         Theme preview: <span className="ml-1 font-semibold capitalize text-foreground">{currentTheme}</span>
       </Badge>
-      <Button className="min-h-10 bg-primary px-4 text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding}>
+      <Button className="min-h-10 bg-primary px-4 text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding} aria-busy={isSavingBrand}>
         <Check className="mr-2 h-4 w-4" />
         Save brand changes
       </Button>
@@ -1172,7 +1223,7 @@ export default function WhiteLabel() {
               setLastDraftSavedAt(null);
             }} disabled={!hasChanges}>Discard</Button>
             <Button variant="outline" className="min-h-10 min-w-0 border-destructive/30 bg-destructive/5 text-destructive shadow-sm transition-all hover:-translate-y-0.5 hover:bg-destructive/10 hover:text-destructive hover:shadow-md hover:shadow-destructive/10 focus-visible:ring-destructive/40 disabled:hover:translate-y-0" onClick={() => setShowResetPrompt(true)} disabled={!canEditWhiteLabel}>Reset to defaults</Button>
-            <Button className="min-h-10 min-w-0 bg-primary text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding}>
+            <Button className="min-h-10 min-w-0 bg-primary text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding} aria-busy={isSavingBrand}>
               <Check className="mr-2 h-4 w-4" />
               Save brand changes
             </Button>
@@ -1719,6 +1770,8 @@ export default function WhiteLabel() {
             {BRAND_SLOT_ORDER.map((slot) => {
               const validation = assetValidation[slot];
               const isValid = validation.status === 'valid';
+              // Empty reads as neutral, not as a problem: it is a legitimate
+              // choice that hands the surface to the platform default.
               const isInvalid = validation.status === 'invalid';
 
               return (
@@ -1744,7 +1797,7 @@ export default function WhiteLabel() {
                       ) : null}
                     </div>
                     <Badge variant="outline" className={`w-fit shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] ${isValid ? 'border-success/35 bg-success/10 text-success shadow-sm shadow-success/10' : isInvalid ? 'border-warning/35 bg-warning/10 text-warning shadow-sm shadow-warning/10' : 'border-border bg-muted/40 text-muted-foreground'}`}>
-                      {validation.status === 'validating' ? 'Checking' : validation.status === 'valid' ? 'Ready' : validation.status === 'invalid' ? 'Needs asset' : 'Idle'}
+                      {assetStatusLabel(validation.status)}
                     </Badge>
                   </div>
                 </div>

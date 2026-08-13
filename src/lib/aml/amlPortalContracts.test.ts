@@ -86,9 +86,14 @@ describe("activation contract (Phase 1, directive §17)", () => {
     /case 'activate_client': \{([\s\S]*?)\n {6}\}/,
   )?.[1];
 
-  it("still requires human confirmation, an active client and a reason", () => {
+  it("still requires human confirmation and a reason; inactive clients are activated atomically", () => {
     expect(activateBranch).toContain("Human confirmation is required");
-    expect(activateBranch).toContain("Client is not active");
+    // Inactive clients are no longer bounced to another screen — the
+    // confirmed form flips them active in the same transaction as case
+    // creation (aml_activate_client_open_case), with a compensated fallback.
+    expect(activateBranch).not.toContain("Client is not active");
+    expect(activateBranch).toContain("const clientWasInactive = client.is_active !== true;");
+    expect(activateBranch).toContain("aml_activate_client_open_case");
     expect(activateBranch).toContain("reason must be at least 10 characters");
   });
 
@@ -169,15 +174,16 @@ describe("activation dialog has no raw-UUID entry (Phase 4, §13.4)", () => {
   it("uses a client picker instead of a UUID input", () => {
     expect(dialogSource).not.toContain("Client ID (UUID)");
     expect(dialogSource).not.toContain("00000000-0000-0000-0000-000000000000");
-    expect(dialogSource).toContain("Search clients by name");
+    expect(dialogSource).toContain("Search clients by first name, surname or full name");
   });
 
-  it("loads only a slim, non-sensitive client projection for the picker", () => {
-    // The projection now lives on the server (aml-cases `search_clients`) —
-    // the dialog receives a name-only shape and never a client record.
-    expect(casesSource).toContain("select('id, primary_first_name, primary_surname, is_active')");
-    expect(dialogSource).toMatch(/label: string;\s*\n?\s*is_active: boolean;/);
-    expect(dialogSource).not.toMatch(/total_portfolio_value|email|phone/);
+  it("loads only a slim, non-financial client projection for the picker", () => {
+    // The projection lives on the server (aml-cases `search_clients` via the
+    // shared CLIENT_SEARCH_SELECT) — identification data only (name, email,
+    // mobile, active flag), never financial fields.
+    expect(casesSource).toContain("select(CLIENT_SEARCH_SELECT)");
+    expect(dialogSource).toContain("AmlActivationClient");
+    expect(dialogSource).not.toMatch(/total_portfolio_value|total_debt|cash_flow|income/);
   });
 
   it("does not surface internal model vocabulary in the options", () => {
@@ -744,11 +750,15 @@ describe("activation client picker", () => {
       casesSource.indexOf("case 'search_clients':"),
       casesSource.indexOf("case 'client_summary':"));
     expect(branch).toContain("if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403)");
-    expect(branch).toContain(".eq('is_active', true)");
-    expect(branch).toContain(".limit(20)");
-    // Projection must not leak financial or contact data into the picker.
-    expect(branch).toContain("select('id, primary_first_name, primary_surname, is_active')");
-    expect(branch).not.toMatch(/email|phone|portfolio|income/i);
+    // Candidate fetch is capped; the shared matcher caps offered results at
+    // 20 (CLIENT_SEARCH_RESULT_LIMIT) and includes inactive clients so the
+    // activation form can confirm them active.
+    expect(branch).toContain(".limit(200)");
+    expect(branch).toContain("selectActivationMatches");
+    expect(branch).not.toContain(".eq('is_active', true)");
+    // Projection must not leak financial data into the picker.
+    expect(branch).toContain("select(CLIENT_SEARCH_SELECT)");
+    expect(branch).not.toMatch(/portfolio|income|total_debt|cash_flow/i);
     // This file's response helper is jsonResponse; `jr` belongs to other
     // functions and would be a ReferenceError at runtime here.
     expect(casesSource).not.toMatch(/\bjr\(/);
@@ -1082,9 +1092,10 @@ describe("self-hosted verification stack", () => {
     expect(branch).not.toMatch(/opensanctions/i);
   });
 
-  it("never auto-clears a screening match", () => {
+  it("never auto-clears a screening match, and never clears a scope it did not check", () => {
     const branch = providers.slice(providers.indexOf("makeLocalListsScreeningProvider"));
-    expect(branch).toContain('matches.length === 0 ? "clear" : "review"');
+    expect(branch).toContain('matches.length > 0 ? "review"');
+    expect(branch).toContain('scopesNotCovered.length > 0 ? "review"');
     expect(branch).toContain("scopes_not_covered");
   });
 
@@ -1109,7 +1120,15 @@ describe("self-hosted verification stack", () => {
       verifySource.indexOf("import { reserveTokens"));
     expect(helper).toContain('rpc("has_any_tenant_aml_role"');
     expect(helper).toContain('rpc("has_tenant_aml_role"');
-    expect(helper).toContain('_tenant_id: caseRow.tenant_id');
+    // The tenant is resolved from the case, but NOT by selecting a
+    // `aml.cases.tenant_id` column — that column does not exist and no
+    // migration adds it, so the previous `caseRow.tenant_id` form made this
+    // gate deny every caller on every case (the documentary route was
+    // permanently 403). `resolveTenantId` is the same resolver the rest of
+    // this function file already uses; the assertion pins the property that
+    // matters — authorisation is tenant-scoped — not the broken expression.
+    expect(helper).toContain('await resolveTenantId(admin, caseId)');
+    expect(helper).toContain('_tenant_id: tenantId');
 
     for (const op of [
       "list_verification_checks",
@@ -1154,16 +1173,25 @@ describe("self-hosted verification stack", () => {
   });
 
   it("keeps the portal verification view free of scores and thresholds", () => {
+    // Attempt accounting and the status collapse moved into
+    // verificationParties.pure.ts so the lockout they caused could be covered
+    // by behavioural tests. The withholding property is asserted across both
+    // halves rather than against where the mapping happens to live.
     const helper = portalSource.slice(
       portalSource.indexOf("async function verificationParties"),
       portalSource.indexOf("function consentRequiredResponse"));
-    expect(helper).toContain("CLIENT_VISIBLE");
-    // Comments describe what is withheld; assert against code only.
-    const codeOnly = helper.split("\n")
-      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
-    expect(codeOnly).not.toMatch(/similarity|threshold|score|outcome_detail/);
-    // The staff ownership model must stay out of the portal entirely.
-    expect(codeOnly).not.toContain("beneficial_owners");
+    const pureSource = readFileSync(
+      "supabase/functions/_shared/aml/verificationParties.pure.ts", "utf8");
+    expect(pureSource).toContain("CLIENT_VISIBLE");
+
+    for (const [label, source] of [["portal", helper], ["projection", pureSource]] as const) {
+      // Comments describe what is withheld; assert against code only.
+      const codeOnly = source.split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+      expect(codeOnly, label).not.toMatch(/similarity|threshold|score|outcome_detail/);
+      // The staff ownership model must stay out of the portal entirely.
+      expect(codeOnly, label).not.toContain("beneficial_owners");
+    }
   });
 
   it("keeps the biometric bucket private with no direct client policy", () => {
@@ -1176,5 +1204,156 @@ describe("self-hosted verification stack", () => {
     expect(vcMigration2).toContain("'biometric', 7");
     expect(vcMigration2).toContain("hard_delete");
     expect(vcMigration2).toContain("trigger-based, never from upload");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Compliance passport — Pt 2 Div 7 reliance                           */
+/* ------------------------------------------------------------------ */
+
+describe("compliance passport (AML/CTF Act Pt 2 Div 7)", () => {
+  const reliance = readFileSync(
+    join(repo, "supabase/functions/aml-reliance/index.ts"), "utf8");
+  const relianceMigration = readFileSync(
+    join(repo, "supabase/migrations/20260729090000_aml_reliance_passport.sql"), "utf8");
+
+  it("makes the written agreement a statutory precondition, not a field", () => {
+    // No written CDD arrangement, no s 37A reliance.
+    expect(relianceMigration).toContain("agreement_reference text NOT NULL");
+    expect(relianceMigration).toContain("next_review_due date NOT NULL");
+    expect(reliance).toContain("reliance without a written CDD arrangement is not available");
+  });
+
+  it("suspends new grants when the arrangement's review is overdue", () => {
+    const branch = reliance.slice(reliance.indexOf('case "grant_access"'));
+    expect(branch).toContain("review_overdue");
+    expect(branch).toMatch(/next_review_due[\s\S]{0,120}< Date\.now\(\)/);
+  });
+
+  it("cannot grant without the client's sharing consent, traceably", () => {
+    const branch = reliance.slice(reliance.indexOf('case "grant_access"'));
+    expect(branch).toContain("sharing_consent_missing");
+    expect(branch).toContain("consent_id: consent.id");
+    expect(relianceMigration).toContain("consent_id uuid NOT NULL REFERENCES aml.consents(id)");
+  });
+
+  it("attestation states procedures performed, never our conclusions", () => {
+    const builder = reliance.slice(
+      reliance.indexOf("async function buildAttestationPayload"),
+      reliance.indexOf("async function resolveGrant"));
+    const codeOnly = builder.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    // The exclusion list IS the outward contract.
+    expect(codeOnly).not.toMatch(/risk_rating|risk_score|reviewer_notes|mlro_commentary/);
+    // Screening: performed + freshness only; match content never selected.
+    expect(codeOnly).not.toContain("screening_matches");
+    expect(builder).toContain("list_freshness");
+    // Readiness derives from the explicit gate, same as the finance contract.
+    expect(builder).toContain('["approved", "approved_with_controls"]');
+    // Honesty travels with the passport.
+    expect(builder).toContain("documents_not_verified_against_issuing_authority");
+  });
+
+  it("refuses to attest to a process that has not happened", () => {
+    expect(reliance).toContain("nothing_to_attest");
+  });
+
+  it("issuing, granting and revoking are MLRO-only outward acts", () => {
+    for (const op of ['case "create_agreement"', 'case "issue_attestation"', 'case "grant_access"', 'case "revoke_grant"']) {
+      const idx = reliance.indexOf(op);
+      expect(idx).toBeGreaterThan(-1);
+      expect(reliance.slice(idx, idx + 400)).toContain("isMlro");
+    }
+  });
+
+  it("stores the partner token only as a hash, shown raw exactly once", () => {
+    expect(relianceMigration).toContain("access_token_hash text NOT NULL UNIQUE");
+    expect(reliance).toContain("access_token_hash: await sha256Hex(rawToken)");
+    expect(reliance).toContain("This token is shown once");
+    // list_grants must never return the hash to staff either.
+    const listBranch = reliance.slice(
+      reliance.indexOf('case "list_grants"'), reliance.indexOf('case "list_assessments"'));
+    expect(listBranch).not.toContain("access_token_hash");
+  });
+
+  it("logs every partner access and pins assessments to the content hash", () => {
+    expect(reliance).toContain("reliance_access_log");
+    expect(reliance).toContain("based_on_attestation_sha256: attestation.payload_sha256");
+  });
+
+  it("a partner's independent assessment never moves our case", () => {
+    const branch = reliance.slice(reliance.indexOf("record_independent_assessment —"));
+    expect(branch).toContain("Does not alter this case's status or service gate");
+    // No writes to aml.cases anywhere in the partner path.
+    const partnerPath = reliance.slice(
+      reliance.indexOf('if (op === "redeem_attestation"'),
+      reliance.indexOf("/* ── staff ops"));
+    expect(partnerPath).not.toMatch(/from\("cases"\)[\s\S]{0,80}\.update/);
+  });
+
+  it("publishes the sharing consent as optional, into the current version", () => {
+    // required=false: declining costs the client nothing with us, and no
+    // catalogue re-ask is triggered for every existing client.
+    expect(relianceMigration).toMatch(/'compliance_sharing', '2026\.2', 'consent'/);
+    expect(relianceMigration).toMatch(/false, 60\s*\)/);
+    expect(relianceMigration).toContain("Part 2 Division 7 (ss 37A");
+    expect(relianceMigration).toContain("This consent is optional");
+  });
+});
+
+describe("optional consents are never recorded unticked", () => {
+  const portalAml = readFileSync(join(repo, "src/pages/portal/PortalAml.tsx"), "utf8");
+  it("the consent submit loop skips documents the client did not tick", () => {
+    // With compliance_sharing published as optional, recording an unticked
+    // document would fabricate an authorisation the client never gave.
+    const idx = portalAml.indexOf("if (d.accepted_at) continue;");
+    expect(idx).toBeGreaterThan(-1);
+    expect(portalAml.slice(idx, idx + 400)).toContain("if (!checked[d.code]) continue;");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Compliance journey surfaces                                         */
+/* ------------------------------------------------------------------ */
+
+describe("compliance journey surfaces", () => {
+  const staffMap = readFileSync(
+    join(repo, "src/components/aml/ComplianceJourneyMap.tsx"), "utf8");
+  const clientStrip = readFileSync(
+    join(repo, "src/components/portal/ClientJourneyStrip.tsx"), "utf8");
+
+  it("client strip is built from the portal-safe overview alone", () => {
+    // The client's journey view must never import staff APIs or reach for
+    // internal vocabulary — it reads AmlPortalOverview and nothing else.
+    expect(clientStrip).toContain("AmlPortalOverview");
+    expect(clientStrip).not.toMatch(/amlRelianceApi|amlCasesApi|amlVerificationApi|amlRiskApi/);
+    const codeOnly = clientStrip.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(codeOnly).not.toMatch(/risk|mlro|screening|service_gate|attestation/i);
+  });
+
+  it("staff map is a projection, not a control panel", () => {
+    // The journey renders state; it must never write anything.
+    expect(staffMap).not.toMatch(/\.update\(|\.insert\(|issueAttestation|grantAccess|\btransition\(/);
+  });
+
+  it("staff map derives 'approved' only from the explicit gate decision", () => {
+    expect(staffMap).toContain('["approved", "approved_with_controls"].includes(gate)');
+    expect(staffMap).not.toMatch(/risk_rating|risk_score/);
+  });
+
+  it("both surfaces use semantic tokens, not raw palette classes", () => {
+    for (const src of [staffMap, clientStrip]) {
+      // FRONTEND_TOOLING hard rule: no raw Tailwind palette colours.
+      expect(src).not.toMatch(/-(red|green|blue|emerald|amber|slate|zinc|gray|indigo|violet)-\d{2,3}/);
+      expect(src).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    }
+  });
+
+  it("both surfaces are wired into their pages", () => {
+    const workspace = readFileSync(join(repo, "src/pages/aml/AmlCaseWorkspace.tsx"), "utf8");
+    const portal = readFileSync(join(repo, "src/pages/portal/PortalAml.tsx"), "utf8");
+    expect(workspace).toContain("<ComplianceJourneyMap caseRow={caseRow} />");
+    expect(portal).toContain("<ClientJourneyStrip overview={data!} />");
   });
 });

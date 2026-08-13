@@ -1,4 +1,10 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
+import {
+  clearPortalSessionToken,
+  portalSessionBodyFields,
+  portalSessionHeaders,
+  setPortalSessionToken,
+} from '@/lib/portalSession';
 
 interface PortalUser {
   id: string;
@@ -26,33 +32,14 @@ const PortalAuthContext = createContext<PortalAuthContextType | undefined>(undef
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
 
-const PORTAL_SESSION_KEY = 'portal_session_token';
-
-const getStoredValue = (key: string): string | null => {
-  try { return sessionStorage.getItem(key) || localStorage.getItem(key); }
-  catch { try { return localStorage.getItem(key); } catch { return null; } }
-};
-
-const persistStoredValue = (key: string, value: string) => {
-  try { sessionStorage.setItem(key, value); } catch {}
-  try { localStorage.setItem(key, value); } catch {}
-};
-
-const clearStoredValue = (key: string) => {
-  try { sessionStorage.removeItem(key); } catch {}
-  try { localStorage.removeItem(key); } catch {}
-};
-
 async function invokePortalFunction(
   functionName: string,
   body?: Record<string, any>
 ): Promise<{ data: any; error: any }> {
   try {
-    const sessionToken = getStoredValue(PORTAL_SESSION_KEY);
     const requestBody = {
       ...body,
-      portal_session_token: sessionToken,
-      session_token: sessionToken,
+      ...portalSessionBodyFields(),
     };
 
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
@@ -61,9 +48,13 @@ async function invokePortalFunction(
         'Content-Type': 'application/json',
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        ...(sessionToken ? { 'x-portal-session-token': sessionToken } : {}),
+        ...portalSessionHeaders(),
       },
-      credentials: 'omit',
+      // WP-11B/C: the HttpOnly `__Host-client_session_token` cookie is the
+      // authoritative carrier, so it has to be attached. This was 'omit', which
+      // stripped it and forced the token to travel in a body field the browser
+      // had to keep readable — see src/lib/portalSession.ts.
+      credentials: 'include',
       body: JSON.stringify(requestBody),
     });
 
@@ -87,19 +78,16 @@ export function PortalAuthProvider({ children }: { children: ReactNode }) {
 
   const checkSession = async () => {
     try {
-      const sessionToken = getStoredValue(PORTAL_SESSION_KEY);
-      if (!sessionToken) {
-        setLoading(false);
-        return;
-      }
-
+      // The cookie is authoritative, so ask the server unconditionally. Bailing
+      // out when no token is held would sign the user out on every reload now
+      // that nothing is persisted to browser storage.
       const { data, error } = await invokePortalFunction('client-portal-verify');
       if (error || !data?.valid) {
         clearAuthState();
       } else {
         setUser(data.user);
         if (data.session_token) {
-          persistStoredValue(PORTAL_SESSION_KEY, data.session_token);
+          setPortalSessionToken(data.session_token);
         }
       }
     } catch {
@@ -110,7 +98,7 @@ export function PortalAuthProvider({ children }: { children: ReactNode }) {
   };
 
   const clearAuthState = () => {
-    clearStoredValue(PORTAL_SESSION_KEY);
+    clearPortalSessionToken();
     setUser(null);
   };
 
@@ -127,7 +115,7 @@ export function PortalAuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data.session_token) {
-        persistStoredValue(PORTAL_SESSION_KEY, data.session_token);
+        setPortalSessionToken(data.session_token);
       }
 
       setUser(data.user);

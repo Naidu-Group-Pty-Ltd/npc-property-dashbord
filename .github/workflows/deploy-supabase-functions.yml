@@ -1,0 +1,155 @@
+name: Deploy Supabase functions
+
+# Ships the edge functions that land on `main`.
+#
+# This exists because nothing did. PR #1866 rewrote the Airtable field map, the
+# deduplication guard and the whole listing-image pipeline, merged cleanly, and
+# then produced no visible change for two days — because merging is not
+# deploying and no pipeline closed that gap. The frontend ships with the site
+# build, the functions did not ship at all, so production ran a new interface
+# over old server code: sentinel addresses the new code no longer emits, prices
+# from a column that does not exist, and an enrichment service that was never
+# uploaded.
+#
+# The failure is silent by construction, which is what makes it worth a
+# workflow rather than a runbook entry: nothing is red, the merge is green, and
+# the only symptom is that the product does not change.
+#
+# Opt-in by secret. Without SUPABASE_ACCESS_TOKEN this reports what it *would*
+# deploy and stops — so adding the file does not start pushing code to anyone's
+# project, and does not paint `main` red for a repo that has not set it up.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - 'supabase/config.toml'
+      - '.github/workflows/deploy-supabase-functions.yml'
+  workflow_dispatch:
+    inputs:
+      functions:
+        description: 'Space-separated function names. Empty deploys every changed one.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Never two deploys into the same project at once, and never cancel one
+# mid-flight: a half-applied set of functions is worse than a late one.
+concurrency:
+  group: deploy-supabase-functions
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `git diff` against the previous commit needs its parent.
+          fetch-depth: 2
+
+      - name: Work out which functions changed
+        id: changed
+        env:
+          REQUESTED: ${{ inputs.functions }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED:-}" ]; then
+            echo "list=${REQUESTED}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # A change under _shared/ can alter any function that imports it, and
+          # working out which is a dependency-graph problem this step has no
+          # business solving. Deploy everything instead: the operation is
+          # idempotent, and under-deploying is what caused the bug this file
+          # exists to prevent.
+          if git diff --name-only HEAD^ HEAD | grep -qE '^supabase/functions/_shared/'; then
+            echo 'shared code changed — deploying every function' >&2
+            list=$(find supabase/functions -mindepth 1 -maxdepth 1 -type d \
+              ! -name '_shared' -printf '%f\n' | sort | tr '\n' ' ')
+          else
+            list=$(git diff --name-only HEAD^ HEAD \
+              | sed -n 's|^supabase/functions/\([^/]*\)/.*|\1|p' \
+              | grep -v '^_shared$' | sort -u | tr '\n' ' ')
+          fi
+          echo "list=${list}" >> "$GITHUB_OUTPUT"
+
+      # The `secrets` context is not dependable inside a step-level `if`, so the
+      # presence of the token becomes an ordinary output first.
+      - name: Check for a deploy credential
+        id: gate
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -n "${TOKEN:-}" ]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Stays green on purpose (see the header), but no longer stays quiet.
+      #
+      # A job summary is only read by someone who already suspects a problem,
+      # and the state this reports is one nobody suspects: the merge is green,
+      # the workflow ran, and the functions on main are not the functions in
+      # production. That gap shipped a Command Centre password reset that had
+      # been fixed on main and still answered 401 in production, and the person
+      # locked out of their own account had no way to see why. A `::warning::`
+      # is annotated onto the run and the commit, so the undeployed state is
+      # visible from the merge itself rather than one click deeper.
+      - name: Report and stop when no credential is configured
+        if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true' }}
+        run: |
+          echo "::warning title=Supabase functions NOT deployed::No SUPABASE_ACCESS_TOKEN secret is set. ${{ steps.changed.outputs.list }} changed on main but production still runs the previous version. Add the secret in Settings → Secrets → Actions."
+          {
+            echo '### Supabase functions NOT deployed'
+            echo
+            echo 'No `SUPABASE_ACCESS_TOKEN` secret is set, so this run made no changes.'
+            echo
+            echo '**Production is running the previous version of every function listed below.**'
+            echo
+            echo 'Would have deployed:'
+            echo
+            for fn in ${{ steps.changed.outputs.list }}; do echo "- \`$fn\`"; done
+            echo
+            echo 'Add the secret in Settings → Secrets → Actions to turn this on.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: supabase/setup-cli@v3
+        if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
+        with:
+          version: latest
+
+      - name: Deploy
+        if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'dduzbchuswwbefdunfct' }}
+        run: |
+          set -euo pipefail
+          failed=''
+          for fn in ${{ steps.changed.outputs.list }}; do
+            echo "::group::$fn"
+            # `verify_jwt` comes from config.toml, so it is not passed here —
+            # these functions authenticate in their own bodies and a flag on the
+            # command line would silently disagree with the file.
+            if supabase functions deploy "$fn" --project-ref "$PROJECT_REF"; then
+              echo "- \`$fn\` deployed" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed="$failed $fn"
+              echo "- \`$fn\` **FAILED**" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo '::endgroup::'
+          done
+
+          # Every function is attempted before the job fails, so one bad
+          # function cannot strand the rest undeployed — the exact
+          # partial-deploy state this workflow exists to avoid.
+          if [ -n "$failed" ]; then
+            echo "::error::failed to deploy:$failed"
+            exit 1
+          fi

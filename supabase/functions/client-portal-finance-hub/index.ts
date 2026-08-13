@@ -17,6 +17,8 @@
  *         fields are explicitly whitelisted.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { internalError } from '../_shared/errorResponse.ts';
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -59,7 +61,7 @@ const DECISION_LABEL: Record<string, string> = {
   subject_to_lmi_approval:   'Subject to LMI approval',
 };
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -295,8 +297,16 @@ Deno.serve(async (req) => {
     );
   } catch (err) {
     console.error('[client-portal-finance-hub]', err);
-    return new Response(JSON.stringify({ error: (err as Error).message }),
+    return new Response(JSON.stringify(internalError(err, 'client-portal-finance-hub')),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+
 

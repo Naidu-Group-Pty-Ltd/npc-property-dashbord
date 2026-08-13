@@ -2,6 +2,7 @@ import type { Overlay } from '../../templateSchema';
 import type { ImportAsset, ImportWarning, RawImportBlock, RawImportManifest, TemplateImportPlan } from './types';
 import { stableImportId } from './ids';
 import { buildBackgroundFirstImportPlan } from './planBuilder';
+import { resolveTextWrapping } from '../../pdfImport/resolveTextWrapping.pure';
 
 export interface HybridPlanOptions {
   importId?: string;
@@ -32,10 +33,22 @@ function rawTextBlockToOverlay(block: RawImportBlock, unlockConfidence: number):
   const confidence = clamp01(block.confidence);
   const fontSize = finiteOr(block.style?.fontSize, Math.max(8, Math.min(72, block.bbox.height * 0.72)));
   const lineHeight = block.style?.lineHeight ?? 1.2;
-  // Single-line source text must not wrap when the substituted font runs wider
-  // than the original — a wrapped second line overlaps the content below.
-  const isSingleLine = !content.includes('\n')
-    && finiteOr(block.bbox.height, fontSize * 1.3) <= fontSize * lineHeight * 1.6;
+  // Same decision as the Docling mapper, from the same module: text the source
+  // set on one line must not gain a second, and text the source set on two must
+  // not be forced onto one. This path has no width measurer, so it decides on
+  // the source's line count when one was recorded and on box geometry when not.
+  const wrapping = resolveTextWrapping({
+    text: content,
+    boxWidthPt: Math.max(1, finiteOr(block.bbox.width, 1)),
+    boxHeightPt: finiteOr(block.bbox.height, fontSize * 1.3),
+    fontSizePt: fontSize,
+    lineHeight,
+    letterSpacingPt: block.style?.letterSpacing ?? 0,
+    fontFamily: block.style?.fontFamily ?? 'Inter',
+    sourceLineCount: block.meta?.sourceLineCount ?? null,
+    sourceBaselineCount: block.meta?.sourceBaselineCount ?? null,
+    sourceAlign: block.style?.textAlign ?? null,
+  });
   return {
     id: stableImportId('text', block.id),
     type: 'text',
@@ -55,7 +68,7 @@ function rawTextBlockToOverlay(block: RawImportBlock, unlockConfidence: number):
     // Phase 2: prefer real leading/tracking from the extractor when present.
     lineHeight,
     letterSpacing: block.style?.letterSpacing ?? 0,
-    ...(isSingleLine ? { whiteSpace: 'nowrap' as const } : {}),
+    ...(wrapping.nowrap ? { whiteSpace: 'nowrap' as const } : {}),
     locked: confidence < unlockConfidence,
     confidence,
     name: `Imported text · ${block.source}`,

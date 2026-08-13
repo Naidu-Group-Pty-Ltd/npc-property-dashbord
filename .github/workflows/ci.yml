@@ -23,12 +23,12 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -48,12 +48,48 @@ jobs:
       - name: Integration secrets — registry drift
         run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
 
+      # The AML screening/compliance programme: behavioural provider and
+      # projection/gate suites, the source contracts over the edge functions,
+      # the sanctions parser suite, and the two authorization-boundary
+      # inventories (EDD/MLRO and screening/PEP). None of these ran in CI
+      # before — the screening repair's guarantees only hold if a change that
+      # loosens them goes red here.
+      - name: AML — screening, gate, parser and boundary suites
+        run: |
+          npx vitest run src/lib/aml src/components/aml src/pages/aml
+          npm run test:aml-sanctions
+          npm run security:edd-boundary
+          npm run security:screening-boundary
+
+      # `src/lib/security` held EIGHT specs and ran in no workflow at all — the
+      # same defect WP-16 found in the gates, in the other half of the suite.
+      #
+      # It cost something real. `requestSchemas.spec.ts` asserts that each
+      # schema accepts the body its callers actually send; had it existed and
+      # run, it would have caught `.optional()` rejecting a JSON `null` before
+      # that took four of the five logins down in production. Two more of these
+      # specs were already red from a refactor nobody could see, and two went
+      # red from the WP-28 shim without anything reporting it.
+      #
+      # Every gate in the `security` job reads source. These run it.
+      - name: Security invariant suites (WP-29)
+        run: npx vitest run src/lib/security
+
       # The Workflow Playground's step catalog is derived from the same registry,
       # and its templates reference catalog ids by hand — both rot silently when an
       # integration or an operation is renamed. Ordered here for the same reason as
       # the step above: after the report suites it would never run while they are red.
+      #
+      # The page spec is named explicitly because it does not live under either
+      # of those paths, and it is the one that guards the reported failure: the
+      # step library and the settings panel are docked columns keyed to `lg` and
+      # `xl`, and a change that drops the slide-over route below those widths
+      # leaves a canvas that can be panned and zoomed and nothing else. Every
+      # other workflow test would still pass.
       - name: Workflow Playground — catalog, graph and canvas
-        run: npx vitest run src/lib/workflow src/components/workflow
+        run: >
+          npx vitest run src/lib/workflow src/components/workflow
+          src/pages/__tests__/workflowPlaygroundAccess.spec.tsx
 
       # Golden-render isolation guard, run as its own step so a renderer
       # regression (anything that changes the WeasyPrint/jsPDF output, incl. the
@@ -92,19 +128,61 @@ jobs:
       - name: Unit tests (report design system)
         run: npx vitest run src/lib/reportDesign
 
-      # The first migrated format. Its payload contract is single-sourced the
-      # same way the design system is, and `audit.spec.ts` reads
-      # calculate-borrowing-capacity to check that every audit entry the engine
-      # emits has a known unit and polarity — a table keyed on strings written
-      # elsewhere goes stale silently.
-      - name: Unit tests (borrowing capacity payload)
-        run: npx vitest run src/lib/reports/borrowingCapacity
-
       # Renders the shipping generator and pins page count, sections, typeface
       # and the cover's identity. This is the reference the migration is
       # measured against; if it stops running, the diff stops meaning anything.
+      #
+      # It runs BEFORE the format tests, and that ordering is the whole point.
+      # `reports/` is gitignored, so on a fresh runner the golden PDF does not
+      # exist until this step writes it — and `goldenDiff.spec.ts` guards itself
+      # with `existsSync(GOLDEN_PDF) ? describe : describe.skip`. With the two
+      # steps the other way round, which is how they were written, the entire
+      # legacy-comparison half of the migration's evidence was silently skipped
+      # on every CI run there has ever been. It passed, and it proved nothing.
       - name: Golden capture (borrowing capacity snapshot)
         run: npx vitest run src/components/borrowing-capacity/__tests__
+
+      # Every migrated format, not one of them.
+      #
+      # This named `src/lib/reports/borrowingCapacity` and nothing else, so nine
+      # formats' specs had never run on a runner — including the contents-page,
+      # spine-legality and page-band assertions each migration was built around,
+      # and the render specs that write `reports/html/` for the whole set.
+      #
+      # `src/lib/reports` also picks up the shared markdown renderer, the
+      # critique rubric and the converter, all of which every format goes
+      # through.
+      - name: Unit tests (every report format)
+        run: npx vitest run src/lib/reports
+
+      # The measurer owns the pixels the critique rubric judges, and two of its
+      # three page-level judgements were wrong at once — a trim band derived
+      # from the portrait constants on a landscape sheet, and a full-bleed test
+      # that exempted a tinted page from the trim rule. Both produced `high`
+      # findings on correct documents, which is the severity that stops a gate.
+      - name: Unit tests (the page measurer)
+        run: |
+          python3 -m pip install --quiet --break-system-packages pillow
+          cd scripts/reports && python3 -m unittest test_measure_pages -v
+
+      # The PDF-import sidecar's pure modules — lane policy, OCR language
+      # contract, operational metrics, text alignment — import no Docling and
+      # need no model download, so they are cheap to gate here.
+      #
+      # Nothing ran them before. test_ocr_config.py already encoded the rule
+      # that EasyOCR cannot construct a reader from an incompatible script mix,
+      # and the shipped default drifted to `en,fr,de,es,zh,ja,ko,ar` anyway —
+      # `zh` is not even an EasyOCR code. That failed 9 of 33 production parses
+      # before anyone looked. An unrun test is not a test.
+      #
+      # Only dependency-free modules belong here; anything importing docling,
+      # httpx or fitz is covered by pdf-vnext-j1-container-gate.yml instead.
+      - name: Unit tests (PDF-import sidecar, pure modules)
+        run: |
+          cd pdf-parse-service
+          python3 -m unittest test_lane_policy test_ocr_config test_operational_metrics \
+            test_chart_candidates test_chart_series_wiring test_text_alignment \
+            test_font_cmap_repair -v
 
       - name: Build
         run: npm run build
@@ -115,13 +193,13 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -143,6 +221,39 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+
+      # Warm the Deno module cache across runs.
+      #
+      # Every `deno check` below resolves `https://esm.sh/...` and
+      # `https://deno.land/x/...` from the network. When one of those is
+      # unhealthy the whole job fails on somebody else's outage — esm.sh
+      # answered 408 for `@supabase/storage-js` and took this job down twice in
+      # an hour, with nothing in the diff to act on.
+      #
+      # A restored cache means most runs fetch nothing at all. Deno keys its
+      # cache by URL and integrity, so a cached module is byte-identical to the
+      # one it replaces — this removes a dependency on a third party being up,
+      # not a check.
+      #
+      # The key follows the import lines in the functions themselves, so adding
+      # or bumping a remote specifier misses and refetches; `restore-keys` still
+      # gives the new run a warm start from the previous cache.
+      #
+      # Restore and save are SEPARATE steps on purpose. `actions/cache` writes
+      # its cache in a post step that runs only when the job SUCCEEDED, so the
+      # first version of this could never be seeded during the very outage it
+      # exists to survive: the fetch failed, the job went red, nothing was
+      # saved, and the next run started cold again. `if: always()` on the save
+      # banks whatever was fetched before the failure, so each attempt starts
+      # warmer than the last.
+      - name: Restore Deno module cache
+        id: deno-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
+          restore-keys: |
+            deno-${{ runner.os }}-
 
       - name: Deno type-check shared trust modules
         run: |
@@ -169,6 +280,31 @@ jobs:
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs
 
+      # Guards the save below. An EMPTY cache must never be banked: a cache key
+      # can be written once, and an exact hit does not consult `restore-keys` —
+      # so an empty entry under this key would make every future run on this
+      # tree state start cold, which is precisely what the cache exists to
+      # prevent. `always()` means this step can be reached after a failure that
+      # happened before Deno ever ran.
+      - name: Measure the Deno module cache
+        if: always()
+        id: deno-cache-size
+        run: echo "bytes=$(du -sb ~/.cache/deno 2>/dev/null | cut -f1 || echo 0)" >> "$GITHUB_OUTPUT"
+
+      # See the restore step: this runs on failure too, so a partly-fetched
+      # cache is still banked and the next run starts warmer. Skipped on an
+      # exact hit, which has nothing new to write.
+      - name: Save Deno module cache
+        if: >-
+          always()
+          && steps.deno-cache.outputs.cache-hit != 'true'
+          && steps.deno-cache-size.outputs.bytes != ''
+          && steps.deno-cache-size.outputs.bytes != '0'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
+
       # WP-12: block reintroduction of legacy internal-auth trust paths.
       - name: Internal-auth legacy-fallback gate (WP-12)
         run: node scripts/security/check-internal-legacy-fallback.mjs
@@ -191,16 +327,98 @@ jobs:
           node scripts/security/check-market-qa-internal-auth.mjs
           node scripts/security/check-market-digest-authz.mjs
           node scripts/security/check-internal-call-signing.mjs
+          node scripts/security/check-auth-rate-limit-coverage.mjs
+          node scripts/security/check-password-leak-coverage.mjs
+          node scripts/security/check-portal-session-client-storage.mjs
+          node scripts/security/check-admin-authorization-server-side.mjs
+          node scripts/security/check-client-bundle-secrets.mjs
           node scripts/security/check-google-places-circuit-fail-closed.mjs
           node scripts/security/check-dependency-gate-level.mjs
           node scripts/security/test-registry-launch-gates.mjs
+
+      # WP-16: these twelve gates existed but were named by nothing — not this
+      # workflow, not package.json. Running them for the first time found four
+      # failures, two of them live defects (credentialed wildcard CORS on the
+      # push endpoints; solicitor portfolio reads that skipped the per-client
+      # permission matrix). A gate nobody runs still reads as coverage, which is
+      # worse than no gate at all.
+      - name: CORS, portal and per-domain authorization gates (WP-16)
+        run: |
+          node scripts/security/check-cors-contract.mjs
+          node scripts/security/check-client-portfolio-authz.mjs
+          node scripts/security/check-solicitor-intelligence-authz.mjs
+          node scripts/security/check-commercial-bc-ai-abuse-controls.mjs
+          node scripts/security/check-finance-ghl-metadata-boundary.mjs
+          node scripts/security/check-finance-handoff-authz.mjs
+          node scripts/security/check-finance-leaderboard-authz.mjs
+          node scripts/security/check-feedback-campaign-authz.mjs
+          node scripts/security/check-mfa-recovery-code-lifecycle.mjs
+          node scripts/security/check-webauthn-lifecycle-step-up.mjs
+          node scripts/solicitor-portal/security-check.mjs
+          node scripts/builder-portal/security-check.mjs
+
+      # And the gate that keeps the list above honest: every check-*.mjs must be
+      # reachable from CI, or it is dead weight pretending to be a control.
+      # WP-29: a direct dependency may not require a React this project does not
+      # have. `react-leaflet@5` (peer react ^19, project on 18) merged from
+      # Dependabot and `npm ci` stopped resolving — every job of every PR went
+      # red at the install step, none of them for a reason in the diff.
+      #
+      # Reads the peer ranges out of `package-lock.json`, so it needs no
+      # node_modules and asks the question instead of maintaining a list of the
+      # 50 direct dependencies that declare a React peer.
+      - name: Direct dependencies agree with the pinned React (WP-29)
+        run: node scripts/security/check-peer-compatibility.mjs
+
+      - name: Every security gate is wired (WP-16)
+        run: node scripts/security/check-gates-wired.mjs
+
+      # WP-17: the database layer had no gate of its own, and it was the layer
+      # that regressed. Three weeks after the July hardening closed at 3/116/9
+      # -> 0/9/0, the live advisor read 2 SECURITY DEFINER views, 96 over-broad
+      # EXECUTE grants and 5 unpinned search_paths — because those were one-off
+      # migrations, and Postgres grants EXECUTE to PUBLIC at CREATE time.
+      - name: Migration security invariants (WP-17)
+        run: node scripts/security/check-migration-security.mjs
+
+      # WP-18: 329 catch blocks across 275 functions returned the caught error
+      # to the caller. A Postgres message names tables, columns and constraints;
+      # at that scale it is a readable map of the database, and provoking a 500
+      # is usually just a malformed body.
+      - name: No caught error reaches a client 5xx (WP-18)
+        run: node scripts/security/check-error-disclosure.mjs
+
+      # WP-20: a request body must not choose which columns get written. Several
+      # AML operations wrote a request sub-object straight to a table, which
+      # reached `resolved_by`/`resolved_at` — the record of who closed an alert.
+      # Ratcheted: the existing backlog is frozen, new sites fail.
+      - name: No new mass assignment (WP-20)
+        run: node scripts/security/check-mass-assignment.mjs
+
+      # WP-24: items 6, 8, 9 and 13 of the 20-item review were already in good
+      # shape and gated by nothing — true because of how somebody wrote the code
+      # once, with no mechanism to notice the next person writing it differently.
+      - name: Baseline security invariants (WP-24)
+        run: node scripts/security/check-baseline-invariants.mjs
+
+      # WP-24: the nine `public` functions take no credential at all, so an
+      # unbounded `await req.json()` there is an anonymous memory-pressure vector.
+      - name: Unauthenticated endpoints bound their bodies (WP-24)
+        run: node scripts/security/check-public-validation.mjs
+
+      # The gates above assert their properties by matching source literals, so
+      # a legitimate refactor can make one stop matching and a careless repair
+      # can loosen it until it passes. This removes each control from a
+      # throwaway mirror of the tree and requires the gate to fail.
+      - name: Security gate negative tests
+        run: node scripts/security/check-security-gate-negatives.mjs
 
       # WP-15: launch-gate aggregator (registry clean + WP-15 artefacts present).
       - name: WP-15 launch-gate aggregator
         run: node scripts/security/wp15-launch-gate.mjs
 
       - name: Secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -213,7 +431,7 @@ jobs:
   render-container:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -235,6 +453,33 @@ jobs:
             fc-match "Playfair Display:italic" | grep -qi playfair
             echo "ok: Playfair Display italic"
           '
+
+      # The build already ran this as its last layer; running it again proves it
+      # against the image that was actually produced, and leaves the output in
+      # the log — which is the only place a substituted face is ever visible.
+      - name: The image renders its own specimen
+        run: docker run --rm --entrypoint python weasyprint-service:ci selfcheck.py
+
+      # The service's own tests, run against the engine and fonts that shipped
+      # rather than against whatever a runner happens to have. The test file is
+      # mounted rather than COPY-ed, because tests do not belong in the image.
+      - name: The service's tests, inside the image
+        run: |
+          docker run --rm -v "$PWD/weasyprint-service:/tests:ro" -w /tests \
+            -e WEASYPRINT_SERVICE_TOKEN=ci-token -e PYTHONDONTWRITEBYTECODE=1 \
+            weasyprint-service:ci python -m unittest test_app -v
+
+      # The engine installed must be the engine the stylesheet was written
+      # against. While these were 62.3 and 69, `width: calc(210mm - 44mm)` was
+      # dropped on every production render and rendered fine in review, and the
+      # cover printed the classification and the reference as one word.
+      - name: The image installs the pinned engine
+        run: |
+          PINNED=$(grep -oP '(?<=^weasyprint==)[\d.]+' weasyprint-service/requirements.txt)
+          GOT=$(docker run --rm --entrypoint python weasyprint-service:ci \
+                  -c 'import weasyprint; print(weasyprint.__version__)')
+          echo "pinned=$PINNED installed=$GOT"
+          [ "$PINNED" = "$GOT" ] || { echo "engine drift"; exit 1; }
 
       # A render is the only thing that proves the engine, the fonts and the
       # service agree. Assert the bytes are a PDF and that the brand faces are
@@ -268,7 +513,7 @@ jobs:
       # calls across the legacy generators; this is what closes it for the
       # first migrated format.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -276,11 +521,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # Writes reports/html/borrowing-capacity-snapshot.html as a side effect.
+      # Writes reports/html/borrowing-capacity.html as a side effect.
       - name: Build the Borrowing Capacity Snapshot
         run: npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
 
-      - name: Render it in the container and assert its typography
+      - name: Render it in the container and read what the engine said
         run: |
           docker run -d --name wp2 -p 8081:8080 \
             -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
@@ -290,29 +535,185 @@ jobs:
           done
           node -e '
             const fs = require("node:fs");
-            const html = fs.readFileSync("reports/html/borrowing-capacity-snapshot.html", "utf8");
-            fs.writeFileSync("/tmp/bc.json", JSON.stringify({ html, pdf_variant: "pdf/a-2b", tagged: true }));
+            const html = fs.readFileSync("reports/html/borrowing-capacity.html", "utf8");
+            // `strict: true` is the service turning any engine warning into a
+            // 422 with the warnings as JSON. It is off for client-facing
+            // renders — a dropped `text-wrap` is cosmetic and a person waiting
+            // on a report is not served by an error — and on here, where a
+            // dropped declaration is a design decision that did not reach the
+            // page and is exactly what this job exists to catch.
+            //
+            // Until now nothing anywhere set it. The service implemented it and
+            // tested it, `weasyprintClient.ts` offered it and documented it as
+            // being on "for CI", and every caller including this one left it
+            // false.
+            //
+            // `pdf/ua-1` and `output_intent` are what the nine render routes
+            // send, so this renders the same file a client gets. The variant is
+            // validated two steps down; the output intent is here because
+            // `pdf/ua-1` — unlike the PDF/A variants — does not add one, so
+            // asking for it by name is the only thing that keeps a colour
+            // space in the file.
+            fs.writeFileSync("/tmp/bc.json", JSON.stringify({
+              html, pdf_variant: "pdf/ua-1", output_intent: "srgb",
+              tagged: true, strict: true,
+            }));
           '
           curl -sf -X POST http://localhost:8081/render \
             -H "Authorization: Bearer ci-token" \
             -H "Content-Type: application/json" \
+            -D /tmp/bc.headers \
             --data @/tmp/bc.json -o /tmp/bc.pdf
+          cat /tmp/bc.headers
           docker logs wp2
-          docker rm -f wp2
           head -c 5 /tmp/bc.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          # The engine says what it ignored, once, and nothing used to read it.
+          # A dropped declaration is a design decision that did not reach the
+          # page, and no other check in this file can see one.
+          grep -qi '^x-weasyprint-warning-count: *0' /tmp/bc.headers || {
+            echo "the engine did not render the report whole:"
+            grep -i '^x-weasyprint-warnings:' /tmp/bc.headers
+            exit 1
+          }
+          # `tagged: true` was accepted by the service and never passed to the
+          # engine, so every report it produced was untagged.
+          grep -qi '^x-pdf-tagged: *1' /tmp/bc.headers || {
+            echo "the report is untagged"; exit 1;
+          }
+
+      # The claim, checked. Everything above proves the file was *asked* to be
+      # PDF/UA-1; this is the only step that proves it is one, and it runs
+      # against the same bytes a client would receive.
+      #
+      # A conformance claim that fails validation is worse than no claim — it
+      # tells a procurement officer, a screen-reader user and an accessibility
+      # auditor that the document is navigable, and none of them finds out
+      # otherwise until they try. veraPDF exits non-zero on a non-conformant
+      # file, so the gate is the exit code.
+      #
+      # It found a real one on its first run: six formats emitted an `h1`
+      # chapter title followed by an `h3`, because each had grown its own
+      # `const h3 = …` helper for "a subhead" while the design system's actual
+      # subhead — `h2` — went unused in all six. Clause 7.4.2, three checks.
+      - name: The report validates as PDF/UA-1
+        run: |
+          docker run --rm -v /tmp:/work:ro --entrypoint /opt/verapdf/verapdf \
+            weasyprint-service:ci -f ua1 /work/bc.pdf
+
+      # An outline is the one part of a tagged PDF a sighted reader also uses,
+      # and it is invisible to every other check here: a document with an empty
+      # bookmarks pane validates as PDF/UA and renders identically. Every
+      # generated report had one until `bookmark-level` reached the stylesheet.
+      #
+      # qpdf rather than a PDF library: the outline lives in the catalogue,
+      # which the engine writes into an object stream, so `grep` on the shipped
+      # bytes finds nothing. `--qdf --object-streams=disable` unpacks it.
+      - name: The report carries a document outline
+        run: |
+          sudo apt-get install -y -qq qpdf
+          qpdf --qdf --object-streams=disable /tmp/bc.pdf /tmp/bc.qdf.pdf
+          grep -q '/Outlines' /tmp/bc.qdf.pdf || {
+            echo "the report opens with an empty bookmarks pane"; exit 1;
+          }
+          # Fourteen entries on this document: one per chapter, plus each
+          # chapter's subheads. A floor rather than the exact number, because
+          # `grep` also counts the Info dictionary's own `/Title` and the
+          # fixture is allowed to grow — but a count rather than a presence
+          # check, because the first version of the stylesheet rule emitted the
+          # cover title and nothing else and "has an outline" was true of it.
+          ENTRIES=$(grep -c '/Title' /tmp/bc.qdf.pdf || true)
+          echo "outline entries (including the Info title): $ENTRIES"
+          [ "$ENTRIES" -ge 12 ] || { echo "outline is too shallow"; exit 1; }
+
+      # The repo's list of constructs the engine drops, checked against the
+      # engine that is actually deployed. A list like that rots the moment the
+      # engine moves, and a stale one is worked around rather than updated.
+      - name: The engine agrees with engineSupport.pure.ts
+        run: |
+          npx tsx scripts/reports/engineCheck.mts \
+            --service http://localhost:8081 --token ci-token \
+            --capabilities \
+            reports/html/borrowing-capacity.html
+          docker rm -f wp2
+
+      - name: Assert the report's typography
+        run: |
           pdffonts /tmp/bc.pdf
           # Cinzel sets the cover title, Playfair the chapter headings and the
           # running head, Inter the body, IBM Plex Mono every figure and label.
           # A substituted face still yields a valid PDF, so the fonts are the
           # assertion, not the bytes.
-          for face in Cinzel Playfair Inter IBMPlex; do
-            pdffonts /tmp/bc.pdf | grep -qi "$face" || { echo "$face not embedded in the report"; exit 1; }
+          #
+          # Normalised on both sides. The engine writes `IAPHVP+IBM-Plex-Mono` —
+          # a subset tag, and the family with its spaces turned into hyphens —
+          # so grepping for `IBMPlex` stopped matching and failed this job with
+          # a font problem that did not exist. `selfcheck.py` normalises the
+          # same way, for the same reason.
+          EMBEDDED=$(pdffonts /tmp/bc.pdf | tr -d '[:punct:][:space:]' | tr '[:upper:]' '[:lower:]')
+          for face in cinzel playfairdisplay inter ibmplexmono; do
+            printf '%s' "$EMBEDDED" | grep -q "$face" \
+              || { echo "$face not embedded in the report"; exit 1; }
           done
-          # The document the fixture describes is eleven pages. A migration
+          # The document the fixture describes is twelve pages. A migration
           # that drops the audit trail changes nothing a unit test sees, and
           # changes this.
-          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +11$' || {
+          #
+          # Eleven until the subheads moved from `h3` to `h2` to satisfy PDF/UA
+          # clause 7.4.2. `h2` is the design system's subhead and carries 3pt
+          # more type and 16pt more air than the `h3` these six formats had
+          # each invented for themselves, which is a page across a document of
+          # this length. Recorded because the next person to see this number
+          # move should know whether it moved for a reason.
+          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +12$' || {
             echo "unexpected page count:"; pdfinfo /tmp/bc.pdf | grep Pages; exit 1;
+          }
+
+      # The same proof for the second migrated format. It is a separate render
+      # rather than a loop because the two assert different page counts, and a
+      # page count is the only check that sees a section quietly disappearing.
+      - name: Build the Commercial & Industrial Capacity Report
+        run: npx vitest run src/lib/reports/commercialCapacity/__tests__/render.spec.ts
+
+      - name: Render it in the container and assert its typography and length
+        run: |
+          docker run -d --name wp3 -p 8082:8080 \
+            -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8082/healthz >/dev/null && break
+            sleep 2
+          done
+          node -e '
+            const fs = require("node:fs");
+            const html = fs.readFileSync("reports/html/commercial-capacity.html", "utf8");
+            fs.writeFileSync("/tmp/cc.json", JSON.stringify({
+              html, pdf_variant: "pdf/a-2b", tagged: true, strict: true,
+            }));
+          '
+          curl -sf -X POST http://localhost:8082/render \
+            -H "Authorization: Bearer ci-token" \
+            -H "Content-Type: application/json" \
+            -D /tmp/cc.headers \
+            --data @/tmp/cc.json -o /tmp/cc.pdf
+          cat /tmp/cc.headers
+          docker logs wp3
+          docker rm -f wp3
+          head -c 5 /tmp/cc.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          grep -qi '^x-weasyprint-warning-count: *0' /tmp/cc.headers || {
+            echo "the engine did not render the report whole:"
+            grep -i '^x-weasyprint-warnings:' /tmp/cc.headers
+            exit 1
+          }
+          pdffonts /tmp/cc.pdf
+          EMBEDDED=$(pdffonts /tmp/cc.pdf | tr -d '[:punct:][:space:]' | tr '[:upper:]' '[:lower:]')
+          for face in cinzel playfairdisplay inter ibmplexmono; do
+            printf '%s' "$EMBEDDED" | grep -q "$face" \
+              || { echo "$face not embedded in the report"; exit 1; }
+          done
+          # Seventeen, measured. The fixture turns on every conditional section;
+          # a section that stops building changes nothing a unit test sees, and
+          # changes this.
+          pdfinfo /tmp/cc.pdf | grep -E '^Pages: +17$' || {
+            echo "unexpected page count:"; pdfinfo /tmp/cc.pdf | grep Pages; exit 1;
           }
 
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
@@ -321,12 +722,12 @@ jobs:
   supply-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -348,7 +749,7 @@ jobs:
 
       - name: Upload SBOM artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json

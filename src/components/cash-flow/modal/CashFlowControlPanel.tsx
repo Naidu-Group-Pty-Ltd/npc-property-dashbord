@@ -14,6 +14,10 @@ interface InvestmentReport {
 
 interface CashFlowControlPanelProps {
   comparisonMode: boolean;
+  /** Whether the workspace holds the Cash-Flow Comparisons capability.
+   * When false the comparison toggle is removed entirely. Defaults true so
+   * legacy callers keep today's behaviour. */
+  comparisonsAvailable?: boolean;
   onComparisonModeChange: (enabled: boolean) => void;
   selectedComparisonReportIds: string[];
   availableReports: InvestmentReport[];
@@ -28,6 +32,7 @@ interface CashFlowControlPanelProps {
 
 export function CashFlowControlPanel({
   comparisonMode,
+  comparisonsAvailable = true,
   onComparisonModeChange,
   selectedComparisonReportIds,
   availableReports,
@@ -61,15 +66,17 @@ export function CashFlowControlPanel({
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center xl:justify-end">
-            <Button
-              variant={comparisonMode ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => onComparisonModeChange(!comparisonMode)}
-              className="min-h-9 gap-2 rounded-xl"
-            >
-              <GitCompare className="h-4 w-4" />
-              {comparisonMode ? 'Exit Comparison' : 'Compare Reports'}
-            </Button>
+            {comparisonsAvailable && (
+              <Button
+                variant={comparisonMode ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => onComparisonModeChange(!comparisonMode)}
+                className="min-h-9 gap-2 rounded-xl"
+              >
+                <GitCompare className="h-4 w-4" />
+                {comparisonMode ? 'Exit Comparison' : 'Compare Reports'}
+              </Button>
+            )}
 
             <Select value={investorProfile} onValueChange={(value) => onInvestorProfileChange(value as 'growth' | 'income' | 'balanced')}>
               <SelectTrigger className="h-9 w-full rounded-xl sm:w-[190px]">

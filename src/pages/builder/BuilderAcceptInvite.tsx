@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { BuilderAuthShell } from '@/components/builder-portal/BuilderAuthShell';
@@ -148,9 +148,8 @@ export default function BuilderAcceptInvite() {
 
         <div className="space-y-2">
           <Label htmlFor="builder-invite-password">Password</Label>
-          <Input
+          <PasswordInput
             id="builder-invite-password"
-            type="password"
             autoComplete="new-password"
             required
             value={password}
@@ -164,9 +163,8 @@ export default function BuilderAcceptInvite() {
 
         <div className="space-y-2">
           <Label htmlFor="builder-invite-confirm">Confirm password</Label>
-          <Input
+          <PasswordInput
             id="builder-invite-confirm"
-            type="password"
             autoComplete="new-password"
             required
             value={confirmPassword}

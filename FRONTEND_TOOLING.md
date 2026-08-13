@@ -65,6 +65,22 @@ built from — is generated from code so it cannot drift:
 `npm run templates:library:cards`, then push `.design-system/report-templates/`.
 See [`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
 
+Traffic also runs the **other way**, and that is newer. `npm run brand:sync`
+reads the committed subset of the project's `_ds_manifest.json` at
+`scripts/brandDesign/claudeDesign/npc-services.manifest.json` and asserts that
+the print tokens in `reportDesign/tokens.pure.ts` are still derivable from it —
+`--background` → paper, `--aurixa-obsidian` → the cover field, and so on. A
+failure means the two have diverged and somebody has to decide which is right;
+the rule above says the repo wins and the project needs re-syncing.
+
+To refresh the committed manifest, ask Claude Code in a session with
+design-system authorization: `list_projects`, then `get_file` on
+`_ds_manifest.json`, keep `namespace / globalCssPaths / themes / fonts /
+brandFonts / tokens / cards`, and run `npm run brand:sync`. The same file is
+what `/admin/template-builder/brand-systems` seeds the house design system
+from, so a person can import any other Claude Design project by dropping its
+manifest onto that page.
+
 For **generated PDFs**, read
 [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 and [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
@@ -106,6 +122,24 @@ generated the code:
 - **Theming is dynamic.** Branding (colors, logos, light/dark) comes from
   `whitelabel_settings` via `BrandProvider` → CSS vars on `:root` / `.dark`. Build
   UI that reads tokens so it re-themes automatically; never assume a fixed brand.
+- **Surfaces are glass, and the recipe lives in one file.** Every pane in the
+  product — card, panel, dialog, dropdown, sidebar, toolbar, table — is frosted
+  glass over a single ambient field. Use a `.glass-*` class from
+  [`src/styles/glass.css`](./src/styles/glass.css); never hand-roll
+  `bg-card/60 backdrop-blur-md border shadow-lg`. Two rules that file explains in
+  full and that are easy to get wrong:
+  - **Never put `backdrop-filter` on a repeated element** — a table row, a list
+    item, a card in a grid. Blur is per-layer work: measured on this app, sixty
+    blurring cards took a scroll frame from 17ms to 80ms. Containers blur;
+    repeated panes get the fill and the lit edge only, and read as glass because
+    the container behind them is already refracting.
+  - **Don't add a `bg-*` or `shadow-*` utility to a glass surface.** Tailwind
+    emits utilities after the components layer, so the utility paints an opaque
+    background straight back over the glass. That is why the shadcn primitives
+    carry no background utility.
+  Transparency degrades to opaque in one place — the fallback branches at the
+  bottom of `src/styles/tokens.css` cover `prefers-reduced-transparency`,
+  `prefers-contrast`, forced colours, no-`backdrop-filter` browsers and print.
 - **Use the shadcn setup as-is.** Respect `components.json` aliases (`@/components`,
   `@/components/ui`, `@/lib`, `@/hooks`) and the existing Tailwind config
   (`tailwind.config.ts`, `src/index.css`). Add primitives via the shadcn registry

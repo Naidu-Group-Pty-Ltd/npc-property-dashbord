@@ -2,6 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 import { getEffectiveGhlCredentials } from "../_shared/ghl-account.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -212,7 +214,7 @@ Deno.serve(async (req) => {
         try {
           const resendKey = Deno.env.get('RESEND_API_KEY');
           if (resendKey) {
-            await fetch('https://api.resend.com/emails', {
+            await meteredFetch('https://api.resend.com/emails', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${resendKey}`,
@@ -250,7 +252,7 @@ Deno.serve(async (req) => {
         try {
           const resendKey = Deno.env.get('RESEND_API_KEY');
           if (resendKey) {
-            await fetch('https://api.resend.com/emails', {
+            await meteredFetch('https://api.resend.com/emails', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${resendKey}`,
@@ -375,7 +377,7 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[portal-book-appointment] Error:', err);
-    return new Response(JSON.stringify({ error: err.message || 'Internal error', success: false }), {
+    return new Response(JSON.stringify({ ...internalError(err, 'portal-book-appointment'), success: false }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   }

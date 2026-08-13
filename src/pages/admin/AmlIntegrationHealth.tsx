@@ -19,15 +19,21 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity, AlertTriangle, CheckCircle2, Gauge, Loader2, RefreshCw,
-  ShieldAlert, TrendingDown, TrendingUp, Lock,
+  Activity, AlertTriangle, CheckCircle2, Gauge, HelpCircle,
+  TrendingDown, TrendingUp, Lock, XCircle, type LucideIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AmlAccessGate,
+  AmlLoadingState,
+  AmlMetricCard,
+  AmlPageHeader,
+  AmlRefreshButton,
+} from "@/components/aml/primitives";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
@@ -40,6 +46,8 @@ import {
   type AmlProviderMetricRollup,
 } from "@/lib/aml/amlTenantApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { PartnerEventsOpsCard } from "@/components/aml/PartnerEventsOpsCard";
+import { ProviderReadinessCard } from "@/components/aml/ProviderReadinessCard";
 
 const DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
 
@@ -60,6 +68,26 @@ const HEALTH_TONE: Record<AmlProviderHealth, string> = {
 const HEALTH_LABEL: Record<AmlProviderHealth, string> = {
   ok: "Healthy", degraded: "Degraded", failing: "Failing", unknown: "Unknown",
 };
+
+/** Per-health icons — the state must never be signalled by colour alone
+ * (a "Failing" badge previously rendered a red check mark). */
+const HEALTH_ICON: Record<AmlProviderHealth, LucideIcon> = {
+  ok: CheckCircle2,
+  degraded: AlertTriangle,
+  failing: XCircle,
+  unknown: HelpCircle,
+};
+
+function HealthBadge({ health, count }: { health: AmlProviderHealth; count?: number }) {
+  const Icon = HEALTH_ICON[health];
+  return (
+    <Badge variant="outline" className="gap-1">
+      <Icon aria-hidden="true" className={`h-3 w-3 ${HEALTH_TONE[health]}`} />
+      {HEALTH_LABEL[health]}
+      {count !== undefined ? `: ${count}` : null}
+    </Badge>
+  );
+}
 
 function fmtCurrency(cents: number, currency = "AUD") {
   return new Intl.NumberFormat("en-AU", { style: "currency", currency, maximumFractionDigits: 2 })
@@ -153,73 +181,67 @@ export default function AmlIntegrationHealth() {
   }, [rollup, providers]);
 
   const timelineMax = Math.max(1, ...timeline.map((t) => t.calls));
+  const timelineTotals = useMemo(() => {
+    let calls = 0, failures = 0;
+    for (const t of timeline) { calls += t.calls; failures += t.failures; }
+    return { calls, failures };
+  }, [timeline]);
 
   if (!canView) {
     return (
       <div className="p-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-destructive" />
-              Restricted
-            </CardTitle>
-            <CardDescription>
-              Integration Health is available to the MLRO and superadmins only.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <AmlAccessGate
+          title="Restricted"
+          body="Integration Health is available to the MLRO and superadmins only."
+        />
       </div>
     );
   }
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Gauge className="h-6 w-6 text-primary" />
-            AML Integration Health
-          </h1>
-          <p className="text-sm text-muted-foreground max-w-2xl mt-1">
-            Provider cost, latency, and failure telemetry for identity,
-            screening, monitoring, and reporting connectors. Relocated
-            out of the daily workflow per Directive 13.
-            {!metricsRelocation && (
-              <span className="block text-xs text-warning mt-1">
-                Note: <code>aml_v3_metrics_relocation</code> is off — legacy
-                tiles still render in Configuration. Flip the flag in the
-                Cutover Console to complete the relocation.
-              </span>
-            )}
+      <AmlPageHeader
+        headingLevel="h1"
+        icon={Gauge}
+        title="AML Integration Health"
+        description="Provider cost, latency, and failure telemetry for identity, screening, monitoring, and reporting connectors. Relocated out of the daily workflow per Directive 13."
+        actions={
+          <>
+            <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+              <SelectTrigger className="w-[140px]" aria-label="Telemetry window">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DAY_OPTIONS.map((d) => (
+                  <SelectItem key={d} value={String(d)}>Last {d} days</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={capability}
+              onValueChange={(v) => setCapability(v as AmlProviderCapability | "__all__")}
+            >
+              <SelectTrigger className="w-[220px]" aria-label="Provider capability filter">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All capabilities</SelectItem>
+                {AML_PROVIDER_CAPABILITIES.map((c) => (
+                  <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <AmlRefreshButton onClick={load} loading={loading} />
+          </>
+        }
+      >
+        {!metricsRelocation && (
+          <p className="text-xs text-warning">
+            Metrics relocation is not complete — the legacy tiles still render
+            in Configuration. Finish the relocation from the Cutover Console.
           </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
-            <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {DAY_OPTIONS.map((d) => (
-                <SelectItem key={d} value={String(d)}>Last {d} days</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={capability}
-            onValueChange={(v) => setCapability(v as AmlProviderCapability | "__all__")}
-          >
-            <SelectTrigger className="w-[220px]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All capabilities</SelectItem>
-              {AML_PROVIDER_CAPABILITIES.map((c) => (
-                <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" variant="outline" onClick={load} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            <span className="ml-2">Refresh</span>
-          </Button>
-        </div>
-      </div>
+        )}
+      </AmlPageHeader>
 
       {!isMlro && isSuperadmin && (
         <Alert>
@@ -234,30 +256,33 @@ export default function AmlIntegrationHealth() {
 
       {/* KPI row */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard
-          icon={<Activity className="h-4 w-4" />}
-          label="Provider calls"
+        <AmlMetricCard
+          title="Provider calls"
+          icon={Activity}
+          state={loading ? "loading" : "ready"}
           value={totals.calls.toLocaleString()}
-          sub={`over ${days}d`}
+          hint={`over ${days}d`}
         />
-        <KpiCard
-          icon={<AlertTriangle className="h-4 w-4" />}
-          label="Failure rate"
+        <AmlMetricCard
+          title="Failure rate"
+          icon={AlertTriangle}
+          state={loading ? "loading" : "ready"}
           value={fmtPct(totals.failureRate)}
-          sub={`${totals.failures.toLocaleString()} failures`}
-          tone={totals.failureRate > 0.05 ? "warn" : totals.failureRate > 0.15 ? "bad" : "good"}
+          hint={`${totals.failures.toLocaleString()} failures`}
         />
-        <KpiCard
-          icon={<TrendingUp className="h-4 w-4" />}
-          label="Avg latency"
+        <AmlMetricCard
+          title="Avg latency"
+          icon={TrendingUp}
+          state={loading ? "loading" : "ready"}
           value={`${totals.avgLatency.toLocaleString()} ms`}
-          sub="calls-weighted"
+          hint="calls-weighted"
         />
-        <KpiCard
-          icon={<TrendingDown className="h-4 w-4" />}
-          label="Total cost"
+        <AmlMetricCard
+          title="Total cost"
+          icon={TrendingDown}
+          state={loading ? "loading" : "ready"}
           value={fmtCurrency(totals.cost)}
-          sub={`over ${days}d`}
+          hint={`over ${days}d`}
         />
       </div>
 
@@ -278,10 +303,7 @@ export default function AmlIntegrationHealth() {
           ) : (
             <div className="flex flex-wrap gap-2">
               {(["ok", "degraded", "failing", "unknown"] as AmlProviderHealth[]).map((s) => (
-                <Badge key={s} variant="outline" className="gap-1">
-                  <CheckCircle2 className={`h-3 w-3 ${HEALTH_TONE[s]}`} />
-                  {HEALTH_LABEL[s]}: {providerHealthCount[s] ?? 0}
-                </Badge>
+                <HealthBadge key={s} health={s} count={providerHealthCount[s] ?? 0} />
               ))}
               <Badge variant="secondary">Total: {providers.length}</Badge>
             </div>
@@ -297,9 +319,7 @@ export default function AmlIntegrationHealth() {
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <div className="p-6 flex items-center justify-center text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading telemetry…
-            </div>
+            <AmlLoadingState variant="spinner" label="Loading telemetry…" />
           ) : rowsWithHealth.length === 0 ? (
             <div className="p-6 text-sm text-muted-foreground">
               No provider calls recorded in the selected window.
@@ -345,10 +365,7 @@ export default function AmlIntegrationHealth() {
                     <TableCell className="text-right tabular-nums">{r.avg_latency_ms.toLocaleString()} ms</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtCurrency(r.cost_cents, r.currency)}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className="gap-1">
-                        <CheckCircle2 className={`h-3 w-3 ${HEALTH_TONE[r.health]}`} />
-                        {HEALTH_LABEL[r.health]}
-                      </Badge>
+                      <HealthBadge health={r.health} />
                     </TableCell>
                   </TableRow>
                 ))}
@@ -357,6 +374,14 @@ export default function AmlIntegrationHealth() {
           )}
         </CardContent>
       </Card>
+
+      {/* IDV/screening provider preflight — what would actually run if staff
+          requested a verification right now, and why. */}
+      <ProviderReadinessCard />
+
+      {/* Partner compliance events (Phase 6): outbox backlog, refresh
+          obligations and arrangement reviews for the reliance domain. */}
+      <PartnerEventsOpsCard />
 
       {/* Daily call timeline (sparkline-style bars, no chart lib dep) */}
       <Card>
@@ -368,7 +393,14 @@ export default function AmlIntegrationHealth() {
           {timeline.length === 0 ? (
             <p className="text-sm text-muted-foreground">No activity in this window.</p>
           ) : (
-            <div className="flex items-end gap-1 h-32">
+            <>
+              <p className="sr-only">
+                Daily call volume across {timeline.length} days:{" "}
+                {timelineTotals.calls.toLocaleString()} calls and{" "}
+                {timelineTotals.failures.toLocaleString()} failures in the
+                selected window.
+              </p>
+              <div className="flex items-end gap-1 h-32" aria-hidden="true">
               {timeline.map((t) => {
                 const h = Math.max(2, Math.round((t.calls / timelineMax) * 100));
                 const fh = t.calls > 0 ? Math.max(1, Math.round((t.failures / t.calls) * h)) : 0;
@@ -387,35 +419,11 @@ export default function AmlIntegrationHealth() {
                   </div>
                 );
               })}
-            </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function KpiCard({
-  icon, label, value, sub, tone,
-}: {
-  icon: React.ReactNode; label: string; value: string; sub?: string;
-  tone?: "good" | "warn" | "bad";
-}) {
-  const toneClass =
-    tone === "bad" ? "text-destructive" :
-    tone === "warn" ? "text-warning" :
-    tone === "good" ? "text-success" : "text-foreground";
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription className="flex items-center gap-2 text-xs">
-          {icon}{label}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className={`text-2xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
-        {sub && <div className="text-xs text-muted-foreground mt-1">{sub}</div>}
-      </CardContent>
-    </Card>
   );
 }

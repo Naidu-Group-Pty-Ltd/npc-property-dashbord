@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -98,7 +99,7 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[ghl-calendar-proxy] Error:', err);
-    return new Response(JSON.stringify({ error: err.message || 'Internal error' }), {
+    return new Response(JSON.stringify(internalError(err, 'ghl-calendar-proxy')), {
       status: 500,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });

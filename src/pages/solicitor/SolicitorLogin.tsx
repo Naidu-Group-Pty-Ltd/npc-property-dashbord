@@ -54,7 +54,7 @@ export default function SolicitorLogin() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
+      <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <div className="flex flex-col items-center gap-3">
           <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
 
@@ -102,6 +102,11 @@ export default function SolicitorLogin() {
       const { error } = await requestPasswordReset(email);
       if (error) toast.error(error);
       else {
+        // A new code makes the previous one dead. Leaving its digits in the
+        // boxes invites the one mistake the screen cannot recover from:
+        // pressing Verify on a code that has already been replaced, and being
+        // told the code is invalid.
+        setOtp('');
         toast.success('If that email exists, a code has been sent.');
         changeMode('verify');
       }
@@ -116,8 +121,16 @@ export default function SolicitorLogin() {
     setSubmitting(true);
     try {
       const { error } = await verifyOtp(email, otp);
-      if (error) toast.error(error);
-      else changeMode('reset');
+      if (error) {
+        toast.error(error);
+        // A rejected code is never going to be accepted on a second press, so
+        // clear it and put the caret back at the first box rather than leaving
+        // six digits the user has to delete one at a time.
+        setOtp('');
+        setTimeout(() => {
+          formRef.current?.querySelector<HTMLInputElement>('input:not([type=hidden])')?.focus();
+        }, 0);
+      } else changeMode('reset');
     } finally {
       setSubmitting(false);
     }
@@ -157,12 +170,16 @@ export default function SolicitorLogin() {
   };
 
   const goBack = () => {
-    if (mode === 'verify' || mode === 'reset') changeMode('forgot');
-    else changeMode('login');
+    if (mode === 'verify' || mode === 'reset') {
+      // Going back leads to "send another code", which is exactly when a
+      // leftover code becomes a trap.
+      setOtp('');
+      changeMode('forgot');
+    } else changeMode('login');
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex">
       {/* ── Left branded panel (desktop only) ── */}
       <aside
         className="hidden lg:flex lg:w-[480px] xl:w-[520px] flex-col relative overflow-hidden border-r border-border bg-gradient-to-br from-card via-card to-primary/5"

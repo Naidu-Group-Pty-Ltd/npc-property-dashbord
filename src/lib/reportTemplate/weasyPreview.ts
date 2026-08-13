@@ -11,9 +11,8 @@
  * Calls are cached in-memory by SHA-1 of the compiled HTML so re-rendering an
  * unchanged template returns the previous signed URL instantly.
  */
-import { supabase } from '@/integrations/supabase/client';
-import { preloadImages } from './imagePreloader';
-import { renderTemplateToHtml } from './htmlRenderer';
+import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
+import { compileTemplateHtmlForPdf } from './compileTemplateForPdf';
 import type { ReportTemplate } from './templateSchema';
 
 export interface WeasyPreviewOptions {
@@ -37,6 +36,8 @@ export interface WeasyPreviewResult {
 const cache = new Map<string, { url: string; fileName: string; bytes?: number; expiresAt: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1h (signed URL lives 24h, refresh well before)
 const MAX_CACHE = 32;
+/** A print-resolution render is minutes, not seconds. */
+const RENDER_TIMEOUT_MS = 10 * 60_000;
 
 async function sha1(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
@@ -65,14 +66,19 @@ export async function renderTemplateViaWeasyPrint(
   template: ReportTemplate,
   opts: WeasyPreviewOptions = {},
 ): Promise<WeasyPreviewResult> {
-  const prepared = await preloadImages(template);
-  if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
-
-  const { html } = renderTemplateToHtml(prepared, {
+  // One shared compile step: resolve the page rasters, then render. The
+  // resolution uses reference mode, so WeasyPrint fetches the rasters itself
+  // rather than receiving them base64-inlined — inlining is bounded by the
+  // service's 25 MB MAX_HTML_BYTES, and an A4 page raster costs ~5.9 MB at
+  // 200 DPI and ~13.3 MB at 300, so an inlined pixel-perfect export blows the
+  // cap at roughly two pages while production imports average 18.5.
+  // See compileTemplateForPdf.ts for what skipping the step cost.
+  const { html } = await compileTemplateHtmlForPdf(template, {
     data: opts.data ?? {},
     title: opts.title ?? 'Template Preview',
     customCss: opts.customCss,
   });
+  if (opts.signal?.aborted) throw new DOMException('aborted', 'AbortError');
 
   const fileName = (opts.fileName || 'template-preview.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = await sha1(`${opts.templateId ?? ''}::${opts.mode ?? 'preview'}::${html}`);
@@ -82,40 +88,29 @@ export async function renderTemplateViaWeasyPrint(
     return { url: hit.url, fileName: hit.fileName, bytes: hit.bytes, cached: true };
   }
 
-  const { data: sess } = await supabase.auth.getSession();
-  const token = sess?.session?.access_token;
-  const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
-  const anonKey = (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
-  if (!projectId || !anonKey) {
-    throw new Error('Supabase env not configured (VITE_SUPABASE_PROJECT_ID / VITE_SUPABASE_PUBLISHABLE_KEY)');
-  }
-
-  const url = `https://${projectId}.supabase.co/functions/v1/render-template-pdf`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: anonKey,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
+  // Goes through `invokeSecureFunction` — the app's one transport — rather
+  // than a hand-rolled fetch built on Vite env vars that only the hosting
+  // build defines. See `weasyRenderClient.ts`; the shared transport carries
+  // the cookie session and refreshes-and-retries once on an auth failure.
+  const { data, error } = await invokeSecureFunction<{
+    url?: string; fileName?: string; bytes?: number;
+  }>(
+    'render-template-pdf',
+    {
       html,
       fileName,
       templateId: opts.templateId ?? null,
       templateName: opts.templateName ?? null,
       mode: opts.mode ?? 'preview',
-    }),
-    signal: opts.signal,
-  });
-
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.error || `WeasyPrint render failed (HTTP ${res.status})`);
-  }
+    },
+    { timeoutMs: RENDER_TIMEOUT_MS, signal: opts.signal },
+  );
+  if (error) throw new Error(describeAuthError(error.message) ?? error.message);
+  if (!data?.url) throw new Error('WeasyPrint render returned no document URL');
   const result: WeasyPreviewResult = {
-    url: String(json.url),
-    fileName: String(json.fileName ?? fileName),
-    bytes: typeof json.bytes === 'number' ? json.bytes : undefined,
+    url: String(data.url),
+    fileName: String(data.fileName ?? fileName),
+    bytes: typeof data.bytes === 'number' ? data.bytes : undefined,
     cached: false,
   };
   cache.set(key, { ...result, expiresAt: Date.now() + CACHE_TTL_MS });

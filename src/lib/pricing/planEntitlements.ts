@@ -61,9 +61,16 @@ export const SUB_MODULE_ENTITLEMENTS: readonly SubModuleEntitlement[] = [
   { key: "clients.ai", module: "Clients", subModule: "AI", launch: false, growth: false, scale: true },
 ];
 
-/** Tiers that include each priced module at no extra cost. */
+/** Tiers that include each priced module at no extra cost.
+ *
+ * Market News Feed (`market-updates`) is Scale-bundled ONLY — Launch and
+ * Growth reach it through the separately purchased add-on. AML/CTF belongs
+ * to no tier list: entitlement follows the purchased SKU, which Mission
+ * Control (and the snapshot normaliser) express as the `aml-ctf` add-on
+ * slug. See src/lib/entitlements/registry.ts — the canonical registry this
+ * legacy matrix must agree with. */
 export const MODULE_TIERS: Record<string, readonly string[]> = {
-  "market-updates": ["growth", "scale"],
+  "market-updates": ["scale"],
   "commercial-industrial": ["scale"],
   "opportunity-marketplace": ["scale"],
   "intelligence-hub": [],
@@ -80,7 +87,7 @@ export const MODULE_TIERS: Record<string, readonly string[]> = {
   "agreements": ["scale"],
   "marketing": ["scale"],
   "deal-pipeline": ["growth", "scale"],
-  "aml-ctf": ["launch", "growth", "scale"],
+  "aml-ctf": [],
   "model-hub": ["scale"],
   "finance-portal": ["scale"],
   "integrations": [],

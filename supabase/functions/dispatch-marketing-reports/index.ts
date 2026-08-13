@@ -1,8 +1,19 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
-import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
+import { verifySignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
+/**
+ * Callers permitted to invoke `dispatch` without a staff session.
+ *
+ * The declared caller travels inside the signed envelope, so this is an
+ * identity allow-list rather than a secret. Any scheduler added here must build
+ * its headers with `public.cron_signed_internal_headers(...)` (or the equivalent
+ * HMAC helper) — a bare `x-internal-edge-secret` header is no longer accepted.
+ */
+const INTERNAL_DISPATCH_CALLERS = ['pg_cron', 'marketing-reports-cron'] as const;
+
 /**
  * dispatch-marketing-reports
  * 
@@ -46,14 +57,33 @@ Deno.serve(async (req) => {
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const body: RequestBody = await req.json();
+    // Read the body ONCE as text: the signed-internal check verifies the HMAC
+    // over the exact bytes, so it cannot be re-read after `req.json()`.
+    const rawBody = await req.text();
+    let body: RequestBody;
+    try {
+      body = JSON.parse(rawBody || '{}') as RequestBody;
+    } catch {
+      return securityJsonError(400, 'invalid_json');
+    }
 
-    // Cron dispatches must prove knowledge of a non-public server secret. The
-    // anon key is intentionally public and must never bypass staff auth.
-    const isCronCall = body.operation === 'dispatch' && verifyRequiredCronSecret(
-      Deno.env.get('INTERNAL_EDGE_SECRET'),
-      req.headers.get('x-internal-edge-secret'),
-    );
+    // Scheduled dispatches authenticate with the signed internal envelope
+    // (WP-12), not a bare shared secret in a header.
+    //
+    // This previously compared `x-internal-edge-secret` directly. That
+    // credential is replayable, is not bound to the request body and carries no
+    // caller identity, so a leaked value authorises any dispatch forever.
+    // `verifySignedInternal` verifies an HMAC over the method, target, body and
+    // declared caller, restricts the caller to the allow-list below, and fails
+    // closed when INTERNAL_EDGE_SECRET is absent or shorter than the minimum.
+    //
+    // The authorisation shape is unchanged: an internal caller may only run
+    // `dispatch`. Every other operation still requires an authenticated staff
+    // user holding admin or superadmin, and a signed request cannot reach them.
+    const internalAuth = body.operation === 'dispatch'
+      ? await verifySignedInternal(supabase, req, rawBody, INTERNAL_DISPATCH_CALLERS)
+      : null;
+    const isCronCall = internalAuth?.ok === true;
 
     if (!isCronCall) {
       // Verify authentication
@@ -296,7 +326,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('[dispatch-marketing-reports] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'dispatch-marketing-reports'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

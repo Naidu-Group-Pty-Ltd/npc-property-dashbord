@@ -27,6 +27,7 @@ import { normalizeComparableReportType, REPORT_TYPE_CONFIG, resolveInvestmentRep
 import { ReportTypeBadge } from '@/components/reports/ReportTypeBadge';
 import { downloadClientPdf } from '@/lib/reports/clientPdfDownload';
 import { InvestmentGradeSummary } from './InvestmentGradeSummary';
+import { resolveReportAddress } from '@/lib/reports/reportAddress';
 
 interface InvestmentReportCardProps {
   report: InvestmentReport;
@@ -76,6 +77,7 @@ export function InvestmentReportCard({
   onToggleArchive,
   onGenerateTier,
 }: InvestmentReportCardProps) {
+  const fullAddress = resolveReportAddress(report);
   const [isDownloadingClientPdf, setIsDownloadingClientPdf] = useState(false);
   const scope = report.report_scope && report.report_scope in scopeMeta
     ? scopeMeta[report.report_scope as keyof typeof scopeMeta]
@@ -122,7 +124,7 @@ export function InvestmentReportCard({
                 size="icon"
                 disabled={comparisonDisabled}
                 aria-pressed={isSelected}
-                aria-label={isSelected ? `Remove ${typeLabel} report for ${report.property_address} from comparison` : comparisonDisabled ? `${typeLabel} report cannot be selected because this comparison contains ${activeComparisonType ? REPORT_TYPE_CONFIG[activeComparisonType].label : 'other'} reports` : `Select ${typeLabel} report for ${report.property_address} for comparison`}
+                aria-label={isSelected ? `Remove ${typeLabel} report for ${fullAddress} from comparison` : comparisonDisabled ? `${typeLabel} report cannot be selected because this comparison contains ${activeComparisonType ? REPORT_TYPE_CONFIG[activeComparisonType].label : 'other'} reports` : `Select ${typeLabel} report for ${fullAddress} for comparison`}
                 aria-describedby={comparisonDisabled ? `comparison-reason-${report.id}` : undefined}
                 onClick={() => onToggleSelection(report, !isSelected)}
                 className={`h-11 w-11 rounded-xl border-2 shadow-sm transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${isSelected ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90' : comparisonDisabled ? 'cursor-not-allowed border-muted-foreground/30 bg-muted/40 text-muted-foreground opacity-70' : 'border-primary/65 bg-primary/10 text-primary hover:scale-105 hover:border-primary hover:bg-primary/20'}`}
@@ -163,8 +165,8 @@ export function InvestmentReportCard({
               <MapPin className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="line-clamp-2 text-lg font-semibold leading-snug tracking-tight text-foreground">
-                {report.property_address}
+              <h3 className="break-words text-lg font-semibold leading-snug tracking-tight text-foreground" title={fullAddress}>
+                {fullAddress}
               </h3>
               <div className="mt-2 grid gap-1.5 text-xs text-muted-foreground sm:grid-cols-2">
                 <span className="flex items-center gap-1.5">
@@ -209,14 +211,14 @@ export function InvestmentReportCard({
             <Eye className="h-3.5 w-3.5" />
             View
           </Button>
-          <Button variant="outline" size="sm" onClick={handleClientPdfDownload} disabled={isDownloadingClientPdf} className="flex-1 gap-1.5 rounded-xl border-primary/40 hover:border-primary hover:bg-primary/10" aria-label={`Download client PDF for ${report.property_address}`} title="Download Client PDF">
+          <Button variant="outline" size="sm" onClick={handleClientPdfDownload} disabled={isDownloadingClientPdf} className="flex-1 gap-1.5 rounded-xl border-primary/40 hover:border-primary hover:bg-primary/10" aria-label={`Download client PDF for ${fullAddress}`} title="Download Client PDF">
             {isDownloadingClientPdf ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
             <span className="sm:hidden">Client PDF</span><span className="hidden sm:inline">{isDownloadingClientPdf ? 'Preparing…' : 'Download Client PDF'}</span>
           </Button>
         </div>
         <RegenerateReportButton
           reportId={report.id}
-          propertyAddress={report.property_address}
+          propertyAddress={fullAddress}
           onRegenerated={onRegenerated}
           variant="ghost"
           size="sm"

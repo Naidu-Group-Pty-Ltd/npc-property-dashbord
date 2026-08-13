@@ -5,6 +5,7 @@ const read = (path) => readFileSync(path, 'utf8');
 const migration = read('supabase/migrations/20260812000000_market_updates_article_archive.sql');
 const retention = read('supabase/migrations/20260812010000_market_updates_archive_indefinite_retention.sql');
 const curate = read('supabase/functions/market-updates-curate/index.ts');
+const archiveFunction = read('supabase/functions/market-updates-archive/index.ts');
 const status = read('supabase/functions/market-updates-status/index.ts');
 const feed = read('supabase/functions/market-updates-feed/index.ts');
 const digest = read('supabase/functions/market-updates-digest/index.ts');
@@ -64,7 +65,13 @@ const dedupeBlock = ingest.slice(ingest.indexOf('const lookups = ['), ingest.ind
 requireTokens(dedupeBlock, [".eq('dedupe_hash',dedupe_hash)", ".eq('canonical_url',canonicalUrl)", ".eq('external_id',item.externalId)"], 'ingestion dedupe');
 assert.ok(!dedupeBlock.includes('archived_at'), 'ingestion dedupe must include retained archived rows');
 
-requireTokens(service, ['archiveMarketUpdate', 'restoreMarketUpdate', 'fetchMarketUpdateArchive', "action:'archive_write'", "action:'restore_write'"], 'frontend service contract');
+requireTokens(service, ['setMarketNewsArchiveState', 'archiveMarketUpdate', 'restoreMarketUpdate', 'fetchMarketUpdateArchive', "'market-news-archive-v2'", "'market-updates-archive'", "action:'set_archive_state'", 'archived:input.archived'], 'frontend service contract');
+requireTokens(archiveFunction, [
+  "action === 'set_archive_state'", "typeof body.updateId==='string'", "typeof body.archived!=='boolean'",
+  "'market_updates', 'can_edit'", 'archived_by:auth.userId', 'pre_archive_status:row.status',
+  "outcome=wantsArchived?'already_archived':'already_restored'", "code:'MARKET_NEWS_NOT_FOUND'",
+  "code:'MARKET_NEWS_WRITE_FAILED'", "'x-correlation-id':correlationId",
+], 'canonical archive function');
 requireTokens(archivePage, ['Archived News', 'Clear All', 'Recently archived', 'Newest publication', 'Restore', 'canRestore'], 'archive page');
 requireTokens(routes, ['path="market-updates/archived"', '<MarketArchivePage />'], 'archive route');
 requireTokens(types, ['ArchivedMarketUpdate', 'MarketUpdateArchivePage', 'archivedUpdates'], 'application types');

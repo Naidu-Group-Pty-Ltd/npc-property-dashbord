@@ -15,11 +15,19 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   getIdvProvider,
+  idvAdapterReadiness,
+  isStandaloneIdvProvider,
+  standaloneIdvReadiness,
   getScreeningProvider,
   resolveTenantProvider,
   runWithMetrics,
+  currentEnvironment,
+  checkSelfHostedIdvHealth,
+  ProviderResolutionError,
   type ScreeningScope,
 } from "../_shared/aml/providers/index.ts";
+import { stripImagePayloads } from "../_shared/aml/verificationEvidence.pure.ts";
+import { canonicalOutcome } from "../_shared/aml/verificationOutcome.pure.ts";
 
 const DEFAULT_TENANT = "default";
 async function resolveTenantId(admin: any, caseId: string): Promise<string> {
@@ -36,15 +44,25 @@ async function hasCaseAccess(
   caseId: string,
   requireWriteRole = false,
 ): Promise<boolean> {
-  const { data: caseRow, error: caseError } = await admin.schema("aml").from("cases")
-    .select("tenant_id").eq("id", caseId).maybeSingle();
-  if (caseError || !caseRow?.tenant_id) return false;
+  // `aml.cases` has no `tenant_id` column — no migration ever added one. This
+  // used to `.select("tenant_id")` and `return false` on the resulting
+  // PostgREST error, so it denied EVERY caller on EVERY case. That made the
+  // documentary route — the primary evidence path when no electronic provider
+  // is configured — permanently 403 behind an enabled "Record sighting"
+  // button. Found by running the real case workspace against production.
+  //
+  // The case still resolves its tenant exactly as `resolveTenantId` above
+  // does: the recorded value when one exists, otherwise the default tenant.
+  // Authorisation itself is unchanged — the tenant-scoped AML role RPCs below
+  // remain the only thing that can grant access.
+  const tenantId = await resolveTenantId(admin, caseId);
+  if (!tenantId) return false;
 
   const aml = admin.schema("aml");
   if (!requireWriteRole) {
     const { data, error } = await aml.rpc("has_any_tenant_aml_role", {
       _user_id: userId,
-      _tenant_id: caseRow.tenant_id,
+      _tenant_id: tenantId,
     });
     return !error && data === true;
   }
@@ -52,7 +70,7 @@ async function hasCaseAccess(
   for (const role of ["analyst", "reviewer", "mlro"]) {
     const { data, error } = await aml.rpc("has_tenant_aml_role", {
       _user_id: userId,
-      _tenant_id: caseRow.tenant_id,
+      _tenant_id: tenantId,
       _role: role,
     });
     if (!error && data === true) return true;
@@ -61,6 +79,7 @@ async function hasCaseAccess(
 }
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,6 +90,26 @@ const corsHeaders = {
 
 /** Owner decision of 2026-07-28: one attempt plus two retries. */
 const MAX_VERIFICATION_ATTEMPTS = 3;
+
+/**
+ * Attempts this party has actually spent.
+ *
+ * Never `attempt_number`: that is a capture sequence, and reading it here is
+ * what let three unusable captures exhaust a client who had used none.
+ */
+async function consumedAttempts(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<number> {
+  let q = admin.schema("aml").from("verification_checks")
+    .select("id")
+    .eq("case_id", caseId)
+    .eq("check_type", "electronic_idv")
+    .eq("attempt_consumed", true);
+  q = partyId ? q.eq("party_id", partyId) : q.is("party_id", null);
+  const { data, error } = await q;
+  if (error) return 0; // pre-migration: no escalation rather than a wrong one
+  return (data ?? []).length;
+}
 
 const IDV_ESTIMATED_TOKENS = 400;
 const SCREENING_ESTIMATED_TOKENS = 250;
@@ -144,7 +183,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             ? body.method : "document_and_liveness";
         const tenantId = await resolveTenantId(admin, caseId);
         const resolved = await resolveTenantProvider(admin, tenantId, "idv");
-        const provider = getIdvProvider({ resolved, preferred: body.provider });
+        // Provider resolution happens BEFORE anything is written: a refusal
+        // (production simulator block, missing configuration) must never
+        // create an identity_checks row, consume an attempt, or read as a
+        // customer failure. It is an operator condition, answered as 409.
+        let provider;
+        try {
+          // No caller-supplied hint. `providers/index.ts` states the rule —
+          // "Providers MUST NEVER be selected client-side" — and this was the
+          // one place a request body could still influence the choice.
+          provider = getIdvProvider({ resolved, admin });
+        } catch (resolutionErr: any) {
+          if (resolutionErr instanceof ProviderResolutionError) {
+            return jr({
+              error: resolutionErr.message.replace(/^\[aml\/providers\]\s*/, ""),
+              code: resolutionErr.code,
+              environment: currentEnvironment(),
+            }, 409);
+          }
+          throw resolutionErr;
+        }
 
         const idempotencyKey = `aml-idv-${caseId}-${Date.now()}`;
         let reservation: { jobId: string } | null = null;
@@ -160,7 +218,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           console.warn("[aml-verification] IDV token reserve failed", e?.message);
         }
 
-        const { data: inserted, error: insertErr } = await admin.schema("aml").from("identity_checks").insert({
+        const baseRow = {
           case_id: caseId,
           subject_label: caseRow.subject_display_name,
           provider: provider.name,
@@ -168,8 +226,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           status: "in_progress",
           requested_by: userId,
           mc_job_id: reservation?.jobId ?? null,
-          metadata: body.metadata ?? {},
+          // The caller's metadata carries the base64 captures the provider
+          // needs. They are passed to the provider below but never stored:
+          // persisting them here would put a second, unaudited copy of a
+          // customer's face in a database row.
+          metadata: stripImagePayloads(body.metadata ?? {}),
+        };
+        // Stamp the evidential standing at creation: a simulator execution is
+        // never authoritative. Retry without the columns while a database has
+        // not applied 20260830000000_aml_check_execution_mode.
+        let { data: inserted, error: insertErr } = await admin.schema("aml").from("identity_checks").insert({
+          ...baseRow,
+          execution_mode: provider.mode === "simulator" ? "simulation" : "live",
+          authoritative: provider.mode !== "simulator",
+          environment: currentEnvironment(),
         }).select().single();
+        if (insertErr && /execution_mode|authoritative|environment/i.test(insertErr.message ?? "")) {
+          ({ data: inserted, error: insertErr } = await admin.schema("aml")
+            .from("identity_checks").insert(baseRow).select().single());
+        }
         if (insertErr) throw insertErr;
 
         try {
@@ -184,7 +259,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             status: result.status,
             overall_score: result.overallScore,
             provider_reference: result.providerReference,
-            result_payload: result.raw,
+            result_payload: stripImagePayloads(result.raw),
             completed_at: new Date().toISOString(),
             mc_tokens_committed: IDV_ESTIMATED_TOKENS,
           }).eq("id", inserted.id).select().single();
@@ -203,12 +278,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jr({ identity_check: updated, result });
         } catch (e: any) {
           if (reservation) await cancelTokens(reservation.jobId, "idv_failed");
+          // An infrastructure/provider failure is NOT a verification result.
+          // The row records that a request never produced an outcome —
+          // "failed" is reserved for a provider that actually examined the
+          // subject and said no.
           await admin.schema("aml").from("identity_checks").update({
-            status: "failed",
-            result_payload: { error: e?.message ?? "provider_failure" },
+            status: "pending",
+            result_payload: {
+              error_category: "provider_unavailable",
+              error: String(e?.message ?? "provider_failure").slice(0, 300),
+              attempt_not_consumed: true,
+            },
             completed_at: new Date().toISOString(),
           }).eq("id", inserted.id);
-          throw e;
+          return jr({
+            error: "The verification provider could not be reached. The request was recorded and no result was produced — try again once Integration Health shows the provider is available.",
+            code: "provider_unavailable",
+          }, 502);
         }
       }
 
@@ -251,13 +337,38 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("id, subject_display_name, subject_type").eq("id", caseId).maybeSingle();
         if (!caseRow) return jr({ error: "Case not found" }, 404);
 
-        const scope: ScreeningScope[] = Array.isArray(body.scope) && body.scope.length
+        const requestedScope: ScreeningScope[] = Array.isArray(body.scope)
           ? body.scope.filter((s: string) => ["pep", "sanctions", "adverse_media", "watchlist"].includes(s))
-          : ["pep", "sanctions", "adverse_media"];
+          : [];
         const tenantId = await resolveTenantId(admin, caseId);
-        const capability = scope.length === 1 && scope[0] === "adverse_media" ? "adverse_media" : "pep_sanctions";
+        const capability = requestedScope.length === 1 && requestedScope[0] === "adverse_media"
+          ? "adverse_media" : "pep_sanctions";
         const resolved = await resolveTenantProvider(admin, tenantId, capability);
-        const provider = getScreeningProvider({ resolved, preferred: body.provider });
+        let provider;
+        try {
+          // Server-side selection only: tenant + capability + provider_configs
+          // + factory. The request body used to be able to steer this with a
+          // provider hint — a browser must never choose the authoritative
+          // screening provider, so no hint is passed.
+          provider = getScreeningProvider({ resolved, admin });
+        } catch (resolutionErr: any) {
+          if (resolutionErr instanceof ProviderResolutionError) {
+            return jr({
+              error: resolutionErr.message.replace(/^\[aml\/providers\]\s*/, ""),
+              code: resolutionErr.code,
+              environment: currentEnvironment(),
+            }, 409);
+          }
+          throw resolutionErr;
+        }
+
+        // Default to what the resolved provider actually covers, never to a
+        // wish-list. The old default of pep+sanctions+adverse_media recorded
+        // checks nobody performed; a caller may still request wider scopes,
+        // and the provider then reports them truthfully as not covered.
+        const scope: ScreeningScope[] = requestedScope.length
+          ? requestedScope
+          : provider.supportedScopes;
 
         const idempotencyKey = `aml-scr-${caseId}-${Date.now()}`;
         let reservation: { jobId: string } | null = null;
@@ -338,12 +449,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jr({ screening_check: updated, result });
         } catch (e: any) {
           if (reservation) await cancelTokens(reservation.jobId, "screening_failed");
+          // Same contract as IDV: an unreachable provider is not a screening
+          // outcome and never renders as a failure against the subject. Stale
+          // or missing list data is the same shape of condition — screening
+          // incomplete, never "clear", never "matched".
+          const listDataStale = /sanctions_list_unavailable/.test(String(e?.message ?? ""));
+          const errorCategory = listDataStale ? "list_data_unavailable" : "provider_unavailable";
           await admin.schema("aml").from("screening_checks").update({
-            status: "failed",
-            result_summary: { error: e?.message ?? "provider_failure" },
+            status: "pending",
+            result_summary: {
+              error_category: errorCategory,
+              error: String(e?.message ?? "provider_failure").slice(0, 300),
+            },
             completed_at: new Date().toISOString(),
           }).eq("id", inserted.id);
-          throw e;
+          return jr({
+            error: listDataStale
+              ? "The sanctions list data is missing or stale, so screening cannot produce an authoritative result. No result was recorded — re-run once the sanctions refresh has succeeded."
+              : "The screening provider could not be reached. No result was produced — try again once Integration Health shows the provider is available.",
+            code: errorCategory,
+          }, 502);
         }
       }
 
@@ -409,6 +534,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           : disposition === "dismissed" ? "dismissed" : "escalated";
         const { data: updatedMatch } = await admin.schema("aml").from("screening_matches")
           .update({ status: nextStatus }).eq("id", matchId).select().single();
+
+        // Party screening state is a projection of canonical match state:
+        // resolving a match here re-derives any party subject that references
+        // the same screening check, so the two vocabularies cannot drift.
+        const { projectPartyScreeningState } = await import("../_shared/aml/partyScreening.pure.ts");
+        const { data: linkedSubjects } = await admin.schema("aml").from("party_screening_subjects")
+          .select("id").eq("screening_check_id", match.screening_check_id);
+        if ((linkedSubjects ?? []).length > 0) {
+          const { data: allMatches } = await admin.schema("aml").from("screening_matches")
+            .select("status").eq("screening_check_id", match.screening_check_id);
+          const projected = projectPartyScreeningState(
+            (allMatches ?? []).map((m: any) => m.status));
+          for (const subject of linkedSubjects ?? []) {
+            await admin.schema("aml").from("party_screening_subjects").update({
+              state: projected,
+              adjudicated_by: userId,
+              adjudicated_at: now,
+              adjudication_note: rationale,
+              updated_at: now,
+            }).eq("id", subject.id);
+          }
+        }
 
         await appendCaseEvent(admin, match.case_id, "mlro_decision",
           `Match ${match.matched_name} ${disposition} (${match.list_name ?? match.match_type})`,
@@ -501,46 +648,67 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             failure_reason: `service_error: ${String(e?.message ?? e).slice(0, 300)}`,
             updated_at: new Date().toISOString(),
           }).eq("id", checkId);
-          return jr({ error: `Verification service unavailable: ${e?.message ?? e}`, code: "service_unavailable" }, 503);
+          // The adapter already redacts its host and token, but the message is
+          // still internal diagnostics; it belongs in failure_reason, not in a
+          // response body.
+          return jr({
+            error: "The verification service could not be reached. Nothing was recorded against the customer — try again once Integration Health shows the service is available.",
+            code: "service_unavailable",
+          }, 503);
         }
 
-        // 'unusable' capture (no face found, too small) is a capture problem,
-        // not an identity failure — leave the attempt open for a retake.
-        const unusable = (result.raw as any)?.face?.verdict === "unusable";
-        const status = unusable ? "pending"
-          : result.status === "failed" ? "failed"
-          : result.status === "verified" ? "passed"
-          : "referred";
-
-        const attemptsUsed = Number(check.attempt_number ?? 1);
-        const finalStatus = (status === "failed" && attemptsUsed >= MAX_VERIFICATION_ATTEMPTS)
-          ? "exhausted" : status;
+        // Exactly the rules the outbox worker applies. This path used to have
+        // its own: it read `attempt_number` (a capture sequence) to decide
+        // `exhausted`, never set `attempt_consumed` — so an outcome it
+        // recorded was invisible to the portal's accounting — and never set
+        // `processing_status`, leaving a finished check looking in-flight and
+        // blocking the client from submitting again.
+        const outcome = canonicalOutcome(result, {
+          attemptsConsumed: await consumedAttempts(admin, check.case_id, check.party_id ?? null),
+          maxAttempts: MAX_VERIFICATION_ATTEMPTS,
+        });
+        const unusable = outcome.processingStatus === "capture_unusable";
 
         const { data: updated, error: upErr } = await admin.schema("aml")
           .from("verification_checks").update({
-            status: finalStatus,
+            // null leaves the identity status untouched: an unusable capture
+            // is not a result, and the attempt stays open for a retake.
+            ...(outcome.status ? { status: outcome.status } : {}),
+            processing_status: outcome.processingStatus,
+            provider_error_category: outcome.providerErrorCategory,
+            attempt_consumed: outcome.attemptConsumed,
             provider: result.provider,
             provider_reference: result.providerReference,
-            outcome_detail: {
+            outcome_detail: stripImagePayloads({
               ...(check.outcome_detail ?? {}),
               checks: result.checks,
               overall_score: result.overallScore,
               raw: result.raw,
               adjudicated_by: userId,
-            },
-            failure_reason: status === "failed"
+            }),
+            failure_reason: outcome.status === "failed"
               ? result.checks.filter((c: any) => c.status === "fail").map((c: any) => c.name).join(", ")
               : null,
-            completed_at: ["passed", "failed", "exhausted"].includes(finalStatus)
+            completed_at: ["passed", "failed", "exhausted"].includes(String(outcome.status))
               ? new Date().toISOString() : null,
             updated_at: new Date().toISOString(),
           }).eq("id", checkId).select("*").single();
         if (upErr) throw upErr;
 
+        // The timeline records consumed attempts, so it agrees with what the
+        // client is told. An unusable capture is named as such rather than
+        // reported as an identity outcome.
+        // Read after the update, so it already includes this one if consumed.
+        const consumedNow = await consumedAttempts(admin, check.case_id, check.party_id ?? null);
         await appendCaseEvent(admin, check.case_id, "idv_result",
-          `Identity verification for ${check.party_label}: ${finalStatus} (attempt ${attemptsUsed} of ${MAX_VERIFICATION_ATTEMPTS})`,
+          unusable
+            ? `Identity verification for ${check.party_label}: capture unusable — no attempt consumed (${consumedNow} of ${MAX_VERIFICATION_ATTEMPTS} used)`
+            : `Identity verification for ${check.party_label}: ${outcome.status} (attempt ${consumedNow} of ${MAX_VERIFICATION_ATTEMPTS})`,
           {
-            verification_check_id: checkId, status: finalStatus,
+            verification_check_id: checkId,
+            status: outcome.status ?? "pending",
+            processing_status: outcome.processingStatus,
+            attempt_consumed: outcome.attemptConsumed,
             provider: result.provider, provider_reference: result.providerReference,
             checks: result.checks,
             limitations: (result.raw as any)?.limitations ?? [],
@@ -680,12 +848,156 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({ syncs: data ?? [], entry_count: count ?? 0 });
       }
 
+      // Stage 9: authorised technical retry for canonical checks. Retries
+      // ONLY technical failures and dead-lettered jobs — an authoritative
+      // outcome is final here, and a retry never consumes a customer attempt
+      // (the worker's attempt accounting decides that on completion).
+      case "retry_verification_processing": {
+        if (!canWrite) return jr({ error: "Write role required" }, 403);
+        const checkId = String(body.verification_check_id ?? "");
+        if (!checkId) return jr({ error: "verification_check_id required" }, 400);
+        const { data: check } = await admin.schema("aml").from("verification_checks")
+          .select("id, case_id, processing_status, status, superseded_at")
+          .eq("id", checkId).maybeSingle();
+        if (!check) return jr({ error: "not found" }, 404);
+        if (check.superseded_at || check.status !== "pending"
+            || !["technical_failure", "dead_lettered"].includes(check.processing_status ?? "")) {
+          return jr({
+            error: "Only a technically-failed or dead-lettered check can be retried. Authoritative results are final; ask the client for a new capture instead.",
+            code: "retry_not_eligible",
+          }, 409);
+        }
+        const { error: requeueErr } = await admin.schema("aml").from("verification_checks")
+          .update({ processing_status: "queued", provider_error_category: null })
+          .eq("id", checkId).eq("processing_status", check.processing_status);
+        if (requeueErr) throw requeueErr;
+        await admin.from("integration_outbox").insert({
+          aggregate_type: "aml_verification_check", aggregate_id: checkId,
+          event_type: "aml.verification.requested", event_version: 1,
+          payload: { verification_check_id: checkId, case_id: check.case_id, retry: true },
+          idempotency_key: `aml-verify-retry-${checkId}-${Date.now()}`,
+        });
+        await appendCaseEvent(admin, check.case_id, "system",
+          "Verification processing retried by staff (technical failure — no customer attempt consumed)",
+          { verification_check_id: checkId }, userId, userEmail);
+        return jr({ requeued: true, verification_check_id: checkId });
+      }
+
+      // Read-only provider readiness: what would actually run if staff asked
+      // for a verification right now, and why. Booleans only for secrets —
+      // never values. This is the operator preflight for the IDV workflow.
+      case "provider_readiness": {
+        const environment = currentEnvironment();
+        const tenantId = String(body.tenant_id ?? DEFAULT_TENANT);
+
+        async function capabilityReadiness(capability: "idv" | "pep_sanctions") {
+          const resolved = await resolveTenantProvider(admin, tenantId, capability);
+          const mode = resolved?.mode ??
+            ((Deno.env.get("AML_PROVIDER_MODE") || "").toLowerCase() === "live" ? "live" : "simulator");
+          const key = (resolved?.providerKey ?? "simulator").toLowerCase();
+          // Wiring and configuration come from the provider registry rather
+          // than from a second opinion here. `idvAdapterReadiness` knows about
+          // BOTH registries — capture (selfhosted) and hosted-session (didit) —
+          // so a correctly configured hosted provider no longer reports as
+          // misconfigured on the Command Centre card.
+          const idvReadiness = capability === "idv"
+            ? idvAdapterReadiness(key, resolved) : null;
+          // Secret PRESENCE only, and only the ones the active flow actually
+          // needs. Never a value.
+          const isStandalone = capability === "idv" && isStandaloneIdvProvider(key);
+          const secrets = capability !== "idv" ? {}
+            : idvReadiness?.flow === "hosted_session" ? {
+              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              DIDIT_WEBHOOK_SECRET: Boolean(Deno.env.get("DIDIT_WEBHOOK_SECRET")),
+            } : isStandalone ? {
+              // The Standalone path needs neither the workflow id nor the
+              // webhook secret — there is no workflow and, with
+              // save_api_request=false, no webhook is ever emitted. Reporting
+              // them would send an operator hunting for a secret that is
+              // correctly absent.
+              DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
+              DIDIT_LIVENESS_THRESHOLD: Boolean(Deno.env.get("DIDIT_LIVENESS_THRESHOLD")),
+              DIDIT_FACE_MATCH_THRESHOLD: Boolean(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD")),
+            } : {
+              AML_VERIFICATION_SERVICE_URL: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_URL")),
+              AML_VERIFICATION_SERVICE_TOKEN: Boolean(Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN")),
+            };
+          /**
+           * The specific fault, for the person who has to fix it.
+           *
+           * `secrets_present` answers "is it set", which cannot distinguish a
+           * threshold nobody set from one set to `0.6` on a 0-100 scale — the
+           * two mistakes an operator is most likely to make here, with opposite
+           * fixes. Presence and validity only; no value crosses this boundary,
+           * and nothing here is ever sent to the client portal.
+           */
+          const standaloneReadiness = isStandalone ? standaloneIdvReadiness() : null;
+          const wired = capability === "idv" ? Boolean(idvReadiness?.wired) : key === "local_lists";
+          const configured = capability === "idv" ? Boolean(idvReadiness?.configured) : true;
+          const wantsSimulator = mode === "simulator" || key === "simulator";
+          let state: string;
+          // Live health of the actual service, not an inference from secrets.
+          // Two secrets can point at a dead container; reporting `ready_live`
+          // for that is what let staff believe the provider was up while every
+          // verification would have failed.
+          let serviceHealth: Awaited<ReturnType<typeof checkSelfHostedIdvHealth>> | null = null;
+
+          if (wantsSimulator) {
+            state = environment === "production" ? "not_configured" : "simulator_non_production";
+          } else if (!wired || !configured) {
+            state = "misconfigured";
+          } else if (resolved && ["failing", "unhealthy"].includes(String((resolved as any).lastHealthStatus ?? ""))) {
+            state = "unavailable";
+          } else if (capability === "idv" && key === "selfhosted") {
+            serviceHealth = await checkSelfHostedIdvHealth();
+            state = serviceHealth.reachable && serviceHealth.status === "ok"
+              ? "ready_live"
+              : "unavailable";
+          } else {
+            state = "ready_live";
+          }
+          const { data: cfg } = resolved?.configId
+            ? await admin.schema("aml").from("provider_configs")
+              .select("last_health_at, last_health_status, last_health_message")
+              .eq("id", resolved.configId).maybeSingle()
+            : { data: null };
+          return {
+            capability,
+            configured_provider: resolved?.providerKey ?? null,
+            // Which experience the client will get. Lets the Command Centre
+            // word its client request correctly instead of assuming capture.
+            idv_flow: idvReadiness?.flow ?? null,
+            mode,
+            adapter_wired: wired,
+            secrets_present: secrets,
+            // Null for every provider except the Standalone one.
+            standalone_readiness: standaloneReadiness,
+            last_health: cfg ? {
+              at: cfg.last_health_at, status: cfg.last_health_status,
+              message: cfg.last_health_message,
+            } : null,
+            // A probe made just now, so `state` is evidence rather than
+            // inference. Carries no URL and no token.
+            service_health: serviceHealth,
+            state,
+          };
+        }
+
+        return jr({
+          environment,
+          simulator_blocked: environment === "production",
+          note: "Configuration plus a live /healthz probe of the configured service. `ready_live` means the service answered and both models initialised.",
+          idv: await capabilityReadiness("idv"),
+          screening: await capabilityReadiness("pep_sanctions"),
+        });
+      }
+
       default:
         return jr({ error: `Unknown op: ${op}` }, 400);
     }
   } catch (e: any) {
     console.error("[aml-verification] error", e);
-    return jr({ error: e?.message ?? "internal_error" }, 500);
+    return jr({ ...internalError(e, 'aml-verification') }, 500);
   }
 });
 

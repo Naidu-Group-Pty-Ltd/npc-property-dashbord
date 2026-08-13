@@ -111,6 +111,8 @@ import {
 // jsPDF preview retired — PDF tab now renders via WeasyPrint for production parity.
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { renderHtmlToPdfUrl, pdfFileNameFor } from '@/lib/reportTemplate/weasyRenderClient';
+import { compileTemplateHtmlForPdf, describeUnresolvedRasterPages } from '@/lib/reportTemplate/compileTemplateForPdf';
+import { downloadUrlAsFile } from '@/lib/downloadFile';
 import {
   buildCascadeActivationReadiness,
   buildCascadeAnchorSuggestions,
@@ -209,7 +211,11 @@ export default function TemplateBuilderEdit() {
   const { update, create } = useReportTemplateMutations();
   const { data: versions = [] } = useReportTemplateVersions(id);
   const qc = useQueryClient();
-  const importReview = usePersistedImportReviewController({ onRepairApplied: () => { if (id) void qc.invalidateQueries({ queryKey: ['report-templates', id] }); } });
+  // Stage 3 — see TemplateBuilder.tsx: a critique reports and cannot write.
+  const importReview = usePersistedImportReviewController({
+    onRepairApplied: () => { if (id) void qc.invalidateQueries({ queryKey: ['report-templates', id] }); },
+    enableAiCritique: true,
+  });
   const { data: linkedImport, isLoading: linkedImportLoading } = useQuery({
     queryKey: ['template-imports', 'linked-template', id],
     enabled: !!id,
@@ -1926,7 +1932,10 @@ export default function TemplateBuilderEdit() {
                   if (!confirmRendererPreflight('render with WeasyPrint')) return;
                   const toastId = toast.loading('Rendering via WeasyPrint…');
                   try {
-                    const { html } = renderTemplateToHtml(template, {
+                    // Compiles through the shared path so the page rasters are
+                    // resolved first. Calling renderTemplateToHtml directly (as
+                    // this did) produced a PDF that was blank from page 2 on.
+                    const { html, unresolvedRasterPages } = await compileTemplateHtmlForPdf(template, {
                       data: sampleData,
                       title: name || 'Template Preview',
                       customCss: customCss || undefined,
@@ -1939,8 +1948,13 @@ export default function TemplateBuilderEdit() {
                       templateId: id,
                       mode: 'preview',
                     });
-                    window.open(url, '_blank', 'noopener');
-                    toast.success('WeasyPrint render ready', { id: toastId });
+                    // Save it rather than `window.open` — the render takes tens
+                    // of seconds, so the popup is blocked by then. downloadFile.ts.
+                    await downloadUrlAsFile(url, pdfFileNameFor(name));
+                    const degraded = describeUnresolvedRasterPages(unresolvedRasterPages);
+                    const openAction = { label: 'Open', onClick: () => window.open(url, '_blank', 'noopener') };
+                    if (degraded) toast.warning(degraded, { id: toastId, action: openAction });
+                    else toast.success('WeasyPrint render downloaded', { id: toastId, action: openAction });
                   } catch (e: any) {
                     toast.error(`WeasyPrint failed: ${e?.message ?? e}`, { id: toastId });
                   }
@@ -1952,10 +1966,12 @@ export default function TemplateBuilderEdit() {
                 disabled={!previewUrl}
                 onSelect={() => {
                   if (!previewUrl) return;
-                  const a = document.createElement('a');
-                  a.href = previewUrl;
-                  a.download = `${name || 'template'}.pdf`;
-                  a.click();
+                  // `download` is ignored on a cross-origin href, and the
+                  // signed URL is served from *.supabase.co — so this used to
+                  // drop the filename and, with a detached anchor, usually do
+                  // nothing at all. Fetch the bytes and save a same-origin blob.
+                  void downloadUrlAsFile(previewUrl, `${name || 'template'}.pdf`)
+                    .catch((e: Error) => toast.error(e.message));
                 }}
               >
                 <Download className="h-4 w-4 mr-2" /> Download current PDF

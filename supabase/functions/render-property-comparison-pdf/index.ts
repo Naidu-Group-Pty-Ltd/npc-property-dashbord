@@ -55,11 +55,12 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
-import { countPdfPages, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
+import { countPdfPagesAsync, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import {
   buildReportBrandSnapshot,
   REPORT_SNAPSHOT_VERSION,
@@ -145,6 +146,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (auth.error || !auth.userId || auth.userId === 'service_role') {
       return json({ error: auth.error || 'Authentication required' }, 401);
     }
+
+    // Report Comparisons is a Growth/Scale capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, auth, 'report-comparisons');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const parsed = parseRenderRequest(body);
     if (!parsed.ok) return json({ error: parsed.error }, 400);
@@ -363,7 +368,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       .maybeSingle();
     renderId = (renderRow?.id as string) ?? null;
 
-    const pdf = await renderPdf(weasyprint, html, { variant: 'pdf/a-2b', tagged: true });
+    const pdf = await renderPdf(weasyprint, html, {
+      variant: 'pdf/ua-1',
+      tagged: true,
+      // The ledger row and the source row, stamped into the PDF itself.
+      // See `DocumentProvenance` — a delivered file could not be traced
+      // back to the render that produced it.
+      provenance: {
+        format: 'property-comparison',
+        renderId: renderId,
+        sourceId: request.comparisonId,
+        renderedAt: now,
+      },
+    });
 
     const { error: uploadError } = await supabase.storage.from(PDF_BUCKET).upload(path, pdf, {
       contentType: 'application/pdf',
@@ -382,7 +399,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     const durationMs = Date.now() - started;
-    const pageCount = countPdfPages(pdf);
+    const pageCount = await countPdfPagesAsync(pdf);
 
     if (renderId) {
       await supabase

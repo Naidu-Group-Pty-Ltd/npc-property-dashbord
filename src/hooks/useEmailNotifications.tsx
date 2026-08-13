@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { getNotificationBadge, getNotificationIcon } from '@/lib/desktopMessageAlerts';
 
 interface EmailNotificationOptions {
   onNewEmail?: (email: any) => void;
@@ -67,7 +68,10 @@ export function useEmailNotifications({
       try {
         const notification = new Notification(title, {
           body,
-          icon: '/favicon.ico',
+          // White-label mark where one is configured, Aurixa Systems otherwise
+          // — never the scaffold's stock icon.
+          icon: getNotificationIcon(),
+          badge: getNotificationBadge(),
           tag: 'email-notification',
           requireInteraction: false
         });

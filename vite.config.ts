@@ -1,9 +1,10 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { execSync } from "node:child_process";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
 import { inlineXlsxPlugin } from "./vite-inline-xlsx";
+import { stagingTargetPlugin } from "./vite-staging-target";
 
 // Identifies the deployed build. `version.json` carries the same value, so a
 // tab can tell whether it is running the current bundle or a cached older one
@@ -42,7 +43,7 @@ function buildVersionManifest(): Plugin {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig(() => ({
+export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
@@ -50,8 +51,18 @@ export default defineConfig(() => ({
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
-  plugins: [inlineXlsxPlugin(), react(), mcpPlugin(), buildVersionManifest()],
-  assetsInclude: ["**/*.xlsx"],
+  plugins: [
+    // Inert unless run with `--mode staging` AND the local staging variables
+    // are set; see vite-staging-target.ts. Gating on the mode is what stops a
+    // default build being retargeted by a `.env.local` on disk. Runs before
+    // everything else so the retarget applies to source, not to output.
+    stagingTargetPlugin(mode, loadEnv(mode, process.cwd(), ["STAGING_"])),
+    inlineXlsxPlugin(),
+    react(),
+    mcpPlugin(),
+    buildVersionManifest(),
+  ],
+  assetsInclude: ["**/*.xlsx", "**/*.docx"],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

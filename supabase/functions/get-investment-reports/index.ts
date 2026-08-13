@@ -2,9 +2,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
-type Projection = 'library' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup';
+type Projection = 'library' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
 type ErrorCode = 'UNAUTHENTICATED' | 'FORBIDDEN' | 'REPORT_SCHEMA_MISMATCH' | 'INVALID_REPORT_QUERY' |
   'REPORT_DATABASE_UNAVAILABLE' | 'REPORT_QUERY_TIMEOUT' | 'REPORT_QUERY_FAILED' | 'REPORT_NOT_FOUND' | 'INTERNAL_REPORT_ERROR';
 
@@ -25,11 +26,19 @@ interface RequestBody {
 
 export const INVESTMENT_LIBRARY_SELECT = 'id,property_address,property_listing_id,client_property_id,canonical_property_key,created_at,current_version,report_scope,report_tier,parent_report_id,status,is_archived,is_client_report,report_variant,derived_from_report_id,investment_score,generated_by';
 const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence`;
+// Live-progress projection for the floating generation widget, which polls every
+// few seconds. The library projection omits `updated_at`, `error_message` and the
+// section counters, so the widget was rendering `new Date(undefined)` and a
+// permanent 0% — see docs. `report_content` is deliberately NOT here: completed
+// reports average ~95KB and the widget polls up to 20 rows, so including it
+// would ship megabytes of report prose per poll. Progress comes from the
+// counters, which the generator maintains authoritatively.
+const INVESTMENT_PROGRESS_SELECT = 'id,property_address,status,error_message,created_at,updated_at,last_completed_section,total_sections,bulk_job_id,report_tier,generation_engine';
 const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = {
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-07-26.1';
+const FUNCTION_VERSION = '2026-08-06.1';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -44,6 +53,46 @@ const classifyDatabaseError = (error: { code?: string; message?: string }) => {
   if (/connection|unavailable|gateway/i.test(message)) return { code: 'REPORT_DATABASE_UNAVAILABLE' as const, details: 'The report database is temporarily unavailable.', retryable: true, status: 503 };
   return { code: 'REPORT_QUERY_FAILED' as const, details: 'The report query could not be completed.', retryable: true, status: 500 };
 };
+
+type ReportRow = Record<string, unknown> & { id?: string; property_address?: string; report_content?: string; sources_content?: string };
+
+async function hydrateCompleteAddresses(
+  supabase: ReturnType<typeof createClient>,
+  rows: ReportRow[],
+): Promise<{ rows: ReportRow[]; error: { code?: string; message?: string } | null }> {
+  const incompleteIds = rows
+    .filter(row => typeof row.id === 'string' && !hasCompleteAustralianAddress(row.property_address))
+    .map(row => row.id as string);
+  if (!incompleteIds.length) return { rows, error: null };
+
+  const missingContentIds = rows
+    .filter(row => incompleteIds.includes(row.id as string) && typeof row.report_content !== 'string')
+    .map(row => row.id as string);
+  let contentById = new Map<string, { report_content?: string; sources_content?: string }>();
+  if (missingContentIds.length) {
+    const contentResult = await supabase
+      .from('investment_reports')
+      .select('id,report_content,sources_content')
+      .in('id', missingContentIds);
+    if (contentResult.error) return { rows, error: contentResult.error };
+    contentById = new Map((contentResult.data || []).map(item => [item.id, item]));
+  }
+
+  return {
+    error: null,
+    rows: rows.map(row => {
+      const content = typeof row.id === 'string' ? contentById.get(row.id) : undefined;
+      return {
+        ...row,
+        property_address: resolveCompleteReportAddress(
+          row.property_address,
+          row.report_content ?? content?.report_content,
+          row.sources_content ?? content?.sources_content,
+        ),
+      };
+    }),
+  };
+}
 
 Deno.serve(async (req) => {
   const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -70,11 +119,14 @@ Deno.serve(async (req) => {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200)
       return failure('INVALID_REPORT_QUERY', 'Page must be positive and pageSize must be between 1 and 200.', false, 400, corsHeaders, correlationId);
     const projection: Projection = body.projection || (body.reportId ? 'detail' : body.reportIds ? 'multiLookup' : options.isArchived ? 'archivedLibrary' : 'library');
-    const allowed: Projection[] = ['library', 'archivedLibrary', 'detail', 'idLookup', 'multiLookup'];
+    const allowed: Projection[] = ['library', 'archivedLibrary', 'detail', 'idLookup', 'multiLookup', 'generationProgress'];
     if (!allowed.includes(projection)) return failure('INVALID_REPORT_QUERY', 'The requested projection is invalid.', false, 400, corsHeaders, correlationId);
 
     const select = table === 'investment_reports'
-      ? projection === 'detail' ? INVESTMENT_DETAIL_SELECT : projection === 'idLookup' ? 'id' : INVESTMENT_LIBRARY_SELECT
+      ? projection === 'detail' ? INVESTMENT_DETAIL_SELECT
+        : projection === 'idLookup' ? 'id'
+        : projection === 'generationProgress' ? INVESTMENT_PROGRESS_SELECT
+        : INVESTMENT_LIBRARY_SELECT
       : TABLE_SELECTS[table as Exclude<TableName, 'investment_reports'>];
     let query = supabase.from(table).select(select, { count: 'exact' });
     if (body.reportId) query = query.eq('id', body.reportId);
@@ -108,7 +160,10 @@ Deno.serve(async (req) => {
     // Fetch lightweight siblings for keys represented by this page; large payloads
     // remain detail-only and IDs are de-duplicated below.
     let responseData = data || [];
-    if (table === 'investment_reports' && !body.reportId && !body.reportIds && responseData.length) {
+    // The sibling sweep exists so the library grid never shows a partial property
+    // package. The progress widget lists individual in-flight jobs, so pulling in
+    // every sibling of every row is pure noise there (and inflates a 50-row page).
+    if (table === 'investment_reports' && projection !== 'generationProgress' && !body.reportId && !body.reportIds && responseData.length) {
       const keys = [...new Set(responseData.map(row => row.canonical_property_key).filter((key): key is string => Boolean(key)))];
       if (keys.length) {
         let siblingsQuery = supabase.from('investment_reports').select(INVESTMENT_LIBRARY_SELECT).in('canonical_property_key', keys);
@@ -122,9 +177,17 @@ Deno.serve(async (req) => {
         responseData = [...new Map([...(data || []), ...(siblings.data || [])].map(row => [row.id, row])).values()];
       }
     }
+    if (table === 'investment_reports' && projection !== 'idLookup' && projection !== 'generationProgress' && responseData.length) {
+      const hydrated = await hydrateCompleteAddresses(supabase, responseData as ReportRow[]);
+      if (hydrated.error) {
+        console.error('[get-investment-reports]', { correlationId, functionVersion: FUNCTION_VERSION, technicalError: hydrated.error });
+        const mapped = classifyDatabaseError(hydrated.error); return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
+      }
+      responseData = hydrated.rows as typeof responseData;
+    }
     const totalRows = count || 0, totalPages = Math.ceil(totalRows / pageSize);
     console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection, filters: { status: options.status, archived: options.isArchived, client: options.isClientReport, hasDateRange: Boolean(options.createdAfter || options.createdBefore) }, page, pageSize, durationMs: Math.round(performance.now() - started), returnedCount: responseData.length, functionVersion: FUNCTION_VERSION });
-    if (body.reportId) return json({ success: true, report: data[0], correlationId }, 200, corsHeaders, correlationId);
+    if (body.reportId) return json({ success: true, report: responseData[0], correlationId }, 200, corsHeaders, correlationId);
     return json({ success: true, reports: responseData, count: totalRows, pagination: { page, pageSize, totalRows, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 }, correlationId }, 200, corsHeaders, correlationId);
   } catch (error) {
     console.error('[get-investment-reports]', { correlationId, functionVersion: FUNCTION_VERSION, technicalError: error });

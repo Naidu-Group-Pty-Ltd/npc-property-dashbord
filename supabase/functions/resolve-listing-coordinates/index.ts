@@ -2,6 +2,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { assessAuPoint } from '../_shared/auGeoSanity.pure.ts';
+import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
+import { assessAgainstConsensus, type GeoPointLike } from '../_shared/geoConsensus.pure.ts';
 import {
   enforceGlobalDailyQuota,
   fetchWithTimeout,
@@ -91,8 +94,21 @@ Deno.serve(async (req) => {
 
     if (rawListings.length === 0) return j({ success: true, results: [] });
 
-    const results: Array<{ id: string; lat: number; lng: number; source: string }> = [];
-    const pending: Array<{ id: string; query: string; hash: string }> = [];
+    const results: Array<{
+      id: string;
+      lat: number;
+      lng: number;
+      source: string;
+      precision?: string | null;
+    }> = [];
+    const pending: Array<{
+      id: string;
+      query: string;
+      hash: string;
+      state: string | null;
+      postcode: string | null;
+      suburb: string | null;
+    }> = [];
 
     for (const listing of rawListings) {
       const id = clean(listing.id, 120);
@@ -107,7 +123,14 @@ Deno.serve(async (req) => {
 
       const query = buildQuery(listing);
       if (!query || query.length < 6) continue;
-      pending.push({ id, query, hash: await hashQuery(query) });
+      pending.push({
+        id,
+        query,
+        hash: await hashQuery(query),
+        state: clean(listing.state, 60) || null,
+        postcode: clean(listing.postcode, 8) || null,
+        suburb: clean(listing.suburb, 80) || null,
+      });
     }
 
     if (pending.length === 0) return j({ success: true, results });
@@ -116,20 +139,50 @@ Deno.serve(async (req) => {
     const uniqueHashes = Array.from(new Set(pending.map((p) => p.hash)));
     const { data: cached } = await supabase
       .from('listing_geocodes')
-      .select('listing_hash, lat, lng, status')
+      .select('listing_hash, lat, lng, status, precision')
       .in('listing_hash', uniqueHashes);
 
-    const cacheMap = new Map<string, { lat: number | null; lng: number | null; status: string }>();
-    (cached || []).forEach((row: { listing_hash: string; lat: number | null; lng: number | null; status: string }) => {
-      cacheMap.set(row.listing_hash, { lat: row.lat, lng: row.lng, status: row.status });
-    });
+    const cacheMap = new Map<
+      string,
+      { lat: number | null; lng: number | null; status: string; precision: string | null }
+    >();
+    (cached || []).forEach(
+      (row: {
+        listing_hash: string;
+        lat: number | null;
+        lng: number | null;
+        status: string;
+        precision: string | null;
+      }) => {
+        cacheMap.set(row.listing_hash, {
+          lat: row.lat,
+          lng: row.lng,
+          status: row.status,
+          precision: row.precision ?? null,
+        });
+      },
+    );
 
     const needsLookup: Array<{ id: string; query: string; hash: string }> = [];
     for (const item of pending) {
       const hit = cacheMap.get(item.hash);
       if (hit) {
-        if (hit.status === 'ok' && validPoint(hit.lat, hit.lng)) {
-          results.push({ id: item.id, lat: hit.lat as number, lng: hit.lng as number, source: 'cache' });
+        if (
+          hit.status === 'ok' &&
+          validPoint(hit.lat, hit.lng) &&
+          // The Australian-geography gate, against the listing's own state. A
+          // stored answer that fails it is never served — a wrong pin with a
+          // cache behind it is the most durable kind of wrong.
+          assessAuPoint(hit.lat as number, hit.lng as number, item.state).ok &&
+          assessAuPostcodePoint(hit.lat as number, hit.lng as number, item.postcode).ok
+        ) {
+          results.push({
+            id: item.id,
+            lat: hit.lat as number,
+            lng: hit.lng as number,
+            source: 'cache',
+            precision: hit.precision,
+          });
         }
         continue;
       }
@@ -144,6 +197,35 @@ Deno.serve(async (req) => {
 
     if (needsLookup.length === 0) {
       return j({ success: true, results, pendingLookups: 0 });
+    }
+
+    // Suburb consensus: the corpus as its own control group. Verified
+    // coordinates already stored for the same suburb form a median prior;
+    // a fresh answer hundreds of kilometres from every neighbour is a
+    // wrong-town geocode no rectangle or polygon can catch. One query per
+    // request, neighbours grouped in memory.
+    const consensusSuburbs = Array.from(
+      new Set(
+        needsLookup
+          .map((item) => (item.suburb ? item.suburb.toLowerCase() : null))
+          .filter((v): v is string => Boolean(v)),
+      ),
+    );
+    const neighboursBySuburb = new Map<string, GeoPointLike[]>();
+    if (consensusSuburbs.length > 0) {
+      const { data: neighbourRows } = await supabase
+        .from('listing_geocodes')
+        .select('suburb, lat, lng')
+        .eq('status', 'ok')
+        .not('suburb', 'is', null)
+        .in('suburb', consensusSuburbs.concat(consensusSuburbs.map((v) => v.toUpperCase())));
+      for (const row of (neighbourRows ?? []) as Array<{ suburb: string | null; lat: number | null; lng: number | null }>) {
+        if (!row.suburb || row.lat === null || row.lng === null) continue;
+        const key = row.suburb.toLowerCase();
+        const list = neighboursBySuburb.get(key) ?? [];
+        list.push({ lat: row.lat, lng: row.lng });
+        neighboursBySuburb.set(key, list);
+      }
     }
 
     if (apiKey && !killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
@@ -189,20 +271,50 @@ Deno.serve(async (req) => {
             const loc = data.results[0].geometry.location;
             const lat = numeric(loc.lat);
             const lng = numeric(loc.lng);
-            if (validPoint(lat, lng)) {
-              cacheMap.set(item.hash, { lat, lng, status: 'ok' });
+            const precision = String(data.results[0].geometry.location_type ?? 'UNKNOWN').slice(0, 40);
+            const neighbours = item.suburb
+              ? (neighboursBySuburb.get(item.suburb.toLowerCase()) ?? [])
+              : [];
+            const sane =
+              validPoint(lat, lng) &&
+              assessAuPoint(lat as number, lng as number, item.state).ok &&
+              // A geocode in the right state but the wrong end of it — the
+              // postcode band is the only gate that can see this.
+              assessAuPostcodePoint(lat as number, lng as number, item.postcode).ok &&
+              // And the neighbours get the final word: a fresh answer must
+              // agree with the suburb's own verified median when one exists.
+              assessAgainstConsensus({ lat: lat as number, lng: lng as number }, neighbours).ok;
+            if (sane) {
+              cacheMap.set(item.hash, { lat, lng, status: 'ok', precision });
               inserts.push({
                 listing_hash: item.hash,
                 lat,
                 lng,
-                precision: String(data.results[0].geometry.location_type ?? 'UNKNOWN').slice(0, 40),
+                precision,
                 provider: 'google',
                 status: 'ok',
+                suburb: item.suburb,
+                state: item.state,
+                resolved_at: new Date().toISOString(),
+              });
+            } else if (validPoint(lat, lng)) {
+              // Google answered, but outside Australia or the listing's own
+              // state — a contaminated locality being taken at its word.
+              // Recorded as suspect so the sweep does not retry it forever,
+              // and never served as a coordinate.
+              cacheMap.set(item.hash, { lat: null, lng: null, status: 'suspect', precision: null });
+              inserts.push({
+                listing_hash: item.hash,
+                lat: null,
+                lng: null,
+                precision: null,
+                provider: 'google',
+                status: 'suspect',
                 resolved_at: new Date().toISOString(),
               });
             }
           } else if (data.status === 'ZERO_RESULTS') {
-            cacheMap.set(item.hash, { lat: null, lng: null, status: 'not_found' });
+            cacheMap.set(item.hash, { lat: null, lng: null, status: 'not_found', precision: null });
             inserts.push({
               listing_hash: item.hash,
               lat: null,
@@ -239,7 +351,13 @@ Deno.serve(async (req) => {
     for (const item of needsLookup) {
       const hit = cacheMap.get(item.hash);
       if (hit && hit.status === 'ok' && validPoint(hit.lat, hit.lng)) {
-        results.push({ id: item.id, lat: hit.lat as number, lng: hit.lng as number, source: 'geocoded' });
+        results.push({
+          id: item.id,
+          lat: hit.lat as number,
+          lng: hit.lng as number,
+          source: 'geocoded',
+          precision: hit.precision ?? null,
+        });
       }
     }
 

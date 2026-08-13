@@ -12,6 +12,8 @@ import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse,
 import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -105,7 +107,7 @@ async function generateOne(chapterTitle: string): Promise<{ bytes: Uint8Array }>
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
   try {
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
+    const res = await meteredFetch("https://ai.gateway.lovable.dev/v1/images/generations", {
       method: "POST",
       headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -387,7 +389,7 @@ Deno.serve(async (req) => {
     });
   } catch (err: any) {
     console.error("[prepare-report-hero-images]", err);
-    return new Response(JSON.stringify({ error: err?.message || "Unknown error" }), {
+    return new Response(JSON.stringify(internalError(err, 'prepare-report-hero-images')), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

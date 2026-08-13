@@ -10,11 +10,11 @@ import { AlertCircle, Building2, CheckCircle, Eye, EyeOff, Loader2 } from 'lucid
 import { validatePassword } from '@/utils/passwordValidation';
 import { PasswordStrengthMeter } from '@/components/ui/password-strength-meter';
 import { BrandLogo } from '@/components/branding/BrandAssets';
+import { setPortalSessionToken } from '@/lib/portalSession';
 
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
 
-const PORTAL_SESSION_KEY = 'portal_session_token';
 
 async function invokeFunction(functionName: string, body: Record<string, any>) {
   const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
@@ -24,7 +24,10 @@ async function invokeFunction(functionName: string, body: Record<string, any>) {
       'apikey': SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
     },
-    credentials: 'omit',
+    // `client-portal-accept-invite` answers with exact-origin CORS and sets the
+    // HttpOnly `__Host-client_session_token` cookie, so the browser must be
+    // allowed to keep it.
+    credentials: 'include',
     body: JSON.stringify(body),
   });
   const data = await response.json();
@@ -105,10 +108,12 @@ export default function PortalAcceptInvite() {
       return;
     }
 
-    // Store session
+    // The session lives in the HttpOnly cookie the response set; this in-memory
+    // copy only backs the legacy header/body carriers and dies with the tab. It
+    // used to be written to localStorage, which left a working client session on
+    // the machine indefinitely. See src/lib/portalSession.ts.
     if (data.session_token) {
-      try { sessionStorage.setItem(PORTAL_SESSION_KEY, data.session_token); } catch {}
-      try { localStorage.setItem(PORTAL_SESSION_KEY, data.session_token); } catch {}
+      setPortalSessionToken(data.session_token);
     }
 
     setSuccess(true);
@@ -117,7 +122,7 @@ export default function PortalAcceptInvite() {
 
   if (validating) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="text-center space-y-4">
           <Loader2 className="h-10 w-10 text-primary mx-auto animate-spin" />
           <p className="text-muted-foreground">Validating your invite...</p>
@@ -128,7 +133,7 @@ export default function PortalAcceptInvite() {
 
   if (!token || !inviteValid) {
     return (
-      <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="client-portal-theme min-h-screen flex items-center justify-center p-4">
         <Card className="client-portal-soft-panel w-full max-w-md overflow-hidden">
           <CardHeader className="border-b border-border/50 bg-gradient-to-r from-destructive/10 via-destructive/5 to-transparent text-center">
             <div className="flex justify-center mb-4">
@@ -153,7 +158,7 @@ export default function PortalAcceptInvite() {
 
   if (alreadyActive) {
     return (
-      <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="client-portal-theme min-h-screen flex items-center justify-center p-4">
         <Card className="client-portal-soft-panel w-full max-w-md overflow-hidden">
           <CardHeader className="border-b border-border/50 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent text-center">
             <div className="flex justify-center mb-4">
@@ -171,7 +176,7 @@ export default function PortalAcceptInvite() {
   }
 
   return (
-    <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="client-portal-theme min-h-screen flex items-center justify-center p-4">
       <Card className="client-portal-soft-panel w-full max-w-md overflow-hidden">
         <CardHeader className="space-y-2 text-center">
           <div className="flex justify-center mb-4">

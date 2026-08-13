@@ -9,7 +9,9 @@ import {
   formatCompactAud,
   formatFullAud,
   getStoredListingPoint,
+  describeGeocodePrecision,
   heatGeometryForZoom,
+  robustClusterAnchor,
   listingSetSignature,
   listingTimestamp,
   priceTier,
@@ -368,6 +370,59 @@ describe('describeHeatLegend', () => {
   });
 });
 
+describe('describeGeocodePrecision', () => {
+  it('lets rooftop and street-level pins stand unqualified', () => {
+    expect(describeGeocodePrecision('ROOFTOP')).toEqual({ tier: 'exact', note: null });
+    expect(describeGeocodePrecision('RANGE_INTERPOLATED').tier).toBe('street');
+    expect(describeGeocodePrecision('GEOMETRIC_CENTER').tier).toBe('street');
+  });
+
+  it('captions a suburb centroid as approximate — the map must not imply rooftop', () => {
+    const described = describeGeocodePrecision('APPROXIMATE');
+    expect(described.tier).toBe('area');
+    expect(described.note).toMatch(/approximate/i);
+  });
+
+  it('treats missing or unrecognised precision as unknown, without a caption', () => {
+    expect(describeGeocodePrecision(null)).toEqual({ tier: 'unknown', note: null });
+    expect(describeGeocodePrecision('rooftop').tier).toBe('exact');
+    expect(describeGeocodePrecision('SOMETHING_NEW').tier).toBe('unknown');
+  });
+});
+
+describe('robustClusterAnchor', () => {
+  const melbourne = { lat: -37.81, lng: 144.96 };
+
+  it('lands on a typical member, not the average', () => {
+    const anchor = robustClusterAnchor([
+      { lat: -37.8, lng: 144.9 },
+      { lat: -37.82, lng: 144.97 },
+      { lat: -37.79, lng: 145.02 },
+    ]);
+    expect(anchor).not.toBeNull();
+    expect(anchor!.lat).toBeCloseTo(-37.8, 0);
+  });
+
+  it('cannot be dragged into the sea by one wrong member', () => {
+    // The degenerate case the nearest-to-current-position snap ratified: a
+    // poisoned member in the Southern Ocean that the cluster was anchored on.
+    const members = [
+      ...Array.from({ length: 40 }, (_, i) => ({
+        lat: melbourne.lat + (i % 7) * 0.01,
+        lng: melbourne.lng + (i % 5) * 0.01,
+      })),
+      { lat: -46, lng: 146 },
+    ];
+    const anchor = robustClusterAnchor(members);
+    expect(anchor!.lat).toBeGreaterThan(-38.5);
+  });
+
+  it('handles the trivial sizes', () => {
+    expect(robustClusterAnchor([])).toBeNull();
+    expect(robustClusterAnchor([melbourne])).toEqual(melbourne);
+  });
+});
+
 describe('heatGeometryForZoom', () => {
   it('grows the radius with zoom so the surface stays legible', () => {
     const country = heatGeometryForZoom(4, 'balanced');
@@ -377,8 +432,18 @@ describe('heatGeometryForZoom', () => {
   });
 
   it('clamps to a sane pixel range at both extremes', () => {
-    expect(heatGeometryForZoom(0, 'tight').radius).toBeGreaterThanOrEqual(10);
+    expect(heatGeometryForZoom(0, 'tight').radius).toBeGreaterThanOrEqual(5);
     expect(heatGeometryForZoom(22, 'wide').radius).toBeLessThanOrEqual(62);
+  });
+
+  it('keeps national-scale hotspots tight so a city cannot bleed into the sea', () => {
+    // At zoom 4 all of Melbourne is a couple of pixels; a generous radius put
+    // its blob in Bass Strait. Country zooms trade gradient for placement.
+    const country = heatGeometryForZoom(4, 'balanced');
+    const regional = heatGeometryForZoom(8, 'balanced');
+    expect(country.radius).toBeLessThanOrEqual(10);
+    expect(country.blur).toBeLessThan(country.radius);
+    expect(regional.radius).toBeGreaterThan(country.radius);
   });
 
   it('scales with the focus setting', () => {

@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import type { ElementType, ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -17,6 +17,27 @@ import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { reloadForFreshBuild } from '@/lib/chunkReload';
 import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
+import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
+import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
+import { useListingImages } from '@/hooks/useListingImages';
+import { useListingCoordinates } from '@/hooks/useListingCoordinates';
+
+/**
+ * Stable identity for "resolve nothing".
+ *
+ * `useListingCoordinates` keys its pass off the payload signature, and a fresh
+ * `[]` on every render would restart it continuously while the reader is on any
+ * view other than the gallery.
+ */
+const EMPTY_LISTINGS: PropertyListing[] = [];
+import {
+  DEFAULT_LISTING_FILTERS,
+  listingHasPhotos,
+  matchesListingFilters,
+  type ListingFilterState,
+} from '@/lib/listingFilters';
+import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
 import { BulkActionBar } from '@/components/aurixa';
@@ -80,33 +101,17 @@ const getListingConfidenceBadgeTone = (confidence: number) =>
 // instead of leaving the feature stuck on its loading fallback.
 const ListingDetailsModal = lazyWithRetry(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
 const InvestmentReportModal = lazyWithRetry(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
+const EmailAgentDialog = lazyWithRetry(() => import('@/components/listings/EmailAgentDialog').then(m => ({ default: m.EmailAgentDialog })));
 const BulkGenerationModal = lazyWithRetry(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
 const ListingsMapView = lazyWithRetry(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
-// Default empty filter state — keyword always starts blank
-const DEFAULT_FILTERS = {
-  propertyType: 'all',
-  suburb: 'all',
-  state: 'all',
-  zipCode: 'all',
-  sourceHost: 'all',
-  hasInspection: false,
-  lowConfidence: false,
-  offMarket: false,
-  priceMin: '',
-  priceMax: '',
-  bedsMin: '',
-  bedsMax: '',
-  bathsMin: '',
-  bathsMax: '',
-  carsMin: '',
-  carsMax: '',
-  agencyName: 'all',
-  keywordSearch: '',
-  includeNearbySuburbs: false,
-};
+// Default empty filter state — keyword always starts blank.
+// Both the shape and the defaults come from `@/lib/listingFilters`, so the
+// predicate and the panels can never disagree about what a filter is called or
+// what "unset" means for it.
+const DEFAULT_FILTERS = DEFAULT_LISTING_FILTERS;
 
-type ListingFilters = typeof DEFAULT_FILTERS;
+type ListingFilters = ListingFilterState;
 
 // URL <-> filter serialisation. Only non-default values are written to the URL so
 // links stay clean. Boolean flags are serialised as "1" and view/search live under
@@ -118,10 +123,19 @@ const URL_KEYS_STRING = [
 ] as const;
 const URL_KEYS_BOOL = ['hasInspection', 'lowConfidence', 'offMarket', 'includeNearbySuburbs'] as const;
 
+/**
+ * The four ways the same filtered set can be read.
+ *
+ * `gallery` leads with the photograph and is what a buyer wants; `table` leads
+ * with the numbers and is what an analyst wants. Both draw from one predicate so
+ * they can never disagree about which listings match.
+ */
+export type ListingsViewMode = 'list' | 'table' | 'map' | 'gallery';
+
 function parseListingsUrlState(params: URLSearchParams): {
   filters: Partial<ListingFilters>;
   search: string | null;
-  view: 'list' | 'table' | 'map' | null;
+  view: ListingsViewMode | null;
   hasAny: boolean;
 } {
   let hasAny = false;
@@ -141,7 +155,10 @@ function parseListingsUrlState(params: URLSearchParams): {
   }
   const search = params.get('q');
   const viewRaw = params.get('view');
-  const view = viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' ? viewRaw : null;
+  const view =
+    viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' || viewRaw === 'gallery'
+      ? viewRaw
+      : null;
   if (search !== null) hasAny = true;
   if (view !== null) hasAny = true;
   return { filters, search, view, hasAny };
@@ -150,8 +167,8 @@ function parseListingsUrlState(params: URLSearchParams): {
 function buildListingsUrlParams(
   filters: ListingFilters,
   search: string,
-  view: 'list' | 'table' | 'map',
-  defaultView: 'list' | 'table' | 'map',
+  view: ListingsViewMode,
+  defaultView: ListingsViewMode,
 ): URLSearchParams {
   const params = new URLSearchParams();
   for (const key of URL_KEYS_STRING) {
@@ -255,7 +272,7 @@ export default function Listings() {
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
   const isMobile = useIsMobile();
-  const defaultViewMode: 'list' | 'table' | 'map' = isMobile ? 'list' : 'table';
+  const defaultViewMode: ListingsViewMode = isMobile ? 'list' : 'table';
 
   // Snapshot URL state once at mount so we can hydrate filters/search/view before
   // React writes anything back to the address bar.
@@ -267,7 +284,7 @@ export default function Listings() {
   );
 
   const [searchQuery, setSearchQuery] = useState(() => initialUrlState.search ?? '');
-  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(
+  const [viewMode, setViewMode] = useState<ListingsViewMode>(
     () => initialUrlState.view ?? defaultViewMode,
   );
 
@@ -278,19 +295,44 @@ export default function Listings() {
   }, []);
   const selectedTable = PROPERTY_INTAKE_TABLE;
 
+  const queryClient = useQueryClient();
+
   // Use React Query for caching and efficient data fetching
+  // Set by the Refresh button so the next fetch goes all the way to Airtable
+  // rather than being answered by the server cache, which is at most one sync
+  // interval behind. A ref rather than state: it must not re-trigger the query
+  // by changing, only alter the fetch already on its way.
+  const forceUpstream = useRef(false);
+
   const { data: listings = [], isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['listings', selectedTable],
     queryFn: async () => {
+      const bypassCache = forceUpstream.current;
+      forceUpstream.current = false;
       const result = await propertyDataService.fetchAllListings({
         includeDebugInfo: true,
         tableName: selectedTable,
+        bypassCache,
       });
       return result.listings;
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    // The service answers from its persistent cache first and revalidates behind
+    // the render, so what lands here may already be a cached set. `placeholderData`
+    // keeps the previous table's rows on screen while a new one resolves rather
+    // than flashing the empty state.
+    placeholderData: (previous) => previous,
   });
+
+  // Adopt the background revalidation. Without this the page would sit on the
+  // cached set until something else invalidated the query — the whole point of
+  // serving stale data first is that the fresh set replaces it a moment later.
+  useEffect(() => {
+    return propertyDataService.subscribe(selectedTable, (result) => {
+      queryClient.setQueryData(['listings', selectedTable], result.listings);
+    });
+  }, [queryClient, selectedTable]);
 
 
   
@@ -315,6 +357,7 @@ export default function Listings() {
   const [investmentReportListing, setInvestmentReportListing] = useState<PropertyListing | null>(null);
   const [isInvestmentReportModalOpen, setIsInvestmentReportModalOpen] = useState(false);
   const [isBulkGenerationModalOpen, setIsBulkGenerationModalOpen] = useState(false);
+  const [emailAgentListing, setEmailAgentListing] = useState<PropertyListing | null>(null);
   
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -355,7 +398,10 @@ export default function Listings() {
 
   // Refresh function — bypass cache for explicit user refresh
   const loadListings = useCallback(() => {
-    propertyDataService.clearCache();
+    // Scoped to this table. Clearing everything also reset Overview to cold,
+    // which then paid for a full walk nobody had asked for.
+    propertyDataService.clearCache(PROPERTY_INTAKE_TABLE);
+    forceUpstream.current = true;
     refetch();
   }, [refetch]);
 
@@ -432,6 +478,10 @@ export default function Listings() {
     const suburbs = [...new Set(listings.map(l => l.suburb).filter(Boolean))].sort();
     const sourceHosts = [...new Set(listings.map(l => l.sourceHost).filter(Boolean))].sort();
     const agencies = [...new Set(listings.map(l => l.agencyName).filter(Boolean))].sort();
+    // Newly available: the projection reads `Intent` and `Sector` now, so a
+    // rental can be told from a sale for the first time.
+    const intents = [...new Set(listings.map(l => l.intent).filter(Boolean))].sort() as string[];
+    const sectors = [...new Set(listings.map(l => l.sector).filter(Boolean))].sort() as string[];
     
     // Extract states from both field and address — AU states only
     const states = [...new Set(listings.map(l => {
@@ -444,7 +494,7 @@ export default function Listings() {
       return extractPostcode(l.address || '');
     }).filter(Boolean))].sort() as string[];
     
-    return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies };
+    return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies, intents, sectors };
   }, [listings]);
 
   // Compute nearby suburbs when the filter is active
@@ -455,116 +505,48 @@ export default function Listings() {
     return null;
   }, [filters.includeNearbySuburbs, filters.suburb, listings]);
 
-  // Memoize filtered listings for performance
-  const filteredListings = useMemo(() => {
-    return listings.filter(listing => {
-      // Search filter
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const searchText = [
-          listing.address,
-          listing.suburb,
-          listing.agencyName,
-          listing.agentName
-        ].join(' ').toLowerCase();
-        
-        if (!searchText.includes(query)) return false;
-      }
+  // Filtering happens in two stages, because "has photos" depends on an answer
+  // that only arrives after a network round trip: whether the image library
+  // holds stored bytes for a listing. Resolving images needs a list, and the
+  // list needs the resolution — so everything except the photo filter is
+  // applied first, images are resolved against *that* set, and the photo filter
+  // is applied last.
+  //
+  // The predicate itself lives in `@/lib/listingFilters` so list, table and map
+  // are guaranteed to agree, and so its edge cases (unknown bedroom counts,
+  // undisclosed prices, undated listings) can be asserted directly.
+  const byRecency = useCallback((a: PropertyListing, b: PropertyListing) => {
+    const getTs = (l: PropertyListing) => {
+      const d = (l as any).receivedAt || l.createdAt || l.createdTime;
+      if (!d) return 0;
+      const t = d instanceof Date ? d.getTime() : new Date(d).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+    return getTs(b) - getTs(a);
+  }, []);
 
-      // Keyword search across summary, rawExtract, keyEntities, description
-      if (filters.keywordSearch) {
-        const keywords = filters.keywordSearch.toLowerCase().split(/[,\s]+/).filter(Boolean);
-        const contentText = [
-          listing.summary,
-          listing.rawExtract,
-          listing.keyEntities,
-          listing.description,
-          listing.address,
-        ].filter(Boolean).join(' ').toLowerCase();
-        
-        if (!keywords.every(kw => contentText.includes(kw))) return false;
-      }
-
-      // Property type filter
-      if (filters.propertyType && filters.propertyType !== 'all' && listing.propertyType !== filters.propertyType) return false;
-
-      // Suburb filter (with nearby suburbs support)
-      if (filters.suburb && filters.suburb !== 'all') {
-        if (filters.includeNearbySuburbs && nearbySuburbsList) {
-          if (!listing.suburb || !nearbySuburbsList.includes(listing.suburb)) return false;
-        } else {
-          if (listing.suburb !== filters.suburb) return false;
-        }
-      }
-
-      // State filter — check both field and extracted from address
-      if (filters.state && filters.state !== 'all') {
-        const listingState = listing.state || extractAUState(listing.address || '');
-        if (listingState !== filters.state) return false;
-      }
-
-      // Postcode filter — check both field and extracted
-      if (filters.zipCode && filters.zipCode !== 'all') {
-        const listingPostcode = listing.zipCode || extractPostcode(listing.address || '');
-        if (listingPostcode !== filters.zipCode) return false;
-      }
-
-      // Source host filter
-      if (filters.sourceHost && filters.sourceHost !== 'all' && listing.sourceHost !== filters.sourceHost) return false;
-
-      // Has inspection filter
-      if (filters.hasInspection && !listing.inspectionStart) return false;
-
-      // Low confidence filter
-      if (filters.lowConfidence && (listing.confidence === undefined || listing.confidence >= 0.7)) return false;
-
-      // Off-market filter
-      if (filters.offMarket) {
-        const status = (listing.status || '').toLowerCase();
-        const category = (listing.category || '').toLowerCase();
-        const isOffMarket = status.includes('off-market') || status.includes('off market') || 
-                            category.includes('off-market') || category.includes('off market');
-        if (!isOffMarket) return false;
-      }
-
-      // Agency filter
-      if (filters.agencyName && filters.agencyName !== 'all' && listing.agencyName !== filters.agencyName) return false;
-
-      // Price filters
-      const hasPriceFilter = filters.priceMin || filters.priceMax;
-      if (hasPriceFilter && (!listing.price || listing.price <= 0)) return false;
-      if (filters.priceMin && listing.price && listing.price < parseFloat(filters.priceMin)) return false;
-      if (filters.priceMax && listing.price && listing.price > parseFloat(filters.priceMax)) return false;
-
-      // Bedroom filters
-      if (filters.bedsMin && listing.beds && listing.beds < parseInt(filters.bedsMin)) return false;
-      if (filters.bedsMax && listing.beds && listing.beds > parseInt(filters.bedsMax)) return false;
-
-      // Bathroom filters
-      if (filters.bathsMin && listing.baths && listing.baths < parseInt(filters.bathsMin)) return false;
-      if (filters.bathsMax && listing.baths && listing.baths > parseInt(filters.bathsMax)) return false;
-
-      // Car space filters
-      if (filters.carsMin && listing.carSpaces && listing.carSpaces < parseInt(filters.carsMin)) return false;
-      if (filters.carsMax && listing.carSpaces && listing.carSpaces > parseInt(filters.carsMax)) return false;
-
-      return true;
-    }).sort((a, b) => {
-      const getTs = (l: PropertyListing) => {
-        const d = (l as any).receivedAt || l.createdAt || l.createdTime;
-        if (!d) return 0;
-        const t = d instanceof Date ? d.getTime() : new Date(d).getTime();
-        return isNaN(t) ? 0 : t;
-      };
-      return getTs(b) - getTs(a);
-    });
-  }, [listings, searchQuery, filters, nearbySuburbsList]);
+  const preFilteredListings = useMemo(() => {
+    const withoutPhotoFilter = { ...filters, hasPhotos: false };
+    return listings
+      .filter((listing) =>
+        matchesListingFilters(listing, withoutPhotoFilter, {
+          searchQuery,
+          nearbySuburbs: nearbySuburbsList,
+          extractState: (address) => extractAUState(address),
+          extractPostcode: (address) => extractPostcode(address),
+        }),
+      )
+      .sort(byRecency);
+  }, [listings, searchQuery, filters, nearbySuburbsList, byRecency]);
 
 
   const openDetailsModal = (listing: PropertyListing) => {
     setSelectedListing(listing);
     setIsDetailsModalOpen(true);
   };
+
+  /** Straight from a card to a drafted enquiry, without a detour through the modal. */
+  const openEmailAgent = (listing: PropertyListing) => setEmailAgentListing(listing);
 
   const openInvestmentReportModal = (listing: PropertyListing) => {
     setInvestmentReportListing(listing);
@@ -631,9 +613,56 @@ export default function Listings() {
     return value !== '';
   });
   const hasSearchQuery = searchQuery.trim().length > 0;
+  // Photos are resolved once for the filtered set and shared by every view, so
+  // switching list ↔ table ↔ map re-uses the same signed URLs instead of asking
+  // again. The map's popup resolves its own single listing on top of this.
+  const { images: listingImages, isResolving: listingImagesResolving, refresh: refreshListingImages } =
+    useListingImages(preFilteredListings);
+
+
+  /** Ids the image library actually holds stored photos for. */
+  const listingsWithPhotos = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [listingId, photos] of Object.entries(listingImages)) {
+      if (photos && photos.length > 0) ids.add(listingId);
+    }
+    return ids;
+  }, [listingImages]);
+
+  const filteredListings = useMemo(() => {
+    if (!filters.hasPhotos) return preFilteredListings;
+    // Applied only once the pass has settled — filtering mid-resolution would
+    // empty the page and then repopulate it, which reads as a bug.
+    if (listingImagesResolving && listingsWithPhotos.size === 0) return preFilteredListings;
+    return preFilteredListings.filter((listing) => listingHasPhotos(listing, listingsWithPhotos));
+  }, [preFilteredListings, filters.hasPhotos, listingImagesResolving, listingsWithPhotos]);
+
   const showListView = viewMode === 'list';
   const showTableView = viewMode === 'table';
   const showMapView = viewMode === 'map';
+  const showGalleryView = viewMode === 'gallery';
+
+  /**
+   * Coordinates for the gallery, so a photo-less listing can still show the
+   * building.
+   *
+   * The grid used to render with no `points` at all, which meant every card got
+   * `point={null}`, `ListingHero` never added its Street View slide, and all
+   * 1,441 tiles fell through to "No photo on record" — including the 811 that
+   * are already geocoded and could have shown the actual street frontage. That
+   * is the single largest source of empty tiles on this page, and it costs
+   * nothing to fix: the geocodes are stored.
+   *
+   * Scoped to the rendered slice rather than the filtered set. Resolving 1,441
+   * would exceed the geocoder's ten-calls-per-minute budget and spend it on
+   * cards nobody has scrolled to; the grid reports how many it is showing.
+   */
+  const [galleryVisibleCount, setGalleryVisibleCount] = useState(0);
+  const galleryCoordinateInput = useMemo(
+    () => (showGalleryView ? filteredListings.slice(0, galleryVisibleCount) : EMPTY_LISTINGS),
+    [showGalleryView, filteredListings, galleryVisibleCount],
+  );
+  const { points: galleryPoints } = useListingCoordinates(galleryCoordinateInput);
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
@@ -742,6 +771,17 @@ export default function Listings() {
               >
                 <Table2 className="h-4 w-4" />
                 Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-pressed={showGalleryView}
+                onClick={() => setViewMode('gallery')}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showGalleryView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Gallery
               </Button>
               <Button
                 type="button"
@@ -893,9 +933,45 @@ export default function Listings() {
           }
         >
           <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
-            <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
+            <ListingsMapView
+              listings={filteredListings}
+              onSelectListing={openDetailsModal}
+              onEmailAgent={openEmailAgent}
+              images={listingImages}
+            />
           </Suspense>
         </ErrorBoundary>
+      ) : showGalleryView ? (
+        filteredListings.length === 0 ? (
+          <ListingsStatePanel
+            icon={emptyStateCopy.icon}
+            eyebrow={emptyStateCopy.eyebrow}
+            title={emptyStateCopy.title}
+            description={emptyStateCopy.description}
+          >
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={clearAllFilters} className={`${LISTINGS_SECONDARY_ACTION} gap-2`}>
+                <X className="h-4 w-4" />
+                Clear filters
+              </Button>
+            )}
+          </ListingsStatePanel>
+        ) : (
+          <ListingGalleryGrid
+            listings={filteredListings}
+            images={listingImages}
+            imagesResolving={listingImagesResolving}
+            selectedIds={selectedListings}
+            onToggleSelect={(listing, checked) => handleSelectListing(listing.id, checked)}
+            onOpenDetails={openDetailsModal}
+            onOpenSource={(listing) => listing.url && openSourceUrl(listing.url)}
+            onEmailAgent={openEmailAgent}
+            onImagesFound={refreshListingImages}
+            points={galleryPoints}
+            onVisibleCountChange={setGalleryVisibleCount}
+            formatDate={formatDate}
+          />
+        )
       ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (
@@ -926,9 +1002,12 @@ export default function Listings() {
                 onOpenDetails={() => openDetailsModal(listing)}
                 onOpenInvestmentReport={() => openInvestmentReportModal(listing)}
                 onCopyAddress={() => copyToClipboard(buildFullAddress(listing), 'Full address')}
+                onEmailAgent={() => openEmailAgent(listing)}
                 onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
+                images={listingImages[listing.id]}
+                imagesResolving={listingImagesResolving}
               />
             ))
           )}
@@ -970,6 +1049,7 @@ export default function Listings() {
                   onOpenDetails={() => openDetailsModal(listing)}
                   onCopyAddress={() => copyToClipboard(buildFullAddress(listing), 'Full address')}
                   onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
+                  onEmailAgent={listingContact(listing).email ? () => openEmailAgent(listing) : undefined}
                 >
                   <TableRow
                     className={cn(
@@ -988,19 +1068,34 @@ export default function Listings() {
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
+                    <div className="flex min-w-0 items-center gap-3">
+                    <ListingThumbnail
+                      images={listingImages[listing.id]}
+                      isResolving={listingImagesResolving}
+                      label={listing.address || listing.suburb || undefined}
+                      className="h-11 w-16"
+                      onClick={() => openDetailsModal(listing)}
+                    />
                     <div className="min-w-0 space-y-1.5">
                       <div className={cn(
                         "max-w-[360px] truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-foreground",
                         !listing.address && "text-muted-foreground"
                       )}>
-                        {listing.address || 'Unknown Address'}
+                        {listing.address || listing.fullAddress || 'Address not extracted'}
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-                        <span className="min-w-0 truncate leading-5">
-                          {listing.suburb || 'Unknown Suburb'}
-                          {(listing.state || extractAUState(listing.address || '')) && `, ${listing.state || extractAUState(listing.address || '')}`}
-                          {(listing.zipCode || extractPostcode(listing.address || '')) && ` ${listing.zipCode || extractPostcode(listing.address || '')}`}
+                        <span className={cn('min-w-0 truncate leading-5', !listing.suburb && LISTING_MISSING_VALUE)}>
+                          {formatLocality(listing) || 'Location unknown'}
                         </span>
+                        {qualityCaveat(listing) && (
+                          <Badge
+                            variant="outline"
+                            title={qualityCaveat(listing) ?? undefined}
+                            className={cn(LISTING_BADGE_BASE, 'border-warning/40 text-warning')}
+                          >
+                            Check location
+                          </Badge>
+                        )}
                         {listing.propertyType && (
                           <Badge variant="outline" className={cn(LISTING_BADGE_BASE, LISTING_PROPERTY_TYPE_BADGE)}>
                             {listing.propertyType}
@@ -1008,14 +1103,26 @@ export default function Listings() {
                         )}
                       </div>
                     </div>
+                    </div>
                   </TableCell>
-                  
+
                   <TableCell className="py-4 text-right align-middle">
-                    {listing.price && listing.price > 0 ? (
-                      <span className="font-semibold tabular-nums text-foreground">{formatCurrency(listing.price)}</span>
-                    ) : (
-                      <span className={LISTING_MISSING_VALUE}>-</span>
-                    )}
+                    {(() => {
+                      // `Display Price Text` is what the agent wrote and is
+                      // populated on more records than the numeric column, so it
+                      // leads here too — a table showing "-" beside a listing
+                      // whose email said "From $1,599,000" is simply wrong.
+                      const price = displayPrice(listing);
+                      if (!price.known) return <span className={LISTING_MISSING_VALUE}>-</span>;
+                      return (
+                        <span className="font-semibold tabular-nums text-foreground">
+                          {price.text}
+                          {price.isRent && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">rent</span>
+                          )}
+                        </span>
+                      );
+                    })()}
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
@@ -1044,7 +1151,7 @@ export default function Listings() {
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
-                    <div className={cn("max-w-[180px] truncate text-sm font-medium leading-5", !listing.agencyName && "text-muted-foreground")}>{listing.agencyName || 'Unknown Agency'}</div>
+                    <div className={cn("max-w-[180px] truncate text-sm font-medium leading-5", !listing.agencyName && LISTING_MISSING_VALUE)}>{listing.agencyName || '-'}</div>
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
@@ -1121,6 +1228,16 @@ export default function Listings() {
             listing={selectedListing}
             isOpen={isDetailsModalOpen}
             onClose={closeDetailsModal}
+          />
+        </Suspense>
+      )}
+
+      {emailAgentListing && (
+        <Suspense fallback={null}>
+          <EmailAgentDialog
+            listing={emailAgentListing}
+            open={Boolean(emailAgentListing)}
+            onOpenChange={(open) => !open && setEmailAgentListing(null)}
           />
         </Suspense>
       )}

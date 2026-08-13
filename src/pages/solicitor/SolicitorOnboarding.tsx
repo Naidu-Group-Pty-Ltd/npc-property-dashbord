@@ -53,7 +53,7 @@ const buildIntroSteps = (brand: string) => [
 
 /**
  * Mandatory onboarding for solicitor portal users. Mirrors the Finance Portal
- * onboarding wizard (`FinancePortalOnboardingGate`) and the Client Portal
+ * onboarding wizard (`FinancePortalOnboarding`) and the Client Portal
  * welcome flow: an introductory wizard with progress dots, followed by the
  * server-driven mandatory acknowledgements.
  */

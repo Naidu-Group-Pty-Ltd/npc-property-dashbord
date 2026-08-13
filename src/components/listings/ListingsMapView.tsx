@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl } from 'react-leaflet';
+import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -14,16 +14,19 @@ import {
   Car,
   ChevronDown,
   Crosshair,
+  ExternalLink,
   Flame,
   Layers,
   LayoutGrid,
   Loader2,
   LocateFixed,
+  Mail,
   MapPin,
   Maximize2,
   Minimize2,
   Minus,
   PanelRightClose,
+  Phone,
   PanelRightOpen,
   Plus,
   X,
@@ -45,7 +48,6 @@ import { PropertyListing } from '@/lib/airtable';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
 import { HeatLayer } from './ListingsHeatLayer';
-import { StreetViewPanel } from './StreetViewPanel';
 import {
   buildHeatModel,
   computePriceTiers,
@@ -62,6 +64,7 @@ import {
   priceTier,
   propertyGlyph,
   PROPERTY_GLYPHS,
+  describeGeocodePrecision,
   summariseCluster,
   tierMixGradientStops,
   type BasemapId,
@@ -75,9 +78,17 @@ import {
   type PropertyGlyph,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
+import { displayPrice, formatArea } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
+import { ListingHero } from './ListingHero';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
-import { pickHeroImage } from '@/lib/listingImages';
+import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
+import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.pure';
+import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPostcodeGeo.pure';
+import { installClusterAnchorPatch } from '@/lib/leafletClusterAnchor';
+import { BUILD_ID } from '@/lib/buildVersion';
+import type { StoredListingImage } from '@/lib/listingImages';
 
 /**
  * Leaflet copies unknown constructor options straight onto `marker.options`, and
@@ -90,10 +101,14 @@ declare module 'leaflet' {
   interface MarkerOptions {
     listingPrice?: number | null;
     listingTier?: PriceTier;
+    listingSuburb?: string | null;
   }
 }
 
 export type { GeoPoint } from '@/lib/listingsMap';
+
+// Clusters draw on a real member property, never a mid-ocean average.
+installClusterAnchorPatch();
 
 // Fix default marker icons for bundlers that don't handle Leaflet's asset URLs.
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -132,11 +147,34 @@ const isPanelState = (value: unknown): value is PanelState =>
 interface ListingsMapViewProps {
   listings: PropertyListing[];
   onSelectListing: (listing: PropertyListing) => void;
+  /** Opens the enquiry composer for a listing, straight from its pin. */
+  onEmailAgent?: (listing: PropertyListing) => void;
+  /**
+   * Resolved imagery from the page, keyed by listing id. Purely additive: a
+   * pin whose listing has a stored photograph shows it in the hover card, so
+   * the map answers "is this worth a click" with the same photography as the
+   * gallery.
+   */
+  images?: Record<string, StoredListingImage[]>;
 }
 
 interface ListingMarker {
   listing: PropertyListing;
   point: GeoPoint;
+  /**
+   * The SAME tuple instance across rebuilds while the coordinates are
+   * unchanged. react-leaflet compares `position` by reference and answers
+   * every "new" reference with `marker.setLatLng()`; Leaflet fires `move`
+   * even for identical values; and leaflet.markercluster answers every child
+   * move by REMOVING the marker from the cluster tree and re-adding it. An
+   * inline `[lat, lng]` therefore rebuilt the entire clustering, marker by
+   * marker, on every render — cluster bubbles reshuffled "without direction"
+   * on every filter tick, image wave and hover. A stable tuple makes all of
+   * that simply not happen.
+   */
+  position: [number, number];
+  /** Geocoder location_type for the point, when the lookup reported one. */
+  precision?: string | null;
 }
 
 type PinVariant = 'chip' | 'pin' | 'ghost';
@@ -262,13 +300,17 @@ function pinIcon(
   glyph: PropertyGlyph,
   label: string | null,
   pinState: PinState,
+  approx = false,
 ): L.DivIcon {
   const active = pinState === 'active';
   const state =
-    pinState === 'active' ? ' listing-pin--active' : pinState === 'peek' ? ' listing-pin--peek' : '';
+    (pinState === 'active' ? ' listing-pin--active' : pinState === 'peek' ? ' listing-pin--peek' : '') +
+    // Suburb-centroid pins are dressed differently so precision is visible at
+    // a glance, not only in the hover card.
+    (approx ? ' listing-pin--approx' : '');
 
   if (variant === 'ghost') {
-    return cacheIcon(`ghost|${pinState}`, () =>
+    return cacheIcon(`ghost|${pinState}|${approx}`, () =>
       L.divIcon({
         className: `listing-pin listing-pin--ghost${state}`,
         html: '<span class="listing-pin__dot"></span>',
@@ -280,7 +322,7 @@ function pinIcon(
   }
 
   if (variant === 'pin' || !label) {
-    return cacheIcon(`pin|${tier}|${glyph}|${pinState}`, () =>
+    return cacheIcon(`pin|${tier}|${glyph}|${pinState}|${approx}`, () =>
       L.divIcon({
         className: `listing-pin listing-pin--pin listing-pin--${tier}${state}`,
         html: (active ? HALO_HTML : '') + teardropSvg(glyph),
@@ -293,7 +335,7 @@ function pinIcon(
     );
   }
 
-  return cacheIcon(`chip|${tier}|${glyph}|${label}|${pinState}`, () => {
+  return cacheIcon(`chip|${tier}|${glyph}|${label}|${pinState}|${approx}`, () => {
     // Estimated so the icon box matches the rendered chip: Leaflet needs real
     // dimensions for hit-testing, anchoring, and cluster spiderfy geometry.
     // 40 covers the glyph disc, gutters and border; 7 is a generous per-character
@@ -771,9 +813,98 @@ function ResultsPanel({
 /* Markers layer                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The hover card a pin shows before anyone commits to a click.
+ *
+ * The pins already carry a price chip; this adds the two facts that decide
+ * whether a click is worth it — the address and the spec line — in the same
+ * reading order as the gallery card, so the map and the grid describe a
+ * listing identically. Bound lazily on first hover: fourteen hundred prebuilt
+ * tooltips would be DOM ballast for the handful anyone touches.
+ */
+function pinTooltipHtml(
+  listing: PropertyListing,
+  photoUrl?: string | null,
+  precision?: string | null,
+): string {
+  const beds = listing.beds ?? listing.bedrooms;
+  const baths = listing.baths ?? listing.bathrooms;
+  const specs = [
+    beds ? `${beds} bed` : null,
+    baths ? `${baths} bath` : null,
+    listing.carSpaces ? `${listing.carSpaces} car` : null,
+    listing.propertyType ?? null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const address = listing.address || listing.suburb || 'Listing';
+  return (
+    // The photograph, when the page has already resolved one — the same
+    // signed URL the gallery card is rendering, so hovering a pin shows the
+    // property itself, not just its numbers.
+    (photoUrl
+      ? `<img class="listings-pin-tip__photo" src="${escapeHtml(photoUrl)}" alt="" loading="lazy" />`
+      : '') +
+    `<span class="listings-pin-tip__price">${escapeHtml(formatFullAud(listing.price) ?? 'Price on request')}</span>` +
+    `<span class="listings-pin-tip__address">${escapeHtml(address)}</span>` +
+    (specs ? `<span class="listings-pin-tip__specs">${escapeHtml(specs)}</span>` : '') +
+    (() => {
+      const note = describeGeocodePrecision(precision).note;
+      return note
+        ? `<span class="listings-pin-tip__specs listings-pin-tip__note">${escapeHtml(note)}</span>`
+        : '';
+    })()
+  );
+}
+
+/**
+ * What a cluster says on hover, before anyone decides to zoom: how many
+ * properties, what they are worth at the median, and where they are — the
+ * question a bubble over a whole region begs. Built lazily per hover;
+ * clusters are recreated on every re-cluster, so nothing here goes stale.
+ */
+function clusterTooltipHtml(cluster: ClusterLike): string {
+  const members = clusterMembers(cluster);
+  const summary = summariseCluster(members);
+  const median = formatCompactAud(summary.median);
+
+  const bySuburb = new Map<string, number>();
+  for (const marker of cluster.getAllChildMarkers()) {
+    const suburb = marker.options.listingSuburb;
+    if (suburb) bySuburb.set(suburb, (bySuburb.get(suburb) ?? 0) + 1);
+  }
+  const top = Array.from(bySuburb.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([name]) => name);
+  const rest = bySuburb.size - top.length;
+  const where =
+    top.length === 0
+      ? null
+      : rest > 0
+        ? `${top.join(', ')} +${rest} more suburb${rest === 1 ? '' : 's'}`
+        : top.join(', ');
+
+  return (
+    `<span class="listings-pin-tip__price">${escapeHtml(
+      `${summary.count} propert${summary.count === 1 ? 'y' : 'ies'}${median ? ` · median ${median}` : ''}`,
+    )}</span>` +
+    (where ? `<span class="listings-pin-tip__address">${escapeHtml(where)}</span>` : '') +
+    `<span class="listings-pin-tip__specs">Click to zoom in</span>`
+  );
+}
+
 interface ListingMarkersProps {
   markers: ListingMarker[];
   tiers: PriceTiers | null;
+  /**
+   * Read through a ref, deliberately. Image resolution delivers in waves, and
+   * passing the record itself re-rendered fourteen hundred markers — and
+   * rebound every one of their event listeners — on each wave. The ref's
+   * identity never changes, so the memo holds; the hover handler reads
+   * whatever imagery has arrived by the time someone actually hovers.
+   */
+  imagesRef: React.MutableRefObject<Record<string, StoredListingImage[]> | undefined>;
   variant: PinVariant;
   selectedId: string | null;
   /** The listing under the pointer in the results panel, if any. */
@@ -787,6 +918,7 @@ interface ListingMarkersProps {
 const ListingMarkers = memo(function ListingMarkers({
   markers,
   tiers,
+  imagesRef,
   variant,
   selectedId,
   hoveredId,
@@ -814,10 +946,11 @@ const ListingMarkers = memo(function ListingMarkers({
       iconCreateFunction={iconFactory}
       polygonOptions={{ opacity: 0, fillOpacity: 0 }}
     >
-      {markers.map(({ listing, point }) => {
+      {markers.map(({ listing, position, precision }) => {
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
         const glyph = propertyGlyph(listing.propertyType);
+        const approx = describeGeocodePrecision(precision).tier === 'area';
         const pinState: PinState =
           listing.id === selectedId ? 'active' : listing.id === hoveredId ? 'peek' : 'idle';
         const title = [
@@ -831,8 +964,8 @@ const ListingMarkers = memo(function ListingMarkers({
           <Marker
             key={listing.id}
             ref={(instance) => registerMarker(listing.id, instance)}
-            position={[point.lat, point.lng]}
-            icon={pinIcon(variant, tier, glyph, label, pinState)}
+            position={position}
+            icon={pinIcon(variant, tier, glyph, label, pinState, approx)}
             // Lift the open (or peeked) listing clear of its neighbours so the
             // highlighted pin is never buried under the ones around it.
             zIndexOffset={pinState === 'active' ? 1200 : pinState === 'peek' ? 900 : 0}
@@ -840,17 +973,84 @@ const ListingMarkers = memo(function ListingMarkers({
             // augmentation above.
             listingPrice={typeof listing.price === 'number' ? listing.price : null}
             listingTier={tier}
-            title={title}
+            listingSuburb={listing.suburb ?? null}
             alt={title}
             riseOnHover
             keyboard
-            eventHandlers={{ click: () => onSelect(listing.id) }}
+            eventHandlers={{
+              click: () => onSelect(listing.id),
+              mouseover: (event) => {
+                // Rebuilt on every hover rather than bound once: the page's
+                // image resolution may have delivered this listing's
+                // photograph since the last look, and the card should show it.
+                const marker = event.target as L.Marker;
+                const html = pinTooltipHtml(
+                  listing,
+                  imagesRef.current?.[listing.id]?.[0]?.url ?? null,
+                  precision,
+                );
+                if (marker.getTooltip()) marker.setTooltipContent(html);
+                else {
+                  marker.bindTooltip(html, {
+                    direction: 'top',
+                    offset: L.point(0, -14),
+                    opacity: 1,
+                    className: 'listings-pin-tip',
+                  });
+                }
+                marker.openTooltip();
+              },
+            }}
           />
         );
       })}
     </MarkerClusterGroup>
   );
 });
+
+/**
+ * Cluster hover intelligence: count, median and where — bound lazily on the
+ * group's own event, so a thousand clusters cost nothing until one is under
+ * the pointer.
+ */
+function ClusterHoverIntel({
+  clusterRef,
+  signature,
+}: {
+  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
+  signature: string;
+}) {
+  useEffect(() => {
+    const group = clusterRef.current;
+    if (!group) return;
+    const onOver = (event: L.LeafletEvent) => {
+      const cluster = (event as { propagatedFrom?: unknown; layer?: unknown }).propagatedFrom ??
+        (event as { layer?: unknown }).layer;
+      const marker = cluster as (L.MarkerCluster & { __npcIntel?: boolean }) | undefined;
+      if (!marker || typeof marker.getAllChildMarkers !== 'function') return;
+      try {
+        if (!marker.__npcIntel) {
+          marker.__npcIntel = true;
+          marker.bindTooltip(clusterTooltipHtml(marker as unknown as ClusterLike), {
+            direction: 'top',
+            offset: L.point(0, -22),
+            opacity: 1,
+            className: 'listings-pin-tip',
+          });
+        }
+        marker.openTooltip();
+      } catch {
+        /* a tooltip is never worth an exception on the map */
+      }
+    };
+    group.on('clustermouseover', onOver);
+    return () => {
+      group.off('clustermouseover', onOver);
+    };
+  }, [clusterRef, signature]);
+
+  return null;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Popup card                                                                  */
@@ -865,96 +1065,236 @@ function MetaChip({ icon: Icon, value }: { icon: typeof BedDouble; value: string
   );
 }
 
+/** A small outline tag. The popup uses several and they must not drift apart. */
+function PopupTag({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </span>
+  );
+}
+
 function ListingPopupCard({
   listing,
   point,
+  precision,
   onOpenDetails,
+  onEmailAgent,
 }: {
   listing: PropertyListing;
   point: GeoPoint;
+  precision?: string | null;
   onOpenDetails: () => void;
+  onEmailAgent?: () => void;
 }) {
   const locality = [listing.suburb, listing.state, listing.zipCode].filter(Boolean).join(' ');
-  const price = formatFullAud(listing.price);
+  const precisionNote = describeGeocodePrecision(precision).note;
+  // The same decision the card and the table make, so one listing cannot read
+  // "$1,599,000" in the grid and "Price undisclosed" in the popup.
+  const price = displayPrice(listing);
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
 
-  // The listing's own photo leads the card when we have a durable copy of one.
   // Never the raw field: an Airtable attachment is an object whose signed `url`
   // has usually expired by the time anyone clicks, so rendering it straight
   // produces a broken image. `useListingImages` returns signed URLs into our
   // own bucket instead — see src/lib/listingImages.ts.
   const forImages = useMemo(() => [listing], [listing]);
-  const { images, isResolving: imagesResolving } = useListingImages(forImages);
-  const [photoFailed, setPhotoFailed] = useState(false);
-  const hero = pickHeroImage(images[listing.id] ?? []);
-  const photo = photoFailed ? null : (hero?.url ?? null);
-  useEffect(() => setPhotoFailed(false), [listing.id]);
+  const { images, isResolving: imagesResolving, refresh: refreshImages } = useListingImages(forImages);
+  // The popup is where someone lands after zooming into a suburb, so it is a
+  // likely place to open a listing that has no photographs — and the cascade
+  // treats it like every other surface: the source page is searched without
+  // being asked, and anything found appears in the carousel.
+  const { searchingId } = useAutoFindPhotos(forImages, images, imagesResolving, refreshImages);
+
+  /**
+   * Keep clicks inside the card away from the map.
+   *
+   * Leaflet treats a click anywhere in its container as a map click, and with
+   * `closePopupOnClick` on by default that tears the popup down — so pressing a
+   * control in the popup closed the popup instead of operating the control.
+   * Leaflet's own `disableClickPropagation` covers mousedown, which is what the
+   * map's drag/click detection keys off. `click` itself must NOT be stopped
+   * here: React 18 listens at the app root, so swallowing the click below that
+   * point means no handler inside the popup ever runs.
+   */
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = cardRef.current;
+    if (!node) return;
+    L.DomEvent.disableClickPropagation(node);
+    L.DomEvent.disableScrollPropagation(node);
+
+    // Inside a Leaflet popup the browser delivers `mousedown` and `mouseup` to a
+    // control but never synthesises the `click` between them, so every button in
+    // this card was dead to the mouse while still working from the keyboard —
+    // including "Open details", which predates this change. Re-issue the
+    // activation ourselves, and only when the browser genuinely did not.
+    let pressed: HTMLElement | null = null;
+    let sawClick = false;
+    const control = (event: Event) =>
+      (event.target as HTMLElement | null)?.closest<HTMLElement>('button, [role="button"]') ?? null;
+
+    const onDown = (event: Event) => {
+      pressed = control(event);
+      sawClick = false;
+    };
+    const onClick = () => {
+      sawClick = true;
+    };
+    const onUp = (event: Event) => {
+      const target = pressed;
+      pressed = null;
+      if (!target || target !== control(event)) return;
+      window.setTimeout(() => {
+        if (!sawClick && target.isConnected) target.click();
+      }, 0);
+    };
+
+    node.addEventListener('mousedown', onDown, true);
+    node.addEventListener('click', onClick, true);
+    node.addEventListener('mouseup', onUp, true);
+    return () => {
+      node.removeEventListener('mousedown', onDown, true);
+      node.removeEventListener('click', onClick, true);
+      node.removeEventListener('mouseup', onUp, true);
+    };
+  }, []);
+
+  const contact = listingContact(listing);
+  const land = formatArea(listing.landSizeSqm);
+  const photoCount = images[listing.id]?.length ?? 0;
+  const inspection = listing.inspectionStart ?? listing.nextInspectionDate;
 
   return (
-    <div className="min-w-[248px] max-w-[280px] space-y-2.5">
-      {photo ? (
-        <img
-          src={photo}
-          alt={`${listing.address || listing.title || 'This listing'} — listing photo`}
-          className="h-28 w-full rounded-lg border border-border/60 object-cover"
-          loading="lazy"
-          onError={() => setPhotoFailed(true)}
-        />
-      ) : imagesResolving ? (
-        <div
-          className="h-28 w-full animate-pulse rounded-lg border border-border/60 bg-muted/50 motion-reduce:animate-none"
-          aria-hidden="true"
-        />
-      ) : null}
+    <div ref={cardRef} className="min-w-[268px] max-w-[300px] space-y-2.5">
+      {/*
+        The whole gallery, with Street View as its last slide.
 
-      <div>
-        <h3 className="text-sm font-semibold leading-snug text-foreground">
-          {listing.address || listing.title || 'Unknown address'}
-        </h3>
-        {locality ? <p className="text-xs text-muted-foreground">{locality}</p> : null}
-      </div>
+        This used to be a single 112px frame showing EITHER one photograph OR
+        Street View, behind a toggle that only rendered when a photograph
+        existed. Since no listing had one, every popup silently showed Street
+        View and gave no hint a photograph was ever expected — which is why the
+        map appeared to know nothing about the property beyond where it was.
+      */}
+      <ListingHero
+        images={images[listing.id]}
+        isResolving={imagesResolving}
+        label={listing.address || listing.suburb || undefined}
+        point={point}
+        aspect="aspect-[16/10]"
+        onExpand={onOpenDetails}
+        isFindingPhotos={searchingId === listing.id}
+        listing={listing}
+      />
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        {price ? (
-          <span className="text-sm font-semibold tabular-nums text-primary">{price}</span>
-        ) : (
-          <span className="text-xs font-medium text-muted-foreground">Price undisclosed</span>
-        )}
-        {listing.propertyType ? (
-          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {listing.propertyType}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold leading-snug text-foreground">
+            {listing.address || listing.title || 'Address not extracted'}
+          </h3>
+          {locality ? <p className="text-xs text-muted-foreground">{locality}</p> : null}
+          {precisionNote ? (
+            // The pin's honesty, repeated where the decision is made: someone
+            // about to drive to this property should know the pin marks the
+            // suburb, not the letterbox.
+            <p className="text-[11px] font-medium text-warning">{precisionNote}</p>
+          ) : null}
+        </div>
+        {photoCount > 1 ? (
+          <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+            {photoCount}
           </span>
         ) : null}
       </div>
 
-      {(beds || baths || listing.carSpaces || listing.landSize) && (
+      <div className="flex flex-wrap items-center gap-1.5">
+        {price.known ? (
+          <span className="text-sm font-semibold tabular-nums text-primary">{price.text}</span>
+        ) : (
+          <span className="text-xs font-medium text-muted-foreground">{price.text}</span>
+        )}
+        {price.isRent ? <PopupTag>Rental</PopupTag> : null}
+        {listing.propertyType ? <PopupTag>{listing.propertyType}</PopupTag> : null}
+        {listing.listingStatus ? <PopupTag>{listing.listingStatus}</PopupTag> : null}
+      </div>
+
+      {(beds || baths || listing.carSpaces || land) && (
         <div className="flex flex-wrap gap-1.5">
           {beds ? <MetaChip icon={BedDouble} value={`${beds} bed`} /> : null}
           {baths ? <MetaChip icon={Bath} value={`${baths} bath`} /> : null}
           {listing.carSpaces ? <MetaChip icon={Car} value={`${listing.carSpaces} car`} /> : null}
-          {listing.landSize ? (
-            <MetaChip icon={Building2} value={`${listing.landSize}`} />
+          {land ? <MetaChip icon={Building2} value={land} /> : null}
+        </div>
+      )}
+
+      {(listing.agencyName || listing.agentName) && (
+        <p className="truncate text-xs text-muted-foreground">
+          {[listing.agentName, listing.agencyName].filter(Boolean).join(' · ')}
+        </p>
+      )}
+
+      {/*
+        Contact from the pin itself. Someone scanning the map for a suburb wants
+        to ask about what they found without first opening a page — the whole
+        reason the popup exists is to answer "what is this and who do I ask".
+      */}
+      {(contact.email || contact.phone) && (
+        <div className="flex gap-1.5">
+          {contact.email ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 flex-1 text-[11px]"
+              onClick={() => onEmailAgent?.()}
+            >
+              <Mail className="mr-1 h-3 w-3" aria-hidden="true" />
+              Email agent
+            </Button>
+          ) : null}
+          {contact.phone ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn('h-7 text-[11px]', !contact.email && 'flex-1')}
+              onClick={() => window.open(`tel:${contact.phone!.replace(/\s/g, '')}`, '_self')}
+            >
+              <Phone className="h-3 w-3" aria-hidden="true" />
+              {!contact.email && <span className="ml-1">{contact.phone}</span>}
+            </Button>
           ) : null}
         </div>
       )}
 
-      {/* One frame, not two. Street View is the *fallback* for a listing with
-          no usable photo, so it only loads when there is nothing better —
-          which also saves an edge-function call per popup. Showing both made
-          the card taller than the map itself, and Leaflet's auto-pan then
-          shoved the marker off the bottom of the viewport to fit it. */}
-      {!photo && !imagesResolving ? (
-        <StreetViewPanel
-          lat={point.lat}
-          lng={point.lng}
-          label={listing.address || listing.suburb || undefined}
-        />
+      {inspection ? (
+        <p className="flex items-center gap-1 text-xs font-medium text-primary">
+          <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {new Date(inspection).toLocaleString('en-AU', {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short',
+            hour: 'numeric',
+            minute: '2-digit',
+          })}
+        </p>
       ) : null}
 
-      <Button size="sm" className="w-full" onClick={onOpenDetails}>
-        Open details
-      </Button>
+      <div className="flex gap-1.5 pt-0.5">
+        <Button size="sm" className="flex-1" onClick={onOpenDetails}>
+          Open details
+        </Button>
+        {listing.url ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            aria-label="Open the source listing"
+            onClick={() => window.open(listing.url!, '_blank', 'noopener,noreferrer')}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -963,7 +1303,11 @@ function ListingPopupCard({
 /* Main view                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewProps) {
+export function ListingsMapView({ listings, onSelectListing, onEmailAgent, images }: ListingsMapViewProps) {
+  // Stable identity for the marker layer; see ListingMarkersProps.imagesRef.
+  const imagesRef = useRef<Record<string, StoredListingImage[]> | undefined>(images);
+  imagesRef.current = images;
+
   const { isDark } = useWhiteLabel();
   const [mode, setMode] = usePersistedChoice<MapMode>(STORAGE_KEYS.mode, 'hybrid', isMapMode);
   const [basemapPref, setBasemapPref] = usePersistedChoice<BasemapId>(
@@ -1003,6 +1347,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const mapFrameRef = useRef<HTMLDivElement | null>(null);
+  const [frameHeight, setFrameHeight] = useState(0);
   const popupRef = useRef<L.Popup | null>(null);
   const markersRef = useRef<ListingMarker[]>([]);
   const markerIndexRef = useRef(new Map<string, L.Marker>());
@@ -1014,25 +1359,46 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
 
   const { points, isResolving, failure, retry } = useListingCoordinates(listings);
 
-  const markers = useMemo<ListingMarker[]>(() => {
+  // The accuracy gate. Every plotted point must survive the Australian
+  // geography check — country bounds, and the record's own state where it
+  // names one. A coordinate that fails is not plotted *anywhere*: not as a
+  // pin, not into a cluster centroid, not into the heat surface. It joins the
+  // unmapped list with its reason, which is the honest outcome — a pin in the
+  // Southern Ocean is not "mapped", it is wrong with confidence.
+  const positionCache = useRef(new Map<string, [number, number]>());
+  const { markers, unmapped } = useMemo(() => {
     const rows: ListingMarker[] = [];
+    const held: Array<{ listing: PropertyListing; reason: 'no_coordinates' | 'failed_check' }> =
+      [];
     for (const listing of listings) {
       const resolved = points[listing.id];
       const point = resolved
         ? { lat: resolved.lat, lng: resolved.lng }
         : getStoredListingPoint(listing);
-      if (point) rows.push({ listing, point });
+      if (!point) {
+        held.push({ listing, reason: 'no_coordinates' });
+        continue;
+      }
+      if (
+        !assessAuPoint(point.lat, point.lng, listing.state).ok ||
+        !assessAuPostcodePoint(point.lat, point.lng, listing.zipCode).ok
+      ) {
+        held.push({ listing, reason: 'failed_check' });
+        continue;
+      }
+      const cache = positionCache.current;
+      const prior = cache.get(listing.id);
+      const position: [number, number] =
+        prior && prior[0] === point.lat && prior[1] === point.lng
+          ? prior
+          : [point.lat, point.lng];
+      cache.set(listing.id, position);
+      rows.push({ listing, point, position, precision: resolved?.precision ?? null });
     }
-    return rows;
+    return { markers: rows, unmapped: held };
   }, [listings, points]);
 
   markersRef.current = markers;
-
-  const unmappedListings = useMemo(() => {
-    if (markers.length === listings.length) return [];
-    const plotted = new Set(markers.map((m) => m.listing.id));
-    return listings.filter((l) => !plotted.has(l.id));
-  }, [listings, markers]);
 
   const tiers = useMemo(
     () =>
@@ -1059,6 +1425,17 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
   const selected = useMemo(
     () => markers.find((m) => m.listing.id === selectedId) ?? null,
     [markers, selectedId],
+  );
+
+  // By value, not by render: `position={[lat, lng]}` inline hands react-leaflet
+  // a new array every render, and it responds to every "new" position with
+  // popup.setLatLng — which re-runs Leaflet's auto-pan every time. A popup
+  // that pans on every unrelated re-render is the spasm a screenshot caught.
+  const selectedLat = selected?.point.lat;
+  const selectedLng = selected?.point.lng;
+  const popupPosition = useMemo<[number, number] | null>(
+    () => (selectedLat !== undefined && selectedLng !== undefined ? [selectedLat, selectedLng] : null),
+    [selectedLat, selectedLng],
   );
 
   const markerSignature = useMemo(
@@ -1106,7 +1483,21 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
       if (rows.length < IN_VIEW_LIMIT) rows.push(m);
     }
     setInViewCount(count);
-    setInViewRows(rows);
+    // Same rows → same state object, so a settle pan that changes nothing
+    // causes no re-render. This matters more than it looks: recount runs on
+    // every moveend, and a re-render while the popup is open used to hand the
+    // popup a fresh position array, which re-ran Leaflet's auto-pan, which
+    // fired another moveend — the popup visibly spasming in a loop of its own
+    // making. Each leg of that loop is now cut independently.
+    setInViewRows((prior) => {
+      if (
+        prior.length === rows.length &&
+        prior.every((row, i) => row.listing.id === rows[i].listing.id)
+      ) {
+        return prior;
+      }
+      return rows;
+    });
     setZoom(instance.getZoom());
   }, [map]);
 
@@ -1157,7 +1548,11 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
   // frame while leaving the shell exactly the same size.
   useEffect(() => {
     if (!map || !mapFrameRef.current || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
+    const observer = new ResizeObserver((entries) => {
+      map.invalidateSize({ animate: false });
+      const height = entries[0]?.contentRect?.height;
+      if (typeof height === 'number' && height > 0) setFrameHeight(Math.round(height));
+    });
     observer.observe(mapFrameRef.current);
     return () => observer.disconnect();
   }, [map]);
@@ -1301,9 +1696,13 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
 
   const openSelectedDetails = useCallback(() => {
     if (!selected) return;
-    map?.closePopup();
+    // Deliberately does NOT close the popup. Closing it here made Leaflet
+    // reverse its auto-pan and re-settle the map at the exact moment the
+    // details modal was opening over it — a lurch the reader experienced as
+    // the map glitching. The modal covers the popup; when it closes, the
+    // reader is back exactly where they were, popup and all.
     onSelectListing(selected.listing);
-  }, [map, onSelectListing, selected]);
+  }, [onSelectListing, selected]);
 
   /* ---------------------------------------------------------------------- */
   /* Render                                                                  */
@@ -1411,12 +1810,20 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
           <ListingMarkers
             markers={markers}
             tiers={tiers}
+            imagesRef={imagesRef}
             variant={pinVariant}
             selectedId={selectedId}
             hoveredId={hoveredId}
             onSelect={handleSelect}
             registerMarker={registerMarker}
             clusterRef={clusterRef}
+          />
+          {/* The cluster group remounts when the ghost style toggles, so the
+              signature carries the variant as well as the data size — both
+              re-arm the listeners on the fresh group. */}
+          <ClusterHoverIntel
+            clusterRef={clusterRef}
+            signature={`${markers.length}:${pinVariant === 'ghost'}`}
           />
 
           {userLocation ? (
@@ -1440,24 +1847,34 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
             </>
           ) : null}
 
-          {selected ? (
+          {selected && popupPosition ? (
             <Popup
               key={selected.listing.id}
               ref={popupRef}
-              position={[selected.point.lat, selected.point.lng]}
-              maxWidth={300}
-              minWidth={248}
+              position={popupPosition}
+              maxWidth={320}
+              minWidth={268}
               // Bounded so the card can never outgrow the frame it sits in:
               // an over-tall popup makes Leaflet auto-pan its own marker out
               // of view. Leaflet scrolls the content past this height.
-              maxHeight={300}
+              //
+              // Raised from 300 to fit the photo carousel. It is a ceiling, not
+              // a target — the card is still deliberately compact, and anything
+              // richer belongs on the property page rather than in a popup that
+              // has to sit inside the viewport with its own marker visible.
+              // Never taller than the frame can actually show: a popup that
+              // cannot fully fit gives Leaflet's auto-pan an unsatisfiable
+              // goal, and an unsatisfiable auto-pan is a pan on every update.
+              maxHeight={frameHeight > 0 ? Math.max(240, Math.min(440, frameHeight - 140)) : 440}
               autoPanPadding={L.point(32, 44)}
               className="listings-map__popup"
             >
               <ListingPopupCard
                 listing={selected.listing}
                 point={selected.point}
+                precision={selected.precision}
                 onOpenDetails={openSelectedDetails}
+                onEmailAgent={onEmailAgent ? () => onEmailAgent(selected.listing) : undefined}
               />
             </Popup>
           ) : null}
@@ -1472,7 +1889,14 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
             aria-live="polite"
           >
             <MapPin className="h-3.5 w-3.5 text-primary" />
-            <span className="tabular-nums">{plottedSummary}</span>
+            {/*
+              The chip's tooltip carries the running build id. Three rounds of
+              map debugging were spent against screenshots of a build that
+              predated every fix — undetectably, because nothing on screen said
+              which build produced it. Now any screenshot of this map
+              self-identifies: hover the chip, read the build.
+            */}
+            <span className="tabular-nums" title={`Build ${BUILD_ID}`}>{plottedSummary}</span>
             {isResolving && (
               <Loader2
                 className="h-3 w-3 animate-spin text-muted-foreground motion-reduce:animate-none"
@@ -1505,7 +1929,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
             </button>
           )}
 
-          {unmappedListings.length > 0 && !isResolving && (
+          {unmapped.length > 0 && !isResolving && (
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -1513,23 +1937,23 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
                   className="flex items-center gap-1.5 rounded-full border border-warning/40 bg-background/85 px-3 py-1.5 text-xs font-semibold text-foreground shadow-md backdrop-blur transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                 >
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                  <span className="tabular-nums">{unmappedListings.length}</span> unmapped
+                  <span className="tabular-nums">{unmapped.length}</span> unmapped
                   <ChevronDown className="h-3 w-3 text-muted-foreground" />
                 </button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-80 p-0">
                 <div className="border-b border-border/60 px-3 py-2">
                   <p className="text-xs font-semibold text-foreground">
-                    Listings without coordinates
+                    Listings held off the map
                   </p>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    Addresses resolve server-side. Add a street address, suburb and state so these
-                    records can be located.
+                    Records with no resolvable address, plus any whose coordinates failed the
+                    location accuracy check — held back rather than plotted wrongly.
                   </p>
                 </div>
                 <div className="max-h-64 overflow-y-auto">
                   <ul className="divide-y divide-border/50">
-                    {unmappedListings.slice(0, 50).map((listing) => (
+                    {unmapped.slice(0, 50).map(({ listing, reason }) => (
                       <li key={listing.id}>
                         <button
                           type="button"
@@ -1540,17 +1964,19 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
                             {listing.address || listing.title || 'Untitled listing'}
                           </span>
                           <span className="block truncate text-[11px] text-muted-foreground">
-                            {[listing.suburb, listing.state].filter(Boolean).join(' ') ||
-                              'No locality on record'}
+                            {reason === 'failed_check'
+                              ? 'Coordinates failed the location accuracy check'
+                              : [listing.suburb, listing.state].filter(Boolean).join(' ') ||
+                                'No locality on record'}
                           </span>
                         </button>
                       </li>
                     ))}
                   </ul>
                 </div>
-                {unmappedListings.length > 50 && (
+                {unmapped.length > 50 && (
                   <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-                    +{unmappedListings.length - 50} more
+                    +{unmapped.length - 50} more
                   </p>
                 )}
               </PopoverContent>

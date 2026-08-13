@@ -420,3 +420,91 @@ report, which keeps working throughout.
 > Still outstanding from earlier work: `render-investment-report-pdf` is deployed
 > at v9 from 31 July, so the `ReferenceError` fix has not shipped. Investment
 > report PDFs keep failing until that function is redeployed.
+
+---
+
+## 10. The Template Library masters
+
+Separate from sections 1–9, which describe the format's own generator. This
+section describes the same comparison drawn as **50 Template Library masters**
+in the ten Investment Compass design families — a different destination for the
+same data. Both stay.
+
+### The projection normalises nothing
+
+This is the one thing to understand before touching
+`supabase/functions/_shared/comparisonProjection.pure.ts`. The other three
+formats on the family system each got a bespoke projection that reads their
+stored row, because none of them had a normaliser to share. **This one does** —
+the modules in §2 and §3 — so the projection takes `buildPropertyComparison`'s
+output and restates it in the vocabulary a template binds. It reads no column.
+
+That is not tidiness. Every hard question in this record has exactly one right
+answer and three wrong ones that still render:
+
+| | Answered by |
+| --- | --- |
+| 27 of 50 rows truncated mid-token | `salvage.pure.ts`, which never repairs a cut-off array |
+| `finalScore` on two scales | `detectScale`, once per comparison, with a confidence flag |
+| 43 of 253 winner pointers naming nobody | `propertyAt`, which returns null rather than reading index −1 |
+
+A second reader would eventually disagree with the first on one of them, and the
+disagreement would surface as a client's document rather than as a test failure.
+
+### Everything is nested under `comparison`
+
+The natural top-level names — `properties`, `ranked`, `risks`,
+`recommendations` — are already taken. `risks` is a list of `{risk, why,
+action}` to the voice templates, `recommendations` is a list of strings to the
+Borrowing Capacity masters, and `properties` is a portfolio's holdings. In
+production each report type gets its own data object and nothing would notice;
+in the Template Library's shared preview sample, whichever loaded last would
+win and the other format's pages would render somebody else's content.
+
+`client` and `report` stay at the top level, because they are ambient and mean
+the same thing to every format.
+
+### The ranking is drawn four times
+
+A comparison ranks **2 to 5 properties** — 7 rows compare two, 17 three, 9 four
+and 17 five. A fixed table has to choose between printing three empty rows on
+the two-property comparisons and silently dropping three properties on the
+five-property ones. The second is `PORTFOLIO.md`'s F4 in a new format.
+
+So the ranking table is built once per count, each variant carrying a
+conditional on `comparison.ranked.length`, **all four placed at the same `y`**.
+Exactly one renders. `FlowItem.block` returns several blocks for this purpose
+and the item's height is the tallest variant's, so what follows clears them all.
+
+The same shape covers the risk register and the investor matches: one block per
+property, each conditional on that property existing. Those cost their height
+whether or not they render, which is what a conditional costs in a layout that
+cannot reflow.
+
+### The page budget is measured, not assumed
+
+Eleven superlatives whose `reason` runs to **604 characters** is 6,600
+characters of prose on its own, which is why the reasons take six pages at two
+axes each rather than three at four. The first draft put four to a page and ran
+154pt past the footer on five of the ten families. The measurements the
+composer is built from:
+
+| Field | max | Drives |
+| --- | --- | --- |
+| `executive_summary` | 1,851 | its own page |
+| superlative `reason` | 604 | two axes to a page, six pages |
+| `bestOverall.reason` | 571 | the verdict callout |
+| alternative scenario | 517 | the basis page |
+| `avoid` / runner reason | 400 / 383 | the actions page |
+| investor `reasoning` | 399 | three matches to a page |
+
+`recommendations.runners` and `recommendations.avoid` have a **minimum of zero**
+across the stored rows, so both sections are conditional rather than drawn
+blank.
+
+### Tests
+
+| File | Asserts |
+| --- | --- |
+| `comparisonProjection.spec.ts` | the restatement keeps the score with its denominator, says "no clear winner" rather than pointing at a property that was never named, reads back a truncated record, and never publishes a half-written ranking row — asserted by cutting a fixture at every step |
+| `comparisonCatalogue.spec.ts` | 50 masters across 10 families, slugs disjoint from the other three catalogues, nothing bound outside `comparison`, four ranking variants at one position covering counts 2–5, exactly one rendering per count, and every bound score paired with its `outOf` in the template source |

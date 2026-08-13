@@ -1,7 +1,36 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { esc, type HtmlBlockContext } from './_shared.html';
+import { esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext } from './_shared.html';
 
+/**
+ * Strengths and considerations, side by side.
+ *
+ * ## `style`
+ *
+ * This block drew one thing: a solid full-width band of saturated colour with
+ * the label reversed out of it. That is a reasonable default and the wrong
+ * default for a catalogue of ten design families — it rendered *identically* in
+ * Swiss Minimal and Institutional Research, two families whose whole difference
+ * is how loudly they mark a section. Two blocks of full-strength green and red
+ * also dominate the page they sit on and read as an alert, not as editorial
+ * structure, which is heavy ink on paper for what is a pair of lists.
+ *
+ * `style` follows the same pattern `callout` already uses, and the Investment
+ * Compass generator keys it off the same `callout_style` manifest axis, so a
+ * family that marks a callout with a bar marks these with a bar too:
+ *
+ *  - `band`  — solid label band, reversed type. The historical rendering, and
+ *              still the default, so every existing template is unchanged.
+ *  - `rule`  — label in the semantic colour over paper, above a rule in the
+ *              same colour. The colour still carries the meaning; it just stops
+ *              carrying it as a filled rectangle.
+ *  - `plain` — label in the semantic colour, no rule and no fill. For families
+ *              whose callouts live in the margin.
+ *
+ * The glyph bullets keep their fill in every style: they are 14pt discs, small
+ * enough to read as marks rather than as areas, and they are what makes a
+ * strength scannable from a watch point.
+ */
 export function renderStrengthsWatchHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const x = Number(p.x ?? 24);
@@ -20,16 +49,41 @@ export function renderStrengthsWatchHtml(block: Block, ctx: HtmlBlockContext): s
   const textColor = resolveBindableColor(p.color ?? '#1A1A1A', ctx, '#1A1A1A');
   const radius = Number.isFinite(Number(p.radius)) ? Number(p.radius) : 0;
 
+  const style = p.style === 'rule' || p.style === 'plain' ? p.style : 'band';
+  const titleFont = fontFamilyDecl(p.titleFont);
+  const bodyFont = fontFamilyDecl(p.bodyFont);
+  const titleSize = Number(p.titleSize ?? 10);
+  const bodySize = Number(p.bodySize ?? 9.5);
+  const titleTracking = trackingDecl(p.titleTracking, 0.08);
+  const bodyLineHeight = Number(p.bodyLineHeight ?? 1.35);
+  const ruleWeight = Number(p.ruleWeight ?? 1);
+
+  /** The label, drawn the way this family marks things. */
+  const heading = (title: string, color: string) => {
+    const common = `font-weight:700;font-size:${titleSize}pt;text-transform:uppercase;${titleTracking}${titleFont}`;
+    if (style === 'band') {
+      return `<div style="background:${color};color:${onFill};${common}padding:6pt 12pt;border-radius:${radius}pt;margin-bottom:10pt;">${esc(title)}</div>`;
+    }
+    if (style === 'rule') {
+      return `<div style="color:${color};${common}padding-bottom:4pt;border-bottom:${ruleWeight}pt solid ${color};margin-bottom:10pt;">${esc(title)}</div>`;
+    }
+    return `<div style="color:${color};${common}margin-bottom:10pt;">${esc(title)}</div>`;
+  };
+
   const column = (title: string, items: string[], color: string, glyph: string) => {
-    const li = items.map((it) => {
-      const text = resolveBindable(it, ctx);
-      return `<div style="display:flex;gap:8pt;align-items:flex-start;margin-bottom:8pt;">
+    const li = items.map((it) => resolveBindable(it, ctx))
+      // A template declares a fixed number of rows and the data decides how many
+      // it fills — a portfolio's analysis writes three to six strengths, a
+      // property's two. An item that resolved to nothing must not leave its
+      // marker behind: a lone coloured bullet with no text beside it reads as a
+      // rendering fault, which is worse than the shorter column it replaces.
+      .filter((text) => String(text).trim() !== '')
+      .map((text) => `<div style="display:flex;gap:8pt;align-items:flex-start;margin-bottom:8pt;">
         <span style="background:${color};color:${onFill};border-radius:50%;width:14pt;height:14pt;display:inline-flex;align-items:center;justify-content:center;font-size:8pt;font-weight:700;flex-shrink:0;">${esc(glyph)}</span>
-        <span style="color:${textColor};font-size:9.5pt;line-height:1.35;">${esc(text)}</span>
-      </div>`;
-    }).join('');
+        <span style="color:${textColor};font-size:${bodySize}pt;line-height:${bodyLineHeight};${bodyFont}">${esc(text)}</span>
+      </div>`).join('');
     return `<div>
-      <div style="background:${color};color:${onFill};font-weight:700;font-size:10pt;padding:6pt 12pt;text-transform:uppercase;letter-spacing:0.08em;border-radius:${radius}pt;margin-bottom:10pt;">${esc(title)}</div>
+      ${heading(title, color)}
       ${li}
     </div>`;
   };

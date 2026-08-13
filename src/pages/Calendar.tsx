@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, Users, Filter, RefreshCw, GripVertical, LayoutList, Flame, BarChart3, TrendingUp, AlertTriangle, Sparkles, Plus, Layers, Repeat, Bell, X, PanelLeftClose, PanelLeft, Menu, Mail, Pin, PinOff } from 'lucide-react';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
@@ -39,7 +39,7 @@ import { QuickAddAppointmentModal } from '@/components/calendar/QuickAddAppointm
 import { MultiCalendarOverlay } from '@/components/calendar/MultiCalendarOverlay';
 import { RecurringPatterns } from '@/components/calendar/RecurringPatterns';
 import { SmartReminders } from '@/components/calendar/SmartReminders';
-import { MiniCalendarNavigator } from '@/components/calendar/MiniCalendarNavigator';
+import { CalendarPeriodPicker } from '@/components/calendar/CalendarPeriodPicker';
 import { EnhancedEventPreview } from '@/components/calendar/EnhancedEventPreview';
 import { KeyboardShortcutsHint } from '@/components/calendar/KeyboardShortcutsHint';
 import { CalendarLoadingSkeleton, StatsLoadingSkeleton, SidebarLoadingSkeleton } from '@/components/calendar/CalendarLoadingSkeleton';
@@ -111,6 +111,7 @@ const PREMIUM_PANEL = 'dashboard-theme-section border-border/60 bg-card/80 text-
 const PREMIUM_BUTTON = 'border-border/70 bg-card/85 text-foreground transition-all duration-200 ease-out hover:border-primary/40 hover:bg-primary/10 hover:text-primary hover:shadow-[0_10px_28px_hsl(var(--primary)/0.12)] dark:border-white/10 dark:bg-background/55';
 
 export default function Calendar() {
+  const calendarPageRef = useRef<HTMLElement | null>(null);
   const { canEdit: canEditCalendar } = useModulePermissions('calendar');
   const { user } = useAuth();
   const isMobile = useIsMobile();
@@ -188,15 +189,131 @@ export default function Calendar() {
           height: 0;
           display: none;
         }
+
+        body.${bodyClass} .dashboard-main,
+        body.${bodyClass} .dashboard-content,
+        body.${bodyClass} .dashboard-page-shell {
+          touch-action: pan-y;
+        }
       `;
       document.head.appendChild(styleEl);
     }
 
+    // Radix modal primitives temporarily lock pointer input on <body>. When a
+    // tooltip, context menu and select close in the same frame, an old lock can
+    // survive their unmount and make wheel/touch scrolling appear frozen.
+    // A popper wrapper alone is not evidence of an open modal: tooltip wrappers
+    // can remain mounted during their closing animation. Only state-aware modal
+    // content keeps the lock; otherwise release it after Radix has completed its
+    // own close-frame cleanup.
+    const releaseStuckOverlayLocks = () => {
+      const hasPointerLock = document.body.style.pointerEvents === 'none';
+      const hasScrollLock = document.body.hasAttribute('data-scroll-locked');
+      if (!hasPointerLock && !hasScrollLock) return;
+
+      const blockingOverlayOpen = document.querySelector(
+        '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="listbox"][data-state="open"], [data-vaul-drawer][data-state="open"]',
+      );
+      if (blockingOverlayOpen) return;
+
+      if (hasPointerLock) document.body.style.removeProperty('pointer-events');
+      if (hasScrollLock) document.body.removeAttribute('data-scroll-locked');
+    };
+
+    let pointerLockFrame: number | null = null;
+    let pointerLockSettleFrame: number | null = null;
+    const schedulePointerLockCheck = () => {
+      if (pointerLockFrame !== null) return;
+      pointerLockFrame = window.requestAnimationFrame(() => {
+        pointerLockFrame = null;
+        pointerLockSettleFrame = window.requestAnimationFrame(() => {
+          pointerLockSettleFrame = null;
+          releaseStuckOverlayLocks();
+        });
+      });
+    };
+
+    const observer = new MutationObserver(schedulePointerLockCheck);
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['style'],
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener('focus', schedulePointerLockCheck);
+    document.addEventListener('pointerup', schedulePointerLockCheck, true);
+    document.addEventListener('keyup', schedulePointerLockCheck, true);
+
     return () => {
+      observer.disconnect();
+      if (pointerLockFrame !== null) window.cancelAnimationFrame(pointerLockFrame);
+      if (pointerLockSettleFrame !== null) window.cancelAnimationFrame(pointerLockSettleFrame);
+      window.removeEventListener('focus', schedulePointerLockCheck);
+      document.removeEventListener('pointerup', schedulePointerLockCheck, true);
+      document.removeEventListener('keyup', schedulePointerLockCheck, true);
+      releaseStuckOverlayLocks();
       document.body.classList.remove(bodyClass);
       document.getElementById(styleId)?.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const calendarPage = calendarPageRef.current;
+    if (!calendarPage) return;
+
+    // The dashboard has two different scroll owners: `.dashboard-main` on
+    // mobile/tablet and the document viewport on desktop. Interactive calendar
+    // descendants (native draggable events, drop zones and Radix triggers) can
+    // consume a wheel gesture before it reaches either owner. That is why the
+    // same wheel scrolls over the empty gutter but appears frozen over the
+    // calendar and registry below it.
+    //
+    // Bridge vertical wheel input from this page to the actual owner. Genuine
+    // nested vertical scrollers retain control, as do horizontal gestures and
+    // Ctrl/Meta+wheel browser zoom.
+    const handleCalendarWheel = (event: WheelEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY) || event.deltaY === 0) return;
+
+      let nestedScroller = event.target instanceof Element ? event.target : null;
+      while (nestedScroller && nestedScroller !== calendarPage) {
+        const style = window.getComputedStyle(nestedScroller);
+        const canScrollVertically = /^(auto|scroll)$/.test(style.overflowY)
+          && nestedScroller.scrollHeight > nestedScroller.clientHeight;
+        const hasRoom = event.deltaY < 0
+          ? nestedScroller.scrollTop > 0
+          : nestedScroller.scrollTop + nestedScroller.clientHeight < nestedScroller.scrollHeight - 1;
+        if (canScrollVertically && hasRoom) return;
+        nestedScroller = nestedScroller.parentElement;
+      }
+
+      const dashboardMain = calendarPage.closest('.dashboard-main');
+      const mainStyle = dashboardMain instanceof HTMLElement
+        ? window.getComputedStyle(dashboardMain)
+        : null;
+      const mainOwnsScroll = dashboardMain instanceof HTMLElement
+        && /^(auto|scroll)$/.test(mainStyle?.overflowY ?? '')
+        && dashboardMain.scrollHeight > dashboardMain.clientHeight;
+
+      const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? window.innerHeight
+          : 1;
+      const deltaY = event.deltaY * multiplier;
+
+      event.preventDefault();
+      if (mainOwnsScroll) {
+        dashboardMain.scrollBy({ top: deltaY, behavior: 'auto' });
+      } else {
+        window.scrollBy({ top: deltaY, behavior: 'auto' });
+      }
+    };
+
+    calendarPage.addEventListener('wheel', handleCalendarWheel, { passive: false, capture: true });
+    return () => calendarPage.removeEventListener('wheel', handleCalendarWheel, { capture: true });
+  }, []);
+
 
   // Keyboard navigation hook
   const { TAB_SHORTCUTS } = useCalendarKeyboard({
@@ -564,18 +681,8 @@ export default function Calendar() {
       .map((x) => x.e);
   }, [filteredEvents]);
 
-  // Events per day for mini calendar
-  const eventsPerDay = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredEvents.forEach(event => {
-      const d = safeParseISO(event.startTime);
-      if (d) {
-        const key = format(d, 'yyyy-MM-dd');
-        map[key] = (map[key] || 0) + 1;
-      }
-    });
-    return map;
-  }, [filteredEvents]);
+
+
 
   const calendarDays = useMemo(() => {
     const monthStart = startOfMonth(currentMonth);
@@ -746,7 +853,7 @@ export default function Calendar() {
   }
 
   return (
-    <DashboardThemeFrame variant="page" className={cn(CALENDAR_PAGE_SHELL, "calendar-page-scrollbar-fix max-w-none [scrollbar-gutter:auto]")}>
+    <DashboardThemeFrame ref={calendarPageRef} variant="page" className={cn(CALENDAR_PAGE_SHELL, "calendar-page-scrollbar-fix max-w-none [scrollbar-gutter:auto]")}>
       <GHLExportDialog
         open={showExportDialog}
         onOpenChange={setShowExportDialog}
@@ -859,7 +966,7 @@ export default function Calendar() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 md:justify-end">
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" className="h-10 rounded-xl border-border bg-card/85 px-3 font-semibold text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 active:translate-y-0 active:scale-[0.98]">
                     <Mail className="h-4 w-4 mr-2" />
@@ -889,7 +996,7 @@ export default function Calendar() {
                     <div className="shrink-0 overflow-x-auto border-b border-border px-4 py-3">
                       <div className="inline-flex flex-wrap gap-2">
                         {orderedSidebarTabs.map(tab => (
-                          <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
+                          <ContextMenu key={tab.id} modal={false} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                           <ContextMenuTrigger asChild>
                           <button
                             aria-pressed={sidebarTab === tab.id}
@@ -922,19 +1029,8 @@ export default function Calendar() {
                     </div>
                     {/* Tab content */}
                     <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 scrollbar-hide">
-                      {/* Mini Calendar Navigator */}
-                      <div className="mb-4 rounded-2xl border border-border bg-background/55 p-3 shadow-inner shadow-sm dark:shadow-black/20">
-                        <MiniCalendarNavigator
-                          currentMonth={currentMonth}
-                          setCurrentMonth={setCurrentMonth}
-                          selectedDate={selectedDate}
-                          onDateSelect={(date) => {
-                            setSelectedDate(date);
-                            setCurrentMonth(date);
-                          }}
-                          eventsPerDay={eventsPerDay}
-                        />
-                      </div>
+
+
 
                       {sidebarTab === 'events' && (
                         <div>
@@ -1089,7 +1185,7 @@ export default function Calendar() {
                     <div className="flex items-center gap-2">
                       <div
                         className="h-3 w-3 rounded-full shrink-0 ring-2 ring-black/30 shadow-sm"
-                        style={{ backgroundColor: cal.eventColor || '#3b82f6' }}
+                        style={{ backgroundColor: getCalendarColor(cal.id) }}
                       />
                       <span className="truncate max-w-[120px]">{cal.name}</span>
                     </div>
@@ -1167,13 +1263,24 @@ export default function Calendar() {
                 <span className="rounded-xl border border-primary/25 bg-primary/10 p-2 text-primary">
                   <CalendarIcon className="h-5 w-5" />
                 </span>
-                {view === 'month'
-                  ? format(currentMonth, 'MMMM yyyy')
-                  : view === 'week'
-                    ? `${format(weekDays[0], 'MMM d')} - ${format(weekDays[6], 'MMM d, yyyy')}`
-                    : selectedDate ? format(selectedDate, 'MMMM d, yyyy') : 'Timeline'
-                }
+                <CalendarPeriodPicker
+                  label={
+                    view === 'month'
+                      ? format(currentMonth, 'MMMM yyyy')
+                      : view === 'week'
+                        ? `${format(weekDays[0], 'MMM d')} - ${format(weekDays[6], 'MMM d, yyyy')}`
+                        : selectedDate ? format(selectedDate, 'MMMM d, yyyy') : 'Timeline'
+                  }
+                  anchorDate={view === 'month' ? currentMonth : view === 'week' ? currentWeek : (selectedDate ?? currentMonth)}
+                  showWeek={view !== 'month'}
+                  onNavigate={(date) => {
+                    setCurrentMonth(date);
+                    setCurrentWeek(date);
+                    if (view === 'timeline') setSelectedDate(date);
+                  }}
+                />
               </CardTitle>
+
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button
                   aria-label={view === 'month' ? 'Previous month' : 'Previous week'}
@@ -1462,7 +1569,7 @@ export default function Calendar() {
                 {orderedSidebarTabs.map((tab) => {
                   const isPinned = pinnedTabs.includes(tab.id);
                   return (
-                    <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
+                    <ContextMenu key={tab.id} modal={false} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <ContextMenuTrigger asChild>
@@ -1564,8 +1671,9 @@ export default function Calendar() {
                     <TabsList className="grid h-auto w-full grid-cols-4 gap-2 rounded-2xl border border-border bg-card/80 p-2 shadow-inner shadow-sm dark:shadow-black/20">
                       {orderedSidebarTabs.map((tab) => {
                         const isPinned = pinnedTabs.includes(tab.id);
+                        const isActiveTab = sidebarTab === tab.id;
                         return (
-                          <ContextMenu key={tab.id} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
+                          <ContextMenu key={tab.id} modal={false} onOpenChange={(open) => setContextMenuTab(open ? tab.id : null)}>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <ContextMenuTrigger asChild>
@@ -1575,14 +1683,40 @@ export default function Calendar() {
                                 value={tab.id}
                                 aria-haspopup="menu"
                                 aria-expanded={contextMenuTab === tab.id}
+                                aria-current={isActiveTab ? 'true' : undefined}
+                                data-active={isActiveTab ? 'true' : 'false'}
                                 className={cn(
-                                  "relative h-11 rounded-xl border border-border bg-background/55 p-0 text-muted-foreground transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 active:translate-y-0 active:scale-95 data-[state=active]:border-primary/60 data-[state=active]:bg-primary/20 data-[state=active]:text-primary data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.14)]",
-                                  isPinned && "ring-1 ring-primary/30"
+                                  "group relative flex h-[4.25rem] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-2xl border p-0 shadow-sm transition-all duration-200 ease-out bg-gradient-to-br",
+                                  "focus-visible:ring-2 focus-visible:ring-primary/45 active:translate-y-0 active:scale-[0.97]",
+                                  isActiveTab
+                                    ? "border-primary/60 from-primary/25 via-primary/12 to-primary/5 text-primary ring-1 ring-primary/40 shadow-[0_16px_38px_hsl(var(--primary)/0.24)]"
+                                    : "border-border from-card/95 via-card/70 to-muted/40 text-muted-foreground hover:-translate-y-0.5 hover:border-primary/40 hover:from-primary/12 hover:via-card/70 hover:to-primary/5 hover:text-primary hover:shadow-[0_14px_32px_hsl(var(--primary)/0.16)]",
+                                  isPinned && !isActiveTab && "ring-1 ring-primary/25"
                                 )}
                               >
-                                {tab.icon}
+                                <span
+                                  aria-hidden="true"
+                                  className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-data-[active=true]:opacity-100"
+                                />
+                                <span className={cn(
+                                  "flex h-7 w-7 items-center justify-center rounded-xl border text-current transition-all duration-200",
+                                  isActiveTab
+                                    ? "border-primary/45 bg-primary/15"
+                                    : "border-border/70 bg-background/70 group-hover:border-primary/35 group-hover:bg-primary/10"
+                                )}>
+                                  {tab.icon}
+                                </span>
+                                <span className="max-w-full truncate px-1 text-[10px] font-semibold uppercase tracking-[0.12em]">
+                                  {tab.label}
+                                </span>
+                                <span
+                                  aria-hidden="true"
+                                  className="pointer-events-none absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-primary/70 opacity-0 transition-opacity duration-200 group-data-[active=true]:opacity-100"
+                                />
+
                                 {isPinned && <Pin aria-hidden="true" className="absolute right-1 top-1 h-3 w-3 text-primary" />}
                               </TabsTrigger>
+
                               </ContextMenuTrigger>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="flex flex-col gap-1">
@@ -1613,19 +1747,8 @@ export default function Calendar() {
               </CardHeader>
 
               <CardContent className="p-3">
-              {/* Mini Calendar Navigator */}
-              <div className="mb-4 rounded-2xl border border-border bg-muted/40 p-3 shadow-inner shadow-sm dark:shadow-black/20">
-                <MiniCalendarNavigator
-                  currentMonth={currentMonth}
-                  setCurrentMonth={setCurrentMonth}
-                  selectedDate={selectedDate}
-                  onDateSelect={(date) => {
-                    setSelectedDate(date);
-                    setCurrentMonth(date);
-                  }}
-                  eventsPerDay={eventsPerDay}
-                />
-              </div>
+
+
 
               {sidebarTab === 'events' && (
                 <div>
@@ -1898,7 +2021,7 @@ export default function Calendar() {
                     <div className="flex items-center gap-2">
                       <div
                         className="h-3.5 w-3.5 rounded-full shrink-0 ring-2 ring-black/30 shadow-sm"
-                        style={{ backgroundColor: calendar.eventColor || '#3b82f6' }}
+                        style={{ backgroundColor: getCalendarColor(calendar.id) }}
                       />
                       <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-foreground">{calendar.name}</span>
                     </div>

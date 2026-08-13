@@ -14,6 +14,7 @@ import {
   BuilderOrganisationSettingsCard,
 } from '@/components/builder-portal/BuilderOrganisationSettingsCard';
 import { BUILDER_TOUR_EVENT } from '@/components/builder-portal/BuilderOnboardingTour';
+import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
 
 /**
  * Builder / Developer Portal account and session settings.
@@ -82,15 +83,10 @@ export default function BuilderSettings() {
   const active = sessions.filter((session) => !session.revoked_at);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your account, your preferences, your organisation's settings and the devices signed
-          into the Builder Portal.
-        </p>
-      </div>
-
+    <BuilderPortalShell
+      title="Settings"
+      description="Your account, your preferences, your organisation's settings and the devices signed into the Builder Portal."
+    >
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -208,11 +204,13 @@ export default function BuilderSettings() {
                 <div className="flex min-w-0 items-start gap-3">
                   <MonitorSmartphone className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <div className="min-w-0">
-                    <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    {/* A div, not a p: Badge renders a div, and a div inside a
+                        p is invalid HTML that the browser silently reflows. */}
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
                       <span className="truncate">{session.device_label || 'Unknown device'}</span>
                       {isCurrent ? <Badge variant="outline">This device</Badge> : null}
                       {session.revoked_at ? <Badge variant="secondary">Revoked</Badge> : null}
-                    </p>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Last used {new Date(session.last_used_at).toLocaleString()}
                       {session.revoked_at ? ` · ${session.revoked_reason || 'revoked'}` : ''}
@@ -248,6 +246,6 @@ export default function BuilderSettings() {
           ) : null}
         </CardContent>
       </Card>
-    </div>
+    </BuilderPortalShell>
   );
 }

@@ -23,6 +23,7 @@
  */
 import type { CompanyBlock } from './companyBlock.pure.ts';
 import type { NamedPage } from './page.pure.ts';
+import { coverTitleFit } from './typography.pure.ts';
 
 /**
  * Escape for HTML text and double-quoted attributes.
@@ -93,6 +94,38 @@ export function renderPage(page: NamedPage, contentHtml: string): string {
   return `<section class="page-${page}">${contentHtml}</section>`;
 }
 
+/**
+ * One composed sheet — a page somebody decided the contents of.
+ *
+ * The rest of this system *flows*: content goes into one column and the engine
+ * breaks it wherever it lands, which is why a chapter with two bullets in it
+ * prints as a page with two bullets on it. A sheet is the other model. Its
+ * contents were chosen, by the thing that wrote them, to fill a page.
+ *
+ * ## It is a page because it ends, not because it is tall
+ *
+ * The obvious implementation gives the sheet a `min-height` of the content box
+ * so it *occupies* a page. Rendered, that is wrong twice over. A chapter header
+ * sits above the first sheet, so a full-height box no longer fits beside it and
+ * the engine pushes the contents to the next page — leaving a sheet's worth of
+ * blank paper under the header. And a run of sheets each forcing its own height
+ * turned a two-chapter document into ten pages, six of them empty.
+ *
+ * So a sheet is `break-after: page` and nothing else. Whether it *fills* the
+ * page is a question about the composition, not about the box, and it is
+ * answered where it can actually be answered — `judgeDocument` measures the ink
+ * on the rendered page and reports a sparse one. A CSS rule cannot know whether
+ * a page looks finished; a measurement of the render can.
+ *
+ * No named page either. A sheet lives inside a chapter that has already claimed
+ * one, and nesting a second `page-body` inside it triggers the adjacency rule
+ * that exists to separate *sibling* named pages — a page break before every
+ * sheet, on top of the one after it.
+ */
+export function renderSheet(contentHtml: string): string {
+  return `<section class="sheet">${contentHtml}</section>`;
+}
+
 // ── Brand lockup ────────────────────────────────────────────────────────────
 
 export interface BrandLockupProps {
@@ -158,6 +191,37 @@ export interface CoverProps {
   footerRight?: string;
 }
 
+/**
+ * The most meta entries that fit across the cover on one row.
+ *
+ * Four broke three of the four values, including `04 August 2026` set as
+ * `04 August` over `2026`. Three is what the measure holds at this size.
+ */
+export const COVER_META_PER_ROW = 3;
+
+/**
+ * The cover's meta block, in balanced rows.
+ *
+ * Balanced rather than filled: four entries set 2 + 2 rather than 3 + 1,
+ * because a table row with one cell in a three-column table occupies one
+ * column and reads as a stray. Nothing is dropped — a cover that silently
+ * loses its fourth fact is a worse answer than one that runs to a second row.
+ */
+export function renderCoverMeta(meta: readonly CoverMetaItem[]): string {
+  if (!meta.length) return '';
+  const rows = Math.ceil(meta.length / COVER_META_PER_ROW);
+  const perRow = Math.ceil(meta.length / rows);
+  const chunks = Array.from({ length: rows }, (_, i) => meta.slice(i * perRow, (i + 1) * perRow));
+  return `<div class="cover-meta">${chunks.map((chunk) => `
+        <div class="meta-row">${chunk.map((m) => `
+          <div class="meta-item">
+            <span class="lbl">${escapeHtml(m.label)}</span>
+            <span class="val">${escapeHtml(m.value)}</span>
+          </div>`).join('')}
+        </div>`).join('')}
+      </div>`;
+}
+
 export function renderCover(p: CoverProps): string {
   const hero = p.heroDataUri
     ? `<div class="cover-hero" style="background-image:url('${cssUrl(p.heroDataUri)}')"></div>`
@@ -168,14 +232,7 @@ export function renderCover(p: CoverProps): string {
     ? `${escapeHtml(p.title)}<br><em>${escapeHtml(p.subtitle)}</em>`
     : escapeHtml(p.title);
 
-  const meta = (p.meta ?? []).length
-    ? `<div class="cover-meta">${(p.meta ?? []).map((m) => `
-          <div class="meta-item">
-            <span class="lbl">${escapeHtml(m.label)}</span>
-            <span class="val">${escapeHtml(m.value)}</span>
-          </div>`).join('')}
-        </div>`
-    : '';
+  const meta = renderCoverMeta(p.meta ?? []);
 
   const lockup = p.lockup
     ? `<div class="cover-lockup">${renderBrandLockup({ ...p.lockup, onField: true, large: true })}</div>`
@@ -201,7 +258,7 @@ export function renderCover(p: CoverProps): string {
       <div class="cover-body">
         ${lockup}
         <div class="cover-eyebrow">— ${escapeHtml(p.eyebrow)}</div>
-        <h1 class="cover-title">${title}</h1>
+        <h1 class="cover-title fit-${coverTitleFit(p.title, p.subtitle)}">${title}</h1>
         ${meta}
       </div>
       ${footer}
@@ -220,21 +277,50 @@ export interface ContentsEntry {
   page?: string | number;
 }
 
-export function renderContentsPage(title: string, entries: ContentsEntry[]): string {
-  const rows = entries.map((e) => `
+export function renderContentsPage(
+  title: string,
+  entries: ContentsEntry[],
+  /**
+   * Entries per sheet, when the list is long enough to need more than one.
+   *
+   * Split here rather than left to the page breaker, because the breaker fills
+   * the first sheet and gives the remainder whatever is left: a fourteen-entry
+   * Market Intelligence contents put thirteen rows on one page and the
+   * fourteenth alone on the next, at 0.2% ink, on a named page that carries no
+   * running head — so page three of a twenty-two page report was one line
+   * floating under nothing. CSS cannot fix it: `break-after: avoid` is not
+   * honoured on table rows, which is where the first attempt went.
+   *
+   * Splitting evenly is also the only way the page count is *decided* rather
+   * than discovered, which is what lets a spine claim it.
+   */
+  perPage?: number,
+): string {
+  const cap = Math.max(1, Math.trunc(perPage ?? entries.length) || entries.length);
+  const sheets = Math.max(1, Math.ceil(entries.length / cap));
+  // Evenly, so two sheets are 7 and 7 rather than 13 and 1.
+  const size = Math.ceil(entries.length / sheets);
+
+  const sheet = (slice: ContentsEntry[]): string => {
+    const rows = slice.map((e) => `
       <div class="toc-row">
         <span class="toc-no">${escapeHtml(e.number ?? '')}</span>
         <span class="toc-title">${escapeHtml(e.title)}</span>
         <span class="toc-note">${escapeHtml(e.note ?? '')}</span>
         <span class="toc-page">${escapeHtml(e.page ?? '')}</span>
       </div>`).join('');
-  return `
+    return `
     <section class="page-contents">
       <div class="eyebrow">Contents</div>
       <h1>${escapeHtml(title)}</h1>
       <div class="contents">${rows}
       </div>
     </section>`;
+  };
+
+  const out: string[] = [];
+  for (let i = 0; i < entries.length; i += size) out.push(sheet(entries.slice(i, i + size)));
+  return out.join('') || sheet([]);
 }
 
 // ── Chapters ────────────────────────────────────────────────────────────────
@@ -314,10 +400,22 @@ const TONE_CLASS: Record<ValueTone, string> = {
   negative: ' neg',
 };
 
+/**
+ * Above this many cells, the strip sets its figures a step smaller.
+ *
+ * `table-layout: fixed` divides the strip evenly, so a six-cell strip across
+ * the 174mm measure gives each value about 28mm. At `h2 + 2` — 22pt — that is
+ * not enough for "3.74%" or "House", and a render showed both broken across
+ * two lines: "3.74 / %" and "Hous / e". Five is where the arithmetic turns:
+ * 34mm holds a five-character figure at 22pt, 28mm does not.
+ */
+export const KPI_DENSE_FROM = 5;
+
 export function renderKpiStrip(cells: KpiCell[]): string {
   if (!cells.length) return '';
+  const dense = cells.length >= KPI_DENSE_FROM ? ' dense' : '';
   return `
-      <div class="kpi-strip">
+      <div class="kpi-strip${dense}">
         ${cells.map((c) => `
         <div class="kpi">
           <div class="kpi-label">${escapeHtml(c.label)}</div>
@@ -446,11 +544,22 @@ export function renderDataTable(
     return `<tr${r.__total ? ' class="total"' : ''}>${cells}</tr>`;
   }).join('');
 
+  // A header row of empty labels is not a header row.
+  //
+  // A GFM table whose header cells are blank — which is what a two-column
+  // key/value table transcribed out of a PDF usually is — produced a `thead` of
+  // empty `th`s. Invisible while the header carried no styling of its own, and
+  // an empty tinted band across the top of the table the moment one did. There
+  // is nothing for a screen reader or a tagged PDF to announce either, so the
+  // row is dropped rather than styled around.
+  const hasHead = cols.some((c) => String(c.label ?? '').trim());
+
   // The wrapper is what keeps the caption with its table across a page break —
   // a `<caption>` is a separate box and WeasyPrint will strand it otherwise.
   return '<div class="table-block"><table class="data">'
     + (opts.caption ? `<caption>${escapeHtml(opts.caption)}</caption>` : '')
-    + `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    + (hasHead ? `<thead><tr>${head}</tr></thead>` : '')
+    + `<tbody>${body}</tbody></table></div>`;
 }
 
 /**
@@ -516,7 +625,19 @@ export function renderCompanyPage(p: CompanyPageProps): string {
       }</div>`
     : '';
 
-  const lockup = p.lockup
+  // A wordmark-only lockup above the wordmark is the firm's name printed twice,
+  // 20mm apart, at two sizes. Read off a closing page: `TENANT ADVISORY` in
+  // small letterspaced caps, then `TENANT` over `ADVISORY` as the display
+  // lockup underneath it. When the lockup carries a mark the repetition earns
+  // its place — the image is the point and the text labels it — and when it
+  // does not, it is noise on the one page that is nothing but the brand.
+  const sameWords = (a: string, b: string) =>
+    a.toLowerCase().replace(/[^a-z0-9]/g, '') === b.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const wordmark = `${block.name.lead} ${block.name.tail ?? ''}`;
+  const lockupEchoes = Boolean(
+    p.lockup && !p.lockup.markDataUri && p.lockup.wordmark && sameWords(p.lockup.wordmark, wordmark),
+  );
+  const lockup = p.lockup && !lockupEchoes
     ? renderBrandLockup({ ...p.lockup, onField: true })
     : '';
 

@@ -14,6 +14,8 @@ export interface CachedPoint {
   lat: number;
   lng: number;
   source: 'record' | 'cache' | 'geocoded';
+  /** Provider location_type (ROOFTOP, APPROXIMATE, …), when the lookup said. */
+  precision?: string | null;
 }
 
 interface CacheEntry extends CachedPoint {
@@ -23,7 +25,11 @@ interface CacheEntry extends CachedPoint {
   at: number;
 }
 
-const STORAGE_KEY = 'npc.listing-coords.v1';
+// v3: each namespace retires an era of weaker validation at once,
+// deterministically, on first load. v1 predates the geography gates entirely;
+// v2 predates the land mask, so it can hold open-water points for records
+// that carry no state or postcode — the rectangle checks cannot see sea.
+const STORAGE_KEY = 'npc.listings.coordinates.v3';
 const CACHE_LIMIT = 5000;
 /** Geocoded points are stable; a month keeps them fresh enough. */
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -114,7 +120,7 @@ export function readCachedPoint(id: string, fingerprint: string): CachedPoint | 
     scheduleFlush();
     return null;
   }
-  return { lat: entry.lat, lng: entry.lng, source: entry.source };
+  return { lat: entry.lat, lng: entry.lng, source: entry.source, precision: entry.precision ?? null };
 }
 
 export function writeCachedPoint(id: string, fingerprint: string, point: CachedPoint): void {
@@ -125,6 +131,17 @@ export function writeCachedPoint(id: string, fingerprint: string, point: CachedP
   }
   memory.set(id, { ...point, fp: fingerprint, at: Date.now() });
   scheduleFlush();
+}
+
+/**
+ * Drop one entry. Exists for the sanity gate: a cached point that fails the
+ * Australian-geography check is a poisoned answer from an earlier session,
+ * and leaving it in place would resurrect the same wrong pin on every load
+ * until the TTL finally aged it out.
+ */
+export function forgetCachedPoint(id: string): void {
+  hydrate();
+  if (memory.delete(id)) scheduleFlush();
 }
 
 /** Test / troubleshooting helper. */

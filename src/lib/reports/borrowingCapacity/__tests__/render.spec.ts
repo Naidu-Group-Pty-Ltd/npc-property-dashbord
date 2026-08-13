@@ -10,9 +10,9 @@
  * and reading all ten pages. Everything that turned up there is either fixed
  * or written down in `BORROWING_CAPACITY.md` §8.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+
+import { writeRenderArtifact } from '../../__tests__/renderArtifact';
 
 import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
 import { mastheadFor, resolveCompanyBlock } from '@/lib/reportDesign/companyBlock.pure';
@@ -64,17 +64,12 @@ const body = () => renderSnapshotBody(input());
  * economy, a table that tore across a break, a KPI label that wrapped and
  * dropped its own value below its neighbours' — those were all found by
  * rendering this file through WeasyPrint and reading the pages, and every later
- * phase will need to do the same:
- *
- *     npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
- *     python3 -m weasyprint reports/html/borrowing-capacity-snapshot.html out.pdf
- *     pdftoppm -png -r 100 out.pdf page
+ * phase will need to do the same. Nine other formats now do this too; the whole
+ * set is `npx tsx scripts/reports/renderAll.mts`, and `renderArtifact.ts`
+ * explains why.
  */
-const HTML_OUT = resolve(__dirname, '../../../../..', 'reports/html/borrowing-capacity-snapshot.html');
-
 beforeAll(() => {
-  mkdirSync(dirname(HTML_OUT), { recursive: true });
-  writeFileSync(HTML_OUT, renderBorrowingCapacityDocument(input()));
+  writeRenderArtifact('borrowing-capacity', renderBorrowingCapacityDocument(input()));
 });
 
 describe('the findings, in the output', () => {

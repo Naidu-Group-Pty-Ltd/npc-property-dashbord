@@ -48,7 +48,13 @@ import {
 } from './page.pure.ts';
 import type { ResolvedReportPalette } from './roles.pure.ts';
 import { PRINT_TRACKING } from './tokens.pure.ts';
-import { NUMERIC_FEATURES, PRINT_STACK } from './typography.pure.ts';
+import {
+  COVER_TITLE_SCALE,
+  EDITORIAL_NUMERIC_FEATURES,
+  NUMERIC_FEATURES,
+  PRINT_STACK,
+  PROSE_NUMERIC_FEATURES,
+} from './typography.pure.ts';
 
 export interface ReportCssInput {
   /** From `resolveReportPalette()` — or from the report's brand snapshot. */
@@ -89,6 +95,25 @@ function cssString(value: string): string {
   return `"${escaped}"`;
 }
 
+/**
+ * The cover's masthead and footer rows, in millimetres.
+ *
+ * Computed here rather than written as `calc(210mm - 44mm)` in the sheet.
+ * **WeasyPrint 62.3 — the version the render container pins — rejects that
+ * `calc()` outright**: `Ignored \`width: calc(210mm - 44mm)\`, invalid value`.
+ * Newer builds accept it, which is exactly how it survived review: it was
+ * verified against the engine on a developer's machine and dropped on the one
+ * that prints for clients.
+ *
+ * What it cost: `table-layout: fixed` needs a width to be fixed *to*. Without
+ * one the table auto-sized to its content, so the cover's classification and
+ * its reference printed as one run — `PRIVATE AND CONFIDENTIALAE8DDE86` — which
+ * is the defect the fixed layout was added to stop.
+ *
+ * 44 is the two 22mm cover margins. A number no version can misread.
+ */
+const COVER_ROW_WIDTH_MM = PAGE_SIZE.widthMm - 44;
+
 /** Trim `10.50pt` to `10.5pt`; keeps the golden readable and the output small. */
 function pt(value: number): string {
   return `${Number(value.toFixed(2))}pt`;
@@ -125,8 +150,22 @@ function pageRules(
   palette: ResolvedReportPalette,
   masthead: string,
   type: Record<string, number>,
+  pressMarks: boolean,
 ): string {
   const base = marginsFor('body');
+
+  /* Crop marks and a bleed-extended sheet, for a document going to a press.
+
+     On the base rule so every named page inherits it — a cover is the page
+     that most needs the bleed, and it is the one that declares its own margins.
+
+     3mm is the trade convention. The sheet becomes 216 x 303mm around a
+     210 x 297mm trim, and the field colour on a full-bleed page runs off the
+     edge instead of stopping at it. Off by default: crop marks on a document
+     sent to a client read as a proof nobody meant to send. */
+  const press = pressMarks
+    ? '    marks: crop cross;\n    bleed: 3mm;\n'
+    : '';
   const named = (Object.keys(NAMED_PAGES) as NamedPage[])
     .filter((p) => p !== 'body')
     .map((p) => namedPageRule(p, palette))
@@ -154,13 +193,16 @@ function pageRules(
     size: ${PAGE_SIZE.name};
     margin: ${base.top}mm ${base.right}mm ${base.bottom}mm ${base.left}mm;
     background: ${palette.paper};
-
+${press}
     @top-left {
       content: string(chapter-eyebrow);
       font-family: ${PRINT_STACK.mono};
       font-size: ${pt(type.micro)};
       letter-spacing: ${PRINT_TRACKING.widest};
       text-transform: uppercase;
+      /* A margin box inherits nothing, so the case-sensitive forms the rest of
+         this sheet's uppercase runs get have to be asked for here too. */
+      font-feature-settings: "kern" 1, "case" 1;
       color: ${palette.mutedInk};
     }
     @top-right {
@@ -176,6 +218,7 @@ function pageRules(
       font-size: ${pt(type.micro)};
       letter-spacing: ${PRINT_TRACKING.widest};
       text-transform: uppercase;
+      font-feature-settings: "kern" 1, "case" 1;
       color: ${palette.mutedInk};
     }
     @bottom-center {
@@ -470,17 +513,37 @@ function coverRules(
     position: absolute;
     top: 22mm; left: 22mm; right: 22mm;
     display: table;
-    width: calc(${PAGE_SIZE.widthMm}mm - 44mm);
+    /* Fixed, so a long company name cannot widen the table past the measure and
+       push the edition off the sheet. An auto table sizes to its content and
+       ignores the declared width, which is how a real cover printed a tenant's
+       name and its design system's name run together as one word.
+
+       Nothing in this file may name a company or a client: these comments ship
+       inside every tenant's PDF, and documentBrand.spec.ts scans the whole
+       document for ours. */
+    table-layout: fixed;
+    width: ${COVER_ROW_WIDTH_MM}mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro + 0.5)};
     letter-spacing: ${PRINT_TRACKING.widest};
     text-transform: uppercase;
     color: ${palette.accentOnField};
   }
-  .report-cover .cover-masthead .mark { display: table-cell; text-align: left; }
+  /* 62/38 rather than the even split a fixed table would take. The mark is a
+     company name at the widest tracking in the system and the edition is one
+     word; an even split wrapped a long name onto a second line, which landed on
+     the cover rule 8mm below. */
+  .report-cover .cover-masthead .mark {
+    display: table-cell;
+    text-align: left;
+    width: 62%;
+    overflow-wrap: anywhere;
+    padding-right: 6mm;
+  }
   .report-cover .cover-masthead .vol {
     display: table-cell;
     text-align: right;
+    width: 38%;
     color: ${alpha(palette.onFieldInk, 0.7)};
   }
   .report-cover .cover-rule {
@@ -497,19 +560,40 @@ function coverRules(
     color: ${palette.accentOnField};
     margin-bottom: 14mm;
   }
-  /* Cinzel — the brand's cover face, and the only place it appears. It ships
-     Bold alone and sets lowercase as small capitals, which is why it is
-     confined to the two places set large and short. */
+  /* Cinzel — the brand's cover face, and one of only two places it appears. It
+     sets lowercase as small capitals, which is why it is confined to the two
+     places set large and short.
+
+     Regular, not Bold. Cinzel is an inscriptional roman cut after Trajan-column
+     capitals, and those are light: at 34pt the Bold reads as blunt rather than
+     grand, and it blooms on the obsidian field a cover is set on, because
+     light-on-dark type optically gains weight. The face was only being set Bold
+     because Bold was the only weight in the image — a typographic decision made
+     by an omission in a Dockerfile. Regular and SemiBold were sitting unused in
+     public/fonts/Cinzel_Playfair_Display.zip, the same archive the Bold came
+     from, the whole time. */
   .report-cover h1.cover-title {
     font-family: ${PRINT_STACK.cover};
-    font-weight: 700;
+    font-weight: 400;
     font-size: ${pt(type.coverTitle)};
     line-height: 1.02;
     letter-spacing: ${PRINT_TRACKING.snug};
     color: ${palette.onFieldInk};
     margin: 0;
     max-width: 165mm;
+    /* A title is somebody else's string, and one of them arrived as an uploaded
+       *filename* — fifty-odd characters joined by underscores, which are not a
+       break opportunity. At 56pt that is far wider than the measure, max-width
+       cannot clip what cannot wrap, and the overflow stretched the cover box so
+       that the masthead and the footer, both positioned 22mm from its right
+       edge, were dragged off the sheet. Three broken things, one unbreakable
+       word. */
+    overflow-wrap: anywhere;
   }
+  /* Set by coverTitleFit, which counts the characters CSS cannot. */
+  .report-cover h1.cover-title.fit-medium { font-size: ${pt(type.coverTitle * COVER_TITLE_SCALE.medium)}; }
+  .report-cover h1.cover-title.fit-long { font-size: ${pt(type.coverTitle * COVER_TITLE_SCALE.long)}; line-height: 1.06; }
+  .report-cover h1.cover-title.fit-longest { font-size: ${pt(type.coverTitle * COVER_TITLE_SCALE.longest)}; line-height: 1.1; }
   /* The subtitle sets smaller than the title and on its own line. At parity it
      wraps a locality onto a third line, which pushes the meta block into the
      cover footer — seen in a real render before this was corrected. */
@@ -523,10 +607,22 @@ function coverRules(
     line-height: 1.05;
     color: ${palette.accentOnField};
   }
+  /* The meta block runs to a second row rather than squeezing its columns.
+
+     One row of however many entries a format supplied sized its columns to
+     content, so a fourth entry took every column below its content width and
+     three of the four broke — including "04 August 2026", set as "04 August"
+     over "2026". A date that wraps is the kind of thing a reader registers as
+     sloppiness before they have read a word, and it is on the cover.
+
+     renderCover now chunks the entries into rows of at most three, balanced,
+     and the vertical border-spacing separates them. Still a table: the flat
+     sheet's layout model is tables rather than flexbox, for the reason this
+     file's header gives, and a cover is not the place to make an exception. */
   .report-cover .cover-meta {
     margin-top: 16mm;
     display: table;
-    border-spacing: 7mm 0;
+    border-spacing: 7mm 5mm;
     margin-left: -7mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro + 0.5)};
@@ -534,6 +630,7 @@ function coverRules(
     text-transform: uppercase;
     color: ${alpha(palette.onFieldInk, 0.78)};
   }
+  .report-cover .cover-meta .meta-row { display: table-row; }
   .report-cover .cover-meta .meta-item { display: table-cell; vertical-align: top; }
   .report-cover .cover-meta .lbl {
     display: block;
@@ -554,7 +651,10 @@ function coverRules(
     position: absolute;
     bottom: 14mm; left: 22mm; right: 22mm;
     display: table;
-    width: calc(${PAGE_SIZE.widthMm}mm - 44mm);
+    /* Same reason as the masthead — "PRIVATE AND CONFIDENTIAL" and the
+       reference printed as one run on the cover this fixes. */
+    table-layout: fixed;
+    width: ${COVER_ROW_WIDTH_MM}mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.widest};
@@ -617,7 +717,7 @@ export function buildReportCss(input: ReportCssInput): string {
   const d = DENSITY_METRICS[options.density];
   const i = intensity(options);
 
-  return `${pageRules(palette, input.masthead, type)}
+  return `${pageRules(palette, input.masthead, type, options.pressMarks)}
 
   /* ── Foundation ─────────────────────────────────────────────────────── */
   html, body {
@@ -631,6 +731,78 @@ export function buildReportCss(input: ReportCssInput): string {
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
   }
 
+  /* ── Case-sensitive forms on everything set in caps ───────────────────
+
+     Every uppercase run in this system is also letterspaced, most of them at
+     0.18em. Without the case feature, a parenthesis, a hyphen, a bullet or a
+     slash inside one keeps its lowercase optical position — designed to sit
+     against an x-height — so it drops below the centre of the capitals around
+     it and the extra tracking makes the misalignment plain. EXAMPLE (DRAFT) is
+     the one to look at: both parentheses sit low and small.
+
+     Both IBM Plex Mono and Playfair Display carry the feature. One declaration
+     per surface, and it is the cheapest visible improvement available anywhere
+     in this stylesheet.
+
+     Enumerated rather than put on the body rule to inherit: case also
+     substitutes figure forms in some faces, and this system sets figures
+     deliberately three different ways below. A feature that reached everything
+     by default would quietly overrule all three.
+
+     The running head and foot are margin boxes, which take their own
+     declarations and inherit nothing from this rule. Theirs sit beside their
+     own text-transform. */
+  .report-cover .cover-eyebrow,
+  .report-cover .cover-masthead,
+  .report-cover .cover-meta,
+  .report-cover .cover-footer,
+  .brand-lockup .lockup-text,
+  .company-page .company-name .tail,
+  .company-page .contact-label,
+  .callout .callout-label,
+  .decision-box .decision-label,
+  .sidenote .sidenote-label,
+  .kpi .kpi-label,
+  .chart-figure figcaption,
+  .pull-quote cite,
+  .eyebrow,
+  h4,
+  table.data caption,
+  table.data th {
+    font-feature-settings: "kern" 1, "liga" 1, "case" 1;
+  }
+
+  /* ── The document outline ─────────────────────────────────────────────
+
+     The bookmark properties appeared nowhere in this design system, so every
+     report it has ever produced opens with an empty bookmarks pane —
+     including a twenty-nine page one. The contents page tells a reader what
+     is in the document and gives them no way to get there; the outline is the
+     half a reader can actually use. It is also what a screen reader navigates
+     by, which makes it part of the accessibility claim rather than a
+     convenience.
+
+     Two levels, from the two headings that are structural. An h3 is a
+     sub-subhead inside a chapter and belongs in the prose, not in a pane.
+
+     The cover is excluded deliberately: its heading is the document's title,
+     so an outline that began with it would open on an entry pointing at the
+     page the reader is already looking at. WeasyPrint reads these from the
+     stylesheet — the technique is the one in
+     src/lib/reportTemplate/htmlRenderer.ts, which has used it since it was
+     written. */
+  .chapter-header h1,
+  .page-contents h1,
+  .company-page .company-name {
+    bookmark-level: 1;
+    bookmark-label: content(text);
+  }
+  .chapter-body h2 {
+    bookmark-level: 2;
+    bookmark-label: content(text);
+  }
+  .report-cover h1.cover-title { bookmark-level: none; }
+
   /* ── Typography ─────────────────────────────────────────────────────── */
   h1, h2, h3 {
     font-family: ${PRINT_STACK.display};
@@ -642,8 +814,48 @@ export function buildReportCss(input: ReportCssInput): string {
     page-break-after: avoid;
   }
   h1 { font-size: ${pt(type.h1)}; }
-  h2 { font-size: ${pt(type.h2)}; margin: ${pt(d.blockGapPt + 10)} 0 ${pt(d.paragraphGapPt + 3)}; }
+  /* ── A subhead is a different object from a chapter title ──────────────
+     h1 and h2 shared face, colour, weight, tracking and line-height, and
+     differed only in size and margin — so an h2 was a chapter title set
+     smaller. That is invisible while a chapter title sits above it and wrong
+     the moment one does not: a chapter always breaks to a new page, and
+     page-break-after:avoid regularly puts an h2 at the top of a fresh sheet
+     with nothing above it but the running head. A 20pt Playfair heading
+     opening a blank page reads as a chapter opener that lost its eyebrow and
+     its rule.
+
+     Two signals, not three. The first version also drew an accent rule above
+     the subhead, and a render said what that costs: at the top of a sheet a
+     full-measure 0.6pt hairline is indistinguishable from a header rule, so it
+     separated the subhead from the page break rather than from the text above
+     it — and eight subheads down two pages, each with its own gold rule at
+     ~55pt intervals, read as a rate card rather than as prose. Half the
+     title's size at a lighter weight is enough; a native Borrowing Capacity
+     page sets its subheads at this size with no rule and reads correctly.
+
+     subhead is its own token rather than a ratio of h1, so a brand design
+     system that moves it moves it. It stays above 14pt at every bodyScale,
+     which keeps it in the display contrast band (see tokens.pure.ts). */
+  h2 {
+    font-size: ${pt(type.subhead)};
+    font-weight: 500;
+    margin: ${pt(d.blockGapPt + 12)} 0 ${pt(d.paragraphGapPt + 3)};
+  }
   h3 { font-size: ${pt(type.h3)}; margin: ${pt(d.blockGapPt)} 0 ${pt(d.paragraphGapPt - 1)}; }
+  /* ── Why there is no keep-together beyond the heading ──────────────────
+     A subhead can still open a section in the last inch of a page:
+     page-break-after:avoid promises only the *next* box, and when every
+     paragraph is one line the next box always fits. Refusing a break after the
+     first block as well was tried, and a render said what it costs — it turned
+     a bad break into a worse page. The group it creates is often a chapter's
+     tail, and a tail that no longer fits moves to a sheet of its own: a subhead
+     and two lines alone at 1.1% ink, which is more visible than the fault it
+     was fixing.
+
+     The condition that separates the two cases is "unless this would strand
+     the group", and CSS cannot express it — there is no way to ask whether the
+     receiving page would be empty. So the heading keeps its own rule and
+     nothing more. Recorded rather than left to be rediscovered. */
   /* h4 is the mono micro-label, not a smaller heading — it is the same object
      as .eyebrow and shares its colour so the two never drift apart. */
   h4 {
@@ -661,10 +873,67 @@ export function buildReportCss(input: ReportCssInput): string {
     margin: 0 0 ${pt(d.paragraphGapPt)};
     orphans: 3;
     widows: 3;
-    ${options.justifyText ? 'text-align: justify;\n    hyphens: auto;' : 'text-align: left;'}
+    ${options.justifyText ? 'text-align: justify;' : 'text-align: left;'}
   }
+  /* Figures in a sentence are not figures in a column. Tabular figures set
+     every digit on the same advance, so a year or a percentage inside a
+     paragraph opens a gap on both sides of its narrow digits — right in a
+     table, wrong in prose, and inherited into prose wherever a numeric rule
+     was an ancestor. Said here rather than left to the face's default. */
+  p, li, blockquote, .callout-body, .decision-box, .sidenote-body {
+    ${PROSE_NUMERIC_FEATURES}
+  }
+
+  /* ── Hyphenation, body prose only ─────────────────────────────────────
+
+     It works: pyphen ships with the engine and renderDocument sets lang.
+     Two things about how it was wired were wrong.
+
+     It was welded to justifyText, in the same ternary — so turning
+     justification off silently turned hyphenation off too, and a ragged-right
+     setting is where a long word hurts most. And it was on p alone, so a list
+     item and a callout body, which sit on a narrower measure than the text
+     around them, were the two places that could not break a word.
+
+     The limits are what keep it from being the other kind of eyesore: never
+     break a word under six letters, and never leave fewer than three letters
+     before the hyphen or three after it. There is no limit on consecutive
+     hyphenated lines — hyphenate-limit-lines is an unknown property on the
+     pinned engine, which said so on stderr the first time it was asked. It is
+     recorded in UNSUPPORTED so it cannot come back silently.
+
+     Not on headings, cover type, table cells or figure labels — those are set
+     to be read at a glance and a hyphen in one reads as a typo. */
+  p, li, .callout-body p, .decision-box p, .sidenote-body p {
+    hyphens: auto;
+    hyphenate-limit-chars: 6 3 3;
+  }
+  h1, h2, h3, h4, caption, th, td,
+  .cover-title, .cover-eyebrow, .cover-meta, .chapter-header,
+  .kpi-label, .kpi-value, .eyebrow, .figure-label, .toc-row {
+    hyphens: none;
+  }
+
   strong { font-weight: 600; color: ${palette.bodyInk}; }
-  em { font-family: ${PRINT_STACK.accent}; font-style: italic; font-size: 1.05em; }
+  em {
+    font-family: ${PRINT_STACK.accent};
+    font-style: italic;
+    font-size: 1.05em;
+    /* Pinned, because only the 400 italic of the accent face ships.
+
+       Without a weight this rule inherits one, so inside an h1 (600) or an h2
+       (500) it asks for an italic at that weight. There is no such cut, and
+       Pango emboldens the 400 synthetically rather than refusing — a smeared
+       italic that nothing downstream can see. The cover title already pinned
+       400 for exactly this reason, which shows the hazard was known and
+       handled in one place only.
+
+       font-synthesis: none is the declaration that says "fall back visibly
+       rather than fake it", and it is an unknown property on the pinned
+       engine — asked, warned about on stderr, ignored. Pinning the weight is
+       what actually works: it requests the cut that exists. */
+    font-weight: 400;
+  }
   a {
     color: ${palette.accentOnPaper};
     text-decoration: none;
@@ -672,6 +941,16 @@ export function buildReportCss(input: ReportCssInput): string {
   }
   ul, ol { margin: 0 0 ${pt(d.paragraphGapPt)}; padding-left: 14pt; }
   li { margin-bottom: ${pt(d.paragraphGapPt / 2)}; }
+  /* A list whose items carry their own leading glyph.
+     The model's glance strip writes its own marker per item — a tick, a
+     diamond, a warning sign, a star — and each one means something. Left as an
+     ordinary list the sheet added a bullet in front of it, so a client's page
+     printed two markers where the model wrote one. The list stays a list,
+     because a tagged PDF should announce it as one; only the sheet's marker
+     goes. (No example glyph in this comment: comments in this file ship inside
+     every document, and the clientDetails spec rightly fails the build for a
+     dingbat anywhere in the HTML.) */
+  ul.marked { list-style: none; padding-left: 0; }
 ${options.showDropCaps
     ? `
   /* A raised initial on the chapter's first body paragraph — NOT a floated drop
@@ -715,6 +994,10 @@ ${options.showDropCaps
     font-style: italic;
     font-size: ${pt(type.pullQuote)};
     line-height: 1.25;
+    ${EDITORIAL_NUMERIC_FEATURES}
+    /* Same reason as em: pin the cut that ships rather than inherit a weight
+       there is no italic for. */
+    font-weight: 400;
     color: ${palette.bodyInk};
     margin: ${pt(d.blockGapPt + 4)} 0;
     padding: 0 0 0 14pt;
@@ -761,10 +1044,21 @@ ${options.showDropCaps
   .kpi .kpi-value {
     font-family: ${PRINT_STACK.display};
     font-size: ${pt(type.h2 + 2)};
-    line-height: 1;
+    /* Not 1. A KPI value is usually a figure on one line, where a leading of
+       exactly the em is the right tight setting — but table-layout: fixed
+       divides the strip evenly, so a six-cell strip gives each value about
+       28mm, and anything wordier than a number wraps. At line-height 1 the
+       second line's ascenders print through the first line's descenders in a
+       display face. 1.08 is the smallest leading that clears them and is
+       invisible on the one-line case. */
+    line-height: 1.08;
     color: ${palette.bodyInk};
     ${NUMERIC_FEATURES}
   }
+  /* Five or more cells — see KPI_DENSE_FROM. The step down is what stops a
+     28mm cell breaking "House" into "Hous / e". */
+  .kpi-strip.dense .kpi-value { font-size: ${pt(type.subhead)}; }
+  .kpi-strip.dense .kpi { padding: ${pt(d.cellPadPt + 4)} ${pt(d.cellPadPt + 4)}; }
   .kpi .kpi-value.pos { color: ${palette.positive}; }
   .kpi .kpi-value.neg { color: ${palette.negative}; }
   .kpi .kpi-foot {
@@ -772,6 +1066,21 @@ ${options.showDropCaps
     font-size: ${pt(type.caption)};
     color: ${palette.mutedInk};
   }
+
+  /* ── The composed sheet ─────────────────────────────────────────────── */
+  /* A page whose contents were chosen rather than flowed into.
+
+     A break and nothing else — no min-height. Giving the sheet the height of
+     the content box seemed obvious and was wrong twice: a chapter header sits
+     above the first sheet, so a full-height box no longer fitted beside it and
+     the contents were pushed to the next page under a sheet of blank paper;
+     and a run of them turned a two-chapter document into ten pages. Whether a
+     sheet fills its page is a question about the composition, and the page
+     critique answers it by measuring the ink on the render. */
+  .sheet { break-after: page; }
+  /* Without this the last sheet's break emits a blank page before the closing
+     company page. */
+  .sheet:last-of-type { break-after: auto; }
 
   /* ── Columns and the asymmetric grid ────────────────────────────────── */
   .two-col {
@@ -866,7 +1175,27 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
 
   /* ── Contents ───────────────────────────────────────────────────────── */
   .contents { display: table; width: 100%; margin-top: ${pt(d.blockGapPt)}; }
-  .contents .toc-row { display: table-row; }
+  /* A contents entry is one line and must not be split across a page.
+     Found on the first Market Intelligence render, which is the first document
+     in the programme with a contents page long enough to break: the last entry
+     kept its number and its note on page two and put its title alone on page
+     three, so the contents listed a section with no name. */
+  .contents .toc-row { display: table-row; break-inside: avoid; page-break-inside: avoid; }
+  /* A contents page must not end by stranding one entry on the next sheet.
+     Keeping a row whole fixed a title separated from its number and swapped in
+     a different fault: the fourteen-entry Market Intelligence contents put
+     thirteen rows on one page and the fourteenth alone on the next, at 0.2%
+     ink, on a named page that carries no running head — so page three of a
+     twenty-two page report was a single line floating under nothing, which
+     reads as a printing fault rather than as a contents page.
+
+     Refusing a break after each of the last three rows pulls the whole tail
+     over together. It is the table equivalent of widows, which does not apply
+     to rows. */
+  .contents .toc-row:nth-last-child(-n+4):not(:last-child) {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
   .contents .toc-row > * {
     display: table-cell;
     padding: ${pt(d.cellPadPt)} 0;
@@ -928,10 +1257,14 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
   }
   .company-page .company-name {
     font-family: ${PRINT_STACK.cover};
-    /* Cinzel ships Bold alone. Stating 700 is not decoration: an unstated
-       weight is a 400 request, and a request the image cannot answer exactly is
-       how a face gets synthesised. */
-    font-weight: 700;
+    /* SemiBold, and stating it is not decoration: an unstated weight is a 400
+       request, and a request the image cannot answer exactly is how a face gets
+       synthesised.
+
+       A weight above the cover title's Regular, deliberately. This is a
+       wordmark set smaller than the title and it has to hold the page on its
+       own, where the title has a whole sheet of furniture around it. */
+    font-weight: 600;
     font-size: ${pt(type.h1 - 4)};
     line-height: 1.05;
     color: ${palette.accentOnField};
@@ -980,7 +1313,16 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
   /* The SVG carries its own viewBox and scales to the measure; the width here
      is what fixes the printed size, and therefore what the point sizes in
      charts.pure.ts are computed against. */
-  .chart-figure svg { display: block; width: 100%; height: auto; }
+  /* A chart is an img carrying a data-URI SVG, so that the engine tags it as a
+     figure with alternative text — see chartFigure in charts.pure.ts. The
+     inline svg case remains for a figure with nothing to describe it by. */
+  .chart-figure svg,
+  .chart-figure .chart-img { display: block; width: 100%; height: auto; }
+  /* A chart drawn at CHART_WIDTH.compact prints at the width it was drawn for,
+     not stretched across the measure - see chartFigure's ChartFigureWidth. Left
+     against the measure rather than centred, so it reads as a figure in a
+     column and not as a slide. */
+  .chart-figure.chart-compact { width: 60.5%; }
   .chart-figure figcaption {
     margin-top: 6pt;
     font-family: ${PRINT_STACK.mono};
@@ -1002,6 +1344,8 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
     font-style: italic;
     font-size: ${pt(type.bodyLg + 1)};
     line-height: 1.4;
+    ${EDITORIAL_NUMERIC_FEATURES}
+    font-weight: 400;
     color: ${palette.mutedInk};
     margin-bottom: ${pt(d.blockGapPt)};
     text-align: left;
@@ -1009,5 +1353,112 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
 ${tableRules(palette, options, type)}
 ${chapterRules(palette, options, type)}
 ${coverRules(palette, options, type)}
+${raisedRules(palette, options, type)}
 `;
+}
+
+/**
+ * The raised surface style.
+ *
+ * Appended last so every rule here overrides its flat counterpart by order
+ * rather than by specificity — no `!important`, and the flat sheet stays
+ * readable on its own.
+ *
+ * ## What is deliberately absent
+ *
+ * No `box-shadow` and no `filter: blur()`. WeasyPrint 69 ignores both as
+ * unknown properties, and its SVG renderer ignores `feGaussianBlur` too, so
+ * the soft glow a browser-rendered document gets under a card is genuinely
+ * unavailable here. Tested, not assumed. What replaces it is a gradient fill
+ * and a hairline ring, which read as *lifted* without pretending to a shadow —
+ * and everything else in a browser-designed reference page (flexbox, grid,
+ * radius, gradients, the paper texture, a rounded table shell, pill badges)
+ * WeasyPrint draws correctly.
+ */
+function raisedRules(
+  palette: ResolvedReportPalette,
+  options: ReportDesignOptions,
+  type: Record<string, number>,
+): string {
+  if (options.surfaceStyle !== 'raised') return '';
+  const d = DENSITY_METRICS[options.density];
+  const radius = '3.2mm';
+
+  return `
+  /* ── Raised ─────────────────────────────────────────────────────────── */
+
+  /* The paper carries a faint square grid. Two repeating gradients rather than
+     an image: nothing to fetch, nothing to inline, and it scales with the page
+     instead of resampling.
+
+     On the page box rather than on a section, because a section's background
+     paints its own box and stops. A later @page rule merges with the earlier
+     one, so this adds the image without disturbing the paper colour. */
+  @page {
+    background-image:
+      linear-gradient(${alpha(palette.rule, 0.38)} 0.2pt, transparent 0.2pt),
+      linear-gradient(90deg, ${alpha(palette.rule, 0.38)} 0.2pt, transparent 0.2pt);
+    background-size: 14mm 14mm;
+  }
+  /* Not on the field pages: a grid over an obsidian cover is a cutting mat. */
+  @page cover { background-image: none; }
+  @page disclaimer { background-image: none; }
+  /* The paper colour lives on the page box, which is what the texture is
+     drawn on. The root element's background is propagated to the canvas and
+     painted over that box, so leaving it set covered the content area and the
+     grid survived only in the margins — which read exactly like a printing
+     fault. Both are cleared; the page box still carries the paper. */
+  html, body { background: transparent; }
+
+  /* KPI cards, not a KPI strip. The single biggest visual difference between a
+     document that looks composed and one that looks printed out. */
+  .kpi-strip {
+    display: flex;
+    gap: ${pt(d.blockGapPt - 2)};
+    border-top: 0;
+    border-bottom: 0;
+  }
+  .kpi-strip .kpi {
+    display: block;
+    flex: 1 1 0;
+    border-right: 0;
+    border-radius: ${radius};
+    border: 0.3pt solid ${alpha(palette.rule, 0.9)};
+    background: linear-gradient(160deg, ${palette.paperBright} 0%, ${palette.paperAlt} 100%);
+    padding: ${pt(d.cellPadPt + 6)} ${pt(d.cellPadPt + 6)};
+  }
+
+  /* A shell around the table, and a header band inside it. */
+  .table-block, table.data {
+    border-radius: ${radius};
+    /* Clips the corners of the header band to the shell's own radius. */
+    overflow: hidden;
+  }
+  table.data {
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 0.3pt solid ${alpha(palette.rule, 0.9)};
+  }
+  table.data thead th {
+    background: ${palette.paperAlt};
+    border-bottom: 0.3pt solid ${palette.rule};
+  }
+  table.data caption { padding-bottom: ${pt(d.paragraphGapPt)}; }
+
+  /* Callouts, sidenotes and decision boxes become cards too, so a page of them
+     reads as one family rather than as three unrelated treatments. */
+  .callout, .sidenote, .decision-box {
+    border-radius: ${radius};
+    background: linear-gradient(160deg, ${palette.paperBright} 0%, ${palette.paperAlt} 100%);
+  }
+
+  /* An accent bar beside the section head, which is what carries the eyebrow
+     and the title as one object rather than two stacked lines. */
+  .chapter-header {
+    border-left: 1.2pt solid ${palette.accentOnPaper};
+    padding-left: ${pt(d.cellPadPt + 8)};
+  }
+
+  /* Rows sit apart rather than butting together. */
+  .grid-12 { gap: ${pt(d.blockGapPt)}; }`;
 }

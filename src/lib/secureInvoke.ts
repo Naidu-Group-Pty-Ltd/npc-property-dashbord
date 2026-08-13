@@ -13,13 +13,20 @@ let _globalAuthExhausted = false;
 const GLOBAL_AUTH_FAIL_LIMIT = 5;
 let _globalAuthFailCount = 0;
 
+/** Fired once when the breaker trips, so auth state can clear and redirect. */
+export const AUTH_EXHAUSTED_EVENT = 'npc-auth-exhausted';
+
 export function markAuthFailure(): void {
   _globalAuthFailCount++;
-  if (_globalAuthFailCount >= GLOBAL_AUTH_FAIL_LIMIT) {
+  if (_globalAuthFailCount >= GLOBAL_AUTH_FAIL_LIMIT && !_globalAuthExhausted) {
     _globalAuthExhausted = true;
     console.warn('[secureInvoke] Global auth circuit breaker tripped – all polling stopped until re-login.');
+    // Without this, a revoked/expired session left every poller 401-ing behind a
+    // blank screen instead of returning the user to the login page.
+    try { window.dispatchEvent(new Event(AUTH_EXHAUSTED_EVENT)); } catch { /* non-browser */ }
   }
 }
+
 
 export function resetAuthFailures(): void {
   _globalAuthFailCount = 0;
@@ -35,16 +42,43 @@ export function isAuthExhausted(): boolean {
 // is the sole carrier, so only the access-token (RLS/realtime JWT) key remains.
 const ACCESS_TOKEN_KEY = 'supabase_access_token';
 
-// These endpoints deliberately use wildcard, token-auth CORS responses. Sending
-// cookies would make browsers reject those responses because credentialed CORS
-// requests cannot be combined with `Access-Control-Allow-Origin: *`.
-const TOKEN_AUTH_FUNCTIONS = new Set([
+/**
+ * Functions moving from wildcard token-auth CORS to exact-origin cookie CORS.
+ *
+ * These five used to be called with `credentials: 'omit'`, because they
+ * answered every origin `Access-Control-Allow-Origin: *` and a credentialed
+ * request may not be combined with a wildcard origin. Omitting credentials
+ * stripped the HttpOnly `__Host-session_token` cookie — and WP-11B/C Phase 4
+ * had already made that cookie the SOLE session carrier server-side. Their only
+ * remaining credential was the HS256 access-token JWT, which the ES256
+ * remediation records the browser can no longer obtain. Every PDF template
+ * import therefore 401'd "Authentication required", shown to the user as
+ * "Your sign-in session has expired" on a session that was perfectly valid.
+ *
+ * `createTokenAuthCorsHeaders(origin)` now answers an allowlisted origin
+ * exactly, with credentials, so the cookie authenticates these calls like it
+ * does everywhere else.
+ *
+ * DEPLOY ORDER: the frontend ships as one bundle; each function is redeployed
+ * individually. Against a function still running the old wildcard build, a
+ * credentialed request fails its CORS PREFLIGHT — so the real request is never
+ * dispatched and nothing happened server-side. That is what makes the one-shot
+ * `credentials: 'omit'` retry below safe: it cannot duplicate a side effect,
+ * and it keeps imports working in whichever order the two sides deploy.
+ */
+const COOKIE_CORS_MIGRATING_FUNCTIONS = new Set([
   'template-import-pdf',
   'template-design-agent',
   'render-source',
   'import-from-url',
   'pdf-parse-dispatch',
 ]);
+
+/**
+ * Functions observed this session to still answer a wildcard origin. Remembered
+ * so only the FIRST call to each pays for the failed credentialed preflight.
+ */
+const _uncredentialedFunctions = new Set<string>();
 
 /** Human-readable guidance for auth failures from secured edge functions. */
 export function describeAuthError(message: string | undefined | null): string | null {
@@ -55,9 +89,31 @@ export function describeAuthError(message: string | undefined | null): string | 
     || m.includes('session not found')
     || m === 'unauthorized'
   ) {
-    return 'Your sign-in session has expired. Sign out, sign back in, and retry the import.';
+    return 'Your sign-in session has expired. Sign out, sign back in, and try again.';
   }
   return null;
+}
+
+/**
+ * Does this response mean "we did not believe who you are"?
+ *
+ * 401 and 403 are unambiguous. The 400 arm exists because several functions
+ * answer a missing session with `400 { error: 'Authentication required' }`
+ * rather than a 401, and a caller that only looked at the status would show
+ * that to a signed-in user as a bad request instead of refreshing their token.
+ *
+ * Exported so the streaming callers — which cannot go through
+ * `invokeSecureFunction`, because it reads the whole body as JSON — apply the
+ * same rule rather than inventing a second one.
+ */
+export function isAuthFailureResponse(status: number, message?: string | null): boolean {
+  if (status === 401 || status === 403) return true;
+  if (status !== 400) return false;
+  const m = String(message ?? '').toLowerCase();
+  return m.includes('authentication required')
+    || m.includes('auth required')
+    || m.includes('invalid session')
+    || m.includes('session expired');
 }
 
 export interface InvokeResult<T = any> {
@@ -117,26 +173,64 @@ async function tryRefreshAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Re-mint the access token from the HttpOnly session cookie.
+ *
+ * Public because the streaming callers need the same one-shot refresh
+ * `invokeSecureFunction` performs on an auth failure. Returns the new token, or
+ * null when the cookie is gone or no longer valid — i.e. when the person really
+ * does have to sign in again.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  return tryRefreshAccessToken();
+}
+
+/**
+ * The Bearer credential for a call to an edge function.
+ *
+ * Three carriers, in order: the access token this tab mirrored at sign-in, the
+ * native supabase-js session (for users who signed in through it), and — only
+ * when asked — the HttpOnly `__Host-session_token` cookie, re-minted through
+ * `custom-auth-verify-v2`.
+ *
+ * `refreshIfMissing` is opt-in because for the ordinary JSON path a missing
+ * token is cheap to discover: the function answers 401 and
+ * `invokeSecureFunction` refreshes and retries. A caller that cannot do that —
+ * a streaming request, whose body is consumed once — asks for the refresh up
+ * front instead of sending a credential it already knows is absent.
+ */
+export async function resolveAuthBearer(
+  options: { refreshIfMissing?: boolean } = {},
+): Promise<{ token: string; authenticated: boolean }> {
+  let accessToken = getAccessToken();
+
+  // Native Supabase Auth fallback: users signed in through supabase-js keep
+  // their JWT in the client's own storage, not under our custom keys — for
+  // them the old code silently sent the ANON key and secured functions 401'd.
+  if (!accessToken) {
+    try {
+      const { supabase } = await import('@/integrations/supabase/client');
+      accessToken = (await supabase.auth.getSession()).data.session?.access_token ?? null;
+    } catch { /* native session lookup is best-effort */ }
+  }
+
+  if (!accessToken && options.refreshIfMissing) {
+    accessToken = await tryRefreshAccessToken();
+  }
+
+  return { token: accessToken || SUPABASE_ANON_KEY, authenticated: Boolean(accessToken) };
+}
+
+/**
  * Invoke an edge function with HttpOnly cookie support
  */
 export async function invokeSecureFunction<T = any>(
   functionName: string,
   body?: Record<string, any>,
-  options?: { timeoutMs?: number; _isRetry?: boolean; stepUpCapability?: string; correlationId?:string }
+  options?: { timeoutMs?: number; _isRetry?: boolean; stepUpCapability?: string; correlationId?:string; signal?: AbortSignal }
 ): Promise<InvokeResult<T>> {
   const correlationId = options?.correlationId ?? crypto.randomUUID();
   try {
-    let accessToken = getAccessToken();
-    // Native Supabase Auth fallback: users signed in through supabase-js keep
-    // their JWT in the client's own storage, not under our custom keys — for
-    // them the old code silently sent the ANON key and secured functions 401'd.
-    if (!accessToken) {
-      try {
-        const { supabase } = await import('@/integrations/supabase/client');
-        accessToken = (await supabase.auth.getSession()).data.session?.access_token ?? null;
-      } catch { /* native session lookup is best-effort */ }
-    }
-    const bearerToken = accessToken || SUPABASE_ANON_KEY;
+    const { token: bearerToken, authenticated: hasAccessToken } = await resolveAuthBearer();
 
     // WP-11C: attach a live step-up token when the caller declares a capability.
     let stepUpToken: string | null = null;
@@ -167,30 +261,70 @@ export async function invokeSecureFunction<T = any>(
       ...(stepUpToken ? { step_up_token: stepUpToken } : {}),
     };
 
-    const controller = new AbortController();
     const timeoutMs = options?.timeoutMs || 60000;
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const serializedBody = JSON.stringify(requestBody);
 
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
-      method: 'POST',
-      // Only CORS-safelisted headers plus the two Supabase auth headers every
-      // deployed function already allow-lists. `correlation_id` and
-      // `step_up_token` ride in the body (see the note above) — adding either
-      // as a header here breaks every page until all functions are redeployed.
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${bearerToken}`,
-      },
-      credentials: TOKEN_AUTH_FUNCTIONS.has(functionName) ? 'omit' : 'include',
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
+    const sendRequest = async (credentials: RequestCredentials): Promise<Response> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      // A caller-supplied signal (the editor cancels a superseded preview
+      // render) aborts this request too. Without it, callers that need
+      // cancellation had to hand-roll their own fetch — which is how the
+      // render calls came to bypass this transport entirely.
+      const external = options?.signal;
+      const onExternalAbort = () => controller.abort();
+      if (external) {
+        if (external.aborted) controller.abort();
+        else external.addEventListener('abort', onExternalAbort, { once: true });
+      }
+      try {
+        return await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+          method: 'POST',
+          // Only CORS-safelisted headers plus the two Supabase auth headers every
+          // deployed function already allow-lists. `correlation_id` and
+          // `step_up_token` ride in the body (see the note above) — adding either
+          // as a header here breaks every page until all functions are redeployed.
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${bearerToken}`,
+          },
+          credentials,
+          body: serializedBody,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+        external?.removeEventListener('abort', onExternalAbort);
+      }
+    };
 
-    clearTimeout(timeoutId);
+    // The HttpOnly session cookie is the app's authoritative credential, so ask
+    // for it by default. A function still on the old wildcard-CORS build rejects
+    // that at the preflight — before the request is dispatched — so falling back
+    // to an uncredentialed retry is side-effect free. See
+    // COOKIE_CORS_MIGRATING_FUNCTIONS.
+    const preferredCredentials: RequestCredentials =
+      _uncredentialedFunctions.has(functionName) ? 'omit' : 'include';
+    let response: Response;
+    try {
+      response = await sendRequest(preferredCredentials);
+    } catch (err: any) {
+      // A timeout is our own abort, not a CORS verdict — never retry it.
+      const isAbort = err?.name === 'AbortError';
+      if (isAbort || preferredCredentials === 'omit' || !COOKIE_CORS_MIGRATING_FUNCTIONS.has(functionName)) {
+        throw err;
+      }
+      console.warn(
+        `[invokeSecureFunction] ${functionName} refused a credentialed request `
+        + '(function not yet redeployed with exact-origin CORS); retrying without the session cookie.',
+      );
+      response = await sendRequest('omit');
+      _uncredentialedFunctions.add(functionName);
+    }
 
     const data = await response.json().catch(() => ({}));
-    const responseCorrelationId = response.headers.get('x-correlation-id') || data?.correlation_id || correlationId;
+    const responseCorrelationId = response.headers.get('x-correlation-id') || data?.correlationId || data?.correlation_id || correlationId;
     
     if (!response.ok) {
       // Mission Control insufficient_funds → surface global banner.
@@ -214,18 +348,11 @@ export async function invokeSecureFunction<T = any>(
         functionName,
         status: response.status,
         ...(functionName.startsWith('market-updates-') ? { code:data?.code ?? 'unknown', stage:data?.stage ?? 'function', correlationId:responseCorrelationId } : { data }),
-        hasAccessToken: Boolean(accessToken),
+        hasAccessToken,
       });
 
-      const message = String(data?.error || data?.message || '').toLowerCase();
-      const isAuthFailure = response.status === 401
-        || response.status === 403
-        || (response.status === 400 && (
-          message.includes('authentication required')
-          || message.includes('auth required')
-          || message.includes('invalid session')
-          || message.includes('session expired')
-        ));
+      const message = String(data?.error?.message || data?.error || data?.message || '');
+      const isAuthFailure = isAuthFailureResponse(response.status, message);
 
       // ── One-shot token refresh + retry on auth failure ──
       if (isAuthFailure && !options?._isRetry && functionName !== 'custom-auth-verify-v2') {
@@ -250,7 +377,7 @@ export async function invokeSecureFunction<T = any>(
 
       return { 
         data: data as T, 
-        error: { message: String(errorMessage), status: response.status, functionName, code:data?.code, stage:data?.stage, correlationId:responseCorrelationId, retryable:data?.retryable }
+        error: { message: String(errorMessage), status: response.status, functionName, code:data?.error?.code ?? data?.code, stage:data?.stage, correlationId:responseCorrelationId, retryable:data?.retryable }
       };
     }
     
@@ -306,3 +433,30 @@ export async function invokeSecureFunction<T = any>(
 export function hasActiveSession(): boolean {
   return Boolean(getAccessToken());
 }
+
+/**
+ * Authoritative session check.
+ *
+ * `hasActiveSession()` only sees the (tab-scoped) access token, so it reports
+ * "expired" whenever that token was never mirrored into this tab, was cleared
+ * after transient auth failures, or the user signed in through supabase-js.
+ * In all three cases the HttpOnly `__Host-session_token` cookie is still valid,
+ * so we re-verify against it (and re-seed the access token) before telling the
+ * user their session has expired.
+ */
+export async function ensureActiveSession(): Promise<boolean> {
+  if (getAccessToken()) return true;
+
+  try {
+    const { supabase } = await import('@/integrations/supabase/client');
+    if ((await supabase.auth.getSession()).data.session?.access_token) return true;
+  } catch { /* native session lookup is best-effort */ }
+
+  const refreshed = await tryRefreshAccessToken();
+  if (refreshed) {
+    resetAuthFailures();
+    return true;
+  }
+  return false;
+}
+

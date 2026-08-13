@@ -2,9 +2,33 @@
  * chart-preservation-v1 — PDF Extraction V3 · Package E3 (canonical shared pure module).
  *
  * Charts are SOURCE TRUTH. A chart is preserved by rendering its exact source
- * crop as a single locked visual object — never by rebuilding bars, axes,
- * legends or labels from OCR/text. This module is the deterministic decision
- * engine both runtimes agree on:
+ * crop as a single locked visual object, and that remains the DEFAULT and the
+ * fallback for every chart this pipeline cannot prove it read correctly.
+ *
+ * This header used to end that sentence with "never by rebuilding bars, axes,
+ * legends or labels from OCR/text". That absolute was right for as long as
+ * nothing could prove a reconstruction correct, and it was never really an
+ * argument against reconstruction — it was an argument against UNVERIFIED
+ * reconstruction, standing in for a verification that did not exist.
+ *
+ * It exists now. `chartArbitration.pure.ts` gates a native chart behind twelve
+ * hard defects, each an absolute veto that no score can override: an axis scale
+ * fitted to worse than r2 0.999, a value disagreeing with a printed data label,
+ * an unexplained number inside the chart region, a chart type nobody can
+ * decompose. Series come from measured vector geometry — a rect's height, a
+ * wedge's angle — never from OCR of a label and never from a model. Where a
+ * chart prints its numbers, those numbers are truth and the geometry must agree
+ * with them; one disagreement vetoes the whole chart, because the rest being
+ * right is exactly what would make the wrong part credible.
+ *
+ * So the rule is now conditional rather than absolute: a chart may be rebuilt
+ * ONLY through a cleared arbitration verdict, and anything short of that renders
+ * its crop exactly as before. The prohibition has become a gate. Do not weaken
+ * that gate to raise a native-chart rate — in a valuation or borrowing-capacity
+ * report a chart that is a picture is inert and correct, while a chart rebuilt
+ * from a bad read is authoritative, editable and wrong.
+ *
+ * This module is the deterministic decision engine both runtimes agree on:
  *
  *   - `buildChartRenderPlanForRegions` decides, per chart region, whether to
  *     render the durable source crop (`chart-crop`) or defer to E0 containment
@@ -20,6 +44,9 @@
  * `pdf-parse-service/source_scene_graph.py` (`build_chart_render_plan`). Pure +
  * deterministic + JSON-safe: no signed URLs, DOM, ImageData, network or secrets.
  * A missing/invalid crop NEVER triggers a semantic redraw — it falls back to E0.
+ * That still holds, and is now doubly enforced: `arbitrateChart` treats a
+ * missing crop as the hard defect `source_chart_crop_missing`, so a chart with
+ * nothing to fall back to cannot reach a native mode either.
  */
 
 import type {
@@ -32,7 +59,27 @@ import type {
 
 export const CHART_PRESERVATION_VERSION = 'chart-preservation-v1';
 
-export type ChartRenderMode = 'chart-crop' | 'containment-fallback';
+/**
+ * How a chart reaches the page.
+ *
+ * The two native modes are reachable only through a cleared `arbitrateChart`
+ * verdict; `buildChartRenderPlanForRegions` in this module never produces them
+ * on its own, and its crop/containment decision is unchanged. They differ in
+ * whether the reconstruction was CORROBORATED: a chart printing its own data
+ * labels can have its geometry checked against them, while one that prints none
+ * gives the geometry nothing to be checked against — probably right, not proven,
+ * and therefore flagged for sign-off rather than quietly trusted.
+ */
+export type ChartRenderMode =
+  | 'verified-native-chart'
+  | 'native-with-source-reference'
+  | 'chart-crop'
+  | 'containment-fallback';
+
+/** True when the mode renders an editable chart object rather than pixels. */
+export function isNativeChartRenderMode(mode: ChartRenderMode): boolean {
+  return mode === 'verified-native-chart' || mode === 'native-with-source-reference';
+}
 
 export interface ChartRegionRenderPlan {
   regionId: string;
@@ -116,7 +163,13 @@ export function buildChartRenderPlanForRegions(
 
   const charts = regions.filter((r) => r?.type === 'chart');
   const chartPlans: ChartRegionRenderPlan[] = [];
-  const modeCounts: Record<ChartRenderMode, number> = { 'chart-crop': 0, 'containment-fallback': 0 };
+  const modeCounts: Record<ChartRenderMode, number> = {
+    'chart-crop': 0,
+    'containment-fallback': 0,
+    'native-with-source-reference': 0,
+    'verified-native-chart': 0,
+  };
+
   let suppressedTotal = 0;
   let completeCharts = 0;
   let chartsWithCrop = 0;

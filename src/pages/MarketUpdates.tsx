@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Activity, AlertTriangle, Archive, BarChart3, Building2, ExternalLink, Eye, FileText, Globe2, Loader2, Newspaper, Radio, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -17,13 +17,17 @@ import { interleaveBySource } from '@/lib/marketFeedOrder';
 import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
-import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
-import type { MarketQARetrievedItem } from '@/types/marketUpdates';
+import { MarketQAAnswer } from '@/components/market-updates/MarketQAAnswer';
+import { MarketQAProgress } from '@/components/market-updates/MarketQAProgress';
+import { MarketQADepthSelector, type DepthChoice } from '@/components/market-updates/MarketQADepthSelector';
+import type { MarketQAImplications, MarketQARetrievedItem, MarketQAStage, MarketQATimelineEntry } from '@/types/marketUpdates';
+import { GlassCard, AurixaMark } from '@/components/aurixa';
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { clearMarketUpdateArticleFilters, DEFAULT_MARKET_UPDATE_ARTICLE_FILTERS, hasClearableMarketUpdateFilters } from '@/lib/marketUpdateFilters';
+import { stripTechnicalIdentifiers as clean, stripTechnicalIdentifiersFromList as cleanList } from '@/utils/stripTechnicalIdentifiers';
 
 const PERIODS: Array<{ id: MarketDigestPeriod; label: string; hint: string }> = [
   { id: '24h', label: '24 Hours', hint: 'Last day' },
@@ -51,6 +55,18 @@ const audiences: Array<'all' | MarketAudienceTag> = ['all','investors','owner_oc
 const titleCase = (v: string) => v.split('_').map(p => p[0].toUpperCase() + p.slice(1)).join(' ');
 const label = (v: string) => v === 'all' ? 'All' : titleCase(v);
 const dateLabel = (v?: string | null) => v ? new Date(v).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not available';
+/** Relative for recency (brand rule): "42m ago" / "5h ago" today, the date beyond that. */
+const relTime = (v?: string | null) => {
+  if (!v) return 'Date unknown';
+  const then = new Date(v).getTime();
+  if (!Number.isFinite(then)) return 'Date unknown';
+  const mins = Math.round((Date.now() - then) / 60_000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 24 * 60) return `${Math.round(mins / 60)}h ago`;
+  if (mins < 48 * 60) return 'Yesterday';
+  return new Date(v).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+};
 
 const FRESHNESS_STYLE: Record<MarketFreshnessTier, string> = {
   breaking: 'bg-destructive/15 text-destructive border-destructive/30',
@@ -64,6 +80,15 @@ const IMPACT_STYLE: Record<MarketImpactLevel, string> = {
   medium: 'bg-warning/15 text-[hsl(var(--warning))] border-warning/30',
   low: 'bg-muted text-muted-foreground border-border',
 };
+/** The left rail on every feed card. The rail IS the impact axis — read the
+ *  feed edge top-to-bottom and the day's weight distribution is visible
+ *  before a single headline is read. */
+const IMPACT_RAIL: Record<MarketImpactLevel, string> = {
+  critical: 'bg-destructive/80',
+  high: 'bg-destructive/55',
+  medium: 'bg-[hsl(var(--warning)/0.55)]',
+  low: 'bg-border',
+};
 
 function FreshnessBadge({ tier }: { tier: MarketFreshnessTier }) {
   const Icon = tier === 'breaking' ? Zap : tier === 'today' ? Clock : tier === 'this_week' ? Newspaper : FileText;
@@ -75,10 +100,10 @@ function SegmentChip({ seg, active, onClick }: { seg: MarketSegment | 'all'; act
     <button
       onClick={onClick}
       className={cn(
-        'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+        'rounded-full border px-3 py-1 text-xs font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-[var(--motion-fast)] ease-[var(--motion-ease-out)] active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         active
-          ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-          : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground'
+          ? 'border-primary bg-primary text-primary-foreground shadow-[var(--elevation-1)]'
+          : 'border-[color:var(--glass-hairline)] bg-card/70 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[var(--elevation-1)]'
       )}
     >
       {seg === 'all' ? 'All Segments' : titleCase(seg)}
@@ -101,11 +126,18 @@ export default function MarketUpdates() {
   const [actionIssue, setActionIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
   const operationalIssue = actionIssue ?? dataIssue ?? digestIssue;
   const [selectedUpdate, setSelectedUpdate] = useState<MarketUpdate | null>(null);
-  const [hidingId, setHidingId] = useState<string | null>(null);
+  const [archivePendingIds,setArchivePendingIds]=useState<Set<string>>(()=>new Set());
+  const archivePendingRef=useRef(new Set<string>());
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
+  /** Which update the retained dialog thread belongs to. */
+  const [qaThreadUpdateId, setQaThreadUpdateId] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
-  const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
+  const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null; implications?: MarketQAImplications; timeline?: MarketQATimelineEntry[]; watch_items?: string[]; contrarian_view?: string; depth_mode?: string; context_size?: number; retrieval_mode?: string }>>([]);
+  /** 'auto' lets the endpoint infer depth from the question. */
+  const [qaDepth, setQaDepth] = useState<DepthChoice>('auto');
+  /** Live pipeline progress for the turn currently being researched. */
+  const [qaStage, setQaStage] = useState<MarketQAStage | null>(null);
   const [asking, setAsking] = useState(false);
   const qaAbortRef = useRef<AbortController | null>(null);
   const qaRequestRef = useRef(0);
@@ -122,11 +154,12 @@ export default function MarketUpdates() {
   // Shadow counters live on the ingestion response rather than the run row, so the
   // last run's validation result is held alongside it.
   const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
-  // Held items live in the main feed behind a scope chip rather than a modal —
-  // the tiered publication policy leaves far fewer of them, and the ones that
-  // remain are managed in place.
+  // There is no Held tab any more: every classified item belongs in the one
+  // published feed. Anything the classifier held is (a) merged into the feed
+  // immediately so the reader never waits, and (b) promoted server-side through
+  // the existing audited publish path, so the database matches what is shown.
   const [heldUpdates, setHeldUpdates] = useState<MarketUpdate[]>([]);
-  const [feedScope, setFeedScope] = useState<'published' | 'held'>('published');
+  const [promotingHeld, setPromotingHeld] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
 
 
@@ -134,25 +167,40 @@ export default function MarketUpdates() {
     ? error.issue
     : { stage:'database', code:'unknown', message:'Some Market News Feed data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
+  // Published rows plus anything still held, de-duplicated by id and ordered by
+  // recency — one list for counts, filters, KPIs and the feed itself.
+  const mergeFeed = (published: MarketUpdate[], held: MarketUpdate[]): MarketUpdate[] => {
+    const byId = new Map<string, MarketUpdate>();
+    for (const item of [...published, ...held]) if (!byId.has(item.id)) byId.set(item.id, item);
+    return [...byId.values()].sort((a, b) => {
+      const at = new Date(a.source_published_at ?? a.ingested_at).getTime();
+      const bt = new Date(b.source_published_at ?? b.ingested_at).getTime();
+      return bt - at;
+    });
+  };
+
   const loadUpdates = async () => {
     setLoading(true);
     const [updatesResult, healthResult, heldResult] = await Promise.allSettled([
-      fetchMarketUpdates({ limit:200 }),
+      fetchMarketUpdates({ limit:1000 }),
       fetchMarketSourceHealth(),
       fetchMarketUpdates({ status:'candidate', limit:100 }),
     ]);
-    if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
-    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    const held = heldResult.status === 'fulfilled' ? heldResult.value : [];
     // Held items are supplementary: a failure there must not blank the feed.
-    if (heldResult.status === 'fulfilled') setHeldUpdates(heldResult.value);
+    setHeldUpdates(held);
+    if (updatesResult.status === 'fulfilled') setUpdates(mergeFeed(updatesResult.value, held));
+    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
     const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
     setDataIssue(failure ? issueFrom(failure.reason) : null);
     setLoading(false);
     return {
-      updates: updatesResult.status === 'fulfilled' ? updatesResult.value : null,
+      updates: updatesResult.status === 'fulfilled' ? mergeFeed(updatesResult.value, held) : null,
       health: healthResult.status === 'fulfilled' ? healthResult.value : null,
+      held,
     };
   };
+
 
   const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
     try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
@@ -163,19 +211,30 @@ export default function MarketUpdates() {
     let cancelled = false;
     const start = async () => {
       const loaded = await loadUpdates();
+      // Held items are already merged into the feed above; promote them server-side
+      // so the single Published feed is the truth in the database too.
+      if (!cancelled && loaded.held.length) {
+        const promoted = await reconcileHeldIntoFeed(loaded.held);
+        if (!cancelled && promoted) await loadUpdates();
+      }
       if (cancelled || !loaded.updates || !loaded.health) return;
       try {
         setActionIssue(null);
         const result = await ensureMarketUpdatesFresh(loaded.health, loaded.updates.length);
         if (!cancelled && result) {
           setMessage(result.active ? 'Checking for newer market intelligence…' : `Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);
-          await loadUpdates();
+          const refreshed = await loadUpdates();
+          if (!cancelled && refreshed.held.length) {
+            const promoted = await reconcileHeldIntoFeed(refreshed.held);
+            if (!cancelled && promoted) await loadUpdates();
+          }
         }
       } catch (error) { if (!cancelled) setActionIssue(issueFrom(error)); }
     };
     void start();
     return () => { cancelled = true; };
   }, []);
+
   useEffect(() => { void loadDigest(period); }, [period]);
 
   // Recency alone let the highest-volume masthead take most of the first screen, so the
@@ -217,12 +276,12 @@ export default function MarketUpdates() {
   }, [updates]);
 
   const kpis = useMemo(() => [
-    { label: 'Breaking Now', value: freshnessCounts.breaking, icon: Zap, tone: 'text-destructive' },
-    { label: 'Today', value: freshnessCounts.today, icon: Clock, tone: 'text-primary' },
-    { label: 'High Impact', value: updates.filter(u => u.impact_level === 'high').length, icon: TrendingUp, tone: 'text-warning' },
-    { label: 'Finance', value: segmentCounts.finance ?? 0, icon: BarChart3, tone: 'text-primary' },
-    { label: 'Property', value: segmentCounts.property ?? 0, icon: Building2, tone: 'text-info' },
-    { label: 'Policy', value: segmentCounts.policy_regulation ?? 0, icon: ShieldCheck, tone: 'text-success' },
+    { label: 'Breaking now', value: freshnessCounts.breaking, icon: Zap, chip: 'border-destructive/30 bg-destructive/10 text-destructive' },
+    { label: 'Today', value: freshnessCounts.today, icon: Clock, chip: 'border-primary/30 bg-primary/10 text-primary' },
+    { label: 'High impact', value: updates.filter(u => u.impact_level === 'high').length, icon: TrendingUp, chip: 'border-[color:hsl(var(--warning)/0.35)] bg-[color:hsl(var(--warning)/0.12)] text-[hsl(var(--warning))]' },
+    { label: 'Finance', value: segmentCounts.finance ?? 0, icon: BarChart3, chip: 'border-primary/30 bg-primary/10 text-primary' },
+    { label: 'Property', value: segmentCounts.property ?? 0, icon: Building2, chip: 'border-info/30 bg-info/10 text-[hsl(var(--info))]' },
+    { label: 'Policy', value: segmentCounts.policy_regulation ?? 0, icon: ShieldCheck, chip: 'border-success/30 bg-success/10 text-success' },
   ], [freshnessCounts, updates, segmentCounts]);
 
   const highImpact = updates.filter(u => u.impact_level === 'high').slice(0, 5);
@@ -265,41 +324,73 @@ export default function MarketUpdates() {
     } finally { setPublishingId(null); }
   };
 
+  // Promotes everything still held into the published feed through the same
+  // server-authoritative publish path an operator used to click, so the audit
+  // trail, publication reason and shadow-mode protections all still apply. It is
+  // silent by design: the items are already visible in the feed, and a source
+  // the server legitimately refuses (a shadow row) simply stays unpublished
+  // without disturbing the reader.
+  const reconcileHeldIntoFeed = async (held: MarketUpdate[]) => {
+    if (!held.length || promotingHeld) return false;
+    setPromotingHeld(true);
+    let promoted = 0;
+    try {
+      const queue = [...held];
+      const worker = async () => {
+        for (let next = queue.shift(); next; next = queue.shift()) {
+          try { await publishMarketUpdate(next.id); promoted += 1; }
+          catch { /* left held server-side; still rendered in the single feed */ }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+    } finally { setPromotingHeld(false); }
+    return promoted > 0;
+  };
+
+
 
   const restoreArchived = async (updateId:string,title:string):Promise<boolean> => {
-    if (hidingId) return false;
-    setHidingId(updateId);
+    if(archivePendingRef.current.has(updateId))return false;
+    archivePendingRef.current.add(updateId);
+    setArchivePendingIds(current=>new Set(current).add(updateId));
     try {
       setActionIssue(null);
       await restoreMarketUpdate(updateId);
       setSourceHealth(current => ({ ...current, archivedUpdates:Math.max(0,(current.archivedUpdates ?? 1)-1) }));
       await loadUpdates();
-      toast.success(`Restored “${title}”.`);
+      toast.success('News item restored.',{description:`“${title}” is active in the Market News Feed.`});
       return true;
     } catch (error) {
       setActionIssue(issueFrom(error));
-      toast.error(`“${title}” could not be restored.`,{description:'The active feed was not changed. Retry from the Archive.'});
+      toast.error('Unable to restore this news item. Please try again.',{description:'The active feed was not changed. Retry from Archived News.'});
       return false;
-    } finally { setHidingId(null); }
+    } finally {
+      archivePendingRef.current.delete(updateId);
+      setArchivePendingIds(current=>{const next=new Set(current);next.delete(updateId);return next;});
+    }
   };
 
   const archiveUpdate = async (update: MarketUpdate) => {
-    if (hidingId) return;
-    setHidingId(update.id);
+    if(archivePendingRef.current.has(update.id))return;
+    archivePendingRef.current.add(update.id);
+    setArchivePendingIds(current=>new Set(current).add(update.id));
     setActionIssue(null);
     try {
       await archiveMarketUpdate(update.id);
       setUpdates(current => current.filter(u => u.id !== update.id));
       setSourceHealth(current => ({ ...current, archivedUpdates:(current.archivedUpdates ?? 0)+1 }));
-      toast.success(`Archived “${update.title}”.`,{
+      toast.success('News item archived.',{
         description:'This update remains available in Archived News until it is restored.',
         action:{label:'Undo',onClick:() => { void restoreArchived(update.id,update.title); }},
       });
     } catch (error) {
       setActionIssue(issueFrom(error));
-      toast.error(`“${update.title}” could not be archived.`,{description:'The update remains in the active feed.'});
+      toast.error('Unable to archive this news item. Please try again.',{description:'The update remains in the active feed.'});
     }
-    finally { setHidingId(null); }
+    finally {
+      archivePendingRef.current.delete(update.id);
+      setArchivePendingIds(current=>{const next=new Set(current);next.delete(update.id);return next;});
+    }
   };
 
   const handleAsk = async (overrideQuestion?: string) => {
@@ -315,6 +406,7 @@ export default function MarketUpdates() {
     const requestId = ++qaRequestRef.current;
     setQaThread((t) => [...t, { role: 'user', content: q }, { role: 'assistant', content: '', streaming: true }]);
     setQuestion('');
+    setQaStage(null);
     try {
       const seg = activeSegment !== 'all' ? activeSegment : undefined;
       const answer = await streamMarketUpdateQuestion(q, {
@@ -322,7 +414,12 @@ export default function MarketUpdates() {
         history: priorHistory,
         segment: seg,
         conversation_id: convId,
+        depth: qaDepth === 'auto' ? undefined : qaDepth,
         signal: controller.signal,
+        onStage: (stage) => {
+          if (qaRequestRef.current !== requestId) return;
+          setQaStage(stage);
+        },
         onDelta: (acc) => {
           if (qaRequestRef.current !== requestId) return;
           setQaThread((t) => {
@@ -348,6 +445,13 @@ export default function MarketUpdates() {
           sentiment: answer?.sentiment,
           retrieved: answer?.retrieved ?? [],
           question_id: answer?.question_id ?? null,
+          implications: answer?.implications,
+          timeline: answer?.timeline ?? [],
+          watch_items: answer?.watch_items ?? [],
+          contrarian_view: answer?.contrarian_view,
+          depth_mode: answer?.depth_mode,
+          context_size: answer?.context_size,
+          retrieval_mode: answer?.retrieval_mode,
           streaming: false,
         };
         return next;
@@ -360,7 +464,7 @@ export default function MarketUpdates() {
         return next;
       });
     } finally {
-      if (qaRequestRef.current === requestId) { setAsking(false); qaAbortRef.current = null; }
+      if (qaRequestRef.current === requestId) { setAsking(false); setQaStage(null); qaAbortRef.current = null; }
     }
   };
 
@@ -369,6 +473,7 @@ export default function MarketUpdates() {
     qaAbortRef.current?.abort();
     qaAbortRef.current = null;
     setAsking(false);
+    setQaStage(null);
     setQaThread((thread) => thread.filter((turn) => !turn.streaming));
   };
 
@@ -384,46 +489,53 @@ export default function MarketUpdates() {
 
 
   const renderAskAIWorkspace = () => (
-    <Card className="flex min-h-[560px] flex-col border-primary/20 bg-gradient-to-br from-card to-primary/[0.03]">
-      <CardHeader className="flex-none pb-3">
+    <GlassCard elevation={2} flush className="flex min-h-[560px] flex-col">
+      <div className="flex-none border-b border-[color:var(--glass-hairline)] px-5 pb-4 pt-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Sparkles className="h-4 w-4 text-primary" />Ask AI
-            </CardTitle>
-            <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market news. Threaded — follow-ups keep prior context.</p>
+          <div className="flex min-w-0 items-center gap-3">
+            <AurixaMark size="md" state={asking ? 'thinking' : 'idle'} />
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Source-grounded desk analyst</p>
+              <h2 className="text-lg font-semibold tracking-[-0.02em] text-foreground">Ask Aurixa</h2>
+            </div>
           </div>
           {qaThread.length > 0 && (
             <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
           )}
         </div>
-      </CardHeader>
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-        <div aria-label="Ask AI conversation" className="min-h-[320px] flex-1 space-y-3 overflow-y-auto overflow-x-hidden rounded-xl border border-border/60 bg-background/40 p-3">
+        <p className="mt-2 text-sm text-muted-foreground">Streaming answers grounded in published market news. Threaded — follow-ups keep prior context.</p>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
+        <div aria-label="Ask Aurixa conversation" className="min-h-[320px] flex-1 space-y-3 overflow-y-auto overflow-x-hidden rounded-xl border border-border/60 bg-background/40 p-3">
           {qaThread.length === 0 ? (
             <div className="flex h-full min-h-[280px] flex-col items-center justify-center text-center">
-              <Sparkles className="mb-3 h-8 w-8 text-primary/70" />
-              <h3 className="text-base font-semibold">Ask a source-grounded market question</h3>
+              <AurixaMark size="lg" className="mb-4" />
+              <h3 className="text-base font-semibold tracking-[-0.02em]">Ask a source-grounded market question</h3>
               <p className="mt-2 max-w-xl text-sm text-muted-foreground">Answers use published market news and may refuse if there are no grounded sources available.</p>
               {!updates.length && <p className="mt-2 text-xs text-muted-foreground">No published updates loaded yet — the AI may refuse if it has no grounded sources.</p>}
             </div>
           ) : qaThread.map((turn, i) => (
-            <div key={i} className={cn('rounded-lg p-3 text-sm leading-relaxed', turn.role === 'user' ? 'bg-primary/10 text-foreground' : 'border border-border/60 bg-background/70')}>
+            <div key={i} className={cn('rounded-[var(--radius-lg)] p-3.5 text-sm leading-relaxed', turn.role === 'user' ? 'border border-primary/20 bg-primary/10 text-foreground' : 'border border-[color:var(--glass-hairline)] bg-card/80 shadow-[var(--elevation-1)]')}>
               <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold uppercase text-muted-foreground">
                 <span>{turn.role === 'user' ? 'You' : 'AI'}</span>
                 {turn.role === 'assistant' && turn.sentiment && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.sentiment}</Badge>}
                 {turn.role === 'assistant' && turn.time_horizon && turn.time_horizon !== 'unclear' && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.time_horizon.replace('_',' ')}</Badge>}
+                {turn.role === 'assistant' && turn.depth_mode && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.depth_mode === 'deep' ? 'deep dive' : turn.depth_mode}</Badge>}
+                {turn.role === 'assistant' && typeof turn.context_size === 'number' && turn.context_size > 0 && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.context_size} sources read</Badge>}
               </div>
-              <p className="whitespace-pre-wrap break-words">{turn.content}</p>
-              {turn.key_figures && turn.key_figures.length > 0 && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {turn.key_figures.map((k, j) => (
-                    <div key={j} className="rounded border border-border/60 bg-background/50 px-2 py-1.5">
-                      <div className="text-[10px] uppercase text-muted-foreground">{k.label}</div>
-                      <div className="text-sm font-semibold text-primary">{k.value}</div>
-                    </div>
-                  ))}
-                </div>
+              {turn.role === 'assistant' ? (
+                <MarketQAAnswer
+                  content={turn.content}
+                  retrieved={turn.retrieved}
+                  keyFigures={turn.key_figures}
+                  implications={turn.implications}
+                  timeline={turn.timeline}
+                  watchItems={turn.watch_items}
+                  contrarianView={turn.contrarian_view}
+                  streaming={turn.streaming}
+                />
+              ) : (
+                <p className="whitespace-pre-wrap break-words">{turn.content}</p>
               )}
               {turn.citations && turn.citations.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
@@ -445,13 +557,9 @@ export default function MarketUpdates() {
               )}
             </div>
           ))}
-          {asking && (
-            <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/70 p-3 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
-            </div>
-          )}
+          {asking && <MarketQAProgress stage={qaStage} />}
         </div>
-        <div className="flex-none space-y-2" aria-label="Ask AI composer">
+        <div className="flex-none space-y-2" aria-label="Ask Aurixa composer">
           <Textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -459,6 +567,7 @@ export default function MarketUpdates() {
             placeholder="Ask anything — e.g. What's the RBA signalling this month?"
             className="min-h-[96px] text-sm"
           />
+          <MarketQADepthSelector value={qaDepth} onChange={setQaDepth} disabled={asking} />
           <div className="flex gap-2">
             <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
             <Button className="flex-1" onClick={() => handleAsk()} disabled={asking || !question.trim()}>
@@ -467,30 +576,36 @@ export default function MarketUpdates() {
             {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </GlassCard>
   );
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-6 md:px-8">
-        {/* Hero */}
-        <section className="w-full overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-lg">
-          <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge className="bg-primary/15 text-primary hover:bg-primary/20">Aurixa Market News Intelligence</Badge>
+        {/* Hero — the page's one aurora (the gradient that exclusively means
+            Aurixa/AI). Eyebrow-over-tight-title is the NPC signature. */}
+        <GlassCard aurora elevation={2} className="px-6 py-6 md:px-8 md:py-7">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div className="min-w-0 space-y-4">
+              <div className="inline-flex items-center gap-2 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.5)] px-3 py-1">
+                <AurixaMark size="xs" aria-label="Aurixa" />
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Aurixa market intelligence</span>
               </div>
-              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market News Feed</h1>
-              <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
-                Australian property, lending, economic and regulatory intelligence
-              </p>
-              <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline">Last ingest: {dateLabel(sourceHealth.lastSuccessAt)}</Badge>
-                <Badge variant="outline" className={sourceHealth.automation?.cronStale ? 'text-destructive' : undefined}>Automation: {sourceHealth.automation?.cronStale ? 'stale' : dateLabel(sourceHealth.automation?.lastIngestionDispatchAt)}</Badge>
-                <Badge variant="outline">{sourceHealth.enabledSources}/{sourceHealth.totalSources} sources live</Badge>
-                {Boolean(sourceHealth.shadowSources) && <Badge variant="outline" title="Fetched and classified, but held out of the feed while they are validated."><Eye className="mr-1 h-3 w-3" />{sourceHealth.shadowSources} in shadow</Badge>}
-                {sourceHealth.failedSources > 0 && <Badge variant="outline" className="text-destructive"><AlertTriangle className="mr-1 h-3 w-3" />{sourceHealth.failedSources} failing</Badge>}
+              <div>
+                <h1 className="text-3xl font-semibold tracking-[-0.035em] text-foreground md:text-[2.6rem] md:leading-[1.08]">Market News Feed</h1>
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground md:text-base">
+                  Australian property, lending, economic and regulatory intelligence — sourced, classified and graded as it publishes.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.5)] px-2.5 py-1">
+                  <span className={cn('relative flex h-2 w-2 shrink-0')} aria-hidden>
+                    <span className={cn('absolute inline-flex h-full w-full rounded-full', sourceHealth.automation?.cronStale ? 'bg-destructive/60' : 'animate-ping bg-success/50 motion-reduce:animate-none')} />
+                    <span className={cn('relative inline-flex h-2 w-2 rounded-full', sourceHealth.automation?.cronStale ? 'bg-destructive' : 'bg-success')} />
+                  </span>
+                  {sourceHealth.automation?.cronStale ? 'Automation stale' : 'Live'} · ingested {relTime(sourceHealth.lastSuccessAt)}
+                </span>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -498,7 +613,7 @@ export default function MarketUpdates() {
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
-        </section>
+        </GlassCard>
 
         {message && (
           <Card className="border-primary/25 bg-primary/5">
@@ -525,39 +640,35 @@ export default function MarketUpdates() {
 
         {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div>{runShadow && <p className="text-xs text-muted-foreground">Shadow validation: {runShadow.sources} source(s) sampled {runShadow.ingested} item(s); {runShadow.wouldPublish} would have been published had they been live. None reached the feed.</p>}</CardContent></Card>; })()}
 
-        {/* KPIs — presented as one panel so it reads at the same weight and
-            rhythm as the Source coverage panel directly beneath it. */}
-        <Card className="border-border/60">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Feed at a glance</CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">Live composition of the published feed. Select a tile to filter the updates below.</p>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              {kpis.map(k => (
-                <button
-                  key={k.label}
-                  type="button"
-                  onClick={() => { if(k.label==='Breaking Now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High Impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }}
-                  className="flex items-center gap-3 rounded-xl border border-border/60 bg-background/20 p-2 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60">
-                    <k.icon className={cn('h-4 w-4', k.tone)} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-lg font-semibold leading-none tabular-nums text-foreground">{k.value}</p>
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{k.label}</p>
-                  </div>
-                </button>
-              ))}
+        {/* KPIs — six weighted tiles. The number carries the tile (KPI values
+            read at 600 with tabular numerals); each tile filters the feed. */}
+        <section aria-label="Feed at a glance">
+          <div className="mb-3 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Feed at a glance</p>
+              <p className="mt-1 text-xs text-muted-foreground">Live composition of the published feed — select a tile to filter the updates below.</p>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="grid gap-3 min-[480px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+            {kpis.map(k => (
+              <button
+                key={k.label}
+                type="button"
+                onClick={() => { if(k.label==='Breaking now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }}
+                className="group/tile flex min-w-0 flex-col gap-3 rounded-[var(--radius-xl)] border border-[color:var(--glass-hairline)] p-4 text-left shadow-[var(--elevation-1)] backdrop-blur-md transition-[transform,box-shadow,border-color] duration-[var(--motion-base)] ease-[var(--motion-ease-out)] [background:var(--glass-tint)] hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-[var(--elevation-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99] motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{k.label}</p>
+                  <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] border', k.chip)} aria-hidden>
+                    <k.icon className="h-4 w-4" />
+                  </span>
+                </div>
+                <p className="text-[1.75rem] font-semibold leading-none tracking-[-0.045em] tabular-nums text-foreground">{k.value}</p>
+              </button>
+            ))}
+          </div>
+        </section>
 
-
-        {/* Where the feed comes from: all canonical sources, split by what the
-            pipeline does with each. Collapsed to three tiles until asked to expand. */}
-        <MarketSourceCoveragePanel shadowMetrics={sourceHealth.shadowMetrics} />
 
         {/* Period tabs + Digest */}
         <section>
@@ -573,13 +684,18 @@ export default function MarketUpdates() {
 
             {PERIODS.map(p => (
               <TabsContent key={p.id} value={p.id} className="mt-4">
-                <Card className="border-primary/20 bg-gradient-to-br from-card to-primary/[0.03]">
-                  <CardHeader className="pb-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <CardTitle className="flex items-center gap-2 text-lg">
-                        <Sparkles className="h-4 w-4 text-primary" />
-                        {p.label} Digest
-                      </CardTitle>
+                <Card className="relative overflow-hidden rounded-[var(--radius-xl)] border-[color:var(--glass-hairline)] shadow-[var(--elevation-1)]">
+                  {/* Gold rail — the sanctioned premium-unit accent. The digest is
+                      the desk's one distilled product, so it carries the rail. */}
+                  <span aria-hidden className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[hsl(var(--brand)/0.9)] via-[hsl(var(--brand)/0.4)] to-transparent" />
+                  <CardHeader className="pb-3 pt-6">
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                      <div>
+                        <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand))]">
+                          <Sparkles className="h-3.5 w-3.5" aria-hidden />Aurixa digest
+                        </p>
+                        <CardTitle className="mt-1.5 text-xl tracking-[-0.02em]">{p.label} briefing</CardTitle>
+                      </div>
                       {digest && <span className="text-xs text-muted-foreground">Generated {dateLabel(digest.generated_at)}</span>}
                     </div>
                   </CardHeader>
@@ -595,7 +711,8 @@ export default function MarketUpdates() {
                       </div>
                     ) : (
                       <>
-                        <p className="text-sm leading-relaxed text-foreground">{digest.executive_summary}</p>
+
+                        <p className="max-w-4xl text-[0.95rem] leading-7 text-foreground">{clean(digest.executive_summary)}</p>
 
                         {(() => {
                           const segments = normaliseSegmentBreakdown(digest.segment_breakdown);
@@ -603,17 +720,17 @@ export default function MarketUpdates() {
                           return (
                             <div className="grid gap-3 md:grid-cols-2">
                               {segments.map(({ seg, headline, highlights, implications }) => (
-                                <div key={seg} className="rounded-xl border border-border/60 bg-background/50 p-3">
-                                  <button type="button" onClick={() => setActiveSegment(seg as MarketSegment)} className="mb-1 rounded text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Filter the feed by ${titleCase(seg)}`}>
+                                <div key={seg} className="rounded-[var(--radius-lg)] border border-[color:var(--glass-hairline)] bg-background/50 p-3.5 transition-[border-color,box-shadow] duration-[var(--motion-base)] ease-[var(--motion-ease-out)] hover:border-primary/35 hover:shadow-[var(--elevation-1)] motion-reduce:transition-none">
+                                  <button type="button" onClick={() => setActiveSegment(seg as MarketSegment)} className="mb-1 rounded text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground transition-colors duration-[var(--motion-fast)] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Filter the feed by ${titleCase(seg)}`}>
                                     {titleCase(seg)}
                                   </button>
-                                  {headline && <p className="text-sm leading-relaxed">{headline}</p>}
+                                  {headline && <p className="text-sm leading-relaxed">{clean(headline)}</p>}
                                   {highlights.length > 0 && (
                                     <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                                      {highlights.slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
+                                      {cleanList(highlights).slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
                                     </ul>
                                   )}
-                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{implications}</p>}
+                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{clean(implications)}</p>}
                                 </div>
                               ))}
                             </div>
@@ -621,10 +738,10 @@ export default function MarketUpdates() {
                         })()}
 
                         {digest.client_advisory_implications.length > 0 && (
-                          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
-                            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary">Client Advisory Implications</h4>
+                          <div className="rounded-[var(--radius-lg)] border border-[color:hsl(var(--brand)/0.35)] bg-[color:hsl(var(--brand)/0.06)] p-4">
+                            <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand))]">Client advisory implications</h4>
                             <ul className="list-disc space-y-1 pl-4 text-sm">
-                              {digest.client_advisory_implications.map((c, i) => <li key={i}>{c}</li>)}
+                              {cleanList(digest.client_advisory_implications).map((c, i) => <li key={i}>{c}</li>)}
                             </ul>
                           </div>
                         )}
@@ -651,14 +768,14 @@ export default function MarketUpdates() {
         {/* Filters: Segment chips + Freshness pills + advanced */}
         <section className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Segments</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Segments</span>
             <SegmentChip seg="all" active={activeSegment === 'all'} onClick={() => setActiveSegment('all')} />
             {SEGMENTS.map(seg => (
               <SegmentChip key={seg} seg={seg} active={activeSegment === seg} onClick={() => setActiveSegment(seg)} />
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Freshness</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Freshness</span>
             {FRESHNESS.map(f => {
               const active = activeFreshness === f.id;
               const count = freshnessCounts[f.id as keyof typeof freshnessCounts];
@@ -666,8 +783,8 @@ export default function MarketUpdates() {
                 <button
                   key={f.id}
                   onClick={() => setActiveFreshness(f.id)}
-                  className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-                    active ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground')}
+                  className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-[var(--motion-fast)] ease-[var(--motion-ease-out)] active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    active ? 'border-primary bg-primary text-primary-foreground shadow-[var(--elevation-1)]' : 'border-[color:var(--glass-hairline)] bg-card/70 text-muted-foreground hover:border-primary/40 hover:text-foreground hover:shadow-[var(--elevation-1)]')}
                 >
                   <f.icon className="h-3 w-3" />{f.label}
                   <span className={cn('rounded-full px-1.5 py-0 text-[10px]', active ? 'bg-primary-foreground/20' : 'bg-muted')}>{count}</span>
@@ -675,7 +792,7 @@ export default function MarketUpdates() {
               );
             })}
           </div>
-          <div className="grid gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 md:grid-cols-3 xl:grid-cols-7">
+          <div className="grid gap-3 rounded-[var(--radius-xl)] border border-[color:var(--glass-hairline)] p-3.5 shadow-[var(--elevation-1)] backdrop-blur-md [background:var(--glass-tint)] md:grid-cols-3 xl:grid-cols-7">
             <div className="space-y-1 md:col-span-1">
               <Label className="text-xs">Search</Label>
               <div className="relative">
@@ -715,60 +832,35 @@ export default function MarketUpdates() {
           <Tabs value={workspaceTab} onValueChange={(v) => setWorkspaceTab(v as 'updates' | 'ask-ai')} className="min-w-0 space-y-4">
             <TabsList aria-label="Market updates workspace" className="w-full justify-start sm:w-auto">
               <TabsTrigger value="updates">Latest Updates</TabsTrigger>
-              <TabsTrigger value="ask-ai">Ask AI</TabsTrigger>
+              <TabsTrigger value="ask-ai">Ask Aurixa</TabsTrigger>
             </TabsList>
             <TabsContent value="updates" className="mt-0 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">
-                  {feedScope === 'held'
-                    ? <>{heldUpdates.length} {heldUpdates.length === 1 ? 'held item' : 'held items'}<span className="ml-2 text-sm font-normal text-muted-foreground">awaiting a publication decision</span></>
-                    : <>{filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}<span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span></>}
+                  {filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span>
                 </h2>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Feed scope">
-                  <Button size="sm" variant={feedScope === 'published' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('published')} aria-pressed={feedScope === 'published'}>
-                    Published<Badge variant="secondary" className="ml-2">{updates.length}</Badge>
-                  </Button>
-                  <Button size="sm" variant={feedScope === 'held' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('held')} aria-pressed={feedScope === 'held'} title="Items fetched and classified but not published automatically.">
-                    Held<Badge variant="secondary" className="ml-2">{heldUpdates.length}</Badge>
-                  </Button>
+                {/* One feed, one scope. Anything the classifier held is promoted on load
+                    (see reconcileHeldIntoFeed) and shown inline here until the server
+                    confirms it, so the reader never sees a second tab. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary" className="rounded-full">Published{promotingHeld ? ' · syncing' : ''}</Badge>
                 </div>
               </div>
 
-              {feedScope === 'held' ? (
-                heldUpdates.length ? heldUpdates.map(held => (
-                  <article key={held.id} className="min-w-0 rounded-2xl border border-warning/30 bg-card p-5">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="text-warning">Held</Badge>
-                      <span className="min-w-0 break-words text-xs text-muted-foreground" title={held.source_name}>{held.source_name}</span>
-                      {held.source_authority && <Badge variant="secondary">{titleCase(held.source_authority)}</Badge>}
-                      <span className="text-xs text-muted-foreground">Relevance {held.relevance_score}{typeof held.confidence_score === 'number' ? ` · Confidence ${held.confidence_score}` : ''}</span>
-                    </div>
-                    <h3 className="mt-2 break-words text-xl font-semibold leading-snug tracking-tight lg:text-2xl">{held.title}</h3>
-                    <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
-                    {held.ai_summary && <p className="mt-2 break-words text-sm">{held.ai_summary}</p>}
-                    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
-                      <Button size="sm" onClick={() => void publishHeldUpdate(held)} disabled={publishingId === held.id}>
-                        {publishingId === held.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Publish to feed
-                      </Button>
-                      <a href={held.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 rounded-md border border-primary/40 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/10" title={held.source_url}>
-                        <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />Open original source
-                      </a>
-                    </div>
-                  </article>
-                )) : (
-                  <Card className="border-dashed">
-                    <CardContent className="p-10 text-center">
-                      <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-                      <h3 className="text-lg font-semibold">Nothing is being held</h3>
-                      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Every classified item from the latest runs met its tier's publication policy and is live in the feed.</p>
-                      <div className="mt-4 flex justify-center"><Button size="sm" variant="outline" onClick={() => setFeedScope('published')}>Back to published feed</Button></div>
-                    </CardContent>
-                  </Card>
-                )
-              ) : loading ? (
+              {loading ? (
 
-                <div className="space-y-3">
-                  {[1,2,3].map(i => <Card key={i} className="animate-pulse"><CardContent className="h-40 p-6" /></Card>)}
+
+                <div className="space-y-4">
+                  {[1,2,3].map(i => (
+                    <div key={i} className="relative overflow-hidden rounded-[var(--radius-xl)] border border-[color:var(--glass-hairline)] bg-card p-5 pl-6 shadow-[var(--elevation-1)]">
+                      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-muted" />
+                      <div className="flex gap-2"><span className="h-4 w-16 animate-pulse rounded-full bg-muted" /><span className="h-4 w-20 animate-pulse rounded-full bg-muted" /></div>
+                      <div className="mt-3 h-6 w-3/4 animate-pulse rounded bg-muted" />
+                      <div className="mt-2 h-3.5 w-40 animate-pulse rounded bg-muted" />
+                      <div className="mt-4 space-y-2"><div className="h-3.5 w-full animate-pulse rounded bg-muted" /><div className="h-3.5 w-5/6 animate-pulse rounded bg-muted" /></div>
+                    </div>
+                  ))}
                 </div>
               ) : feedEmptyState ? (
                 <Card className="border-dashed">
@@ -786,8 +878,24 @@ export default function MarketUpdates() {
                   </CardContent>
                 </Card>
               ) : (
-                filteredUpdates.map(update => (
-                  <article key={update.id} className="group rounded-2xl border border-border/60 bg-card p-5 transition-all hover:border-primary/30 hover:shadow-md">
+                filteredUpdates.map((update, index) => {
+                  // Front-page treatment: only when the top of the feed is genuinely
+                  // consequential. Nothing is reordered — if the first card is
+                  // routine, there is no lead story today.
+                  const isLead = index === 0 && (update.freshness_tier === 'breaking' || update.impact_level === 'critical' || update.impact_level === 'high');
+                  return (
+                  <article key={update.id} className={cn(
+                    'group relative overflow-hidden rounded-[var(--radius-xl)] border border-[color:var(--glass-hairline)] bg-card p-5 pl-6 shadow-[var(--elevation-1)] transition-[transform,box-shadow,border-color] duration-[var(--motion-base)] ease-[var(--motion-ease-out)] hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[var(--elevation-2)] motion-reduce:transition-none motion-reduce:hover:translate-y-0',
+                    isLead && 'p-6 pl-7 shadow-[var(--elevation-2)]',
+                  )}>
+                    {/* Impact rail — the feed's left edge reads as the day's weight. */}
+                    <span aria-hidden className={cn('absolute inset-y-0 left-0 w-[3px]', IMPACT_RAIL[update.impact_level])} />
+                    {/* The gold rail is reserved for the lead story — the one premium
+                        accent the brand permits on a hero unit. */}
+                    {isLead && <span aria-hidden className="absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-[hsl(var(--brand)/0.9)] via-[hsl(var(--brand)/0.4)] to-transparent" />}
+                    {isLead && (
+                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--brand))]">Lead story</p>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
                       <FreshnessBadge tier={update.freshness_tier} />
                       <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', IMPACT_STYLE[update.impact_level])}>
@@ -802,12 +910,12 @@ export default function MarketUpdates() {
                       {update.geography.slice(0, 2).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                     </div>
 
-                    <h3 className="mt-3 text-xl font-semibold leading-snug tracking-tight lg:text-2xl">
+                    <h3 className={cn('mt-3 font-semibold leading-snug tracking-[-0.02em]', isLead ? 'text-2xl lg:text-[1.85rem] lg:leading-[1.2]' : 'text-xl lg:text-2xl')}>
                       <a
                         href={update.source_url}
                         target="_blank"
                         rel="noreferrer"
-                        className="rounded text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-primary"
+                        className="rounded text-foreground underline-offset-4 transition-colors duration-[var(--motion-fast)] hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-primary"
                       >
                         {update.title}
                         <span className="sr-only"> (opens the original article in a new tab)</span>
@@ -831,10 +939,10 @@ export default function MarketUpdates() {
                           {titleCase(update.source_authority)}
                         </Badge>
                       )}
-                      <span>· {dateLabel(update.source_published_at ?? update.ingested_at)}</span>
+                      <span title={dateLabel(update.source_published_at ?? update.ingested_at)}>· {relTime(update.source_published_at ?? update.ingested_at)}</span>
                     </p>
 
-                    {update.ai_summary && <p className="mt-3 text-sm leading-relaxed text-foreground/90">{update.ai_summary}</p>}
+                    {update.ai_summary && <p className="mt-3 text-sm leading-relaxed text-foreground/90">{clean(update.ai_summary)}</p>}
 
                     {update.why_it_matters && (
                       <div className="mt-3 rounded-lg border-l-2 border-primary/60 bg-primary/5 py-2 pl-3 pr-2">
@@ -872,9 +980,20 @@ export default function MarketUpdates() {
 
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
                       <Button size="sm" onClick={() => setSelectedUpdate(update)}>Open Analysis</Button>
-                      <Button size="sm" variant="outline" onClick={() => { setQaUpdate(update); setQaMessage(null); setQaThread([]); setQuestion(''); setDialogConversationId(crypto.randomUUID()); }}>Ask AI</Button>
-                      {canEditMarketUpdates && <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" disabled={hidingId === update.id} onClick={() => archiveUpdate(update)} aria-label={`Archive ${update.title}`}>
-                        {hidingId === update.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive
+                      <Button size="sm" variant="outline" onClick={() => {
+                        setQaUpdate(update);
+                        setQaMessage(null);
+                        setQuestion('');
+                        // Retain the prior conversation when re-opening the same
+                        // update; only start a fresh thread for a different one.
+                        if (qaThreadUpdateId !== update.id) {
+                          setQaThread([]);
+                          setDialogConversationId(crypto.randomUUID());
+                          setQaThreadUpdateId(update.id);
+                        }
+                      }}><Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />Ask Aurixa</Button>
+                      {canEditMarketUpdates && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" disabled={archivePendingIds.has(update.id)||!update.id} onClick={(event:MouseEvent<HTMLButtonElement>)=>{event.preventDefault();event.stopPropagation();void archiveUpdate(update);}} aria-label={`Archive ${update.title}`}>
+                        {archivePendingIds.has(update.id) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{archivePendingIds.has(update.id)?'Archiving…':'Archive'}
                       </Button>}
                       <div className="ml-auto flex flex-wrap items-center gap-1">
                         <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/20">
@@ -883,7 +1002,8 @@ export default function MarketUpdates() {
                       </div>
                     </div>
                   </article>
-                ))
+                  );
+                })
               )}
             </TabsContent>
             <TabsContent value="ask-ai" className="mt-0 min-h-0">
@@ -893,21 +1013,22 @@ export default function MarketUpdates() {
 
           {/* Sidebar */}
           <aside className="space-y-4">
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">High Impact Watchlist</CardTitle></CardHeader>
+            <Card className="rounded-[var(--radius-xl)] border-[color:var(--glass-hairline)] shadow-[var(--elevation-1)]">
+              <CardHeader className="pb-2"><CardTitle className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">High impact watchlist</CardTitle></CardHeader>
               <CardContent className="space-y-2">
                 {highImpact.length ? highImpact.map(u => (
-                  <button key={u.id} onClick={() => setSelectedUpdate(u)} className="block w-full rounded-lg border border-border/60 bg-background/50 p-2 text-left transition-colors hover:border-primary/40">
+                  <button key={u.id} onClick={() => setSelectedUpdate(u)} className="relative block w-full overflow-hidden rounded-[var(--radius-md)] border border-[color:var(--glass-hairline)] bg-background/50 p-2.5 pl-3.5 text-left transition-[border-color,box-shadow,transform] duration-[var(--motion-base)] ease-[var(--motion-ease-out)] hover:-translate-y-px hover:border-primary/40 hover:shadow-[var(--elevation-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none motion-reduce:hover:translate-y-0">
+                    <span aria-hidden className={cn('absolute inset-y-0 left-0 w-[3px]', IMPACT_RAIL[u.impact_level])} />
                     <div className="mb-1 flex items-center gap-1.5"><FreshnessBadge tier={u.freshness_tier} /></div>
-                    <p className="line-clamp-2 text-xs font-medium">{u.title}</p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">{u.source_name}</p>
+                    <p className="line-clamp-2 text-xs font-medium leading-snug">{u.title}</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">{u.source_name} · {relTime(u.source_published_at ?? u.ingested_at)}</p>
                   </button>
-                )) : <p className="text-xs text-muted-foreground">No high impact updates yet.</p>}
+                )) : <p className="text-xs text-muted-foreground">No high impact updates yet — the desk is quiet.</p>}
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Segment Coverage</CardTitle></CardHeader>
+            <Card className="rounded-[var(--radius-xl)] border-[color:var(--glass-hairline)] shadow-[var(--elevation-1)]">
+              <CardHeader className="pb-2"><CardTitle className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Segment coverage</CardTitle></CardHeader>
               <CardContent className="space-y-1.5">
                 {SEGMENTS.map(seg => {
                   const count = segmentCounts[seg] ?? 0;
@@ -918,8 +1039,8 @@ export default function MarketUpdates() {
                         <span className="text-foreground/80">{titleCase(seg)}</span>
                         <span className="tabular-nums text-muted-foreground">{count}</span>
                       </div>
-                      <div className="mt-0.5 h-1 overflow-hidden rounded-full bg-muted">
-                        <div className="h-full bg-primary/60" style={{ width: `${pct}%` }} />
+                      <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full rounded-full bg-primary/70 transition-[width] duration-[var(--motion-slow)] ease-[var(--motion-ease-out)] motion-reduce:transition-none" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
                   );
@@ -930,7 +1051,7 @@ export default function MarketUpdates() {
           </aside>
         </section>
 
-        <p className="pb-6 text-center text-xs text-muted-foreground">General market intelligence only. Review source material and obtain professional advice before acting.</p>
+        <p className="border-t border-[color:var(--glass-hairline)] pb-6 pt-5 text-center text-[11px] tracking-wide text-muted-foreground">General market intelligence only. Review source material and obtain professional advice before acting.</p>
 
         {/* Analysis Dialog */}
         <Dialog open={Boolean(selectedUpdate)} onOpenChange={(open) => !open && setSelectedUpdate(null)}>
@@ -938,12 +1059,14 @@ export default function MarketUpdates() {
               a line and the implications grid was clipped below the fold with the title
               scrolled out of view. 4xl keeps a readable measure on any screen. */}
           <DialogContent className="flex max-h-[90vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden p-0 sm:max-w-2xl lg:max-w-4xl">
-            <DialogHeader className="shrink-0 space-y-2 border-b border-border/60 px-6 pb-4 pt-6 text-left">
+            <DialogHeader className="relative shrink-0 space-y-2 overflow-hidden border-b border-[color:var(--glass-hairline)] px-6 pb-4 pt-6 text-left">
+              {selectedUpdate && <span aria-hidden className={cn('absolute inset-y-0 left-0 w-[3px]', IMPACT_RAIL[selectedUpdate.impact_level])} />}
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Update analysis</p>
               <div className="flex flex-wrap items-center gap-2">
                 {selectedUpdate && <FreshnessBadge tier={selectedUpdate.freshness_tier} />}
                 {selectedUpdate && <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase', IMPACT_STYLE[selectedUpdate.impact_level])}>{selectedUpdate.impact_level} impact</span>}
               </div>
-              <DialogTitle className="pr-8 text-xl leading-snug lg:text-2xl">{selectedUpdate?.title}</DialogTitle>
+              <DialogTitle className="pr-8 text-xl leading-snug tracking-[-0.02em] lg:text-2xl">{selectedUpdate?.title}</DialogTitle>
               <p className="text-sm text-muted-foreground">{selectedUpdate?.source_name} · {dateLabel(selectedUpdate?.source_published_at)}</p>
               {selectedUpdate && (
                 <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -960,19 +1083,19 @@ export default function MarketUpdates() {
             </DialogHeader>
             {selectedUpdate && (
               <div className="flex-1 space-y-5 overflow-y-auto px-6 pb-6 pt-5 text-base leading-relaxed">
-                {selectedUpdate.ai_summary && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</h4><p className="mt-1.5">{selectedUpdate.ai_summary}</p></div>}
-                {selectedUpdate.key_points.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Key Points</h4><ul className="mt-1.5 list-disc space-y-1.5 pl-5">{selectedUpdate.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul></div>}
-                {selectedUpdate.why_it_matters && <div className="rounded-lg border-l-2 border-primary/60 bg-primary/5 py-3 pl-4 pr-3"><h4 className="text-sm font-semibold uppercase tracking-wide text-primary">Why it matters</h4><p className="mt-1.5">{selectedUpdate.why_it_matters}</p></div>}
+                {selectedUpdate.ai_summary && <div><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">AI summary</h4><p className="mt-2 leading-7">{clean(selectedUpdate.ai_summary)}</p></div>}
+                {selectedUpdate.key_points.length > 0 && <div><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Key points</h4><ul className="mt-2 list-disc space-y-1.5 pl-5">{selectedUpdate.key_points.map((p, i) => <li key={i} className="marker:text-muted-foreground">{p}</li>)}</ul></div>}
+                {selectedUpdate.why_it_matters && <div className="rounded-[var(--radius-lg)] border-l-2 border-primary/60 bg-primary/5 py-3 pl-4 pr-3"><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Why it matters</h4><p className="mt-1.5 leading-7">{selectedUpdate.why_it_matters}</p></div>}
                 <div className="grid gap-4 md:grid-cols-3">
-                  {selectedUpdate.property_implications && <div className="rounded-lg border border-border/60 p-4"><h4 className="text-sm font-semibold uppercase text-info">Property</h4><p className="mt-1.5 text-sm">{selectedUpdate.property_implications}</p></div>}
-                  {selectedUpdate.finance_implications && <div className="rounded-lg border border-border/60 p-4"><h4 className="text-sm font-semibold uppercase text-primary">Finance</h4><p className="mt-1.5 text-sm">{selectedUpdate.finance_implications}</p></div>}
-                  {selectedUpdate.policy_implications && <div className="rounded-lg border border-border/60 p-4"><h4 className="text-sm font-semibold uppercase text-success">Policy</h4><p className="mt-1.5 text-sm">{selectedUpdate.policy_implications}</p></div>}
+                  {selectedUpdate.property_implications && <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--glass-hairline)] p-4"><span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-info/50" /><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[hsl(var(--info))]">Property</h4><p className="mt-1.5 text-sm leading-6">{selectedUpdate.property_implications}</p></div>}
+                  {selectedUpdate.finance_implications && <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--glass-hairline)] p-4"><span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-primary/50" /><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Finance</h4><p className="mt-1.5 text-sm leading-6">{selectedUpdate.finance_implications}</p></div>}
+                  {selectedUpdate.policy_implications && <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-[color:var(--glass-hairline)] p-4"><span aria-hidden className="absolute inset-x-0 top-0 h-[2px] bg-success/50" /><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-success">Policy</h4><p className="mt-1.5 text-sm leading-6">{selectedUpdate.policy_implications}</p></div>}
                 </div>
-                {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-destructive">Risk Flags</h4><div className="mt-1.5 flex flex-wrap gap-1.5">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
+                {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-destructive">Risk flags</h4><div className="mt-2 flex flex-wrap gap-1.5">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
                   <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
-                  {canEditMarketUpdates && <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-foreground" disabled={hidingId === selectedUpdate.id} onClick={() => { const target = selectedUpdate; setSelectedUpdate(null); archiveUpdate(target); }} aria-label={`Archive ${selectedUpdate.title}`}>
-                    {hidingId === selectedUpdate.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive update
+                  {canEditMarketUpdates && <Button type="button" size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-foreground" disabled={archivePendingIds.has(selectedUpdate.id)||!selectedUpdate.id} onClick={(event:MouseEvent<HTMLButtonElement>) => {event.preventDefault();event.stopPropagation();const target=selectedUpdate;setSelectedUpdate(null);void archiveUpdate(target);}} aria-label={`Archive ${selectedUpdate.title}`}>
+                    {archivePendingIds.has(selectedUpdate.id) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{archivePendingIds.has(selectedUpdate.id)?'Archiving…':'Archive update'}
                   </Button>}
                 </div>
               </div>
@@ -981,32 +1104,50 @@ export default function MarketUpdates() {
         </Dialog>
 
         {/* Q&A Dialog */}
-        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Ask AI about this update</DialogTitle>
-              <p className="text-xs text-muted-foreground">{qaUpdate?.title}</p>
+        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); } }}>
+          <DialogContent className="flex h-[90vh] max-w-4xl flex-col gap-0 p-0 sm:max-w-4xl">
+            <DialogHeader className="relative flex-none overflow-hidden border-b border-[color:var(--glass-hairline)] p-5 pb-4">
+              <div aria-hidden className="pointer-events-none absolute inset-0 bg-[image:var(--aurora-gradient)] opacity-50" />
+              <div className="relative flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 items-start gap-3">
+                  <AurixaMark size="md" state={asking ? 'thinking' : 'idle'} className="mt-0.5 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Source-grounded desk analyst</p>
+                    <DialogTitle className="text-lg tracking-[-0.02em]">Ask Aurixa about this update</DialogTitle>
+                    <p className="mt-1 truncate text-sm text-muted-foreground" title={qaUpdate?.title}>{qaUpdate?.title}</p>
+                  </div>
+                </div>
+                {qaThread.length > 0 && (
+                  <Button size="sm" variant="ghost" className="relative" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setDialogConversationId(crypto.randomUUID()); }}>New thread</Button>
+                )}
+              </div>
             </DialogHeader>
-            <div className="space-y-3">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
               {qaThread.length > 0 && (
-                <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-2">
+                <div aria-label="Ask Aurixa conversation" className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-3">
+
                   {qaThread.map((turn, i) => (
-                    <div key={i} className={cn('rounded-md p-2 text-sm', turn.role === 'user' ? 'bg-primary/10' : 'bg-background/70 border border-border/60')}>
+                    <div key={i} className={cn('rounded-[var(--radius-lg)] p-3 text-sm', turn.role === 'user' ? 'border border-primary/20 bg-primary/10' : 'border border-[color:var(--glass-hairline)] bg-card/80 shadow-[var(--elevation-1)]')}>
                       <div className="mb-0.5 flex flex-wrap items-center gap-1 text-[10px] font-semibold uppercase text-muted-foreground">
                         <span>{turn.role === 'user' ? 'You' : 'AI'}</span>
                         {turn.role === 'assistant' && turn.sentiment && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.sentiment}</Badge>}
                         {turn.role === 'assistant' && turn.time_horizon && turn.time_horizon !== 'unclear' && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.time_horizon.replace('_',' ')}</Badge>}
+                        {turn.role === 'assistant' && turn.depth_mode && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.depth_mode === 'deep' ? 'deep dive' : turn.depth_mode}</Badge>}
+                        {turn.role === 'assistant' && typeof turn.context_size === 'number' && turn.context_size > 0 && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.context_size} sources read</Badge>}
                       </div>
-                      <p className="whitespace-pre-wrap">{turn.content}</p>
-                      {turn.key_figures && turn.key_figures.length > 0 && (
-                        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          {turn.key_figures.map((k, j) => (
-                            <div key={j} className="rounded border border-border/60 bg-background/50 px-2 py-1">
-                              <div className="text-[9px] uppercase text-muted-foreground">{k.label}</div>
-                              <div className="text-sm font-semibold text-primary">{k.value}</div>
-                            </div>
-                          ))}
-                        </div>
+                      {turn.role === 'assistant' ? (
+                        <MarketQAAnswer
+                          content={turn.content}
+                          retrieved={turn.retrieved}
+                          keyFigures={turn.key_figures}
+                          implications={turn.implications}
+                          timeline={turn.timeline}
+                          watchItems={turn.watch_items}
+                          contrarianView={turn.contrarian_view}
+                          streaming={turn.streaming}
+                        />
+                      ) : (
+                        <p className="whitespace-pre-wrap">{turn.content}</p>
                       )}
                       {turn.citations && turn.citations.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
@@ -1028,11 +1169,20 @@ export default function MarketUpdates() {
                       )}
                     </div>
                   ))}
-                  {asking && <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/70 p-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Thinking…</div>}
+                  {asking && <MarketQAProgress stage={qaStage} />}
                 </div>
               )}
-              <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[100px]" />
-              <div className="flex gap-2">
+              {qaThread.length === 0 && (
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-[var(--radius-lg)] border border-[color:var(--glass-hairline)] bg-background/40 p-6 text-center">
+                  <AurixaMark size="lg" className="mb-4" />
+                  <h3 className="text-base font-semibold tracking-[-0.02em]">Ask a source-grounded question</h3>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">Aurixa searches this update and the related published market news around it — prior coverage, the policy behind it and corroborating reports — then answers from what it finds. Your questions stay in this thread.</p>
+                  {asking && <MarketQAProgress stage={qaStage} className="mt-4 w-full max-w-md text-left" />}
+                </div>
+              )}
+              <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[120px] flex-none text-sm" />
+              <MarketQADepthSelector value={qaDepth} onChange={setQaDepth} disabled={asking} />
+              <div className="flex flex-none gap-2">
                 <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
                   {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}

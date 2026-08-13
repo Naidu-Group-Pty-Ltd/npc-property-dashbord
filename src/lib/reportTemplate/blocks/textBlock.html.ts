@@ -1,7 +1,29 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { absBoxStyle, esc, type HtmlBlockContext } from './_shared.html';
+import {
+  absBoxStyle, esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
+} from './_shared.html';
 
+/**
+ * Section text — eyebrow, heading, body.
+ *
+ * ## The typography props
+ *
+ * `eyebrowFont` / `headingFont` / `bodyFont`, `eyebrowTracking`,
+ * `headingWeight` and `bodyLineHeight` are additive and default to exactly what
+ * this block emitted before them, so an existing template renders unchanged.
+ *
+ * They exist because a design family can set more than two faces. The approved
+ * Private Banking family runs four with one job each — Cinzel on the cover,
+ * Playfair on headings and figures, Inter for body copy, IBM Plex Mono for
+ * every uppercase label — and until this block could be told which face an
+ * eyebrow takes, all three of its elements resolved to `--font-body` and
+ * `--font-heading`. The eyebrow in particular was pinned at 0.18em, which is
+ * the brand's section tracking but not its cover tracking (0.34em).
+ *
+ * Fonts resolve through `fontFamilyDecl`, which points at the `--font-*` custom
+ * property rather than interpolating a font name into the style attribute.
+ */
 export function renderTextBlockHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const eyebrow = resolveBindable(p.eyebrow, ctx);
@@ -13,10 +35,40 @@ export function renderTextBlockHtml(block: Block, ctx: HtmlBlockContext): string
   const eyebrowSize = Number(p.eyebrowSize ?? 8);
   const headingSize = Number(p.headingSize ?? 16);
   const bodySize = Number(p.bodySize ?? 10);
+
+  // Defaults reproduce the pre-existing output byte for byte: body face for the
+  // eyebrow and body, heading face for the heading, 0.18em tracking, weight
+  // 700, line-height 1.4.
+  const eyebrowFont = fontFamilyDecl(p.eyebrowFont, 'var(--font-body, Helvetica)');
+  const headingFont = fontFamilyDecl(p.headingFont, 'var(--font-heading, Helvetica)');
+  const bodyFont = fontFamilyDecl(p.bodyFont, 'var(--font-body, Helvetica)');
+  const eyebrowTracking = trackingDecl(p.eyebrowTracking, 0.18);
+  const headingWeight = Number(p.headingWeight ?? 700);
+  // Emitted only when set. The heading previously carried no `line-height` at
+  // all, so defaulting one here would re-leaded every existing template's
+  // headings — the kind of change that is invisible in review and obvious in a
+  // customer's PDF.
+  const headingLineHeight = p.headingLineHeight != null && Number.isFinite(Number(p.headingLineHeight))
+    ? `line-height:${Number(p.headingLineHeight)};`
+    : '';
+  const bodyLineHeight = Number(p.bodyLineHeight ?? 1.4);
+  // The standfirst on a Private Banking cover is Playfair set italic. Italic is
+  // a typographic role here, not emphasis, so it belongs on the block rather
+  // than in the copy.
+  const bodyStyle = p.bodyStyle === 'italic' ? 'font-style:italic;' : '';
+  const headingStyle = p.headingStyle === 'italic' ? 'font-style:italic;' : '';
+  const bodyAlign = typeof p.bodyAlign === 'string' && /^(left|right|center|justify)$/.test(p.bodyAlign)
+    ? `text-align:${p.bodyAlign};`
+    : '';
+  // Body tracking is emitted only when asked for. A wordmark and a running head
+  // are both body-role elements that carry brand tracking; ordinary copy must
+  // not, so there is no default.
+  const bodyTracking = trackingDecl(p.bodyTracking);
+
   const style = absBoxStyle(p, { x: 24, y: 24, w: ctx.page.width - 48 });
   return `<div style="${style}">
-    ${eyebrow ? `<div style="color:${eyebrowColor};font-size:${eyebrowSize}pt;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;margin:0 0 6pt;font-family:var(--font-body, Helvetica);">${esc(eyebrow)}</div>` : ''}
-    ${heading ? `<h2 style="color:${headingColor};font-size:${headingSize}pt;font-weight:700;margin:0 0 8pt;font-family:var(--font-heading, Helvetica);">${esc(heading)}</h2>` : ''}
-    ${body ? `<div style="color:${color};font-size:${bodySize}pt;line-height:1.4;white-space:pre-wrap;font-family:var(--font-body, Helvetica);">${esc(body)}</div>` : ''}
+    ${eyebrow ? `<div style="color:${eyebrowColor};font-size:${eyebrowSize}pt;font-weight:700;text-transform:uppercase;${eyebrowTracking}margin:0 0 6pt;${eyebrowFont}">${esc(eyebrow)}</div>` : ''}
+    ${heading ? `<h2 style="color:${headingColor};font-size:${headingSize}pt;font-weight:${headingWeight};${headingStyle}${headingLineHeight}margin:0 0 8pt;${headingFont}">${esc(heading)}</h2>` : ''}
+    ${body ? `<div style="color:${color};font-size:${bodySize}pt;line-height:${bodyLineHeight};${bodyStyle}${bodyAlign}${bodyTracking}white-space:pre-wrap;${bodyFont}">${esc(body)}</div>` : ''}
   </div>`;
 }

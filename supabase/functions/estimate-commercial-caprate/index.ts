@@ -3,10 +3,13 @@
 // for the supplied property snapshot, grounded in 2025 AU market evidence.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { checkModuleView } from "../_shared/permissions.ts";
 import { consumeRateLimit, enforceJsonBodyLimit, securityJsonError } from "../_shared/requestSecurity.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 interface Snapshot {
   propertyId?: string;
   dealId?: string;
@@ -102,6 +105,11 @@ Deno.serve(async (req) => {
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
     if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
 
+    // Commercial & Industrial is a Scale-or-add-on capability — enforced
+    // server-side, not just hidden in the UI.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'commercial-industrial');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
+
     const permission = await checkModuleView(supabase, userId, 'listings', authMethod);
     if (!permission.allowed) return securityJsonError(403, 'module_permission_denied');
     if (!isValidSnapshot(body.snapshot)) return securityJsonError(400, 'invalid_snapshot');
@@ -155,7 +163,7 @@ Deno.serve(async (req) => {
       },
     }];
 
-    const aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const aiResp = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
@@ -199,6 +207,6 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ success: true, estimate }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err: any) {
     console.error('[estimate-commercial-caprate] fatal', err);
-    return new Response(JSON.stringify({ success: false, error: err?.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ ...internalError(err, 'estimate-commercial-caprate'), success: false }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

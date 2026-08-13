@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -269,7 +270,7 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
 async function geocodeAddress(address: string, apiKey: string) {
   try {
     const encodedAddress = encodeURIComponent(address);
-    const response = await fetch(
+    const response = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`
     );
 
@@ -298,7 +299,7 @@ async function fetchNearbyPlaces(
 ) {
   try {
     const radius = type === 'school' ? 3000 : type === 'park' ? 2000 : 5000;
-    const response = await fetch(
+    const response = await meteredFetch(
       `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coordinates.lat},${coordinates.lng}&radius=${radius}&type=${type}&key=${apiKey}`
     );
 
@@ -341,7 +342,7 @@ async function calculateCommuteTime(
   apiKey: string
 ) {
   try {
-    const response = await fetch(
+    const response = await meteredFetch(
       `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&mode=transit&key=${apiKey}`
     );
 

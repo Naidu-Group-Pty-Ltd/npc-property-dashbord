@@ -22,6 +22,8 @@ import {
 } from '../_shared/financePortalObjectAuthz.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -50,7 +52,7 @@ function jsonWithHeaders(d: unknown, responseCorsHeaders: Record<string, string>
 async function runOcrAntiTamper(documentUrl: string | null, label: string, lovableKey: string) {
   if (!documentUrl) return { ok: false, error: 'no document_url' };
   try {
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const res = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${lovableKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -395,6 +397,6 @@ Deno.serve(async (req) => {
 
     return json({ error: `Unknown operation: ${operation}` }, 400);
   } catch (e: any) {
-    return json({ error: e?.message || 'internal error' }, 500);
+    return json({ ...internalError(e, 'finance-portal-batch7') }, 500);
   }
 });

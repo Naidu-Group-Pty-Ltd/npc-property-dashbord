@@ -19,28 +19,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { getFullStateName } from '@/lib/states';
+// One shape for the predicate and both panels — see @/lib/listingFilters.
+import {
+  DEFAULT_LISTING_FILTERS,
+  LISTED_WITHIN_OPTIONS,
+  type ListingFilterState as FilterState,
+} from '@/lib/listingFilters';
 
-interface FilterState {
-  propertyType: string;
-  suburb: string;
-  state: string;
-  zipCode: string;
-  sourceHost: string;
-  hasInspection: boolean;
-  lowConfidence: boolean;
-  offMarket: boolean;
-  priceMin: string;
-  priceMax: string;
-  bedsMin: string;
-  bedsMax: string;
-  bathsMin: string;
-  bathsMax: string;
-  carsMin: string;
-  carsMax: string;
-  agencyName: string;
-  keywordSearch: string;
-  includeNearbySuburbs: boolean;
-}
 
 interface ListingFiltersProps {
   filters: FilterState;
@@ -52,6 +37,9 @@ interface ListingFiltersProps {
     zipCodes: string[];
     sourceHosts: string[];
     agencies: string[];
+    /** Optional: present once the projection reads the columns they live in. */
+    intents?: string[];
+    sectors?: string[];
   };
 }
 
@@ -80,27 +68,7 @@ export function ListingFilters({ filters, setFilters, uniqueValues }: ListingFil
   };
 
   const handleClear = () => {
-    setLocalFilters({
-      propertyType: 'all',
-      suburb: 'all',
-      state: 'all',
-      zipCode: 'all',
-      sourceHost: 'all',
-      hasInspection: false,
-      lowConfidence: false,
-      offMarket: false,
-      priceMin: '',
-      priceMax: '',
-      bedsMin: '',
-      bedsMax: '',
-      bathsMin: '',
-      bathsMax: '',
-      carsMin: '',
-      carsMax: '',
-      agencyName: 'all',
-      keywordSearch: '',
-      includeNearbySuburbs: false,
-    });
+    setLocalFilters({ ...DEFAULT_LISTING_FILTERS });
   };
 
   return (
@@ -317,6 +285,170 @@ export function ListingFilters({ filters, setFilters, uniqueValues }: ListingFil
                       onChange={(e) => setLocalFilters({ ...localFilters, carsMax: e.target.value })}
                     />
                   </div>
+
+                {/* Land size */}
+                <div className="space-y-2">
+                  <Label>Land size (m²)</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Input
+                      placeholder="Min"
+                      type="number"
+                      inputMode="numeric"
+                      value={localFilters.landSizeMin}
+                      onChange={(e) => setLocalFilters({ ...localFilters, landSizeMin: e.target.value })}
+                    />
+                    <Input
+                      placeholder="Max"
+                      type="number"
+                      inputMode="numeric"
+                      value={localFilters.landSizeMax}
+                      onChange={(e) => setLocalFilters({ ...localFilters, landSizeMax: e.target.value })}
+                    />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Hectares and acres in the source data are converted to m².
+                  </p>
+                </div>
+
+                {/* Listed within */}
+                <div className="space-y-2">
+                  <Label>Listed within</Label>
+                  <Select
+                    value={localFilters.listedWithinDays}
+                    onValueChange={(value) => setLocalFilters({ ...localFilters, listedWithinDays: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LISTED_WITHIN_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    Listings with no date on record are excluded from a window.
+                  </p>
+                </div>
+
+                {/* Data-completeness toggles */}
+                <div className="space-y-3">
+                  <Label>Only show</Label>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">Listings with photos</span>
+                    <Switch
+                      checked={localFilters.hasPhotos}
+                      onCheckedChange={(checked) => setLocalFilters({ ...localFilters, hasPhotos: checked })}
+                      aria-label="Only listings with photos"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">Listings that can be mapped</span>
+                    <Switch
+                      checked={localFilters.mappableOnly}
+                      onCheckedChange={(checked) => setLocalFilters({ ...localFilters, mappableOnly: checked })}
+                      aria-label="Only listings that can be mapped"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">
+                      Include undisclosed prices
+                      <span className="block text-[11px] text-muted-foreground">
+                        Keeps price-less listings inside a price range
+                      </span>
+                    </span>
+                    <Switch
+                      checked={localFilters.includeUndisclosedPrice}
+                      onCheckedChange={(checked) =>
+                        setLocalFilters({ ...localFilters, includeUndisclosedPrice: checked })
+                      }
+                      aria-label="Include listings with undisclosed prices in a price range"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">
+                      Flagged for review
+                      <span className="block text-[11px] text-muted-foreground">
+                        The pipeline was not confident about these
+                      </span>
+                    </span>
+                    <Switch
+                      checked={localFilters.needsReview}
+                      onCheckedChange={(checked) => setLocalFilters({ ...localFilters, needsReview: checked })}
+                      aria-label="Only listings flagged for human review"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">
+                      Conflicting location
+                      <span className="block text-[11px] text-muted-foreground">
+                        State and postcode disagree with each other
+                      </span>
+                    </span>
+                    <Switch
+                      checked={localFilters.localityConflict}
+                      onCheckedChange={(checked) =>
+                        setLocalFilters({ ...localFilters, localityConflict: checked })
+                      }
+                      aria-label="Only listings whose state and postcode conflict"
+                    />
+                  </div>
+                </div>
+
+                {/* Dimensions that only became readable once the projection was
+                    pointed at the real columns. */}
+                <div className="space-y-3">
+                  <Label>Listing type</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Select
+                      value={localFilters.intent}
+                      onValueChange={(value) => setLocalFilters({ ...localFilters, intent: value })}
+                    >
+                      <SelectTrigger aria-label="Intent">
+                        <SelectValue placeholder="Sale or rent" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Sale or rent</SelectItem>
+                        {(uniqueValues.intents ?? []).map((value) => (
+                          <SelectItem key={value} value={value}>{value}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={localFilters.sector}
+                      onValueChange={(value) => setLocalFilters({ ...localFilters, sector: value })}
+                    >
+                      <SelectTrigger aria-label="Sector">
+                        <SelectValue placeholder="Any sector" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Any sector</SelectItem>
+                        {(uniqueValues.sectors ?? []).map((value) => (
+                          <SelectItem key={value} value={value}>{value}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="min-quality">Minimum data quality</Label>
+                  <Input
+                    id="min-quality"
+                    inputMode="numeric"
+                    placeholder="e.g. 70"
+                    value={localFilters.minQuality}
+                    onChange={(event) =>
+                      setLocalFilters({ ...localFilters, minQuality: event.target.value })
+                    }
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Percentage. The pipeline scores every record; listings with no
+                    score are excluded once a minimum is set.
+                  </p>
+                </div>
                 </div>
               </div>
             </div>

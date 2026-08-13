@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import {
   invokeSolicitorFunction,
+  type SolicitorAcknowledgementKey,
   type SolicitorPortalUser,
 } from '@/lib/solicitorPortal';
 
@@ -14,7 +15,7 @@ interface SolicitorPortalAuthContextType {
   requestPasswordReset: (email: string) => Promise<{ error?: string; success?: boolean }>;
   verifyOtp: (email: string, otp: string) => Promise<{ error?: string; success?: boolean }>;
   resetPassword: (email: string, otp: string, newPassword: string) => Promise<{ error?: string; success?: boolean }>;
-  acceptTerms: () => Promise<void>;
+  acceptTerms: (acknowledgements: SolicitorAcknowledgementKey[]) => Promise<void>;
   completeOnboarding: () => Promise<void>;
   refresh: () => Promise<void>;
   applySession: (user: SolicitorPortalUser) => void;
@@ -112,9 +113,16 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
     return { success: true };
   }, []);
 
-  const acceptTerms = useCallback(async () => {
-    const { error } = await invokeSolicitorFunction('solicitor-portal-verify', { action: 'accept_current_terms' });
-    if (error) throw error;
+  // The acknowledgments the accepting person asserted travel with the
+  // acceptance: they are contractual statements, and the agreement records them
+  // as acknowledgment history. The server rejects an acceptance that is missing
+  // any of them, so this argument is not advisory.
+  const acceptTerms = useCallback(async (acknowledgements: SolicitorAcknowledgementKey[]) => {
+    const { data, error } = await invokeSolicitorFunction<{ error?: string }>('solicitor-portal-verify', {
+      action: 'accept_current_terms',
+      acknowledgements,
+    });
+    if (error) throw new Error(data?.error || error.message);
     setUser((prev) => (prev ? { ...prev, has_accepted_terms: true, has_accepted_current_terms: true } : prev));
   }, []);
 

@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { listingContact } from '@/lib/listingContact';
+import { EmailAgentDialog } from '@/components/listings/EmailAgentDialog';
+import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash, Loader2, Maximize2, Send } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +16,8 @@ import { buildFullAddress } from '@/lib/addressUtils';
 import { PropertyListing } from '@/lib/airtable';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
+import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
+import { useOrderedImages } from '@/hooks/useOrderedImages';
 
 interface ListingDetailsModalProps {
   listing: PropertyListing | null;
@@ -23,6 +28,10 @@ interface ListingDetailsModalProps {
 export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetailsModalProps) {
   const { toast } = useToast();
   const [investmentModalOpen, setInvestmentModalOpen] = useState(false);
+  const [emailAgentOpen, setEmailAgentOpen] = useState(false);
+  // Resolved before the `!listing` bail-out for the same reason as the images
+  // below: hooks and derived values here must not sit behind a conditional.
+  const contact = listingContact(listing ?? ({} as never));
 
   // Resolved before the `!listing` bail-out because hooks cannot be conditional.
   //
@@ -32,12 +41,19 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
   // every base whose photos are attachments — which is most of them. These are
   // signed URLs for our own stored copies instead.
   const galleryInput = useMemo(() => (listing ? [listing] : []), [listing]);
-  const { images: galleryByListing, isResolving: galleryResolving } =
+  const { images: galleryByListing, isResolving: galleryResolving, refresh: refreshGallery } =
     useListingImages(galleryInput);
+  // Unprompted, like everywhere else imagery appears: if the record has no
+  // stored photographs and carries a source link, the page is read and the
+  // grid below fills in — no button, no toast.
+  const { searchingId } = useAutoFindPhotos(galleryInput, galleryByListing, galleryResolving, refreshGallery);
+  const isSearching = listing !== null && searchingId === listing.id;
+  // Photographs lead, floor plans trail — the same order the hero draws.
+  const { images: galleryImages } = useOrderedImages(
+    listing ? galleryByListing[listing.id] : undefined,
+  );
 
   if (!listing) return null;
-
-  const galleryImages = galleryByListing[listing.id] ?? [];
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-AU', {
@@ -148,6 +164,22 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
                 >
                   <TrendingUp className="h-4 w-4 mr-2" />
                   Investment Report
+                </Button>
+                {/*
+                  First in the row, deliberately. Everything above it is there to
+                  help someone decide; this is what they do once they have.
+                */}
+                {contact.email && (
+                  <Button onClick={() => setEmailAgentOpen(true)}>
+                    <Send className="h-4 w-4 mr-2" />
+                    Email {contact.name?.split(' ')[0] ?? 'the agent'}
+                  </Button>
+                )}
+                {/* The modal is the quick look; the page is the shareable one. */}
+                <Button variant="outline" asChild>
+                  <Link to={`/listings/${listing.id}`}>
+                    <Maximize2 className="h-4 w-4 mr-2" /> Full page
+                  </Link>
                 </Button>
                 {listing.webLinks && (
                   <Button variant="outline" onClick={openWebLink}>
@@ -322,36 +354,72 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
             </div>
           )}
 
-          {/* Images */}
-          {(galleryImages.length > 0 || galleryResolving) && (
-            <div>
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Images</h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {galleryResolving && galleryImages.length === 0
-                  ? Array.from({ length: 3 }, (_, index) => (
-                      <div
-                        key={`skeleton-${index}`}
-                        className="aspect-video animate-pulse rounded-lg border border-border/60 bg-muted motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ))
-                  : galleryImages.slice(0, 6).map((image, index) => (
-                      <div key={image.url} className="group aspect-video bg-muted rounded-lg overflow-hidden border border-border/60 hover:border-primary/50 transition-colors">
-                        <img
-                          src={image.url}
-                          alt={`Property image ${index + 1}`}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform cursor-pointer"
-                          loading="lazy"
-                          onClick={() => window.open(image.url, '_blank', 'noopener,noreferrer')}
-                        />
-                      </div>
-                    ))}
+          {/*
+            Images — rendered even when there are none.
+
+            This section used to disappear entirely when the gallery came back
+            empty, which is the state nearly every record is in. The result read
+            as a property that simply had no photographs section, rather than one
+            whose photographs have not been fetched yet, and left no way to ask
+            for them.
+          */}
+          <div>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Images</h3>
+                {galleryImages.some((image) => image.origin === 'scraped') && (
+                  // Sourced photographs carry their provenance. A buyer's agent
+                  // forwarding this listing should know the imagery came from
+                  // the agency's public page, not from the email.
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Photographs sourced from the agency&rsquo;s public listing
+                    {listing.url ? ' — the source link is under the actions menu.' : '.'}
+                  </p>
+                )}
               </div>
-              {galleryImages.length > 6 && (
-                <p className="text-xs text-muted-foreground mt-2">+{galleryImages.length - 6} more images available on source</p>
+              {isSearching && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" aria-busy="true">
+                  <Loader2 className="h-3 w-3 animate-spin motion-reduce:hidden" aria-hidden="true" />
+                  Searching the source listing…
+                </span>
               )}
             </div>
-          )}
+            {galleryImages.length === 0 && !galleryResolving && !isSearching ? (
+              <p className="rounded-lg border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                No photographs stored for this listing yet.
+                {listing.url
+                  ? ' Its source page is checked automatically — anything found will appear here.'
+                  : ' This record carries no source link to fetch them from.'}
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {(galleryResolving || isSearching) && galleryImages.length === 0
+                    ? Array.from({ length: 3 }, (_, index) => (
+                        <div
+                          key={`skeleton-${index}`}
+                          className="aspect-video animate-pulse rounded-lg border border-border/60 bg-muted motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ))
+                    : galleryImages.slice(0, 6).map((image, index) => (
+                        <div key={image.url} className="group aspect-video bg-muted rounded-lg overflow-hidden border border-border/60 hover:border-primary/50 transition-colors">
+                          <img
+                            src={image.url}
+                            alt={`Property image ${index + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform cursor-pointer"
+                            loading="lazy"
+                            onClick={() => window.open(image.url, '_blank', 'noopener,noreferrer')}
+                          />
+                        </div>
+                      ))}
+                </div>
+                {galleryImages.length > 6 && (
+                  <p className="text-xs text-muted-foreground mt-2">+{galleryImages.length - 6} more images available on source</p>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Floorplans */}
           {listing.floorplans && listing.floorplans.length > 0 && (
@@ -441,6 +509,8 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
 
           </div>
         </div>
+
+        <EmailAgentDialog listing={listing} open={emailAgentOpen} onOpenChange={setEmailAgentOpen} />
 
         <InvestmentReportModal
           isOpen={investmentModalOpen}

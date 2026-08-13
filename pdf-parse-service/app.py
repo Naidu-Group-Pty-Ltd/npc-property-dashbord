@@ -80,6 +80,12 @@ from lane_policy import (
     normalize_lane,
 )
 
+# OCR language contract (pure; unit-tested in test_ocr_config.py without Docling).
+from ocr_languages import (
+    OCR_LANGUAGE_CONTRACT_VERSION,
+    resolve_ocr_languages,
+)
+
 # G2 — Sidecar Operational Metrics V1 (pure; unit-tested in test_operational_metrics.py).
 from operational_metrics import (
     OperationalMetricsAccumulator,
@@ -96,6 +102,16 @@ import table_integrity as tinteg
 import source_typography as stypo
 import font_assets as fassets
 from source_url_security import UnsafeSourceUrl, fetch_public_url
+# Text alignment inference (pure; gated by ci.yml — see the module header for
+# what shipped wrong while it lived in this file).
+from text_alignment import MIN_JUSTIFY_LINES, infer_alignment  # noqa: F401
+# Font cmap repair (pure; gated by ci.yml). The file surgery below uses
+# fontTools; everything that decides WHAT to write lives in that module.
+from font_cmap_repair import (  # noqa: F401
+    coverage_ranges,
+    parse_tounicode_cmap,
+    plan_cmap_repair,
+)
 
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -126,7 +142,11 @@ LOG = logging.getLogger("pdf-parse-service")
 SERVICE_TOKEN = os.environ.get("PDF_PARSE_SERVICE_TOKEN", "").strip()
 SERVICE_TOKEN_NEXT = os.environ.get("PDF_PARSE_SERVICE_TOKEN_NEXT", "").strip()
 SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
-ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style"
+# `align-v2` is a SEMANTIC change to a field that already existed: `text_align`
+# no longer reports justify for a two-line block. A cached artifact carries the
+# old meaning under the same key, so the version has to move or the cache serves
+# it. See _infer_alignment / MIN_JUSTIFY_LINES.
+ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style+subset-fonts-v1+source-measure-v2+coverage-ranges-v1+align-v2+cmap-repair-v1+font-metrics-v1"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
@@ -149,11 +169,28 @@ RASTER_DPI = int(os.environ.get("DOCLING_RASTER_DPI", "300"))
 # below; keep this check self-contained so module import order doesn't matter.)
 ENABLE_FITZ_LAYERS = os.environ.get("DOCLING_ENABLE_FITZ_LAYERS", "true").strip().lower() not in {"", "0", "false", "no"}
 MAX_VECTORS_PER_PAGE = int(os.environ.get("DOCLING_MAX_VECTORS_PER_PAGE", "400"))
+# Per-span extents shipped per text line, so the client can reconcile a
+# mixed-style line rather than collapse it to its widest span. Bounded because
+# the count is attacker-influenced and this rides on every text item.
+MAX_SPANS_PER_LINE = int(os.environ.get("DOCLING_MAX_SPANS_PER_LINE", "24"))
+# Measured line records shipped per text item, for the same reason.
+MAX_MEASURED_LINES = int(os.environ.get("DOCLING_MAX_MEASURED_LINES", "64"))
+# Bumped when the shape of `item.source_measure` changes, so a consumer can tell
+# a missing measurement from one it does not understand.
+#
+# v2 adds per-line `x0Pt` / `x1Pt` / `baselineYPt`. Additive — a v1 consumer
+# ignores them — but a v2 consumer needs to know it is looking at v1 and must
+# fall back rather than treat absent geometry as geometry at the origin.
+SOURCE_MEASURE_VERSION = "source-measure-v2"
 MIN_VECTOR_SIZE_PT = float(os.environ.get("DOCLING_MIN_VECTOR_SIZE_PT", "1.0"))
 # Phase 3: font metadata extraction (names + embeddable programs).
 MAX_FONTS = int(os.environ.get("DOCLING_MAX_FONTS", "48"))
 MAX_FONT_BYTES = int(os.environ.get("DOCLING_MAX_FONT_BYTES", str(512 * 1024)))
 MAX_EMBEDDED_FONT_BYTES = int(os.environ.get("DOCLING_MAX_EMBEDDED_FONT_BYTES", str(4 * 1024 * 1024)))
+# CSS unicode-range segments per embedded face. Dropping a segment only sends
+# those glyphs to the stack fallback — safe direction — so the cap keeps the
+# LARGEST segments rather than refusing to scope at all.
+MAX_COVERAGE_RANGES = int(os.environ.get("DOCLING_MAX_COVERAGE_RANGES", "64"))
 
 # Wave F-Option-3 storage upload config.
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -194,16 +231,42 @@ PREWARM_ON_STARTUP = _env_bool("DOCLING_PREWARM_ON_STARTUP", True)
 # Phase B/D toggles. Expensive enrichments remain available as explicit opt-ins.
 ENABLE_PICTURE_CLASSIFICATION = _env_bool("ENABLE_PICTURE_CLASSIFICATION", True)
 ENABLE_PICTURE_DESCRIPTION_DEFAULT = _env_bool("ENABLE_PICTURE_DESCRIPTION", False)
-ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", True)
-ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", True)
+# Formula and code enrichment target scientific papers and source listings. This
+# product ingests property and finance PDFs, where both load extra models and
+# add per-page work for no measured benefit — so they are opt-in, not opt-out.
+ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", False)
+ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", False)
 # OCR fallback and full-page OCR are resource-intensive and must be enabled explicitly.
 ENABLE_OCR_FALLBACK = _env_bool("ENABLE_OCR_FALLBACK", False)
 FORCE_FULL_PAGE_OCR = _env_bool("DOCLING_FORCE_FULL_PAGE_OCR", False)
-# Multi-language OCR — order matters; first match wins per region.
-OCR_LANGS = [s.strip() for s in os.environ.get("DOCLING_OCR_LANGS", "en,fr,de,es,zh,ja,ko,ar").split(",") if s.strip()]
+# Multi-language OCR. Resolved through the pure `ocr_languages` contract, which
+# aliases non-EasyOCR spellings (`zh` -> `ch_sim`), drops unknown codes, and
+# reduces incompatible script mixes to a constructible group. Without it an
+# unconstructible language list fails the whole conversion rather than degrading
+# the OCR pass — see ocr_languages.py.
+_OCR_LANG_RESOLUTION = resolve_ocr_languages(os.environ.get("DOCLING_OCR_LANGS"))
+OCR_LANGS = list(_OCR_LANG_RESOLUTION.languages)
+if _OCR_LANG_RESOLUTION.changed:
+    LOG.warning(
+        "DOCLING_OCR_LANGS adjusted for EasyOCR compatibility: using %s (group=%s, dropped=%s)",
+        OCR_LANGS,
+        _OCR_LANG_RESOLUTION.primary_group,
+        _OCR_LANG_RESOLUTION.dropped,
+    )
 # Lower bitmap threshold = OCR runs even on lightly-bitmapped regions.
 BITMAP_AREA_THRESHOLD = float(os.environ.get("DOCLING_BITMAP_AREA_THRESHOLD", "0.05"))
-IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "2.0"))
+# Picture-crop resolution, expressed as a multiplier on 72 DPI: 2.0 == 144 DPI,
+# 4.0 == 288 DPI. Docling RE-RENDERS a picture's page region at this scale
+# rather than extracting the embedded stream, so this is a hard ceiling on
+# embedded-image quality — a 600 DPI photograph in the source was permanently
+# resampled to 144 DPI before it ever reached the template, which is a large
+# part of the reported pixelation.
+#
+# Raised to 4.0 (288 DPI, just under the 300 DPI print floor). Cost scales with
+# the square, but it applies to picture REGIONS rather than whole pages, and the
+# per-page artifact caps still bound the total. Dial back via the env var if a
+# picture-dense corpus regresses cold-start memory.
+IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "4.0"))
 TABLE_MODE = os.environ.get("DOCLING_TABLE_MODE", "ACCURATE").strip().upper() or "ACCURATE"
 LAYOUT_MODEL = os.environ.get("DOCLING_LAYOUT_MODEL", "").strip() or None
 # Accelerator: AUTO lets Docling pick CUDA / MPS / CPU as available.
@@ -215,13 +278,30 @@ INCLUDE_MARKDOWN_DEFAULT = _env_bool("DOCLING_INCLUDE_MARKDOWN_DEFAULT", True)
 # G1 — the process-level capability ceilings + configured defaults handed to the
 # pure lane-policy resolver. A lane can never enable a feature disabled here.
 GLOBAL_CAPABILITIES = GlobalCapabilities(
+    # OCR *availability*. Forcing full-page OCR implies needing OCR at all, so
+    # either flag raises the ceiling.
     ocr=(ENABLE_OCR_FALLBACK or FORCE_FULL_PAGE_OCR),
     picture_description=ENABLE_PICTURE_DESCRIPTION_DEFAULT,
     picture_classification=ENABLE_PICTURE_CLASSIFICATION,
     formula=ENABLE_FORMULA_ENRICHMENT,
     code=ENABLE_CODE_ENRICHMENT,
     fitz=(_FITZ_AVAILABLE and ENABLE_FITZ_LAYERS),
-    force_full_page_ocr_default=(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK),
+    # OCR *forcing* — deliberately NOT `(FORCE_FULL_PAGE_OCR or ENABLE_OCR_FALLBACK)`.
+    #
+    # These two fields were previously the same expression, which made "OCR is
+    # available" and "OCR every page of every document" a single switch. The
+    # `unplanned` lane inherits this default, so enabling the fallback silently
+    # forced full-page OCR across the largest slice of production traffic — on
+    # documents whose measured `ocr_page_ratio` was 0.0.
+    #
+    # Setting ENABLE_OCR_FALLBACK=false was not a workaround: `ocr` is a hard
+    # ceiling (lane_policy rule 4), so that would have left `ocr_scanned` unable
+    # to OCR a genuinely scanned document. There was no env-var combination for
+    # "OCR available, not forced" — hence the decoupling here.
+    #
+    # `ocr_scanned` still forces full-page OCR: its lane profile sets
+    # force_full_page_ocr=True authoritatively, capped only by the `ocr` ceiling.
+    force_full_page_ocr_default=FORCE_FULL_PAGE_OCR,
     default_table_mode=TABLE_MODE,
     images_scale=IMAGES_SCALE,
     raster_dpi_default=RASTER_DPI,
@@ -885,6 +965,34 @@ def _page_text_lines(page) -> list[dict]:
             lbbox = line.get("bbox") or dom.get("bbox") or [0, 0, 0, 0]
             origin = dom.get("origin") or [lbbox[0], lbbox[3]]
             flags = int(dom.get("flags") or 0)
+            # The MEASURED advance width of this line, in the source's own font.
+            #
+            # It was always computed — `lbbox` is right here — and was used only
+            # to infer alignment and leading, then dropped. That made it
+            # impossible for the client to tell whether its substituted font
+            # rendered the same text wider than the original, which is precisely
+            # why imported text overflows a box copied verbatim from the source.
+            # A ratio needs both terms; this is the one nobody was sending.
+            measured_width = max(0.0, float(lbbox[2]) - float(lbbox[0]))
+            # Per-span extents let the client reconcile a mixed-style line
+            # instead of collapsing it to its widest span. Bounded so a
+            # pathological line cannot inflate the artifact.
+            span_extents = []
+            for sp in spans[:MAX_SPANS_PER_LINE]:
+                sb = sp.get("bbox") or [0, 0, 0, 0]
+                try:
+                    sw = max(0.0, float(sb[2]) - float(sb[0]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+                text = str(sp.get("text") or "")
+                if not text:
+                    continue
+                span_extents.append({
+                    "width": sw,
+                    "chars": len(text),
+                    "size": float(sp.get("size") or 0.0),
+                    "font": str(sp.get("font") or ""),
+                })
             lines.append({
                 "bbox": [float(lbbox[0]), float(lbbox[1]), float(lbbox[2]), float(lbbox[3])],
                 "origin_y": float(origin[1]),
@@ -893,6 +1001,9 @@ def _page_text_lines(page) -> list[dict]:
                 "bold": bool(flags & 16),
                 "italic": bool(flags & 2),
                 "color": _fitz_span_color_to_hex(dom.get("color")),
+                "measured_width": measured_width,
+                "char_count": sum(len(str(sp.get("text") or "")) for sp in spans),
+                "spans": span_extents,
             })
     return lines
 
@@ -940,26 +1051,11 @@ def _bbox_to_tl(bbox: Any, page_height: float) -> Optional[tuple[float, float, f
     return (min(l, r), y0, max(l, r), y1)
 
 
-def _infer_alignment(lines: list[dict], ix0: float, ix1: float) -> str:
-    width = max(1.0, ix1 - ix0)
-    n = len(lines)
-    if not n:
-        return "left"
-    left_gaps = [ln["bbox"][0] - ix0 for ln in lines]
-    right_gaps = [ix1 - ln["bbox"][2] for ln in lines]
-    fills = [(ln["bbox"][2] - ln["bbox"][0]) / width for ln in lines]
-    avg_left = sum(left_gaps) / n
-    avg_right = sum(right_gaps) / n
-    tol = max(2.0, width * 0.02)
-    if n >= 2 and sum(1 for f in fills if f >= 0.95) >= n - 1:
-        return "justify"
-    if avg_left <= tol and avg_right > tol:
-        return "left"
-    if avg_right <= tol and avg_left > tol:
-        return "right"
-    if abs(avg_left - avg_right) <= tol and avg_left > tol:
-        return "center"
-    return "left"
+# Moved to `text_alignment.py` so `ci.yml` can gate it: the rule shipped wrong
+# (every two-line block came back justified) precisely because nothing in this
+# file is dependency-free enough to run in that job. Kept as a thin alias so
+# call sites and existing diagnostics read the same.
+_infer_alignment = infer_alignment
 
 
 def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> None:
@@ -1022,6 +1118,49 @@ def _enrich_text_typography(doc_dict: dict, fitz_by_page: dict[int, dict]) -> No
             font["italic"] = True
         if "text_align" not in item:
             item["text_align"] = _infer_alignment(matched, ix0, ix1)
+        # The measurement the client cannot make for itself: how much space this
+        # text occupies IN THE SOURCE'S OWN FONT. The client knows what its
+        # substituted font renders; without this it has no second term, so it
+        # cannot tell "the box is right and the font is wide" from "the box is
+        # wrong", and every remedy would be guesswork.
+        item["source_measure"] = {
+            "version": SOURCE_MEASURE_VERSION,
+            "lineCount": len(matched),
+            "measuredWidthPt": round(max((m.get("measured_width") or 0.0) for m in matched), 3),
+            "totalCharCount": sum(int(m.get("char_count") or 0) for m in matched),
+            "lines": [
+                {
+                    "widthPt": round(float(m.get("measured_width") or 0.0), 3),
+                    "charCount": int(m.get("char_count") or 0),
+                    "sizePt": round(float(m.get("size") or 0.0), 2),
+                    # WHERE the line sits, not just how wide it is. Two facts the
+                    # client cannot recover from the joined string and could only
+                    # guess at from the item's box:
+                    #
+                    #  - Distinct baselines say how many lines were STACKED. A
+                    #    "line" here is a line RECORD, and two runs sharing a
+                    #    baseline are two of them — this cover's footer sets
+                    #    `PRIVATE AND CONFIDENTIAL` and `REF 90E5DF34` at
+                    #    opposite ends of one 9pt strip. Counting records reads
+                    #    that as a wrapped paragraph; counting baselines does not.
+                    #  - The horizontal gap between two such runs is what makes
+                    #    them separable at all. Merged into one left-aligned
+                    #    overlay, the right-hand field walks to the middle of
+                    #    the page.
+                    "x0Pt": round(float((m.get("bbox") or [0, 0, 0, 0])[0]), 3),
+                    "x1Pt": round(float((m.get("bbox") or [0, 0, 0, 0])[2]), 3),
+                    "baselineYPt": round(float(m.get("origin_y") or 0.0), 3),
+                    # Per-span extents. Span char-counts recover word boundaries
+                    # for tracked text WHEN the PDF drew one span per word —
+                    # which is a real pattern but not a rule: this cover draws
+                    # each tracked line as a single span, so nothing here helps
+                    # it and `charCount` above is what partitions the join.
+                    # Already bounded by MAX_SPANS_PER_LINE.
+                    "spans": m.get("spans") or [],
+                }
+                for m in matched[:MAX_MEASURED_LINES]
+            ],
+        }
 
 
 def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
@@ -1039,36 +1178,166 @@ def _collect_vectors(fitz_by_page: dict[int, dict]) -> list[dict]:
     return vectors
 
 
+def _font_codepoints(font) -> set[int] | None:
+    """Codepoints the program's cmap actually maps, or None if unreadable."""
+    try:
+        cps = {int(c) for c in font.valid_codepoints() if 0 < int(c) <= 0x10FFFF}
+    except Exception:
+        return None
+    return cps or None
+
+
+def _cmap_coverage_ranges(font) -> list[str] | None:
+    """CSS `unicode-range` segments for the codepoints this font ACTUALLY maps.
+
+    Returns None when the cmap cannot be read. The caller treats None as
+    "coverage unknown" and refuses to embed a SUBSET on it: a face declared
+    without a range claims every codepoint, and a subset that claims codepoints
+    it lacks is precisely the gibberish-glyph / vanished-space failure this
+    exists to prevent.
+    """
+    cps = _font_codepoints(font)
+    return None if cps is None else coverage_ranges(cps, MAX_COVERAGE_RANGES)
+
+
+def _font_tounicode(doc, xref: int) -> dict[int, str]:
+    """The producer's own CID → text statement for this font, or {}."""
+    try:
+        obj = doc.xref_object(xref) or ""
+        match = re.search(r"/ToUnicode\s+(\d+)\s+0\s+R", obj)
+        if not match:
+            return {}
+        raw = doc.xref_stream(int(match.group(1)))
+        if not raw:
+            return {}
+        return parse_tounicode_cmap(raw.decode("latin-1", errors="ignore"))
+    except Exception:
+        return {}
+
+
+def _cid_to_gid_is_identity(doc, xref: int) -> bool:
+    """Is this font's CID numbering the same as its glyph numbering?
+
+    Only then does the ToUnicode CMap invert into a Unicode→glyph mapping. A
+    font whose descendant declares a CIDToGIDMap STREAM renumbers the glyphs,
+    and reading a CID as a glyph index there would draw an unrelated glyph.
+    Absent, the PDF default is Identity — but say so only for a descendant we
+    actually found, so an unreadable object is never assumed benign.
+    """
+    try:
+        obj = doc.xref_object(xref) or ""
+        match = re.search(r"/DescendantFonts\s*\[\s*(\d+)\s+0\s+R", obj)
+        if not match:
+            return False
+        descendant = doc.xref_object(int(match.group(1))) or ""
+        if "/CIDFontType2" not in descendant:
+            # Identity CIDToGIDMap is a TrueType-outline concept; CFF-based
+            # descendants map through the charset instead.
+            return False
+        c2g = re.search(r"/CIDToGIDMap\s*(/\w+|\d+\s+0\s+R)", descendant)
+        return c2g is None or c2g.group(1) == "/Identity"
+    except Exception:
+        return False
+
+
+def _repair_font_cmap(buf: bytes, tounicode: dict[int, str], identity: bool) -> tuple[bytes, set[int], int]:
+    """Add the ToUnicode mapping's missing Unicode→glyph entries to the cmap.
+
+    Returns `(bytes, codepoints, added)`. On any failure the ORIGINAL bytes come
+    back with an empty codepoint set and zero additions — a font we could not
+    safely improve must still embed exactly as well as it did before.
+
+    Only Unicode cmap subtables are touched, and only by adding: see
+    `plan_cmap_repair` for every rule that keeps this from making a page worse.
+    """
+    try:
+        from fontTools.ttLib import TTFont  # noqa: PLC0415 — optional at import time
+
+        tt = TTFont(io.BytesIO(buf), fontNumber=0, lazy=False)
+        cmap_table = tt.get("cmap")
+        glyph_order = tt.getGlyphOrder()
+        if cmap_table is None or not glyph_order:
+            return buf, set(), 0
+        unicode_subtables = [t for t in cmap_table.tables if t.isUnicode()]
+        if not unicode_subtables:
+            return buf, set(), 0
+
+        existing: set[int] = set()
+        for table in unicode_subtables:
+            existing |= set(table.cmap.keys())
+
+        # A subsetter strips outlines from glyphs it does not need. Pointing a
+        # codepoint at one of those draws nothing at all.
+        blank: set[int] = set()
+        glyf = tt.get("glyf")
+        if glyf is not None:
+            for gid, name in enumerate(glyph_order):
+                try:
+                    if glyf[name].numberOfContours == 0:
+                        blank.add(gid)
+                except Exception:
+                    blank.add(gid)
+
+        planned = plan_cmap_repair(tounicode, existing, len(glyph_order), blank, identity)
+        if not planned:
+            return buf, existing, 0
+
+        for table in unicode_subtables:
+            for codepoint, gid in planned.items():
+                if codepoint not in table.cmap:
+                    table.cmap[codepoint] = glyph_order[gid]
+        out = io.BytesIO()
+        tt.save(out)
+        return out.getvalue(), existing | set(planned), len(planned)
+    except Exception as exc:  # pragma: no cover — never fail a parse over a font
+        LOG.warning("cmap repair skipped: %s", exc)
+        return buf, set(), 0
+
+
 def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
     """Document fonts: names (for web-font matching) + embeddable programs.
 
-    Only attaches `base64` for fonts that are safe to reuse as @font-face — i.e.
-    NOT subsetted and carrying a usable unicode cmap. Subset/CID fonts (the common
-    case) are surfaced name-only so the frontend can match them to a web font.
+    Attaches `base64` for every font program that can render as an @font-face —
+    INCLUDING subset fonts, which are the common case. A subset embedded in the
+    PDF contains exactly the glyphs the source text drew with it, which is
+    exactly what re-rendering that text needs. The frontend already places the
+    name-resolved web font AFTER the embedded family in the stack, and both
+    browsers and WeasyPrint fall back PER GLYPH within a stack — so a partial
+    subset plus fallback strictly dominates fallback alone. The previous gate
+    (non-subset only) excluded nearly every real-world font, which is why
+    imported text rendered in substitutes rather than in itself.
+
+    PDFs re-embed the same family as a DIFFERENT subset per page, so per family
+    the candidate that renders most of the document wins: a full font beats any
+    subset, else the larger glyph set. First-seen kept whichever page happened
+    to come first, which could not cover later pages' glyphs.
     """
-    out: list[dict] = []
     if not (_FITZ_AVAILABLE and ENABLE_FITZ_LAYERS):
-        return out
+        return []
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as exc:  # pragma: no cover
         LOG.warning("fitz open (fonts) failed: %s", exc)
-        return out
+        return []
+
+    def _rank(e: dict) -> tuple:
+        return (
+            1 if e.get("_buf") is not None else 0,
+            0 if e.get("subset") else 1,
+            int(e.get("glyphCount") or 0),
+        )
+
+    by_name: dict[str, dict] = {}
+    order: list[str] = []
     try:
         seen_xref: set[int] = set()
-        seen_name: set[str] = set()
-        embedded_font_bytes = 0
         for pno in range(doc.page_count):
-            if len(out) >= MAX_FONTS:
-                break
             try:
                 fonts = doc.load_page(pno).get_fonts(full=True)
             except Exception as exc:  # pragma: no cover
                 LOG.warning("fitz get_fonts page %d failed: %s", pno + 1, exc)
                 continue
             for ent in fonts:
-                if len(out) >= MAX_FONTS:
-                    break
                 xref = ent[0]
                 if xref in seen_xref:
                     continue
@@ -1076,19 +1345,16 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                 ext = str(ent[1] or "").lower()
                 basename = str(ent[3] or "")
                 stripped = re.sub(r"^[A-Z]{6}\+", "", basename)
-                # Dedup by family name — PDFs re-embed the same font (subset per
-                # page) under many xrefs; one entry per name keeps doc.fonts small.
-                if stripped.lower() in seen_name:
+                key = stripped.lower()
+                if key not in by_name and len(by_name) >= MAX_FONTS:
                     continue
-                seen_name.add(stripped.lower())
-                low = stripped.lower()
                 entry: dict[str, Any] = {
                     "basename": stripped,
                     "psName": basename,
                     "ext": ext,
                     "subset": bool(re.match(r"^[A-Z]{6}\+", basename)),
-                    "bold": "bold" in low,
-                    "italic": ("italic" in low) or ("oblique" in low),
+                    "bold": "bold" in key,
+                    "italic": ("italic" in key) or ("oblique" in key),
                 }
                 if ext in ("ttf", "otf"):
                     try:
@@ -1098,26 +1364,108 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                             entry["mimetype"] = "font/ttf" if e2 == "ttf" else "font/otf"
                             font = fitz.Font(fontbuffer=buf)
                             entry["glyphCount"] = int(getattr(font, "glyph_count", 0) or 0)
+                            # D1 — the font's own hhea ascent/descent, in em.
+                            #
+                            # CSS puts a line's first baseline at
+                            # `(lineHeight - (ascent + descent))/2 + ascent`
+                            # below the box, so without these the client cannot
+                            # know where its text will actually sit and places
+                            # every block by its ink top instead — which lands
+                            # ~0.36em low, on every line of every page.
+                            _asc = float(getattr(font, "ascender", 0.0) or 0.0)
+                            _desc = float(getattr(font, "descender", 0.0) or 0.0)
+                            if _asc > 0:
+                                entry["ascender"] = round(_asc, 6)
+                                # hhea descent is negative; ship the magnitude,
+                                # which is what the CSS formula adds.
+                                entry["descender"] = round(abs(_desc), 6)
                             hits = sum(1 for c in "AaEeRrTtOoNnIiSs" if font.has_glyph(ord(c)))
+                            # Telemetry only. As a GATE this heuristic wrongly
+                            # rejected any subset missing the probe letters — an
+                            # uppercase-only heading subset misses every
+                            # lowercase probe yet renders its own text exactly.
                             entry["hasUnicodeCmap"] = hits >= 6
-                            # Embed only full (non-subset) fonts with a real cmap,
-                            # within the size cap, so reconstructed text renders.
-                            can_embed = (
-                                (not entry["subset"])
-                                and entry["hasUnicodeCmap"]
-                                and len(buf) <= MAX_FONT_BYTES
-                                and embedded_font_bytes + len(buf) <= MAX_EMBEDDED_FONT_BYTES
-                            )
-                            if can_embed:
-                                entry["base64"] = base64.b64encode(buf).decode("ascii")
-                                embedded_font_bytes += len(buf)
+                            # A functional cmap maps at least one probe; per-glyph
+                            # stack fallback covers whatever the subset lacks.
+                            if hits >= 1 and len(buf) <= MAX_FONT_BYTES:
+                                # R2 — enumerate the cmap's REAL coverage so the
+                                # client can scope the @font-face with
+                                # unicode-range. The browser then uses this face
+                                # only for codepoints it truly has and falls per
+                                # glyph to the stack fallback for the rest — no
+                                # tofu, no wrong glyphs, no vanishing spaces.
+                                #
+                                # A SUBSET whose coverage cannot be read does not
+                                # embed at all: without a range the browser would
+                                # claim every codepoint for a face that has few,
+                                # which is exactly the gibberish-glyph failure.
+                                # A full font without coverage still embeds
+                                # (real cmap; the pre-subset behaviour).
+                                #
+                                # B5 — before measuring coverage, make the
+                                # glyphs the source actually drew REACHABLE.
+                                # A PDF subset selects glyphs by CID, so its
+                                # cmap need not be complete and Chrome's is not:
+                                # this document's SegoeUI-Semibold has 2467
+                                # glyphs, a 47-codepoint cmap, and a '7' at CID
+                                # 2464 that nothing could address. A web font is
+                                # looked up BY Unicode, so that '7' fell to the
+                                # stack fallback and the footer read `07 / 07`
+                                # in two typefaces. The producer's own ToUnicode
+                                # CMap says which glyph is which; with an
+                                # Identity CIDToGIDMap it inverts into exactly
+                                # the entries the cmap lacks.
+                                repaired, _cps, added = _repair_font_cmap(
+                                    buf,
+                                    _font_tounicode(doc, xref),
+                                    _cid_to_gid_is_identity(doc, xref),
+                                )
+                                # Adopt the repair only if the result is still a
+                                # font fitz can read and still within budget.
+                                # Coverage is then measured on WHAT IS EMBEDDED,
+                                # never on the repair's own bookkeeping: the
+                                # range gate is the last thing standing between
+                                # a partial subset and a page of tofu, and it
+                                # has to be describing the actual bytes.
+                                if added and len(repaired) <= MAX_FONT_BYTES:
+                                    try:
+                                        font = fitz.Font(fontbuffer=repaired)
+                                        buf = repaired
+                                        entry["bytes"] = len(buf)
+                                        entry["cmapRepairedCodepoints"] = added
+                                    except Exception as exc:
+                                        LOG.warning(
+                                            "repaired font unreadable, keeping original: %s", exc,
+                                        )
+                                ranges = _cmap_coverage_ranges(font)
+                                if ranges is not None:
+                                    entry["coverage_ranges"] = ranges
+                                    entry["_buf"] = buf
+                                elif not entry["subset"]:
+                                    entry["_buf"] = buf
                     except Exception as exc:  # pragma: no cover
                         LOG.warning("fitz extract_font xref=%s failed: %s", xref, exc)
-                out.append(entry)
+                prev = by_name.get(key)
+                if prev is None:
+                    by_name[key] = entry
+                    order.append(key)
+                elif _rank(entry) > _rank(prev):
+                    by_name[key] = entry
     finally:
         doc.close()
-    return out
 
+    # Emit in first-seen order; the whole-document byte budget applies to the
+    # winning candidates only, not to every xref encountered along the way.
+    out: list[dict] = []
+    embedded_font_bytes = 0
+    for key in order:
+        entry = by_name[key]
+        buf = entry.pop("_buf", None)
+        if buf is not None and embedded_font_bytes + len(buf) <= MAX_EMBEDDED_FONT_BYTES:
+            entry["base64"] = base64.b64encode(buf).decode("ascii")
+            embedded_font_bytes += len(buf)
+        out.append(entry)
+    return out
 
 # ── J1: explicit runtime selection (legacy | vnext) ─────────────────────────
 # `_do_parse` is the ONE conversion boundary shared by every parse path. Under
@@ -2812,6 +3160,11 @@ def _docling_capabilities() -> dict[str, Any]:
             "global_ocr_fallback": ENABLE_OCR_FALLBACK,
             "lane_aware_ocr": True,
             "ocr_langs": OCR_LANGS,
+            # Language resolution is reported in full: an operator who configures
+            # a code EasyOCR cannot build needs to see that it was dropped here,
+            # rather than discover it as a failed conversion.
+            "ocr_language_resolution": _OCR_LANG_RESOLUTION.as_dict(),
+            "ocr_language_contract_version": OCR_LANGUAGE_CONTRACT_VERSION,
             "bitmap_area_threshold": BITMAP_AREA_THRESHOLD,
         },
         "tables": {

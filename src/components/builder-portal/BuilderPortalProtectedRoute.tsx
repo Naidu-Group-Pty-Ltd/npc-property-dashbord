@@ -31,7 +31,7 @@ export function BuilderPortalProtectedRoute() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="space-y-4 text-center">
           <Loader2 className="mx-auto h-10 w-10 animate-spin text-primary" aria-hidden />
           <p className="text-sm text-muted-foreground">Loading Builder Portal…</p>

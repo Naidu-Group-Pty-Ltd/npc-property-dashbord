@@ -20,11 +20,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Loader2, ShieldCheck, ScanSearch, Gauge, ClipboardList, Play,
   Network, Wallet, ExternalLink, AlertTriangle, History,
-  Scale, CircleDot,
+  Scale, CircleDot, BookMarked,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import {
-  amlVerificationApi, type IdentityCheck, type ScreeningCheck,
+  amlVerificationApi, type IdentityCheck, type ScreeningCheck, type ProviderReadiness,
 } from "@/lib/aml/amlVerificationApi";
 // (IdentityCheck / ScreeningCheck also power the Phase 6 verification linking)
 import {
@@ -32,13 +32,24 @@ import {
   type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { CommandPassportSection } from "@/components/aml/passport/CommandPassportSection";
+import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
   type AmlOwnershipSummary, type AmlProvenanceRow, type AmlQuestionnaireImportReport,
 } from "@/lib/aml/amlEntitiesApi";
-import type { AmlCase, AmlCaseEvent } from "@/lib/aml/amlCasesApi";
+import { amlCasesApi, type AmlCase, type AmlCaseEvent } from "@/lib/aml/amlCasesApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
+import { VerificationSection } from "@/components/aml/VerificationSection";
+import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificationHistoryPanel";
+import {
+  CASE_STAGE_LABELS, CASE_STATUS_LABELS, CLIENT_PORTAL_STATUS_LABELS,
+  FINANCE_PORTAL_STATUS_LABELS, RISK_BADGE_CLASSES, SERVICE_GATE_LABELS,
+  caseStage, clientPortalStatus, financePortalStatus, serviceGateStatus,
+} from "@/lib/aml/caseDimensions";
+import { smartCapitalize } from "@/lib/nameUtils";
+import { cn } from "@/lib/utils";
 
 interface Props {
   caseRow: AmlCase;
@@ -47,78 +58,125 @@ interface Props {
   canInvestigate: boolean;
   onChanged: () => void;
   initialTab?: string;
+  /**
+   * Workspace-dialog mode: the Tabs shell stretches to fill its flex parent,
+   * the tab bar stays fixed and each active tab body becomes the scroll
+   * region — the persistent-header/persistent-nav contract of the centred
+   * case workspace. Default (page embeds) is the original in-flow layout.
+   */
+  fillHeight?: boolean;
 }
 
 const KNOWN_TABS = new Set([
   "overview", "verification", "screening", "risk",
-  "ownership", "finance", "timeline", "audit",
+  "ownership", "finance", "timeline", "audit", "passport",
 ]);
 
-export function CaseWorkspaceTabs({ caseRow, events, canWrite, canInvestigate, onChanged, initialTab }: Props) {
+/** Shared trigger treatment: roomy touch target, never-wrapping label. */
+const TAB_TRIGGER_CLS = "min-h-9 shrink-0 whitespace-nowrap px-3";
+
+export function CaseWorkspaceTabs({
+  caseRow, events, canWrite, canInvestigate, onChanged, initialTab, fillHeight,
+}: Props) {
   const { caseWorkspace: v3Case } = useAmlV3Flags();
   const safeInitial = initialTab && KNOWN_TABS.has(initialTab) ? initialTab : "overview";
+  // Controlled so the Overview dashboard can deep-link into Audit, and so a
+  // case refresh never resets the operator's selected tab.
+  const [tab, setTab] = useState(safeInitial);
+  const contentCls = cn(
+    "mt-4",
+    fillHeight && "mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-4",
+  );
   return (
-    <Tabs defaultValue={safeInitial} className="w-full">
+    <Tabs
+      value={tab}
+      onValueChange={setTab}
+      className={cn("w-full", fillHeight && "flex min-h-0 flex-1 flex-col")}
+    >
 
-      <TabsList className="w-full justify-start overflow-x-auto">
-        <TabsTrigger value="overview">
+      <TabsList className="h-auto w-full shrink-0 justify-start gap-1 overflow-x-auto p-1">
+        <TabsTrigger value="overview" className={TAB_TRIGGER_CLS}>
           <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Overview
         </TabsTrigger>
-        <TabsTrigger value="verification">
+        <TabsTrigger value="verification" className={TAB_TRIGGER_CLS}>
           <ShieldCheck className="h-3.5 w-3.5 mr-1.5" /> Verification
         </TabsTrigger>
-        <TabsTrigger value="screening">
+        <TabsTrigger value="screening" className={TAB_TRIGGER_CLS}>
           <ScanSearch className="h-3.5 w-3.5 mr-1.5" /> Screening
         </TabsTrigger>
-        <TabsTrigger value="risk">
+        <TabsTrigger value="risk" className={TAB_TRIGGER_CLS}>
           <Gauge className="h-3.5 w-3.5 mr-1.5" /> Risk & Decision
         </TabsTrigger>
         {v3Case && (
-          <TabsTrigger value="ownership">
+          <TabsTrigger value="ownership" className={TAB_TRIGGER_CLS}>
             <Network className="h-3.5 w-3.5 mr-1.5" /> Ownership & Control
           </TabsTrigger>
         )}
         {v3Case && canInvestigate && (
-          <TabsTrigger value="finance">
+          <TabsTrigger value="finance" className={TAB_TRIGGER_CLS}>
             <Wallet className="h-3.5 w-3.5 mr-1.5" /> Funding & Finance
           </TabsTrigger>
         )}
         {v3Case && (
-          <TabsTrigger value="timeline">
+          <TabsTrigger value="timeline" className={TAB_TRIGGER_CLS}>
             <History className="h-3.5 w-3.5 mr-1.5" /> Timeline
           </TabsTrigger>
         )}
-        <TabsTrigger value="audit">Audit</TabsTrigger>
+        <TabsTrigger value="passport" className={TAB_TRIGGER_CLS}>
+          <BookMarked className="h-3.5 w-3.5 mr-1.5" /> Compliance Passport
+        </TabsTrigger>
+        <TabsTrigger value="audit" className={TAB_TRIGGER_CLS}>
+          <Scale className="h-3.5 w-3.5 mr-1.5" /> Audit
+        </TabsTrigger>
       </TabsList>
 
-      <TabsContent value="overview" className="mt-4">
-        <OverviewTab caseRow={caseRow} />
+      <TabsContent value="overview" className={contentCls}>
+        <OverviewTab caseRow={caseRow} events={events} onOpenAudit={() => setTab("audit")} />
       </TabsContent>
-      <TabsContent value="verification" className="mt-4">
-        <VerificationTab caseId={caseRow.id} canWrite={canWrite} onChanged={onChanged} />
+      <TabsContent value="verification" className={contentCls}>
+        {/* ONE canonical identity-verification surface, matching the case
+            page. This tab used to mount the legacy `VerificationTab`, which
+            read aml.identity_checks and disabled "Request identity
+            verification" whenever the electronic provider was not
+            ready_live — leaving staff unable to start verification in
+            exactly the case where the manual route is the only option. */}
+        <div className="space-y-4">
+          <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={onChanged} />
+          <LegacyVerificationHistoryPanel caseId={caseRow.id} />
+        </div>
       </TabsContent>
-      <TabsContent value="screening" className="mt-4">
+      <TabsContent value="screening" className={contentCls}>
         <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={onChanged} />
       </TabsContent>
-      <TabsContent value="risk" className="mt-4">
+      <TabsContent value="risk" className={contentCls}>
         <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={onChanged} />
       </TabsContent>
       {v3Case && (
-        <TabsContent value="ownership" className="mt-4">
+        <TabsContent value="ownership" className={contentCls}>
           <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
         </TabsContent>
       )}
       {v3Case && canInvestigate && (
-        <TabsContent value="finance" className="mt-4">
+        <TabsContent value="finance" className={contentCls}>
           <FundingFinanceTab caseId={caseRow.id} />
         </TabsContent>
       )}
       {v3Case && (
-        <TabsContent value="timeline" className="mt-4">
+        <TabsContent value="timeline" className={contentCls}>
           <TimelineTab caseId={caseRow.id} events={events} canInvestigate={canInvestigate} />
         </TabsContent>
       )}
-      <TabsContent value="audit" className="mt-4">
+      <TabsContent value="passport" className={contentCls}>
+        {/* The Compliance Passport must be reachable from THIS surface, not
+            only the V3 workspace: the V3 flags are a separate cutover, and a
+            merged product that is only visible behind an unrelated flag reads
+            as missing. The section itself renders nothing until the server
+            answers under aml_passport_command_view, so with the flag off this
+            tab shows only the sharing controls exactly as V3 does. */}
+        <PassportTabBody caseId={caseRow.id} />
+      </TabsContent>
+
+      <TabsContent value="audit" className={contentCls}>
         <AuditTab events={events} />
       </TabsContent>
     </Tabs>
@@ -127,36 +185,189 @@ export function CaseWorkspaceTabs({ caseRow, events, canWrite, canInvestigate, o
 
 /* -------------------- Overview -------------------- */
 
-function OverviewTab({ caseRow }: { caseRow: AmlCase }) {
+const OVERVIEW_SUBJECT_TYPE_LABELS: Record<string, string> = {
+  individual: "Individual", entity: "Entity / company", trust: "Trust",
+};
+
+const ACTIVATION_TIMING_LABELS: Record<string, string> = {
+  post_agreement_trigger: "At service trigger — agreement in place",
+  conditional_agreement: "Before service — conditional agreement",
+};
+
+const AGREEMENT_STATE_LABELS: Record<string, string> = {
+  operative: "Operative",
+  conditional_executed: "Conditional (executed)",
+};
+
+/**
+ * Overview — a case dashboard rather than a flat label/value list:
+ * summary grid, progress/readiness tiles, activation record and a recent
+ * activity preview drawn from the already-loaded events (no extra fetches).
+ */
+function OverviewTab({
+  caseRow, events, onOpenAudit,
+}: { caseRow: AmlCase; events: AmlCaseEvent[]; onOpenAudit?: () => void }) {
   const activation = (caseRow as any)?.metadata?.activation;
+  const stage = caseStage(caseRow);
+  const gate = serviceGateStatus(caseRow);
+  const portal = clientPortalStatus(caseRow);
+  const finance = financePortalStatus(caseRow);
+  const recent = events.slice(0, 4);
+
   return (
-    <Card>
-      <CardHeader><CardTitle className="text-sm">Case snapshot</CardTitle></CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        <Row k="Reference" v={caseRow.case_reference} />
-        <Row k="Subject" v={`${caseRow.subject_display_name} (${caseRow.subject_type})`} />
-        <Row k="Status" v={caseRow.status} />
-        <Row k="Risk" v={caseRow.risk_rating ?? "unrated"} />
-        <Row k="Opened" v={new Date(caseRow.opened_at).toLocaleString()} />
-        {activation ? (
-          <>
-            <div className="pt-2 text-xs font-semibold text-muted-foreground uppercase">
-              Activation
-            </div>
-            <Row k="Model" v={`Model ${activation.model}`} />
-            <Row k="Event" v={activation.event ?? "—"} />
-            {activation.program_version && (
-              <Row k="Program version" v={activation.program_version} />
+    <div className="space-y-5">
+      {/* Case summary */}
+      <section aria-label="Case summary" className="space-y-2.5">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          Case summary
+        </h3>
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+          <InfoCell label="Reference" value={caseRow.case_reference} mono />
+          <InfoCell label="Subject" value={smartCapitalize(caseRow.subject_display_name)} />
+          <InfoCell
+            label="Subject type"
+            value={OVERVIEW_SUBJECT_TYPE_LABELS[caseRow.subject_type] ?? caseRow.subject_type}
+          />
+          <InfoCell label="Status" value={CASE_STATUS_LABELS[caseRow.status] ?? caseRow.status} />
+          <InfoCell
+            label="Risk rating"
+            value={caseRow.risk_rating ? (
+              <Badge variant="outline" className={RISK_BADGE_CLASSES[caseRow.risk_rating]}>
+                {caseRow.risk_rating.toUpperCase()}
+              </Badge>
+            ) : (
+              <span className="text-muted-foreground">Unrated</span>
             )}
-            <Row k="Confirmed by" v={activation.activated_by_email ?? "—"} />
-          </>
+          />
+          <InfoCell label="Opened" value={new Date(caseRow.opened_at).toLocaleString()} />
+          <InfoCell label="Last updated" value={new Date(caseRow.updated_at).toLocaleString()} />
+          {caseRow.assigned_analyst_id && (
+            <InfoCell label="Assigned analyst" value={caseRow.assigned_analyst_id} mono truncate />
+          )}
+          {caseRow.assigned_mlro_id && (
+            <InfoCell label="Assigned MLRO" value={caseRow.assigned_mlro_id} mono truncate />
+          )}
+        </div>
+      </section>
+
+      {/* Progress & readiness */}
+      <section aria-label="Progress and readiness" className="space-y-2.5">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          Progress &amp; readiness
+        </h3>
+        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+          <InfoCell label="Case stage" value={CASE_STAGE_LABELS[stage]} />
+          <InfoCell label="Client onboarding" value={CLIENT_PORTAL_STATUS_LABELS[portal]} />
+          <InfoCell label="Finance portal" value={FINANCE_PORTAL_STATUS_LABELS[finance]} />
+          <InfoCell
+            label="Service gate"
+            value={
+              <span
+                className={cn(
+                  ["approved", "approved_with_controls"].includes(gate)
+                    ? "text-success"
+                    : ["locked", "terminated"].includes(gate)
+                      ? "text-destructive"
+                      : undefined,
+                )}
+              >
+                {SERVICE_GATE_LABELS[gate]}
+              </span>
+            }
+          />
+        </div>
+      </section>
+
+      {/* Activation record */}
+      <section aria-label="Activation" className="space-y-2.5">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          Activation
+        </h3>
+        {activation ? (
+          <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+            <InfoCell label="Activation model" value={`Model ${activation.model}`} />
+            <InfoCell label="Activation event" value={activation.event ?? "—"} />
+            <InfoCell label="Confirmed by" value={activation.activated_by_email ?? "—"} truncate />
+            <InfoCell
+              label="Activated at"
+              value={activation.activated_at ? new Date(activation.activated_at).toLocaleString() : "—"}
+            />
+            {caseRow.activation_timing && (
+              <InfoCell
+                label="Activation timing"
+                value={ACTIVATION_TIMING_LABELS[caseRow.activation_timing] ?? caseRow.activation_timing}
+              />
+            )}
+            {caseRow.agreement_state && (
+              <InfoCell
+                label="Agreement state"
+                value={AGREEMENT_STATE_LABELS[caseRow.agreement_state] ?? caseRow.agreement_state}
+              />
+            )}
+            {activation.program_version && (
+              <InfoCell label="Program version" value={activation.program_version} mono />
+            )}
+          </div>
         ) : (
-          <p className="text-xs text-muted-foreground pt-2">
+          <p className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-sm text-muted-foreground">
             No activation metadata recorded (legacy case).
           </p>
         )}
-      </CardContent>
-    </Card>
+      </section>
+
+      {/* Recent activity — already-loaded events, no duplicate fetch. */}
+      <section aria-label="Recent activity" className="space-y-2.5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Recent activity
+          </h3>
+          {onOpenAudit && events.length > 0 && (
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onOpenAudit}>
+              View full audit trail
+            </Button>
+          )}
+        </div>
+        {recent.length === 0 ? (
+          <p className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-sm text-muted-foreground">
+            No events recorded yet.
+          </p>
+        ) : (
+          <ol className="space-y-2">
+            {recent.map((ev) => (
+              <li key={ev.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+                <div className="text-xs text-muted-foreground">
+                  {new Date(ev.created_at).toLocaleString()} · {ev.category.replace(/_/g, " ")}
+                </div>
+                <div className="break-words text-sm">{ev.summary}</div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/** Compact information cell for the Overview grids. */
+function InfoCell({
+  label, value, mono, truncate,
+}: { label: string; value: React.ReactNode; mono?: boolean; truncate?: boolean }) {
+  return (
+    <div className="min-w-0 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "mt-0.5 text-sm leading-snug",
+          mono && "font-mono text-[13px]",
+          truncate ? "truncate" : "break-words",
+        )}
+        title={truncate && typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -171,63 +382,35 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 
 /* -------------------- Verification -------------------- */
 
-export function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
-  const [items, setItems] = useState<IdentityCheck[] | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const load = async () => {
-    try { setItems((await amlVerificationApi.listIdv(caseId)).identity_checks); }
-    catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
-
-  const runIdv = async () => {
-    setBusy(true);
-    try {
-      await amlVerificationApi.initiateIdv(caseId);
-      toast({ title: "IDV initiated" });
-      await load(); onChanged();
-    } catch (e: any) { toast({ title: "Failed", description: e.message, variant: "destructive" }); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="text-sm">Identity verification</CardTitle>
-        {canWrite && (
-          <Button size="sm" onClick={runIdv} disabled={busy}>
-            {busy ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Play className="h-3.5 w-3.5 mr-1.5" />}
-            Initiate IDV
-          </Button>
-        )}
-      </CardHeader>
-      <CardContent>
-        {items === null ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No IDV checks yet for this case.</p>
-        ) : (
-          <ul className="space-y-2">
-            {items.map((r) => (
-              <li key={r.id} className="flex items-center justify-between text-sm border-b border-border/50 py-2">
-                <div>
-                  <div className="font-medium">{r.subject_label}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {r.provider} · {r.method} · {new Date(r.requested_at).toLocaleString()}
-                  </div>
-                </div>
-                <Badge variant="outline">{r.status}</Badge>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
+/** Safe presentation for a verification row. A generic "failed" badge told
+ * staff nothing about whether the result was real, simulated, or an outage —
+ * classify from the row's evidential fields instead. */
+function identityCheckPresentation(r: IdentityCheck): { label: string; tone: "default" | "secondary" | "destructive" | "outline" } {
+  const simulated = r.execution_mode === "simulation" || r.provider === "simulator";
+  const category = r.result_payload?.error_category;
+  if (category === "provider_unavailable") {
+    return { label: "Provider unavailable — attempt not consumed", tone: "secondary" };
+  }
+  if (simulated) return { label: "Test simulation — not compliance evidence", tone: "secondary" };
+  switch (r.status) {
+    case "verified": return { label: "Live verification passed", tone: "default" };
+    case "manual_review": return { label: "Manual review required", tone: "outline" };
+    case "failed": return { label: "Failed — customer action required", tone: "destructive" };
+    case "cancelled": return { label: "Cancelled", tone: "outline" };
+    case "expired": return { label: "Expired", tone: "outline" };
+    case "pending":
+    case "in_progress":
+    default: return { label: "In progress", tone: "outline" };
+  }
 }
 
-/* -------------------- Screening -------------------- */
+/* The legacy `VerificationTab` lived here. It read aml.identity_checks and
+   gated "Request identity verification" on provider readiness, so staff could
+   not start verification when the electronic provider was unavailable — the
+   one case where the manual document route is the only way forward. The
+   canonical `VerificationSection` (aml.verification_checks) is now mounted in
+   its place; aml.identity_checks survives read-only in
+   `LegacyVerificationHistoryPanel`. */
 
 export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [items, setItems] = useState<ScreeningCheck[] | null>(null);
@@ -237,7 +420,7 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
     try { setItems((await amlVerificationApi.listScreening(caseId)).screening_checks); }
     catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
+  useEffect(() => { load();   }, [caseId]);
 
   const runScreen = async () => {
     setBusy(true);
@@ -340,7 +523,7 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
       setRecalc(rc.recalc ?? null);
     } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
+  useEffect(() => { load();   }, [caseId]);
 
   const evaluate = async () => {
     setBusy(true);
@@ -1562,3 +1745,13 @@ export function TimelineTab({
   );
 }
 
+/** The Passport tab: the resulting record, then the sharing controls. */
+function PassportTabBody({ caseId }: { caseId: string }) {
+  const access = useAmlAccess();
+  return (
+    <div className="space-y-4">
+      <CommandPassportSection caseId={caseId} />
+      <ReliancePassportSection caseId={caseId} isMlro={access.isMlro} />
+    </div>
+  );
+}

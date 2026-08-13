@@ -1,8 +1,12 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { canAccessClient } from '../_shared/clientAccess.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { computeDtiDenominator } from '../_shared/dtiDenominator.ts';
+// The same humanising the report normaliser applies on the way *out*, applied
+// here on the way in — so `vehicle_loan` never reaches a client's audit row.
+import { titleCase } from '../_shared/reports/borrowingCapacity/normalise.pure.ts';
 import type { ScenarioIncomeComponent } from '../_shared/lenderShadingProfiles.ts';
 import {
   aggregateDeltas,
@@ -14,6 +18,7 @@ import {
   type AcquisitionContext as SharedAcquisitionContext,
 } from '../_shared/scenarioDeltaEngine.ts';
 import { reconcileSegments } from './segments/reconcile.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 
 
@@ -285,6 +290,7 @@ function fmtPercentServer(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+
 function generateExplanationServer(p: {
   borrowingCapacity: number; monthlySurplus: number; serviceabilityBand: string;
   stressTestedCapacity: number; dtiRatio: number; assessmentRate: number;
@@ -509,7 +515,7 @@ function assessPropertyContribution(
 
   if (propertyType === 'rental') {
     const monthlyRentPaid = property.monthly_rental_income || 0;
-    auditNotes.push(`Rental: client pays $${monthlyRentPaid}/mo`);
+    auditNotes.push(`Rental: client pays ${fmtCurrencyServer(monthlyRentPaid)}/mo`);
     return {
       propertyId: property.id || '',
       address, propertyType,
@@ -1028,10 +1034,16 @@ function calculateLiabilityBreakdown(liabilities: any[], properties: any[], annu
         monthlyServicing,
       });
     } else {
-      // All other loans: Use actual repayment
+      // All other loans: Use actual repayment.
+      //
+      // `type` becomes the *label* of an audit row a client reads, and the three
+      // branches above all write a display name. This one passed the raw column
+      // through, so the audit trail printed `vehicle_loan` and `personal_loan`
+      // five pages after the liabilities table had correctly called the same two
+      // things "Vehicle Loan" and "Personal Loan".
       monthlyServicing = liability.monthly_repayment || 0;
       breakdown.push({
-        type: liability.liability_type || 'Other Loan',
+        type: titleCase(String(liability.liability_type ?? '')) || 'Other Loan',
         balance: liability.current_balance || 0,
         monthlyServicing,
       });
@@ -1226,7 +1238,7 @@ function calculateBorrowingCapacity(params: {
     warnings.push("Borrowing capacity constrained by existing commitments");
   }
   if (isConservative && monthlySurplus < conservativeConfig.minimumSurplusFloor) {
-    warnings.push(`Surplus below conservative minimum floor of $${conservativeConfig.minimumSurplusFloor}/mo`);
+    warnings.push(`Surplus below conservative minimum floor of ${fmtCurrencyServer(conservativeConfig.minimumSurplusFloor)}/mo`);
   }
   
   return {
@@ -1369,6 +1381,18 @@ Deno.serve(async (req) => {
       console.log(`[calculate-borrowing-capacity] Auth failed for client ${clientId}:`, authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
+
+    // Named once, as in get-client-data and manage-bc-scenarios. The authz gate
+    // (scripts/security/check-client-portfolio-authz.mjs) asserts on the exact
+    // access-check call below, so the actor shape is not inlined at the call
+    // site. Do not restate that call in a comment either — a comment satisfies
+    // the gate's literal match just as well as the code does, which is how this
+    // very line first defeated its own negative test.
+    const actor = { userId, authMethod };
+
+    // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, actor, 'borrowing-capacity');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log(`[calculate-borrowing-capacity] Authenticated user: ${userId}`);
 
     if (!clientId) {
@@ -1380,7 +1404,7 @@ Deno.serve(async (req) => {
 
     // The service-role client bypasses RLS, so bind this request to a client
     // the authenticated actor owns or is assigned to before reading any data.
-    if (!await canAccessClient(supabase, { userId, authMethod }, clientId)) {
+    if (!await canAccessClient(supabase, actor, clientId)) {
       return new Response(
         JSON.stringify({ success: false, error: "Client not found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1654,7 +1678,7 @@ Deno.serve(async (req) => {
 
     // Expense audit
     audit.add('expense', expenseMethodUsed === 'hem' ? 'hem_benchmark_applied' : expenseMethodUsed === 'declared_higher' ? 'declared_expenses_used' : 'override_applied',
-      'Living Expenses', totalDeclaredExpenses, livingExpenses, `Method: ${expenseMethodUsed}`, `HEM $${hemBenchmark}/mo vs Declared $${totalDeclaredExpenses}/mo`);
+      'Living Expenses', totalDeclaredExpenses, livingExpenses, `Method: ${titleCase(expenseMethodUsed)}`, `HEM ${fmtCurrencyServer(hemBenchmark)}/mo vs Declared ${fmtCurrencyServer(totalDeclaredExpenses)}/mo`);
     for (const ncf of negativeCashFlowBreakdown) {
       audit.add('property', 'negative_cf_layered', `Neg CF: ${ncf.address}`, 0, ncf.monthlyCashflow, 'Layered on expenses');
     }
@@ -1709,18 +1733,18 @@ Deno.serve(async (req) => {
       { key: "Buffer Rate", value: `${bufferRate}%` },
       { key: "Assessment Rate", value: `${result.assessmentRate}%` },
       { key: "Loan Term", value: `${loanTermYears} years` },
-      { key: "HEM Benchmark", value: `$${hemBenchmark.toLocaleString()}/mo (income-scaled)` },
+      { key: "HEM Benchmark", value: `${fmtCurrencyServer(hemBenchmark)}/mo (income-scaled)` },
       { key: "Repayment Type", value: "Principal & Interest" },
       { key: "Rental Expense Ratio", value: `${activePolicy.propertyPolicy.rentalExpenseRatio * 100}%` },
       { key: "Existing Loan Stress Rate", value: `P&I at ${(effectiveLoanAssessmentRate * 100).toFixed(2)}% (max of policy ${(activePolicy.propertyPolicy.loanAssessmentRate * 100).toFixed(1)}% and assessment rate ${(userAssessmentRateDecimal * 100).toFixed(2)}%)` },
       { key: "Tax Year", value: `${activePolicy.tax.taxYear} (incl. ${(activePolicy.tax.medicareLevyRate * 100).toFixed(0)}% Medicare Levy)` },
-      { key: "Assessable Income (Shaded)", value: `$${effectiveShadedIncome.toLocaleString()}/yr` },
-      { key: "DTI Denominator (APS 220)", value: `$${Math.round(effectiveDtiAdjustedAnnualIncome).toLocaleString()}/yr` },
-      { key: "After-Tax Income Used", value: `$${taxBreakdown.afterTaxIncome.toLocaleString()}/yr (on shaded income)` },
+      { key: "Assessable Income (Shaded)", value: `${fmtCurrencyServer(effectiveShadedIncome)}/yr` },
+      { key: "DTI Denominator (APS 220)", value: `${fmtCurrencyServer(effectiveDtiAdjustedAnnualIncome)}/yr` },
+      { key: "After-Tax Income Used", value: `${fmtCurrencyServer(taxBreakdown.afterTaxIncome)}/yr (on shaded income)` },
       { key: "Marginal Tax Rate", value: `${(taxBreakdown.marginalTaxRate * 100).toFixed(0)}%` },
       { key: "Stress Test Increment", value: `+${activePolicy.loanDefaults.stressTestIncrement}%` },
       { key: "Credit Card Servicing", value: `${(activePolicy.liabilityRules.creditCardLimitRate * 100).toFixed(1)}% of limit` },
-      { key: "Conservative Surplus Floor", value: `$${activePolicy.conservativeMode.minimumSurplusFloor}/mo (zeroed below)` },
+      { key: "Conservative Surplus Floor", value: `${fmtCurrencyServer(activePolicy.conservativeMode.minimumSurplusFloor)}/mo (zeroed below)` },
     ];
 
     const propertyContributionData = {
@@ -2037,7 +2061,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error("[calculate-borrowing-capacity] Error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'calculate-borrowing-capacity'), success: false }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

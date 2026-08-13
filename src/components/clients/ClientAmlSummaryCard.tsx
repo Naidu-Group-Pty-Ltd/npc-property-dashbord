@@ -1,16 +1,20 @@
 /**
  * Persistent AML/CTF summary on the master client record (directive §13,
- * tri-portal Phase 4). Extends the activation entry point into a standing
- * status card: before activation it explains eligibility and offers Start
- * Client Compliance; after activation it shows stage, portal status, service
- * gate, progress and outstanding items with a deep link into the case.
+ * tri-portal Phase 4). Standing status card: before activation it explains
+ * eligibility and offers the direct activation action; after activation it
+ * shows stage, portal status, service gate, progress and outstanding items
+ * with a deep link into the case.
  *
  * Deliberately a summary — detailed AML processing stays in the dedicated
  * case workspace (§13.3). Renders nothing for users without AML access or
- * while the client-record integration flag is off.
+ * while the module flag is off.
+ *
+ * Activation hands off by ROUTE (`/admin/aml/cases?activateClientId=<id>`)
+ * so there is exactly one activation dialog in the product, the AML Cases
+ * page loads the client server-side, and the URL carries only the client ID.
  */
-import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +23,6 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
-import { ActivateClientDialog } from "@/components/aml/ActivateClientDialog";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import {
   CASE_STAGE_LABELS, CLIENT_PORTAL_STATUS_LABELS, caseStage, clientPortalStatus,
@@ -41,48 +44,28 @@ const GATE_LABELS: Record<string, string> = {
 interface Props {
   clientId: string;
   clientName?: string;
+  /** Real `clients.is_active` — drives the activation label only. */
+  isActive?: boolean | null;
 }
 
-export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
+export function ClientAmlSummaryCard({ clientId, clientName, isActive }: Props) {
   const access = useAmlAccess();
-  const { startClientCompliance, caseWorkspace, loading: flagsLoading } = useAmlV3Flags();
+  const { caseWorkspace } = useAmlV3Flags();
   const navigate = useNavigate();
 
-  const [summary, setSummary] = useState<{
-    caseRow: AmlCase | null;
-    hasOpenCase: boolean;
-    progress: { completed: number; total: number } | null;
-    openRequests: number;
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [activateOpen, setActivateOpen] = useState(false);
-
+  // The direct activation action is available whenever the AML module is
+  // enabled and the user holds an AML write role. It is deliberately not
+  // hidden behind the separate `startClientCompliance` rollout flag — the
+  // server enforces the same permission checks regardless.
   const eligible = Boolean(
-    !access.loading && !flagsLoading &&
-    access.flagEnabled && access.hasAnyRole && startClientCompliance && clientId,
+    !access.loading && access.flagEnabled && access.hasAnyRole && clientId,
   );
 
-  const load = useCallback(async () => {
-    if (!clientId) return;
-    setLoading(true);
-    try {
-      const res = await amlCasesApi.clientSummary(clientId);
-      setSummary({
-        caseRow: res.case,
-        hasOpenCase: res.has_open_case,
-        progress: res.requirement_progress ?? null,
-        openRequests: res.open_client_requests ?? 0,
-      });
-    } catch {
-      setSummary(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [clientId]);
-
-  useEffect(() => {
-    if (eligible) void load();
-  }, [eligible, load]);
+  const { data, isLoading } = useQuery({
+    queryKey: ["aml-client-summary", clientId],
+    queryFn: () => amlCasesApi.clientSummary(clientId),
+    enabled: eligible,
+  });
 
   if (!eligible) return null;
 
@@ -91,7 +74,15 @@ export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
     else navigate(`/admin/aml/cases?open=${c.id}`);
   };
 
-  const c = summary?.caseRow ?? null;
+  // Route handoff carries the client ID only — never a name or email.
+  const startActivation = () => navigate(`/admin/aml/cases?activateClientId=${clientId}`);
+
+  const activateLabel = isActive === true ? "Start AML/CTF" : "Activate for AML/CTF";
+
+  const c = data?.case ?? null;
+  const hasOpenCase = Boolean(data?.has_open_case);
+  const progress = data?.requirement_progress ?? null;
+  const openRequests = data?.open_client_requests ?? 0;
 
   return (
     <Card>
@@ -107,18 +98,19 @@ export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {loading || summary === null ? (
+        {isLoading || data === undefined ? (
           <Skeleton className="h-16 w-full" />
         ) : !c ? (
           <>
             <p className="text-sm text-muted-foreground">
-              Compliance has not started. Activating opens a case, invites the client into
-              their secure portal and starts identity checks — it needs a human-confirmed
+              Compliance has not started{clientName ? ` for ${clientName}` : ""}.
+              Activating opens a case, invites the client into their secure
+              portal and starts identity checks — it needs a human-confirmed
               activation event.
             </p>
             {access.canWrite && (
-              <Button size="sm" onClick={() => setActivateOpen(true)}>
-                <ShieldCheck className="mr-2 h-4 w-4" /> Start Client Compliance
+              <Button size="sm" onClick={startActivation}>
+                <ShieldCheck className="mr-2 h-4 w-4" /> {activateLabel}
               </Button>
             )}
           </>
@@ -143,14 +135,14 @@ export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
               </Badge>
             </div>
 
-            {summary.progress && summary.progress.total > 0 && (
+            {progress && progress.total > 0 && (
               <div className="space-y-1">
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>Required documents</span>
-                  <span>{summary.progress.completed} of {summary.progress.total}</span>
+                  <span>{progress.completed} of {progress.total}</span>
                 </div>
                 <Progress
-                  value={(summary.progress.completed / summary.progress.total) * 100}
+                  value={(progress.completed / progress.total) * 100}
                   aria-label="Required document progress"
                 />
               </div>
@@ -159,8 +151,8 @@ export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
               <span>
                 {c.case_reference}
-                {summary.openRequests > 0
-                  ? ` · ${summary.openRequests} open request${summary.openRequests === 1 ? "" : "s"} with the client`
+                {openRequests > 0
+                  ? ` · ${openRequests} open request${openRequests === 1 ? "" : "s"} with the client`
                   : ""}
               </span>
               <span>Updated {new Date(c.updated_at).toLocaleDateString()}</span>
@@ -171,9 +163,10 @@ export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
                 Open AML case <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
               {/* Duplicate prevention: a new activation is offered only when no
-                  open case exists (cleared/blocked/closed cases don't block). */}
-              {!summary.hasOpenCase && access.canWrite && (
-                <Button size="sm" variant="outline" onClick={() => setActivateOpen(true)}>
+                  open case exists (cleared/blocked/closed cases don't block —
+                  the backend permits a fresh case for those). */}
+              {!hasOpenCase && access.canWrite && (
+                <Button size="sm" variant="outline" onClick={startActivation}>
                   <ShieldCheck className="mr-2 h-4 w-4" /> Start new compliance case
                 </Button>
               )}
@@ -181,18 +174,6 @@ export function ClientAmlSummaryCard({ clientId, clientName }: Props) {
           </>
         )}
       </CardContent>
-
-      <ActivateClientDialog
-        open={activateOpen}
-        onOpenChange={setActivateOpen}
-        clientId={clientId}
-        clientName={clientName}
-        onActivated={(created) => {
-          setActivateOpen(false);
-          void load();
-          openCase(created);
-        }}
-      />
     </Card>
   );
 }

@@ -22,6 +22,7 @@ import {
   MessageSquare,
   Paperclip,
   Pencil,
+  PictureInPicture2,
   Plus,
   Search,
   Send,
@@ -29,6 +30,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -57,7 +59,9 @@ import {
   onInternalTyping,
   publishInternalMessage,
   publishInternalTyping,
+  requestPopOutInternalThread,
 } from '@/lib/internalMessagingBus';
+
 
 
 export interface InternalStaffMember {
@@ -436,6 +440,26 @@ export function InternalMessagesPanel({
     }
   };
 
+  /**
+   * Detach a conversation into the free-floating pop-out chat window so it can
+   * be dragged, resized and used anywhere in the Command Centre while the
+   * Aurixa widget itself is closed. Direct, group and announcement threads are
+   * all supported. The panel falls back to the thread list so the same
+   * conversation is never rendered twice.
+   */
+  const popOut = (thread: InternalThread) => {
+    requestPopOutInternalThread({
+      thread_id: thread.id,
+      kind: thread.kind,
+      title: thread.title || thread.display_title,
+    });
+    setView('threads');
+    setActiveThread(null);
+    setRenaming(false);
+    toast.success('Chat popped out — drag or resize it anywhere');
+  };
+
+
   const commitRename = async () => {
     if (!activeThread) return;
     const title = renameDraft.trim();
@@ -547,6 +571,17 @@ export function InternalMessagesPanel({
             </Button>
           )}
           <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 shrink-0 text-primary hover:text-primary"
+            aria-label="Pop out chat into a floating window"
+            title="Pop out chat"
+            onClick={() => popOut(activeThread)}
+          >
+            <PictureInPicture2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+
             size="icon"
             variant="ghost"
             className="h-7 w-7 shrink-0"
@@ -969,6 +1004,17 @@ export function InternalMessagesPanel({
                   )}
                 </button>
                 <Button
+                  size="icon"
+                  variant="ghost"
+                  className="mt-1.5 h-7 w-7 shrink-0 text-primary opacity-60 hover:opacity-100 hover:text-primary"
+                  aria-label={`Pop out ${t.display_title} into a floating chat`}
+                  title="Pop out chat"
+                  onClick={() => popOut(t)}
+                >
+                  <PictureInPicture2 className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+
                   size="icon"
                   variant="ghost"
                   className="mt-1.5 h-7 w-7 shrink-0 opacity-60 hover:opacity-100"

@@ -1,0 +1,114 @@
+/**
+ * The persistent case header.
+ *
+ * One line of identity at the top of every section, so an analyst never has
+ * to scroll to remember which case they are in. It answers three of the ten
+ * questions on its own — what am I looking at, where is it, and what is the
+ * risk and gate position — and hands the fourth (what needs attention) to
+ * the phase rail immediately beneath it.
+ *
+ * Restraint is the point: one strong name, quiet metadata, and exactly two
+ * badges. Risk and the service gate are the only two dimensions that earn a
+ * badge here, and they are visually separated so that neither reads as
+ * causing the other.
+ */
+import { ArrowLeft, User } from "lucide-react";
+import { Link } from "react-router-dom";
+
+import { Button } from "@/components/ui/button";
+import { displayRelative } from "@/lib/aml/displayDate";
+import { cn } from "@/lib/utils";
+import type { AmlMacroProgress as MacroProgress } from "@/lib/aml/workspaceViewModel";
+import type { AmlCase } from "@/lib/aml/amlCasesApi";
+
+import { AmlGateBadge, AmlRiskBadge } from "@/components/aml/primitives";
+import { AmlMacroProgress } from "./AmlMacroProgress";
+import { serviceGateStatus } from "@/lib/aml/caseDimensions";
+
+const SUBJECT_TYPE_LABELS: Record<string, string> = {
+  individual: "Individual",
+  entity: "Entity / company",
+  trust: "Trust",
+};
+
+export interface AmlWorkspaceHeaderProps {
+  caseRow: AmlCase;
+  macro: MacroProgress;
+  /** Property or matter line, when the case has one loaded. */
+  matterLabel?: string | null;
+  className?: string;
+}
+
+export function AmlWorkspaceHeader({
+  caseRow,
+  macro,
+  matterLabel,
+  className,
+}: AmlWorkspaceHeaderProps) {
+  const gate = serviceGateStatus(caseRow);
+  const subjectType = SUBJECT_TYPE_LABELS[caseRow.subject_type] ?? caseRow.subject_type;
+
+  return (
+    <header className={cn("space-y-3", className)}>
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        {/* `basis-72` gives the row somewhere to wrap. Without it the badge
+            group — which must not shrink — squeezed the whole identity
+            block to four pixels on a phone and the case name disappeared. */}
+        <div className="min-w-0 flex-1 basis-72">
+          <div className="flex items-center gap-1.5">
+            <Button asChild variant="ghost" size="sm" className="-ml-2 h-8 w-8 shrink-0 p-0">
+              <Link to="/admin/aml/cases" aria-label="Back to the case register">
+                <ArrowLeft aria-hidden className="h-4 w-4" />
+              </Link>
+            </Button>
+            <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight sm:text-2xl">
+              {caseRow.subject_display_name}
+            </h1>
+          </div>
+
+          {matterLabel && (
+            <p className="mt-0.5 truncate pl-8 text-sm text-foreground/80" title={matterLabel}>
+              {matterLabel}
+            </p>
+          )}
+
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 pl-8 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground/70">{caseRow.case_reference}</span>
+            <span aria-hidden>·</span>
+            <span>{subjectType}</span>
+            <span aria-hidden>·</span>
+            <span>Updated {displayRelative(caseRow.updated_at)}</span>
+            {/* Ownership of the work, without leaking internal identifiers. */}
+            <span aria-hidden>·</span>
+            <span>{caseRow.assigned_analyst_id ? "Analyst assigned" : "No analyst assigned"}</span>
+            {caseRow.assigned_mlro_id && (
+              <>
+                <span aria-hidden>·</span>
+                <span>MLRO assigned</span>
+              </>
+            )}
+            {caseRow.client_id && (
+              <>
+                <span aria-hidden>·</span>
+                <Link
+                  className="inline-flex items-center gap-1 underline-offset-2 hover:underline"
+                  to={`/clients?clientId=${caseRow.client_id}`}
+                >
+                  <User aria-hidden className="h-3 w-3" /> Client record
+                </Link>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Two badges, kept apart: an assessment and a decision, not a chain. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2" aria-label="Case position">
+          <AmlRiskBadge risk={caseRow.risk_rating} prefix />
+          <AmlGateBadge gate={gate} prefix />
+        </div>
+      </div>
+
+      <AmlMacroProgress macro={macro} />
+    </header>
+  );
+}

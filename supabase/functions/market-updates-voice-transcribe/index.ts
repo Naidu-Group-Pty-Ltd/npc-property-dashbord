@@ -2,6 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { verifyHuman } from '../_shared/auth_v2.ts';
 import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, getTrustedClientIp, securityJsonError } from '../_shared/requestSecurity.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token', 'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const MIME_TO_EXT: Record<string, string> = { 'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg' };
@@ -14,7 +16,7 @@ const jsonError = (status: 400 | 401 | 403 | 413 | 429 | 503, code: string, corr
   return new Response(response.body, { status: response.status, headers: { ...corsHeaders, ...Object.fromEntries(response.headers) } });
 };
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return jsonError(400, 'invalid_request');
   const parsed = await enforceJsonBodyLimit<{ audio_base64?: unknown; mime_type?: unknown }>(req, MAX_REQUEST_BYTES);
@@ -42,7 +44,7 @@ Deno.serve(async (req) => {
   try {
     for (const model of ['openai/gpt-4o-mini-transcribe', 'openai/gpt-4o-transcribe'].slice(0, MAX_ATTEMPTS)) {
       const form = new FormData(); form.append('model', model); form.append('file', new Blob([bytes], { type: mimeType }), `recording.${ext}`);
-      const upstream = await fetch('https://ai.gateway.lovable.dev/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: controller.signal });
+      const upstream = await meteredFetch('https://ai.gateway.lovable.dev/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: controller.signal });
       if (upstream.ok) { const data = await upstream.json().catch(() => ({})); return new Response(JSON.stringify({ transcript: String(data?.text ?? '').trim() }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }); }
       console.warn('[market-voice] provider rejected request', { status: upstream.status, correlationId: auth.correlationId, model });
       if (![400, 404, 422].includes(upstream.status)) break;
@@ -50,4 +52,12 @@ Deno.serve(async (req) => {
     return jsonError(503, 'transcription_unavailable', auth.correlationId);
   } catch (error) { console.warn('[market-voice] provider failure', { correlationId: auth.correlationId, error: error instanceof Error ? error.name : 'unknown' }); return jsonError(503, 'transcription_unavailable', auth.correlationId); }
   finally { clearTimeout(timeout); }
-});
+};
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. This function is browser-reachable and its callers
+// send `credentials: 'include'`, and the Fetch spec makes the browser reject a
+// credentialed response carrying `Access-Control-Allow-Origin: *` — opaquely,
+// as "Failed to fetch". See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
+

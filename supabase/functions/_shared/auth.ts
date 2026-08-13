@@ -461,6 +461,15 @@ export const CORS_ALLOWED_REQUEST_HEADERS = [
   'x-portal-request',
   'x-session-id',
   'x-generation-run-id',
+  // PostgREST headers sent by supabase-js when a query is routed through the
+  // `authenticated-data` gateway. Omitting them failed the CORS preflight, so
+  // every gateway read/write surfaced as a bare "Failed to fetch".
+  'prefer',
+  'accept-profile',
+  'content-profile',
+  'range',
+  'range-unit',
+  'x-supabase-api-version',
 ].join(', ');
 
 /**
@@ -477,7 +486,11 @@ export const CORS_EXPOSED_RESPONSE_HEADERS = [
   'x-tokens-reserved',
   'x-tokens-estimated',
   'x-duration-ms',
+  // PostgREST count/pagination metadata; `count: 'exact'` reads this back.
+  'content-range',
+  'content-profile',
 ].join(', ');
+
 
 function parseAllowedOrigins(): string[] {
   const raw = Deno.env.get('ALLOWED_ORIGINS') || '';
@@ -489,7 +502,40 @@ function parseAllowedOrigins(): string[] {
   if (fromEnv.length > 0) {
     return fromEnv;
   }
-  console.warn('[auth.cors] ALLOWED_ORIGINS env var is unset; using legacy fallback origins. Set ALLOWED_ORIGINS to override.');
+
+  // WP-19: unset falls through to LEGACY_FALLBACK_ORIGINS. Two things are wrong
+  // with that and only one of them can be fixed from here.
+  //
+  // The problem is config hygiene, not exposure. The fallback is two exact,
+  // legitimate production hostnames — an allowlist, not a wildcard — so nothing
+  // is over-trusted today. What is wrong is that a missing variable is invisible
+  // (the app works, so nobody sets it) and that trust stays pinned to hostnames
+  // in source after the app moves off them.
+  //
+  // This deliberately does NOT fail closed. Whether `ALLOWED_ORIGINS` is set on
+  // the deployed project cannot be determined from this repository, and it
+  // cannot be determined from outside either: probing a deployed function with a
+  // disallowed origin returns `allowedOrigins[0]`, which is
+  // `command-centre.npcservices.com.au` whether the variable is set to it or the
+  // fallback supplied it. The two states are indistinguishable, and guessing
+  // wrong takes every browser client offline at once — an outage traded for a
+  // hygiene improvement is a bad trade.
+  //
+  // So it stays available and gets loud instead. `CORS_STRICT_ALLOWED_ORIGINS=true`
+  // opts into failing closed once the operator has confirmed the variable is
+  // set; NT-41 in the live negative-test matrix is what confirms it, because
+  // that harness runs against the deployed system, which is the only place the
+  // answer exists.
+  if ((Deno.env.get('CORS_STRICT_ALLOWED_ORIGINS') || '').trim().toLowerCase() === 'true') {
+    console.error('[auth.cors] ALLOWED_ORIGINS is unset and CORS_STRICT_ALLOWED_ORIGINS=true — no production origin is trusted for credentialed responses. Set ALLOWED_ORIGINS.');
+    return [];
+  }
+  console.error(
+    '[auth.cors] ALLOWED_ORIGINS is UNSET. Falling back to hardcoded legacy origins '
+    + `(${LEGACY_FALLBACK_ORIGINS.join(', ')}). This is configuration debt: those hostnames stay `
+    + 'trusted for credentialed responses even after this app moves off them. Set ALLOWED_ORIGINS, '
+    + 'then set CORS_STRICT_ALLOWED_ORIGINS=true to make this state fail closed.',
+  );
   return LEGACY_FALLBACK_ORIGINS;
 }
 
@@ -508,22 +554,53 @@ function lovablePreviewSuffixAllowed(origin: string): boolean {
   }
 }
 
-export function createCorsHeaders(origin: string | null = null): Record<string, string> {
-  const allowedOrigins = [
+/**
+ * The exact origins trusted for CREDENTIALED responses — i.e. the ones allowed
+ * to read a response carrying the staff session cookie.
+ */
+function credentialedOriginAllowlist(): string[] {
+  // WP-19: the two exact preview origins used to sit here unconditionally,
+  // which contradicted the posture stated two functions up — "Production leaves
+  // this unset, so suffix origins are NOT trusted for credentialed responses."
+  // The suffix rule was gated and the exact list was not, so two Lovable
+  // preview URLs could read a response carrying the staff session cookie in
+  // production. Both now answer to the same flag.
+  const preview = (Deno.env.get('CORS_ALLOW_LOVABLE_PREVIEW') || '').trim().toLowerCase() === 'true'
+    ? PROJECT_PREVIEW_ORIGINS
+    : [];
+  return [
     ...parseAllowedOrigins(),
-    ...PROJECT_PREVIEW_ORIGINS,
+    ...preview,
     'http://localhost:5173',
     'http://localhost:8080',
+    // Belt and braces: guarantees the list is never empty, so the
+    // `allowedOrigins[0]` used as the deliberate mismatch below is always a
+    // defined string and never `Access-Control-Allow-Origin: undefined`.
+    // `.invalid` is reserved by RFC 2606 and resolves nowhere.
+    'https://origin.invalid',
   ];
+}
+
+/**
+ * Is this origin trusted to receive a credentialed CORS response?
+ *
+ * Exported because `createTokenAuthCorsHeaders` needs the same answer without
+ * inheriting `createCorsHeaders`'s "mismatched ACAO" behaviour for origins that
+ * are NOT on the list (see that function for why the difference matters).
+ */
+export function isAllowedOrigin(origin: string | null | undefined): boolean {
+  if (!origin) return false;
+  return credentialedOriginAllowlist().includes(origin) || lovablePreviewSuffixAllowed(origin);
+}
+
+export function createCorsHeaders(origin: string | null = null): Record<string, string> {
+  const allowedOrigins = credentialedOriginAllowlist();
 
   // Exact-origin allowlist only. Suffix matching is gated behind an explicit,
   // default-off preview flag (see lovablePreviewSuffixAllowed). A disallowed
   // origin gets a mismatched ACAO (allowedOrigins[0]) that the browser refuses
   // to expose to the caller.
-  const allowedOrigin = origin && (
-    allowedOrigins.includes(origin) ||
-    lovablePreviewSuffixAllowed(origin)
-  ) ? origin : allowedOrigins[0];
+  const allowedOrigin = isAllowedOrigin(origin) ? origin! : allowedOrigins[0];
 
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
@@ -542,24 +619,57 @@ export function createCorsHeaders(origin: string | null = null): Record<string, 
 }
 
 /**
- * CORS headers for TOKEN-authenticated endpoints (no cookies involved — the
- * app calls them with `credentials: 'omit'` and auth travels in the
- * Authorization header / `session_token` body field).
+ * CORS headers for endpoints that historically answered every origin with a
+ * wildcard because they authenticated on a Bearer token alone.
  *
- * Wildcard origin is deliberate: the origin-allowlist variant returned a
- * mismatched `Access-Control-Allow-Origin` for any origin missing from
- * `ALLOWED_ORIGINS`, which the browser surfaces as an opaque
- * "Failed to fetch" hard error on EVERY call — indistinguishable from an
- * outage. Authentication is enforced in-function, not by CORS.
+ * ## Why this now takes the request origin
+ *
+ * The wildcard was chosen to avoid a hard failure: the plain origin-allowlist
+ * variant answers a NON-allowlisted origin with a deliberately mismatched
+ * `Access-Control-Allow-Origin`, which the browser surfaces as an opaque
+ * "Failed to fetch" on EVERY call — indistinguishable from an outage.
+ *
+ * But a wildcard origin is only valid for an UNcredentialed request, so the
+ * app had to call these endpoints with `credentials: 'omit'`. That stripped the
+ * HttpOnly `__Host-session_token` cookie, and WP-11B/C Phase 4 had already made
+ * that cookie the SOLE session carrier (`extractSessionToken` reads nothing
+ * else). The only credential left was the HS256 access-token JWT — and the
+ * ES256 remediation (see `supabase/functions/authenticated-data/index.ts`)
+ * records that both projects now sign with ES256, so the browser holds no
+ * usable one. The result was every PDF template import failing 401
+ * "Authentication required", surfaced to the user as "Your sign-in session has
+ * expired", on a session that was perfectly valid.
+ *
+ * So: answer an ALLOWLISTED origin exactly, with credentials, and the cookie
+ * authenticates exactly as it does for the ~300 other functions. Answer anyone
+ * else with the old wildcard, so token-only and non-browser callers keep
+ * working and no origin ever gets the mismatched-ACAO hard failure. This is
+ * strictly narrower than the previous blanket wildcard for credentialed
+ * requests and identical to it for everything else.
+ *
+ * A function that accepts the cookie here MUST also run `enforceCsrf` (see
+ * `_shared/csrfGuard.ts`) — ambient cookie authority is what CSRF exploits.
  */
-export function createTokenAuthCorsHeaders(): Record<string, string> {
-  return {
-    'Access-Control-Allow-Origin': '*',
+export function createTokenAuthCorsHeaders(origin: string | null = null): Record<string, string> {
+  const base: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': CORS_ALLOWED_REQUEST_HEADERS,
     'Access-Control-Expose-Headers': CORS_EXPOSED_RESPONSE_HEADERS,
     'Access-Control-Max-Age': '86400',
+    // The answer now depends on the request origin, so caches must not serve
+    // one origin's CORS response to another.
+    'Vary': 'Origin',
   };
+
+  if (isAllowedOrigin(origin)) {
+    return {
+      ...base,
+      'Access-Control-Allow-Origin': origin!,
+      'Access-Control-Allow-Credentials': 'true',
+    };
+  }
+
+  return { ...base, 'Access-Control-Allow-Origin': '*' };
 }
 
 /**
@@ -602,6 +712,49 @@ export function createClearSessionCookies(): string[] {
   return [
     `__Host-session_token=; HttpOnly; Secure; SameSite=None; Max-Age=0; Expires=${past}; Path=/`,
   ];
+}
+
+/**
+ * Client-portal-scoped session cookie.
+ *
+ * The Finance, Solicitor and Builder portals were each given a dedicated
+ * cookie name for the reason recorded under `createFinanceSessionCookie`. The
+ * Client Portal was the one that never got it: `client-portal-login`,
+ * `client-portal-logout` and `client-portal-accept-invite` all called
+ * `createSessionCookie`, so a client portal session was written into the
+ * Command Centre's own `__Host-session_token`.
+ *
+ * Two consequences, both of which show up as soon as one address is registered
+ * in more than one portal and a tester uses both in one browser — which is
+ * exactly how this deployment is being exercised:
+ *
+ *  - A client portal sign-in overwrote the staff cookie with a token that is
+ *    not in `user_sessions`, so the Command Centre's next call failed
+ *    `verifySession` and the person was bounced to the login screen with
+ *    "Authentication required" on a staff session that had not expired.
+ *  - `client-portal-logout` cleared `__Host-session_token`, so signing out of
+ *    the Client Portal silently signed the same browser out of the Command
+ *    Centre.
+ *
+ * A distinct `__Host-` name makes a client portal session unpresentable as a
+ * staff session and vice versa, which is what the other three portals already
+ * rely on. Nothing reads this cookie as a *client portal* credential today —
+ * that portal carries its token explicitly in the body and the
+ * `x-portal-session-token` header — so the rename removes a collision without
+ * changing how the Client Portal authenticates.
+ */
+export function createClientPortalSessionCookie(
+  sessionToken: string,
+  expiresAt: Date,
+  options?: { clear?: boolean }
+): string {
+  const maxAge = options?.clear ? 0 : Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+  const expires = options?.clear ? new Date(0).toUTCString() : expiresAt.toUTCString();
+  return `__Host-client_session_token=${options?.clear ? '' : sessionToken}; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}; Expires=${expires}; Path=/`;
+}
+
+export function createClearClientPortalSessionCookie(): string {
+  return createClientPortalSessionCookie('', new Date(0), { clear: true });
 }
 
 /**

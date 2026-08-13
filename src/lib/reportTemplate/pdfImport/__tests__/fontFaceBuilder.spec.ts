@@ -6,6 +6,7 @@ import {
   deriveStyle,
   dataUrlMime,
   buildEmbeddedFontFace,
+  buildUnicodeRange,
 } from '../fontFaceBuilder';
 
 describe('sanitizeFamilyName', () => {
@@ -86,5 +87,38 @@ describe('buildEmbeddedFontFace', () => {
   it('prefixes a leading non-letter family so it stays a valid CSS identifier', () => {
     const r = buildEmbeddedFontFace({ loadedName: '123', postscriptName: '999', base64: 'AA' });
     expect(/^[A-Za-z]/.test(r.family)).toBe(true);
+  });
+
+  it('R2: carries sidecar coverage as a unicodeRange on the face', () => {
+    const r = buildEmbeddedFontFace({
+      loadedName: 'f1', base64: 'AA',
+      coverageRanges: ['U+0041-005A', 'U+0061'],
+    });
+    expect(r.face.unicodeRange).toBe('U+0041-005A, U+0061');
+  });
+
+  it('R2: omits unicodeRange entirely when coverage is absent', () => {
+    const r = buildEmbeddedFontFace({ loadedName: 'f1', base64: 'AA' });
+    expect('unicodeRange' in r.face).toBe(false);
+  });
+});
+
+describe('buildUnicodeRange (R2)', () => {
+  it('joins valid segments', () => {
+    expect(buildUnicodeRange(['U+0020-007E', 'U+00A0'])).toBe('U+0020-007E, U+00A0');
+    expect(buildUnicodeRange(['u+41'])).toBe('u+41');   // lowercase + short hex are valid CSS
+  });
+
+  it('rejects the WHOLE list on any malformed segment — no partial trust', () => {
+    expect(buildUnicodeRange(['U+0041-005A', 'garbage'])).toBeUndefined();
+    expect(buildUnicodeRange(["U+41;}</style><script>"])).toBeUndefined();
+    expect(buildUnicodeRange(['U+4??'])).toBeUndefined();  // wildcards: sidecar never emits them
+    expect(buildUnicodeRange(['U+1234567'])).toBeUndefined();  // >6 hex digits
+  });
+
+  it('returns undefined for empty/absent input', () => {
+    expect(buildUnicodeRange(undefined)).toBeUndefined();
+    expect(buildUnicodeRange([])).toBeUndefined();
+    expect(buildUnicodeRange('U+41' as never)).toBeUndefined();
   });
 });

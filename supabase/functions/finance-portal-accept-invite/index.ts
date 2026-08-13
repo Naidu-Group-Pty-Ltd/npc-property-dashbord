@@ -1,6 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.ts"
+import { validatePasswordStrength } from "../_shared/passwordValidation.ts"
+import { parseJsonBody } from '../_shared/validate.ts';
+import { AcceptInviteRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
+import { deliverPendingAgreementNotifications } from "../_shared/agreements/pendingDelivery.ts"
 
 const SESSION_HOURS = 12;
 
@@ -17,7 +21,12 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { action, token, password } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, AcceptInviteRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { action, token, password } = __body.data
     if (!token) {
       return new Response(
         JSON.stringify({ error: 'Invite token is required' }),
@@ -79,9 +88,13 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
-    if (password.length < 8) {
+    // Full strength policy including the HIBP k-anonymity breach lookup. This is
+    // the password the partner will hold for the life of the account. Fail-open
+    // if HIBP is unreachable — an outage must not block onboarding.
+    const strength = await validatePasswordStrength(password)
+    if (!strength.isValid) {
       return new Response(
-        JSON.stringify({ error: 'Password must be at least 8 characters' }),
+        JSON.stringify({ error: strength.error }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
@@ -125,7 +138,21 @@ Deno.serve(async (req) => {
       entity_id: portalUser.id,
     });
 
-    const sessionCookie = createSessionCookie(sessionToken, expiresAt)
+    // Anything issued to this organisation before it had a login. The
+    // notification could not be addressed at the time — there was no row to
+    // address it to — so this is the moment it becomes deliverable. Idempotent
+    // and best-effort: activation must succeed regardless.
+    await deliverPendingAgreementNotifications(supabase, {
+      portalUserId: portalUser.id,
+      financeContactId: portalUser.finance_contact_id,
+    });
+
+    // A Finance Portal session must be written into the Finance Portal cookie.
+    // This used to call `createSessionCookie`, which writes a finance session
+    // token into the Command Centre's `__Host-session_token` — overwriting the
+    // staff cookie with a token that is not in `user_sessions`, so the next
+    // Command Centre call in that browser failed `verifySession`.
+    const sessionCookie = createFinanceSessionCookie(sessionToken, expiresAt)
 
     return new Response(
       JSON.stringify({

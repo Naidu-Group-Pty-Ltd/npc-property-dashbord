@@ -47,6 +47,70 @@ export function isPlottable(lat: number | null, lng: number | null): boolean {
 }
 
 /** Coordinates already present on the source record — no lookup involved. */
+/**
+ * Provider `location_type` translated into a claim the interface can stand
+ * behind. ROOFTOP is the address itself; RANGE_INTERPOLATED is measured along
+ * the street; GEOMETRIC_CENTER is a road or building centreline; APPROXIMATE
+ * is a locality centroid — the pin is in the right suburb and nothing more.
+ * Only 'area' warrants a caption: street-level precision is what a map pin
+ * already implies, but a suburb centroid dressed as a rooftop pin is the map
+ * quietly lying, and at 148 of 957 stored geocodes it is common enough to
+ * matter.
+ */
+export type GeocodePrecisionTier = 'exact' | 'street' | 'area' | 'unknown';
+
+export function describeGeocodePrecision(precision: string | null | undefined): {
+  tier: GeocodePrecisionTier;
+  note: string | null;
+} {
+  switch ((precision ?? '').toUpperCase()) {
+    case 'ROOFTOP':
+      return { tier: 'exact', note: null };
+    case 'RANGE_INTERPOLATED':
+    case 'GEOMETRIC_CENTER':
+      return { tier: 'street', note: null };
+    case 'APPROXIMATE':
+      return { tier: 'area', note: 'Approximate — placed at suburb level' };
+    default:
+      return { tier: 'unknown', note: null };
+  }
+}
+
+/**
+ * The member a cluster bubble should sit on.
+ *
+ * Nearest-to-centroid was the first attempt, and it has a degenerate case:
+ * when the cluster library anchors the bubble on a member that is itself a
+ * wrong coordinate, the nearest member to that position is the wrong member,
+ * at distance zero — the snap ratifies the error it exists to fix. The
+ * coordinate-wise median is immune: one member in the Southern Ocean cannot
+ * drag the median of four hundred Melbourne properties anywhere, so the
+ * bubble lands on a typical member, which is on land.
+ */
+export function robustClusterAnchor(points: GeoPoint[]): GeoPoint | null {
+  if (points.length === 0) return null;
+  if (points.length === 1) return points[0];
+
+  const median = (values: number[]): number => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  };
+  const centreLat = median(points.map((p) => p.lat));
+  const centreLng = median(points.map((p) => p.lng));
+
+  let best = points[0];
+  let bestDistance = Infinity;
+  for (const point of points) {
+    const d = (point.lat - centreLat) ** 2 + (point.lng - centreLng) ** 2;
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = point;
+    }
+  }
+  return best;
+}
+
 export function getStoredListingPoint(listing: PropertyListing): GeoPoint | null {
   const lat = toFiniteNumber(listing.latitude);
   const lng = toFiniteNumber(listing.longitude);
@@ -503,9 +567,18 @@ export function heatGeometryForZoom(
   focus: HeatFocus,
 ): { radius: number; blur: number } {
   const safeZoom = Number.isFinite(zoom) ? zoom : 5;
-  const base = 13 + Math.max(0, safeZoom - 4) * 2.6;
-  const radius = Math.min(Math.max(base * FOCUS_RADIUS_SCALE[focus], 10), 62);
-  return { radius: Math.round(radius), blur: Math.round(radius * 0.72) };
+  // Country-to-state zooms get a deliberately tight, sharp core. At zoom 4 a
+  // capital city's entire stock projects into a couple of pixels, and the old
+  // radius smeared that mass across the coastline into open water — Melbourne
+  // read as a blob in Bass Strait. Nobody is judging density gradients at
+  // national scale; they are locating hotspots, and a hotspot should sit on
+  // the city that produced it.
+  const lowZoom = safeZoom <= 5;
+  const base = lowZoom
+    ? 10.4 - (5 - Math.max(safeZoom, 3)) * 2.2
+    : 13 + (safeZoom - 4) * 2.6;
+  const radius = Math.min(Math.max(base * FOCUS_RADIUS_SCALE[focus], lowZoom ? 5 : 10), 62);
+  return { radius: Math.round(radius), blur: Math.round(radius * (lowZoom ? 0.55 : 0.72)) };
 }
 
 export interface ProjectedWeight {

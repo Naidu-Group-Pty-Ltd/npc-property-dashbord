@@ -22,6 +22,8 @@ import {
   Settings,
 } from 'lucide-react';
 import type { AuditTrail, AuditEntry, AuditCategory } from '@/utils/auditEngine';
+import { auditDelta, auditMeasures } from '@/lib/reports/borrowingCapacity/audit.pure';
+import { aud, formatMeasure } from '@/lib/reportDesign/measure.pure';
 import type { ExplanationReport, ExplanationStep } from '@/utils/explanationEngine';
 
 // ============================================
@@ -43,17 +45,45 @@ const categoryConfig: Record<AuditCategory, { label: string; icon: typeof Dollar
   constraint: { label: 'Constraints', icon: Shield, color: 'text-warning' },
 };
 
+/** The summary totals really are dollars — they are sums of AUD adjustments. */
 function formatAuditCurrency(value: number): string {
-  if (value === 0) return '$0';
-  return new Intl.NumberFormat('en-AU', {
-    style: 'currency', currency: 'AUD', minimumFractionDigits: 0, maximumFractionDigits: 0,
-  }).format(value);
+  return formatMeasure(aud(value));
 }
 
-function ImpactBadge({ impact, delta }: { impact: string; delta: number }) {
+/**
+ * An audit value, in the unit the entry actually carries.
+ *
+ * This put every value through one currency formatter, so the panel told a
+ * client their assessment rate went from **$6 to $9** when it went from 6.15%
+ * to 8.65% — `policy/override_applied` is declared `percent` on both sides in
+ * `audit.pure.ts`, and a credit-card row's raw value is a balance while its
+ * assessed value is a monthly repayment.
+ *
+ * `auditMeasures` already knows all of that; it just was not being asked.
+ */
+function formatAuditValue(entry: AuditEntry, side: 'raw' | 'assessed'): string {
+  const measures = auditMeasures(entry as never);
+  return formatMeasure(side === 'raw' ? measures.raw : measures.assessed);
+}
+
+/**
+ * The size of the movement, which only exists when both sides share a unit.
+ *
+ * `auditDelta` returns null for the liability rows — subtracting a monthly
+ * repayment from a balance is not a number — and the badge then shows the
+ * direction without a figure rather than a figure that means nothing.
+ */
+function formatAuditDelta(entry: AuditEntry): string | null {
+  const delta = auditDelta(entry as never);
+  return delta ? formatMeasure(delta) : null;
+}
+
+function ImpactBadge({ impact, amount }: { impact: string; amount: string | null }) {
   if (impact === 'neutral') return <Badge variant="secondary" className="text-xs"><Minus className="h-3 w-3 mr-0.5" />Neutral</Badge>;
-  if (impact === 'increase') return <Badge className="bg-success/20 text-success border-success/30 text-xs"><ArrowUp className="h-3 w-3 mr-0.5" />+{formatAuditCurrency(Math.abs(delta))}</Badge>;
-  return <Badge className="bg-destructive/20 text-destructive border-destructive/30 text-xs"><ArrowDown className="h-3 w-3 mr-0.5" />{formatAuditCurrency(Math.abs(delta))}</Badge>;
+  // No shared unit, no figure — see `formatAuditDelta`.
+  const shown = amount ? amount.replace(/^[-+]/, '') : '';
+  if (impact === 'increase') return <Badge className="bg-success/20 text-success border-success/30 text-xs"><ArrowUp className="h-3 w-3 mr-0.5" />{shown ? `+${shown}` : 'Increase'}</Badge>;
+  return <Badge className="bg-destructive/20 text-destructive border-destructive/30 text-xs"><ArrowDown className="h-3 w-3 mr-0.5" />{shown || 'Decrease'}</Badge>;
 }
 
 function AuditEntryRow({ entry }: { entry: AuditEntry }) {
@@ -72,10 +102,10 @@ function AuditEntryRow({ entry }: { entry: AuditEntry }) {
       </div>
       <div className="flex items-center gap-3 shrink-0 ml-2">
         <div className="text-right text-xs">
-          <p className="text-muted-foreground">{formatAuditCurrency(entry.rawValue)}</p>
-          <p className="font-medium text-foreground">→ {formatAuditCurrency(entry.assessedValue)}</p>
+          <p className="text-muted-foreground">{formatAuditValue(entry, 'raw')}</p>
+          <p className="font-medium text-foreground">→ {formatAuditValue(entry, 'assessed')}</p>
         </div>
-        <ImpactBadge impact={entry.impact} delta={entry.delta} />
+        <ImpactBadge impact={entry.impact} amount={formatAuditDelta(entry)} />
       </div>
     </div>
   );

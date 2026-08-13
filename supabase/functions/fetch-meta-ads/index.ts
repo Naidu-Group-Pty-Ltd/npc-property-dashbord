@@ -1,7 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const META_API_VERSION = 'v21.0';
 const META_BASE_URL = `https://graph.facebook.com/${META_API_VERSION}`;
 
@@ -57,6 +59,10 @@ Deno.serve(async (req) => {
     if (authResult.error) {
       return createUnauthorizedResponse(authResult.error, corsHeaders);
     }
+
+    // Marketing is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, authResult, 'marketing');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const accessToken = Deno.env.get('META_ADS_ACCESS_TOKEN');
     const adAccountId = Deno.env.get('META_ADS_AD_ACCOUNT_ID');
@@ -155,7 +161,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[fetch-meta-ads] Error:', error);
     return new Response(
-      JSON.stringify({ success: false, error: error.message }),
+      JSON.stringify({ ...internalError(error, 'fetch-meta-ads'), success: false }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

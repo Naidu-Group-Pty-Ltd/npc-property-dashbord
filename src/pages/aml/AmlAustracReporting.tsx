@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, PlusCircle, RefreshCw, ShieldCheck, Send, Download, CheckCircle2, XCircle, History } from "lucide-react";
+import { FileText, Loader2, PlusCircle, ShieldCheck, Send, Download, CheckCircle2, XCircle, History } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +15,14 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
+import {
+  AmlAccessGate,
+  AmlLoadingState,
+  AmlPageHeader,
+  AmlRefreshButton,
+  AmlTableEmptyRow,
+  AmlTableLoadingRow,
+} from "@/components/aml/primitives";
 import {
   amlReportingApi,
   type AmlReport, type AmlReportKind, type AmlReportStatus,
@@ -198,25 +207,30 @@ export default function AmlAustracReporting() {
     { label: "Rejected", value: summary.rejected },
   ] : [], [summary]);
 
-  if (accessLoading) return <div className="p-6"><Loader2 className="h-5 w-5 animate-spin" /></div>;
-  if (!hasAnyRole) return <div className="p-6 text-muted-foreground">You do not have any AML role.</div>;
+  if (accessLoading) return <AmlLoadingState variant="spinner" label="Checking your access…" />;
+  if (!hasAnyRole) {
+    return (
+      <AmlAccessGate
+        title="You don't have access to the AUSTRAC Hub yet"
+        body="Ask your compliance administrator to grant you AML reporting access."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
       {regulatoryHub && <RegulatoryAssuranceHeader />}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2"><FileText className="h-6 w-6 text-primary" /> AUSTRAC Reporting Hub</h1>
-          <p className="text-sm text-muted-foreground max-w-2xl">
-            Draft SMR, TTR, IFTI and compliance reports, capture MLRO sign-off, record submissions and receipts.
-            Nothing auto-submits — human confirmation is required at every step.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={load} disabled={loading}><RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh</Button>
-          {canWrite && <Button onClick={startNew}><PlusCircle className="h-4 w-4 mr-2" /> New Draft</Button>}
-        </div>
-      </div>
+      <AmlPageHeader
+        title="AUSTRAC Reporting Hub"
+        description="Draft SMR, TTR, IFTI and compliance reports, capture MLRO sign-off, record submissions and receipts. Nothing auto-submits — human confirmation is required at every step."
+        icon={FileText}
+        actions={
+          <>
+            <AmlRefreshButton onClick={load} loading={loading} />
+            {canWrite && <Button size="sm" onClick={startNew}><PlusCircle aria-hidden="true" className="h-4 w-4 mr-2" /> New Draft</Button>}
+          </>
+        }
+      />
 
       {tiles.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -256,12 +270,12 @@ export default function AmlAustracReporting() {
             <CardDescription>Filter, review, and act on AUSTRAC drafts and submissions.</CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
+            <Table aria-label="AUSTRAC reports">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Kind</TableHead><TableHead>Title</TableHead>
-                  <TableHead>Status</TableHead><TableHead>Updated</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead scope="col">Kind</TableHead><TableHead scope="col">Title</TableHead>
+                  <TableHead scope="col">Status</TableHead><TableHead scope="col">Updated</TableHead>
+                  <TableHead scope="col" className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -293,8 +307,9 @@ export default function AmlAustracReporting() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {!reports.length && loading && <AmlTableLoadingRow colSpan={5} label="Loading reports…" />}
                 {!reports.length && !loading && (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">No reports match these filters.</TableCell></TableRow>
+                  <AmlTableEmptyRow colSpan={5}>No reports match these filters. Try clearing the status or kind filter{canWrite ? ", or start a new draft" : ""}.</AmlTableEmptyRow>
                 )}
               </TableBody>
             </Table>
@@ -446,13 +461,13 @@ export default function AmlAustracReporting() {
               <p className="text-[11px] text-muted-foreground mt-1">Provide the archived bundle URL/path if the lodgement reference is not yet available. One evidence source is mandatory.</p>
             </div>
             <div><Label>Notes</Label><Textarea rows={3} value={submitNotes} onChange={(e) => setSubmitNotes(e.target.value)} /></div>
-            <label className="flex items-start gap-2 rounded-md border p-3 text-xs">
-              <input type="checkbox" className="mt-0.5" checked={submitAttest} onChange={(e) => setSubmitAttest(e.target.checked)} />
-              <span>
+            <div className="flex items-start gap-2 rounded-md border p-3">
+              <Checkbox id="mlro-tipping-off-attestation" className="mt-0.5" checked={submitAttest} onCheckedChange={(v) => setSubmitAttest(v === true)} />
+              <Label htmlFor="mlro-tipping-off-attestation" className="text-xs font-normal leading-snug">
                 <strong>MLRO attestation:</strong> I confirm submission evidence has been captured and no tipping-off breach has occurred.
                 This attestation is written to the immutable audit trail.
-              </span>
-            </label>
+              </Label>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpenSubmit(false)}>Cancel</Button>

@@ -1,9 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { createCorsHeaders, verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkModuleView } from '../_shared/permissions.ts';
 import { isSuperadmin, rateLimit, redactUpstreamError } from '../_shared/wp08Guards.ts';
+import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
+import { allowlistAdmits, buildAllowlist, parseTableAliases } from '../_shared/airtableTableKey.pure.ts';
 
 interface AirtableRecord {
   id: string;
@@ -50,6 +53,11 @@ Deno.serve(async (req) => {
     if (auth.error || !auth.userId) {
       return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
     }
+
+    // The Airtable listings intake data proxied here is the Property
+    // Marketplace dataset — a Scale-or-add-on capability, enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabaseAuthClient, auth, 'opportunity-marketplace');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     // WP-08 — module gate: requires `listings` module view. Superadmin bypasses.
     const moduleCheck = await checkModuleView(supabaseAuthClient, auth.userId, 'listings', auth.authMethod);
@@ -131,9 +139,12 @@ Deno.serve(async (req) => {
     // superadmin-only.
     const superadmin = await isSuperadmin(supabaseAuthClient, auth.userId, auth.authMethod);
     const allowlistEnv = (Deno.env.get('AIRTABLE_TABLE_ALLOWLIST') || '').trim();
-    const allowlist = new Set<string>();
-    if (defaultTableName) allowlist.add(defaultTableName);
-    for (const name of allowlistEnv.split(',').map((s) => s.trim()).filter(Boolean)) allowlist.add(name);
+    // Built through the shared resolver so a deployment that allowlists table
+    // *ids* still admits a caller who asked by display name, and vice versa.
+    // Airtable accepts either form in a URL, so the two spellings reach here
+    // interchangeably and the check has to treat them as one table.
+    const tableAliases = parseTableAliases(Deno.env.get('AIRTABLE_TABLE_ALIASES'));
+    const allowlist = buildAllowlist(defaultTableName, allowlistEnv, tableAliases);
 
     if (op === 'list_tables') {
       if (!superadmin) {
@@ -171,7 +182,7 @@ Deno.serve(async (req) => {
     }
 
     // Superadmins keep freeform access; everyone else is bound to the allowlist.
-    if (!superadmin && !allowlist.has(tableName)) {
+    if (!superadmin && !allowlistAdmits(allowlist, tableName)) {
       return new Response(
         JSON.stringify({ error: 'Requested table is not permitted.' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -254,125 +265,11 @@ Deno.serve(async (req) => {
       metadata: { records_fetched: data.records.length, has_offset: !!data.offset, table: tableName, op: op || 'list' },
     });
 
-    // Transform the data to match the expected format
-    console.log('Transforming record example:', data.records[0]?.fields);
-    console.log('Zipcode field value:', data.records[0]?.fields?.Zipcode);
-    const transformedRecords = data.records.map(record => {
-      const fields = record.fields;
-      
-      // Enhanced data cleaning and normalization
-      const cleanPrice = (price: any): number | null => {
-        if (!price) return null;
-        const numPrice = typeof price === 'string' ? parseFloat(price.replace(/[^0-9.]/g, '')) : price;
-        return numPrice > 0 && numPrice < 50000000 ? numPrice : null; // Filter unrealistic prices
-      };
-
-      const normalizeConfidence = (confidence: any): number | null => {
-        if (!confidence) return null;
-        const numConf = typeof confidence === 'string' ? parseFloat(confidence) : confidence;
-        if (numConf >= 0 && numConf <= 1) return numConf; // Already normalized
-        if (numConf >= 0 && numConf <= 100) return numConf / 100; // Convert percentage
-        return null;
-      };
-
-      const standardizePropertyType = (type: string | undefined): string => {
-        if (!type) return 'Unknown';
-        const normalized = type.toLowerCase().trim();
-        if (normalized.includes('apartment') || normalized.includes('unit')) return 'Apartment';
-        if (normalized.includes('house') || normalized.includes('home')) return 'House';
-        if (normalized.includes('townhouse') || normalized.includes('town house')) return 'Townhouse';
-        if (normalized.includes('villa')) return 'Villa';
-        if (normalized.includes('duplex')) return 'Duplex';
-        if (normalized.includes('land')) return 'Land';
-        return type; // Return original if no match
-      };
-
-      const standardizeSuburb = (suburb: string | undefined): string => {
-        if (!suburb) return 'Unknown Suburb';
-        return suburb.split(',')[0].trim(); // Remove state/postcode if present
-      };
-
-      // Enhanced date handling with multiple fallback options
-      const getValidDate = (): string => {
-        const candidates = [
-          fields['Created'], // Primary field name in Airtable
-          fields['Created At'],
-          fields['Listed_Date'],
-          fields['Date_Listed'],
-          record.createdTime
-        ];
-        
-        for (const candidate of candidates) {
-          if (candidate) {
-            try {
-              const date = new Date(candidate);
-              if (!isNaN(date.getTime())) return date.toISOString();
-            } catch (e) {
-              continue;
-            }
-          }
-        }
-        return new Date().toISOString(); // Fallback to now
-      };
-
-      return {
-        id: record.id,
-        fields: fields,
-        createdTime: getValidDate(),
-        
-        // Core property information with enhanced mapping
-        title: fields.Address || fields.Property_Title || fields.Title || 'Untitled Property',
-        price: cleanPrice(fields.Price || fields.Asking_Price),
-        location: `${fields.Address || ''}, ${standardizeSuburb(fields.Suburb)}`.replace(/^, |, $/, '') || 'Location not specified',
-        address: fields.Address || 'Unknown Address',
-        suburb: standardizeSuburb(fields.Suburb),
-        
-        // Property details with data validation
-        beds: Math.max(0, parseInt(String(fields.Beds || fields.Bedrooms || fields.Bedroom_Count || 0))) || null,
-        baths: Math.max(0, parseInt(String(fields.Baths || fields.Bathrooms || fields.Bathroom_Count || 0))) || null,
-        bedrooms: Math.max(0, parseInt(String(fields.Beds || fields.Bedrooms || fields.Bedroom_Count || 0))) || null,
-        bathrooms: Math.max(0, parseInt(String(fields.Baths || fields.Bathrooms || fields.Bathroom_Count || 0))) || null,
-        carSpaces: Math.max(0, parseInt(String(fields['Car Spaces'] || fields.Car_Spaces || 0))) || null,
-        
-        propertyType: standardizePropertyType(fields['Property Type'] || fields.Property_Type),
-        listingDate: getValidDate(),
-        status: fields.Status || 'Available',
-        
-        // Quality and confidence metrics
-        confidence: normalizeConfidence(fields['Confidence Score'] || fields.Confidence_Score || fields.Confidence),
-        source: fields.Source || fields.Data_Source || 'Airtable',
-        
-        // Agent and agency information - FIXED MAPPING
-        agent: fields['Agent Name'] || fields.Agent || fields.Listing_Agent || 'Unknown Agent',
-        agentName: fields['Agent Name'] || fields.Agent || fields.Listing_Agent || 'Unknown Agent',
-        agencyName: fields['Agency Name'] || fields.Agency || fields['Agent Agency'] || 'Unknown Agency',
-        agentPhone: fields['Agent Phone'] || null,
-        
-        // Additional details
-        createdAt: getValidDate(),
-        receivedAt: getValidDate(),
-        description: fields['Property Description'] || fields.Description || fields.Summary || '',
-        images: fields.Images || fields.Property_Images || [],
-        features: fields.Features || fields.Property_Features || [],
-        
-        // Location details
-        landSize: fields['Square Feet'] || fields['Land Size'] || fields.Land_Size || fields.LandSize || null,
-        lotNumber: fields['Lot Number'] || null,
-        webLinks: fields['Web Link'] || null,
-        state: fields['State'] || null,
-        zipCode: fields['Zipcode'] || fields['Zip Code'] || fields['Post Code'] || fields['Postcode'] || null,
-        
-        // Additional metadata
-        summary: fields.Summary || null,
-        keyEntities: fields['Key Entities'] || null,
-        rawExtract: fields['Raw Extract'] || null,
-        category: fields.Category || null,
-        inspectionStart: fields['Inspection Start'] ? new Date(fields['Inspection Start']) : null,
-        inspectionEnd: fields['Inspection End'] ? new Date(fields['Inspection End']) : null,
-        inspectionNotes: fields['Inspection Notes'] || null,
-        floorplans: fields.Floorplans || [],
-      };
-    });
+    // Transform the data to match the expected format. The projection lives in
+    // `_shared/airtableListing.pure.ts` because `listings-cache` stores Airtable
+    // `fields` verbatim and applies the same projection at read time; two copies
+    // would drift the first time a column was renamed.
+    const transformedRecords = data.records.map((record) => projectAirtableRecord(record));
 
     // Enhanced scoring system with weighted fields and quality penalties
     const calculateEnrichmentScore = (record: any): number => {
@@ -380,8 +277,8 @@ Deno.serve(async (req) => {
       
       // Critical property info (weighted higher) - 35 points max
       if (record.price && record.price > 0) score += 10; // Most important
-      if (record.address && record.address !== 'Unknown Address') score += 8;
-      if (record.suburb && record.suburb !== 'Unknown Suburb') score += 7; 
+      if (record.address) score += 8;
+      if (record.suburb) score += 7;
       if (record.beds && record.beds > 0) score += 5;
       if (record.baths && record.baths > 0) score += 5;
       
@@ -395,8 +292,8 @@ Deno.serve(async (req) => {
       if (record.status && record.status !== 'Available') score += 2;
       
       // Agent and agency info - 15 points max
-      if (record.agentName && record.agentName !== 'Unknown Agent') score += 6;
-      if (record.agencyName && record.agencyName !== 'Unknown Agency') score += 5;
+      if (record.agentName) score += 6;
+      if (record.agencyName) score += 5;
       if (record.agentPhone) score += 4;
       
       // Rich content and media - 20 points max
@@ -419,11 +316,17 @@ Deno.serve(async (req) => {
       if (record.webLinks) score += 2;
       if (record.rawExtract && record.rawExtract.length > 200) score += 3;
       
-      // Quality penalties (subtract points for poor data)
-      if (record.address === 'Unknown Address') score -= 5;
-      if (record.suburb === 'Unknown Suburb') score -= 3;
-      if (record.agentName === 'Unknown Agent') score -= 2;
-      if (record.agencyName === 'Unknown Agency') score -= 2;
+      // Quality penalties (subtract points for poor data).
+      //
+      // These test for absence directly. They used to compare against the
+      // literal strings the projection substituted — 'Unknown Address' and so
+      // on — which the projection no longer emits, so left unchanged they would
+      // simply never fire and every record would score as though its address
+      // were present.
+      if (!record.address) score -= 5;
+      if (!record.suburb) score -= 3;
+      if (!record.agentName) score -= 2;
+      if (!record.agencyName) score -= 2;
       if (!record.price || record.price <= 0) score -= 8;
       
       return Math.max(0, score); // Ensure non-negative score
@@ -489,7 +392,15 @@ Deno.serve(async (req) => {
       const currentRecord = transformedRecords[i];
       const group = [currentRecord];
       processedRecords.add(i);
-      
+
+      // A record with no address cannot be matched to anything. Two unknowns are
+      // not the same property, and treating them as one is what collapsed 268
+      // records into a single row.
+      if (!currentRecord.address) {
+        listingGroups.set(`norecord:${currentRecord.id}`, group);
+        continue;
+      }
+
       // Look for similar listings
       for (let j = i + 1; j < transformedRecords.length; j++) {
         if (processedRecords.has(j)) continue;
@@ -534,41 +445,56 @@ Deno.serve(async (req) => {
       listingGroups.set(groupKey, group);
     }
     
-    // Select the best record from each group with enhanced selection logic
+    // Rank each group and TAG the runners-up. Nothing is removed.
+    //
+    // This block used to keep only `records[0]` and drop the rest, which cost
+    // 268 of 1,441 records on every read — the page showed 1,173 and no caller
+    // could tell that a quarter of the table had been deleted from the response.
+    // Two things made it that destructive: grouping runs per 100-record page, so
+    // what it merges is an accident of pagination rather than a real duplicate
+    // relationship; and the projection used to substitute the literal string
+    // 'Unknown Address', which `normalizeForDuplication` turns into
+    // 'unknown address' — passing the `!== 'unknown'` guards below and comparing
+    // equal to every other address-less record, so they all collapsed into one.
+    //
+    // The projection no longer emits that sentinel, and grouping now skips
+    // records with no address at all. But a silent drop is the wrong failure
+    // mode regardless of how good the matching is, so duplicates are marked and
+    // the client decides what to show.
     const deduplicatedRecords = [];
     let duplicatesFound = 0;
     let totalGroups = 0;
-    
+
     for (const [key, records] of listingGroups.entries()) {
       totalGroups++;
-      
+
       if (records.length > 1) {
         duplicatesFound += records.length - 1;
-        
+
         // Sort by enrichment score (highest first), then by creation date (newest first)
         records.sort((a: any, b: any) => {
           const scoreDiff = b.enrichmentScore - a.enrichmentScore;
           if (scoreDiff !== 0) return scoreDiff;
-          
+
           // If scores are tied, prefer listings with more recent data
           const dateA = new Date(a.createdTime).getTime();
           const dateB = new Date(b.createdTime).getTime();
           return dateB - dateA;
         });
-        
+
         const selected = records[0];
+        selected.duplicateCount = records.length - 1;
+        for (const record of records.slice(1)) {
+          record.duplicateOf = selected.id;
+        }
         const scores = records.map((r: any) => r.enrichmentScore).join(', ');
-        console.log(`Duplicate group "${key.substring(0, 50)}...": ${records.length} records (scores: ${scores}), selected score ${selected.enrichmentScore}`);
+        console.log(`Duplicate group "${key.substring(0, 50)}...": ${records.length} records (scores: ${scores}), best score ${selected.enrichmentScore}`);
       }
-      
-      deduplicatedRecords.push(records[0]);
+
+      deduplicatedRecords.push(...records);
     }
-    
-    console.log(`Deduplication summary: ${totalGroups} unique groups, ${duplicatesFound} duplicates removed from ${transformedRecords.length} total records`);
-    
-    if (duplicatesFound > 0) {
-      console.log(`✅ Removed ${duplicatesFound} duplicate listings, prioritizing enriched data quality`);
-    }
+
+    console.log(`Deduplication summary: ${totalGroups} groups, ${duplicatesFound} tagged as duplicates of ${transformedRecords.length} total records (none removed)`);
 
     return new Response(
       JSON.stringify({

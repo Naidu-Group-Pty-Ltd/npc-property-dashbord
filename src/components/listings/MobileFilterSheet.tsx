@@ -10,30 +10,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetFooter
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { getFullStateName } from '@/lib/states';
+// One shape for the predicate and both panels — see @/lib/listingFilters.
+import {
+  DEFAULT_LISTING_FILTERS,
+  LISTED_WITHIN_OPTIONS,
+  type ListingFilterState as FilterState,
+} from '@/lib/listingFilters';
 import { useState } from 'react';
 import { SearchableSelect } from '@/components/shared/SearchableSelect';
 
-interface FilterState {
-  propertyType: string;
-  suburb: string;
-  state: string;
-  zipCode: string;
-  sourceHost: string;
-  hasInspection: boolean;
-  lowConfidence: boolean;
-  offMarket: boolean;
-  priceMin: string;
-  priceMax: string;
-  bedsMin: string;
-  bedsMax: string;
-  bathsMin: string;
-  bathsMax: string;
-  carsMin: string;
-  carsMax: string;
-  agencyName: string;
-  keywordSearch: string;
-  includeNearbySuburbs: boolean;
-}
 
 interface MobileFilterSheetProps {
   filters: FilterState;
@@ -45,6 +30,9 @@ interface MobileFilterSheetProps {
     zipCodes: string[];
     sourceHosts: string[];
     agencies: string[];
+    /** Optional: present once the projection reads the columns they live in. */
+    intents?: string[];
+    sectors?: string[];
   };
 }
 
@@ -73,27 +61,7 @@ export function MobileFilterSheet({ filters, setFilters, uniqueValues }: MobileF
   };
 
   const handleClear = () => {
-    const clearedFilters: FilterState = {
-      propertyType: 'all',
-      suburb: 'all',
-      state: 'all',
-      zipCode: 'all',
-      sourceHost: 'all',
-      hasInspection: false,
-      lowConfidence: false,
-      offMarket: false,
-      priceMin: '',
-      priceMax: '',
-      bedsMin: '',
-      bedsMax: '',
-      bathsMin: '',
-      bathsMax: '',
-      carsMin: '',
-      carsMax: '',
-      agencyName: 'all',
-      keywordSearch: '',
-      includeNearbySuburbs: false,
-    };
+    const clearedFilters: FilterState = { ...DEFAULT_LISTING_FILTERS };
     setLocalFilters(clearedFilters);
   };
 
@@ -228,6 +196,86 @@ export function MobileFilterSheet({ filters, setFilters, uniqueValues }: MobileF
                     Will also show listings from surrounding suburbs
                   </p>
                 )}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Listed within */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Listed within</Label>
+              <Select
+                value={localFilters.listedWithinDays}
+                onValueChange={(value) => setLocalFilters({ ...localFilters, listedWithinDays: value })}
+              >
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LISTED_WITHIN_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Separator />
+
+            {/* Only show */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Only show</Label>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm">Listings with photos</span>
+                <Switch
+                  checked={localFilters.hasPhotos}
+                  onCheckedChange={(checked) => setLocalFilters({ ...localFilters, hasPhotos: checked })}
+                  aria-label="Only listings with photos"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm">Listings that can be mapped</span>
+                <Switch
+                  checked={localFilters.mappableOnly}
+                  onCheckedChange={(checked) => setLocalFilters({ ...localFilters, mappableOnly: checked })}
+                  aria-label="Only listings that can be mapped"
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm">Include undisclosed prices</span>
+                <Switch
+                  checked={localFilters.includeUndisclosedPrice}
+                  onCheckedChange={(checked) =>
+                    setLocalFilters({ ...localFilters, includeUndisclosedPrice: checked })
+                  }
+                  aria-label="Include listings with undisclosed prices in a price range"
+                />
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Land size */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Land size (m²)</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  placeholder="Min"
+                  type="number"
+                  inputMode="numeric"
+                  value={localFilters.landSizeMin}
+                  onChange={(e) => setLocalFilters({ ...localFilters, landSizeMin: e.target.value })}
+                  className="h-11"
+                />
+                <Input
+                  placeholder="Max"
+                  type="number"
+                  inputMode="numeric"
+                  value={localFilters.landSizeMax}
+                  onChange={(e) => setLocalFilters({ ...localFilters, landSizeMax: e.target.value })}
+                  className="h-11"
+                />
               </div>
             </div>
 

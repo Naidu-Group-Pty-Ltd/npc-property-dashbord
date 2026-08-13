@@ -197,6 +197,8 @@ export const MAX_HEATMAP_COLS = 50;
 export const MAX_HEATMAP_CELLS = 400;
 export const MAX_WHEEL_SCORES = 24;
 export const MAX_PICTOGRAPH_UNITS = 100;
+/** Beyond six the fan's legend outruns the plot and the lines stop separating. */
+export const MAX_FAN_SERIES = 6;
 
 // ── Primitives ──────────────────────────────────────────────────────────────
 
@@ -263,11 +265,87 @@ export function formatAxisValue(value: number, mode: AxisMode): string {
   return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0);
 }
 
-/** Wrap a chart into a print-ready figure. */
-export function chartFigure(svg: string, caption = ''): string {
+/**
+ * Base64, UTF-8 safe, in both runtimes these modules run in.
+ *
+ * `btoa` takes a latin1 string, and a chart label contains an em dash, a
+ * non-breaking space or a currency symbol often enough that passing the SVG
+ * straight in throws. Encoding to bytes first is the portable fix — no
+ * `Buffer`, which the Edge Function runtime does not have.
+ */
+function base64Utf8(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/**
+ * Wrap a chart into a print-ready figure.
+ *
+ * ## Why the chart is an `img` and not inline SVG
+ *
+ * It was inline, and every chart in every format was **invisible to a screen
+ * reader**. WeasyPrint renders inline `<svg>` as drawing operators under a
+ * `/NonStruct` node: there is no `/Figure` in the structure tree, so there is
+ * nothing to attach alternative text to and nothing for assistive technology
+ * to announce. `aria-label` on the `<svg>` does nothing. A `<title>` child
+ * does nothing. Both were tried against the pinned engine.
+ *
+ * The part that makes this worth stating plainly: **the document still passes
+ * PDF/UA**. veraPDF cannot require alt text for a figure that is not in the
+ * tree, so a report full of unreachable charts validates clean. That is the
+ * shape of a hollow conformance claim, and it is why the check that matters
+ * here is not the validator.
+ *
+ * `<img src="data:image/svg+xml;base64,…" alt="…">` is the one form the engine
+ * tags as `/Figure` with `/Alt`. Base64 rather than percent-encoded because
+ * `renderResourcePolicy.pure.ts` skips exactly the base64 payload — a
+ * percent-encoded SVG stays under the URL scan, where its own markup can trip
+ * the scheme-relative check.
+ *
+ * ## The alt text
+ *
+ * The caption when there is one, an explicit `alt` when the caption is absent
+ * or would not describe the drawing. A figure with neither is emitted inline
+ * and untagged rather than as a `/Figure` with an empty `/Alt`: an untagged
+ * drawing is merely silent, while a figure that declares itself described and
+ * is not fails PDF/UA — and lies.
+ */
+/**
+ * How wide the figure prints, as a share of the measure.
+ *
+ * `full` is the default and what every caller before this one wanted. `compact`
+ * exists because a chart drawn at `CHART_WIDTH.compact` — a gauge, a donut, a
+ * score wheel — is 460 units wide and up to 360 tall, and stretching that to
+ * the full 174mm measure prints a single number 136mm high. Nine of those in a
+ * chapter is nine sheets to say nine things.
+ *
+ * The fraction is the ratio the charts were drawn at: 460 of 760. A caller
+ * choosing `compact` **must** also narrow its `ChartContext.widthMm` by the
+ * same fraction, or every label inside the drawing is set at the wrong point
+ * size — `chartContextForSpan` exists for the same reason.
+ */
+export type ChartFigureWidth = 'full' | 'compact';
+
+/** `CHART_WIDTH.compact / CHART_WIDTH.wide`. */
+export const COMPACT_FIGURE_FRACTION = CHART_WIDTH.compact / CHART_WIDTH.wide;
+
+export function chartFigure(
+  svg: string,
+  caption = '',
+  alt = '',
+  width: ChartFigureWidth = 'full',
+): string {
   if (!svg) return '';
-  return `<figure class="chart-figure">${minifySvg(svg)}`
-    + `${caption ? `<figcaption>${svgEscape(caption)}</figcaption>` : ''}</figure>`;
+  const described = (alt || caption).trim();
+  const figcaption = caption ? `<figcaption>${svgEscape(caption)}</figcaption>` : '';
+  const body = described
+    ? `<img class="chart-img" src="data:image/svg+xml;base64,${base64Utf8(minifySvg(svg))}"`
+      + ` alt="${svgEscape(described)}">`
+    : minifySvg(svg);
+  const cls = width === 'compact' ? 'chart-figure chart-compact' : 'chart-figure';
+  return `<figure class="${cls}">${body}${figcaption}</figure>`;
 }
 
 /** Shared `<text>` builder — every label in this module routes through it. */
@@ -313,8 +391,19 @@ export function renderGauge(
   const max = opts.max ?? 100;
   const v = Math.max(0, Math.min(max, Number(value) || 0));
   const pct = max > 0 ? v / max : 0;
-  const w = CHART_WIDTH.compact, h = 260;
-  const cx = w / 2, cy = 180, r = 130;
+  // The arc is pushed down by whatever furniture sits above it.
+  //
+  // These were fixed at `cy = 180, h = 260` with the label at y=42 and the
+  // caption at y=62, which put both *inside* the arc: its crown is at `cy - r`,
+  // which was 50. A render of a gauge carrying both showed "OUT OF 100" struck
+  // through by the track. Every caller before this one passed a label alone or
+  // nothing, so the collision only appeared when a caller finally used the
+  // parameter the signature had always offered.
+  const top = 18 + (opts.label ? 22 : 0) + (opts.caption ? 18 : 0);
+  const w = CHART_WIDTH.compact;
+  const cx = w / 2, r = 130;
+  const cy = top + r + 10;
+  const h = cy + 80;
   const polarX = (a: number) => cx + r * Math.cos(a);
   const polarY = (a: number) => cy + r * Math.sin(a);
   const endA = Math.PI + Math.PI * pct;
@@ -357,8 +446,8 @@ export function renderGauge(
     ${text(ctx, w, { x: cx, y: cy - 6, pt: 'hero', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, String(Math.round(v)))}
     ${text(ctx, w, { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.6 }, svgEscape(`/${max}  ·  ${band}`.toUpperCase()))}
     <rect x="${cx - 38}" y="${cy + 30}" width="76" height="3" fill="${bandColor}" rx="1.5"/>
-    ${opts.label ? text(ctx, w, { x: cx, y: 42, pt: 'title', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700 }, svgEscape(opts.label)) : ''}
-    ${opts.caption ? text(ctx, w, { x: cx, y: 62, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.9 }, svgEscape(opts.caption.toUpperCase())) : ''}
+    ${opts.label ? text(ctx, w, { x: cx, y: 26, pt: 'title', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700 }, svgEscape(opts.label)) : ''}
+    ${opts.caption ? text(ctx, w, { x: cx, y: opts.label ? 46 : 26, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.9 }, svgEscape(opts.caption.toUpperCase())) : ''}
   </svg>`;
 }
 
@@ -1014,6 +1103,131 @@ export function renderDonut(
     ${centerSub}${legend}</svg>`;
 }
 
+export interface SeriesLine { label: string; values: readonly number[] }
+
+/**
+ * Several series over a shared x axis — a scenario fan.
+ *
+ * Added for the investment report, which is the first format in the programme
+ * whose payload carries more than one series of the same measure: its
+ * `projections` column holds conservative, moderate and optimistic ten-year
+ * arrays, and every renderer before this one could only draw the middle case.
+ * Printing one line out of three throws away the range, and the range is the
+ * whole point of a projection.
+ *
+ * The band between the lowest and highest series is filled, which is what makes
+ * this a fan rather than three unrelated lines: the reader is meant to see the
+ * spread first and the individual paths second. With a single series it degrades
+ * to a plain line, and that is deliberate — a caller with one scenario should
+ * not have to reach for a different function.
+ *
+ * Series are drawn in the order given, and the **last** one is drawn heaviest,
+ * because the caller orders them worst-to-best and the case a reader anchors on
+ * is whichever the caller put last.
+ */
+export function renderSeriesFan(
+  ctx: ChartContext,
+  series: readonly SeriesLine[],
+  opts: { title?: string; xLabels?: readonly string[]; mode?: AxisMode; zeroLine?: boolean } = {},
+): string {
+  const clean = series.filter((s) => s.values.length >= 2).slice(0, MAX_FAN_SERIES);
+  if (!clean.length) return '';
+
+  const w = CHART_WIDTH.wide;
+  const h = 340;
+  const padT = opts.title ? 44 : 18;
+  const padB = 46, padL = 74, padR = 16;
+  const plotW = w - padL - padR;
+  const plotH = h - padT - padB;
+
+  const points = clean.length ? Math.max(...clean.map((s) => s.values.length)) : 0;
+  const all = clean.flatMap((s) => [...s.values]);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  // A zero baseline is included whenever the data straddles it or the caller
+  // asks, so a cumulative cash-flow fan that is negative throughout still shows
+  // the reader where break-even sits rather than floating above an implied one.
+  if (opts.zeroLine || (lo < 0 && hi > 0)) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const span = hi - lo;
+
+  const px = (i: number) => padL + (points <= 1 ? 0 : (i / (points - 1)) * plotW);
+  const py = (v: number) => padT + plotH - ((v - lo) / span) * plotH;
+
+  // ── Grid and the y axis ──
+  const TICKS = 4;
+  const gridLines: string[] = [];
+  for (let t = 0; t <= TICKS; t++) {
+    const v = lo + (span * t) / TICKS;
+    const y = py(v);
+    gridLines.push(
+      `<line x1="${padL}" x2="${padL + plotW}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" `
+      + `stroke="${ctx.palette.rule}" stroke-width="0.5"/>`
+      + text(ctx, w, { x: padL - 10, y: y + 4, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'end', tabular: true },
+        svgEscape(formatAxisValue(v, opts.mode ?? 'plain'))),
+    );
+  }
+
+  const zero = (lo <= 0 && hi >= 0)
+    ? `<line x1="${padL}" x2="${padL + plotW}" y1="${py(0).toFixed(1)}" y2="${py(0).toFixed(1)}" `
+      + `stroke="${ctx.palette.ink}" stroke-width="1" stroke-dasharray="4 3"/>`
+    : '';
+
+  // ── The band between the extremes ──
+  //
+  // Built from the per-x min and max across every series rather than from the
+  // first and last series, because "lowest" is not guaranteed to be one series
+  // throughout — an optimistic rent case can cross a conservative value case.
+  let band = '';
+  if (clean.length >= 2) {
+    const top: string[] = [], bottom: string[] = [];
+    for (let i = 0; i < points; i++) {
+      const col = clean.map((s) => s.values[Math.min(i, s.values.length - 1)]);
+      top.push(`${px(i).toFixed(1)},${py(Math.max(...col)).toFixed(1)}`);
+      bottom.unshift(`${px(i).toFixed(1)},${py(Math.min(...col)).toFixed(1)}`);
+    }
+    band = `<polygon points="${top.join(' ')} ${bottom.join(' ')}" fill="${withAlpha(ctx.palette.accent, 0.14)}"/>`;
+  }
+
+  const lines = clean.map((s, si) => {
+    const last = si === clean.length - 1;
+    const colour = ctx.palette.series[si % ctx.palette.series.length];
+    const pts = s.values.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ');
+    return `<polyline points="${pts}" fill="none" stroke="${colour}" `
+      + `stroke-width="${last ? 2.6 : 1.6}" stroke-linecap="round" stroke-linejoin="round"`
+      + `${last ? '' : ' stroke-dasharray="5 3"'}/>`
+      // The end point is marked so a reader can tell which line finished where
+      // without tracing it back to the legend.
+      + `<circle cx="${px(s.values.length - 1).toFixed(1)}" cy="${py(s.values[s.values.length - 1]).toFixed(1)}" `
+      + `r="${last ? 4 : 3}" fill="${colour}"/>`;
+  }).join('');
+
+  // ── x labels, thinned so they cannot collide ──
+  const labels = opts.xLabels ?? Array.from({ length: points }, (_, i) => String(i + 1));
+  const widest = Math.max(...labels.map((l) => l.length)) * MICRO_ADVANCE;
+  const every = Math.max(1, Math.ceil((points * widest) / Math.max(1, plotW)));
+  const xLabels = labels.slice(0, points).map((l, i) =>
+    (i % every === 0 || i === points - 1)
+      ? text(ctx, w, { x: px(i), y: h - padB + 22, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' }, svgEscape(l))
+      : '').join('');
+
+  // ── Legend ──
+  const legend = clean.length > 1
+    ? clean.map((s, si) => {
+      const colour = ctx.palette.series[si % ctx.palette.series.length];
+      const x = padL + si * Math.min(160, plotW / clean.length);
+      return `<line x1="${x}" x2="${x + 18}" y1="${h - 12}" y2="${h - 12}" stroke="${colour}" stroke-width="2.4"/>`
+        + text(ctx, w, { x: x + 24, y: h - 8, pt: 'micro', fill: ctx.palette.inkMuted }, svgEscape(s.label));
+    }).join('')
+    : '';
+
+  const title = opts.title
+    ? text(ctx, w, { x: 0, y: 24, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+      + `<line x1="0" x2="${w}" y1="34" y2="34" stroke="${ctx.palette.rule}" stroke-width="0.6"/>`
+    : '';
+
+  return `${svgOpen(w, h)}${title}<g>${gridLines.join('')}</g>${band}${zero}${lines}${xLabels}${legend}</svg>`;
+}
+
 export interface TileItem { label: string; value: string; sub?: string; intensity?: number }
 
 /** Tiles — small multiples that read like a faux-choropleth. */
@@ -1073,8 +1287,19 @@ export function renderTimelineRibbon(
   const markers = phases.map((phase, i) => {
     const x = padX + i * step;
     const list = (grouped.get(phase) ?? []).slice(0, 2);
+    // The end labels align to the edge; only the interior ones centre.
+    //
+    // Centring all four put the first label's midpoint at `padX` — 44 units
+    // into a 760-unit viewBox — so a 28-character micro label spanned roughly
+    // −16 to 104 and the SVG clipped its first glyph. Read off a render:
+    // "Rail within 900m" printed as "ail within 900m" under the Existing dot,
+    // on every timeline in the corpus. The last marker overflowed the right
+    // edge by the same amount.
+    const last = phases.length - 1;
+    const anchor = i === 0 ? 'start' : i === last ? 'end' : 'middle';
+    const labelX = i === 0 ? 12 : i === last ? w - 12 : x;
     const labels = list.map((it, j) => text(ctx, w,
-      { x, y: axisY + 36 + j * 15, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: j === 0 ? 700 : 500 },
+      { x: labelX, y: axisY + 36 + j * 15, pt: 'micro', fill: ctx.palette.ink, anchor, weight: j === 0 ? 700 : 500 },
       svgEscape(it.label.length > 28 ? `${it.label.slice(0, 26)}…` : it.label))).join('');
     return `<circle cx="${x.toFixed(1)}" cy="${axisY}" r="8" fill="${i === 0 ? ctx.palette.ink : ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
       + text(ctx, w, { x, y: axisY - 24, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', weight: 700, tracking: 1 }, svgEscape(phase.toUpperCase()))

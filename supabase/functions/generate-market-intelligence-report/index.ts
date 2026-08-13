@@ -5,6 +5,8 @@ import { callLLMRaw } from '../_shared/llmRouter.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { resolvePrompt } from '../_shared/engine-prompts.ts';
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -16,6 +18,25 @@ interface ReportRequest {
   include_advisory_strategy?: boolean;
   /** @deprecated kept for backward-compat with old callers. */
   include_npc_strategy?: boolean;
+  /**
+   * The correlation block, when the report was started from the correlation
+   * panel.
+   *
+   * Persisted into `report_data` from here on. `MarketCorrelationPanel` has
+   * always handed this straight to the browser-side PDF generator in memory
+   * (`MarketCorrelationPanel.tsx:128` → `MarketIntelligenceExportButton.tsx:91`)
+   * and nothing ever wrote it down, so the History modal — which only has the
+   * row — could not supply it and every re-download silently dropped the whole
+   * Correlation Highlights section. Measured: zero of the six stored reports
+   * carry one.
+   *
+   * Optional, and callers that omit it are unaffected.
+   */
+  correlation_data?: {
+    aiAnalysis?: string;
+    perplexityResearch?: string;
+    citations?: string[];
+  };
 }
 
 interface PerplexityResult {
@@ -91,7 +112,7 @@ async function queryPerplexity(
   apiKey: string,
   systemPrompt?: string
 ): Promise<PerplexityResult> {
-  const response = await fetch('https://api.perplexity.ai/chat/completions', {
+  const response = await meteredFetch('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -541,6 +562,26 @@ const __miReportHandler = async (req: Request): Promise<Response> => {
       ? body.include_advisory_strategy !== false
       : body.include_npc_strategy !== false;
 
+    // Normalised here rather than trusted, and bounded: this lands verbatim in a
+    // jsonb column that a renderer later typesets, and the panel that sends it
+    // gets its text from a model.
+    const rawCorrelation = body.correlation_data;
+    const correlationData = rawCorrelation && typeof rawCorrelation === 'object'
+      ? (() => {
+        const ai = String(rawCorrelation.aiAnalysis ?? '').slice(0, 40_000);
+        const research = String(rawCorrelation.perplexityResearch ?? '').slice(0, 40_000);
+        const citations = Array.isArray(rawCorrelation.citations)
+          ? rawCorrelation.citations
+            .filter((c: unknown): c is string => typeof c === 'string' && c.trim().length > 0)
+            .slice(0, 60)
+            .map((c: string) => c.slice(0, 500))
+          : [];
+        return ai || research || citations.length
+          ? { aiAnalysis: ai, perplexityResearch: research, citations }
+          : null;
+      })()
+      : null;
+
     // Allow internal service calls (from dispatch function) without auth
     const authHeader = req.headers.get('Authorization') || '';
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -923,6 +964,10 @@ Tone: Authoritative, data-backed, actionable. Use bold for key figures. Position
         ),
         allCitations,
         includedLayers: requiredLayers,
+        // Written only when the caller supplied one, so the key stays absent on
+        // an ordinary report rather than appearing as an empty object that a
+        // reader would have to distinguish from a real but blank block.
+        ...(correlationData ? { correlationData } : {}),
       };
 
       // ── Update report record ────────────────────────────────────────
@@ -964,9 +1009,7 @@ Tone: Authoritative, data-backed, actionable. Use bold for key figures. Position
 
   } catch (error) {
     console.error('[market-intel-report] Fatal error:', error);
-    return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : 'Internal error'
-    }), {
+    return new Response(JSON.stringify(internalError(error, 'generate-market-intelligence-report')), {
       status: 500, headers: { ...createCorsHeaders(), 'Content-Type': 'application/json' },
     });
   }

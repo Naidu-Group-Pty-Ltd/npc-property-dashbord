@@ -28,6 +28,7 @@ import {
   resolveBuilderSession, builderGovernanceError, builderPermissionMatrix,
 } from '../_shared/builderPortalAuth.ts';
 import { auditBuilderIdentity, revokeBuilderSession, revokeAllBuilderSessions } from '../_shared/builderSessions.ts';
+import { ACKNOWLEDGEMENTS_INCOMPLETE_ERROR, readAcknowledgements } from '../_shared/portalAgreement.ts';
 
 const MUTATING_ACTIONS = new Set([
   'accept_current_terms', 'complete_onboarding', 'select_organisation',
@@ -71,6 +72,17 @@ Deno.serve(async (req) => {
 
     // ---------------------------------------------------------------- terms
     if (action === 'accept_current_terms') {
+      // Every mandatory acknowledgment must be asserted. The list is shared
+      // with the Solicitor and Finance portals: one agreement, one gate.
+      const { acknowledgements, missing } = readAcknowledgements(body);
+      if (missing.length > 0) {
+        return json({
+          error: ACKNOWLEDGEMENTS_INCOMPLETE_ERROR,
+          code: 'ACKNOWLEDGEMENTS_INCOMPLETE',
+          missing,
+        }, 400);
+      }
+
       const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
       const userAgent = req.headers.get('user-agent');
       const { data, error } = await supabase.rpc('builder_accept_current_terms', {
@@ -78,6 +90,7 @@ Deno.serve(async (req) => {
         _session_id: session.session_id,
         _ip_hash: ip ? await hashSessionToken(`ip:${ip}`) : null,
         _user_agent_hash: userAgent ? await hashSessionToken(`ua:${userAgent}`) : null,
+        _acknowledgements: acknowledgements,
       });
       if (error) {
         if (String(error.message).includes('BUILDER_TERMS_UNAVAILABLE')) {
@@ -90,6 +103,9 @@ Deno.serve(async (req) => {
         }
         throw error;
       }
+      // `builder_accept_current_terms` writes the acceptance, the user flag and
+      // the activity-log entry — including which acknowledgments were asserted —
+      // in one transaction. Logging again here would double-count the event.
       const accepted = Array.isArray(data) ? data[0] : data;
       return json({ success: true, terms_version_id: accepted?.terms_version_id ?? null });
     }
@@ -97,7 +113,7 @@ Deno.serve(async (req) => {
     if (action === 'get_governance') {
       const [{ data: terms }, { data: steps }] = await Promise.all([
         supabase.from('portal_terms_versions')
-          .select('id, version, title, content_markdown, effective_at')
+          .select('id, version, title, content_markdown, document_hash, effective_at')
           .eq('portal', 'builder').is('retired_at', null)
           .lte('effective_at', new Date().toISOString())
           .order('effective_at', { ascending: false }).limit(1).maybeSingle(),

@@ -77,7 +77,7 @@ async function synthesizeWithAI(period: Period, windowLabel: string, updates: an
   const result = await callLLM({
     agentKey:'market_updates_digest',
     messages:[
-      { role:'system', content:"You are an Australian real-estate market intelligence editor. Produce a factual, source-grounded " + period + " digest. Cite only supplied updates and use their raw IDs in top_update_ids. Never invent figures, sources or events. Australian English; concise executive tone." },
+      { role:'system', content:"You are an Australian real-estate market intelligence editor. Produce a factual, source-grounded " + period + " digest. Cite only supplied updates. Put raw record IDs ONLY in the top_update_ids array — never inside any prose field. Narrative fields (executive_summary, highlights, segment_breakdown, implications, watchlist) must be clean reader-facing English: attribute by publication name only (e.g. \"Mortgage Professional Australia\") and must not contain UUIDs, 'id:' fragments, database keys or any developer identifiers. Never invent figures, sources or events. Australian English; concise executive tone." },
       { role:'user', content:`Period: ${period} (${windowLabel})\nUpdates (${updates.length} total):\n${JSON.stringify(compact, null, 2)}` },
     ],
     tools:[tool], toolChoice:{ type:'function', function:{ name:'record_market_digest' } }, requiredToolName:'record_market_digest', requireValidToolArguments:true,

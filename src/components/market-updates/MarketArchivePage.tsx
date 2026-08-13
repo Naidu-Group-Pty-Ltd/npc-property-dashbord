@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { Archive, ArrowLeft, ExternalLink, Loader2, RotateCcw, Search, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -27,7 +27,8 @@ export function MarketArchivePage() {
   const [filters,setFilters]=useState(INITIAL_FILTERS);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState(false);
-  const [restoringId,setRestoringId]=useState<string|null>(null);
+  const [restoringIds,setRestoringIds]=useState<Set<string>>(()=>new Set());
+  const restoringRef=useRef(new Set<string>());
 
   const load=useCallback(async(page=1,query=appliedSearch,nextFilters=filters)=>{
     setLoading(true);
@@ -48,11 +49,12 @@ export function MarketArchivePage() {
   const clearAll=()=>{setSearch('');setAppliedSearch('');setFilters(INITIAL_FILTERS);void load(1,'',INITIAL_FILTERS);};
   const hasFilters=Boolean(appliedSearch)||Object.entries(filters).some(([key,value])=>key!=='sort'&&value!==ALL)||filters.sort!=='archived_desc';
   const restore=async(item:ArchivedMarketUpdate)=>{
-    if(restoringId||!canRestore)return;
-    setRestoringId(item.id);
-    try { await restoreMarketUpdate(item.id); setArchive(current=>({...current,items:current.items.filter(row=>row.id!==item.id),count:Math.max(0,current.count-1)})); toast.success('Article restored to the Market News Feed.'); }
-    catch { toast.error("We couldn’t restore this article. Please try again."); }
-    finally { setRestoringId(null); }
+    if(restoringRef.current.has(item.id)||!canRestore||!item.id)return;
+    restoringRef.current.add(item.id);
+    setRestoringIds(current=>new Set(current).add(item.id));
+    try { await restoreMarketUpdate(item.id); setArchive(current=>({...current,items:current.items.filter(row=>row.id!==item.id),count:Math.max(0,current.count-1)})); toast.success('News item restored.'); }
+    catch { toast.error('Unable to restore this news item. Please try again.'); }
+    finally { restoringRef.current.delete(item.id);setRestoringIds(current=>{const next=new Set(current);next.delete(item.id);return next;}); }
   };
 
   return <main className="mx-auto w-full max-w-[1600px] space-y-5 p-4 sm:p-6 lg:p-8">
@@ -77,11 +79,11 @@ export function MarketArchivePage() {
     {error&&<Card role="alert" className="p-6"><p className="font-semibold text-destructive">Archived News could not be loaded.</p><p className="mt-1 text-sm text-muted-foreground">Please retry the secure archive request.</p><Button className="mt-4" variant="outline" onClick={()=>void load(archive.page)}>Retry</Button></Card>}
     {loading&&archive.items.length===0&&<div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground" aria-live="polite"><Loader2 className="mr-2 h-4 w-4 animate-spin"/>Loading archived news…</div>}
     {!loading&&!error&&archive.items.length===0&&<Card className="flex min-h-64 flex-col items-center justify-center border-dashed p-8 text-center"><Archive className="h-9 w-9 text-muted-foreground" aria-hidden/><h2 className="mt-3 font-semibold">{hasFilters?'No archived articles match your current filters.':'No archived articles'}</h2><p className="mt-1 text-sm text-muted-foreground">{hasFilters?'Clear the filters to see all archived news.':'Articles archived from the Market News Feed will appear here.'}</p><Button className="mt-4" variant="outline" asChild><Link to="/market-updates">Return to Market News Feed</Link></Button></Card>}
-    <div className="space-y-4">{archive.items.map(item=><ArchivedCard key={item.id} item={item} canRestore={canRestore} restoring={restoringId===item.id} disabled={Boolean(restoringId)} onRestore={()=>void restore(item)}/>)}</div>
+    <div className="space-y-4">{archive.items.map(item=><ArchivedCard key={item.id} item={item} canRestore={canRestore} restoring={restoringIds.has(item.id)} onRestore={event=>{event.preventDefault();event.stopPropagation();void restore(item);}}/>)}</div>
     {archive.count>archive.pageSize&&<nav className="flex items-center justify-between" aria-label="Archived news pagination"><Button variant="outline" onClick={()=>void load(archive.page-1)} disabled={loading||archive.page<=1}>Previous</Button><span className="text-sm text-muted-foreground">Page {archive.page} of {Math.ceil(archive.count/archive.pageSize)}</span><Button variant="outline" onClick={()=>void load(archive.page+1)} disabled={loading||!archive.hasMore}>Next</Button></nav>}
   </main>;
 }
 
 function Filter({label,value,values,onChange}:{label:string;value:string;values:string[];onChange:(value:string)=>void}) { return <Select value={value} onValueChange={onChange}><SelectTrigger aria-label={`Filter archived news by ${label.toLowerCase()}`}><SelectValue placeholder={label}/></SelectTrigger><SelectContent><SelectItem value={ALL}>All {label}</SelectItem>{values.map(option=><SelectItem key={option} value={option}>{titleCase(option)}</SelectItem>)}</SelectContent></Select>; }
 
-function ArchivedCard({item,canRestore,restoring,disabled,onRestore}:{item:ArchivedMarketUpdate;canRestore:boolean;restoring:boolean;disabled:boolean;onRestore:()=>void}) { return <article className="rounded-xl border border-border bg-card p-5"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Archived {dateLabel(item.archived_at)}</Badge><Badge variant="secondary">{titleCase(item.category)}</Badge><Badge variant="outline">{titleCase(item.impact_level)} impact</Badge>{item.geography.slice(0,2).map(value=><Badge key={value} variant="secondary">{value}</Badge>)}</div><h2 className="mt-3 text-lg font-semibold leading-snug">{item.title}</h2><p className="mt-1 text-xs text-muted-foreground">{item.source_name} · Published {dateLabel(item.source_published_at??item.ingested_at)}</p>{item.ai_summary&&<p className="mt-3 text-sm leading-relaxed">{item.ai_summary}</p>}{item.why_it_matters&&<div className="mt-3 rounded-lg border-l-2 border-primary/60 bg-primary/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-primary">Why it matters</p><p className="mt-1 text-sm">{item.why_it_matters}</p></div>}{item.property_implications&&<div className="mt-3 rounded-lg border-l-2 border-info/60 bg-info/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-info">Property impact</p><p className="mt-1 text-sm">{item.property_implications}</p></div>}<div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3"><Button size="default" className="border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20" variant="outline" asChild><a href={item.source_url} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" aria-hidden/>Open original source</a></Button>{item.ai_summary&&<Badge variant="outline" className="gap-1"><Sparkles className="h-3 w-3" aria-hidden/>Analysis retained</Badge>}{canRestore&&<Button size="sm" className="ml-auto" onClick={onRestore} disabled={disabled} aria-label={`Restore ${item.title}`}>{restoring?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<RotateCcw className="mr-2 h-4 w-4" aria-hidden/>}Restore</Button>}</div></article>; }
+function ArchivedCard({item,canRestore,restoring,onRestore}:{item:ArchivedMarketUpdate;canRestore:boolean;restoring:boolean;onRestore:(event:MouseEvent<HTMLButtonElement>)=>void}) { return <article className="rounded-xl border border-border bg-card p-5"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Archived {dateLabel(item.archived_at)}</Badge><Badge variant="secondary">{titleCase(item.category)}</Badge><Badge variant="outline">{titleCase(item.impact_level)} impact</Badge>{item.geography.slice(0,2).map(value=><Badge key={value} variant="secondary">{value}</Badge>)}</div><h2 className="mt-3 text-lg font-semibold leading-snug">{item.title}</h2><p className="mt-1 text-xs text-muted-foreground">{item.source_name} · Published {dateLabel(item.source_published_at??item.ingested_at)}</p>{item.ai_summary&&<p className="mt-3 text-sm leading-relaxed">{item.ai_summary}</p>}{item.why_it_matters&&<div className="mt-3 rounded-lg border-l-2 border-primary/60 bg-primary/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-primary">Why it matters</p><p className="mt-1 text-sm">{item.why_it_matters}</p></div>}{item.property_implications&&<div className="mt-3 rounded-lg border-l-2 border-info/60 bg-info/5 p-3"><p className="text-xs font-semibold uppercase tracking-wide text-info">Property impact</p><p className="mt-1 text-sm">{item.property_implications}</p></div>}<div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3"><Button size="default" className="border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20" variant="outline" asChild><a href={item.source_url} target="_blank" rel="noreferrer"><ExternalLink className="mr-2 h-4 w-4" aria-hidden/>Open original source</a></Button>{item.ai_summary&&<Badge variant="outline" className="gap-1"><Sparkles className="h-3 w-3" aria-hidden/>Analysis retained</Badge>}{canRestore&&<Button type="button" size="sm" className="ml-auto" onClick={onRestore} disabled={restoring||!item.id} aria-label={`Restore ${item.title}`}>{restoring?<Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden/>:<RotateCcw className="mr-2 h-4 w-4" aria-hidden/>}{restoring?'Restoring…':'Restore'}</Button>}</div></article>; }

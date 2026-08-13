@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { drainJob, type BulkProperty } from '../_shared/bulkReportWorker.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 // Per-item token metering happens inside `generate-investment-report` (called by the bulk worker).
 
 interface BulkGenerationRequest {
@@ -136,7 +137,7 @@ const __bulkReportHandler = async (req: Request): Promise<Response> => {
   } catch (error) {
     console.error('❌ Error in bulk generation:', error);
     return new Response(JSON.stringify({
-      error: error instanceof Error ? error.message : 'Unknown error',
+      ...internalError(error, 'generate-bulk-reports'),
       success: false,
     }), {
       status: 500,

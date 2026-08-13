@@ -15,6 +15,14 @@ verify_jwt = false
 [functions.aml-provider-webhook]
 verify_jwt = false
 
+# Didit calls this from their own servers and cannot carry a Supabase JWT.
+# The HMAC signature over the raw body (X-Signature + X-Timestamp, verified in
+# _shared/aml/providers/diditClient.ts) IS the authentication boundary: it is
+# checked before any service-role database access, and no unsigned or stale
+# request can change AML state.
+[functions.didit-webhook]
+verify_jwt = false
+
 [functions.aml-risk]
 verify_jwt = false
 
@@ -52,6 +60,12 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.aml-launch-ops]
+verify_jwt = false
+
+# Compliance passport: staff ops verify their own session in-function;
+# partner ops authenticate with a hashed grant token minted by grant_access
+# (finance handoff-token pattern) and cannot carry a Supabase JWT.
+[functions.aml-reliance]
 verify_jwt = false
 
 [functions.finance-email-track-pixel]
@@ -129,6 +143,11 @@ verify_jwt = false
 
 [functions.manage-call-settings]
 verify_jwt = true
+
+# Branding writes authenticate from the HttpOnly staff session cookie inside the
+# handler; the gateway cannot see that cookie, so JWT verification must be off.
+[functions.manage-branding]
+verify_jwt = false
 
 [functions.manage-report-preferences]
 verify_jwt = true
@@ -239,6 +258,10 @@ verify_jwt = false
 request_timeout = 1500
 
 [functions.resume-bulk-generation]
+request_timeout = 1500
+
+[functions.resume-investment-reports]
+verify_jwt = false
 request_timeout = 1500
 
 [functions.abs-data-service]
@@ -364,6 +387,11 @@ request_timeout = 120
 [functions.estimate-property-expenses]
 verify_jwt = true
 
+[functions.dispatch-workflow-triggers]
+# pg_cron presents the anon key at the gateway; authority is the HMAC envelope
+# the function verifies itself (verifySignedInternal, caller "pg_cron").
+verify_jwt = false
+
 [functions.execute-workflow-step]
 verify_jwt = true
 
@@ -472,7 +500,11 @@ verify_jwt = true
 request_timeout = 1500
 
 [functions.manage-templates]
-verify_jwt = true
+# Authentication and authorisation are enforced inside the function by
+# verifyAuth + requireModulePermission. Gateway JWT verification must remain
+# disabled so HttpOnly Command Centre cookie sessions can reach that verifier
+# when the short-lived browser JWT is absent or stale.
+verify_jwt = false
 request_timeout = 1500
 
 [functions.import-from-url]
@@ -573,6 +605,9 @@ request_timeout = 120
 [functions.backfill-notes-to-ghl]
 verify_jwt = false
 request_timeout = 300
+
+[functions.google-fonts-catalog]
+verify_jwt = false
 
 [functions.google-places-autocomplete]
 verify_jwt = false
@@ -873,6 +908,10 @@ request_timeout = 1500
 verify_jwt = false
 request_timeout = 1500
 
+[functions.render-commercial-capacity-pdf]
+verify_jwt = false
+request_timeout = 1500
+
 [functions.figma-template-sync]
 verify_jwt = false
 request_timeout = 1500
@@ -885,6 +924,9 @@ request_timeout = 1500
 # Superadmin role re-checked inside the function against user_roles.
 verify_jwt = false
 request_timeout = 1500
+
+[functions.partner-agreement-records]
+verify_jwt = true
 
 [functions.pdf-import-diagnostics]
 # Superadmin role re-checked inside the function against user_roles.
@@ -992,6 +1034,14 @@ verify_jwt = false
 
 [functions.market-updates-status]
 # Authoritative sanitised read contract; authentication and module access are enforced in-function.
+verify_jwt = false
+
+[functions.market-updates-archive]
+# Archive writes use the Command Centre HttpOnly session and are verified in-function.
+verify_jwt = false
+
+[functions.market-news-archive-v2]
+# Versioned canonical archive mutation transport; auth and permissions are enforced in-function.
 verify_jwt = false
 
 [functions.market-updates-curate]
@@ -1136,4 +1186,56 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.internal-message-attachments]
+verify_jwt = false
+
+# Both are module-gated rather than JWT-gated: they authenticate the caller
+# themselves (cookie or bearer) and then require the `listings` module
+# permission, and both also expose a service-role-only cron op that carries no
+# user JWT at all. `verify_jwt = true` would reject the cron call outright.
+[functions.listing-images]
+verify_jwt = false
+
+[functions.listings-cache]
+verify_jwt = false
+
+# Same posture as listing-images and listings-cache: authenticates the caller
+# itself and then requires the `listings` module permission, and also exposes
+# service-role-only cron ops that carry no user JWT.
+[functions.listing-enrichment]
+verify_jwt = false
+
+[functions.authenticated-data]
+verify_jwt = false
+
+# Cron-driven drain of `api_usage_log` into Mission Control's per-tenant API-key
+# metering. Auth is enforced in-function (INTERNAL_EDGE_SECRET or the cron
+# secret, constant-time compared) because pg_cron carries no user JWT.
+[functions.report-api-usage]
+verify_jwt = false
+
+# Agreement Centre — partner-side agreement room. Portal session token
+# (x-finance-session-token) is the credential; same posture as the other
+# finance-portal-* functions.
+[functions.finance-portal-agreements]
+verify_jwt = false
+request_timeout = 120
+
+# Agreement Centre — staff-side document preview/download. Staff cookie session
+# + agreements module, like partner-agreement-records; long timeout because it
+# calls the PDF service.
+[functions.agreement-centre-render]
+verify_jwt = true
+request_timeout = 300
+
+# MCP server (@lovable.dev/mcp-js). `verify_jwt = false` because MCP clients
+# authenticate to this endpoint with an OAuth bearer token the function issues
+# and verifies itself (via `jose`), not with a Supabase JWT — the gateway would
+# reject every MCP client before the handler ran.
+#
+# This section is not decoration: the function had NO entry here, and the CLI
+# defaults `verify_jwt` to true. The deploy has been failing since 31 July on an
+# unrelated 413 (see supabase/functions/mcp/deno.json), so the default had never
+# been applied. The first successful deploy would otherwise have silently
+# flipped a working endpoint to true and broken every MCP client.
+[functions.mcp]
 verify_jwt = false

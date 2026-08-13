@@ -27,7 +27,7 @@ import {
   Sparkles,
   Loader2
 } from 'lucide-react';
-import { invokeSecureFunction, hasActiveSession, describeAuthError } from '@/lib/secureInvoke';
+import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
 import {
@@ -118,29 +118,17 @@ export function DepreciationValueCalculator({
   const handleCalculate = useCallback(async () => {
     if (!isValid || isExcluded) return;
 
-    // Pre-flight: if no session token is present, the edge function will 401.
-    // Surface a clear "session expired" message instead of a misleading
-    // "Database Empty" toast.
-    if (!hasActiveSession()) {
-      console.warn('[DepreciationCalculator] No active session — aborting before edge call.');
-      toast({
-        title: "Session expired",
-        description: "Your sign-in session has expired. Please sign out and sign back in to run depreciation calcs.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setIsCalculating(true);
     setNoMatchFound(false);
     setResult(null);
     
     try {
       console.group('🏠 Depreciation Calculator - Fetch & Calculate');
-      console.log('Fetching comps from database...', {
-        hasSessionToken: !!(sessionStorage.getItem('session_token') || localStorage.getItem('session_token')),
-        hasAccessToken: !!(sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token')),
-      });
+      // The fetch below goes through `invokeSecureFunction`, which owns auth.
+      // This diagnostic used to read the session and access tokens out of
+      // storage to log whether they were present — the last reason this file
+      // touched either key. Auth state is not this component's to inspect.
+      console.log('Fetching comps from database...');
 
       // IMPORTANT: Query via edge function to respect RLS
       const fetchBucket = async (typeToUse: PropertyType) => {

@@ -59,7 +59,7 @@ export default function BuilderActivity() {
           <div>
             <CardTitle className="text-base">History</CardTitle>
             <CardDescription>
-              Administrative changes — memberships, permissions and sessions — are not shown here.
+              Administrative changes — organisation access, permissions and sessions — are not shown here.
               Your administrator holds that record.
             </CardDescription>
           </div>
@@ -108,14 +108,16 @@ export default function BuilderActivity() {
                 <li key={entry.id} className="rounded-lg border border-border p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="flex flex-wrap items-center gap-2 font-medium">
+                      {/* A div, not a p: Badge renders a div, and a div inside
+                          a p is invalid HTML the browser silently reflows. */}
+                      <div className="flex flex-wrap items-center gap-2 font-medium">
                         {activityActionLabel(entry.action)}
                         {entry.entity_type ? (
                           <Badge variant="outline">
                             {ACTIVITY_ENTITY_LABELS[entry.entity_type] ?? entry.entity_type}
                           </Badge>
                         ) : null}
-                      </p>
+                      </div>
                       {entry.reason ? (
                         <p className="mt-1 text-sm text-muted-foreground">{entry.reason}</p>
                       ) : null}

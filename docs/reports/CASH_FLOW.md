@@ -182,3 +182,73 @@ menu item does anything. Until then `requestCashFlowPdf` falls back to
 400 or a 500, because falling back on a real failure would hand a client a
 document produced by the generator this format exists to replace while telling
 nobody.
+
+---
+
+## 8. The Template Builder path — a second document, from a different source
+
+Everything above is the **render route**: the browser computes a projection, the
+adviser reviews it, and `render-cash-flow-pdf` typesets exactly that payload.
+
+There is now a second way this format reaches a client, and it does not share a
+byte of that pipeline. `/admin/template-builder` can activate one of 50 design
+templates for `report_type = 'cashflow'`, and those are driven by
+`cashFlowAdapter`, which is given a **report id and nothing else**.
+
+That difference is the whole of §1 read backwards. The adviser's overrides are
+never persisted, so an adapter handed an id cannot recover the projection anyone
+reviewed. What it can recover is the one the report itself stores:
+
+| | Render route | Template Builder route |
+| --- | --- | --- |
+| Input | The browser's live payload | `investment_reports.financial_calculations.projections` |
+| Adviser overrides | Included | Not available, and not approximated |
+| Reports it can serve | Any, from the modal | 162 of 1,182 |
+| The rest | — | `buildBindingContext` returns null; the legacy generator keeps them |
+
+Both routes stay. Neither is a fallback for the other.
+
+### The four figures the projection refuses to publish
+
+`_shared/cashFlowProjection.pure.ts` carries the measurements; this is the
+summary, because it is the reason the templated document is *shorter* than the
+record it is drawn from.
+
+| Stored field | Contradicts | Measured |
+| --- | --- | --- |
+| `keyMetrics.annualNet` / `weeklyNet` | `projections[scenario][0].cashFlow` — both are year-one cash flow | Median disagreement **$24,793**; agree on **0 of 162** |
+| `initialCosts.totalUpfront` | The initial costs listed beside it | Equal on **29 of 161**; residual −$80,740 to +$93,000 |
+| `annualCosts.totalAnnual` | Its own seven components | Equal on **18 of 162**; residual −$25,020 to +$14,003; exactly 0 on 13 |
+| `initialCosts.propertyValue` | Its own series | **$3** on one report whose year-one projected value is $780,000 |
+| `assumptions.capitalGrowth` | The growth the series was built at | Recorded on 69; matches the series' 4% on **3** |
+| `loanDetails.interestOnlyPeriod` | A balance that amortises from year one | Recorded on 93; the balance falls in year one on **161 of 161** |
+
+None of these is a bug to be fixed here — they are what the record holds, and
+"fixing" one would mean this route disagreeing with the render route about the
+same report. They are simply not bound, so the templated pages carry **no total
+row** under either cost table. That looks like an omission and is the opposite: a
+total wrong by $93,000, printed under the figures it claims to total, tells a
+client the document cannot add up and gives them no way to tell which line is
+wrong.
+
+The growth rates *are* stated, and they are derived from the series rather than
+read from `assumptions` — `(value₁₀/value₁)^(1/9)` is **2.000, 4.000 and 6.000**
+on all 162 reports and `(rent₁₀/rent₁)^(1/9)` is **2.000, 3.000 and 4.000**,
+without exception. A page headed "what this rests on" is a checkable claim about
+the document's own arithmetic, so it is read off the arithmetic.
+
+### No client, and what that cost elsewhere
+
+`investment_reports` has **no `client_name` column**, and `client_property_id` is
+set on 2 of the 162. So the templated document is addressed to a property.
+
+Finding that out found a live defect in two formats that had already shipped. An
+unresolved binding renders as the **empty string**, not as a visible `{{…}}`, so
+the Borrowing Capacity and Comparison masters — whose cover title was
+`{{client.name}}`, against tables that have no client-name column either — shipped
+a cover with no title and a running foot beginning " · ". Both now name what the
+document is about, and `cashFlowCatalogue.spec.ts` asserts which of the five
+formats may bind a client at all.
+
+See [`../template-library/07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)
+for the design system these 50 masters are drawn in.

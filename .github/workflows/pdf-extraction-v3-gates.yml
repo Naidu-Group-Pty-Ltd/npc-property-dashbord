@@ -43,8 +43,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - run: npm install --no-audit --no-fund
@@ -58,7 +58,7 @@ jobs:
           node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=fast
       - name: Upload sanitized report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdf-v3-release-gate-fast
           path: reports/pdf-extraction-v3/*.json
@@ -74,8 +74,8 @@ jobs:
     env:
       PDF_V3_NIGHTLY: ${{ github.event_name == 'schedule' && '1' || '0' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - run: npm install --no-audit --no-fund
@@ -86,7 +86,7 @@ jobs:
         run: node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=full
       - name: Upload sanitized report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdf-v3-release-gate-full
           path: reports/pdf-extraction-v3/*.json
@@ -103,10 +103,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       - run: npm install --no-audit --no-fund
@@ -125,7 +125,7 @@ jobs:
         run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs --dir reports/pdf-extraction-v3
       - name: Upload sanitized report only
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdf-v3-release-gate-private
           path: reports/pdf-extraction-v3/*.json

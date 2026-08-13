@@ -23,19 +23,35 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Eye, FileStack, Plus, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { TemplateDocumentPreview } from './TemplateDocumentPreview';
+import { ColourwaySwatch } from './TemplateColourwayPicker';
 import { categoryLabel, reportTypeLabel } from '@/lib/templateLibrary/taxonomy';
+import {
+  axisLabel, colourwayOverridesFor, densityLabel, effectiveGround, entryColourways,
+} from '@/lib/templateLibrary/entryDesign';
 import type { TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
 
 interface Props {
   entry: TemplateLibraryListEntry;
   canUse: boolean;
+  /** Colourway to draw the card's page-one in. Null uses the entry's default. */
+  colourwayId?: string | null;
   onPreview: (entry: TemplateLibraryListEntry) => void;
-  onUse: (entry: TemplateLibraryListEntry) => void;
+  onUse: (entry: TemplateLibraryListEntry, colourwayId: string | null) => void;
+  /** Selecting a swatch on the card. */
+  onColourway?: (entry: TemplateLibraryListEntry, colourwayId: string) => void;
 }
 
-export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) {
+export function TemplateLibraryCard({
+  entry, canUse, colourwayId = null, onPreview, onUse, onColourway,
+}: Props) {
   const compat = entry.compatibility;
   const premium = entry.accessTier !== 'standard';
+  const design = entry.designMeta;
+  const colourways = entryColourways(entry);
+  // The stored page-one already carries the entry's default colourway, so an
+  // override is only computed when the user has chosen a different one.
+  const tokenOverrides = colourwayOverridesFor(entry, colourwayId);
+  const ground = effectiveGround(entry, colourwayId);
 
   return (
     <article
@@ -94,6 +110,7 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
               schema={entry.previewSchema}
               variant="page"
               lazy
+              tokenOverrides={tokenOverrides}
               label={`First page of ${entry.name}, rendered with sample data`}
               className="w-full"
             />
@@ -126,6 +143,14 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
       {/* ── Identity ────────────────────────────────────────────────────── */}
       <div className="flex flex-1 flex-col gap-3 border-t border-border/60 p-5">
         <div>
+          {/* The family, above the name. A catalogue of fifty masters across ten
+              families is unreadable if the only label is the template's own
+              name — "Bullion Rail" means nothing without "Private Banking". */}
+          {design && (
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
+              {design.familyName}
+            </p>
+          )}
           <h3 className="text-[15px] font-semibold leading-snug tracking-[-0.01em]">{entry.name}</h3>
           <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
             {entry.description || 'No description'}
@@ -146,7 +171,51 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
             <FileStack className="h-3 w-3" aria-hidden="true" />
             {entry.pageCount} page{entry.pageCount === 1 ? '' : 's'}
           </span>
+          {design && (
+            <>
+              <span aria-hidden="true" className="text-border">·</span>
+              <span className="capitalize">{axisLabel(design.variantAxis)}</span>
+              <span aria-hidden="true" className="text-border">·</span>
+              <span>{densityLabel(design.density)}</span>
+              <span aria-hidden="true" className="text-border">·</span>
+              <span>{ground === 'dark' ? 'Dark' : 'Light'}</span>
+            </>
+          )}
         </div>
+
+        {design && (
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            <span className="text-foreground/70">For:</span> {design.recommendedUse}
+          </p>
+        )}
+
+        {/* The ten colourways, as the catalogue itself presents them: paper
+            behind, accent in front. Selecting one repaints the sheet above
+            rather than opening anything. */}
+        {colourways.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1" role="group" aria-label={`Colourways for ${entry.name}`}>
+            {colourways.map((c) => {
+              const active = (colourwayId ?? design?.defaultColourway) === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => onColourway?.(entry, c.id)}
+                  title={`${c.name} · ${c.ground}`}
+                  aria-label={`${c.name}, ${c.ground} ground`}
+                  aria-pressed={active}
+                  className={[
+                    'rounded-[2px] p-[1.5px] transition-shadow',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    active ? 'ring-2 ring-foreground' : 'ring-1 ring-border hover:ring-foreground/40',
+                  ].join(' ')}
+                >
+                  <ColourwaySwatch colourway={c} size={13} />
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <TooltipProvider>
           <div className="flex flex-wrap gap-1.5">
@@ -196,7 +265,7 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
             <Eye className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Preview
           </Button>
           {canUse && (
-            <Button size="sm" className="flex-1" onClick={() => onUse(entry)}>
+            <Button size="sm" className="flex-1" onClick={() => onUse(entry, colourwayId)}>
               <Plus className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Use template
             </Button>
           )}

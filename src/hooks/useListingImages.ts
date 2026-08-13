@@ -4,10 +4,12 @@ import type { PropertyListing } from '@/lib/airtable';
 import {
   imageSetFingerprint,
   normaliseImageCandidates,
+  orderCandidatesForDisplay,
+  type ImageCandidate,
   type ImageOrigin,
   type StoredListingImage,
 } from '@/lib/listingImages';
-import { readCachedImages, writeCachedImages } from '@/lib/listingImageCache';
+import { forgetCachedImages, readCachedImages, writeCachedImages } from '@/lib/listingImageCache';
 
 /**
  * Resolves durable listing images.
@@ -37,6 +39,24 @@ interface ListingImagePayload {
   id: string;
   images: Array<{ url: string; origin: ImageOrigin; externalId?: string }>;
   listedAt: string | number | null;
+  /** When intake last captured this set; drives how soon it is re-verified. */
+  capturedAt: string | null;
+}
+
+/**
+ * The candidates to harvest for one listing.
+ *
+ * `imageCandidates` is what the projection resolved — the `Listing Images`
+ * attachments *and* the scraped `Listing Image URLs` column, ordered
+ * best-source-first. The fallback to `images` covers callers that hand this
+ * hook a listing built somewhere other than the projection (the map popup
+ * builds one from cached fields, for instance).
+ */
+function candidatesFor(listing: PropertyListing): ImageCandidate[] {
+  if (Array.isArray(listing.imageCandidates) && listing.imageCandidates.length > 0) {
+    return listing.imageCandidates;
+  }
+  return orderCandidatesForDisplay(normaliseImageCandidates(listing.images));
 }
 
 interface ResolveResponse {
@@ -98,7 +118,12 @@ export function useListingImages(listings: PropertyListing[]) {
   const fingerprints = useMemo(() => {
     const map = new Map<string, string>();
     for (const listing of listings) {
-      map.set(listing.id, imageSetFingerprint(normaliseImageCandidates(listing.images)));
+      // Fingerprinted over the same set that gets sent, which now includes the
+      // scraped URL column. Fingerprinting attachments alone would have left
+      // every listing looking unchanged the moment a scrape added photos —
+      // the cache would answer from a stale entry and the new set would never
+      // be requested.
+      map.set(listing.id, imageSetFingerprint(candidatesFor(listing)));
     }
     return map;
   }, [listings]);
@@ -116,6 +141,23 @@ export function useListingImages(listings: PropertyListing[]) {
   const [failure, setFailure] = useState<ImageFailure | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
+  /**
+   * Every listing is asked about, including those carrying no source candidates.
+   *
+   * This used to drop them — `.filter(row => row.images.length > 0)` — on the
+   * reasoning that a listing with nothing to harvest has nothing to resolve.
+   * That stopped being true once photos could arrive from anywhere other than
+   * the record itself. The Airtable attachment columns are empty on all 1,441
+   * records, so under the old filter the payload was *always* empty, the effect
+   * bailed before making a request, and any bytes the enrichment sweep had
+   * already harvested and stored could never be signed or rendered. The library
+   * would have filled up and shown nothing.
+   *
+   * `signStoredImages` on the server keys off the requested ids alone and is
+   * indifferent to whether candidates came with them, so asking costs one round
+   * trip and answers "does this listing have stored photos" — which is the
+   * actual question.
+   */
   const payload = useMemo<ListingImagePayload[]>(
     () =>
       listings
@@ -123,15 +165,33 @@ export function useListingImages(listings: PropertyListing[]) {
           id: listing.id,
           // Only the candidates are sent, never the whole record — the function
           // has no business seeing price or vendor details to fetch a photo.
-          images: normaliseImageCandidates(listing.images).map((candidate) => ({
+          images: candidatesFor(listing).map((candidate) => ({
             url: candidate.url,
             origin: candidate.origin,
             externalId: candidate.externalId,
           })),
           listedAt: listing.listingDate || null,
-        }))
-        .filter((row) => row.images.length > 0),
+          // Sent alongside `listedAt` rather than instead of it: the refresh
+          // tiers are keyed on how recently the *images* changed, and a set
+          // re-scraped yesterday deserves the fast tier even when the record
+          // itself is a year old.
+          capturedAt: listing.imagesCapturedAt ?? null,
+        })),
     [listings],
+  );
+
+  /**
+   * Stable key for "what is outstanding", used as the effect's dependency.
+   *
+   * Depending on `payload` itself restarts the pass on every render that hands
+   * this hook a new array — which is every render of a parent whose `listings`
+   * prop is rebuilt, i.e. most of them. In the map popup that showed up as the
+   * popup remounting mid-interaction and throwing away local state. Same lesson
+   * `useListingCoordinates` records: decouple the pass from render identity.
+   */
+  const payloadSignature = useMemo(
+    () => payload.map((row) => `${row.id}:${fingerprints.get(row.id) ?? ''}`).join('|'),
+    [payload, fingerprints],
   );
 
   const payloadRef = useRef(payload);
@@ -229,9 +289,9 @@ export function useListingImages(listings: PropertyListing[]) {
   }, []);
 
   useEffect(() => {
-    if (payload.length === 0) return;
+    if (payloadRef.current.length === 0) return;
     void runPass();
-  }, [payload, retryNonce, runPass]);
+  }, [payloadSignature, retryNonce, runPass]);
 
   const retry = useCallback(() => {
     resolvedRef.current.clear();
@@ -239,7 +299,22 @@ export function useListingImages(listings: PropertyListing[]) {
     setRetryNonce((n) => n + 1);
   }, []);
 
-  return { images, isResolving, failure, retry };
+  /**
+   * Re-ask for one listing, discarding whatever was concluded about it.
+   *
+   * `retry` clears the whole resolved map and starts a full pass, which is right
+   * after a request failure and wrong after enriching a single listing: it makes
+   * six requests to answer a question about one record. This clears just that
+   * record — both the "already answered" mark and the session cache — so the
+   * next pass picks it up and nothing else changes.
+   */
+  const refresh = useCallback((listingId: string) => {
+    resolvedRef.current.delete(listingId);
+    forgetCachedImages(listingId);
+    setRetryNonce((n) => n + 1);
+  }, []);
+
+  return { images, isResolving, failure, retry, refresh };
 }
 
 export default useListingImages;

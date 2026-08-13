@@ -75,13 +75,40 @@ describe('listings map marker specificity', () => {
     expect(new Set(values).size, `bands collide: ${values.join(', ')}`).toBe(TIERS.length);
   });
 
-  it('keeps the brand out of the price ramp', () => {
-    // `--primary` is retuned per tenant, so it can land on top of a fixed band
-    // colour — in this palette's dark theme it is byte-identical to --warning.
-    // An ordered scale has to be built from Category B tokens only.
-    for (const tier of TIERS) {
+  it('builds the price ramp from the configured brand ramp', () => {
+    // The bands must re-theme with the tenant, so they ride `--brand-*`, which
+    // is generated at runtime from the White-Label brand colour. A status token
+    // (`--success`, `--warning`, …) is fixed by design and would ignore the
+    // tenant entirely; `--primary` is a single point rather than a scale.
+    for (const tier of ['low', 'mid', 'high', 'top'] as const) {
       const block = CSS.match(new RegExp(`\\.listing-pin--${tier}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
-      expect(block, `${tier} must not use the tenant brand`).not.toMatch(/--pin-bg:\s*hsl\(var\(--primary\)\)/);
+      expect(block, `${tier} must ride the brand ramp`).toMatch(
+        /--pin-bg:\s*hsl\(var\(--brand-\d+\)\)/,
+      );
+      expect(block, `${tier} must not use a fixed status colour`).not.toMatch(
+        /--pin-bg:\s*hsl\(var\(--(?:success|warning|destructive|info|primary)\)\)/,
+      );
+    }
+  });
+
+  it('keeps every band-coloured surface on the same ramp', () => {
+    // Pin, cluster ring, cluster median chip, legend swatch and results-panel
+    // row all encode the same variable. One of them drifting onto a different
+    // palette is how a legend stops describing the map.
+    const families = [
+      'listings-cluster',
+      'listings-tier-swatch',
+      'listings-row-mark',
+      'listings-cluster__price',
+    ];
+    for (const family of families) {
+      const blocks = CSS.match(new RegExp(`\\.${family}[^{]*\\{[^}]*\\}`, 'g')) ?? [];
+      const banded = blocks.filter((block) => /--tier-(?:low|mid|high|top)|--(?:low|mid|high|top)\b/.test(block) || /(?:low|mid|high|top)\s*\{/.test(block));
+      for (const block of banded) {
+        expect(block, `${family} must not mix status colours into the ramp`).not.toMatch(
+          /hsl\(var\(--(?:success|warning|destructive|info)\)\)/,
+        );
+      }
     }
   });
 });

@@ -12,11 +12,21 @@ import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 /**
  * Builder / Developer Portal sign-in.
  *
- * Mirrors `SolicitorLogin`, with the reset journey moved onto its own routes
- * (`/builder/forgot-password`, `/builder/reset-password`) rather than being
- * mode-switched inside this component. Nothing about the session is stored in
- * the browser: the server sets an HttpOnly cookie and the provider re-reads the
- * session from it.
+ * The chrome — split layout, branded panel, operator identity, value points and
+ * responsive collapse — now belongs to `BuilderAuthShell`, which every Builder
+ * authentication surface shares. Sign-in therefore cannot drift from invite
+ * acceptance, password reset, rotation or organisation selection, and the panel
+ * is written once rather than six times.
+ *
+ * Branding is the configured white-label identity on the `auth` slot; nothing
+ * about the operator is decided in this file.
+ *
+ * The reset journey stays on its own routes (`/builder/forgot-password`,
+ * `/builder/reset-password`) rather than being mode-switched inside this
+ * component, which is why the link below is a `Link` and not a mode toggle.
+ *
+ * Nothing about the session is stored in the browser: the server sets an
+ * HttpOnly cookie and the provider re-reads the session from it.
  */
 export default function BuilderLogin() {
   const { user, loading, signIn } = useBuilderPortalAuth();
@@ -32,7 +42,7 @@ export default function BuilderLogin() {
   if (loading) {
     return (
       <div
-        className="flex min-h-screen items-center justify-center bg-background"
+        className="flex min-h-screen items-center justify-center"
         role="status"
         aria-label="Checking your session"
       >
@@ -71,50 +81,56 @@ export default function BuilderLogin() {
 
   return (
     <BuilderAuthShell
-      title="Sign in"
-      description="Access your builder or developer workspace."
+      title="Welcome back"
+      description="Sign in to your builder or developer workspace."
       footer={
-        <Link to="/builder/forgot-password" className="text-primary underline-offset-4 hover:underline">
+        <Link
+          to="/builder/forgot-password"
+          className="rounded px-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           Forgot your password?
         </Link>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : null}
 
-        <div className="space-y-2">
-          <Label htmlFor="builder-email">Email</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="builder-email" className="text-xs font-medium">Email</Label>
           <Input
             id="builder-email"
             type="email"
             autoComplete="email"
             required
+            aria-required="true"
+            className="h-11"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             placeholder="you@yourcompany.com.au"
           />
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="builder-password">Password</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="builder-password" className="text-xs font-medium">Password</Label>
           <div className="relative">
             <Input
               id="builder-password"
               type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               required
-              className="pr-10"
+              aria-required="true"
+              className="h-11 pr-10"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
             <button
               type="button"
               onClick={() => setShowPassword((visible) => !visible)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
               {showPassword ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
@@ -128,8 +144,13 @@ export default function BuilderLogin() {
           onError={() => setTurnstileToken(null)}
         />
 
-        <Button type="submit" className="w-full" disabled={submitting} aria-busy={submitting}>
-          {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+        <Button
+          type="submit"
+          className="h-11 w-full gap-2 font-semibold"
+          disabled={submitting}
+          aria-busy={submitting}
+        >
+          {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Sign in
         </Button>
       </form>

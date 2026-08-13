@@ -2,6 +2,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { generateOtp, hashResetToken } from "../_shared/resetTokens.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { beginAuthRateLimit } from "../_shared/authRateLimit.ts";
+import { parseJsonBody } from '../_shared/validate.ts';
+import { ForgotPasswordRequest, AUTH_MAX_BODY_BYTES } from '../_shared/authBodySchemas.ts';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -17,7 +21,12 @@ Deno.serve(async (req) => {
     const resendApiKey = Deno.env.get('RESEND_API_KEY')
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    const { email } = await req.json()
+    // WP-27: bounded and shape-checked. This endpoint needs no session, so the
+    // read had no size limit and the destructure below no runtime check — a
+    // password arriving as an object reached the comparison as one.
+    const __body = await parseJsonBody(req, ForgotPasswordRequest, corsHeaders, AUTH_MAX_BODY_BYTES)
+    if (!__body.ok) return __body.response
+    const { email } = __body.data
     if (!email) {
       return new Response(
         JSON.stringify({ error: 'Email is required' }),
@@ -33,15 +42,18 @@ Deno.serve(async (req) => {
     );
 
     // ABUSE-003: consume the source-IP limit before doing any account-keyed
-    // write. This ordering prevents a caller that is already IP-limited from
-    // creating persistent limiter rows with arbitrary email addresses.
-    const clientIp = (req.headers.get('x-forwarded-for')?.split(',')[0]
-      || req.headers.get('cf-connecting-ip') || 'unknown').trim();
-    const { data: ipOk, error: ipLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `fpfp_ip:${clientIp}`, p_max: 5, p_window_seconds: 900,
+    // write, so a caller who is already IP-limited cannot mint persistent
+    // limiter rows keyed on e-mail addresses they invent. `beginAuthRateLimit`
+    // makes that ordering structural — the account bucket is only reachable
+    // through the gate this returns. The address is no longer read from
+    // `x-forwarded-for` (caller-controlled), and an unavailable RPC no longer
+    // reads as "over limit", which would silently disable password recovery.
+    const gate = await beginAuthRateLimit(supabase, req, {
+      scope: 'fpfp',
+      ip: { max: 5, windowSeconds: 900 },
     });
-    if (ipLimitError || ipOk !== true) {
-      console.warn('[finance-portal-forgot-password] rate limited', { ip: clientIp });
+    if (!gate.allowed) {
+      console.warn('[finance-portal-forgot-password] rate limited', { ipTrusted: gate.ipTrusted, degraded: gate.degraded });
       return genericSuccess();
     }
 
@@ -58,11 +70,9 @@ Deno.serve(async (req) => {
     }
 
     // Only validated, active accounts receive a persistent account bucket.
-    const { data: acctOk, error: acctLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `fpfp_email:${normalizedEmail}`, p_max: 5, p_window_seconds: 3600,
-    });
-    if (acctLimitError || acctOk !== true) {
-      console.warn('[finance-portal-forgot-password] account rate limited', { ip: clientIp });
+    const accountLimit = await gate.consumeIdentifier(normalizedEmail, { max: 5, windowSeconds: 3600 });
+    if (!accountLimit.allowed) {
+      console.warn('[finance-portal-forgot-password] account rate limited', { degraded: accountLimit.degraded });
       return genericSuccess();
     }
 
@@ -84,7 +94,7 @@ Deno.serve(async (req) => {
       const brand = await getBrandConfig(supabase);
       const contactName = (portalUser.finance_agent_contacts as any)?.name || 'there';
       try {
-        const emailRes = await fetch('https://api.resend.com/emails', {
+        const emailRes = await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { invokeSecureFunction, hasActiveSession, isAuthExhausted } from '@/lib/secureInvoke';
+import { invokeSecureFunction, isAuthExhausted } from '@/lib/secureInvoke';
 import { useAuth } from '@/hooks/useAuth';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -15,12 +15,19 @@ import {
   GenerationProgressPill,
   GenerationHistoryList,
   BulkJobGroup,
-  groupReportsByBulkJob,
   type AggregateCounts,
   type AutoContinueSettings,
   type ReportProgress,
 } from './progress/parts';
-import { sectionCountForTier } from '@/lib/reports/compassSectionRegistry';
+import {
+  toReportProgress,
+  isResumable,
+  estimateRemainingMs,
+  aggregateProgress,
+  groupByBulkJob,
+  COMPLETED_RETENTION_MS,
+  type ProgressRow,
+} from './progress/selectors.pure';
 
 /* ---------- Settings persistence ---------- */
 
@@ -29,17 +36,22 @@ interface RetryState {
     attempts: number;
     lastAttempt: number;
     scheduledRetry?: NodeJS.Timeout;
+    /** Wall-clock instant the pending retry will fire, so the row can count down
+     *  instead of showing the configured delay as a frozen string. */
+    retryAt?: number;
   };
 }
 
 type Corner = 'br' | 'bl' | 'tr' | 'tl';
 const POSITION_KEY = 'report-progress-position-v1';
 const COLLAPSED_KEY = 'report-progress-collapsed-v1';
+/** How far back to look for in-flight work. Applied server-side. */
+const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DRAWER_SNAP_POINTS: (string | number)[] = [0.45, 0.92];
 
 function getAutoContinueSettings(): AutoContinueSettings {
   try {
-    const saved = localStorage.getItem('dashboard-settings');
+    const saved = readStorage('dashboard-settings');
     if (saved) {
       const parsed = JSON.parse(saved);
       return {
@@ -56,23 +68,42 @@ function getAutoContinueSettings(): AutoContinueSettings {
 
 function saveAutoContinueSettings(next: AutoContinueSettings) {
   try {
-    const saved = localStorage.getItem('dashboard-settings');
+    const saved = readStorage('dashboard-settings');
     const parsed = saved ? JSON.parse(saved) : {};
     parsed.autoContinueReports = next.enabled;
     parsed.autoContinueMaxRetries = next.maxRetries;
     parsed.autoContinueDelaySeconds = next.delaySeconds;
-    localStorage.setItem('dashboard-settings', JSON.stringify(parsed));
+    writeStorage('dashboard-settings', JSON.stringify(parsed));
   } catch (e) {
     console.error('Failed to save auto-continue settings:', e);
   }
 }
 
+/* Storage access is guarded everywhere: this component is mounted above
+   <Routes> in App.tsx, so an unguarded localStorage throw (Safari private mode,
+   storage disabled by policy, quota exceeded) during state initialisation would
+   take down the entire application, not just the widget. */
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStorage(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable — position/collapse simply won't persist */
+  }
+}
+
 function getCorner(): Corner {
-  const v = localStorage.getItem(POSITION_KEY) as Corner | null;
+  const v = readStorage(POSITION_KEY) as Corner | null;
   return v && ['br', 'bl', 'tr', 'tl'].includes(v) ? v : 'br';
 }
 function getCollapsed(): boolean {
-  return localStorage.getItem(COLLAPSED_KEY) === '1';
+  return readStorage(COLLAPSED_KEY) === '1';
 }
 
 /* ---------- Public component ---------- */
@@ -110,33 +141,57 @@ function ReportGenerationProgressInner() {
   const isMobile = useIsMobile();
   const { entries: history, addEntry: addHistory, clear: clearHistory } = useGenerationHistory();
 
+  /* `paused` is read inside long-running async loops and inside setTimeout
+     callbacks, both of which capture it by closure. A generation pump can run
+     for many minutes, so a captured `false` meant pausing did nothing to work
+     already in flight. Mirror it into a ref and read that instead. */
+  const pausedRef = useRef(paused);
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  /* Same treatment for settings. Previously every callback that read them took
+     the whole object as a dependency, so dragging the retry-delay slider — which
+     emits continuously — rebuilt the callback chain on each tick, tore down the
+     polling interval and fired an immediate extra request each time. */
+  const settingsRef = useRef(autoContinueSettings);
+  useEffect(() => {
+    settingsRef.current = autoContinueSettings;
+  }, [autoContinueSettings]);
+
   /* Track section completion timestamps per report (for ETA + sparkline) */
   const sectionTimelineRef = useRef<Map<string, number[]>>(new Map());
   const lastSectionsRef = useRef<Map<string, number>>(new Map());
   const previousReportIdsRef = useRef<Set<string>>(new Set());
   const prevReportsRef = useRef<ReportProgress[]>([]);
-  /* IDs cancelled by the user — skip finalizeJob to avoid overwriting the 'cancelled' history entry */
+  /* IDs cancelled by the user. Two jobs: skip finalizeJob so the 'cancelled'
+     history entry survives, and — critically — stop auto-continue from
+     resurrecting the report. Stopping a job leaves it `failed` with partial
+     content, which is exactly the shape auto-continue looks for, so without
+     this a stopped report restarted itself within `delaySeconds`. */
   const cancelledIdsRef = useRef<Set<string>>(new Set());
+  /* Reports that finished while we were watching. Kept briefly so the user gets
+     a visible "done" beat instead of the row just vanishing. */
+  const completedAtRef = useRef<Map<string, number>>(new Map());
+  const [completedRows, setCompletedRows] = useState<ReportProgress[]>([]);
   /* IDs the user dismissed locally — hide from the active list even while the
      server-side job continues. Persisted so a reload/re-poll doesn't resurrect them. */
   const DISMISSED_KEY = 'report-dismissed-ids';
   const dismissedIdsRef = useRef<Set<string>>(
-    (() => {
-      try {
-        const raw = localStorage.getItem(DISMISSED_KEY);
-        return new Set<string>(raw ? JSON.parse(raw) : []);
-      } catch {
-        return new Set<string>();
-      }
-    })(),
+    // Lazily initialised: `useRef(expr)` evaluates `expr` on every render, so the
+    // previous inline IIFE re-read and re-parsed localStorage every 3s poll.
+    (undefined as unknown as Set<string>),
   );
-  const persistDismissed = () => {
+  if (dismissedIdsRef.current === undefined) {
     try {
-      localStorage.setItem(
-        DISMISSED_KEY,
-        JSON.stringify(Array.from(dismissedIdsRef.current)),
-      );
-    } catch {}
+      const raw = readStorage(DISMISSED_KEY);
+      dismissedIdsRef.current = new Set<string>(raw ? JSON.parse(raw) : []);
+    } catch {
+      dismissedIdsRef.current = new Set<string>();
+    }
+  }
+  const persistDismissed = () => {
+    writeStorage(DISMISSED_KEY, JSON.stringify(Array.from(dismissedIdsRef.current)));
   };
 
   /* Persist collapsed + corner */
@@ -237,11 +292,17 @@ function ReportGenerationProgressInner() {
         // converge instead of waiting 120s between each section.
         const MAX_SECTION_CALLS = 60; // hard upper bound
         const MAX_TRANSIENT_RETRIES = 4;
+        const MAX_SECTION_FAILURES = 3;
         let consecutiveTransientErrors = 0;
+        let consecutiveSectionFailures = 0;
         let done = false;
 
         for (let call = 0; call < MAX_SECTION_CALLS && !done; call++) {
-          if (paused) break;
+          // Read the live value, not the one captured when this callback was
+          // created: this loop can run for many minutes across up to 60 calls,
+          // and a captured `paused` meant Pause never stopped work in flight.
+          // `cancelled` covers the user pressing Stop mid-pump.
+          if (pausedRef.current || cancelledIdsRef.current.has(reportId)) break;
           const { data, error } = await invokeSecureFunction(
             'generate-investment-report',
             { reportId, continueFrom: true, singleSection: true },
@@ -278,10 +339,42 @@ function ReportGenerationProgressInner() {
           }
 
           consecutiveTransientErrors = 0;
-          if (data?.isComplete === true || data?.success === false) {
+
+          if (data?.isComplete === true) {
             done = true;
             break;
           }
+
+          // `success: false` means this section failed, NOT that the report is
+          // finished. Treating it as done silently abandoned the report with
+          // partial content and no terminal status. Retry the section a bounded
+          // number of times, then stop and leave it for the server-side
+          // watchdog rather than pretending it completed.
+          if (data?.success === false) {
+            if (consecutiveSectionFailures < MAX_SECTION_FAILURES) {
+              consecutiveSectionFailures++;
+              const backoff = Math.min(15000, 2000 * 2 ** (consecutiveSectionFailures - 1));
+              console.warn(
+                `[ReportGenerationProgress] Section failed (#${consecutiveSectionFailures}), retrying in ${backoff}ms`,
+                data?.error
+              );
+              await new Promise((r) => setTimeout(r, backoff));
+              continue;
+            }
+            setReports((prev) =>
+              prev.map((r) =>
+                r.id === reportId
+                  ? { ...r, error_message: String(data?.error || 'Section generation failed') }
+                  : r
+              )
+            );
+            break;
+          }
+
+          // A budgeted hand-off (`resumeRequired`) is normal progress, not an
+          // error: the edge function stopped short of its wall-clock ceiling
+          // and expects to be called again. Keep pumping.
+          consecutiveSectionFailures = 0;
           // small jitter to avoid hammering
           await new Promise((r) => setTimeout(r, 250 + Math.random() * 250));
         }
@@ -291,14 +384,23 @@ function ReportGenerationProgressInner() {
         if (isAutoRetry) autoRetryInProgressRef.current.delete(reportId);
       }
     },
-    [paused]
+    // Deliberately dependency-free: `paused` and `cancelled` are read through
+    // refs above. A stable identity keeps the polling effect (which depends on
+    // this transitively) from tearing down and re-running — and cancelling its
+    // scheduled retries — every time a setting changes.
+    []
   );
 
   const scheduleAutoRetry = useCallback(
     (report: ReportProgress) => {
       const { id } = report;
-      const settings = autoContinueSettings;
-      if (!settings.enabled || paused) return;
+      const settings = settingsRef.current;
+      if (!settings.enabled || pausedRef.current) return;
+      // Stopping a job leaves it `failed` with partial content — precisely the
+      // shape auto-continue hunts for. Without this guard, Stop was silently
+      // undone within `delaySeconds` while the confirmation dialog had just
+      // told the user it could not be undone.
+      if (cancelledIdsRef.current.has(id)) return;
       if (!retryStateRef.current[id]) {
         retryStateRef.current[id] = { attempts: 0, lastAttempt: 0 };
       }
@@ -310,15 +412,20 @@ function ReportGenerationProgressInner() {
       const delayMs = settings.delaySeconds * 1000;
 
       const scheduleIn = timeSinceLastAttempt < delayMs ? delayMs - timeSinceLastAttempt : delayMs;
+      state.retryAt = Date.now() + scheduleIn;
       state.scheduledRetry = setTimeout(() => {
         delete state.scheduledRetry;
+        delete state.retryAt;
+        // Re-check at fire time: the user may have paused or stopped during the
+        // wait, and the timer captured neither.
+        if (pausedRef.current || cancelledIdsRef.current.has(id)) return;
         state.attempts++;
         state.lastAttempt = Date.now();
         saveRetryState();
         handleContinueGeneration(id, true);
       }, scheduleIn);
     },
-    [autoContinueSettings, handleContinueGeneration, saveRetryState, paused]
+    [handleContinueGeneration, saveRetryState]
   );
 
   const cancelScheduledRetry = useCallback((reportId: string) => {
@@ -345,6 +452,11 @@ function ReportGenerationProgressInner() {
   /* Polling state */
   const authFailCountRef = useRef(0);
   const AUTH_FAIL_THRESHOLD = 3;
+  const inFlightRef = useRef(false);
+  /* A ticking clock in state. Elapsed-time and stalled readouts are derived from
+     "now", and deriving them with a bare Date.now() during render made renders
+     impure and froze every countdown whenever polling stopped. */
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const transientFailCountRef = useRef(0);
   const transientBackoffUntilRef = useRef(0);
   const visibleRef = useRef(typeof document !== 'undefined' ? !document.hidden : true);
@@ -358,24 +470,46 @@ function ReportGenerationProgressInner() {
   }, []);
 
   const fetchActiveReports = useCallback(async () => {
-    if (paused) return;
+    if (pausedRef.current) return;
     if (!visibleRef.current) return;
-    if (!hasActiveSession()) return;
+    // NOTE: deliberately NOT gated on hasActiveSession(). The staff session lives
+    // in an HttpOnly cookie that JS cannot read; the tab-scoped access token it
+    // checks is absent in any tab that did not perform the login itself (a new
+    // tab, a restored session, or after an auth-version bump cleared it). Gating
+    // here is what made this widget stop appearing entirely — the poll returned
+    // on its first line forever, so `reports` stayed empty and the component
+    // rendered null, silently. The same bug was already fixed once in
+    // useTokenBalance.ts; only the global circuit breaker means "signed out".
     if (isAuthExhausted()) return;
     if (authFailCountRef.current >= AUTH_FAIL_THRESHOLD) return;
     if (Date.now() < transientBackoffUntilRef.current) return;
+    // One request in flight at a time. The 3s interval used to fire regardless,
+    // so a slow response could resolve after a fast one and overwrite it with
+    // older data — flickering the list backwards and making the disappeared-row
+    // diff fire finalizeJob twice, which produced duplicate "Report ready" toasts.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
 
-    const { data, error } = await invokeSecureFunction('get-investment-reports', {
-      listMode: true,
-      listOptions: {
-        select:
-          'id, property_address, status, report_content, error_message, updated_at, created_at, last_completed_section, bulk_job_id, report_tier, generation_engine, total_sections',
-        filters: { status: ['pending', 'processing', 'failed'] },
-        orderBy: 'updated_at',
-        orderAsc: false,
-        limit: 10,
-      },
-    });
+    let response;
+    try {
+      response = await invokeSecureFunction('get-investment-reports', {
+        listMode: true,
+        // The library projection omits updated_at and the section counters, and
+        // caller-supplied `select` is deliberately ignored by the edge function —
+        // which is why every row used to arrive with an Invalid Date and 0%.
+        projection: 'generationProgress',
+        listOptions: {
+          // `status` sits at the top level of listOptions; nesting it under
+          // `filters` (as this did) meant no status filter was applied at all.
+          status: ['pending', 'processing', 'failed'],
+          createdAfter: new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString(),
+          pageSize: 20,
+        },
+      });
+    } finally {
+      inFlightRef.current = false;
+    }
+    const { data, error } = response;
 
     if (error) {
       const isAuthError =
@@ -416,21 +550,19 @@ function ReportGenerationProgressInner() {
     transientFailCountRef.current = 0;
     transientBackoffUntilRef.current = 0;
 
-    const records = data?.reports || [];
+    const records: ProgressRow[] = data?.reports || [];
     const now = Date.now();
-    const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-    const recentReports = records.filter((report: any) => {
-      const createdAt = new Date(report.created_at).getTime();
-      if (now - createdAt >= MAX_AGE_MS) return false;
-      if (dismissedIdsRef.current.has(report.id)) return false;
-      return true;
-    });
+    // The 24h window is applied server-side now (`createdAfter`), so this only
+    // has to drop what the user hid locally.
+    const visibleRecords = records.filter((report) => !dismissedIdsRef.current.has(report.id));
 
-    // Prune dismissed IDs no longer present server-side so the set doesn't
-    // grow unbounded and a re-used ID (unlikely) can re-surface cleanly.
-    if (dismissedIdsRef.current.size > 0) {
-      const serverIds = new Set<string>(records.map((r: any) => r.id));
+    // Prune dismissed IDs the server no longer reports, so the set can't grow
+    // unbounded. Only prune once the response is a complete view of the window —
+    // pruning against a truncated page used to forget a dismissal whenever newer
+    // jobs pushed that report off the end, resurrecting a row the user had hidden.
+    if (dismissedIdsRef.current.size > 0 && records.length < 20) {
+      const serverIds = new Set<string>(records.map((r) => r.id));
       let mutated = false;
       dismissedIdsRef.current.forEach((id) => {
         if (!serverIds.has(id)) {
@@ -441,43 +573,22 @@ function ReportGenerationProgressInner() {
       if (mutated) persistDismissed();
     }
 
-    const processedReports: ReportProgress[] = recentReports.map((report: any) => {
-      const content = report.report_content || '';
-      const sectionsCompleted = countSections(content);
-      const dbSection = report.last_completed_section || 0;
-      // Engine-aware total: prefer the actual chunk count persisted by the
-      // edge function (`total_sections`), so legacy and Compass-40 reports
-      // show the correct chunk count instead of always defaulting to 17.
-      const engine: 'legacy' | 'compass-40' | null =
-        report.generation_engine === 'compass-40' ? 'compass-40'
-        : report.generation_engine === 'legacy' ? 'legacy'
-        : null;
-      const persistedTotal = Number(report.total_sections) || 0;
-      const total = persistedTotal > 0 ? persistedTotal : sectionCountForTier(report.report_tier);
-      return {
-        id: report.id,
-        property_address: report.property_address,
-        status: report.status,
-        sectionsCompleted: Math.max(sectionsCompleted, dbSection),
-        totalSections: total,
-        contentLength: content.length,
-        error_message: report.error_message,
-        lastUpdated: new Date(report.updated_at),
-        lastCompletedSection: dbSection,
-        createdAt: new Date(report.created_at),
-        bulkJobId: report.bulk_job_id ?? null,
-        generationEngine: engine,
-      };
-    });
+    const processedReports: ReportProgress[] = visibleRecords.map((report) =>
+      toReportProgress(report, now),
+    );
 
-    /* Track section-completion timestamps for ETA + sparkline */
+    /* Track section-completion timestamps for ETA + sparkline.
+       Only record instants we actually observed a section land. Seeding one
+       timestamp per already-complete section on the first poll (as this used to)
+       wrote N identical values, which made the observed span zero and had a
+       report at section 30 of 40 report "~0s left" indefinitely. */
     processedReports.forEach((r) => {
-      const prevSections = lastSectionsRef.current.get(r.id) ?? 0;
-      if (r.sectionsCompleted > prevSections) {
+      const prevSections = lastSectionsRef.current.get(r.id);
+      if (prevSections !== undefined && r.sectionsCompleted > prevSections) {
         const timeline = sectionTimelineRef.current.get(r.id) ?? [];
-        const delta = r.sectionsCompleted - prevSections;
-        for (let i = 0; i < delta; i++) timeline.push(now);
-        sectionTimelineRef.current.set(r.id, timeline);
+        // Replace rather than mutate: an in-place push keeps the array identity
+        // stable, which would freeze any memoised consumer of the sparkline.
+        sectionTimelineRef.current.set(r.id, [...timeline, now]);
       }
     });
 
@@ -512,32 +623,17 @@ function ReportGenerationProgressInner() {
         }
       }
 
-      const timeSinceUpdate = now - report.lastUpdated.getTime();
-      const isTimedOut = timeSinceUpdate > 75000; // 75s — react before a chunk fully times out
-      const hasPartialContent = report.contentLength > 1000;
-      const isIncomplete = report.sectionsCompleted < report.totalSections;
-      const isStuck =
-        report.status === 'processing' && isTimedOut && hasPartialContent && isIncomplete;
-
-      const isInitiallyStuck =
-        report.status === 'processing' &&
-        timeSinceUpdate > 180000 &&
-        report.contentLength < 100 &&
-        report.sectionsCompleted === 0;
-
-      // Failed/pending status with partial progress → resume immediately
-      const hasFailedMidway =
-        (report.status === 'failed' || report.status === 'pending') &&
-        hasPartialContent &&
-        isIncomplete;
-
-      if ((isStuck || isInitiallyStuck || hasFailedMidway) && autoContinueSettings.enabled && !paused) {
+      // One shared definition of "needs a nudge", from the same pure helper the
+      // header counts and the row badge use — so the header can no longer read
+      // "1 Stalled" while the row reads "Processing", and a report can no longer
+      // be auto-retried while "Retry all stalled" is still disabled.
+      if (isResumable(report, now) && settingsRef.current.enabled && !pausedRef.current) {
         scheduleAutoRetry(report);
       }
 
       lastSectionsRef.current.set(report.id, report.sectionsCompleted);
     });
-  }, [autoContinueSettings.enabled, cleanupRetryState, paused, saveRetryState, scheduleAutoRetry]);
+  }, [cleanupRetryState, saveRetryState, scheduleAutoRetry]);
 
   const finalizeJob = useCallback(
     async (prev: ReportProgress) => {
@@ -549,11 +645,21 @@ function ReportGenerationProgressInner() {
         }
         const { data } = await invokeSecureFunction('get-investment-reports', {
           reportId: prev.id,
-          listOptions: { select: 'id, property_address, status, error_message, updated_at' },
+          // Without an explicit projection a single-report fetch defaults to
+          // `detail`, which carries the entire ~95KB report body — a lot of
+          // bandwidth just to read a status field.
+          projection: 'generationProgress',
         });
         const final = data?.report;
         if (!final) return;
         if (final.status === 'completed') {
+          // Pin the finished row briefly so success is something the user sees
+          // in place, rather than the row silently vanishing from the list.
+          completedAtRef.current.set(prev.id, Date.now());
+          setCompletedRows((rows) => [
+            ...rows.filter((r) => r.id !== prev.id),
+            { ...prev, status: 'completed', sectionsCompleted: prev.totalSections },
+          ]);
           toast.success(`Report ready: ${final.property_address}`, {
             action: {
               label: 'Open',
@@ -595,17 +701,37 @@ function ReportGenerationProgressInner() {
   );
 
   useEffect(() => {
-    if (hasActiveSession()) authFailCountRef.current = 0;
     fetchActiveReports();
     const interval = setInterval(fetchActiveReports, 3000);
     return () => {
       clearInterval(interval);
       // NOTE: do NOT cancel scheduled retries here. This effect re-runs
-      // whenever fetchActiveReports identity changes (e.g. settings refresh),
-      // and cancelling pending timers on every re-run would prevent the
-      // 15s auto-retry from ever firing for stuck reports.
+      // whenever fetchActiveReports identity changes, and cancelling pending
+      // timers on every re-run would prevent auto-retry from ever firing.
+      // (`fetchActiveReports` is now stable, so this is belt and braces.)
     };
   }, [fetchActiveReports]);
+
+  /* Retire completed rows once their success moment has passed. A 1s tick is
+     enough for a 30s window and keeps the elapsed-time readouts moving even
+     while polling is paused — the row used to freeze because nothing re-rendered. */
+  useEffect(() => {
+    const tick = setInterval(() => {
+      const now = Date.now();
+      let expired = false;
+      completedAtRef.current.forEach((at, id) => {
+        if (now - at > COMPLETED_RETENTION_MS) {
+          completedAtRef.current.delete(id);
+          expired = true;
+        }
+      });
+      if (expired) {
+        setCompletedRows((rows) => rows.filter((r) => completedAtRef.current.has(r.id)));
+      }
+      setNowTick(now);
+    }, 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   /* True unmount cleanup: cancel any pending auto-retry timers exactly once. */
   useEffect(() => {
@@ -620,20 +746,22 @@ function ReportGenerationProgressInner() {
     };
   }, []);
 
-  /* ⌘⇧R toggles minimised */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const cmd = e.metaKey || e.ctrlKey;
-      if (cmd && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
-        // Avoid hijacking page-reload only when no reports exist
-        if (reports.length === 0 && !historyOpen) return;
-        e.preventDefault();
-        setIsMinimized((m) => !m);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [reports.length, historyOpen]);
+  /* Collapse on Escape, but only while focus is inside the widget.
+     This replaces a global ⌘/Ctrl+Shift+R listener that swallowed the browser's
+     hard-reload shortcut on every page whenever a report happened to be running
+     — including while the user was typing in the history search box, since it
+     never checked the event target. Escape is the conventional "dismiss this
+     surface" key and cannot collide with anything outside the widget. */
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const pillRef = useRef<HTMLButtonElement | null>(null);
+  const onCardKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Escape' || isMinimized) return;
+    e.stopPropagation();
+    setIsMinimized(true);
+    // Return focus to the control that replaces this one, rather than dropping
+    // it on <body>.
+    requestAnimationFrame(() => pillRef.current?.focus());
+  };
 
   const handleManualContinue = (reportId: string) => {
     if (retryStateRef.current[reportId]) {
@@ -670,7 +798,7 @@ function ReportGenerationProgressInner() {
   };
 
   const killReport = useCallback(
-    async (reportId: string) => {
+    async (reportId: string, opts: { silent?: boolean } = {}) => {
       const r = reports.find((x) => x.id === reportId);
       cancelScheduledRetry(reportId);
       cancelledIdsRef.current.add(reportId);
@@ -702,9 +830,11 @@ function ReportGenerationProgressInner() {
           toast.error(`Failed to stop generation: ${error.message || 'Unknown error'}`);
           return;
         }
-        toast.success(
-          r ? `Stopped "${r.property_address}" — marked as failed` : 'Generation stopped',
-        );
+        if (!opts.silent) {
+          toast.success(
+            r ? `Stopped "${r.property_address}" — marked as failed` : 'Generation stopped',
+          );
+        }
         if (r) {
           addHistory({
             id: r.id,
@@ -727,7 +857,9 @@ function ReportGenerationProgressInner() {
 
   const killReports = useCallback(
     (ids: string[]) => {
-      ids.forEach((id) => killReport(id));
+      // One summary toast, not one per report — stopping a batch of eight used
+      // to stack nine toasts.
+      ids.forEach((id) => killReport(id, { silent: ids.length > 1 }));
       if (ids.length > 1) {
         toast.success(`Stopping ${ids.length} reports…`);
       }
@@ -735,77 +867,54 @@ function ReportGenerationProgressInner() {
     [killReport],
   );
 
+  /* What the widget actually lists: in-flight work plus any report that just
+     finished, held for its success moment. */
+  const displayReports = useMemo(() => {
+    const activeIds = new Set(reports.map((r) => r.id));
+    return [...reports, ...completedRows.filter((r) => !activeIds.has(r.id))];
+  }, [reports, completedRows]);
+
   const handleResumeAllStalled = () => {
-    reports.forEach((r) => {
-      const timeSinceUpdate = Date.now() - r.lastUpdated.getTime();
-      const isTimedOut = timeSinceUpdate > 120000;
-      const isStuck = r.status === 'processing' && isTimedOut && r.sectionsCompleted < r.totalSections;
-      if (isStuck) handleManualContinue(r.id);
+    displayReports.forEach((r) => {
+      if (isResumable(r, nowTick)) handleManualContinue(r.id);
     });
   };
 
-  /* Aggregate counts */
+  /* Aggregate counts — derived by the same pure helper the rows use, so the
+     header can never contradict what is listed beneath it. */
   const counts: AggregateCounts = useMemo(() => {
-    let queued = 0;
-    let processing = 0;
-    let stalled = 0;
-    let failed = 0;
-    let completedSections = 0;
-    let totalSections = 0;
-    const now = Date.now();
-    reports.forEach((r) => {
-      completedSections += r.sectionsCompleted;
-      totalSections += r.totalSections;
-      const since = now - r.lastUpdated.getTime();
-      const isStuck =
-        r.status === 'processing' &&
-        since > 120000 &&
-        r.sectionsCompleted < r.totalSections;
-      if (r.status === 'failed') failed++;
-      else if (isStuck) stalled++;
-      else if (r.status === 'pending') queued++;
-      else if (r.status === 'processing') processing++;
-    });
+    const agg = aggregateProgress(displayReports, nowTick);
     return {
-      queued,
-      processing,
-      stalled,
-      failed,
-      total: reports.length,
-      completedSections,
-      totalSections,
+      queued: agg.queued,
+      processing: agg.generating,
+      stalled: agg.stalled,
+      failed: agg.failed,
+      completed: agg.completed,
+      total: agg.total,
+      completedSections: agg.completedSections,
+      totalSections: agg.totalSections,
     };
-  }, [reports]);
+  }, [displayReports, nowTick]);
 
-  /* ETA calculation per report */
-  const etaForReport = useCallback((r: ReportProgress): number | null => {
-    const timeline = sectionTimelineRef.current.get(r.id) ?? [];
-    if (timeline.length < 2) {
-      // Fallback: use elapsed time / sections done if at least 1 section done
-      if (r.sectionsCompleted > 0) {
-        const elapsed = Date.now() - r.createdAt.getTime();
-        const avg = elapsed / r.sectionsCompleted;
-        const remaining = r.totalSections - r.sectionsCompleted;
-        return avg * remaining;
-      }
-      return null;
-    }
-    const total = timeline[timeline.length - 1] - timeline[0];
-    const avg = total / Math.max(1, timeline.length - 1);
-    const remaining = r.totalSections - r.sectionsCompleted;
-    return avg * remaining;
-  }, []);
+  /* ETA per report. Returns null rather than a confident zero — see
+     estimateRemainingMs for why that distinction matters. */
+  const etaForReport = useCallback(
+    (r: ReportProgress): number | null =>
+      estimateRemainingMs(r, sectionTimelineRef.current.get(r.id) ?? [], nowTick),
+    [nowTick],
+  );
 
   const aggregateEta = useMemo(() => {
-    const etas = reports.map(etaForReport).filter((v): v is number => v !== null);
+    const etas = displayReports.map(etaForReport).filter((v): v is number => v !== null);
     if (etas.length === 0) return null;
+    // Reports generate in parallel, so wall time is the slowest one.
     return Math.max(...etas);
-  }, [reports, etaForReport]);
+  }, [displayReports, etaForReport]);
 
   /* Group reports by bulk_job_id */
   const { groups: bulkGroups, loose: looseReports } = useMemo(
-    () => groupReportsByBulkJob(reports),
-    [reports],
+    () => groupByBulkJob(displayReports),
+    [displayReports],
   );
 
   const renderItem = (report: ReportProgress, mobile: boolean) => (
@@ -816,6 +925,8 @@ function ReportGenerationProgressInner() {
       retryState={retryStateRef.current[report.id]}
       autoContinueSettings={autoContinueSettings}
       sectionTimeline={sectionTimelineRef.current.get(report.id) ?? []}
+      now={nowTick}
+      paused={paused}
       onContinue={() => handleManualContinue(report.id)}
       onDismiss={() => dismissReport(report.id)}
       onKill={() => killReport(report.id)}
@@ -840,32 +951,62 @@ function ReportGenerationProgressInner() {
     </>
   );
 
-  /* Drag-to-reposition (desktop) */
+  /* Drag-to-reposition (desktop).
+     Only the corner is committed, and only on release. Re-evaluating on every
+     pointermove made the card flicker between corners whenever the pointer
+     crossed the viewport midline, and it snapped out from under the cursor
+     mid-gesture. `pointercancel` is handled too: without it, releasing outside
+     the window leaked the move/up listeners permanently. */
   const onDragStart = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    // Ignore drags that begin on a control inside the header.
+    if ((e.target as HTMLElement).closest('button,[role="menuitem"],a,input')) return;
+
     const startX = e.clientX;
     const startY = e.clientY;
+    let moved = false;
+
     const onMove = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      if (Math.abs(dx) < 80 && Math.abs(dy) < 80) return;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      const left = ev.clientX < w / 2;
-      const top = ev.clientY < h / 2;
-      const next: Corner = `${top ? 't' : 'b'}${left ? 'l' : 'r'}` as Corner;
-      setCorner(next);
+      if (Math.abs(ev.clientX - startX) > 24 || Math.abs(ev.clientY - startY) > 24) moved = true;
     };
-    const onUp = () => {
+    const finish = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      if (!moved) return;
+      const left = ev.clientX < window.innerWidth / 2;
+      const top = ev.clientY < window.innerHeight / 2;
+      setCorner(`${top ? 't' : 'b'}${left ? 'l' : 'r'}` as Corner);
     };
+
     window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
   }, []);
 
+  /* Keyboard equivalent for repositioning. Dragging was pointer-only, which
+     fails WCAG 2.1.1 and 2.5.7 outright — there was no way to move the widget
+     without a mouse, and it sits fixed over the page on every route. */
+  const moveToCorner = useCallback((next: Corner) => setCorner(next), []);
+
+  /* Announce only what changed. */
+  const [liveMessage, setLiveMessage] = useState('');
+  const lastAnnouncedRef = useRef('');
+  useEffect(() => {
+    const parts: string[] = [];
+    if (counts.completed > 0) parts.push(`${counts.completed} finished`);
+    if (counts.failed > 0) parts.push(`${counts.failed} failed`);
+    if (counts.stalled > 0) parts.push(`${counts.stalled} stalled`);
+    if (counts.processing > 0) parts.push(`${counts.processing} generating`);
+    const next = parts.length ? `Reports: ${parts.join(', ')}.` : '';
+    if (next !== lastAnnouncedRef.current) {
+      lastAnnouncedRef.current = next;
+      setLiveMessage(next);
+    }
+  }, [counts.completed, counts.failed, counts.stalled, counts.processing]);
+
   /* Visibility logic — hide entirely when nothing to show */
-  const hasAnything = reports.length > 0 || historyOpen;
+  const hasAnything = displayReports.length > 0 || historyOpen;
   if (!hasAnything) return null;
 
   const cornerClass = (() => {
@@ -886,14 +1027,13 @@ function ReportGenerationProgressInner() {
     }
   })();
 
-  /* Live region for screen readers */
-  const liveText = (() => {
-    if (counts.total === 0) return '';
-    if (counts.failed > 0) return `${counts.failed} report generations failed.`;
-    if (counts.processing > 0)
-      return `Generating ${counts.processing} report${counts.processing === 1 ? '' : 's'}.`;
-    return '';
-  })();
+  /* Live region for screen readers.
+     Announces transitions rather than the current state, so a 3s poll does not
+     re-announce the same sentence twenty times a minute. The region element
+     itself is always mounted (see the render branches) — a live region that
+     mounts together with its first message is typically not announced at all,
+     which is why the old one silently dropped the opening "Generating…". */
+  const liveText = liveMessage;
 
   /* Mobile uses a Vaul drawer when expanded */
   if (isMobile) {
@@ -969,12 +1109,24 @@ function ReportGenerationProgressInner() {
       <div className={cn('fixed z-50 transition-all duration-300', cornerClass)}>
         {isMinimized ? (
           <GenerationProgressPill
+            ref={pillRef}
             counts={counts}
             etaMs={aggregateEta}
             onClick={() => setIsMinimized(false)}
           />
         ) : (
-          <div className="w-80 overflow-hidden rounded-xl border border-primary/40 bg-card/95 shadow-2xl shadow-primary/20 ring-1 ring-primary/20 backdrop-blur">
+          // `.glass-raised` is the system class for a portalled overlay sitting
+          // over arbitrary content. This was `bg-card/95 shadow-2xl ring-1
+          // backdrop-blur` — the exact hand-rolled frosted surface glass.css
+          // names as the anti-pattern in its own header, with primary emphasis
+          // stacked three ways on a passive status widget.
+          <div
+            ref={cardRef}
+            role="region"
+            aria-label="Report generation progress"
+            onKeyDown={onCardKeyDown}
+            className="glass-raised w-80 overflow-hidden rounded-xl"
+          >
             <GenerationProgressHeader
               counts={counts}
               paused={paused}
@@ -997,11 +1149,12 @@ function ReportGenerationProgressInner() {
               onMinimize={() => setIsMinimized(true)}
               onDragStart={isGeneratedReportsRoute ? undefined : onDragStart}
               draggable={!isGeneratedReportsRoute}
+              onMoveCorner={isGeneratedReportsRoute ? undefined : moveToCorner}
             />
             <div className="max-h-64 overflow-y-auto">
               {historyOpen ? (
                 <GenerationHistoryList entries={history} onClear={clearHistory} />
-              ) : reports.length === 0 ? (
+              ) : displayReports.length === 0 ? (
                 <div className="p-6 text-center text-xs text-muted-foreground">
                   No active generations.
                 </div>
@@ -1010,7 +1163,7 @@ function ReportGenerationProgressInner() {
               )}
             </div>
             {paused && (
-              <div className="px-3 py-1.5 text-[10px] text-warning bg-warning/10 border-t border-warning/20">
+              <div className="border-t border-border bg-warning/10 px-3 py-1.5 text-xs text-warning-foreground dark:text-warning">
                 Polling paused • new updates will not appear until you resume
               </div>
             )}
@@ -1019,37 +1172,4 @@ function ReportGenerationProgressInner() {
       </div>
     </TooltipProvider>
   );
-}
-
-/* ---------- Section detection (preserved from original) ---------- */
-
-function countSections(content: string): number {
-  let count = 0;
-  if (/##?\s*Executive\s*Summary/i.test(content)) count++;
-  if (/##?\s*Location\s*Overview/i.test(content)) count++;
-  if (
-    /##?\s*(Current\s*Market\s*Performance|Current\s*Economic\s*Context|Market\s*(&|and)\s*Economics?)/i.test(
-      content
-    )
-  )
-    count++;
-  if (/##?\s*(Demographics?\s*(&|and)\s*Demand|Demand\s*Drivers)/i.test(content)) count++;
-  if (/##?\s*(Schools?\s*(&|and)\s*Education|Healthcare\s*(&|and)\s*Shopping)/i.test(content))
-    count++;
-  if (/##?\s*(Recreational\s*Amenities|Transport\s*(&|and)\s*Accessibility)/i.test(content))
-    count++;
-  if (
-    /##?\s*(Environmental\s*Risks?\s*(&|and)\s*Climate|Crime\s*(&|and)\s*Safety)/i.test(content)
-  )
-    count++;
-  if (/##?\s*(Property-Level\s*Information|Zoning\s*(&|and)\s*Planning\s*Analysis)/i.test(content))
-    count++;
-  if (/##?\s*(Purchase\s*(&|and)\s*Ongoing\s*Costs|Rental\s*Assessment\s*(&|and)\s*Yield)/i.test(content))
-    count++;
-  if (/##?\s*(Loan\s*Structure\s*(&|and)\s*Repayment|Cashflow\s*Analysis)/i.test(content)) count++;
-  if (/##?\s*(10-Year\s*Investment\s*Projections|SWOT\s*Analysis)/i.test(content)) count++;
-  const hasRisks = /##?\s*(Top\s*3\s*Risks|Investment\s*Recommendations)/i.test(content);
-  const hasConclusion = /##?\s*(Final\s*Conclusion|Data\s*Sources)/i.test(content);
-  if (hasRisks && hasConclusion) count++;
-  return count;
 }

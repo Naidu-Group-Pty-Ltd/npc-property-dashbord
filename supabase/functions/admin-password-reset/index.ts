@@ -2,9 +2,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { hashPassword } from "../_shared/password.ts";
 import { generateOtp, hashResetToken, verifyResetToken, MAX_RESET_ATTEMPTS } from "../_shared/resetTokens.ts";
 import { validatePasswordStrength } from "../_shared/passwordValidation.ts";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { resolveStaffUserByIdentifier } from "../_shared/staffIdentifier.ts";
+import { authRateLimitedResponse, beginAuthRateLimit } from "../_shared/authRateLimit.ts";
+import { readBoundedJson } from '../_shared/validate.ts';
+
+const RESET_IP_BUDGET = { max: 30, windowSeconds: 900 };
+const RESET_IDENTIFIER_BUDGET = { max: 10, windowSeconds: 3600 };
+
 
 // Simple email sending via Resend REST API
 async function sendEmail(to: string, subject: string, html: string): Promise<{ success: boolean; error?: string }> {
@@ -15,7 +23,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<{ s
   
   try {
     const brand = await getBrandConfig();
-    const response = await fetch("https://api.resend.com/emails", {
+    const response = await meteredFetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${resendApiKey}`,
@@ -48,7 +56,6 @@ interface RequestBody {
   email?: string;
   otp?: string;
   new_password?: string;
-  session_token?: string;
 }
 
 Deno.serve(async (req: Request) => {
@@ -70,19 +77,45 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
-    const body: RequestBody = await req.json();
+    const body: RequestBody = await readBoundedJson(req);
     const { action } = body;
 
-    // Validate authentication (JWT first, then session token)
-    // Note: For password reset, we allow unauthenticated requests for 'request_otp' and 'verify_otp'
-    // but require authentication for 'reset_password' to prevent abuse
-    if (action === 'reset_password') {
-      const { error: authError } = await verifyAuth(supabase, req.headers, body);
-      if (authError) {
-        console.log('[admin-password-reset] Auth failed for reset_password:', authError);
-        return createUnauthorizedResponse(authError, corsHeaders);
-      }
+    // Source-keyed ceiling across every action. All three are unauthenticated,
+    // so before this there was nothing bounding how fast a caller could request
+    // OTP e-mails for staff accounts or grind six-digit codes; the controls
+    // described below are all per-account or per-token, and none of them sees a
+    // caller working through a list of usernames. The identifier dimension is
+    // consumed further down, only once an account is known to exist and be
+    // eligible, so an IP-limited caller cannot mint limiter rows for usernames
+    // they invent (ABUSE-003).
+    const gate = await beginAuthRateLimit(supabase, req, { scope: 'apr', ip: RESET_IP_BUDGET });
+    if (!gate.allowed) {
+      console.warn('[admin-password-reset] rate limited', { action, ipTrusted: gate.ipTrusted, degraded: gate.degraded });
+      return authRateLimitedResponse(corsHeaders, gate.retryAfterSeconds);
     }
+
+    /**
+     * All three actions are deliberately UNAUTHENTICATED, and the emailed OTP
+     * is the credential.
+     *
+     * `reset_password` used to call `verifyAuth` first, on the reasoning that
+     * requiring a session "prevents abuse". It does the opposite: the only
+     * person who ever reaches this action is someone who cannot sign in, so
+     * they never have a session to present. The journey completed the first two
+     * steps, then answered the final submit with 401 `Authentication required`
+     * — rendered on the "Set a new password" card — and no Command Centre
+     * password could be reset by the person who owned it. The gate was
+     * unsatisfiable rather than strict.
+     *
+     * The abuse controls that actually bound this endpoint are unchanged and
+     * live below: `verifyStaffOtp` compares a peppered hash in constant time,
+     * counts attempts and burns the token at MAX_RESET_ATTEMPTS; the OTP
+     * expires in 10 minutes; `request_otp` never reveals whether an account
+     * exists; the new password must pass `validatePasswordStrength`; and every
+     * session for the user is deleted on success. This is the same model the
+     * Client, Finance, Solicitor and Builder portals already use for their own
+     * resets — Command Centre was the only one demanding a session.
+     */
 
     if (action === 'request_otp') {
       const { username, email } = body;
@@ -94,15 +127,14 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Find user by username or email
-      let query = supabase.from('custom_users').select('id, username, email, is_active');
-      if (username) {
-        query = query.eq('username', username);
-      } else if (email) {
-        query = query.eq('email', email);
-      }
+      // Either identifier resolves through the same case-insensitive
+      // username-or-email resolver, so the reset journey accepts exactly what
+      // sign-in accepts.
+      const { user, ambiguous } = await resolveStaffUserByIdentifier<{
+        id: string; username: string; email: string | null; is_active: boolean;
+      }>(supabase, String(username || email || ""), 'id, username, email, is_active', { activeOnly: false });
+      const userError = ambiguous ? new Error('ambiguous identifier') : null;
 
-      const { data: user, error: userError } = await query.single();
 
       if (userError || !user) {
         // Don't reveal if user exists
@@ -123,6 +155,18 @@ Deno.serve(async (req: Request) => {
         return new Response(
           JSON.stringify({ success: false, error: 'No email associated with this account' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Only a confirmed, eligible account gets a persistent account bucket, so
+      // rotating the source address cannot churn reset tokens or repeatedly mail
+      // the same person.
+      const accountLimit = await gate.consumeIdentifier(user.id, RESET_IDENTIFIER_BUDGET);
+      if (!accountLimit.allowed) {
+        console.warn('[admin-password-reset] account rate limited', { degraded: accountLimit.degraded });
+        return new Response(
+          JSON.stringify({ success: true, message: 'If the account exists, an OTP has been sent' }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
@@ -250,12 +294,12 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Find user
-      const { data: user, error: userError } = await supabase
-        .from('custom_users')
-        .select('id')
-        .eq('username', username)
-        .single();
+      // Find user (username or email, case-insensitive — same resolver as login)
+      const { user, ambiguous } = await resolveStaffUserByIdentifier<{ id: string }>(
+        supabase, username, 'id', { activeOnly: false },
+      );
+      const userError = ambiguous ? new Error('ambiguous identifier') : null;
+
 
       if (userError || !user) {
         return new Response(
@@ -299,12 +343,12 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Find user
-      const { data: user, error: userError } = await supabase
-        .from('custom_users')
-        .select('id')
-        .eq('username', username)
-        .single();
+      // Find user (username or email, case-insensitive — same resolver as login)
+      const { user, ambiguous } = await resolveStaffUserByIdentifier<{ id: string }>(
+        supabase, username, 'id', { activeOnly: false },
+      );
+      const userError = ambiguous ? new Error('ambiguous identifier') : null;
+
 
       if (userError || !user) {
         return new Response(
@@ -332,11 +376,27 @@ Deno.serve(async (req: Request) => {
       // Hash the new password with bcrypt
       const hashedPassword = await hashPassword(new_password);
 
-      // Update password with bcrypt hash
+      // Update password with bcrypt hash, and release the sign-in lockout.
+      //
+      // Clearing `failed_login_attempts` / `locked_until` is not housekeeping —
+      // without it the reset does not restore access. Someone resets their
+      // password *because* sign-in was refusing them, and the attempts that
+      // sent them here are usually the same ones that tripped the lockout. Leave
+      // the lock standing and the new password is rejected for the rest of the
+      // lockout window with a message about the password being wrong, so the
+      // reset reads as having silently failed and the owner resets again.
+      //
+      // The lock exists to slow an attacker guessing a password. Proving
+      // control of the account's mailbox and setting a new password answers
+      // that far more strongly than waiting out the timer, which is why
+      // client-, finance-, solicitor- and builder-portal-reset-password all
+      // clear it here. Command Centre was the only one that did not.
       const { error: updateError } = await supabase
         .from('custom_users')
-        .update({ 
+        .update({
           password_hash: hashedPassword,
+          failed_login_attempts: 0,
+          locked_until: null,
           updated_at: new Date().toISOString()
         })
         .eq('id', user.id);

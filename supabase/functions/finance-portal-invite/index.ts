@@ -3,6 +3,8 @@ import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts"
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { hashPassword } from "../_shared/password.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const INVITE_EXPIRY_HOURS = 72;
 
@@ -383,7 +385,7 @@ Deno.serve(async (req) => {
 
     if (resendApiKey) {
       try {
-        const emailRes = await fetch('https://api.resend.com/emails', {
+        const emailRes = await meteredFetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -472,7 +474,7 @@ Deno.serve(async (req) => {
   } catch (error: any) {
     console.error('Finance portal invite error:', error)
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error?.message }),
+      JSON.stringify({ ...internalError(error, 'finance-portal-invite'), error: 'Internal server error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }

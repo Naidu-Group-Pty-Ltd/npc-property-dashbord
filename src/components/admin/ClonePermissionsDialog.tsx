@@ -27,10 +27,10 @@ export function ClonePermissionsDialog({ open, onOpenChange, sourceUserId, users
   const [cloning, setCloning] = useState(false);
 
   const sourceUser = users.find(u => u.id === sourceUserId);
-  const eligibleTargets = users.filter(u => 
-    u.id !== sourceUserId && 
-    !u.user_roles?.some(r => r.role === 'superadmin')
-  );
+  // Every account other than the source is a valid target, superadmins
+  // included. Excluding them left no way to seed a superadmin's stored grid —
+  // the rows that decide their access the moment the role is taken away.
+  const eligibleTargets = users.filter(u => u.id !== sourceUserId);
 
   const handleClone = async () => {
     if (!targetUserId) { toast.error('Select a target user'); return; }

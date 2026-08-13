@@ -13,6 +13,10 @@ on:
       - 'docs/pdf-import/**'
       - 'scripts/regression/**'
       - 'supabase/functions/pdf-import-monitoring/**'
+      # The two halves of the engine-lockstep contract. Either one moving alone
+      # is exactly the defect the lockstep step below refuses.
+      - 'pdf-parse-service/**'
+      - 'supabase/functions/pdf-parse-dispatch/**'
       - 'supabase/migrations/**'
       - 'package.json'
       - '.github/workflows/pdf-import-release-gate.yml'
@@ -28,17 +32,29 @@ jobs:
   pdf-import-release-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so the gate can diff the checked-out commit from the
           # PR base or pre-push commit.
           fetch-depth: 0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
+
+      # Before `npm install`, because it needs nothing installed and because it
+      # is the cheapest check here. The sidecar image and `pdf-parse-dispatch`
+      # share a cache fingerprint: if one ships without the other, the
+      # dispatcher serves artifacts built under the OLD semantics under a
+      # CURRENT key, and a cache hit means nothing downstream ever runs to
+      # notice. Catching that on the pull request is the difference between a
+      # failed check and a silently poisoned cache (LANE-POLICY.md G3).
+      - name: The sidecar and the dispatcher agree about the engine
+        run: |
+          node scripts/regression/pdf-parse-engine-lockstep.mjs --selftest
+          node scripts/regression/pdf-parse-engine-lockstep.mjs --static
 
       # Matches the repo's existing ci.yml: `npm ci` is intentionally NOT used
       # because the committed package-lock.json is out of sync with package.json
@@ -53,7 +69,7 @@ jobs:
 
       - name: Upload release gate report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdf-import-release-gate-report
           path: reports/pdf-import-release-gate/

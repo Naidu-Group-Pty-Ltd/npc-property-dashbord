@@ -85,9 +85,34 @@ export interface ResolvedBrandTokens {
   dark: BrandTokenMap;
 }
 
+/**
+ * Outcome of persisting branding. A write is NOT reported as saved unless the
+ * database confirms the row changed: `whitelabel_settings` is readable by
+ * everyone but writable only by `authenticated`, so an unauthenticated client
+ * gets a 200 with zero rows and no error — indistinguishable from success
+ * unless it is checked for explicitly.
+ */
+export type BrandSaveFailureReason = 'unauthenticated' | 'not-persisted' | 'error';
+
+/**
+ * Declared as one shape rather than a discriminated union: this project
+ * compiles with `strictNullChecks: false`, under which narrowing a union on a
+ * boolean literal does not work, and callers would be unable to read `message`.
+ */
+export interface BrandSaveResult {
+  ok: boolean;
+  /**
+   * `unauthenticated` — no RLS token, so the write would silently no-op.
+   * `not-persisted`   — the write ran but changed no row (RLS denied it).
+   * `error`           — the database or transport rejected it outright.
+   */
+  reason?: BrandSaveFailureReason;
+  message?: string;
+}
+
 export interface BrandContextValue {
   settings: WhiteLabelSettings;
-  updateSettings: (newSettings: Partial<WhiteLabelSettings>) => void;
+  updateSettings: (newSettings: Partial<WhiteLabelSettings>) => Promise<BrandSaveResult>;
   isLoading: boolean;
   currentTheme: 'light' | 'dark';
   themeMode: ThemeMode;

@@ -152,7 +152,15 @@ export function NotificationsDropdown() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        {/* Icon-only trigger: without an explicit name a screen reader
+            announces it as an unlabelled button. Found by the AML browser
+            journey's accessibility sweep. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+        >
           <Bell className="h-4 w-4" />
           {unreadCount > 0 && (
             <Badge 

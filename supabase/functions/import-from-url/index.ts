@@ -10,7 +10,9 @@
 // Figma links are exported via the Figma API when FIGMA_TOKEN is configured.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { sanitizeFigmaFrame, type SanitizedFigmaNode } from '../_shared/figma.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MAX_BYTES = 30 * 1024 * 1024; // 30 MB
 const MAX_REDIRECTS = 5;
@@ -125,8 +127,16 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
 }
 
 Deno.serve(async (req) => {
-  const cors = createTokenAuthCorsHeaders();
+  // Origin-aware: an allowlisted origin gets an exact ACAO + credentials so the
+  // HttpOnly `__Host-session_token` cookie authenticates the import. Anyone else
+  // keeps the historical wildcard token-auth answer.
+  const cors = createTokenAuthCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
+
+  // Ambient cookie authority requires an exact-origin check; no-ops for
+  // token-only callers, which send no cookie.
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
 
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -195,6 +205,6 @@ Deno.serve(async (req) => {
       finalUrl: finalUrl.toString(),
     }, 200, cors);
   } catch (e) {
-    return json({ error: (e as Error)?.message || 'Unexpected error' }, 500, cors);
+    return json({ ...internalError(e, 'import-from-url') }, 500, cors);
   }
 });

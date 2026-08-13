@@ -303,7 +303,10 @@ const PRIMITIVES_TEMPLATE = parseTemplate({
 describe('golden render — reconstruction primitives + multi-page (import→renderer contract)', () => {
   it('renders editable vector geometry as inline <svg><path> (not a raster)', () => {
     const { html } = renderTemplateToHtml(PRIMITIVES_TEMPLATE, { data: {}, editorMode: false });
-    expect(html).toContain('<svg viewBox="0 0 24 24"');
+    // R3 stamps data-overlay-id on the rendered root (editor live-drag +
+    // DOM-evidence selector), so match the attributes, not the exact prefix.
+    expect(html).toContain('data-overlay-id="ov-vec"');
+    expect(html).toContain('viewBox="0 0 24 24"');
     expect(html).toContain('d="M2 2 L22 22"');
   });
 

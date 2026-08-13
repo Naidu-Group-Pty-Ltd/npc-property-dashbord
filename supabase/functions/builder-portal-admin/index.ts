@@ -15,11 +15,32 @@
  *
  * Operations
  *   Organisations: list_organisations | upsert_organisation | set_organisation_status
+ *                  | delete_organisation
  *   Users:         list_users | create_user | update_user | set_user_status
+ *                  | delete_user
  *   Memberships:   list_memberships | upsert_membership | revoke_membership
+ *                  | delete_membership
  *   Permissions:   get_membership_permissions | update_membership_permissions
  *   Sessions:      list_user_sessions | revoke_user_sessions
  *   Reference:     get_permission_catalogue
+ *
+ * The three delete_* operations are permanent removal. Each delegates to a
+ * guarded command that, under a lock on the parent, sorts dependants into two
+ * categories:
+ *
+ *   Access and account records — memberships (live or revoked), permission
+ *   overrides, sessions, access grants, onboarding, preferences, notifications,
+ *   conversation participation, organisation settings. Deleted with the parent
+ *   in the same transaction, because they describe access and cannot outlive
+ *   the thing they grant it to.
+ *
+ *   Business and historical work — projects, inventory, reservations,
+ *   transactions, construction records, documents, authored messages, tasks.
+ *   These refuse the removal with 409 `has_dependents`; revoke, suspend or
+ *   close is the answer then, and each preserves everything.
+ *
+ * Nothing here cascade-deletes a business record, and a removal either
+ * completes or rolls back whole.
  *
  * Boundary invariants enforced here, not merely documented:
  *   * Forbidden permission keys are stripped server-side before any write.
@@ -34,6 +55,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shared/auth.ts";
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 
 const MODULE_KEY = 'builder_portal_admin';
 
@@ -292,8 +314,11 @@ Deno.serve(async (req) => {
     [/BUILDER_ORG_CLOSED/, 409, 'organisation_closed'],
     [/BUILDER_USER_REVOKED/, 409, 'user_revoked'],
     [/BUILDER_MEMBERSHIP_NOT_FOUND_OR_REVOKED/, 409, 'membership_not_found'],
+    [/BUILDER_HAS_DEPENDENTS/, 409, 'has_dependents'],
+    [/BUILDER_REASON_REQUIRED/, 400, 'reason_required'],
     [/BUILDER_ORG_NOT_FOUND/, 404, undefined],
     [/BUILDER_USER_NOT_FOUND/, 404, undefined],
+    [/BUILDER_MEMBERSHIP_NOT_FOUND\b/, 404, undefined],
     [/BUILDER_UNKNOWN_USER_STATUS|BUILDER_UNKNOWN_ORG_STATUS/, 400, undefined],
     [/BUILDER_FORBIDDEN_PERMISSION_KEY|BUILDER_UNKNOWN_PERMISSION_KEY/, 400, 'forbidden_permission_key'],
     [/BUILDER_PROJECTION_NOT_WRITABLE/, 400, 'projection_not_writable'],
@@ -302,15 +327,40 @@ Deno.serve(async (req) => {
     [/duplicate key value|23505/, 409, 'duplicate'],
   ];
 
+  /**
+   * A guarded command signals failure as a PostgreSQL exception, so its raw
+   * message is a sentinel like BUILDER_HAS_DEPENDENTS. Those sentinels are for
+   * this layer, not for the administrator reading the dialog, so the ones that
+   * surface in the interface get a sentence instead.
+   */
+  const RPC_MESSAGE: Record<string, string> = {
+    has_dependents: 'This record is still in use and cannot be removed.',
+    reason_required: 'A reason is required for this operation.',
+  };
+
   const rpcFailure = (error: { message?: string; details?: string; code?: string }) => {
+    // Two different reads of the same failure. `text` includes the SQLSTATE so
+    // the patterns above can match on it; the structured values are taken from
+    // the DETAIL line ALONE.
+    //
+    // Reading them out of `text` appended the SQLSTATE to the last field on the
+    // line, which is how "Memberships (1) P0001" reached an administrator's
+    // screen. A guarded command writes its structured detail in DETAIL, so that
+    // is the only place worth reading it from.
+    const detail = String(error?.details ?? '') || String(error?.message ?? '');
     const text = `${error?.message ?? ''} ${error?.details ?? ''} ${error?.code ?? ''}`;
     for (const [pattern, status, code] of RPC_STATUS) {
       if (pattern.test(text)) {
-        const currentVersion = /current_version=(\d+)/.exec(text)?.[1];
+        const currentVersion = /current_version=(\d+)/.exec(detail)?.[1];
+        // A refused removal names what is holding the record, so the
+        // administrator is told which alternative to reach for rather than
+        // just being stopped.
+        const dependents = /dependents=([^\n]+)/.exec(detail)?.[1]?.trim();
         return json({
-          error: error?.message || 'Operation failed',
+          error: (code && RPC_MESSAGE[code]) || error?.message || 'Operation failed',
           ...(code ? { code } : {}),
           ...(currentVersion ? { current_version: Number(currentVersion) } : {}),
+          ...(dependents ? { dependents } : {}),
         }, status, cors);
       }
     }
@@ -496,13 +546,36 @@ Deno.serve(async (req) => {
           }, 409, cors);
         }
 
+        // Email is editable because a mistyped address makes an account
+        // unreachable and therefore unusable. It is the sign-in identifier, so
+        // it is normalised and validated exactly as it is on create, and the
+        // unique-violation path is answered as a 409 rather than a 500.
+        //
+        // Deliberately not editable here, at any privilege: password_hash,
+        // invite_token_hash, reset_token_hash, every session token hash, and
+        // the system-owned lifecycle timestamps (invited_at,
+        // invite_accepted_at, last_login_at, revoked_at). Those are written
+        // only by the flows that earn them. The update payload below is a
+        // closed allow-list, so a new column cannot become editable by
+        // accident.
+        const nextEmail = trimmed(body.email)?.toLowerCase();
+        if (body.email !== undefined && (!nextEmail || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(nextEmail))) {
+          return json({ error: 'A valid email is required' }, 400, cors);
+        }
+
         const { data, error } = await supabase.from('builder_portal_users').update({
           name: trimmed(body.name) ?? undefined,
+          ...(nextEmail ? { email: nextEmail } : {}),
           phone: trimmed(body.phone),
           job_title: trimmed(body.job_title),
           updated_by: adminUserId,
         }).eq('id', userId).eq('row_version', expectedVersion).select(USER_SELECT_INTERNAL).maybeSingle();
-        if (error) throw error;
+        if (error) {
+          if ((error as any).code === '23505') {
+            return json({ error: 'A portal user with that email already exists', code: 'duplicate' }, 409, cors);
+          }
+          throw error;
+        }
         if (!data) return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
         auditRows.push({ action: 'builder_user_updated', entity_id: userId });
         return json({ user: projectUser(data) }, 200, cors);
@@ -550,6 +623,98 @@ Deno.serve(async (req) => {
 
         auditRows.push({ action: `builder_user_${status}`, entity_id: userId });
         return json({ user: projectUser(data as Record<string, any>) }, 200, cors);
+      }
+
+      /**
+       * Permanent removal. The three delete operations below all delegate to a
+       * guarded command that counts protected dependants under a lock on the
+       * parent row and writes the audit record before the DELETE.
+       *
+       * That has to happen inside the database, not here: most Builder child
+       * tables cascade from the user and the organisation, so a check issued as
+       * one call and a delete issued as the next would let a row created in
+       * between be destroyed silently. An explicit reason is mandatory and is
+       * enforced by the command as well as here.
+       */
+      case 'delete_user': {
+        const userId = trimmed(body.builder_user_id);
+        const reason = trimmed(body.reason);
+        if (!userId) return json({ error: 'builder_user_id is required' }, 400, cors);
+        if (!reason) {
+          return json({ error: 'A reason is required to remove a portal user', code: 'reason_required' }, 400, cors);
+        }
+        const expectedVersion = Number(body.expected_version);
+        if (!Number.isFinite(expectedVersion)) {
+          return json({ error: 'expected_version is required' }, 400, cors);
+        }
+
+        const { data, error } = await supabase.rpc('builder_admin_delete_user', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _builder_user_id: userId,
+          _expected_version: expectedVersion,
+          _reason: reason,
+        });
+        if (error) return rpcFailure(error);
+
+        auditRows.push({ action: 'builder_user_removed', entity_id: userId });
+        // `detail` carries what the command actually cleaned up — memberships
+        // removed, sessions revoked, primary reassigned. It never contains a row.
+        return json({ removed: true, id: userId, detail: data ?? null }, 200, cors);
+      }
+
+      case 'delete_organisation': {
+        const organisationId = trimmed(body.organisation_id);
+        const reason = trimmed(body.reason);
+        if (!organisationId) return json({ error: 'organisation_id is required' }, 400, cors);
+        if (!reason) {
+          return json({ error: 'A reason is required to remove an organisation', code: 'reason_required' }, 400, cors);
+        }
+        const expectedVersion = Number(body.expected_version);
+        if (!Number.isFinite(expectedVersion)) {
+          return json({ error: 'expected_version is required' }, 400, cors);
+        }
+
+        const { data, error } = await supabase.rpc('builder_admin_delete_organisation', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _organisation_id: organisationId,
+          _expected_version: expectedVersion,
+          _reason: reason,
+        });
+        if (error) return rpcFailure(error);
+
+        auditRows.push({ action: 'builder_organisation_removed', entity_id: organisationId });
+        // `detail` carries what the command actually cleaned up — memberships
+        // removed, sessions revoked, primary reassigned. It never contains a row.
+        return json({ removed: true, id: organisationId, detail: data ?? null }, 200, cors);
+      }
+
+      case 'delete_membership': {
+        const membershipId = trimmed(body.membership_id);
+        const reason = trimmed(body.reason);
+        if (!membershipId) return json({ error: 'membership_id is required' }, 400, cors);
+        if (!reason) {
+          return json({ error: 'A reason is required to remove a membership', code: 'reason_required' }, 400, cors);
+        }
+        const expectedVersion = Number(body.expected_version);
+        if (!Number.isFinite(expectedVersion)) {
+          return json({ error: 'expected_version is required' }, 400, cors);
+        }
+
+        const { data, error } = await supabase.rpc('builder_admin_delete_membership', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _membership_id: membershipId,
+          _expected_version: expectedVersion,
+          _reason: reason,
+        });
+        if (error) return rpcFailure(error);
+
+        auditRows.push({ action: 'builder_membership_removed', entity_id: membershipId });
+        // `detail` carries what the command actually cleaned up — memberships
+        // removed, sessions revoked, primary reassigned. It never contains a row.
+        return json({ removed: true, id: membershipId, detail: data ?? null }, 200, cors);
       }
 
       // --------------------------------------------------------- memberships
@@ -755,7 +920,7 @@ Deno.serve(async (req) => {
     }
   } catch (error: any) {
     console.error('[builder-portal-admin] operation failed', { operation, message: error?.message });
-    return json({ error: error?.message || 'Operation failed' }, 500, cors);
+    return json({ ...internalError(error, 'builder-portal-admin') }, 500, cors);
   } finally {
     // Best-effort operational event, for observability only. Access-control
     // mutations already wrote a trusted, fail-closed record to

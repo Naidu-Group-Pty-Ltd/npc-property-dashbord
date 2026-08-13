@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Figma as FigmaIcon, Star } from 'lucide-react';
+import { Loader2, Frame as FigmaIcon, Star } from 'lucide-react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 interface ActiveTemplate {

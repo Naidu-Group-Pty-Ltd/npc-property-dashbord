@@ -11,6 +11,39 @@ export interface IdentityCheck {
   provider_reference: string | null; method: string; status: IdvStatus;
   overall_score: number | null; result_payload: any; requested_at: string;
   completed_at: string | null; mc_job_id: string | null; mc_tokens_committed: number | null;
+  /** Present once the execution-mode migration is applied. */
+  execution_mode?: "live" | "simulation";
+  authoritative?: boolean;
+  environment?: string | null;
+}
+
+export type ProviderReadinessState =
+  | "ready_live" | "simulator_non_production" | "not_configured"
+  | "misconfigured" | "unavailable" | "unknown";
+
+export interface CapabilityReadiness {
+  /**
+   * Which IDV experience the client will actually get, as the server resolves
+   * it. Absent for screening. `hosted_session` means the provider runs the
+   * capture on its own UI and the client completes it in the portal — which is
+   * different advice from "upload a document".
+   */
+  idv_flow?: 'capture' | 'hosted_session' | null;
+  capability: string;
+  configured_provider: string | null;
+  mode: "simulator" | "live";
+  adapter_wired: boolean;
+  secrets_present: Record<string, boolean>;
+  last_health: { at: string | null; status: string | null; message: string | null } | null;
+  state: ProviderReadinessState;
+}
+
+export interface ProviderReadiness {
+  environment: string;
+  simulator_blocked: boolean;
+  note: string;
+  idv: CapabilityReadiness;
+  screening: CapabilityReadiness;
 }
 
 export interface ScreeningCheck {
@@ -32,6 +65,7 @@ async function invoke<T = any>(payload: Record<string, unknown>): Promise<T> {
 }
 
 export const amlVerificationApi = {
+  providerReadiness: () => invoke<ProviderReadiness>({ op: "provider_readiness" }),
   initiateIdv: (case_id: string, method?: string, metadata?: Record<string, any>) =>
     invoke<{ identity_check: IdentityCheck; result: any }>({ op: "initiate_idv", case_id, method, metadata }),
   getIdv: (id: string) => invoke<{ identity_check: IdentityCheck; documents: any[] }>({ op: "get_idv", id }),
@@ -59,6 +93,15 @@ export const amlVerificationApi = {
   /** Adjudicate a pending portal submission through the self-hosted service. */
   runVerification: (check_id: string) =>
     invoke<{ check: AmlVerificationCheck }>({ op: "run_verification", check_id }),
+
+  /**
+   * Re-run the provider for a check whose processing failed for a technical
+   * reason. Consumes no further customer attempt — the server refuses anything
+   * that is not `technical_failure` or `dead_lettered` with
+   * `retry_not_eligible`, so this can never overwrite an identity outcome.
+   */
+  retryVerificationProcessing: (check_id: string) =>
+    invoke<{ check: AmlVerificationCheck }>({ op: "retry_verification_processing", check_id }),
 
   recordDocumentSighting: (params: {
     case_id: string; party_id?: string | null; party_label: string;
@@ -100,6 +143,44 @@ export interface AmlVerificationCheck {
   verified_by_type: string | null;
   requested_at: string;
   completed_at: string | null;
+  // ── Canonical verification model ──
+  // `status` is the identity outcome; `processing_status` is how far the
+  // provider run got. They are deliberately separate: a provider outage or an
+  // unusable capture must never read as a customer failure, and neither
+  // consumes an attempt. `list_verification_checks` returns the whole row, so
+  // these were already on the wire before the staff UI surfaced them.
+  execution_mode?: "live" | "simulation" | "manual" | null;
+  authoritative?: boolean | null;
+  environment?: string | null;
+  processing_status?: AmlProcessingStatus | null;
+  attempt_consumed?: boolean | null;
+  processing_attempts?: number | null;
+  capture_sequence?: number | null;
+  provider_error_category?: string | null;
+  superseded_at?: string | null;
+  next_retry_at?: string | null;
+}
+
+/** `aml.verification_checks.processing_status` CHECK values. */
+export type AmlProcessingStatus =
+  | "submitted" | "queued" | "processing" | "completed"
+  | "capture_unusable" | "technical_failure" | "retry_scheduled"
+  | "dead_lettered" | "cancelled";
+
+/**
+ * Only a technical failure or a dead-lettered job may be retried: those are
+ * ours, not the customer's, so a retry runs the provider again without
+ * consuming a further attempt. Anything else is either still in flight or is
+ * an adjudicated identity outcome, which a retry must never overwrite — the
+ * server enforces the same rule and answers `retry_not_eligible`.
+ */
+export const RETRYABLE_PROCESSING_STATUSES: readonly AmlProcessingStatus[] = [
+  "technical_failure",
+  "dead_lettered",
+];
+
+export function isRetryableProcessingStatus(value: string | null | undefined): boolean {
+  return RETRYABLE_PROCESSING_STATUSES.includes(String(value ?? "") as AmlProcessingStatus);
 }
 
 export interface AmlBiometricAccessEntry {

@@ -289,18 +289,27 @@ Deno.serve(async (req: Request) => {
     // Helper to verify any authenticated user (not just superadmin).
     // Returns the active session id so callers can rotate it on privilege
     // elevation (WP-11B/C Phase 3).
-    const verifySession = async (sessionToken: string) => {
-      if (!sessionToken) {
+    const verifySession = async (sessionToken?: string | null) => {
+      // The browser can no longer read its own session: the Command Centre
+      // session lives in an HttpOnly cookie, so `body.session_token` is
+      // undefined for every self-service call and this used to fail with
+      // "Session token required". Fall back to the cookie/header carrier.
+      const token = (sessionToken && sessionToken.trim())
+        ? sessionToken.trim()
+        : (extractSessionToken(req.headers, body) ?? '');
+
+      if (!token) {
         return { error: 'Session token required', user: null, sessionId: null };
       }
 
       // Hash-first lookup (plaintext fallback) so hash-only sessions resolve.
       const session = await resolveUserSessionRow(
         supabase,
-        sessionToken,
+        token,
         'id, user_id, expires_at, revoked_at, idle_expires_at',
         (q: any) => q.gt('expires_at', new Date().toISOString()).is('revoked_at', null),
       );
+
 
       if (!session || !isSessionUsable(session).ok) {
         return { error: 'Invalid or expired session', user: null, sessionId: null };
@@ -691,8 +700,12 @@ Deno.serve(async (req: Request) => {
           );
         }
 
-        // Hash the new password before storing
+        // Hash the new password before storing, and release any lockout —
+        // `finance-portal-change-password` already does this, and a lock left
+        // standing here would refuse the password the caller just chose.
         updates.password_hash = await hashPassword(new_password);
+        updates.failed_login_attempts = 0;
+        updates.locked_until = null;
       }
 
       // Only proceed if there are actual updates
@@ -900,8 +913,26 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // The stored rows are returned exactly as they are, never synthesised.
+      // For a superadmin they are usually empty, because the role grants
+      // access on its own — so the editor is told who it is looking at and
+      // says as much, rather than presenting an empty grid that reads as "no
+      // access" for the one account that has all of it.
+      const { data: targetRoleRow } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user_id)
+        .eq('role', 'superadmin')
+        .maybeSingle();
+      const { data: targetUserRow } = await supabase
+        .from('custom_users')
+        .select('role')
+        .eq('id', user_id)
+        .maybeSingle();
+      const targetIsSuperadmin = !!targetRoleRow || targetUserRow?.role === 'super_admin';
+
       return new Response(
-        JSON.stringify({ success: true, permissions }),
+        JSON.stringify({ success: true, permissions, target_is_superadmin: targetIsSuperadmin }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -943,10 +974,26 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      await revokeUserSessions(user_id, 'privilege_change:permissions_updated');
-      console.log(`Permissions updated for user ${user_id} by ${adminUser.username}`);
+      // Revoking every session forces the target to sign back in under the
+      // new grants. Editing your OWN grid is the one case where that is pure
+      // cost: only a superadmin can reach this action, their access comes
+      // from the role rather than these rows, so signing them out changes
+      // nothing except throwing away the session of the person who just made
+      // the change. (Losing the role revokes sessions on its own path —
+      // `demote_from_superadmin` below.)
+      const editingSelf = user_id === adminUser.id;
+      if (!editingSelf) {
+        await revokeUserSessions(user_id, 'privilege_change:permissions_updated');
+      }
+      console.log(
+        `Permissions updated for user ${user_id} by ${adminUser.username}${editingSelf ? ' (self-edit; sessions kept)' : ''}`,
+      );
       return new Response(
-        JSON.stringify({ success: true, message: 'Permissions updated' }),
+        JSON.stringify({
+          success: true,
+          message: 'Permissions updated',
+          sessions_revoked: !editingSelf,
+        }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -1311,12 +1358,23 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // Releasing the lockout is part of the reset, not an extra.
+      //
+      // This is the action an administrator reaches for when a colleague
+      // cannot get in, so the account is very often locked at the moment it
+      // runs — the failed attempts that prompted the call are the same ones
+      // that tripped it. Writing only the hash hands back a password that is
+      // refused for the rest of the window, and refused as though it were
+      // wrong, so the administrator is told the reset worked and the colleague
+      // is still locked out. Same reasoning as admin-password-reset.
       const hashedPassword = await hashPassword(new_password);
       const { error } = await supabase
         .from('custom_users')
-        .update({ 
-          password_hash: hashedPassword, 
-          updated_at: new Date().toISOString() 
+        .update({
+          password_hash: hashedPassword,
+          failed_login_attempts: 0,
+          locked_until: null,
+          updated_at: new Date().toISOString()
         })
         .eq('id', user_id);
 

@@ -4,8 +4,11 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { pickAllowed } from '../_shared/wp09Guards.ts';
+import { COMMERCIAL_WRITABLE } from '../_shared/assetWritableColumns.ts';
 type TableName = 'commercial_properties' | 'commercial_leases' | 'commercial_dcf_runs' | 'commercial_capex' | 'commercial_financing';
 
 const ALLOWED_TABLES: TableName[] = [
@@ -64,6 +67,11 @@ Deno.serve(async (req) => {
     return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
   }
   const userId = auth.userId;
+
+  // Commercial & Industrial is a Scale-or-add-on capability — enforced
+  // server-side, not just hidden in the UI.
+  const entitlement = await requireWorkspaceCapability(supabase, auth, 'commercial-industrial');
+  if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
   if (!body.operation || !body.table) {
     return new Response(JSON.stringify({ error: 'operation and table are required' }), {
@@ -151,11 +159,20 @@ Deno.serve(async (req) => {
 
       case 'create': {
         if (!body.data) throw new Error('data required for create');
-        const payload = { ...body.data };
-        if (payload.id === '' || payload.id == null) delete payload.id;
+        // WP-24: an allowlist, not a denylist. The three `delete`s this replaces
+        // were right about the columns somebody thought of and silent about
+        // every column added since — and these tables gain columns regularly.
+        const payload: Record<string, unknown> = pickAllowed(body.data, COMMERCIAL_WRITABLE[body.table] ?? new Set());
+        // The two ownership columns are absent from the allowlist on purpose, so
+        // they are set HERE — from the verified session, or from a value that has
+        // been ownership-checked first — and can never simply arrive in the body.
         if (isPropertyOwned) {
-          if (!payload.property_id) throw new Error('property_id required');
-          await assertPropertyOwned(payload.property_id);
+          const requestedPropertyId = (body.data as Record<string, unknown> | undefined)?.property_id;
+          if (typeof requestedPropertyId !== 'string' || !requestedPropertyId) {
+            throw new Error('property_id required');
+          }
+          await assertPropertyOwned(requestedPropertyId);
+          payload.property_id = requestedPropertyId;
         } else {
           payload.user_id = userId;
         }
@@ -171,10 +188,9 @@ Deno.serve(async (req) => {
 
       case 'update': {
         if (!body.recordId || !body.data) throw new Error('recordId and data required for update');
-        const payload = { ...body.data };
-        delete payload.id;
-        delete payload.user_id;
-        delete payload.property_id;
+        // WP-24: same allowlist. `id`, `user_id` and `property_id` are absent from
+        // it by construction, so they cannot be set from the body at all.
+        const payload: Record<string, unknown> = pickAllowed(body.data, COMMERCIAL_WRITABLE[body.table] ?? new Set());
         if (isPropertyOwned) {
           const { data: rec, error: recErr } = await supabase
             .from(body.table)

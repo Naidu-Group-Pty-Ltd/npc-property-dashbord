@@ -16,6 +16,8 @@ import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -105,7 +107,7 @@ Deno.serve(async (req) => {
     }
   } catch (err) {
     console.error('[finance-portal-client-comms] error', err);
-    return json({ error: 'internal_error', message: (err as Error).message }, 500);
+    return json({ ...internalError(err, 'finance-portal-client-comms'), error: 'internal_error' }, 500);
   }
 });
 
@@ -282,7 +284,7 @@ async function sendMessage(supabase: any, partner: any, body: any, json: JsonRes
       if (subject) payload.subject = subject;
     }
 
-    const res = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+    const res = await meteredFetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -371,7 +373,7 @@ async function translate(supabase: any, partner: any, body: any, json: JsonRespo
   if (!apiKey) return json({ error: 'ai_not_configured' }, 500);
 
   const model = 'google/gemini-2.5-flash';
-  const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+  const res = await meteredFetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({

@@ -32,6 +32,7 @@ import {
   Loader2,
   GripVertical,
   RotateCcw,
+  UsersRound,
 } from 'lucide-react';
 import { useDraggablePosition } from '@/hooks/useDraggablePosition';
 import { useResizablePanel } from '@/hooks/useResizablePanel';
@@ -43,10 +44,14 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   isInternalMessagesPanelOpen,
   onInternalMessage,
+  onInternalThreadPopOut,
   onInternalTyping,
   publishInternalMessage,
   publishInternalTyping,
+  requestPopOutInternalThread,
+  type PopOutThreadHint,
 } from '@/lib/internalMessagingBus';
+
 import {
   AttachmentDropOverlay,
   InternalAttachmentQueue,
@@ -61,7 +66,28 @@ import {
   sendInternalMessageWithAttachments,
   hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+
+import {
+  claimMessageAlert,
+  clearTabUnreadBadge,
+  closeAllDesktopMessageAlerts,
+  consumeInternalThreadDeepLink,
+  deliverDesktopMessageAlert,
+  dismissDesktopMessageAlert,
+  markPromptedDesktopAlerts,
+  onServiceWorkerThreadOpen,
+  playMessagePing,
+  requestDesktopAlertPermission,
+  resetMessageAlertClaims,
+  seedMessageAlert,
+  setTabUnreadBadge,
+  shouldOfferDesktopAlerts,
+  snoozeDesktopAlertPrompt,
+  type DesktopMessageAlert,
+} from '@/lib/desktopMessageAlerts';
+
 
 
 type Priority = 'normal' | 'high' | 'urgent';
@@ -78,8 +104,8 @@ interface PopupMessage {
 
 interface PopupThread {
   thread_id: string;
-  kind: 'direct' | 'broadcast';
-  /** Counterparty / announcement title. */
+  kind: 'direct' | 'group' | 'broadcast';
+  /** Counterparty / group / announcement title. */
   title: string;
   /** Name of the person who sent the latest inbound message. */
   sender: string;
@@ -89,6 +115,12 @@ interface PopupThread {
   messages: PopupMessage[];
   loading: boolean;
 }
+
+/** Chip / header label: DMs read best as the person, everything else as its title. */
+function threadLabel(thread: PopupThread) {
+  return thread.kind === 'direct' ? thread.sender || thread.title : thread.title || thread.sender;
+}
+
 
 const POLL_MS = 15_000;
 /** Collapsed chips shown above the expanded card. */
@@ -153,6 +185,14 @@ function writeBaselines(map: Record<string, string>) {
   }
 }
 
+/** Chronological compare that degrades to string order on unparsable input. */
+function isAfter(candidate: string, reference: string) {
+  const a = Date.parse(candidate);
+  const b = Date.parse(reference);
+  if (Number.isFinite(a) && Number.isFinite(b)) return a > b;
+  return candidate > reference;
+}
+
 function timeLabel(iso: string) {
   try {
     return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -178,7 +218,8 @@ function MinimisedChip({
   onDismiss: () => void;
 }) {
   const drag = useDraggablePosition(`aurixa.internalMessages.chipPos.${thread.thread_id}`);
-  const label = thread.kind === 'broadcast' ? thread.title : thread.sender;
+  const label = threadLabel(thread);
+
 
   return (
     <div
@@ -220,11 +261,14 @@ function MinimisedChip({
             thread.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
           )}
         >
-          {thread.kind === 'broadcast' ? (
-            <Megaphone className="h-3 w-3" />
-          ) : (
-            thread.sender?.trim()?.[0] ?? <MessageSquare className="h-3 w-3" />
-          )}
+        {thread.kind === 'broadcast' ? (
+          <Megaphone className="h-3 w-3" />
+        ) : thread.kind === 'group' ? (
+          <UsersRound className="h-3 w-3" />
+        ) : (
+          thread.sender?.trim()?.[0] ?? <MessageSquare className="h-3 w-3" />
+        )}
+
         </span>
         <span className="truncate text-xs font-semibold text-foreground">{label}</span>
         {thread.unread > 0 && (
@@ -292,6 +336,27 @@ export function InternalMessageToasts() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** thread_id → last time we broadcast a typing hint (throttling). */
   const lastTypingSentRef = useRef<Record<string, number>>({});
+  /**
+   * Desktop-alert bookkeeping. The "have we already alerted on this message?"
+   * ledger lives in `desktopMessageAlerts` (shared across every tab and across
+   * reloads); this ref only records whether THIS mount has completed its first
+   * sweep, so a freshly-loaded tab seeds the ledger instead of replaying a
+   * backlog of notifications.
+   */
+  const alertBootstrappedRef = useRef(false);
+  /**
+   * Messages that arrived while the OS route was unavailable (permission not
+   * granted, alerts switched off, notification API missing). They become a
+   * single quiet catch-up toast the next time the user looks at this tab, so
+   * "notifications are off" never means "you silently missed something".
+   */
+  const missedRef = useRef<Map<string, { sender: string; hint: PopOutThreadHint }>>(new Map());
+  /** One opt-in invitation per mount, at most. */
+  const invitedRef = useRef(false);
+  /** Who the alert ledger currently belongs to. */
+  const alertOwnerRef = useRef<string | null>(null);
+
+
 
 
   const persist = useCallback((next: PopupThread[]) => {
@@ -330,6 +395,52 @@ export function InternalMessageToasts() {
   }, []);
 
 
+  /**
+   * Offer desktop alerts once, in context, and never as a modal. Browsers only
+   * grant `Notification` permission from a user gesture, so the actual request
+   * is made from the toast's own button — the user opts in deliberately rather
+   * than being ambushed by a browser dialog on first click.
+   */
+  const offerDesktopAlerts = useCallback(() => {
+    if (invitedRef.current || !shouldOfferDesktopAlerts()) return;
+    invitedRef.current = true;
+
+    toast('Turn on desktop alerts for team messages?', {
+      description:
+        'Get notified when a colleague messages you while you are in another tab, page or module. You can change this any time in Settings.',
+      duration: 15000,
+      action: {
+        label: 'Enable',
+        onClick: () => {
+          markPromptedDesktopAlerts();
+          void requestDesktopAlertPermission().then((result) => {
+            if (result === 'granted') {
+              toast.success('Desktop alerts on', {
+                description:
+                  'New team messages will now reach your desktop, even while the dashboard is in the background.',
+                duration: 6000,
+              });
+            } else if (result === 'denied') {
+              toast.message('Desktop alerts stay off', {
+                description:
+                  'Your browser is blocking notifications for this site. Messages will keep arriving in the dashboard — you can allow notifications later from the padlock icon in the address bar.',
+                duration: 8000,
+              });
+            }
+          });
+        },
+      },
+      cancel: {
+        label: 'Not now',
+        onClick: () => markPromptedDesktopAlerts(),
+      },
+      // Ignoring a toast is not the same as declining: go quiet for a week
+      // rather than forever.
+      onDismiss: () => snoozeDesktopAlertPrompt(),
+      onAutoClose: () => snoozeDesktopAlertPrompt(),
+    });
+  }, []);
+
   /** Poll thread list: opens new pop-ups and refreshes already-open ones. */
   const check = useCallback(async () => {
     try {
@@ -341,6 +452,8 @@ export function InternalMessageToasts() {
 
       const toRefresh: string[] = [];
       const additions: PopupThread[] = [];
+      let totalUnread = 0;
+      let loudestSender: string | null = null;
 
       for (const t of list) {
         const lastAt: string | null = t.last_message_at ?? null;
@@ -350,6 +463,61 @@ export function InternalMessageToasts() {
             : t.kind === 'broadcast'
               ? t.display_title || 'Announcement'
               : t.display_title || 'Team member';
+
+        totalUnread += t.unread ?? 0;
+
+        // ---- OS-level desktop alert -------------------------------------
+        // Fires whenever an inbound message is newer than the last one anyone
+        // alerted on. `claimMessageAlert` is shared across every open tab and
+        // survives reloads, so the user is notified exactly once per message no
+        // matter how many dashboards they have open. The alert itself
+        // self-suppresses when the tab is focused — the in-app chip has it.
+        const inbound =
+          !!lastAt &&
+          (t.unread ?? 0) > 0 &&
+          t.last_message_sender_name !== 'You';
+        if (inbound) {
+          const kind: DesktopMessageAlert['kind'] =
+            t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct';
+          // Anything predating this mount is backlog: on the first sweep it is
+          // recorded as seen (chips carry it) rather than replayed as a wall of
+          // OS notifications. A message that lands *after* boot is genuinely
+          // new even if the first sweep is what finds it — which also keeps the
+          // desktop→mobile layout swap (a remount) from dropping an alert.
+          if (!alertBootstrappedRef.current && !isAfter(lastAt!, bootAtRef.current)) {
+            seedMessageAlert(t.id, lastAt!);
+          } else if (claimMessageAlert(t.id, lastAt!)) {
+            if (!loudestSender) loudestSender = senderName;
+            const title = t.display_title || 'Team message';
+            const alert: DesktopMessageAlert = {
+              thread_id: t.id,
+              title,
+              sender: senderName,
+              body: typeof t.last_message_preview === 'string' ? t.last_message_preview : '',
+              kind,
+              priority: (t.last_message_priority as Priority) ?? 'normal',
+            };
+            void deliverDesktopMessageAlert(alert).then((outcome) => {
+              if (outcome === 'shown') {
+                playMessagePing();
+                return;
+              }
+              // The user is looking at this tab — the chip is the notification.
+              if (outcome === 'suppressed-focused') return;
+              // No OS route: ping (best effort) and queue the catch-up toast.
+              playMessagePing();
+              missedRef.current.set(t.id, {
+                sender: senderName,
+                hint: { thread_id: t.id, kind, title },
+              });
+              // A message just landed and desktop alerts are still unanswered —
+              // the most useful possible moment to offer them.
+              offerDesktopAlerts();
+            });
+          }
+        }
+
+
 
         if (openIds.has(t.id)) {
           const current = threadsRef.current.find((x) => x.thread_id === t.id);
@@ -393,7 +561,7 @@ export function InternalMessageToasts() {
 
         additions.push({
           thread_id: t.id,
-          kind: t.kind === 'broadcast' ? 'broadcast' : 'direct',
+          kind: t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct',
           title: t.display_title || 'Team message',
           sender: senderName,
           priority: (t.last_message_priority as Priority) ?? 'normal',
@@ -425,14 +593,41 @@ export function InternalMessageToasts() {
         additions.forEach((a) => loadMessages(a.thread_id, false));
       }
 
+      // Tab title badge: signals a background-but-visible tab in the tab strip.
+      setTabUnreadBadge(totalUnread, loudestSender ?? undefined);
+      // Offer the opt-in only to people who actually use internal messaging,
+      // and never on the first sweep — landing on the dashboard should not be
+      // greeted by a prompt.
+      if (alertBootstrappedRef.current && list.length) offerDesktopAlerts();
+      // The first sweep only records state — it must never replay a backlog of
+      // OS notifications when the dashboard is opened.
+      alertBootstrappedRef.current = true;
+
       // Refreshing a minimised conversation must not clear its unread badge.
       toRefresh.forEach((id) =>
         loadMessages(id, activeRef.current === id && !minimisedRef.current[id]),
       );
+
     } catch {
       /* silent — badge/panel remain the source of truth */
     }
-  }, [loadMessages, persist]);
+  }, [loadMessages, persist, offerDesktopAlerts]);
+
+  /**
+   * The alert ledger is per-person, not per-browser. On a sign-out or a switch
+   * of user, drop it (and any bubble still on screen) — a stale claim from the
+   * previous account would otherwise silence the new one's first message.
+   */
+  useEffect(() => {
+    const id = user?.id ?? null;
+    if (alertOwnerRef.current && alertOwnerRef.current !== id) {
+      resetMessageAlertClaims();
+      missedRef.current.clear();
+      closeAllDesktopMessageAlerts();
+      alertBootstrappedRef.current = false;
+    }
+    alertOwnerRef.current = id;
+  }, [user?.id]);
 
   // Realtime hint + safety-net poll
   useEffect(() => {
@@ -442,11 +637,129 @@ export function InternalMessageToasts() {
     });
     check();
     const id = setInterval(check, POLL_MS);
+    // Background tabs get their timers throttled, so re-sync the moment the
+    // dashboard becomes visible again (and whenever it regains focus).
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     return () => {
       off();
       clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      clearTabUnreadBadge();
     };
   }, [user, check]);
+
+  /**
+   * Fallback for every context the OS route cannot serve — permission not
+   * granted, alerts switched off, an unsupported browser, or a preview iframe.
+   * Messages that could not raise a desktop notification are summarised in one
+   * quiet toast the moment the user comes back to this tab, with a direct way
+   * into the conversation. Nothing is ever silently missed.
+   */
+  useEffect(() => {
+    if (!user) return;
+    const flush = () => {
+      if (document.visibilityState !== 'visible') return;
+      const missed = [...missedRef.current.entries()];
+      if (!missed.length) return;
+      missedRef.current.clear();
+
+      const senders = [...new Set(missed.map(([, m]) => m.sender))];
+      const names =
+        senders.length === 1
+          ? senders[0]
+          : `${senders.slice(0, 2).join(', ')}${senders.length > 2 ? ` +${senders.length - 2} more` : ''}`;
+      const latest = missed[missed.length - 1][1];
+
+      toast.message(
+        missed.length === 1
+          ? `New message from ${latest.sender}`
+          : `${missed.length} new team messages`,
+        {
+          description:
+            missed.length === 1
+              ? 'Received while you were working elsewhere.'
+              : `From ${names}, received while you were working elsewhere.`,
+          duration: 10000,
+          action: {
+            label: 'Open',
+            onClick: () => requestPopOutInternalThread(latest.hint),
+          },
+        },
+      );
+    };
+
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('focus', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('focus', flush);
+    };
+  }, [user]);
+
+  /**
+   * Notification click routing. Two arrival paths, one destination:
+   *  • the service worker posts to an already-open dashboard, so the user lands
+   *    back in the conversation without losing the page they were working on;
+   *  • a cold start (no window was open) carries `?internalThread=` instead.
+   */
+  useEffect(() => {
+    if (!user) return;
+    const deepLinked = consumeInternalThreadDeepLink();
+    if (deepLinked) requestPopOutInternalThread({ thread_id: deepLinked });
+    return onServiceWorkerThreadOpen((hint) => requestPopOutInternalThread(hint));
+  }, [user]);
+
+
+
+  /**
+   * "Pop out chat" from the Aurixa widget: detach any conversation (direct,
+   * group or announcement) into a free-floating, draggable, resizable window.
+   * Unlike inbound traffic, this IS a deliberate user action, so the thread is
+   * expanded immediately.
+   */
+  useEffect(() => {
+    if (!user) return;
+    return onInternalThreadPopOut((hint) => {
+      const id = hint.thread_id;
+      setThreads((prev) => {
+        if (prev.some((t) => t.thread_id === id)) return prev;
+        const seeded: PopupThread = {
+          thread_id: id,
+          kind: hint.kind ?? 'direct',
+          title: hint.title || 'Team message',
+          sender: hint.title || 'Team member',
+          priority: 'normal',
+          lastAt: new Date().toISOString(),
+          unread: 0,
+          messages: [],
+          loading: true,
+        };
+        const next = [...prev, seeded];
+        persist(next);
+        return next;
+      });
+      // Clear any "minimised" memory so the card actually opens.
+      setMinimised((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setActiveId(id);
+      // The conversation is now on screen: retire every other signal for it.
+      dismissDesktopMessageAlert(id);
+      missedRef.current.delete(id);
+      loadMessages(id, true);
+      // Pull authoritative title / sender / priority for the new pop-out.
+      check();
+    });
+  }, [user, persist, loadMessages, check]);
+
 
   // Pop-ups never auto-expand. A conversation is only ever rendered as a full
   // card when the user clicks its chip, so signing in with ten live threads
@@ -523,6 +836,10 @@ export function InternalMessageToasts() {
         queuedForRef.current = null;
         attachmentQueue.clear();
       }
+      // Closing the chip is an acknowledgement: retire the OS bubble and drop
+      // the thread from the catch-up summary.
+      dismissDesktopMessageAlert(threadId);
+      missedRef.current.delete(threadId);
 
       if (activeRef.current === threadId) setActiveId(null);
     },
@@ -673,7 +990,7 @@ export function InternalMessageToasts() {
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
 
   const typer = active ? typing[active.thread_id] : undefined;
-  const headline = active ? (active.kind === 'broadcast' ? active.title : active.sender) : '';
+  const headline = active ? threadLabel(active) : '';
 
   if (!user || (!active && !chips.length)) return null;
 
@@ -691,16 +1008,17 @@ export function InternalMessageToasts() {
       )}
     >
       {/* Dock handle — drag the whole stack anywhere on the page */}
-      <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-border/50 bg-card/80 px-1.5 py-0.5 backdrop-blur-xl">
+      <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-primary/40 bg-card/95 px-2.5 py-1.5 shadow-lg shadow-primary/10 ring-1 ring-primary/10 backdrop-blur-xl">
         <span
           {...dock.handleProps}
           role="button"
           tabIndex={-1}
           aria-label="Move messages dock"
           title="Drag to move all minimised chats"
-          className="flex cursor-grab items-center text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
+          className="flex cursor-grab items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground active:cursor-grabbing"
         >
-          <GripVertical className="h-3.5 w-3.5" />
+          <GripVertical className="h-4 w-4" />
+          <span className="hidden sm:inline">Move</span>
         </span>
         {(dock.position || panelResize.size) && (
           <button
@@ -711,9 +1029,10 @@ export function InternalMessageToasts() {
             }}
             aria-label="Reset chat position and size"
             title="Reset position & size"
-            className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <RotateCcw className="h-3 w-3" />
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Reset</span>
           </button>
         )}
       </div>
@@ -736,7 +1055,10 @@ export function InternalMessageToasts() {
             setThreads((prev) =>
               prev.map((x) => (x.thread_id === t.thread_id ? { ...x, unread: 0 } : x)),
             );
+            dismissDesktopMessageAlert(t.thread_id);
+            missedRef.current.delete(t.thread_id);
             loadMessages(t.thread_id, true);
+
           }}
           onDismiss={() => dismiss(t.thread_id)}
         />
@@ -853,6 +1175,8 @@ export function InternalMessageToasts() {
           >
             {active.kind === 'broadcast' ? (
               <Megaphone className="h-4 w-4" />
+            ) : active.kind === 'group' ? (
+              <UsersRound className="h-4 w-4" />
             ) : (
               active.sender?.trim()?.[0] ?? <MessageSquare className="h-4 w-4" />
             )}
@@ -860,10 +1184,15 @@ export function InternalMessageToasts() {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-foreground">{headline}</p>
             <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/80">
-              {active.kind === 'broadcast' ? 'Announcement' : 'Direct message'}
+              {active.kind === 'broadcast'
+                ? 'Announcement'
+                : active.kind === 'group'
+                  ? 'Group chat'
+                  : 'Direct message'}
               {active.priority !== 'normal' && ` · ${PRIORITY_LABEL[active.priority]}`}
             </p>
           </div>
+
           {active.priority === 'urgent' && (
             <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" aria-hidden />
           )}
@@ -890,7 +1219,7 @@ export function InternalMessageToasts() {
         <div
           ref={scrollRef}
           className={cn(
-            'overflow-y-auto overscroll-contain px-3 py-2.5',
+            'overflow-y-auto overscroll-contain px-3 py-2.5 scrollbar-premium',
             panelResize.size ? 'min-h-0 flex-1' : 'h-64',
           )}
           aria-live="polite"
@@ -979,16 +1308,16 @@ export function InternalMessageToasts() {
             className="min-h-[46px] resize-none rounded-2xl border-border/60 bg-background/60 text-[12px]"
           />
 
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1">
+          <div className="mt-2 flex items-center justify-between gap-2 pl-8">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 aria-label="Attach files"
                 title="Attach files — any format, any size"
                 onClick={() => fileInputRef.current?.click()}
-                className="mr-0.5 rounded-full border border-border/60 p-1 text-muted-foreground transition-colors hover:text-foreground"
+                className="mr-1 flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-muted/40 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <Paperclip className="h-3 w-3" />
+                <Paperclip className="h-4 w-4" />
               </button>
               {(['normal', 'high', 'urgent'] as Priority[]).map((p) => (
                 <button

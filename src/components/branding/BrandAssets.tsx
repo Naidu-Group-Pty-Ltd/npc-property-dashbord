@@ -99,9 +99,10 @@ export function BrandLockup({
         settings={settings}
       />
       <div className="min-w-0">
-        <p className={cn('truncate font-semibold text-foreground', companyClassName)}>{settings.companyName}</p>
-        {meta ? <p className={cn('text-[10px] uppercase tracking-[0.18em] text-muted-foreground', metaClassName)}>{meta}</p> : null}
+        <p className={cn('break-words font-semibold leading-tight text-foreground', companyClassName)}>{settings.companyName}</p>
+        {meta ? <p className={cn('mt-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground', metaClassName)}>{meta}</p> : null}
       </div>
+
     </div>
   );
 }

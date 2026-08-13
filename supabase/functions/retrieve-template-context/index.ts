@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -223,8 +224,8 @@ Deno.serve(async (req) => {
     console.error('❌ Context retrieval error:', error);
     return new Response(
       JSON.stringify({
+        ...internalError(error, 'retrieve-template-context'),
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
         context: '',
         chunks: [],
       }),

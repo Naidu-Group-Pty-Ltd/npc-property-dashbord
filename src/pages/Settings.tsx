@@ -32,9 +32,11 @@ import { ComparisonScoreMigration } from "@/components/admin/ComparisonScoreMigr
 import { ProfileCredentials } from "@/components/settings/ProfileCredentials";
 import { FinanceAgentContacts } from "@/components/settings/FinanceAgentContacts";
 import { PushNotificationToggle } from "@/components/settings/PushNotificationToggle";
+import { DesktopMessageAlertsToggle } from "@/components/settings/DesktopMessageAlertsToggle";
 import { MissionControlKeyCard } from "@/components/settings/MissionControlKeyCard";
 import { SeatEntitlementCard } from "@/components/settings/SeatEntitlementCard";
 import { PricingCatalogCard } from "@/components/settings/PricingCatalogCard";
+import { EntitlementDiagnosticsCard } from "@/components/settings/EntitlementDiagnosticsCard";
 import { PurchaseHistoryCard } from "@/components/settings/PurchaseHistoryCard";
 import { DeviceManagementCard } from "@/components/settings/DeviceManagementCard";
 import { TotpEnrollmentCard } from "@/components/settings/TotpEnrollmentCard";
@@ -307,6 +309,9 @@ export default function Settings() {
       {/* Push Notifications */}
       <PushNotificationToggle />
 
+      {/* Internal message desktop alerts */}
+      <DesktopMessageAlertsToggle />
+
       {/* Personal Mailbox Settings */}
       <Card className={settingsCardClass}>
         <CardHeader className="space-y-2">
@@ -426,6 +431,9 @@ export default function Settings() {
 
       {/* Pricing & Catalog */}
       <PricingCatalogCard />
+
+      {/* Entitlement Diagnostics (superadmin only — card hides itself otherwise) */}
+      <EntitlementDiagnosticsCard />
 
       {/* Purchase History (attributed, from Mission Control) */}
       <PurchaseHistoryCard />

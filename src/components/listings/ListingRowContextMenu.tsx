@@ -12,6 +12,7 @@ import {
   Eye,
   Copy,
   ExternalLink,
+  Mail,
   Map,
   CheckSquare,
   Square,
@@ -27,6 +28,7 @@ export interface ListingRowContextMenuProps {
   onOpenDetails?: () => void;
   onCopyAddress?: () => void;
   onOpenSource?: () => void;
+  onEmailAgent?: () => void;
 }
 
 /**
@@ -44,6 +46,7 @@ export function ListingRowContextMenu({
   onOpenDetails,
   onCopyAddress,
   onOpenSource,
+  onEmailAgent,
 }: ListingRowContextMenuProps) {
   return (
     <ContextMenu>
@@ -85,12 +88,18 @@ export function ListingRowContextMenu({
           </ContextMenuItem>
         )}
 
-        {(onOpenDetails || onCopyAddress || onOpenSource) && <ContextMenuSeparator />}
+        {(onOpenDetails || onCopyAddress || onOpenSource || onEmailAgent) && <ContextMenuSeparator />}
 
         {onOpenDetails && (
           <ContextMenuItem onClick={onOpenDetails}>
             <Map className="h-4 w-4 mr-2" />
             Open details
+          </ContextMenuItem>
+        )}
+        {onEmailAgent && (
+          <ContextMenuItem onClick={onEmailAgent}>
+            <Mail className="h-4 w-4 mr-2" />
+            Email the agent
           </ContextMenuItem>
         )}
         {onOpenSource && (

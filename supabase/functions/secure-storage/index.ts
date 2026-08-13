@@ -97,12 +97,28 @@ function safeFileName(value: unknown): string {
   return base.slice(0, 120);
 }
 
+/**
+ * Does this caller administer branding? Superadmin, or `white_label` can_edit —
+ * the same gate `manage-branding` uses to persist the row. Requiring superadmin
+ * here meant a delegated brand administrator could edit the draft but never
+ * upload the artwork it referenced.
+ */
+async function canAdministerBranding(supabase: any, actorId: string) {
+  if (await isSuperadmin(supabase, actorId)) return true;
+  for (const moduleKey of ['white_label', 'platform_administration']) {
+    const perm = await requireModulePermission(supabase, { userId: actorId, authMethod: 'human' }, moduleKey, 'can_edit');
+    if (perm.ok) return true;
+  }
+  return false;
+}
+
 /** Resolve browser upload binding fields exclusively from authoritative rows. */
 async function resolveHumanUploadBinding(supabase: any, bucket: string, resourceId: unknown, actorId: string) {
   if (bucket === 'branding-assets') {
-    if (!(await isSuperadmin(supabase, actorId))) return { ok: false as const, reason: 'superadmin_required' };
+    if (!(await canAdministerBranding(supabase, actorId))) return { ok: false as const, reason: 'branding_permission_required' };
     return { ok: true as const, resourceType: 'branding_asset', resourceId: null, clientId: null, ownerUserId: actorId };
   }
+
   if (typeof resourceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(resourceId)) return { ok: false as const, reason: 'resource_required' };
   if (bucket === 'qa_exports') {
     const { data } = await supabase.from('report_qa_conversations').select('id, created_by, client_id').eq('id', resourceId).maybeSingle();
@@ -198,9 +214,23 @@ Deno.serve(async (req) => {
 
     // Permission gating for mutating operations (internal service calls bypass)
     if (!isInternal && (operation === 'upload' || operation === 'delete')) {
+      // Branding artwork is governed by the Branding module itself, not by a
+      // table in the permission matrix — `branding_profiles` is unmapped there,
+      // so routing it through checkPermission() denied every non-superadmin.
+      if (bucket === 'branding-assets') {
+        if (!(await canAdministerBranding(supabase, actorId))) {
+          await logSecurityEvent(supabase, {
+            action: `storage.${operation}`, decision: 'deny', reason_code: 'branding_permission_required',
+            actor_type: 'human', actor_id: actorId, target_type: 'bucket', target_id: bucket,
+          });
+          return createForbiddenResponse('You do not have permission to manage branding assets', corsHeaders);
+        }
+        if (operation === 'delete' && !(await isSuperadmin(supabase, actorId))) {
+          return createForbiddenResponse('Delete on this bucket requires superadmin', corsHeaders);
+        }
+      } else {
       const writeModule = bucket === 'qa_exports' ? 'report_qa'
         : bucket === 'investment-reports' || bucket === 'quantitative-reports' ? 'reports'
-        : bucket === 'branding-assets' ? 'platform_administration'
         : 'clients';
       const modulePerm = await requireModulePermission(supabase, { userId: actorId, authMethod: 'human' }, writeModule, operation === 'delete' ? 'can_delete' : 'can_edit');
       if (!modulePerm.ok) return createForbiddenResponse('Permission denied', corsHeaders);
@@ -223,7 +253,9 @@ Deno.serve(async (req) => {
           return createForbiddenResponse(perm.reason || 'Permission denied', corsHeaders);
         }
       }
+      }
     }
+
 
     // Read-side authorization (EC-5): download/list/signedUrl/publicUrl were
     // previously unauthorized beyond "is authenticated". Require can_view on the
@@ -301,9 +333,21 @@ Deno.serve(async (req) => {
         let uploadPath = path as string;
         let uploadBinding: any = null;
         if (!isInternal) {
-          if (upsert === true) return createForbiddenResponse('Use an authorized replace operation', corsHeaders);
+          // `upsert` is meaningless for a human caller because the destination
+          // path is server-generated and unique, so an overwrite can never
+          // happen. Rejecting the flag outright only broke callers that passed
+          // it defensively (the Branding page did) — ignore it instead.
           uploadBinding = await resolveHumanUploadBinding(supabase, bucket, resource_id, actorId);
-          if (!uploadBinding.ok) return jsonResponse({ success: false, error: 'Invalid upload resource' }, corsHeaders, 403);
+          if (!uploadBinding.ok) {
+            return jsonResponse(
+              { success: false, error: uploadBinding.reason === 'branding_permission_required'
+                ? 'You do not have permission to manage branding assets'
+                : 'Invalid upload resource' },
+              corsHeaders,
+              403,
+            );
+          }
+
           // The probe has no binding; use the canonical client ownership check
           // directly so an arbitrary client UUID cannot be attached.
           if (uploadBinding.clientId) {

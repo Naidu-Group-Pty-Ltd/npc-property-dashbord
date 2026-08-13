@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
+import { internalError } from '../_shared/errorResponse.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -68,6 +69,9 @@ Note type context: ${noteType || 'general'}`;
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
       agentKey: 'transcript_cleaning',
+      // This function already writes its own api_usage_log row for this call;
+      // letting the router log it too would bill the tenant twice.
+      meterUsage: false,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Please clean up this voice transcript into a professional note:\n\n"${transcript}"` },
@@ -110,7 +114,7 @@ Note type context: ${noteType || 'general'}`;
   } catch (error) {
     console.error('[Clean Note Transcript] Error:', error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify(internalError(error, 'clean-note-transcript')),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

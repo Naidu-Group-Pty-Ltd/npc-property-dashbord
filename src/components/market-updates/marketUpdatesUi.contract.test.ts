@@ -9,17 +9,24 @@ const coverage = read('src/components/market-updates/MarketSourceCoveragePanel.t
 const desktopNavigation = read('src/components/layout/DashboardSidebar.tsx');
 const mobileNavigation = read('src/components/layout/MobileSidebar.tsx');
 const commandPalette = read('src/components/layout/GlobalCommandPalette.tsx');
+const navigationRegistry = read('src/lib/navigation/registry.ts');
 const breadcrumbs = read('src/components/aurixa/BreadcrumbRail.tsx');
 const routes = read('src/App.tsx');
 
 describe('Market Updates Phase 4 UI contract',()=>{
   it('uses the Market News Feed display name while retaining the compatible route and permission key',()=>{
     expect(page).toContain('>Market News Feed</h1>');
-    expect(desktopNavigation).toContain("title: 'Market News Feed', url: '/market-updates'");
-    expect(mobileNavigation).toContain("title: 'Market News Feed', url: '/market-updates'");
-    expect(commandPalette).toContain("title: 'Market News Feed', url: '/market-updates'");
+    // All navigation surfaces render the shared registry entry, which is
+    // entitlement-gated (Scale or the market-updates add-on) — no surface
+    // keeps a private copy, and none marks it always-visible.
+    expect(navigationRegistry).toContain("title: 'Market News Feed', url: '/market-updates'");
+    expect(navigationRegistry).toContain("moduleKey: 'market_updates'");
+    expect(desktopNavigation).toContain('useNavigationVisibility');
+    expect(mobileNavigation).toContain('useNavigationVisibility');
+    expect(commandPalette).toContain('useNavigationVisibility');
     expect(breadcrumbs).toContain("'market-updates': 'Market News Feed'");
-    expect(routes).toContain('<Route path="market-updates" element={<MarketUpdates />} />');
+    // The route keeps its path but is entitlement-guarded.
+    expect(routes).toContain('<Route path="market-updates" element={<ModuleGuard moduleKey="market_updates"><MarketUpdates /></ModuleGuard>} />');
     expect(page).toContain("useModulePermissions('market_updates')");
   });
 
@@ -46,11 +53,22 @@ describe('Market Updates Phase 4 UI contract',()=>{
     expect(page).toContain('canEditMarketUpdates && <Button');
     expect(archive).toContain('fetchMarketUpdateArchive');
     expect(page).toContain("navigate('/market-updates/archived')");
-    expect(routes).toContain('<Route path="market-updates/archived" element={<MarketArchivePage />} />');
+    expect(routes).toContain('<Route path="market-updates/archived" element={<ModuleGuard moduleKey="market_updates"><MarketArchivePage /></ModuleGuard>} />');
     expect(archive).toContain('Articles archived from the Market News Feed will appear here.');
     expect(archive).toContain('Clear All');
     expect(archive).toContain('Recently archived');
     expect(archive).toContain('aria-label={`Restore ${item.title}`}');
+    expect(page).toContain('event.stopPropagation()');
+    expect(page).toContain('archivePendingRef.current.has(update.id)');
+    expect(archive).toContain('restoringRef.current.has(item.id)');
+    expect(archive).toContain('disabled={restoring||!item.id}');
+    expect(archive).not.toContain('disabled={Boolean(restoringId)}');
+  });
+
+  it('keeps archive actions independent of page-data warnings',()=>{
+    expect(page).toContain('const operationalIssue = actionIssue ?? dataIssue ?? digestIssue');
+    expect(page).toContain('disabled={archivePendingIds.has(update.id)||!update.id}');
+    expect(page).not.toMatch(/disabled=\{[^}]*operationalIssue/);
   });
 
   it('does not render numerical intelligence confidence on Market Updates surfaces',()=>{

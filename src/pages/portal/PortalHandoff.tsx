@@ -3,17 +3,21 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, ShieldCheck, AlertTriangle, Eye } from 'lucide-react';
+import { setPortalSessionToken } from '@/lib/portalSession';
 
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
 
-const PORTAL_SESSION_KEY = 'portal_session_token';
 const IMPERSONATION_FLAG_KEY = 'portal_impersonation_active';
 const IMPERSONATION_READONLY_KEY = 'portal_impersonation_readonly';
 
+// Impersonation display flags only — never the session token. These are
+// tab-scoped so an impersonation banner cannot outlive the tab that started it;
+// the session itself is carried by the HttpOnly cookie the redeem response
+// sets. See src/lib/portalSession.ts.
 const persist = (key: string, value: string) => {
   try { sessionStorage.setItem(key, value); } catch {}
-  try { localStorage.setItem(key, value); } catch {}
+  try { localStorage.removeItem(key); } catch {}
 };
 
 export default function PortalHandoff() {
@@ -46,7 +50,8 @@ export default function PortalHandoff() {
             'apikey': SUPABASE_ANON_KEY,
             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
           },
-          credentials: 'omit',
+          // The redeem response sets the HttpOnly client-portal session cookie.
+          credentials: 'include',
           body: JSON.stringify({ token, portal_user_id: portalUserId }),
         });
 
@@ -55,8 +60,11 @@ export default function PortalHandoff() {
           throw new Error(data?.error || `Handoff failed (HTTP ${response.status})`);
         }
 
-        // Persist a real client portal session
-        persist(PORTAL_SESSION_KEY, data.session_token);
+        // The session now lives in the HttpOnly cookie the redeem response set;
+        // this in-memory copy only backs the legacy header/body carriers and
+        // dies with the tab. It used to be written to `localStorage`, which left
+        // a working impersonated client session on the machine indefinitely.
+        setPortalSessionToken(data.session_token);
         persist(IMPERSONATION_FLAG_KEY, '1');
         persist(IMPERSONATION_READONLY_KEY, data.impersonation?.is_readonly ? '1' : '0');
 
@@ -79,7 +87,7 @@ export default function PortalHandoff() {
   }, [token]);
 
   return (
-    <div className="client-portal-theme min-h-screen flex items-center justify-center bg-background p-6">
+    <div className="client-portal-theme min-h-screen flex items-center justify-center p-6">
       <Card className="client-portal-soft-panel max-w-md w-full overflow-hidden">
         <CardHeader className="border-b border-border/50 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
           <CardTitle className="flex items-center gap-2">

@@ -12,7 +12,7 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "luxury-tabs-list inline-flex h-auto min-h-10 items-center justify-start sm:justify-center rounded-md bg-muted p-1 text-muted-foreground overflow-x-auto scrollbar-hide max-w-full snap-x snap-proximity",
+      "luxury-tabs-list inline-flex h-auto min-h-10 items-center justify-start sm:justify-center rounded-md p-1 text-muted-foreground overflow-x-auto scrollbar-hide max-w-full snap-x snap-proximity",
       className
     )}
     {...props}
@@ -27,7 +27,7 @@ const TabsTrigger = React.forwardRef<
   <TabsPrimitive.Trigger
     ref={ref}
     className={cn(
-      "luxury-tabs-trigger inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm touch-manipulation min-h-[44px] sm:min-h-0",
+      "luxury-tabs-trigger inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:text-foreground touch-manipulation min-h-[44px] sm:min-h-0",
       className
     )}
     {...props}

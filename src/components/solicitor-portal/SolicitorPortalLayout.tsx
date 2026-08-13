@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { SolicitorNotificationBell } from './SolicitorNotificationBell';
 import { SolicitorOnboardingTour } from './SolicitorOnboardingTour';
 import { SolicitorRealtimeBridge } from './SolicitorRealtimeBridge';
+import { usePartnerWorkspaceEnabled } from '@/lib/aml/usePartnerWorkspaceFlags';
 
 const NAV_ITEMS = [
   { to: '/solicitor', label: 'Dashboard', icon: LayoutDashboard, end: true, tourId: 'dashboard' },
@@ -30,6 +31,10 @@ const NAV_ITEMS = [
   { to: '/solicitor/tasks', label: 'Tasks', icon: ListChecks, end: false, tourId: 'tasks' },
   { to: '/solicitor/notifications', label: 'Notifications', icon: Bell, end: false, tourId: 'notifications' },
   { to: '/solicitor/settings', label: 'Settings', icon: SettingsIcon, end: false, tourId: 'settings' },
+  // Feature-flagged (aml_partner_compliance_workspace + solicitor surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/solicitor/compliance', label: 'Client Verification', icon: ShieldCheck, end: false, tourId: 'compliance', partnerWorkspace: true },
 ];
 
 function getInitials(name?: string | null, email?: string | null): string {
@@ -44,9 +49,11 @@ function getInitials(name?: string | null, email?: string | null): string {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  const { enabled: partnerWorkspaceEnabled } = usePartnerWorkspaceEnabled('solicitor');
   return (
     <nav aria-label="Solicitor portal" className="space-y-1 px-3">
-      {NAV_ITEMS.map(({ to, label, icon: Icon, end, tourId }) => (
+      {NAV_ITEMS.filter((item) => !('partnerWorkspace' in item) || partnerWorkspaceEnabled)
+        .map(({ to, label, icon: Icon, end, tourId }) => (
         <NavLink
           key={to}
           to={to}

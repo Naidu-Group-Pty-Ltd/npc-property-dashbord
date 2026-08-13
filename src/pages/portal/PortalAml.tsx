@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, ShieldCheck, CheckCircle2, Clock, AlertTriangle, Upload, FileText, ArrowRight, ArrowLeft, Send } from 'lucide-react';
+import { Loader2, ShieldCheck, CheckCircle2, Clock, AlertTriangle, Lock, Upload, FileText, ArrowRight, ArrowLeft, Send } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Checkbox } from '@/components/ui/checkbox';
+import { PassportPromoCard } from '@/components/portal/PassportPromoCard';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
@@ -19,6 +20,17 @@ import {
   type AmlPortalOverview, type AmlSection, type AmlConsentDocument,
 } from '@/lib/aml/amlPortalApi';
 import { IdentityVerificationStep } from '@/components/portal/IdentityVerificationStep';
+// Lifted out of this file so it can be tested on its own — it now reads the
+// canonical document list rather than rendering requirements alone.
+import { DocumentsStep } from '@/components/portal/DocumentsStep';
+import { ClientJourneyStrip } from '@/components/portal/ClientJourneyStrip';
+import { resolveRequestStep, type IdvAvailability } from '@/lib/aml/portalRequestRoute';
+// One canonical journey drives the stepper, the progress figure, the resume
+// target and the review summary. Presentation only — the truth is the server's.
+import {
+  buildPortalStepStates, initialStepIndex, onboardingStatusPresentation, portalProgress,
+  type PortalStepState, type PortalStepTone,
+} from '@/lib/aml/portalStepPresentation';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -63,22 +75,120 @@ function resumeKey(caseId: string) { return `${RESUME_STORAGE_PREFIX}${caseId}`;
 export default function PortalAml() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AmlPortalOverview | null>(null);
+  // A failed load is NOT the same as "no case exists". Rendering the no-case
+  // empty state on error told clients their advisor had done nothing while
+  // the real problem was a broken call — keep the two states separate.
+  const [loadFailed, setLoadFailed] = useState<string | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
+  // Client-safe readiness ('available' | 'temporarily_unavailable' |
+  // 'manual_verification_required'). Needed here, not just inside the capture
+  // step, because it decides which step an identity request opens at all.
+  const [idvAvailability, setIdvAvailability] = useState<IdvAvailability | null>(null);
+  /**
+   * A background re-read failed while a good page was already on screen.
+   *
+   * Deliberately not `loadFailed`: that one replaces the whole portal, which
+   * is the right answer when there is nothing to replace and the wrong answer
+   * when the customer is halfway through a step. This is a line of text.
+   */
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const resumedRef = useRef(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * ## Initial load and background refresh are not the same operation
+   *
+   * They used to be one `load()` that set `loading = true`, and the render
+   * swaps the entire portal for skeletons while that is set. So every refresh
+   * — a document upload, a questionnaire save, an identity state change —
+   * unmounted the step the customer was standing in.
+   *
+   * With identity verification that became an infinite loop: the step read a
+   * check that was already in flight, told the page, the page blanked itself,
+   * the step unmounted and forgot what it had seen, remounted, read the same
+   * state, and told the page again. The portal blinked until the customer
+   * gave up. Both halves are fixed — the step no longer reports its baseline
+   * (see IdentityVerificationStep), and a refresh no longer blanks the page.
+   *
+   * A refresh may update the page. It may never erase it.
+   */
+  const requestToken = useRef(0);
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const trailingRef = useRef(false);
+
+  /**
+   * One canonical read. `foreground` decides only what a FAILURE does — the
+   * request is identical either way.
+   *
+   * The token makes the newest response win: a slow first read must never
+   * land on top of a fresher one triggered by something the customer just did.
+   */
+  const readOverview = useCallback(async (foreground: boolean) => {
+    const token = ++requestToken.current;
     try {
       const res = await amlPortalApi.overview();
+      if (token !== requestToken.current) return;
       setData(res);
+      setLoadFailed(null);
+      setRefreshFailed(false);
     } catch (e: any) {
-      toast.error(e?.message ?? 'Failed to load AML onboarding');
-    } finally {
-      setLoading(false);
+      if (token !== requestToken.current) return;
+      if (foreground) {
+        setLoadFailed(e?.message ?? 'Failed to load AML onboarding');
+        toast.error(e?.message ?? 'Failed to load AML onboarding');
+      } else {
+        // Keep the last known-good page. A failed background read is not a
+        // reason to tell somebody their case has vanished.
+        setRefreshFailed(true);
+      }
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  /** First paint, and the explicit retry from the failure card. */
+  const loadInitial = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(null);
+    try { await readOverview(true); } finally { setLoading(false); }
+  }, [readOverview]);
+
+  /**
+   * Re-read the canonical overview underneath the customer.
+   *
+   * Coalesced: concurrent callers (an upload landing while an identity change
+   * is announced) share the in-flight read, and one trailing read follows so
+   * the later event is never answered with data fetched before it. No
+   * skeleton, no unmount, no polling.
+   */
+  const refreshOverview = useCallback(async (): Promise<void> => {
+    if (inFlightRef.current) {
+      trailingRef.current = true;
+      return inFlightRef.current;
+    }
+    const run = async () => {
+      await readOverview(false);
+      if (trailingRef.current) {
+        trailingRef.current = false;
+        await readOverview(false);
+      }
+    };
+    const promise = run().finally(() => { inFlightRef.current = null; });
+    inFlightRef.current = promise;
+    return promise;
+  }, [readOverview]);
+
+  useEffect(() => { void loadInitial(); }, [loadInitial]);
+
+  // Readiness is advisory to the UI and never a gate on requesting anything;
+  // an unknown value resolves identity requests to the manual route, which
+  // always works.
+  useEffect(() => {
+    const id = data?.case?.id;
+    if (!id) return;
+    let alive = true;
+    amlPortalApi.verificationStatus(id)
+      .then((s) => { if (alive) setIdvAvailability((s as any)?.availability ?? null); })
+      .catch(() => { if (alive) setIdvAvailability(null); });
+    return () => { alive = false; };
+  }, [data?.case?.id]);
 
   const caseObj = data?.case ?? null;
 
@@ -93,33 +203,49 @@ export default function PortalAml() {
   // or funding sources. The current index is clamped against the live array.
   const steps = useMemo(() => buildSteps(data?.sections), [data?.sections]);
 
-  // Resume: on first load, jump to the last section the user was on, or the first incomplete step.
+  /**
+   * Every visible step, resolved against the ONE canonical journey.
+   *
+   * Questionnaire children keep their own section status; consent, documents,
+   * identity and submission come from `overview.journey`. Nothing below this
+   * line decides for itself whether something is finished.
+   */
+  const stepStates = useMemo(() => buildPortalStepStates({
+    steps,
+    journey: data?.journey,
+    sections: data?.sections ?? [],
+    consentSatisfied: consented,
+  }), [steps, data?.journey, data?.sections, consented]);
+
+  // Resume: the stored step wins while it is still meaningful; a stale one —
+  // already complete, out of range, or written before the client consented —
+  // loses to the canonical journey.
   useEffect(() => {
-    if (!caseObj || resumedRef.current || loading) return;
+    if (!caseObj || resumedRef.current || loading || stepStates.length === 0) return;
     resumedRef.current = true;
-    if (!consented) { setStepIdx(0); return; }
-    let target = 1;
+    let stored: number | null = null;
     try {
       const saved = localStorage.getItem(resumeKey(caseObj.id));
       if (saved != null) {
         const n = Number(saved);
-        if (Number.isFinite(n) && n >= 0 && n < steps.length) target = n;
-      } else {
-        const sections = data?.sections ?? [];
-        const firstIncompleteIdx = steps.findIndex(s => {
-          if (!s.section) return false;
-          const st = sections.find(x => x.section === s.section)?.status;
-          return !['submitted', 'accepted', 'complete'].includes(st ?? '');
-        });
-        if (firstIncompleteIdx > 0) target = firstIncompleteIdx;
+        if (Number.isFinite(n)) stored = n;
       }
     } catch { /* ignore */ }
-    setStepIdx(target);
-  }, [caseObj, consented, data?.sections, loading, steps]);
+    setStepIdx(initialStepIndex({ states: stepStates, storedIndex: stored, consentSatisfied: consented }));
+  }, [caseObj, consented, loading, stepStates]);
 
-  // Persist current step for resume
+  /**
+   * Persist the current step for next time — but never before resume has read
+   * it.
+   *
+   * `stepIdx` starts at 0, and there is a render where the case has arrived
+   * and the resume decision has not been made yet. Writing in that window
+   * overwrites the customer's stored step with 0 and then "resumes" them to
+   * the answer it just destroyed. The guard is the fix; the ordering of the
+   * two effects is not something to rely on.
+   */
   useEffect(() => {
-    if (!caseObj) return;
+    if (!caseObj || !resumedRef.current) return;
     try { localStorage.setItem(resumeKey(caseObj.id), String(stepIdx)); } catch { /* ignore */ }
   }, [caseObj, stepIdx]);
 
@@ -133,15 +259,23 @@ export default function PortalAml() {
 
   const step = steps[Math.min(stepIdx, steps.length - 1)];
 
-  const progressPct = useMemo(() => {
-    if (!data?.sections) return 0;
-    const doneSections = data.sections.filter(s => ['submitted', 'accepted', 'complete'].includes(s.status)).length;
-    const totalSections = data.sections.length || 1;
-    const reqPct = data.requirement_progress?.total
-      ? data.requirement_progress.completed / data.requirement_progress.total
-      : 0;
-    return Math.round(((doneSections / totalSections) * 0.6 + reqPct * 0.4) * 100);
-  }, [data]);
+  /**
+   * Progress over the steps the client can see, and nothing else.
+   *
+   * The formula this replaced was 60% of questionnaire sections plus 40% of
+   * required documents. It could not see consent, identity verification or
+   * submission at all, and every case with no formal document requirements —
+   * the common one — was capped at 60% no matter how much the client uploaded.
+   */
+  const progress = useMemo(() => portalProgress(stepStates), [stepStates]);
+
+  // Presentation only — never written back, never a case-stage change.
+  const onboardingStatus = useMemo(() => onboardingStatusPresentation({
+    caseStatus: caseObj?.status,
+    statusLabel: caseObj?.status_label,
+    statusTone: caseObj?.status_tone,
+    states: stepStates,
+  }), [caseObj?.status, caseObj?.status_label, caseObj?.status_tone, stepStates]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6 p-4 md:p-6">
@@ -159,6 +293,22 @@ export default function PortalAml() {
           <Skeleton className="h-24" />
           <Skeleton className="h-96" />
         </div>
+      ) : loadFailed ? (
+        <Card>
+          <CardContent className="py-16 text-center space-y-4">
+            <ShieldCheck className="h-10 w-10 text-muted-foreground/50 mx-auto" />
+            <p className="text-sm text-muted-foreground">
+              We couldn’t load your onboarding details just now. This doesn’t affect
+              anything your advisor has set up for you.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void loadInitial()}>
+              Try again
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              If this keeps happening, please contact your adviser.
+            </p>
+          </CardContent>
+        </Card>
       ) : !caseObj ? (
         <Card>
           <CardContent className="py-16 text-center">
@@ -177,19 +327,54 @@ export default function PortalAml() {
                 <div className="font-medium">{caseObj.reference}</div>
               </div>
               <div className="flex-1 min-w-[180px]">
-                <div className="text-xs text-muted-foreground">Status</div>
-                <Badge variant={caseObj.status_tone === 'positive' ? 'default' : 'outline'} className="mt-1">
-                  {caseObj.status_label}
+                {/* "Onboarding status", because that is what the customer is
+                    looking at. The case's own workflow label said "Not
+                    started" over five completed steps. */}
+                <div className="text-xs text-muted-foreground">Onboarding status</div>
+                <Badge variant={onboardingStatus.tone === 'positive' ? 'default' : 'outline'} className="mt-1">
+                  {onboardingStatus.label}
                 </Badge>
               </div>
               <div className="flex-[2] min-w-[240px]">
                 <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                  <span>Overall progress</span><span>{progressPct}%</span>
+                  <span>Overall progress</span>
+                  {/* The count is the honest figure and leads; the percentage
+                      is there for the bar. "75%" alone never told anybody
+                      which step they were missing. */}
+                  <span>{progress.completed} of {progress.total} steps complete</span>
                 </div>
-                <Progress value={progressPct} className="h-2" />
+                <Progress
+                  value={progress.percent}
+                  className="h-2"
+                  aria-label={`${progress.completed} of ${progress.total} steps complete`}
+                />
               </div>
             </CardContent>
           </Card>
+
+          {/* The journey → Passport bridge. Renders nothing while the
+              passport flag is off, so this page is unchanged until then. */}
+          <PassportPromoCard />
+
+          {refreshFailed && (
+            // One line, and the page stays exactly where it was. This used to
+            // be the full-page failure card, which threw away a step the
+            // customer was halfway through because a background read timed out.
+            <p
+              role="status"
+              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              We couldn’t check for updates just now — what you can see may be a
+              moment out of date. Nothing you have sent us is affected.
+              <Button
+                variant="link" size="sm" className="h-auto p-0 text-xs"
+                onClick={() => void refreshOverview()}
+              >
+                Try again
+              </Button>
+            </p>
+          )}
 
           {!consented && (
             <Alert>
@@ -204,11 +389,12 @@ export default function PortalAml() {
             </Alert>
           )}
 
+          <ClientJourneyStrip overview={data!} />
+
           <Stepper
-            steps={steps}
+            states={stepStates}
             currentIdx={Math.min(stepIdx, steps.length - 1)}
             onSelect={safeSetStep}
-            sections={data?.sections ?? []}
             consented={consented}
           />
 
@@ -216,7 +402,7 @@ export default function PortalAml() {
             {step.key === 'consent' && (
               <ConsentStep
                 caseId={caseObj.id}
-                onDone={async () => { await load(); setStepIdx(1); }}
+                onDone={async () => { await refreshOverview(); setStepIdx(1); }}
               />
             )}
             {step.section && consented && (
@@ -226,7 +412,7 @@ export default function PortalAml() {
                 section={step.section}
                 title={step.label}
                 structureType={data?.structure_type ?? null}
-                onSaved={load}
+                onSaved={refreshOverview}
                 onNext={() => setStepIdx(i => Math.min(steps.length - 1, i + 1))}
                 onBack={() => setStepIdx(i => Math.max(0, i - 1))}
               />
@@ -235,7 +421,7 @@ export default function PortalAml() {
               <DocumentsStep
                 caseId={caseObj.id}
                 requirements={data?.requirements ?? []}
-                onChange={load}
+                onChange={refreshOverview}
                 onNext={() => setStepIdx(i => i + 1)}
                 onBack={() => setStepIdx(i => i - 1)}
               />
@@ -246,20 +432,52 @@ export default function PortalAml() {
                 onBack={() => setStepIdx(i => i - 1)}
                 onNext={() => setStepIdx(i => i + 1)}
                 onNeedsConsent={() => setStepIdx(0)}
+                // The step refreshes its own verification state; the journey
+                // that draws the stepper and the progress figure lives up
+                // here. Without this the client could finish a check and watch
+                // "Verify identity" stay grey until they reloaded the page.
+                // It re-reads the SERVER — the child reports that something
+                // moved, never what it moved to.
+                onStatusChange={refreshOverview}
               />
             )}
             {step.key === 'review' && consented && (
               <ReviewStep
                 overview={data}
+                stepStates={stepStates}
                 caseId={caseObj.id}
                 onBack={() => setStepIdx(i => i - 1)}
-                onSubmitted={load}
+                onSubmitted={refreshOverview}
               />
             )}
           </div>
 
           {(data?.open_requests?.length ?? 0) > 0 && (
-            <OpenRequestsCard requests={data!.open_requests!} onDone={load} />
+            <OpenRequestsCard
+              requests={data!.open_requests!}
+              onDone={refreshOverview}
+              availability={idvAvailability}
+              onNavigate={(target, sectionCode) => {
+                // Internal routing only: resolve the validated target to a
+                // step index in the server-derived step list.
+                const findIdx = (pred: (st: PortalStep) => boolean) => steps.findIndex(pred);
+                let idx = -1;
+                if (target === 'consent') idx = findIdx((st) => st.key === 'consent');
+                else if (target === 'documents') idx = findIdx((st) => st.key === 'documents');
+                else if (target === 'verify') idx = findIdx((st) => st.key === 'verify');
+                else if (target === 'review') idx = findIdx((st) => st.key === 'review');
+                else if (target === 'questionnaire') {
+                  idx = sectionCode ? findIdx((st) => st.section === sectionCode) : -1;
+                  if (idx < 0) idx = findIdx((st) => Boolean(st.section));
+                }
+                if (idx >= 0) {
+                  safeSetStep(idx);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                } else {
+                  toast.error('That step is not available yet. Please contact your adviser.');
+                }
+              }}
+            />
           )}
         </>
       )}
@@ -269,53 +487,138 @@ export default function PortalAml() {
 
 /* ─────────────────────────  Stepper  ──────────────────────── */
 
+/**
+ * The status marker's colour, one per journey tone.
+ *
+ * Colour is never the only signal — the step's accessible name states it in
+ * words, and complete, attention and blocked each carry a distinct glyph.
+ */
+const TONE_MARKER: Record<PortalStepTone, string> = {
+  success:   'bg-success text-success-foreground',
+  progress:  'bg-info text-info-foreground',
+  attention: 'bg-warning text-warning-foreground',
+  muted:     'bg-muted text-muted-foreground',
+  blocked:   'bg-muted/60 text-muted-foreground',
+};
+
+function StepMarker({ state, index }: { state: PortalStepState; index: number }) {
+  const { icon } = state.presentation;
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
+        TONE_MARKER[state.presentation.tone],
+      )}
+    >
+      {icon === 'check' ? <CheckCircle2 className="h-3 w-3" />
+        : icon === 'clock' ? <Clock className="h-3 w-3" />
+        : icon === 'alert' ? <AlertTriangle className="h-3 w-3" />
+        : icon === 'lock' ? <Lock className="h-3 w-3" />
+        : index + 1}
+    </span>
+  );
+}
+
+/**
+ * The visible stepper.
+ *
+ * Two things it now keeps apart that it used to conflate. **Where you are** is
+ * the brand outline on the pill; **how far you have got** is the marker inside
+ * it. A step can be both — Documents selected AND complete is a brand pill
+ * around a green tick, and that is the correct rendering rather than a
+ * contradiction.
+ *
+ * It also no longer wraps. `flex-wrap` left "Review & submit" orphaned on a
+ * second line at every desktop width; one scrollable row keeps the journey
+ * readable as a journey, on a phone as well as at 1440.
+ */
 function Stepper({
-  steps, currentIdx, onSelect, sections, consented,
+  states, currentIdx, onSelect, consented,
 }: {
-  steps: PortalStep[]; currentIdx: number; onSelect: (i: number) => void;
-  sections: { section: AmlSection; status: string }[];
+  states: PortalStepState[]; currentIdx: number; onSelect: (i: number) => void;
   consented: boolean;
 }) {
-  const statusFor = (s?: AmlSection) => sections.find(x => x.section === s)?.status;
-  return (
-    <ol className="flex flex-wrap gap-2">
-      {steps.map((s, i) => {
-        const st = statusFor(s.section);
-        const done = st === 'submitted' || st === 'accepted' || st === 'complete';
-        const active = i === currentIdx;
-        const locked = !consented && i !== 0;
-        return (
-          <li key={s.key}>
-            <button
-              type="button"
-              onClick={() => onSelect(i)}
-              disabled={locked}
-              aria-disabled={locked}
-              title={locked ? 'Confirm consents to unlock' : undefined}
-              className={cn(
-                'flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition',
-                active ? 'border-brand-500 bg-brand-500/10 text-foreground' : 'border-border/60 text-muted-foreground hover:text-foreground',
-                locked && 'opacity-50 cursor-not-allowed hover:text-muted-foreground',
-              )}
-            >
-              <span className={cn(
-                'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold',
-                done
-                  ? 'bg-success text-success-foreground'
-                  : active
-                    ? 'bg-brand text-brand-foreground'
-                    : 'bg-muted text-muted-foreground',
-              )}>
-                {done ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
-              </span>
-              {s.label}
-            </button>
-          </li>
-        );
-      })}
-    </ol>
-  );
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const activeRef = useRef<HTMLLIElement | null>(null);
+  const scrolledForRef = useRef<number | null>(null);
 
+  /**
+   * Bring the client's own step into the row — and otherwise leave the row
+   * alone.
+   *
+   * This was `element.scrollIntoView({ behavior: 'smooth' })`, which is the
+   * wrong tool three times over. It scrolls every scrollable ancestor, so the
+   * PAGE moved vertically; it re-centred whether or not the step was already
+   * visible, so the row slid about and clipped its left end; and it ran again
+   * on re-render, so a background journey refresh animated the stepper for no
+   * reason.
+   *
+   * This scrolls the stepper's own container, by the smallest amount that
+   * makes the step visible, only when the step actually changed, and only when
+   * it is actually out of view. Reduced-motion gets no animation.
+   */
+  useEffect(() => {
+    if (scrolledForRef.current === currentIdx) return;
+    scrolledForRef.current = currentIdx;
+    const scroller = scrollerRef.current;
+    const el = activeRef.current;
+    if (!scroller || !el || typeof scroller.scrollTo !== 'function') return;
+    if (typeof el.getBoundingClientRect !== 'function') return;
+
+    const step = el.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    const PAD = 12;
+    let delta = 0;
+    if (step.left - PAD < box.left) delta = step.left - PAD - box.left;
+    else if (step.right + PAD > box.right) delta = step.right + PAD - box.right;
+    if (delta === 0) return;
+
+    const reduced = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scroller.scrollTo({
+      left: scroller.scrollLeft + delta,
+      behavior: reduced ? 'auto' : 'smooth',
+    });
+  }, [currentIdx]);
+
+  return (
+    <div ref={scrollerRef} className="-mx-1 overflow-x-auto scrollbar-thin px-1 pb-1">
+      <ol className="flex w-max min-w-full items-center gap-2">
+        {states.map((state, i) => {
+          const active = i === currentIdx;
+          const locked = !consented && i !== 0;
+          return (
+            <li key={state.key} className="shrink-0" ref={active ? activeRef : undefined}>
+              <button
+                type="button"
+                onClick={() => onSelect(i)}
+                disabled={locked}
+                aria-disabled={locked}
+                aria-current={active ? 'step' : undefined}
+                // "Documents, complete" / "Verify identity, in progress,
+                // current step". The state is never colour alone, and the
+                // visible label leads the name so it still satisfies
+                // label-in-name.
+                aria-label={`${state.label}, ${state.presentation.accessibleStatus}${active ? ', current step' : ''}`}
+                title={locked ? 'Confirm consents to unlock' : undefined}
+                className={cn(
+                  'flex items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition',
+                  active
+                    ? 'border-brand-500 bg-brand-500/10 text-foreground'
+                    : 'border-border/60 text-muted-foreground hover:text-foreground',
+                  locked && 'opacity-50 cursor-not-allowed hover:text-muted-foreground',
+                )}
+              >
+                <StepMarker state={state} index={i} />
+                {state.label}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 }
 
 /* ─────────────────────────  Consent  ──────────────────────── */
@@ -363,6 +666,10 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void | 
       // document, not a single blanket "consented" flag.
       for (const d of docs) {
         if (d.accepted_at) continue;
+        // Optional documents (e.g. compliance_sharing) are recorded ONLY if
+        // the client actually ticked them. Recording an unticked consent
+        // would fabricate an authorisation the client never gave.
+        if (!checked[d.code]) continue;
         await amlPortalApi.recordConsent(caseId, d.code, version ?? undefined, {
           acknowledged: true,
           presented_version: version,
@@ -941,129 +1248,37 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
   );
 }
 
-/* ─────────────────────────  Documents  ──────────────────────── */
-
-function DocumentsStep({
-  caseId, requirements, onChange, onNext, onBack,
-}: {
-  caseId: string; requirements: any[]; onChange: () => void;
-  onNext: () => void; onBack: () => void;
-}) {
-  const inputRef = useRef<Record<string, HTMLInputElement | null>>({});
-  const [uploading, setUploading] = useState<string | null>(null);
-
-  const handleUpload = async (reqId: string | null, file: File | undefined) => {
-    if (!file) return;
-    setUploading(reqId ?? 'freeform');
-    try {
-      await uploadAmlDocument(caseId, file, reqId);
-      toast.success('Uploaded');
-      onChange();
-    } catch (e: any) {
-      toast.error(e?.message ?? 'Upload failed');
-    } finally {
-      setUploading(null);
-    }
-  };
-
-  const missing = requirements.filter(r => r.required && !['uploaded', 'accepted'].includes(r.status));
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Documents</CardTitle>
-        <CardDescription>Upload the items your advisor has requested. Accepted formats: PDF, JPG, PNG (≤ 25 MB).</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {requirements.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No document requirements have been set yet.</p>
-        ) : (
-          <ul className="divide-y divide-border/60">
-            {requirements.map(r => {
-              const done = ['uploaded', 'accepted'].includes(r.status);
-              const rejected = r.status === 'rejected';
-              return (
-                <li key={r.id} className="py-3 flex items-start gap-3">
-                  <div className={cn(
-                    'h-8 w-8 rounded-full flex items-center justify-center shrink-0',
-                    done ? 'bg-success/15 text-success' :
-                    rejected ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground',
-                  )}>
-                    {done ? <CheckCircle2 className="h-4 w-4" /> : rejected ? <AlertTriangle className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium truncate">{r.label}</p>
-                      {r.required && <Badge variant="outline" className="text-[10px]">Required</Badge>}
-                      <Badge variant="outline" className="text-[10px] capitalize">{r.status.replace(/_/g, ' ')}</Badge>
-                    </div>
-                    {r.description && <p className="text-xs text-muted-foreground mt-0.5">{r.description}</p>}
-                  </div>
-                  <input
-                    ref={el => (inputRef.current[r.id] = el)}
-                    type="file"
-                    accept="application/pdf,image/*"
-                    className="hidden"
-                    onChange={e => handleUpload(r.id, e.target.files?.[0])}
-                  />
-                  <Button
-                    size="sm" variant={done ? 'outline' : 'default'}
-                    onClick={() => inputRef.current[r.id]?.click()}
-                    disabled={uploading === r.id}
-                  >
-                    {uploading === r.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Upload className="h-4 w-4 mr-1" /> {done ? 'Replace' : 'Upload'}</>}
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        <Separator />
-        <div>
-          <Label className="text-xs">Upload additional document</Label>
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              ref={el => (inputRef.current['freeform'] = el)}
-              type="file"
-              accept="application/pdf,image/*"
-              className="hidden"
-              onChange={e => handleUpload(null, e.target.files?.[0])}
-            />
-            <Button variant="outline" onClick={() => inputRef.current['freeform']?.click()} disabled={uploading === 'freeform'}>
-              {uploading === 'freeform' ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Upload className="h-4 w-4 mr-1" /> Choose file</>}
-            </Button>
-          </div>
-        </div>
-
-        {missing.length > 0 && (
-          <Alert>
-            <Clock className="h-4 w-4" />
-            <AlertTitle>{missing.length} required document{missing.length === 1 ? '' : 's'} still outstanding</AlertTitle>
-            <AlertDescription>You can still continue and submit later once uploads are complete.</AlertDescription>
-          </Alert>
-        )}
-
-        <div className="flex justify-between">
-          <Button variant="outline" onClick={onBack}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
-          <Button onClick={onNext}>Continue <ArrowRight className="h-4 w-4 ml-1" /></Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 /* ─────────────────────────  Review  ──────────────────────── */
 
+/**
+ * The review summary reads the WHOLE journey, not the questionnaire.
+ *
+ * It used to list sections and required documents, which meant a client who
+ * had consented, uploaded and verified saw none of those three acknowledged
+ * anywhere on the screen that was supposed to confirm they were finished.
+ *
+ * Identity verification is shown but does not gate the button, because
+ * `submit_for_review` does not gate on it either (the reason is recorded at
+ * that op). Saying "everything is ready" while a check is still running would
+ * be wrong, so the copy says which of the two it is.
+ */
 function ReviewStep({
-  overview, caseId, onBack, onSubmitted,
-}: { overview: AmlPortalOverview | null; caseId: string; onBack: () => void; onSubmitted: () => void }) {
+  overview, stepStates, caseId, onBack, onSubmitted,
+}: {
+  overview: AmlPortalOverview | null; stepStates: PortalStepState[];
+  caseId: string; onBack: () => void; onSubmitted: () => void;
+}) {
   const [submitting, setSubmitting] = useState(false);
   const sections = overview?.sections ?? [];
   const reqs = overview?.requirements ?? [];
   const missingSections = sections.filter(s => !['submitted', 'accepted', 'complete'].includes(s.status));
   const missingReqs = reqs.filter(r => r.required && !['uploaded', 'accepted'].includes(r.status));
   const canSubmit = missingSections.length === 0 && missingReqs.length === 0;
+
+  // Everything up to (and excluding) this screen — what the client owes us.
+  const priorSteps = stepStates.filter(s => s.key !== 'review');
+  const outstanding = priorSteps.filter(s => s.status === 'action_required');
+  const inFlight = priorSteps.filter(s => s.status === 'in_progress');
 
   const submit = async () => {
     setSubmitting(true);
@@ -1085,24 +1300,54 @@ function ReviewStep({
         <CardDescription>Confirm everything is complete, then submit your onboarding pack for review.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid md:grid-cols-2 gap-3">
-          {sections.map(s => (
-            <div key={s.section} className="flex items-center justify-between border rounded-md px-3 py-2">
-              <span className="text-sm capitalize">{s.section.replace(/_/g, ' ')}</span>
-              <Badge variant="outline" className="capitalize">{s.status.replace(/_/g, ' ')}</Badge>
-            </div>
+        <ul className="grid md:grid-cols-2 gap-3" aria-label="Your onboarding summary">
+          {priorSteps.map(s => (
+            <li key={s.key} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+              <span className="flex min-w-0 items-center gap-2">
+                <StepMarker state={s} index={0} />
+                <span className="truncate text-sm">{s.label}</span>
+              </span>
+              {/* Journey wording, never a backend enum. */}
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {s.presentation.accessibleStatus}
+              </span>
+            </li>
           ))}
-        </div>
+        </ul>
 
-        {(missingSections.length > 0 || missingReqs.length > 0) && (
+        {outstanding.length > 0 ? (
           <Alert variant="default">
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Not quite ready</AlertTitle>
+            <AlertTitle>
+              {outstanding.length === 1
+                ? 'One step still needs your attention'
+                : `${outstanding.length} steps still need your attention`}
+            </AlertTitle>
             <AlertDescription>
-              {missingSections.length > 0 && <div>{missingSections.length} section(s) not yet submitted.</div>}
-              {missingReqs.length > 0 && <div>{missingReqs.length} required document(s) missing.</div>}
+              {outstanding.map(s => s.label).join(', ')}.
             </AlertDescription>
           </Alert>
+        ) : (
+          <Alert variant="default">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>Everything we need from you has been received.</AlertTitle>
+            {inFlight.length > 0 && (
+              <AlertDescription>
+                {/* Never "all clear" while a check is still running — and never
+                    a reason to hold their pack, because submission does not
+                    wait on it. */}
+                {inFlight.map(s => s.label).join(', ')} is still being checked.
+                You can submit your information now.
+              </AlertDescription>
+            )}
+          </Alert>
+        )}
+
+        {(missingSections.length > 0 || missingReqs.length > 0) && (
+          <p className="text-xs text-muted-foreground">
+            {missingSections.length > 0 && <span>{missingSections.length} section(s) not yet submitted. </span>}
+            {missingReqs.length > 0 && <span>{missingReqs.length} required document(s) missing.</span>}
+          </p>
         )}
 
         <div className="flex justify-between">
@@ -1119,7 +1364,10 @@ function ReviewStep({
 
 /* ────────────────────  Open information requests  ─────────────────── */
 
-function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () => void }) {
+/** Closed action vocabulary → button copy + the portal step it routes to.
+ * The server projects only validated action metadata; nothing here follows a
+ * URL from a request payload. */
+function OpenRequestsCard({ requests, onDone, onNavigate, availability }: { requests: any[]; onDone: () => void; onNavigate?: (target: string, sectionCode?: string | null) => void; availability: IdvAvailability | null }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1128,7 +1376,11 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
     if (!text.trim()) return;
     setSaving(true);
     try {
-      await amlPortalApi.respondRequest(id, { response: text.trim() });
+      // Versioned v1 contract; the server validates and stores it.
+      await amlPortalApi.respondRequest(id, {
+        version: 1, text: text.trim(), attachments: [],
+        completed_action: 'provide_clarification',
+      });
       toast.success('Response sent');
       setActiveId(null); setText('');
       onDone();
@@ -1149,7 +1401,11 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
           <div key={r.id} className="rounded-md border p-3 bg-background/40">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-medium">{r.subject ?? 'Additional information required'}</p>
-              <Badge variant="outline" className="capitalize">{r.status}</Badge>
+              <Badge variant="outline" className="capitalize">
+                {r.status === 'open' ? 'Action required'
+                  : r.status === 'responded' ? 'Response sent'
+                  : r.status === 'resolved' ? 'Resolved' : r.status}
+              </Badge>
             </div>
             {r.message && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{r.message}</p>}
             {activeId === r.id ? (
@@ -1163,11 +1419,41 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
                 </div>
               </div>
             ) : (
-              r.status === 'open' && (
-                <div className="mt-2 flex justify-end">
-                  <Button size="sm" variant="outline" onClick={() => setActiveId(r.id)}>Respond</Button>
-                </div>
-              )
+              r.status === 'open' && (() => {
+                const sectionCode = r.action_target?.section_code ?? null;
+                const resolved = resolveRequestStep(r, availability);
+                const routable = resolved.step !== 'respond';
+                return (
+                  <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                    {/* Say why the route changed, before they click. Without
+                        this the copy contradicted itself: an identity request
+                        that opened a camera the server would refuse. */}
+                    {resolved.manualFallback && (
+                      <p className="w-full text-xs text-muted-foreground">
+                        Electronic verification is unavailable. Please upload your identity
+                        document for manual review.
+                      </p>
+                    )}
+                    {r.due_at && (
+                      <span className="text-xs text-muted-foreground">
+                        Due {new Date(r.due_at).toLocaleDateString()}
+                      </span>
+                    )}
+                    {routable ? (
+                      <Button
+                        size="sm"
+                        onClick={() => onNavigate?.(resolved.step, sectionCode)}
+                      >
+                        {resolved.label}
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => setActiveId(r.id)}>
+                        {resolved.label}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()
             )}
           </div>
         ))}
