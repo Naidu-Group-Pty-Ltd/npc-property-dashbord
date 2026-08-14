@@ -252,3 +252,24 @@ formats may bind a client at all.
 
 See [`../template-library/07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)
 for the design system these 50 masters are drawn in.
+
+---
+
+## Template Builder rendering carries the series on screen
+
+The stored-series gate (`matchStoredScenario`) was the first answer to
+templating this format, and it was correct and almost never satisfied: the
+modal recomputes ten years live, so a chosen template silently fell back to
+the composer on nearly every download. The answer now is a channel rather than
+a gate. The adapter accepts the caller's reviewed `WireProjection` as
+`payload` — the same wire the composer receives — via
+`src/lib/reports/cashFlow/liveProjectionRow.ts`, which converts it to the
+stored-row shape so `projectCashFlow` publishes it under the vocabulary every
+master binds. Three rules: a year missing any drawn field refuses the whole
+series (the caller falls back to the composer, which validates server-side);
+`cashFlow` maps from `afterTaxAnnual` because the composer's opening sentence
+is the after-tax position and the two documents must lead with the same
+figure; and the projection is labelled `reviewed` / "Adviser-reviewed" with
+the stored scenario-comparison blocks withheld — a matched series still routes
+under its named scenario, so "Moderate" is only ever printed when the series
+is the stored moderate one.

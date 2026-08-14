@@ -123,7 +123,7 @@ describe('asking for the templated document', () => {
     expect(doc?.templateId).toBe('tpl-1');
     // `templateId` rides alongside the variant now — null here, because this
     // person has chosen no template for the format.
-    expect(h.routeCalls).toEqual([['qa', 'conv-1', { variant: 'answer', templateId: null }]]);
+    expect(h.routeCalls).toEqual([['qa', 'conv-1', { variant: 'answer', templateId: null, payload: null }]]);
   });
 
   it('asks nothing at all without a report id', async () => {

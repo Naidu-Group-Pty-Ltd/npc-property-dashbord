@@ -86,6 +86,12 @@ export async function routeReportThroughTemplate(
      * falls back to the ranking rather than failing the generation.
      */
     templateId?: string | null;
+    /**
+     * The caller's own reviewed data, for the adapter that documents it
+     * (`payload` on `ReportTemplateAdapter`). Passed through verbatim; the
+     * adapter validates it exactly as it validates a stored row.
+     */
+    payload?: Record<string, unknown> | null;
   },
 ): Promise<TemplateBuilderRouteResult | null> {
   try {
@@ -95,6 +101,7 @@ export async function routeReportThroughTemplate(
       const routing = await adapter.resolveRoutingContext({
         reportId,
         variant: opts?.variant ?? null,
+        payload: opts?.payload ?? null,
       });
       if (!routing?.reportType) continue;
       if (opts?.allowedReportTypes && !opts.allowedReportTypes.includes(routing.reportType.toLowerCase())) continue;
@@ -121,6 +128,7 @@ export async function routeReportThroughTemplate(
         reportId,
         variant: opts?.variant ?? null,
         brand: opts?.brand,
+        payload: opts?.payload ?? null,
       });
       // Null is every adapter's way of saying "I cannot produce a document
       // from this record" — no stored projection, a conversation with no

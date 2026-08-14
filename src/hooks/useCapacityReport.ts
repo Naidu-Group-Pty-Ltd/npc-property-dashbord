@@ -13,9 +13,25 @@
 import { useCallback, useState } from 'react';
 import { toast } from '@/hooks/use-toast';
 import {
+  hasTemplateSelection,
+  notifySelectionNotUsed,
   saveTemplateDocument,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
+
+/**
+ * The refresh action bypasses the template path by design; a person who chose
+ * a template hears that, once, at the moment it happens.
+ */
+async function notifySelectionBypassedForRefresh(): Promise<void> {
+  try {
+    if (await hasTemplateSelection('commercial_capacity')) {
+      notifySelectionNotUsed('Refreshing the analysis always re-renders the standard document');
+    }
+  } catch {
+    // The notice is a courtesy; a failed read must not cost the render.
+  }
+}
 import {
   downloadCapacityReport,
   requestCapacityReport,
@@ -51,7 +67,12 @@ export function useCapacityReport(): UseCapacityReport {
       // Never when the caller asked to refresh the analysis: that is a request
       // to re-run the model and persist a new analysis against the run, and a
       // template renders what is stored — answering it with the previous
-      // analysis would be answering a different question.
+      // analysis would be answering a different question. A person who chose a
+      // template is told so rather than left to notice the layout: the refresh
+      // is the one action on this format that bypasses the choice by design.
+      if (options?.refreshAnalysis === true) {
+        void notifySelectionBypassedForRefresh();
+      }
       const templated = options?.refreshAnalysis === true
         ? null
         : await tryTemplateDocument('commercial_capacity', assessmentId);

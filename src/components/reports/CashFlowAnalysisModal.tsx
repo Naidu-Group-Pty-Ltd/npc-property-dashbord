@@ -3632,18 +3632,21 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           : ['Depreciation is excluded from this projection at the adviser\'s direction.'],
       });
 
-      // An activated template renders this format **only when the series on
-      // screen is the series that is stored**. The adapter reads
-      // `financial_calculations.projections`; this modal recomputes ten years
-      // in the browser from `manual_overrides` plus whatever has been changed
-      // since it opened. Whenever those differ, the templated document would
-      // carry figures the adviser is not looking at, so `matchStoredScenario`
-      // has to name a scenario before the question is even asked — and it
-      // answers null for anything it cannot be certain of.
+      // The template path always renders the series on screen. When it is the
+      // stored series, `matchStoredScenario` names the scenario and the
+      // document says "Moderate"; when the adviser has overridden anything,
+      // the same wire this composer call sends is handed to the adapter as
+      // `payload` and the document says "Adviser-reviewed" — never a scenario
+      // label the series does not satisfy. Before the payload channel existed
+      // the choice applied only in the matched case, which for this format is
+      // the exception: the modal recomputes ten years live, so a chosen
+      // template silently fell back to the standard layout on almost every
+      // download.
       const storedScenario = matchStoredScenario(wire, report);
-      const templated = storedScenario
-        ? await tryTemplateDocument('cashflow', report.id, { variant: storedScenario })
-        : null;
+      const templated = await tryTemplateDocument('cashflow', report.id, {
+        variant: storedScenario,
+        ...(storedScenario ? {} : { payload: { wire } }),
+      });
       if (templated) {
         saveTemplateDocument(templated);
         logActivityDirect({

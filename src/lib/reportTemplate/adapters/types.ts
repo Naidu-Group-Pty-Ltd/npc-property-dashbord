@@ -50,8 +50,17 @@ export interface ReportTemplateAdapter {
    * others derive their own from the record and ignore it. Optional, because
    * every existing caller omits it and the adapters that use it have a default.
    */
-  resolveRoutingContext(input: { reportId: string; variant?: string | null }): Promise<RoutingContext | null>;
-  buildBindingContext(input: { reportId: string; variant?: string | null; brand?: BrandContext | null }): Promise<TemplateBindingContext | null>;
+  /**
+   * `payload` is the caller's own reviewed data, for the one format whose
+   * contract puts the arithmetic in the browser (the 10 Year Cash Flow — see
+   * `docs/reports/CASH_FLOW.md`). An adapter that supports it renders the
+   * supplied series instead of the stored one, after validating it exactly as
+   * it validates a stored row; adapters that read stored records ignore it.
+   * Without this, a stored template choice applied only when the screen
+   * happened to match the store — which for that format is the exception.
+   */
+  resolveRoutingContext(input: { reportId: string; variant?: string | null; payload?: Record<string, unknown> | null }): Promise<RoutingContext | null>;
+  buildBindingContext(input: { reportId: string; variant?: string | null; brand?: BrandContext | null; payload?: Record<string, unknown> | null }): Promise<TemplateBindingContext | null>;
   /**
    * Recent stored reports this adapter could render, for the template
    * preview's real-data picker. Each adapter knows its own table — which is

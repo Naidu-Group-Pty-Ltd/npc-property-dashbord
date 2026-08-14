@@ -33,6 +33,11 @@ import {
   DEFAULT_SCENARIO,
   type ScenarioName,
 } from '../../../../supabase/functions/_shared/cashFlowProjection.pure';
+import {
+  applyLiveCashFlowProjection,
+  wireAsProjectionRow,
+} from '@/lib/reports/cashFlow/liveProjectionRow';
+import type { WireProjection } from '@/lib/reports/cashFlow/requestCashFlowPdf';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
@@ -76,6 +81,28 @@ function resolveScenario(variant?: string | null): ScenarioName {
   return DEFAULT_SCENARIO;
 }
 
+/**
+ * The reviewed series the caller handed over, as a row this adapter can read.
+ *
+ * The 10 Year Cash Flow is the one format whose contract puts the arithmetic
+ * in the browser (`docs/reports/CASH_FLOW.md`): the modal recomputes ten years
+ * live, and those overrides are not stored anywhere this adapter could load
+ * them from. Without this channel the stored template choice applied only when
+ * the screen happened to equal the store — the exception, not the rule.
+ *
+ * Null when no payload was supplied, or the supplied one is not whole enough
+ * to draw — the same refusal shape as a stored row with no projection.
+ */
+function liveRowFromPayload(
+  payload: Record<string, unknown> | null | undefined,
+  reportId: string,
+  propertyAddress?: string | null,
+): Record<string, unknown> | null {
+  const wire = payload?.wire as WireProjection | undefined;
+  if (!wire) return null;
+  return wireAsProjectionRow(wire, { reportId, propertyAddress });
+}
+
 export const cashFlowAdapter: ReportTemplateAdapter = {
   reportType: 'cashflow',
   label: 'Cash Flow Analysis',
@@ -114,11 +141,16 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
     }
   },
 
-  async resolveRoutingContext({ reportId, variant }): Promise<RoutingContext | null> {
+  async resolveRoutingContext({ reportId, variant, payload }): Promise<RoutingContext | null> {
     const row = await loadReport(reportId);
     if (!row) return null;
-    // A report with no stored series cannot be served by this format at all.
-    if (!projectCashFlow(row, resolveScenario(variant)).hasProjections) return null;
+    // A report with no stored series cannot be served by this format — unless
+    // the caller supplied the reviewed series itself, which is this format's
+    // documented source of truth. The payload is validated by the same bridge
+    // the binding uses, so a routing context can never resolve for a series
+    // the binding would then refuse.
+    const live = liveRowFromPayload(payload, reportId, row.property_address as string | null);
+    if (!live && !projectCashFlow(row, resolveScenario(variant)).hasProjections) return null;
     return {
       reportId,
       reportType: 'cashflow',
@@ -134,13 +166,17 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
   },
 
   async buildBindingContext(
-    { reportId, variant, brand }: { reportId: string; variant?: string | null; brand?: BrandContext | null },
+    { reportId, variant, brand, payload }: {
+      reportId: string; variant?: string | null; brand?: BrandContext | null;
+      payload?: Record<string, unknown> | null;
+    },
   ): Promise<TemplateBindingContext | null> {
     const row = await loadReport(reportId);
     if (!row) return null;
 
+    const live = liveRowFromPayload(payload, reportId, row.property_address as string | null);
     const scenario = resolveScenario(variant);
-    if (!projectCashFlow(row, scenario).hasProjections) return null;
+    if (!live && !projectCashFlow(row, scenario).hasProjections) return null;
 
     const data: Record<string, any> = {
       report: {
@@ -157,7 +193,14 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
       },
     };
 
-    applyCashFlowProjection(data, row, scenario);
+    if (live) {
+      // The series the adviser reviewed, published under the same vocabulary
+      // by the same producer — and never labelled with a scenario it does not
+      // satisfy. See `liveProjectionRow.ts`.
+      applyLiveCashFlowProjection(data, live);
+    } else {
+      applyCashFlowProjection(data, row, scenario);
+    }
     // The letterhead — the wordmark on the cover and the contact block on the
     // disclaimer page every template ends with. Nothing published `org` until
     // August 2026, so both printed blank on every report this product has ever

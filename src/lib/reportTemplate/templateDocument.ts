@@ -30,6 +30,7 @@
  * product. A templated document is an improvement on a working path, so it may
  * never be the reason somebody cannot get their file.
  */
+import { toast } from 'sonner';
 import { tryRouteThroughTemplateBuilderFor } from './compassRoute';
 import {
   fetchTemplateSelections,
@@ -78,6 +79,17 @@ async function selectedTemplateFor(reportType: string): Promise<string | null> {
 }
 
 /**
+ * Whether this person has chosen a template for the format.
+ *
+ * For the callers that bypass the template path on purpose (the capacity
+ * report's analysis refresh) and owe the person a notice only when there is a
+ * choice being bypassed.
+ */
+export async function hasTemplateSelection(reportType: string): Promise<boolean> {
+  return (await selectedTemplateFor(reportType)) !== null;
+}
+
+/**
  * Save it the way a browser saves files, for a caller that has no `deliver*`
  * module of its own to do it.
  *
@@ -98,6 +110,26 @@ export function saveTemplateDocument(doc: TemplateDocument): void {
 }
 
 /**
+ * The person chose a template and this document was not produced with it.
+ *
+ * Said out loud, once, at the moment it happens — the same rule the picker
+ * keeps for a stale selection (`unavailable`, never a silent fallback). Before
+ * this notice, every fall-through was invisible: the migrated formats' own
+ * composers produce a perfectly typeset document, so "your choice was ignored"
+ * and "your choice was honoured" looked identical from the outside, and the
+ * only way to find out was to notice the design was not the one you picked.
+ *
+ * The document still downloads either way — the notice is a warning beside a
+ * working file, never an error in place of one.
+ */
+export function notifySelectionNotUsed(detail?: string): void {
+  toast.warning('Your chosen template was not used for this document', {
+    description: `${detail ?? 'It could not be applied to this record'}. `
+      + 'The document was produced with the standard layout instead.',
+  });
+}
+
+/**
  * The templated document for this record, or null to carry on as before.
  *
  * `reportId` is nullable for the callers that may not have one — a Borrowing
@@ -107,31 +139,61 @@ export function saveTemplateDocument(doc: TemplateDocument): void {
 export async function tryTemplateDocument(
   reportType: string,
   reportId: string | null | undefined,
-  opts?: { variant?: string | null },
+  opts?: {
+    variant?: string | null;
+    /**
+     * The caller's own reviewed data, for the one adapter contract that takes
+     * it (the 10 Year Cash Flow — see `payload` on `ReportTemplateAdapter`).
+     */
+    payload?: Record<string, unknown> | null;
+  },
 ): Promise<TemplateDocument | null> {
   if (!reportId) return null;
 
+  const selectedId = await selectedTemplateFor(reportType);
   try {
     const routed = await tryRouteThroughTemplateBuilderFor(reportType, reportId, {
       variant: opts?.variant ?? null,
       // The person's own answer to "which template does this format come out
       // in", honoured here so that every surface gets it rather than only the
       // ones that remembered to ask. See `selectedTemplateFor`.
-      templateId: await selectedTemplateFor(reportType),
+      templateId: selectedId,
+      payload: opts?.payload ?? null,
     });
-    if (!routed?.fileUrl) return null;
+    if (!routed?.fileUrl) {
+      if (selectedId) notifySelectionNotUsed();
+      return null;
+    }
+
+    // The route fell back to the ranking — the choice went stale between the
+    // picker and the download, or names a template this record cannot use.
+    // The resolved template still renders, so the document is delivered; the
+    // difference is that this one is said out loud.
+    if (selectedId && routed.templateId !== selectedId) {
+      toast.warning('Your chosen template no longer applies', {
+        description: 'This document was produced with the default template for the format. '
+          + 'Open the template chooser to pick another.',
+      });
+    }
 
     // Fetched rather than followed, for the reason every `deliver*` module
     // gives: a PDF that opens in a tab is a PDF someone has to find again.
     const response = await fetch(routed.fileUrl);
-    if (!response.ok) return null;
+    if (!response.ok) {
+      if (selectedId) notifySelectionNotUsed('The rendered file could not be fetched');
+      return null;
+    }
     const blob = await response.blob();
     // A zero-byte body is not a document. It would save as a file that opens
     // to an error, which is worse than the legacy layout.
-    if (!blob.size) return null;
+    if (!blob.size) {
+      if (selectedId) notifySelectionNotUsed('The rendered file was empty');
+      return null;
+    }
 
     return { blob, fileName: routed.fileName, templateId: routed.templateId };
   } catch {
+    if (selectedId) notifySelectionNotUsed();
     return null;
   }
 }
