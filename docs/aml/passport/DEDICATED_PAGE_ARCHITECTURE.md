@@ -112,6 +112,52 @@ branch no test could reach, the branch was extracted into a pure function.
 off. A stale view alongside a fresh failure is still a failure — showing the
 previous customer's record after a failed load is worse than an error.
 
+## The booklet
+
+The booklet is the artefact the Passport stands for, and it is composed rather
+than hand-laid. `passportBooklet.pure.ts` turns one `PassportView` into an
+ordered page list built from the design's block vocabulary (statement, fields,
+summary, chips, matrix, rows, partners, seals, hero, timeline, verify, note,
+signature, banner). `BookletBlocks.tsx` draws each block; `PassportBooklet.tsx`
+draws the bound document around them.
+
+Three properties are structural, not decorative:
+
+- **It is bound.** Wide viewports show two facing leaves with a spine; narrow
+  ones show one. A booklet that always showed a single page reads as a
+  slideshow, not a document.
+- **The page count comes from the data.** The design's own screenshots show 12,
+  14 and 16 pages of the same document. A leaf whose records do not exist is
+  not printed — an empty "Screening" leaf in a bound document reads as
+  *screening found nothing*, which is a different and much worse claim than
+  *screening is not part of this record*.
+- **Every leaf is directly reachable**, via the numbered chips.
+
+Composition is pure and tested (`passportBooklet.test.ts`) because page
+arithmetic is the half a render test cannot see: which leaves exist, that
+numerals never gap, that an odd page count does not produce an empty facing
+page, and that no restricted material reaches paper.
+
+**The QR is deliberately not reproduced.** The design mocks a scannable code
+from a hash. A code that looks scannable but resolves to nothing is worse than
+no code on a document a partner may rely on, so the Verify block carries the
+credential ID and evidence fingerprint — what a verifier can actually check by
+hand — until public verification exists.
+
+## Connected portals, not a portal switcher
+
+The design's top chrome switches the view between Command, Client, Finance,
+Solicitor and Builder. That is a prototype affordance: each portal is a separate
+authentication domain with its own cookie and its own server-side projection.
+There is no session in which one operator is all five, and a Command-side "view
+as client" rendering the client projection from Command data would show a
+*simulation* of the boundary rather than the boundary.
+
+The strip keeps what the design was communicating — which portals hold this
+Passport and what each has done with it — and drops the impersonation. Rows are
+derived from real grants (`portalRows.ts`), so a portal never appears for a case
+it was not shared with.
+
 ## Still deferred
 
 Unchanged from `DESIGN_CONFORMANCE_AUDIT.md`: QR/public verification, client

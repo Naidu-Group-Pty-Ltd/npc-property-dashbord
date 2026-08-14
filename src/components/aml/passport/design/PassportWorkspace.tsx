@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { PassportView } from "@/lib/aml/passport";
+import type { PassportStamp, PassportView } from "@/lib/aml/passport";
 import { amlRelianceApi } from "@/lib/aml/amlRelianceApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { classifyPassportLoadFailure, passportSurfaceState } from "../loadState";
@@ -23,6 +23,7 @@ import { formatPassportDate } from "../format";
 import { PassportControls } from "../PassportControls";
 import { PassportStateBadge } from "../PassportStateBadge";
 import { PassportBooklet } from "./PassportBooklet";
+import { PassportPortalStrip, StampRecordDialog } from "./PassportPortals";
 import { PASSPORT_PAGES } from "./pageRegister";
 
 
@@ -40,6 +41,7 @@ export function PassportWorkspace({
   const [pageId, setPageId] = useState(initialPage);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [bookletOpen, setBookletOpen] = useState(false);
+  const [openStamp, setOpenStamp] = useState<PassportStamp | null>(null);
 
   // `async` + try/catch rather than a promise chain, deliberately: the chain
   // form makes a mocked rejection surface as an unhandled rejection under the
@@ -191,6 +193,8 @@ export function PassportWorkspace({
         </div>
       )}
 
+      <PassportPortalStrip view={view} />
+
       {/* ── shell: rail + page ── */}
       <div className="flex flex-col gap-5 p-5 lg:flex-row">
         <aside className="w-full flex-none lg:w-[248px]">
@@ -227,11 +231,18 @@ export function PassportWorkspace({
         </aside>
 
         <main className={cn("min-w-0 flex-1", "passport-fade")} key={active.id}>
-          <ActivePage view={view} onOpenBooklet={() => setBookletOpen(true)} />
+          <ActivePage
+            view={view}
+            onOpenBooklet={() => setBookletOpen(true)}
+            onOpenStamp={(code: string) =>
+              setOpenStamp(view.stamps.find((s) => s.code === code) ?? null)
+            }
+          />
         </main>
       </div>
 
       {bookletOpen && <PassportBooklet view={view} onClose={() => setBookletOpen(false)} />}
+      {openStamp && <StampRecordDialog stamp={openStamp} onClose={() => setOpenStamp(null)} />}
     </div>
   );
 }

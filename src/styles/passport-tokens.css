@@ -682,3 +682,135 @@
   border-color: rgba(217, 166, 31, 0.45);
   color: var(--passport-gold);
 }
+
+/* ══ booklet: block vocabulary ═══════════════════════════════════════════
+   Drawn in the cream-paper palette. These are the design's page blocks
+   (PassportPage.dc.html) — a page is a kicker, a title and an ordered list of
+   these. Colour lives here so BookletBlocks.tsx names none. */
+
+.passport-leaf__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.passport-leaf__tone--ok { color: hsl(143 45% 30%); }
+.passport-leaf__tone--info { color: hsl(216 50% 38%); }
+.passport-leaf__tone--warn { color: hsl(35 62% 34%); }
+.passport-leaf__tone--bad { color: hsl(0 52% 40%); }
+.passport-leaf__tone--na { color: var(--passport-ink-faint); }
+
+.passport-leaf__mono { color: var(--passport-foil-dim); }
+
+.passport-leaf__icon {
+  height: 22px;
+  width: 22px;
+  flex: none;
+  border-radius: 5px;
+  border: 1px solid rgba(166, 130, 43, 0.45);
+  background: rgba(166, 130, 43, 0.08);
+}
+
+.passport-leaf__verify {
+  padding: 10px 12px;
+  border: 1px solid rgba(166, 130, 43, 0.35);
+  border-radius: 8px;
+  background: rgba(166, 130, 43, 0.05);
+}
+
+.passport-leaf__signature {
+  font-family: var(--passport-font-display);
+  font-style: italic;
+  font-size: 20px;
+  line-height: 1.1;
+  color: var(--passport-ink);
+}
+.passport-leaf__sigrule { height: 1px; background: rgba(22, 35, 63, 0.28); }
+
+.passport-leaf__banner {
+  padding: 9px 12px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--passport-gold-soft);
+  background: linear-gradient(150deg, var(--passport-cover), var(--passport-cover-deep));
+  border: 1px solid rgba(166, 130, 43, 0.4);
+}
+
+/* ── booklet chrome ─────────────────────────────────────────────────────
+   The bound-document board the leaves sit on, and its header bar. */
+
+.passport-board {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(35, 55, 105, 0.35), transparent 62%),
+    linear-gradient(160deg, hsl(228 40% 12%), hsl(225 44% 7%));
+  border: 1px solid rgba(166, 130, 43, 0.28);
+  border-radius: 14px;
+}
+
+/* The spine: what makes two leaves read as one bound document rather than two
+   cards side by side. Hidden when only one leaf is shown. */
+.passport-board__spine {
+  width: 2px;
+  align-self: stretch;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(0, 0, 0, 0.55) 12%,
+    rgba(0, 0, 0, 0.55) 88%,
+    transparent
+  );
+  box-shadow: 0 0 14px 3px rgba(0, 0, 0, 0.45);
+}
+
+.passport-bookbar {
+  border-bottom: 1px solid var(--passport-hairline);
+  background: linear-gradient(180deg, rgba(217, 166, 31, 0.06), transparent);
+}
+
+.passport-pagechip {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 0.375rem;
+  border-radius: 6px;
+  border: 1px solid var(--passport-border-raised);
+  background: var(--passport-surface-raised);
+  color: var(--passport-text-muted);
+  font-family: var(--passport-font-mono);
+  font-size: 0.6875rem;
+  transition: background 120ms ease-out, color 120ms ease-out;
+}
+.passport-pagechip:hover {
+  background: var(--passport-surface-hover);
+  color: var(--passport-text);
+}
+.passport-pagechip[aria-current="true"] {
+  border-color: rgba(217, 166, 31, 0.55);
+  background: rgba(217, 166, 31, 0.12);
+  color: var(--passport-gold-bright);
+}
+
+.passport-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4375rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid var(--passport-tone-ok-edge);
+  background: var(--passport-tone-ok-wash);
+  color: var(--passport-tone-ok-ink);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
