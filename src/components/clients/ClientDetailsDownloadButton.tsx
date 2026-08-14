@@ -22,6 +22,7 @@ import { ChevronDown, Download, Loader2, Mail, Send, Sparkles } from 'lucide-rea
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,6 +70,9 @@ export function ClientDetailsDownloadButton({
 }: ClientDetailsDownloadButtonProps) {
   const [running, setRunning] = useState(false);
   const { contacts, defaultContact } = useFinanceContacts();
+  // Which template this comes out in, answered here rather than on the
+  // Template Library page a person would have to know to visit.
+  const template = useReportTemplateMenu('client_details');
 
   /**
    * Produce the document once, then do whatever was asked with it.
@@ -203,8 +207,13 @@ export function ClientDetailsDownloadButton({
               </span>
             </div>
           </DropdownMenuItem>
+          {template.section}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Outside the menu: Radix unmounts the menu's content when it closes,
+          and a dialog rendered inside would go with it. */}
+      {template.dialog}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { FlattenPdfIconButton } from '@/components/common/FlattenPdfIconButton';
+import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
 
 interface CashFlowExportMenuProps {
   includeAllChartsInExport: boolean;
@@ -43,7 +44,12 @@ export function CashFlowExportMenu({
   onSendToClient,
   filename,
 }: CashFlowExportMenuProps) {
+  // Which template this comes out in. The 10 Year Cash Flow only uses it when
+  // the projection on screen is the saved one — the export says so when it
+  // cannot — but the choice belongs here either way, beside the button.
+  const template = useReportTemplateMenu('cashflow', { formatLabel: '10 Year Cash Flow' });
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="min-h-10 shrink-0 rounded-xl shadow-sm">
@@ -100,6 +106,7 @@ export function CashFlowExportMenu({
             <Send className="mr-2 h-4 w-4 text-info" />
             Send to Client
           </DropdownMenuItem>
+          {template.section}
         </div>
 
         <DropdownMenuSeparator />
@@ -147,5 +154,9 @@ export function CashFlowExportMenu({
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* Outside the menu: its content unmounts on close and would take the
+        dialog with it. */}
+    {template.dialog}
+    </>
   );
 }

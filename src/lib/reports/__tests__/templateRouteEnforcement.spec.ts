@@ -137,6 +137,74 @@ describe("the person's chosen template reaches the document", () => {
   });
 });
 
+/**
+ * Where a person can *make* the choice, as opposed to where it is honoured.
+ *
+ * Choosing a template was possible in two places: the Template Library list and
+ * one export panel. Every other format's download control offered no way to see
+ * or change it, so the answer to "which template is this going to use?" lived a
+ * page away from the button that used it — and a person had to know that page
+ * existed at all. The generator honouring the choice (above) and the person
+ * being able to make it where they are (here) are two different failures, and
+ * the second one is why the first went unnoticed.
+ */
+const CHOICE_SURFACES: Record<string, string> = {
+  investment: 'src/components/reports/report-view/InvestmentReportExportPanel.tsx',
+  borrowing_capacity: 'src/components/borrowing-capacity/SnapshotDownloadButton.tsx',
+  portfolio: 'src/components/clients/PortfolioReportDownloadButton.tsx',
+  comparison: 'src/components/reports/ComparisonDownloadButton.tsx',
+  client_details: 'src/components/clients/ClientDetailsDownloadButton.tsx',
+  qa: 'src/components/report-qa/ReportQaDownloadButton.tsx',
+  commercial_capacity: 'src/components/clients/ClientCommercialIndustrialTab.tsx',
+  market_intelligence: 'src/components/marketing/MarketIntelligenceDownloadButton.tsx',
+  cashflow: 'src/components/cash-flow/modal/CashFlowExportMenu.tsx',
+};
+
+describe('the choice can be made where the document is produced', () => {
+  it.each(Object.entries(CHOICE_SURFACES))(
+    '%s: its download control offers the template',
+    (_reportType, path) => {
+      expect(existsSync(join(ROOT, path)), `${path} does not exist`).toBe(true);
+      const code = stripComments(read(path));
+      // Either presentation counts: the menu section for a dropdown, or the
+      // row for a panel that is not a menu.
+      expect(
+        /useReportTemplateMenu\(|<ReportTemplateSelector/.test(code),
+        `${path} offers no way to see or change the template, so the only place `
+        + 'to choose one is the Template Library page',
+      ).toBe(true);
+    },
+  );
+
+  it('covers every production format', () => {
+    expect(Object.keys(CHOICE_SURFACES).sort())
+      .toEqual(productionFormats().map((a) => a.reportType).sort());
+  });
+
+  it('renders the picker outside the menu that opens it', () => {
+    // Radix unmounts `DropdownMenuContent` on close; a dialog rendered inside
+    // it opens and vanishes in the same frame. Every menu-based surface has to
+    // place `template.dialog` outside the menu, so the section and the dialog
+    // are never both inside it.
+    for (const path of Object.values(CHOICE_SURFACES)) {
+      const code = stripComments(read(path));
+      if (!code.includes('useReportTemplateMenu(')) continue;
+
+      expect(code.includes('{template.dialog}'), `${path} never renders the picker`).toBe(true);
+
+      // Every region between a `<DropdownMenuContent` and its close is inside
+      // the menu. A component can have two appearances and therefore two of
+      // them, so each is checked rather than the first against the last.
+      for (const region of code.matchAll(/<DropdownMenuContent[\s\S]*?<\/DropdownMenuContent>/g)) {
+        expect(
+          region[0].includes('{template.dialog}'),
+          `${path} renders the picker inside the menu that opens it`,
+        ).toBe(false);
+      }
+    }
+  });
+});
+
 describe('the picker never offers a choice that does nothing', () => {
   it('lists exactly the registry, production formats first', () => {
     const formats = listReportFormats();

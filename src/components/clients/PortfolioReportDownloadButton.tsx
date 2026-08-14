@@ -26,6 +26,7 @@ import { ChevronDown, FileDown, FileText, Loader2, Sparkles } from 'lucide-react
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -86,6 +87,8 @@ export function PortfolioReportDownloadButton({
   triggerLabel,
 }: PortfolioReportDownloadButtonProps) {
   const [running, setRunning] = useState<PortfolioVariant | null>(null);
+  // Which template this comes out in, offered beside the button that uses it.
+  const template = useReportTemplateMenu('portfolio');
   const hasStored = Boolean((storedPath ?? '').trim());
 
   const run = async (which: PortfolioVariant) => {
@@ -157,11 +160,13 @@ export function PortfolioReportDownloadButton({
           </span>
         </div>
       </DropdownMenuItem>
+      {template.section}
     </DropdownMenuContent>
   );
 
   if (appearance === 'menu') {
     return (
+      <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -178,6 +183,9 @@ export function PortfolioReportDownloadButton({
         </DropdownMenuTrigger>
         {choices}
       </DropdownMenu>
+      {/* Outside the menu: its content unmounts on close. */}
+      {template.dialog}
+      </>
     );
   }
 
@@ -212,6 +220,7 @@ export function PortfolioReportDownloadButton({
         </DropdownMenuTrigger>
         {choices}
       </DropdownMenu>
+      {template.dialog}
     </div>
   );
 }
