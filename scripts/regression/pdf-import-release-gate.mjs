@@ -68,8 +68,32 @@ const commit = git('git rev-parse HEAD');
 const baseCommit = /^[0-9a-f]{40,64}$/i.test(process.env.PDF_IMPORT_BASE_SHA || '')
   ? git(`git rev-parse --verify ${process.env.PDF_IMPORT_BASE_SHA}^{commit}`)
   : null;
-const committedFiles = baseCommit
-  ? (git(`git diff --name-only ${baseCommit} HEAD`, '') || '').split('\n').filter(Boolean)
+/**
+ * What *this branch* changed, and not what the base changed under it.
+ *
+ * `git diff <base> HEAD` is a two-dot diff: it reports every difference
+ * between the two commits, which includes files the **base** gained after the
+ * branch diverged. Those show up as changes this branch never made, and the
+ * artifact scan below classifies purely by path — so a legitimate `.png`
+ * committed to main failed every open pull request whose branch predated it,
+ * naming a file the author had never touched.
+ *
+ * The merge base is the fix: `<merge-base> HEAD` is the three-dot range, which
+ * is the set of files the pull request is actually proposing. The workflow
+ * checks out with `fetch-depth: 0` precisely so this is computable.
+ *
+ * When it is not computable — a shallow clone, an unrelated base — this falls
+ * back to the base commit itself, which is the old behaviour: **over**-
+ * inclusive rather than under-inclusive. That direction is deliberate. A false
+ * alarm costs somebody a re-run; a missed private artifact is a client PDF or
+ * a `.env` committed to the repository, which is what this check exists to
+ * stop.
+ */
+const diffFrom = baseCommit
+  ? (git(`git merge-base ${baseCommit} HEAD`, null) || baseCommit)
+  : null;
+const committedFiles = diffFrom
+  ? (git(`git diff --name-only ${diffFrom} HEAD`, '') || '').split('\n').filter(Boolean)
   : [];
 const stagedFiles = (git('git diff --cached --name-only', '') || '').split('\n').filter(Boolean);
 const changedFiles = (git('git diff --name-only', '') || '').split('\n').filter(Boolean);

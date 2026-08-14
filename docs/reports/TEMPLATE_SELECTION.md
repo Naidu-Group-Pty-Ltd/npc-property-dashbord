@@ -227,3 +227,37 @@ Three rules the hook keeps:
 `templateRouteEnforcement.spec.ts` also holds the format→surface map complete
 against the adapter registry, so a tenth format cannot ship with a download
 control that offers no way to choose its template.
+
+## The choice was empty on eight of nine formats, and why
+
+The picker draws from `report_templates` where `is_active`, and for eight of
+the nine production formats that set was empty — not by fault but by
+architecture. The library's only exit (`instantiate`) deliberately creates
+inactive user drafts ("nothing about a fresh copy is live"), and the only
+surface that sets `is_active` is the Builder's superadmin Activate button, one
+approved template at a time. No migration, script or seed had ever produced an
+active row for borrowing_capacity, cashflow, client_details,
+commercial_capacity, comparison, market_intelligence, portfolio or qa. So the
+menus shipped above stated, correctly, that there was nothing to choose — and
+every document fell back to the legacy generator, which is the coverage number
+`COVERAGE.md` measures.
+
+`supabase/migrations/20260814190000_activate_production_masters_eight_formats.sql`
+seeded one master per format: Private Banking, variant A — "Chancery", the
+drawn reference of the catalogue's leading family, copied from
+`template_library_entries` in exactly the state the activation gate produces
+(approved, active, global, weasyprint, a production adapter for the type — the
+contract in `reportTemplateInsertGuard.pure.ts`). It records lineage the way
+`instantiate` does, skips any format that already has an active template — so
+a re-run is a no-op and a hand activation is never displaced — and can only
+insert. `productionMasterSeed.spec.ts` pins those properties, and pins that the
+seeded spellings are the adapters' own routing strings verbatim, because the
+ranking fallback matches `report_type` with a raw `eq` and a template stored
+under a spelling no adapter emits can be picked but never resolves.
+
+The behavioural consequence is deliberate and worth stating plainly: a format
+whose ranking used to resolve nothing now resolves a WeasyPrint master, so
+documents with **no stored selection** route through the design system instead
+of the legacy generator. A stored selection still beats the ranking, every
+failure path still falls back to legacy, and deactivating the master returns
+the format to exactly its previous behaviour.
