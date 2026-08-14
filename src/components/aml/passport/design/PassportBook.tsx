@@ -41,27 +41,35 @@ import { BookletBlockView } from "./BookletBlocks";
 export function BookletCover({ page }: { page: BookletPage }) {
   return (
     <section
-      className="passport-cover passport-board__leaf relative flex flex-col items-center justify-center rounded-[11px] text-center"
+      className="passport-cover passport-board__leaf relative flex flex-col items-center rounded-[11px] text-center"
       style={{ width: LEAF_W, height: LEAF_H }}
       aria-label="Passport cover"
     >
       <span aria-hidden="true" className="passport-cover__frame" />
       <span aria-hidden="true" className="passport-cover__frame-inner" />
-      <span aria-hidden="true" className="passport-cover__halo" />
 
-      <img
-        src="/brand/aurixa-mark.svg"
-        alt=""
-        aria-hidden="true"
-        className="passport-cover__emblem relative"
-        width={104}
-        height={104}
-      />
+      {/* Emblem zone — the design gives the mark the upper third to itself,
+          sitting inside its own engraved halo. */}
+      <div className="passport-cover__crest relative">
+        <span aria-hidden="true" className="passport-cover__halo" />
+        <img
+          src="/brand/aurixa-emblem.png"
+          alt=""
+          aria-hidden="true"
+          className="passport-cover__emblem relative"
+          width={150}
+          height={150}
+        />
+      </div>
 
-      <h2 className="passport-cover__wordmark relative mt-7">Aurixa</h2>
-      <div className="passport-cover__systems relative mt-1.5">Systems</div>
+      <h2 className="passport-cover__wordmark relative">Aurixa</h2>
+      <div className="passport-cover__systems relative">Systems</div>
 
-      <div className="passport-cover__rule relative mx-auto my-6 w-40" />
+      <div className="passport-cover__diamond relative" aria-hidden="true">
+        <span className="passport-cover__diamond-rule" />
+        <span className="passport-cover__diamond-mark">◆</span>
+        <span className="passport-cover__diamond-rule" />
+      </div>
 
       <div className="passport-cover__title relative">
         AML/CTF
@@ -69,14 +77,18 @@ export function BookletCover({ page }: { page: BookletPage }) {
         Compliance Passport
       </div>
 
-      {page.sub && <div className="passport-cover__holder relative mt-7">{page.sub}</div>}
-      {page.foot && <div className="passport-cover__credential relative mt-2">{page.foot}</div>}
-      {page.fingerprint && (
-        <div className="passport-cover__fingerprint relative mt-4">
-          <div className="passport-cover__fingerprint-k">SHA-256 EVIDENCE FINGERPRINT</div>
-          <div className="passport-mono mt-1">{page.fingerprint}</div>
-        </div>
-      )}
+      {/* Issue detail sits in the lower zone, subordinate to the crest, so the
+          board still reads as the design's cover rather than as a title page. */}
+      <div className="passport-cover__issue relative">
+        {page.sub && <div className="passport-cover__holder">{page.sub}</div>}
+        {page.foot && <div className="passport-cover__credential mt-1.5">{page.foot}</div>}
+        {page.fingerprint && (
+          <div className="passport-cover__fingerprint mt-3">
+            <div className="passport-cover__fingerprint-k">SHA-256 EVIDENCE FINGERPRINT</div>
+            <div className="passport-mono mt-0.5">{page.fingerprint}</div>
+          </div>
+        )}
+      </div>
 
       <span aria-hidden="true" className="passport-cover__clasp" />
     </section>
@@ -88,7 +100,7 @@ export function BookletCover({ page }: { page: BookletPage }) {
 export function BookletLeaf({ page }: { page: BookletPage }) {
   return (
     <article
-      className="passport-leaf passport-board__leaf flex flex-col p-6"
+      className="passport-leaf passport-board__leaf flex flex-col"
       style={{ width: LEAF_W, height: LEAF_H }}
       aria-label={page.title}
     >
@@ -118,6 +130,12 @@ export function BookletLeaf({ page }: { page: BookletPage }) {
 
 /* ── the book ─────────────────────────────────────────────────────────── */
 
+/**
+ * Space the board frame takes around the leaves — its padding plus its border.
+ * Subtracted before fitting so the leaf is sized to the room it actually has.
+ */
+const BOARD_INSET = 56;
+
 /** Measures the board and returns the geometry that fits it. */
 function useBookGeometry(singleOnly: boolean) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -125,16 +143,20 @@ function useBookGeometry(singleOnly: boolean) {
     bookletGeometry({ availableWidth: LEAF_W, availableHeight: LEAF_H, singleOnly }),
   );
 
+  // Measure the board's OWN box rather than deriving a height from
+  // window.innerHeight. The book is nested inside a dialog whose height is
+  // itself capped, so a window-derived guess is wrong by however much chrome
+  // sits above and below — which is how the page ended up taller than the
+  // dialog and spilled off the screen.
   const measure = useCallback(() => {
     const el = ref.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
     setGeometry(
       bookletGeometry({
-        availableWidth: rect.width,
-        // Leave room for the chrome above and below the board rather than
-        // letting a tall leaf push the controls off a short laptop screen.
-        availableHeight: Math.max(320, window.innerHeight - 260),
+        availableWidth: rect.width - BOARD_INSET,
+        availableHeight: rect.height - BOARD_INSET,
         singleOnly,
       }),
     );
@@ -240,12 +262,12 @@ export function PassportBook({
       </div>
 
       {/* board */}
-      <div ref={ref} className="min-h-0 flex-1 px-4 py-3">
+      <div ref={ref} className="flex min-h-0 flex-1 items-center justify-center px-4 py-3">
         <div
-          className="passport-board mx-auto flex items-center justify-center overflow-hidden"
+          className="passport-board flex items-center justify-center overflow-hidden"
           style={{
-            width: Math.round(geometry.width + 48),
-            height: Math.round(geometry.height + 48),
+            width: Math.round(geometry.width + BOARD_INSET),
+            height: Math.round(geometry.height + BOARD_INSET),
             maxWidth: "100%",
           }}
         >
