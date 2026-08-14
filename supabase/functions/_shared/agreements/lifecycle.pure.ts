@@ -214,6 +214,103 @@ export function isTransitionAllowed(from: AgreementStatus, to: AgreementStatus):
   return (AGREEMENT_TRANSITIONS[from] ?? []).includes(to);
 }
 
+// ── Continuity: an agreement is never in "no stage" ─────────────────────────
+//
+// Reported as "the agreement disappears from the originating portal once it is
+// issued". It does not: the row is measured present in the database, returned
+// by `list`, and rendered by both portals. What happens is narrower and worse
+// for being invisible — the register's counters partition the register BY
+// STATUS, and issuing changes the status.
+//
+// So the user stands on "Ready to Issue" (the only stage whose primary action
+// is "Send to Finance Partner"), issues, and the row moves to `partner_review`.
+// The filter is component state and does not move with it. The stage they are
+// standing in empties, and the empty state says "Nothing in this stage" over a
+// Create Agreement button — which is indistinguishable, to the person who has
+// just issued something, from the agreement having been destroyed.
+//
+// The fix is that the filter has to know where an agreement went, which means
+// the mapping from status to stage has to exist somewhere both the counters and
+// the transition can read. It did not: `AGREEMENT_DASHBOARD_GROUPS` was a
+// presentation array the register searched by hand, so nothing could answer
+// "which stage is this row in now" and nothing could notice a status that
+// belongs to no stage at all.
+
+/**
+ * The stage a status is filed under, or null if no group claims it.
+ *
+ * Derived from `AGREEMENT_DASHBOARD_GROUPS` rather than restated, so a status
+ * added to the lifecycle cannot acquire a second home or quietly lose its
+ * only one. A null here means the register would render that agreement in the
+ * "All" view and in no stage — findable, but not where anybody would look for
+ * it. `agreementStagesCoverEveryStatus` is the assertion that keeps it null.
+ */
+export function dashboardGroupForStatus(status: AgreementStatus): string | null {
+  for (const group of AGREEMENT_DASHBOARD_GROUPS) {
+    if ((group.statuses as readonly string[]).includes(status)) return group.key;
+  }
+  return null;
+}
+
+/** Every status has exactly one stage. Asserted in a spec, not assumed. */
+export function agreementStagesCoverEveryStatus(): { ok: boolean; unstaged: AgreementStatus[]; duplicated: AgreementStatus[] } {
+  const unstaged: AgreementStatus[] = [];
+  const duplicated: AgreementStatus[] = [];
+  for (const status of AGREEMENT_STATUSES) {
+    const homes = AGREEMENT_DASHBOARD_GROUPS
+      .filter((group) => (group.statuses as readonly string[]).includes(status));
+    if (homes.length === 0) unstaged.push(status);
+    if (homes.length > 1) duplicated.push(status);
+  }
+  return { ok: unstaged.length === 0 && duplicated.length === 0, unstaged, duplicated };
+}
+
+/**
+ * Where a filtered register should be looking after an agreement moves.
+ *
+ * Returns the stage to switch to, or null to stay put. Staying put is correct
+ * far more often than not — the whole point is to follow the ONE agreement the
+ * user just acted on, not to reshuffle the view every time a poll notices a
+ * partner did something on the other side of the wall.
+ */
+export function stageToFollow(
+  activeGroup: string,
+  nextStatus: AgreementStatus,
+): string | null {
+  // "All" already shows it, and the executed vault is a deliberate destination
+  // somebody chose rather than a stage an agreement passes through.
+  if (activeGroup === 'all' || activeGroup === 'executed_vault') return null;
+  const destination = dashboardGroupForStatus(nextStatus);
+  if (!destination || destination === activeGroup) return null;
+  return destination;
+}
+
+/**
+ * Has this agreement been issued to the partner portal at all?
+ *
+ * `issued_at` and not the status, deliberately. The status says where the
+ * agreement is *now* — a withdrawn or voided agreement was still issued, and a
+ * partner who saw it is entitled to the record of that. Every surface that
+ * wants to say "this has been sent" must ask this rather than test a status,
+ * which is how `partner_review` came to be the only visible evidence of
+ * issuance and why nothing in the product ever said the word "Issued".
+ */
+export function isIssued(row: { issued_at?: string | null } | null | undefined): boolean {
+  return Boolean(row?.issued_at);
+}
+
+/**
+ * Statuses an agreement can only be in AFTER it has been issued.
+ *
+ * Distinct from `PARTNER_VISIBLE_STATUSES`, which additionally has to answer
+ * the issued-at question because `void` and `withdrawn` are reachable without
+ * ever having been sent.
+ */
+export const POST_ISSUE_STATUSES: readonly AgreementStatus[] = [
+  'partner_review', 'changes_requested', 'sent_for_signature',
+  'partially_signed', 'active',
+];
+
 // ── Disposition: void, archive, delete ──────────────────────────────────────
 //
 // Three different things a person means by "get rid of this", and conflating

@@ -269,6 +269,23 @@ is null on every agreement notification in production. That doc also records why
 returned void, so an issue whose notification never wrote said the same thing as
 one that landed.
 
+And an agreement must never be *nowhere*. Read
+[`CONTINUITY.md`](./docs/agreements/CONTINUITY.md) before touching the
+register's stage counters, its empty states, or `dashboardGroupForStatus` /
+`stageToFollow` / `isIssued`. "The agreement disappears from the originating
+portal once it is issued" was measured and is not a data fault — the row is
+present, `list` returns it, the timeline is unbroken and the partner opened it —
+it is that **the register partitions by status and issuing changes the
+status**, so the "Ready to Issue" stage you issued from empties and says
+"Nothing in this stage" over a **Create Agreement** button. Four rules: an
+empty state reachable with rows in the register must say so and **never offer
+to create more**; a row that changes stage **says where it went** rather than
+vanishing; **`isIssued` is `issued_at`, never a status** (a withdrawn or voided
+agreement was still issued, and no status ever rendered as "Issued"); and
+`partner_legal_name` is typed while `finance_agent_contact_id` is what the
+portal resolves against — they differ on half the production register, so the
+row shows the linked **portal account** whenever it disagrees.
+
 Deployment is the other half of it, and it has bitten twice:
 [`DEPLOYMENT.md`](./docs/agreements/DEPLOYMENT.md).
 
