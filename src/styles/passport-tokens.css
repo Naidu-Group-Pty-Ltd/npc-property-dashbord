@@ -1099,6 +1099,352 @@
   }
 }
 
+/* ══ stamp faces — the approved design's struck impression ═══════════════
+   Transcribed from `stampFace()` in `AML Compliance Passport.dc.html`.
+
+   A stamp is FIVE layers, and the reason the previous face read as a coloured
+   box is that it had one. In order, back to front:
+
+     face        shape, rule, inset shadows, gradient wash, rotation, glow
+     grain       two ±38° hatchings under `mix-blend-mode: overlay` — the
+                 texture of ink pressed into paper
+     tick        conic ticks around a circle, hairline rules on a rect
+     inner       a dashed inner ring
+     watermark   the Aurixa emblem, screened at 26% through the face
+
+   The watermark is the layer the design is built around and the one that was
+   missing entirely: every impression carries the mark of the system that
+   struck it. `mix-blend-mode: screen` is what makes it read as part of the
+   ink rather than a picture sitting on top.
+
+   Ink is decided by what the stamp SPEAKS FOR, not by a per-code palette —
+   `stampFaceTone()` carries that rule. Values are the design's own, converted
+   to HSL per this repo's convention. */
+
+.passport-scope {
+  --stamp-gold-ink: hsl(43 71% 73%);
+  --stamp-gold-dim: hsl(42 42% 44%);
+  --stamp-gold-line: hsl(44 75% 49% / 0.42);
+  --stamp-gold-edge: hsl(44 75% 49% / 0.62);
+  --stamp-gold-wash: hsl(44 75% 49% / 0.055);
+  --stamp-gold-glow: hsl(44 75% 49% / 0.16);
+
+  --stamp-partner-ink: hsl(218 51% 86%);
+  --stamp-partner-dim: hsl(219 27% 60%);
+  --stamp-partner-line: hsl(216 56% 69% / 0.34);
+  --stamp-partner-edge: hsl(216 56% 69% / 0.52);
+  --stamp-partner-wash: hsl(216 56% 69% / 0.045);
+  --stamp-partner-glow: hsl(216 56% 69% / 0.12);
+
+  --stamp-final-ink: hsl(99 36% 83%);
+  --stamp-final-dim: hsl(98 15% 51%);
+  --stamp-final-line: hsl(100 29% 59% / 0.34);
+  --stamp-final-edge: hsl(100 32% 63% / 0.5);
+  --stamp-final-wash: hsl(100 29% 59% / 0.045);
+  --stamp-final-glow: hsl(100 29% 59% / 0.12);
+}
+
+.passport-stamp--gold {
+  --stamp-ink: var(--stamp-gold-ink); --stamp-dim: var(--stamp-gold-dim);
+  --stamp-line: var(--stamp-gold-line); --stamp-edge: var(--stamp-gold-edge);
+  --stamp-wash: var(--stamp-gold-wash); --stamp-glow: var(--stamp-gold-glow);
+}
+.passport-stamp--partner {
+  --stamp-ink: var(--stamp-partner-ink); --stamp-dim: var(--stamp-partner-dim);
+  --stamp-line: var(--stamp-partner-line); --stamp-edge: var(--stamp-partner-edge);
+  --stamp-wash: var(--stamp-partner-wash); --stamp-glow: var(--stamp-partner-glow);
+}
+.passport-stamp--final {
+  --stamp-ink: var(--stamp-final-ink); --stamp-dim: var(--stamp-final-dim);
+  --stamp-line: var(--stamp-final-line); --stamp-edge: var(--stamp-final-edge);
+  --stamp-wash: var(--stamp-final-wash); --stamp-glow: var(--stamp-final-glow);
+}
+
+/* ── the face ── */
+.passport-stamp {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(var(--stamp-rot, 0deg));
+  transition: transform 220ms ease, filter 220ms ease;
+  filter: drop-shadow(0 6px 18px var(--stamp-glow));
+}
+
+.passport-stamp--circle {
+  width: 164px;
+  height: 164px;
+  border-radius: 50%;
+  border: 2px solid var(--stamp-edge);
+  box-shadow:
+    inset 0 0 0 4px hsl(0 0% 0% / 0.35),
+    inset 0 0 0 5px var(--stamp-line),
+    inset 0 0 26px hsl(0 0% 0% / 0.55);
+  background: radial-gradient(circle at 50% 38%, var(--stamp-wash), hsl(0 0% 0% / 0.25) 74%);
+}
+
+.passport-stamp--seal {
+  width: 164px;
+  height: 164px;
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+  background: linear-gradient(150deg, var(--stamp-wash), hsl(0 0% 0% / 0.42));
+  box-shadow: 0 0 0 2px var(--stamp-edge);
+}
+
+.passport-stamp--rect {
+  width: 180px;
+  min-height: 112px;
+  padding: 13px 0;
+  border-radius: 2px;
+  border: 1px solid var(--stamp-edge);
+  box-shadow:
+    inset 0 0 0 3px hsl(0 0% 0% / 0.3),
+    inset 0 0 0 4px var(--stamp-line),
+    inset 0 0 22px hsl(0 0% 0% / 0.5);
+  background: linear-gradient(150deg, var(--stamp-wash), hsl(0 0% 0% / 0.28));
+}
+
+/* ── grain ── */
+.passport-stamp__grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background:
+    repeating-linear-gradient(38deg, transparent 0 2px, hsl(0 0% 0% / 0.35) 2px 3px),
+    repeating-linear-gradient(-38deg, transparent 0 3px, hsl(0 0% 0% / 0.22) 3px 4px);
+}
+.passport-stamp--circle .passport-stamp__grain { border-radius: 50%; }
+.passport-stamp--seal .passport-stamp__grain {
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+
+/* ── ticks and inner rule ── */
+.passport-stamp__tick,
+.passport-stamp__inner {
+  position: absolute;
+  pointer-events: none;
+}
+
+.passport-stamp--circle .passport-stamp__tick {
+  inset: 11px;
+  border-radius: 50%;
+  opacity: 0.7;
+  background: repeating-conic-gradient(from 0deg, var(--stamp-line) 0 1.1deg, transparent 1.1deg 6deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 62%, hsl(0 0% 0%) 62% 70%, transparent 70%);
+  mask: radial-gradient(circle, transparent 0 62%, hsl(0 0% 0%) 62% 70%, transparent 70%);
+}
+.passport-stamp--circle .passport-stamp__inner {
+  inset: 19px;
+  border: 1px dashed var(--stamp-line);
+  border-radius: 50%;
+  opacity: 0.75;
+}
+
+/* The octagon's clip-path removes a border on the diagonals, so the seal
+   carries its rule inset rather than on the edge. */
+.passport-stamp--seal .passport-stamp__tick { display: none; }
+.passport-stamp--seal .passport-stamp__inner {
+  inset: 11px;
+  border: 1px solid var(--stamp-line);
+  border-radius: 5px;
+  opacity: 0.8;
+}
+
+.passport-stamp--rect .passport-stamp__tick,
+.passport-stamp--rect .passport-stamp__inner {
+  left: 14px;
+  right: 14px;
+  height: 2px;
+  opacity: 0.5;
+  background: repeating-linear-gradient(90deg, var(--stamp-line) 0 1px, transparent 1px 4px);
+}
+.passport-stamp--rect .passport-stamp__tick { top: 9px; }
+.passport-stamp--rect .passport-stamp__inner { bottom: 9px; }
+
+/* ── the watermark ── */
+.passport-stamp__watermark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: auto;
+  pointer-events: none;
+  opacity: 0.26;
+  mix-blend-mode: screen;
+  filter: brightness(1.5) saturate(1.15) drop-shadow(0 0 6px var(--stamp-glow));
+}
+.passport-stamp--circle .passport-stamp__watermark,
+.passport-stamp--seal .passport-stamp__watermark { width: 104px; }
+.passport-stamp--rect .passport-stamp__watermark { width: 84px; }
+
+/* ── the inscription ── */
+.passport-stamp__body {
+  position: relative;
+  text-align: center;
+  padding: 0 13px;
+}
+.passport-stamp__org {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.passport-stamp__org > span:nth-child(odd) {
+  width: 9px;
+  height: 1px;
+  background: var(--stamp-line);
+}
+.passport-stamp__orgname {
+  font-size: 6.8px;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  color: var(--stamp-dim);
+  white-space: nowrap;
+  /* The design's own data is already capitals ("AURIXA SYSTEMS"), so its CSS
+     carries no transform. Ours is a tenant name in whatever case the operator
+     typed, and a stamp is set in capitals. */
+  text-transform: uppercase;
+}
+.passport-stamp__title {
+  margin: 5px 0 0;
+  font-family: var(--passport-font-display);
+  font-size: 13.5px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--stamp-ink);
+  text-shadow: 0 1px 0 hsl(0 0% 0% / 0.55);
+}
+/* The design drops a long title a step so it still fits the die. */
+.passport-stamp__title--long { font-size: 11.5px; }
+
+.passport-stamp__rule {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 4px 10px 5px;
+}
+.passport-stamp__rule > span:first-child,
+.passport-stamp__rule > span:last-child {
+  flex: 1;
+  height: 1px;
+}
+.passport-stamp__rule > span:first-child {
+  background: linear-gradient(90deg, transparent, var(--stamp-line));
+}
+.passport-stamp__rule > span:last-child {
+  background: linear-gradient(270deg, transparent, var(--stamp-line));
+}
+.passport-stamp__diamond { font-size: 5.5px; color: var(--stamp-dim); }
+
+.passport-stamp__date {
+  font-family: var(--passport-font-mono);
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  color: var(--stamp-ink);
+}
+.passport-stamp__sub {
+  font-family: var(--passport-font-mono);
+  font-size: 7px;
+  letter-spacing: 0.04em;
+  color: var(--stamp-dim);
+}
+
+/* ── the control and its caption ── */
+.passport-stamp-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  padding: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.passport-stamp-caption {
+  margin-top: 11px;
+  font-size: 10.5px;
+  color: var(--passport-text-faint);
+  text-align: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .passport-stamp-button:hover .passport-stamp,
+  .passport-stamp-button:focus-visible .passport-stamp {
+    transform: rotate(0deg) scale(1.03);
+    filter: drop-shadow(0 10px 26px var(--stamp-glow));
+  }
+}
+.passport-stamp-button:focus-visible { outline: none; }
+.passport-stamp-button:focus-visible .passport-stamp {
+  outline: 2px solid var(--passport-gold-dim);
+  outline-offset: 6px;
+}
+
+/* ── the register panel the impressions sit on ── */
+.passport-stamp-register {
+  padding: 24px 20px;
+  border: 1px solid var(--passport-border);
+  border-radius: 14px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 26px, hsl(0 0% 100% / 0.014) 26px 27px),
+    linear-gradient(150deg, hsl(240 5% 7%), hsl(240 6% 5%));
+}
+.passport-stamp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 22px 18px;
+  justify-items: center;
+}
+
+/* ── an UNEARNED impression ──
+   Same die, never struck: no ink in the field, no watermark, a dashed rule
+   and no rotation. It must be unmistakable at a glance, and the page says
+   "not yet earned" in words as well — style is not a distinction a screen
+   reader can hear. */
+.passport-stamp--pending {
+  --stamp-ink: var(--passport-text-muted);
+  --stamp-dim: var(--passport-text-faint);
+  --stamp-line: var(--passport-border-strong);
+  --stamp-edge: var(--passport-border-strong);
+  --stamp-wash: transparent;
+  --stamp-glow: transparent;
+  transform: none;
+  filter: none;
+  border-style: dashed;
+  box-shadow: none;
+  background: hsl(0 0% 100% / 0.015);
+}
+.passport-stamp--pending.passport-stamp--seal { box-shadow: 0 0 0 2px var(--stamp-edge); }
+.passport-stamp--pending .passport-stamp__grain,
+.passport-stamp--pending .passport-stamp__tick { display: none; }
+.passport-stamp--pending .passport-stamp__title { text-shadow: none; }
+
+/* ── the settlement panel the design closes the page with ── */
+.passport-stamp-settlement {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 17px 19px;
+  background: hsl(0 0% 100% / 0.015);
+  border: 1px dashed var(--passport-border-strong);
+  border-radius: 12px;
+}
+.passport-stamp-settlement__die {
+  flex: 0 0 auto;
+  width: 118px;
+  height: 118px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--passport-border-strong);
+  border-radius: 50%;
+  text-align: center;
+}
+
 /* ── leaf padding ──────────────────────────────────────────────────────
    The gold frame sits at inset 9px/13px, so content must clear it or the text
    reads as printed on the border. These are the design's own page margins. */

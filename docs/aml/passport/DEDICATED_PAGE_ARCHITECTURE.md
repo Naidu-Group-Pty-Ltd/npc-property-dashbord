@@ -321,6 +321,56 @@ The booklet's Certification Seals leaf gets the same treatment. Its `seals`
 block has modelled `earned: false` since it was written and had never been
 passed one.
 
+### The struck impression
+
+`StampFace` is a transcription of `stampFace()` in the approved design file
+(`AML Compliance Passport.dc.html`, project `a663070e-…`), read through
+DesignSync rather than eyeballed from a screenshot.
+
+A stamp there is **five layers**, and the face this replaced had one — which is
+why it read as a coloured box rather than as something pressed into the page:
+
+| layer | what it is |
+|---|---|
+| `face` | shape, rule, inset shadows, gradient wash, rotation, glow |
+| `grain` | two ±38° hatchings under `mix-blend-mode: overlay` |
+| `tick` | conic ticks around a circle, hairline rules on a rect |
+| `inner` | a dashed inner ring |
+| `watermark` | the Aurixa emblem, screened at 26% through the face |
+
+**The watermark is the layer the design is built around and the one that was
+absent altogether.** Every impression carries the mark of the system that
+struck it; `mix-blend-mode: screen` is what makes it read as part of the ink
+rather than a picture sitting on top. An unstruck die has no watermark —
+nothing pressed it.
+
+Two rules the design carries that are easy to get wrong:
+
+- **Ink is decided by what the stamp SPEAKS FOR, not by a per-code palette.**
+  Three inks: gold is the issuing entity's own certification, blue is somebody
+  else's decision recorded in our register, green is a terminal certification
+  (issued, completed). `stampFaceTone` reproduces the design's one-line rule
+  against the **code** rather than the title, so a wording change cannot
+  repaint a stamp, and against the issuer passed in rather than a literal, so
+  it holds for any tenant.
+- **The angle is fixed by position** (`[-6, 3, -2.5, 4.5, -4][i % 5]`). Struck
+  impressions are never square to the page, and a random angle would move on
+  every render.
+
+The design's own shapes — rect, circle, octagonal seal — already matched
+`STAMP_VOCABULARY` for all twelve stamps, so nothing about which die a
+certification uses had to change.
+
+`StampSeal` is deliberately NOT replaced. It still draws the partner
+compliance strip, which is a different, already-shipped surface with no entry
+in this design; restyling it as a side effect is the unrelated regression this
+programme keeps being asked to avoid.
+
+One thing the design assumes and we cannot: its `org` data is already capitals
+(`AURIXA SYSTEMS`), so its CSS carries no `text-transform`. Ours is a tenant
+name in whatever case the operator typed — production reads
+`AML/CTF Command Centre` — so the class sets it.
+
 ### Two halves, two deploy routes
 
 The Passport ships by **two independent paths**: the projection lives in

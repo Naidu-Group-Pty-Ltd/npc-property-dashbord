@@ -99,6 +99,46 @@ export const STAMP_VOCABULARY: Record<PassportStampCode, VocabEntry> = {
   transaction_completed: { title: "TRANSACTION COMPLETED", shape: "circle", tone: "green", client_safe: true },
 };
 
+/* ── how a stamp face is inked (the approved design's own rule) ─────────── */
+
+/**
+ * The design inks a stamp by **what it speaks for**, not by a per-code palette.
+ *
+ * `AML Compliance Passport.dc.html` derives it in one line:
+ *
+ *   org !== 'AURIXA SYSTEMS' ? 'partner'
+ *     : /TRANSACTION COMPLETED|PASSPORT ISSUED/.test(title) ? 'final'
+ *     : 'gold'
+ *
+ * Three inks, and the reasoning is legible on the page: gold is the issuing
+ * entity's own certification, blue is somebody else's decision recorded in our
+ * register, green is a terminal certification — the Passport issued, and the
+ * matter completed. Reproduced here against the CODE rather than the title so
+ * a wording change cannot silently repaint a stamp, and against the issuer
+ * passed in rather than a literal so it holds for any tenant.
+ */
+export type StampFaceTone = "gold" | "partner" | "final";
+
+export function stampFaceTone(
+  stamp: { code: PassportStampCode; org: string },
+  issuerOrg: string,
+): StampFaceTone {
+  if (stamp.org && issuerOrg && stamp.org !== issuerOrg) return "partner";
+  if (stamp.code === "passport_issued" || stamp.code === "transaction_completed") return "final";
+  return "gold";
+}
+
+/**
+ * The design rotates each impression by a fixed amount taken from its position
+ * — `[-6, 3, -2.5, 4.5, -4][i % 5]`. Struck impressions are never square to
+ * the page, and a random angle would move on every render.
+ */
+const STAMP_ROTATIONS = [-6, 3, -2.5, 4.5, -4];
+
+export function stampRotation(index: number): number {
+  return STAMP_ROTATIONS[((index % STAMP_ROTATIONS.length) + STAMP_ROTATIONS.length) % STAMP_ROTATIONS.length];
+}
+
 /* ── source facts (rows the edge function already fetched) ──────────────── */
 
 export type StampConsentFact = { id: string | null; kind: string; accepted_at: string | null; actor_label?: string | null };

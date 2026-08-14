@@ -5,7 +5,7 @@
  */
 import type { PassportView } from "@/lib/aml/passport";
 import { formatPassportCurrency, formatPassportDate, formatPassportDateTime } from "../format";
-import { PendingStampSeal, StampSeal } from "../StampSeal";
+import { PendingStampFace, StampFace } from "./StampFace";
 import {
   Field,
   FieldGrid,
@@ -287,10 +287,15 @@ export function PartnersPage({ view }: PassportPageProps) {
  */
 export function StampsPage({ view, onOpenStamp }: PassportPageProps) {
   const stamps = view.stamps;
-  const pending = view.pending_stamps ?? [];
-  const total = stamps.length + pending.length;
+  const all = view.pending_stamps ?? [];
+  // The design closes the page with a dedicated panel for the settlement
+  // stamp, so it is drawn there rather than twice.
+  const settlement = all.find((p) => p.code === "transaction_completed") ?? null;
+  const pending = all.filter((p) => p !== settlement);
+  const total = stamps.length + all.length;
+
   return (
-    <div>
+    <div className="flex flex-col gap-5">
       <PageHead
         kicker="What it certifies"
         title="Stamps & Certifications"
@@ -307,40 +312,67 @@ export function StampsPage({ view, onOpenStamp }: PassportPageProps) {
           timestamp supports it.
         </NoRecord>
       ) : (
-        <div className="flex flex-wrap gap-5">
-          {stamps.map((s) => (
-            <div key={`${s.code}-${s.at}`} className="w-36">
+        <div className="passport-stamp-register">
+          <div className="passport-stamp-grid">
+            {stamps.map((s, i) => (
               <button
+                key={`${s.code}-${s.at}`}
                 type="button"
-                className="text-left"
+                className="passport-stamp-button"
                 onClick={() => onOpenStamp?.(s.code)}
-                aria-label={`${s.title} — open the record behind this stamp`}
+                aria-label={`${s.title} — ${s.org} — ${formatPassportDateTime(s.at)}. Open the record behind this stamp.`}
               >
-                <StampSeal stamp={s} />
+                <StampFace stamp={s} issuerOrg={view.header.issuer_org} index={i} />
+                {/* The design captions every impression with the portal its
+                    record came from — the first thing an auditor asks about a
+                    stamp. */}
+                <span className="passport-stamp-caption">{s.portal}</span>
               </button>
-              {/* The design captions each impression with the portal the
-                  record came from — which is the question an auditor asks
-                  about a stamp before any other. */}
-              <div className="passport-faint mt-1.5 text-center text-[10px] tracking-[0.1em]">
-                {s.portal}
-              </div>
-            </div>
-          ))}
+            ))}
 
-          {/* Not yet earned. No record behind these, so nothing to open. */}
-          {pending.map((p) => (
-            <div key={`pending-${p.code}`} className="w-36">
-              <PendingStampSeal stamp={p} />
-              <div className="passport-faint mt-1.5 text-center text-[10px] tracking-[0.1em]">
-                Outstanding
+            {/* Not yet earned. No record behind these, so nothing to open. */}
+            {pending.map((p) => (
+              <div key={`pending-${p.code}`} className="passport-stamp-button">
+                <PendingStampFace stamp={p} />
+                <span className="passport-stamp-caption">Outstanding</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* The design's own closing panel, kept for the one stamp it models. */}
+      {settlement && (
+        <div className="passport-stamp-settlement">
+          <div className="passport-stamp-settlement__die" aria-hidden="true">
+            <div>
+              <div className="passport-display passport-muted text-xs font-bold leading-[1.15]">
+                TRANSACTION
+                <br />
+                COMPLETED
+              </div>
+              <div className="passport-mono passport-faint mt-1 text-[7.5px]">
+                PENDING SETTLEMENT
               </div>
             </div>
-          ))}
+          </div>
+          <div className="min-w-0 flex-1 basis-64">
+            <h3 className="passport-display passport-dim m-0 text-[15px] font-semibold">
+              Final completion stamp — awaiting settlement
+            </h3>
+            <p className="passport-muted m-0 mt-1.5 text-xs leading-relaxed">
+              {settlement.expected_at
+                ? `Applied on confirmed settlement, expected ${formatPassportDate(settlement.expected_at)}.`
+                : "Applied on confirmed settlement."}{" "}
+              The Passport is then retained under its compliance retention period rather than
+              removed from the system.
+            </p>
+          </div>
         </div>
       )}
 
       {pending.length > 0 && (
-        <PassportCard className="mt-6">
+        <PassportCard>
           <div className="passport-dim text-[13px] font-semibold">
             {pending.length === 1
               ? "One certification is still outstanding"
@@ -364,13 +396,11 @@ export function StampsPage({ view, onOpenStamp }: PassportPageProps) {
         </PassportCard>
       )}
 
-      <div className="mt-6">
-        <PassportNote title="Earned, never assigned">
-          Every stamp is derived from a system record and carries that record's actor, portal and
-          time. There is no way to apply one by hand, and an outstanding impression stays empty
-          until the record behind it exists.
-        </PassportNote>
-      </div>
+      <PassportNote title="Earned, never assigned">
+        Every stamp is derived from a system record and carries that record's actor, portal and
+        time. There is no way to apply one by hand, and an outstanding impression stays empty
+        until the record behind it exists.
+      </PassportNote>
     </div>
   );
 }
