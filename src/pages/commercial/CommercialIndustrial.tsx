@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import {
   Archive, Building2, Calculator, ExternalLink, Factory, FileDown, Loader2,
   Plus, Search, Settings2, FileText,
@@ -233,6 +234,17 @@ export default function CommercialIndustrial() {
             </div>
           </div>
 
+          {/* The per-row Generate icons below produce the Capacity Report, and
+              which template it comes out in was previously answerable only on
+              a client-modal tab. One row for the list — the selection is per
+              format and every row's Generate reads it. */}
+          <div className="rounded-lg border border-border bg-card px-4 py-3">
+            <ReportTemplateSelector
+              reportType="commercial_capacity"
+              formatLabel="Commercial & Industrial Capacity"
+            />
+          </div>
+
           {loading ? (
             <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-5 py-8 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading assessments…
@@ -419,6 +431,13 @@ export default function CommercialIndustrial() {
               white-labelled to your firm, and carries an AI reading of the figures — what bound the
               capacity, what the risks are, and what would move the result — clearly marked as such.
             </p>
+            {/* The choice, on the surface that generates. Every Generate below
+                reads the same per-format selection. */}
+            <ReportTemplateSelector
+              reportType="commercial_capacity"
+              formatLabel="Commercial & Industrial Capacity"
+              className="mt-3"
+            />
           </div>
 
           {rows.filter((row) => row.status === 'completed' || row.status === 'linked').length ? (

@@ -24,9 +24,7 @@
  * in-place email composer. `deliverReportQaPdf` returns the `Blob` for the first
  * and the route writes the attachment row for the second.
  */
-import { useState } from 'react';
 import { ChevronDown, FileText, Loader2, MessageSquareText, Paperclip, Sparkles } from 'lucide-react';
-import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
@@ -39,7 +37,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { deliverReportQaPdf } from '@/lib/reports/reportQa/deliverReportQaPdf';
+import { useReportQaDelivery } from './useReportQaDelivery';
 import type { ReportQaSubjectName } from '@/lib/reports/reportQa/requestReportQaPdf';
 
 export interface ReportQaDownloadButtonProps {
@@ -88,56 +86,14 @@ export function ReportQaDownloadButton({
   size = 'sm',
   className,
 }: ReportQaDownloadButtonProps) {
-  const [running, setRunning] = useState<ReportQaSubjectName | null>(null);
   // Which template this comes out in, offered beside the button that uses it.
   // One call for both shapes below. The full menu has items above the
   // template and rules off from them; the single-subject menu is the template
   // alone, where a leading separator would rule off from nothing.
   const template = useReportTemplateMenu('qa', { separator: !only });
-
-  const run = async (
-    subject: ReportQaSubjectName,
-    options: { attach?: boolean; email?: boolean } = {},
-  ) => {
-    if (!conversationId) {
-      toast.error('Start a conversation first');
-      return;
-    }
-    setRunning(subject);
-    try {
-      const result = await deliverReportQaPdf(conversationId, subject, {
-        messageId: messageId ?? null,
-        // Only the structured subject can spend tokens, and only when the
-        // conversation has no write-up stored. Asking for that subject is the
-        // consent — the menu item says "Uses AI" beside it.
-        generateIfMissing: subject === 'structured',
-        attachToConversation: options.attach === true,
-        save: !options.email && !options.attach,
-      });
-
-      if (options.email) onAttachToEmail?.(result.blob, result.fileName);
-      if (options.attach) onAttached?.();
-
-      const notes: string[] = [];
-      if (result.pageCount) notes.push(`${result.pageCount} pages`);
-      if (result.truncated) {
-        notes.push(`${result.turnsShown} of ${result.turnCount} exchanges — the rest is in the .md export`);
-      }
-      if (result.generated) notes.push('written up by AI');
-      if (result.brandGaps.length) notes.push(`brand incomplete: ${result.brandGaps.join(', ')}`);
-
-      toast.success(result.fileName, { description: notes.join(' · ') || undefined });
-    } catch (e) {
-      // The renderer's own message, in front of the person who pressed the
-      // button. It names what is missing — an undeployed route, a conversation
-      // with no write-up stored — and what still works.
-      toast.error(e instanceof Error ? e.message : 'Could not produce the document');
-    } finally {
-      setRunning(null);
-    }
-  };
-
-  const busy = running !== null;
+  const { busy, run } = useReportQaDelivery({
+    conversationId, messageId, onAttachToEmail, onAttached,
+  });
 
   /**
    * One subject, one action — and still a choice.

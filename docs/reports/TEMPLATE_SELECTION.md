@@ -303,3 +303,30 @@ Four rules carry the tie-up, pinned by `reportUseCopy.spec.ts` and
 - **A library version bump is a different design.** A copy of v1 is never
   reused for a v2 pick — the user chose the design as the library shows it
   now — and the stale copy simply stops being offered.
+
+## The surfaces the map missed, found by walking every generation path
+
+"All nine formats carry the control at the point of download" was true of the
+*download components* and not of every place a document is produced — which is
+the same class of hole as the adapter that was wired nearly all the way. A
+sweep of every call into the delivery modules found four:
+
+- **Commercial & Industrial Capacity's primary surfaces had nothing.** The
+  assessment workspace's results step and both Generate actions on the
+  `/commercial` page called `useCapacityReport` with no control anywhere on the
+  page — the only wired selector sat on a client-modal tab behind a Scale-only
+  add-on. All three now carry `ReportTemplateSelector`.
+- **The portfolio reports list** (`/portfolio-reports`, and the Clients page)
+  typeset reviews per row with no control; the list header now carries one.
+- **`ConversationExport` embedded the whole Q&A download button inside its own
+  menu content** — a `DropdownMenu` nested in another menu never opens, and the
+  template dialog unmounted with the content: the picker opened and vanished in
+  the same frame. The menu now offers the typeset documents as plain items
+  through the same delivery hook (`useReportQaDelivery`), carries the template
+  section at its foot, and renders the dialog outside. The mobile overflow menu
+  on the Q&A page embedded `ConversationExport` itself the same way and was
+  lifted out for the same reason.
+- **The per-file checks could not see any of this**, because they read each
+  wired component's own file. `templateRouteEnforcement.spec.ts` now scans
+  every component in `src/` and fails when a control that carries a dialog is
+  rendered inside any `DropdownMenuContent`.

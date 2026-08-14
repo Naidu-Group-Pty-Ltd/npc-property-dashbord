@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { renderHook } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { isReportable } from '@/lib/reports/commercialCapacity/route.pure';
 import { runAssessment } from '@/lib/ciAssessment/engine';
@@ -144,15 +145,23 @@ describe('the results step', () => {
   const result = runAssessment(payload, { asAt: AS_AT });
 
   function renderStep(over: Partial<Parameters<typeof StepResults>[0]> = {}) {
+    // The step now carries the report-template selector, whose queries need a
+    // client. retry: false so an unmocked read settles as an error state
+    // instead of retrying into the test's timeout.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
     return render(
-      <StepResults
-        payload={payload}
-        result={result}
-        onRecalculate={() => {}}
-        onGenerateReport={() => {}}
-        canGenerateReport
-        {...over}
-      />,
+      <QueryClientProvider client={queryClient}>
+        <StepResults
+          payload={payload}
+          result={result}
+          onRecalculate={() => {}}
+          onGenerateReport={() => {}}
+          canGenerateReport
+          {...over}
+        />
+      </QueryClientProvider>,
     );
   }
 

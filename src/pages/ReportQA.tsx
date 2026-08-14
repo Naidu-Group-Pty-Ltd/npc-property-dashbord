@@ -2684,6 +2684,16 @@ export default function ReportQA() {
                   disabled={isProcessing}
                 />
                 <LiveModelChipGroup surfaceId="reportQa" size="sm" showSlot className="sm:hidden" />
+              {/* Beside the overflow menu, not inside it: ConversationExport is
+                  a menu of its own and carries the template picker's dialog —
+                  nested in this menu's content, the inner menu could not open
+                  and the dialog unmounted with it. */}
+              <ConversationExport
+                messages={messages}
+                title={getCurrentTitle()}
+                reportNames={uploadedReports.map(r => r.name)}
+                conversationId={conversationId}
+              />
               {/* Mobile overflow menu for all toolbar actions */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -2701,16 +2711,6 @@ export default function ReportQA() {
                       <DropdownMenuSeparator />
                     </>
                   )}
-                  <DropdownMenuItem asChild>
-                    <div className="p-0">
-                      <ConversationExport
-                        messages={messages}
-                        title={getCurrentTitle()}
-                        reportNames={uploadedReports.map(r => r.name)}
-                        conversationId={conversationId}
-                      />
-                    </div>
-                  </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <div className="p-0">
                       <AutoSummarize

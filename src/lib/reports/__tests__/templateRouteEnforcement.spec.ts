@@ -19,7 +19,7 @@
  *     offering a choice that does nothing.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { listAdapters, getAdapter } from '@/lib/reportTemplate/adapters';
 import { listReportFormats } from '@/lib/reportTemplate/reportFormats';
@@ -224,5 +224,65 @@ describe('the picker never offers a choice that does nothing', () => {
       expect(format.previewOnlyReason, `${format.reportType} offers a silent no-op`)
         .toBeTruthy();
     }
+  });
+});
+
+/**
+ * A control that carries a dialog must never live inside another menu.
+ *
+ * Radix unmounts `DropdownMenuContent` when the menu closes. A wired download
+ * control embedded in one is doubly broken: its own trigger is a menu that
+ * cannot open from inside an open menu, and the template picker's dialog is
+ * unmounted with the content the moment the outer menu closes — the picker
+ * opens and vanishes in the same frame. `ConversationExport` shipped exactly
+ * this for the Q&A format, and the per-file checks above could not see it
+ * because they only read each wired component's own file. This scans every
+ * component in the app.
+ */
+describe('no wired control is embedded inside another menu', () => {
+  const WIRED_MENU_CONTROLS = [
+    'SnapshotDownloadButton',
+    'PortfolioReportDownloadButton',
+    'ComparisonDownloadButton',
+    'ClientDetailsDownloadButton',
+    'ReportQaDownloadButton',
+    'MarketIntelligenceDownloadButton',
+    'CashFlowExportMenu',
+    'ConversationExport',
+  ];
+
+  const walk = (dir: string): string[] => {
+    const out: string[] = [];
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+        out.push(...walk(full));
+      } else if (entry.name.endsWith('.tsx')) {
+        out.push(full);
+      }
+    }
+    return out;
+  };
+
+  it('nowhere in src does a menu contain one', () => {
+    const offenders: string[] = [];
+    for (const file of walk(join(ROOT, 'src'))) {
+      const code = stripComments(readFileSync(file, 'utf8'));
+      let from = 0;
+      for (;;) {
+        const open = code.indexOf('<DropdownMenuContent', from);
+        if (open === -1) break;
+        const close = code.indexOf('</DropdownMenuContent>', open);
+        const region = code.slice(open, close === -1 ? undefined : close);
+        for (const name of WIRED_MENU_CONTROLS) {
+          if (region.includes(`<${name}`)) {
+            offenders.push(`${file.slice(ROOT.length + 1)} embeds <${name}> inside a DropdownMenuContent`);
+          }
+        }
+        from = open + 1;
+      }
+    }
+    expect(offenders, offenders.join('\n')).toEqual([]);
   });
 });
