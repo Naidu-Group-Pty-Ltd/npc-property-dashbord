@@ -668,6 +668,10 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
    */
   report: {
     generatedDate: '2 August 2026',
+    // The lender profile a Borrowing Capacity run was assessed under. Set on
+    // 26 of 143 assessments, so the masters keep the block conditional; the
+    // sample shows the named-lender path and matches `loan.lender` below.
+    lenderName: 'Meridian Mutual',
   },
 
   /**
@@ -843,6 +847,25 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   assumptions: {
     capitalGrowth: 5.2, rentalGrowth: 3.1, interestRate: 6.14,
     expenseInflation: 2.8, vacancy: 2.0, taxRate: 39, sellingCosts: 2.5,
+    // ── Borrowing Capacity Snapshot ──────────────────────────────────────────
+    // The run's recorded assumptions as the legacy normaliser publishes them —
+    // eleven rows because that is the production cluster (88 of 143 runs), so
+    // the preview exercises the eleven-row table variant the median report
+    // draws. Values reconcile with `loan` and `capacity` below.
+    rowCount: 11,
+    rows: [
+      { label: 'Serviceability Basis', value: 'After-Tax Income' },
+      { label: 'Lender Profile', value: 'Meridian Mutual' },
+      { label: 'Buffer Rate', value: '3%' },
+      { label: 'Assessment Rate', value: '9.14%' },
+      { label: 'Loan Term', value: '30 years' },
+      { label: 'Expense Method', value: 'HEM benchmark' },
+      { label: 'HEM Benchmark', value: '$6,420/mo' },
+      { label: 'Rental Shading', value: '75% of gross rent' },
+      { label: 'Bonus Shading', value: '85% of declared bonus' },
+      { label: 'DTI Cap', value: 'Enabled at 6.0x' },
+      { label: 'LMI Mode', value: 'None' },
+    ],
   },
 
   market: {
@@ -918,9 +941,19 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   },
 
   summary: {
+    /*
+     * One string, two binders. The voice one-pagers set this in 72-92pt
+     * assessment slots, and the Borrowing Capacity masters set it as the
+     * legacy engine's executive summary — so it is written in that engine's
+     * own sentences (truncated to fit the voice heights) with figures that
+     * reconcile against `capacity` below. A property-flavoured string here
+     * read as the wrong document on fifty Snapshot previews; a longer one
+     * overflows three voice blocks.
+     */
     narrative:
-      'A land-led acquisition in a supply-constrained inner-west suburb, bought below the '
-      + 'suburb median with a clear path to a second income stream.',
+      'Based on the financial information provided, Jordan & Sarah Nguyen have an estimated '
+      + 'maximum borrowing capacity of $1,180,000, with a monthly surplus of $1,290 and a '
+      + 'debt-to-income ratio of 6.0x. The overall serviceability position is assessed as moderate.',
     strength: [
       '412m² of R2 land, 18% above the suburb average lot size',
       'Compliant secondary-dwelling footprint confirmed at concept level',
@@ -1915,6 +1948,10 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     // the column is `dti_ratio` and reads like a rate, which is why the
     // templates set it with `| fixed` and label it "x assessable income".
     dti: 5.95,
+    // The legacy engine's own formatting of the ratio above (5.95 renders as
+    // 6.0x at its one-decimal precision), for the definition slot that shows
+    // it as prose rather than a bare figure.
+    dtiLabel: '6.0x',
     depositAmount: 258000,
     propertyValueEstimate: 1290000,
     // `netPurchase` is deliberately absent: populated on 3 of 143 rows, so the
@@ -1932,11 +1969,24 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     gross: 280000,
     shaded: 263320,
     shadingApplied: 16680,
+    // `shadingRate` is a **0–1 fraction of income counted** — production holds
+    // 0.8 and 1, never a whole-number percent. An earlier draft wrote 25 here,
+    // which the legacy normaliser formats as "2,500%".
     items: [
-      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 0 },
-      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 0 },
-      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25 },
-      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 15 },
+      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 1 },
+      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 1 },
+      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 0.75 },
+      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 0.85 },
+    ],
+    // The same lines as the legacy engine's own composition — `shadingLabel`
+    // is the retention rate it applied, formatted by it. Four rows exercises
+    // the four-row table variant; the totals above reconcile against these.
+    rowCount: 4,
+    rows: [
+      { label: 'PAYG salary — applicant 1', gross: 118000, shaded: 118000, shadingLabel: '100%' },
+      { label: 'PAYG salary — applicant 2', gross: 82000, shaded: 82000, shadingLabel: '100%' },
+      { label: 'Rental income', gross: 46800, shaded: 35100, shadingLabel: '75%' },
+      { label: 'Annual bonus', gross: 33200, shaded: 28220, shadingLabel: '85%' },
     ],
   },
   expenses: {
@@ -1955,6 +2005,15 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       { type: 'Credit card', balance: 4200, limit: 15000, monthlyServicing: 300 },
       { type: 'Novated lease', balance: 18600, limit: 18600, monthlyServicing: 0 },
     ],
+    // The legacy engine's display labels for the same commitments (it
+    // title-cases the kind, and appends the provider where one is recorded).
+    // Three rows exercises the three-row table variant, the production mode.
+    rowCount: 3,
+    rows: [
+      { label: 'Owner Occupier Home Loan', balance: 612000, limit: 612000, servicing: 1540 },
+      { label: 'Credit Card', balance: 4200, limit: 15000, servicing: 300 },
+      { label: 'Novated Lease', balance: 18600, limit: 18600, servicing: 0 },
+    ],
   },
   loan: {
     proposed: 1032000,
@@ -1965,8 +2024,39 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     assessmentRate: 9.14,
     lender: 'Meridian Mutual',
   },
+  // The assessment ledger, exactly as the legacy engine assembles it — eight
+  // lines by construction, `amountLabel` formatted by it with the unit kept:
+  // "$280,000 pa" beside "-$6,420/mo" is the point of a ledger, and stripping
+  // the period would misstate which figures are annual. Reconciles line by
+  // line against `income`, `expenses`, `liabilities` and `capacity`.
+  ledger: {
+    rows: [
+      { label: 'Gross Annual Income', amountLabel: '$280,000 pa', direction: 'favourable', emphasis: 'normal' },
+      { label: 'Shaded Annual Income', amountLabel: '$263,320 pa', direction: 'favourable', emphasis: 'normal' },
+      { label: 'Living Expenses', amountLabel: '-$6,420/mo', direction: 'adverse', emphasis: 'normal' },
+      { label: 'Existing Commitments', amountLabel: '-$1,840/mo', direction: 'adverse', emphasis: 'normal' },
+      { label: 'Monthly Surplus', amountLabel: '$1,290/mo', direction: 'favourable', emphasis: 'normal' },
+      { label: 'Assessment Rate Applied', amountLabel: '9.14%', direction: 'neutral', emphasis: 'normal' },
+      { label: 'Loan Term', amountLabel: '30 years', direction: 'neutral', emphasis: 'normal' },
+      { label: 'Maximum Borrowing Capacity', amountLabel: '$1,180,000', direction: 'neutral', emphasis: 'total' },
+    ],
+  },
+  // The proposed loan against the assessed capacity, verdict included — the
+  // verdict is a whole sentence from the projection, never composed on the
+  // page, so an unresolved half cannot strand a fragment.
+  utilisation: {
+    proposedLoan: 1032000,
+    capacity: 1180000,
+    shareLabel: '87%',
+    withinCapacity: true,
+    verdict: 'The proposed loan sits inside the assessed capacity.',
+  },
   // Empty on 140 of 143 assessments, so the LMI block stays conditional and the
-  // sample exercises the common path.
+  // sample exercises the common path. `explanation`, `audit` and `scenarios`
+  // are likewise absent: the first two are columns null on every stored row
+  // (they cascade in as the calculator stores them) and scenario presets never
+  // reach a column at all — a sample that showed those pages would preview a
+  // document no production render can produce today.
   lmi: {},
   // Kept inside the lengths production actually writes: 43-70 characters a
   // recommendation across 270 stored ones, 35-59 a warning across 63. The
