@@ -242,6 +242,9 @@ export function PassportWorkspace({
         <main className={cn("min-w-0 flex-1", "passport-fade")} key={active.id}>
           <ActivePage
             view={view}
+            caseId={caseId}
+            isMlro={access.isMlro}
+            onChanged={() => { void load(); }}
             onOpenBooklet={() => setBookletOpen(true)}
             onOpenStamp={(code: string) =>
               setOpenStamp(view.stamps.find((s) => s.code === code) ?? null)

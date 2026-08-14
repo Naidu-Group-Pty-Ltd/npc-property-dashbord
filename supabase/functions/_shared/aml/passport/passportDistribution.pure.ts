@@ -420,6 +420,24 @@ export function evaluateDistribution(
     if (candidate.classificationStatus !== "completed") {
       add("PARTNER_CLASSIFICATION_REQUIRED");
     }
+    /* The arrangement must belong to THIS partner. The edge function selects
+       it by `partner_org_id`, so in production the binding always holds — but
+       an engine that cannot see a mismatch is one refactor away from granting
+       reliance on somebody else's written arrangement, which is the single
+       worst outcome this module can produce.
+
+       A mismatch is unambiguous and denies. A null is NOT treated as a
+       mismatch: legacy agreement rows predate the column, and failing them
+       here would revoke reliance that is lawfully in force today for a fact
+       the caller's own query already guarantees. */
+    if (
+      candidate.arrangement?.partner_org_id &&
+      candidate.arrangement.partner_org_id !== candidate.partnerOrgId
+    ) {
+      relianceCode = relianceCode ?? "agreement_missing";
+      add("CDD_ARRANGEMENT_REQUIRED");
+    }
+
     const arrangementDecision = evaluateArrangementForReliance({
       arrangement: candidate.arrangement,
       assessment: candidate.assessment,
