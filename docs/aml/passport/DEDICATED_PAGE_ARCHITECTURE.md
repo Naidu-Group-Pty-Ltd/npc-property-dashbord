@@ -208,6 +208,42 @@ exact ratio multiplied in floating point overshoots by ~1e-13, which is enough
 to trip the guard and, against a pixel-rounded board, enough to shave a
 hairline off a leaf.
 
+### The cover as a record miniature
+
+The Command record used to show a 52×70 navy rectangle with `AUX·AML` set in
+it — a stand-in for the document rather than the document. `PassportCoverThumb`
+replaces it with the **real** `BookletCover`, drawn at design size under the
+same uniform transform the book uses for a leaf.
+
+That is the whole design. There is no "thumbnail version" of the cover to keep
+in step, because a simplified copy looks right on the day it is written and
+drifts afterwards — and a customer whose miniature says one thing and whose
+booklet says another has been shown two documents. `bookletCover(view)` is the
+single statement of what a cover holds; `buildBooklet` calls it for page 1 and
+the miniature calls it for the record. Being a pure function of the projection
+also makes it per-customer by construction: nothing in the path can be
+specialised to one case, so every client record shows that client's own bearer,
+credential, state and fingerprint.
+
+**The size is one number, and both the box and the scale are derived from it.**
+`--passport-thumb-w` is unitless, so the stylesheet computes the slot
+(`calc(var(--passport-thumb-w) * 1px)`) and the scale
+(`calc(var(--passport-thumb-w) / 470)`) from the same declaration. The first
+draft did not: the slot came from CSS (112px on a phone) and the scale from a
+JS default of 132, and the two disagreed wherever a layout effect had not run —
+a server render, the first paint, a hidden tab. A board drawn 18% larger than
+its box loses its clasp to `overflow: hidden`, which is exactly what a phone
+render showed. Derived together they cannot disagree, there is no JS in the
+path at all, and a surface resizes the cover by setting one property.
+
+**`.passport-cover` is a material, not a layout.** The navy leather is shared —
+the partner compliance strip paints itself with it — so the front board's own
+page margins live on `.passport-cover--board`. They were on the shared class
+for one release, which put 58px/44px/46px of cover padding on a partner-facing
+strip that had asked for `px-5 py-4`; nothing in the AML suite renders that
+strip with a cascade, so no test could see it. `coverMaterial.test.ts` reads
+the rules.
+
 **One viewer, both portals.** `PassportBook` is shared by the Command dialog and
 the Client Portal page. The Client Portal previously carried a second booklet
 implementation — its own cover, its own page list and eight page components —
@@ -215,6 +251,64 @@ which is how the two could drift. The audience difference is already handled by
 the projection, so the viewer does not need to know who is reading: the client's
 booklet simply has fewer leaves, because the client's projection has fewer
 sections.
+
+## Stamps & Certifications — the page shows the whole set
+
+The page drew earned stamps and stopped. That cannot distinguish *"this case
+has one certification"* from *"this case is one of fourteen certifications
+through"* — both render as a single seal on an otherwise empty page.
+
+Production makes it concrete. Across the five live AML cases there are **0
+attestations, 0 screening subjects, 0 owners, 0 source-of-funds rows, 0 EDD
+cases, 0 grants, 0 assessments, 0 refresh obligations and 0 transactions**. The
+best-covered case earns **two** stamps (consent + identity), three earn one,
+and one earns none and shows the empty state. The page was not dropping
+anything; the records behind ten of the design's thirteen stamp kinds do not
+exist in this deployment. Which is precisely why the design specifies the
+dashed placeholder, and why the reconciliation approved it
+(`PASSPORT_DESIGN_RECONCILIATION.md`, page 10: *"Pending/dashed placeholder
+stamps … render in pending style"*). It was never built.
+
+`derivePendingStamps` closes it. Four rules carry it:
+
+- **A pending stamp carries no record.** No `at`, no `version`, no `actor`, no
+  `source` — the type has no room for them. An outstanding impression that
+  looked like an earned one would assert a control that was never performed,
+  which is the worst defect this page could have. It lives in its own
+  `pending_stamps` field for the same reason: everything downstream that
+  counts, seals or filters on `stamps` still means *earned*.
+- **An event is never drawn as outstanding.** `ACCESS REVOKED` as an empty
+  impression reads as a revocation the system is waiting for; `PASSPORT VERSION
+  SUPERSEDED` as an outcome somebody owes. `PROGRAMME` lists the milestones a
+  case works toward and excludes the rest. Sharing is excluded in the other
+  direction — a Passport is complete whether or not it is ever shared, so a
+  pending `FINANCE PASSPORT SHARED` would invent an obligation on the officer.
+- **Nothing is shown for a dimension the engagement does not have.** An
+  individual is never offered a pending ownership seal, a case with no EDD
+  never a pending EDD seal, a case with no transaction never a pending
+  settlement. A closed case owes nothing at all — listing what a finished file
+  will never now earn reads as an open action list on a case nobody is working.
+- **The audience rule is identical to the earned one.** An unearned seal
+  discloses as loudly as an earned one: *"ENHANCED DUE DILIGENCE COMPLETED —
+  outstanding"* tells a client they are under EDD, which is exactly what
+  `client_safe` exists to prevent. `clientSafePending` uses the same flag.
+
+Two defects surfaced while building it.
+
+**`PASSPORT REFRESHED` did not exist.** The vocabulary had
+`passport_refresh_requested` and nothing for the refresh being *done*, and both
+edge functions selected only `id, created_at, status` from
+`aml.partner_refresh_obligations` — so `completed_at` never reached the engine
+and a finished refresh read as an outstanding request for ever. The ask and the
+answer are separate facts and now have separate stamps.
+
+**The portal caption was missing.** The design captions every impression with
+the portal its record came from, which is the first thing an auditor asks about
+a stamp. `StampSeal` carried `org` and not `portal`.
+
+The booklet's Certification Seals leaf gets the same treatment. Its `seals`
+block has modelled `earned: false` since it was written and had never been
+passed one.
 
 ## Connected portals, not a portal switcher
 

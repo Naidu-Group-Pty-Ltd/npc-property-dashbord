@@ -351,6 +351,7 @@ jobs:
           node scripts/security/check-finance-ghl-metadata-boundary.mjs
           node scripts/security/check-finance-handoff-authz.mjs
           node scripts/security/check-finance-leaderboard-authz.mjs
+          node scripts/security/check-finance-session-transport.mjs
           node scripts/security/check-feedback-campaign-authz.mjs
           node scripts/security/check-mfa-recovery-code-lifecycle.mjs
           node scripts/security/check-webauthn-lifecycle-step-up.mjs

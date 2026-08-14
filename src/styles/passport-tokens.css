@@ -628,6 +628,38 @@
   pointer-events: none;
 }
 
+/* An UNEARNED certification — the empty impression.
+   It must be unmistakable at a glance, so it differs on every axis a reader
+   uses rather than only in opacity: no ink in the field, a dashed rule where
+   an earned seal is struck solid, no rotation (an unstruck die was never
+   pressed), and neutral type. The page states "not yet earned" in words too —
+   style alone is not a distinction a screen reader can hear.
+
+   It takes the page's OWN neutral scale rather than a dimmed seal ink. The
+   seal inks are authored for the booklet's cream paper, and this face is only
+   ever drawn on the Command shell — a navy ink at 30% on a near-black surface
+   is not a faint impression, it is an invisible one. */
+.passport-seal--pending {
+  border-style: dashed;
+  border-width: 2px;
+  border-color: var(--passport-text-faint);
+  /* The `seal` shape is a clip-path, which cuts the border away on the
+     diagonals — with no fill at all the octagon reads as two stray dashes
+     rather than a shape. The "not applicable" wash restores the silhouette
+     without putting any ink in the field. */
+  background: var(--passport-tone-na-wash);
+  color: var(--passport-text-muted);
+  transform: none;
+}
+.passport-seal--pending.passport-seal--circle,
+.passport-seal--pending.passport-seal--rect,
+.passport-seal--pending.passport-seal--seal {
+  transform: none;
+}
+.passport-seal--pending .passport-seal__ring {
+  border-color: var(--passport-border-strong);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .passport-seal { transition: transform 180ms ease-out; }
   button:hover > .passport-seal,
@@ -822,7 +854,13 @@
    design size and scaled with it, so cover and paper are always the same size
    and the whole book scales as one object. */
 
-.passport-cover {
+/* The COMPOSITION is scoped to the front board, never to `.passport-cover`
+   itself. That class is the navy leather material and is shared — the partner
+   compliance strip paints itself with it — so setting the board's own page
+   margins on it put 58px of cover padding on a strip that had asked for 16px,
+   and left-aligned its contents. Material and composition are separate
+   concerns and are now separate selectors. */
+.passport-cover--board {
   /* Vertical rhythm is set once here rather than with per-element margins, so
      the composition holds at every scale. */
   padding: 58px 44px 46px;
@@ -974,6 +1012,91 @@
   border: 1px solid rgba(166, 130, 43, 0.8);
   background: linear-gradient(180deg, hsl(44 62% 64%), hsl(43 55% 45%) 45%, hsl(42 50% 32%));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 2px 7px -2px rgba(0, 0, 0, 0.65);
+}
+
+/* ══ the cover as a miniature ════════════════════════════════════════════
+   A record shows the document, not a stand-in for it — so the real front
+   board is drawn at its design size and uniformly scaled into the slot.
+
+   The size is ONE number, `--passport-thumb-w`, unitless so the box and the
+   scale can both be derived from it. That is the whole trick and it is
+   load-bearing: a slot width taken from CSS and a scale factor computed
+   anywhere else will disagree at some point — before a layout effect, in a
+   server render, on a hidden tab — and a board drawn at one size inside a box
+   of another loses its clasp to `overflow: hidden`. Derived together they
+   cannot. A surface resizes the cover by setting the one property. */
+
+.passport-cover-thumb {
+  --passport-thumb-w: 112;
+  position: relative;
+  display: block;
+  width: calc(var(--passport-thumb-w) * 1px);
+  /* The design ratio (470×648), stated once. */
+  aspect-ratio: 470 / 648;
+  overflow: hidden;
+  /* Clipped just inside the board's own corner so the navy meets the rule. */
+  border-radius: 7px;
+  border: 1px solid var(--passport-border-gold);
+  box-shadow: 0 7px 20px -9px hsl(225 44% 7% / 0.75);
+  flex: none;
+}
+
+@media (min-width: 640px) {
+  .passport-cover-thumb {
+    --passport-thumb-w: 138;
+  }
+}
+
+.passport-cover-thumb__art {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  /* The design size. The board is authored against this box and every rule,
+     seal and letter inside it is proportioned to it. */
+  width: 470px;
+  height: 648px;
+  transform-origin: top left;
+  transform: scale(calc(var(--passport-thumb-w) / 470));
+  /* The board is a picture at this size; nothing inside it is a target. */
+  pointer-events: none;
+}
+
+/* The control that opens the booklet OVERLAYS the cover rather than wrapping
+   it. A <button> may only contain phrasing content and the board is a
+   <section> of headings and figures, so nesting the artwork inside the control
+   would be invalid markup. The slot carries the affordance instead, which also
+   keeps the artwork exactly what the booklet's first page is. */
+.passport-cover-thumb__slot {
+  position: relative;
+  display: block;
+  width: max-content;
+  transition: transform 180ms ease;
+}
+.passport-cover-thumb__slot:hover {
+  transform: translateY(-2px);
+}
+.passport-cover-thumb__slot:hover .passport-cover-thumb {
+  box-shadow: 0 14px 28px -10px hsl(225 44% 7% / 0.85);
+}
+
+.passport-cover-thumb__open {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.passport-cover-thumb__open:focus-visible {
+  outline: 2px solid var(--passport-gold-dim);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .passport-cover-thumb__slot,
+  .passport-cover-thumb__slot:hover {
+    transition: none;
+    transform: none;
+  }
 }
 
 /* ── leaf padding ──────────────────────────────────────────────────────

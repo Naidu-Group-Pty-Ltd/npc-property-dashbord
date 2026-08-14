@@ -24,14 +24,31 @@ import { frameToJpeg, toUploadableJpeg, MAX_CAPTURE_EDGE_PX } from '@/lib/aml/ca
 /**
  * Identity verification step.
  *
- * ## The whole journey is NPC's
+ * ## Two flows, and the SERVER decides which
  *
- * The customer chooses a document, photographs it, photographs themselves, and
- * waits — all inside this page. They never see a verification vendor: no
- * window opens, nothing redirects, no third-party SDK loads, and no image is
- * ever sent anywhere except NPC's own private storage over a signed upload the
- * server minted. The provider is called server-to-server, from an Edge
- * Function, with a credential this bundle has no way to reach.
+ * `verification_status` answers one of two experience words, resolved from the
+ * tenant's active provider. The browser never sends it, never learns the
+ * provider key, the workflow id or the environment, and cannot ask for the
+ * other one — each experience calls a different server operation and each of
+ * those refuses when the tenant is not on it.
+ *
+ *   hosted   NPC screens (which document, what to have ready)
+ *            → a Didit-hosted capture window, opened by this step
+ *            → back to an NPC page, and NPC's own status
+ *
+ *   capture  NPC's camera, in this page
+ *            → NPC's own private storage, over signed uploads the server minted
+ *            → server-side verification against the Standalone APIs
+ *
+ * On the `capture` flow no window opens, nothing redirects and no image leaves
+ * NPC's storage. On `hosted` the provider owns exactly one thing: the minute in
+ * which a document is photographed and a face is matched, in a separate
+ * top-level window — never an iframe, so the camera permission is asked for
+ * under the provider's own origin and the customer can see whose page is
+ * asking. NPC owns the whole journey either side of it.
+ *
+ * Either way the credential is server-side only: every provider call is made
+ * from an Edge Function with a key this bundle has no way to reach.
  *
  * ## Nothing here can mark anybody verified
  *
@@ -60,9 +77,13 @@ const UNAVAILABLE_CODES = [
   'temporarily_unavailable',
   'attempts_exhausted',
   'already_processing',
-  // The server refused because the retired hosted flow is still configured for
-  // this tenant. Not a capture failure and never something the customer did —
-  // the step re-reads and renders the documentary route.
+  // The tenant is on the OTHER flow from the one that made the request — the
+  // legacy single-shot submit reaching a hosted tenant, or a bundle older than
+  // the reactivation asking for a session a server had stopped minting.
+  // `hosted_flow_retired` cannot be produced by the current server and is kept
+  // only so a browser talking to an older deployment degrades to "unavailable"
+  // rather than an unhandled error. Neither is a capture failure and neither is
+  // anything the customer did: the step re-reads and renders what is true now.
   'hosted_verification_required',
   'hosted_flow_retired',
   // The active capture integration changed under us — the tenant moved between
@@ -212,20 +233,18 @@ export function IdentityVerificationStep({
       if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
 
       /**
-       * A hosted provider runs the short capture on its own page. NPC owns
-       * everything either side of it, so this opens NPC's own screens — pick a
-       * document, then read what to have ready — and no session is created
-       * until the customer presses Begin.
+       * Both experiences are sub-screens of this step, and both open on NPC's
+       * own screens first — pick a document, then read what to have ready.
        *
-       * That ordering is not cosmetic. The verification window has to be
-       * opened synchronously inside the customer's click or the browser
-       * classifies it as an unsolicited popup and blocks it, so the click that
-       * opens the window cannot be the same click that waits for a session.
+       * On `hosted` that ordering is not cosmetic: no session is created until
+       * the customer presses Begin, because the verification window has to be
+       * opened synchronously inside that click or the browser classifies it as
+       * an unsolicited popup and blocks it. So the click that opens the step
+       * cannot be the click that waits for a session.
+       *
+       * On `capture` nothing leaves this page: the camera, the review and the
+       * upload are all NPC's.
        */
-      // Both experiences are sub-screens of this step, and both are NPC's own.
-      // `hosted` is the legacy provider-window flow, kept only while the
-      // sessions opened before the cutover can still settle; `capture` is the
-      // journey every new attempt takes, and it never leaves this page.
       setChecking(party);
     } catch (e: any) {
       if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {

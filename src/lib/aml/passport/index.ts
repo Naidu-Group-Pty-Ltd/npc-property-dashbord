@@ -31,13 +31,17 @@ export {
 
 export {
   STAMP_VOCABULARY,
+  clientSafePending,
   clientSafeStamps,
   derivePassportStamps,
+  derivePendingStamps,
   type PassportStamp,
   type PassportStampCode,
   type PassportStampInput,
   type PassportStampShape,
   type PassportStampTone,
+  type PendingStamp,
+  type StampProgrammeFacts,
 } from '../../../../supabase/functions/_shared/aml/passport/passportStamps.pure';
 
 export {
@@ -70,6 +74,7 @@ export {
 export {
   LEAF_H,
   LEAF_W,
+  bookletCover,
   bookletGeometry,
   bookletLabel,
   bookletSpreads,

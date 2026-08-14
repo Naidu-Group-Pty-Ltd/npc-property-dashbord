@@ -5,7 +5,7 @@
  */
 import type { PassportView } from "@/lib/aml/passport";
 import { formatPassportCurrency, formatPassportDate, formatPassportDateTime } from "../format";
-import { StampSeal } from "../StampSeal";
+import { PendingStampSeal, StampSeal } from "../StampSeal";
 import {
   Field,
   FieldGrid,
@@ -274,39 +274,101 @@ export function PartnersPage({ view }: PassportPageProps) {
 
 /* ── 10 · Stamps & Certifications ─────────────────────────────────────── */
 
+/**
+ * The page shows the WHOLE certification set, not only the earned part.
+ *
+ * Earned stamps alone cannot distinguish "this case has one certification"
+ * from "this case is one of fourteen certifications through" — both draw a
+ * single seal on an empty page. Production makes that concrete: of five live
+ * cases the best-covered earns two stamps and one earns none. The outstanding
+ * impressions are what turn a sparse page into a statement of where the case
+ * actually is, and they are derived from the same facts as the earned ones so
+ * the two can never disagree.
+ */
 export function StampsPage({ view, onOpenStamp }: PassportPageProps) {
   const stamps = view.stamps;
+  const pending = view.pending_stamps ?? [];
+  const total = stamps.length + pending.length;
   return (
     <div>
       <PageHead
         kicker="What it certifies"
         title="Stamps & Certifications"
-        meta={`${stamps.length} earned`}
+        meta={
+          total === 0
+            ? "No certifications"
+            : `${stamps.length} of ${total} earned · select a stamp for its full record`
+        }
       />
-      {stamps.length === 0 ? (
+
+      {total === 0 ? (
         <NoRecord>
-          No stamp has been earned yet. A stamp appears only when a record with a timestamp
-          supports it.
+          No certification applies to this case yet. A stamp appears only when a record with a
+          timestamp supports it.
         </NoRecord>
       ) : (
         <div className="flex flex-wrap gap-5">
           {stamps.map((s) => (
-            <button
-              key={`${s.code}-${s.at}`}
-              type="button"
-              className="text-left"
-              onClick={() => onOpenStamp?.(s.code)}
-              aria-label={`${s.title} — open the record behind this stamp`}
-            >
-              <StampSeal stamp={s} />
-            </button>
+            <div key={`${s.code}-${s.at}`} className="w-36">
+              <button
+                type="button"
+                className="text-left"
+                onClick={() => onOpenStamp?.(s.code)}
+                aria-label={`${s.title} — open the record behind this stamp`}
+              >
+                <StampSeal stamp={s} />
+              </button>
+              {/* The design captions each impression with the portal the
+                  record came from — which is the question an auditor asks
+                  about a stamp before any other. */}
+              <div className="passport-faint mt-1.5 text-center text-[10px] tracking-[0.1em]">
+                {s.portal}
+              </div>
+            </div>
+          ))}
+
+          {/* Not yet earned. No record behind these, so nothing to open. */}
+          {pending.map((p) => (
+            <div key={`pending-${p.code}`} className="w-36">
+              <PendingStampSeal stamp={p} />
+              <div className="passport-faint mt-1.5 text-center text-[10px] tracking-[0.1em]">
+                Outstanding
+              </div>
+            </div>
           ))}
         </div>
       )}
+
+      {pending.length > 0 && (
+        <PassportCard className="mt-6">
+          <div className="passport-dim text-[13px] font-semibold">
+            {pending.length === 1
+              ? "One certification is still outstanding"
+              : `${pending.length} certifications are still outstanding`}
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {pending.map((p) => (
+              <div key={`await-${p.code}`} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span className="passport-gold-text text-[11px] font-semibold uppercase tracking-[0.1em]">
+                  {p.title}
+                </span>
+                <span className="passport-muted text-xs">{p.awaiting}</span>
+                {p.expected_at && (
+                  <span className="passport-mono passport-faint text-[10px]">
+                    expected {formatPassportDate(p.expected_at)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </PassportCard>
+      )}
+
       <div className="mt-6">
         <PassportNote title="Earned, never assigned">
           Every stamp is derived from a system record and carries that record's actor, portal and
-          time. There is no way to apply one by hand.
+          time. There is no way to apply one by hand, and an outstanding impression stays empty
+          until the record behind it exists.
         </PassportNote>
       </div>
     </div>
