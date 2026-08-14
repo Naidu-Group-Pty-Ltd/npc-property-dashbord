@@ -12,7 +12,8 @@
  * the projections are the browser's and are never persisted; the analysis is
  * never persisted and structurally cannot be (`cash_flow_analyses` holds 0 rows
  * and its INSERT policy refuses this application's own sign-in); and the render
- * ledger holds 0 rows, stores neither, and is superadmin-only. The stored
+ * ledger — filling now, one succeeded render as of August 2026 — stores
+ * neither payload, and is superadmin-only. The stored
  * `financial_calculations.projections` cannot substitute, because every
  * headline measure in this document is built on `afterTaxAnnual` and that
  * series models no tax at all.
@@ -292,6 +293,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           'Which comes out ahead',
           'What each costs to get into',
           'The measures side by side',
+          'Who leads on what',
           'Cash flow, year by year',
           'Value and equity, year by year',
           'What the analysis found',
@@ -395,6 +397,53 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         columnWidths: propertyWidths(n, 0.32),
       })),
     ], contentTop()),
+  ]), FOOTER));
+
+  // ── 04b Who leads on what ────────────────────────────────────────────────
+  //
+  // The legacy scoreboard's wins table, which the projection published from
+  // the start and no master drew: eight fixed categories — all positive
+  // superlatives, no award for being the worst — with the leader resolved to
+  // its street line, the figure and the clear air to second place. The labels
+  // arrive composed (`valueLabel`, `marginLabel`) because the eight rows mix
+  // dollars, percent and years in one column and a template cannot pick one
+  // filter for the table. Ties print as the legacy's own "No clear leader"
+  // rather than awarding array order.
+  pages.push(withFurniture(page('Who leads on what', [
+    ...furniture(DOCUMENT_LABEL, nextPart('Leaders'), 'Who leads on what'),
+    ...flow(ifItFits([
+      sectionHeading({
+        eyebrow: 'Category by category',
+        heading: 'Who leads on what',
+        numeral: nextNumeral(),
+        standfirst: 'Every measure has a leader, and the margin says whether the lead is worth '
+          + 'acting on — a win by $400 over ten years is not a difference to buy on.',
+      }),
+      table({
+        headers: ['Measure', 'Leads', 'Figure', 'Ahead by'],
+        rows: Array.from({ length: 8 }, (_, i) => [
+          `{{cashFlowComparison.scoreboard.winners.${i}.label}}`,
+          `{{cashFlowComparison.scoreboard.winners.${i}.winner}}`,
+          `{{cashFlowComparison.scoreboard.winners.${i}.valueLabel}}`,
+          `{{cashFlowComparison.scoreboard.winners.${i}.marginLabel}}`,
+        ]),
+        columnWidths: [0.34, 0.3, 0.19, 0.17],
+        // The longest category label, "Fastest to repay its holding costs",
+        // wraps in its column.
+        wraps: { chars: 34, columnWidth: c.contentWidth * 0.34 },
+      }),
+    ], [
+      // The legacy page closes on this, and it is the right caution to carry:
+      // the ranking and the category wins can disagree without either being
+      // wrong.
+      callout(
+        'Two properties can both be right',
+        'A ranking on total return combines what a property grew with what it cost to '
+        + 'hold, and those two are often in tension. A property that leads several '
+        + 'categories here can still rank behind one that leads fewer, bigger ones.',
+        textHeight(240, { size: c.scale.cell, extra: 34 }),
+      ),
+    ], contentTop()), contentTop()),
   ]), FOOTER));
 
   // ── 05 Cash flow, year by year ───────────────────────────────────────────

@@ -30,11 +30,13 @@
  *    application signs in through `custom_users`, so every save is refused —
  *    and its SELECT policy would hide the row from its own author even if one
  *    succeeded. That is F1, recorded and deliberately not fixed here.
- *  - **The render ledger holds 0 rows**, records `primary_report_id` and
- *    `compared_report_ids` but stores neither the projections nor the analysis
- *    (§9), and its only SELECT policy is
- *    `has_role(auth.uid(), 'superadmin')` — which the browser client cannot
- *    satisfy for the same `custom_users` reason.
+ *  - **The render ledger stores no payload.** It has begun to fill — one
+ *    succeeded render as of August 2026 — and records `primary_report_id` and
+ *    `compared_report_ids`, but neither the projections nor the analysis
+ *    (§9); its only SELECT policy is `has_role(auth.uid(), 'superadmin')` —
+ *    which the browser client cannot satisfy for the same `custom_users`
+ *    reason. A ledger row names which reports were compared, not what the
+ *    comparison said.
  *
  * The obvious substitute is the one this codebase already uses for the 10 Year
  * Cash Flow: `investment_reports.financial_calculations.projections`, on 162
@@ -83,6 +85,7 @@ import type {
   AnalysisNote,
   InvestorMatch,
 } from './reports/cashFlowComparison/payload.pure.ts';
+import { formatMeasure } from './reportDesign/measure.pure.ts';
 
 /** Matches `MIN_COMPARED_PROPERTIES` / `MAX_COMPARED_PROPERTIES`. */
 export const MIN_PROPERTIES = 2;
@@ -184,7 +187,10 @@ function projectProperty(p: ComparedProperty): Record<string, unknown> {
   return out;
 }
 
-function projectWinner(w: CategoryWinner): Record<string, unknown> {
+function projectWinner(
+  w: CategoryWinner,
+  shortAddressOf: (n: number | null) => string | undefined,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   put(out, 'key', str(w.key));
   put(out, 'label', str(w.label));
@@ -192,7 +198,25 @@ function projectWinner(w: CategoryWinner): Record<string, unknown> {
   // The clear air to second place. A win by $400 over ten years is not a
   // difference a client should act on, and a ranked table alone cannot say so.
   put(out, 'margin', measure(w.margin));
-  out.winner = num(w.property) ?? 'No clear winner';
+  /*
+   * The figure and the margin, formatted with their own units. The eight
+   * categories mix dollars, percent and years in one column, so a template
+   * cannot pick one filter for the table — the label arrives composed, the
+   * way the legacy wins table's own `show()` composes it. The raw numbers
+   * stay published beside them for a chart or a custom binding.
+   */
+  put(out, 'valueLabel', w.value ? formatMeasure(w.value) : undefined);
+  put(out, 'marginLabel', w.margin ? formatMeasure(w.margin) : undefined);
+  /*
+   * The leader, resolved to the street line — the legacy table's own cell.
+   * The raw number was published here once, and a master printing "1" as a
+   * winner's name is a database index on a client's page; scoreboard winners
+   * are computed server-side over the real property list, so unlike the model
+   * prose this pointer is safe to resolve. A tie says so in the legacy's own
+   * words rather than awarding array order.
+   */
+  out.winner = shortAddressOf(w.property) ?? 'No clear leader';
+  put(out, 'winnerNumber', num(w.property));
   out.lowerIsBetter = w.lowerIsBetter ? 'Yes' : 'No';
   return out;
 }
@@ -286,7 +310,11 @@ export function projectCashFlowComparison(
   const lead = measure(c.scoreboard.leadMargin);
   scoreboard.leadMargin = lead ?? 'Too close to separate';
   scoreboard.hasLeadMargin = lead !== undefined;
-  const winners = c.scoreboard.winners.map(projectWinner);
+  const winners = c.scoreboard.winners.map((w) => projectWinner(w, (n) => {
+    if (n === null) return undefined;
+    const p = c.properties.find((x) => x.number === n);
+    return p ? p.shortAddress : undefined;
+  }));
   if (winners.length) scoreboard.winners = winners;
   out.scoreboard = scoreboard;
 

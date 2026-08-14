@@ -298,6 +298,49 @@ describe('rendering', () => {
     expect(html).toContain(cfc.reference);
   });
 
+  it('draws the wins table with leaders resolved to street lines', () => {
+    /*
+     * The legacy scoreboard's wins table, which the projection published from
+     * the start and no master drew until the binding audit. The leader cell is
+     * the resolved street line, never the raw property number — a "1" as a
+     * winner's name is a database index on a client's page — and the figure
+     * column arrives composed because eight categories mix dollars, percent
+     * and years.
+     */
+    const winners = (cfc.scoreboard as any).winners as Array<Record<string, unknown>>;
+    expect(winners.length).toBeGreaterThan(0);
+    const { html } = renderTemplateToHtml(CASH_FLOW_COMPARISON_TEMPLATES[0].schema as any, { data: SAMPLE });
+    expect(html).toContain('Who leads on what');
+    expect(html).toContain(String(winners[0].label));
+    expect(html).toContain(String(winners[0].winner));
+    expect(html).toContain(String(winners[0].valueLabel));
+  });
+
+  it('writes every conditional as an expression that actually evaluates', () => {
+    // A conditional is JavaScript, not a binding path — `winners.0.label` is a
+    // SyntaxError there, and a conditional that throws at construction answers
+    // false forever: the block is silently dark on every render. This
+    // catalogue was written with bracket indexes from the start; the test is
+    // what keeps that true.
+    const seen = new Set<string>();
+    const collect = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (typeof node.conditional === 'string') seen.add(node.conditional);
+      for (const v of Object.values(node)) {
+        if (Array.isArray(v)) v.forEach(collect);
+        else collect(v);
+      }
+    };
+    for (const t of CASH_FLOW_COMPARISON_TEMPLATES.slice(0, 5)) (t.schema.pages as any[]).forEach(collect);
+    expect(seen.size).toBeGreaterThan(10);
+    for (const cond of seen) {
+      expect(
+        () => new Function('cashFlowComparison', 'client', 'org', 'report', `return (${cond});`),
+        `does not parse: ${cond}`,
+      ).not.toThrow();
+    }
+  });
+
   /**
    * 550 renders: fifty masters against their base palette and each of their ten
    * colourways. Exhaustive on purpose, and slow enough to need saying so.
