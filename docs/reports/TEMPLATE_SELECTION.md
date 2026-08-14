@@ -404,3 +404,15 @@ reads as though a second route exists; and the cash flow picker's
 since the brokered list projection omits the blob on purpose — `projectCashFlow`'s
 structural check was always the guard that actually refuses such a report, at
 render time.
+
+### What the brokered read costs, and why it cannot regress anyone
+
+The two brokers are permission-gated — `get-investment-reports` on `reports:can_view`,
+`get-client-data` on `client_management:can_view` — so the templated path now
+depends on a permission the direct read did not ask for. That is safe in the
+only direction that matters: a caller who lacks the permission gets a refusal,
+`secureSource` turns it into `null`, and the format falls through to its legacy
+generator — which is **exactly** what the direct read produced for everybody,
+permission or not. The worst case after this change equals the best case before
+it, so no surface can generate less than it did; the surfaces whose users hold
+the permission simply start getting the document they chose.
