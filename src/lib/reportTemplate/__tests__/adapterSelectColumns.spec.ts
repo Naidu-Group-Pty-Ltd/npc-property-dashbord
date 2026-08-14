@@ -265,7 +265,7 @@ describe('the generated schema knows every column these paths select', () => {
     // would pass this file for ever. 162 column references across the nine
     // adapters at the time of writing; the floor catches a parser regression
     // without failing on every new query.
-    expect(checkedColumns).toBeGreaterThan(140);
+    expect(checkedColumns).toBeGreaterThan(170);
     expect(unresolved).toEqual([]);
   });
 
@@ -273,6 +273,6 @@ describe('the generated schema knows every column these paths select', () => {
     const { problems, checkedColumns } = check(renderRouteFiles());
     expect(problems).toEqual([]);
     // 129 across the eleven render routes.
-    expect(checkedColumns).toBeGreaterThan(110);
+    expect(checkedColumns).toBeGreaterThan(120);
   });
 });
