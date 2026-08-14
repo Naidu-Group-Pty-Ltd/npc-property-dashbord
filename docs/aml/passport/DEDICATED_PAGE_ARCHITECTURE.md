@@ -169,6 +169,21 @@ legible, and degrades to a usable minimum rather than collapsing on a phone.
 The leaf body scrolls internally, so a long journey record can never stretch the
 page out of proportion.
 
+**The dialog must override the primitive at the same breakpoint.** This cost a
+round. `DialogContent` sets `sm:max-w-lg`, `sm:max-h-[85dvh]` and
+`sm:overflow-visible`; tailwind-merge treats an unprefixed `max-w-*` as a
+different utility group from `sm:max-w-*`, so a plain `max-w-[1180px]` silently
+lost on every screen ≥640px. The booklet rendered inside a 512px dialog, could
+never show a facing pair, and — because the primitive also un-hides overflow at
+`sm:` — spilled off the bottom of the viewport. There is no runtime error, no
+type error and no failing render for this: jsdom has no layout, so only a
+source assertion catches it (`bookletDialog.test.ts`).
+
+The board also measures **its own box** rather than deriving a height from
+`window.innerHeight`. The book is nested in a dialog whose height is itself
+capped, so a window-derived guess is wrong by however much chrome sits above and
+below it.
+
 **One viewer, both portals.** `PassportBook` is shared by the Command dialog and
 the Client Portal page. The Client Portal previously carried a second booklet
 implementation — its own cover, its own page list and eight page components —
