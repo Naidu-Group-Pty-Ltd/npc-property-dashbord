@@ -1421,8 +1421,20 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("id", { count: "exact", head: true })
           .eq("case_id", caseId).eq("status", "open");
 
+        // Every field `PassportAttestationFact` declares, not only the three
+        // the state machine reads first. `schema_version` in particular is not
+        // decoration: `PassportStateInput.material_inputs_current` documents
+        // that `null` means "not assessable (v1 attestation)", so the version
+        // is how a v1 attestation is told apart from a v2 one. The query above
+        // already selects both, so carrying them costs nothing.
         const attestations = att
-          ? [{ version: att.version, issued_at: att.issued_at, superseded_at: att.superseded_at }]
+          ? [{
+            version: att.version,
+            issued_at: att.issued_at,
+            superseded_at: att.superseded_at,
+            payload_sha256: att.payload_sha256,
+            schema_version: att.schema_version,
+          }]
           : [];
         const passportState = derivePassportState({
           attestations,
