@@ -434,23 +434,51 @@ describe('review & submit summary', () => {
     expect(await screen.findByText('Everything we need from you has been received.')).toBeTruthy();
   });
 
-  it('says an identity check is still running without holding the pack', async () => {
+  it('holds the pack while an identity check is still running', async () => {
+    // The old behaviour — "still being checked… You can submit your
+    // information now" — let a pack go to review ahead of its identity
+    // outcome. Submission now waits for every step, this one included.
     overview.mockResolvedValue(overviewPayload({
       journey: journey({
-        documents: 'complete', verification: 'in_progress', submission: 'action_required',
+        documents: 'complete', verification: 'in_progress', submission: 'not_started',
       }),
     }));
     await openReview();
-    expect(await screen.findByText(/still being checked/)).toBeTruthy();
-    expect(screen.getByText(/You can submit your information now/)).toBeTruthy();
+    expect(await screen.findByText(/Verify identity — in progress/)).toBeTruthy();
+    expect(screen.queryByText('Everything we need from you has been received.')).toBeNull();
+    expect(screen.getByRole('button', { name: /Submit for review/ })).toBeDisabled();
+  });
+
+  it('never says everything is received while Documents is not started', async () => {
+    // The reported contradiction: "Documents — not started" on the cards with
+    // "Everything we need from you has been received" over an enabled Submit
+    // button. The banner and the button now read the same journey the cards do.
+    overview.mockResolvedValue(overviewPayload({ journey: journey() }));
+    await openReview();
+    expect(await screen.findByText(/2 steps still need to be completed/)).toBeTruthy();
+    expect(screen.getByText(/Documents — not started/)).toBeTruthy();
+    expect(screen.queryByText('Everything we need from you has been received.')).toBeNull();
+    expect(screen.getByRole('button', { name: /Submit for review/ })).toBeDisabled();
+  });
+
+  it('enables submission when every step is complete', async () => {
+    overview.mockResolvedValue(overviewPayload({
+      journey: journey({
+        documents: 'complete', verification: 'complete', submission: 'action_required',
+      }),
+    }));
+    await openReview();
+    expect(await screen.findByText('Everything we need from you has been received.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Submit for review/ })).not.toBeDisabled();
   });
 
   it('names the step still needing attention', async () => {
     overview.mockResolvedValue(overviewPayload({
-      journey: journey({ documents: 'action_required' }),
+      journey: journey({ documents: 'action_required', verification: 'complete' }),
     }));
     await openReview();
-    expect(await screen.findByText('One step still needs your attention')).toBeTruthy();
+    expect(await screen.findByText('One step still needs to be completed')).toBeTruthy();
+    expect(screen.getByText(/Documents — needs your attention/)).toBeTruthy();
   });
 });
 

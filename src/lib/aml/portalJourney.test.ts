@@ -19,7 +19,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  buildJourney, documentsJourneyStatus, verificationJourneyStatus,
+  buildJourney, documentsJourneyStatus, submissionBlockers, verificationJourneyStatus,
   type JourneyDocument, type JourneyParty, type JourneyRequirement,
   type PortalJourneyStatus,
 } from '../../../supabase/functions/_shared/aml/portalJourney.pure.ts';
@@ -169,14 +169,29 @@ describe('buildJourney', () => {
       .not.toContain('You are verified');
   });
 
-  it('marks submission ready once consent, sections and documents are done', () => {
-    // Identity verification is deliberately NOT part of this — it is not a
-    // gate on `submit_for_review` either, and claiming otherwise would leave
-    // the client waiting on a gate that does not exist.
+  it('marks submission ready only when every step, identity included, is complete', () => {
     const journey = journeyFor({
-      documents: [doc()], parties: [{ status: 'in_review' }],
+      documents: [doc()], parties: [{ status: 'verified' }],
     });
     expect(statusOf(journey, 'submission')).toBe('action_required');
+    expect(journey.find((s) => s.step === 'submission')!.safe_description)
+      .toBe('Everything we need from you is ready to send.');
+  });
+
+  it('is NOT ready while documents are not started — the reported contradiction', () => {
+    // "Documents — not started" and "Everything we need from you has been
+    // received" appeared on one page: readiness ignored a documents step that
+    // had never begun. It may not any more, however verified the client is.
+    const journey = journeyFor({ documents: [], parties: [{ status: 'verified' }] });
+    expect(statusOf(journey, 'documents')).toBe('not_started');
+    expect(statusOf(journey, 'submission')).toBe('not_started');
+  });
+
+  it('is NOT ready while identity verification is anything short of complete', () => {
+    for (const status of ['not_started', 'in_review', 'action_required', 'contact_adviser']) {
+      const journey = journeyFor({ documents: [doc()], parties: [{ status }] });
+      expect(statusOf(journey, 'submission'), `party ${status}`).toBe('not_started');
+    }
   });
 
   it('does not call submission ready while a required document is outstanding', () => {
@@ -193,6 +208,21 @@ describe('buildJourney', () => {
     expect(statusOf(journeyFor({ openRequestCount: 1 }), 'review')).toBe('action_required');
     expect(statusOf(journeyFor({ openRequestCount: 0, submissions: [{}] }), 'review'))
       .toBe('in_progress');
+  });
+
+  it('names every incomplete step as a blocker, in journey vocabulary', () => {
+    expect(submissionBlockers({
+      consent: 'complete', questionnaire: 'complete',
+      documents: 'not_started', verification: 'in_progress',
+    })).toEqual(['documents', 'verification']);
+    expect(submissionBlockers({
+      consent: 'action_required', questionnaire: 'blocked',
+      documents: 'complete', verification: 'complete',
+    })).toEqual(['consent', 'questionnaire']);
+    expect(submissionBlockers({
+      consent: 'complete', questionnaire: 'complete',
+      documents: 'complete', verification: 'complete',
+    })).toEqual([]);
   });
 
   it('every step carries client-safe copy and a target', () => {

@@ -68,7 +68,9 @@ import {
   type FaceMatchReading,
   type StandaloneErrorCategory,
 } from './providers/diditStandalone.pure.ts';
-import { DiditStandaloneError, decodeInlineImage } from './providers/diditStandaloneClient.ts';
+import {
+  DiditStandaloneError, decodeInlineImage, readStandaloneEnvConfig,
+} from './providers/diditStandaloneClient.ts';
 import { canonicalOutcome } from './verificationOutcome.pure.ts';
 import { stripImagePayloads } from './verificationEvidence.pure.ts';
 import { buildVendorData } from './providers/didit.pure.ts';
@@ -242,6 +244,26 @@ export async function runStandaloneVerification(
     await recordTechnical(db, check, category, String(err?.message ?? err));
     return { checkId, outcome: 'technical_failure' };
   }
+
+  /**
+   * Which Didit deployment this run is about to spend against.
+   *
+   * The Standalone APIs leave nothing to inspect in the Didit console
+   * (`save_api_request=false` persists no session there), so when a charge
+   * appears against an unexpected balance the only evidence is here. The
+   * key suffix matches the `…XXXX` preview the Didit console shows for each
+   * application's key, so one log line answers "which application, which
+   * environment" — and nothing logged is secret: no key, no token, no URL
+   * with credentials, no customer data.
+   */
+  const envConfig = readStandaloneEnvConfig();
+  console.info('[aml-verification] standalone run', JSON.stringify({
+    check_id: checkId,
+    environment: currentEnvironment(),
+    provider: provider.name,
+    api_base: Deno.env.get('DIDIT_API_BASE_URL') || 'https://verification.didit.me',
+    api_key_suffix: envConfig.apiKey ? `…${envConfig.apiKey.slice(-4)}` : null,
+  }));
 
   // Captures first: a missing object costs nothing to discover and must be
   // discovered before any paid call.

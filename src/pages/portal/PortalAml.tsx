@@ -1257,10 +1257,14 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
  * had consented, uploaded and verified saw none of those three acknowledged
  * anywhere on the screen that was supposed to confirm they were finished.
  *
- * Identity verification is shown but does not gate the button, because
- * `submit_for_review` does not gate on it either (the reason is recorded at
- * that op). Saying "everything is ready" while a check is still running would
- * be wrong, so the copy says which of the two it is.
+ * Readiness here is derived from the journey steps and nothing else — the
+ * same `submissionBlockers` rule the server renders into the journey and
+ * enforces at `submit_for_review`. This screen once ran its own weaker
+ * calculation (sections + formally required documents), so "Documents — not
+ * started" and "Everything we need from you has been received" appeared on
+ * one page over an enabled Submit button, and the backend agreed with the
+ * button rather than the card. A step is settled only when it is COMPLETE:
+ * not started, in progress and blocked all hold the pack.
  */
 function ReviewStep({
   overview, stepStates, caseId, onBack, onSubmitted,
@@ -1273,12 +1277,11 @@ function ReviewStep({
   const reqs = overview?.requirements ?? [];
   const missingSections = sections.filter(s => !['submitted', 'accepted', 'complete'].includes(s.status));
   const missingReqs = reqs.filter(r => r.required && !['uploaded', 'accepted'].includes(r.status));
-  const canSubmit = missingSections.length === 0 && missingReqs.length === 0;
 
   // Everything up to (and excluding) this screen — what the client owes us.
   const priorSteps = stepStates.filter(s => s.key !== 'review');
-  const outstanding = priorSteps.filter(s => s.status === 'action_required');
-  const inFlight = priorSteps.filter(s => s.status === 'in_progress');
+  const incomplete = priorSteps.filter(s => !s.presentation.done);
+  const canSubmit = incomplete.length === 0;
 
   const submit = async () => {
     setSubmitting(true);
@@ -1315,31 +1318,25 @@ function ReviewStep({
           ))}
         </ul>
 
-        {outstanding.length > 0 ? (
+        {incomplete.length > 0 ? (
           <Alert variant="default">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>
-              {outstanding.length === 1
-                ? 'One step still needs your attention'
-                : `${outstanding.length} steps still need your attention`}
+              {incomplete.length === 1
+                ? 'One step still needs to be completed'
+                : `${incomplete.length} steps still need to be completed`}
             </AlertTitle>
             <AlertDescription>
-              {outstanding.map(s => s.label).join(', ')}.
+              {/* Each step with the journey's own wording, so an in-progress
+                  identity check reads "in progress", not as something the
+                  client did wrong. */}
+              {incomplete.map(s => `${s.label} — ${s.presentation.accessibleStatus}`).join('. ')}.
             </AlertDescription>
           </Alert>
         ) : (
           <Alert variant="default">
             <CheckCircle2 className="h-4 w-4" />
             <AlertTitle>Everything we need from you has been received.</AlertTitle>
-            {inFlight.length > 0 && (
-              <AlertDescription>
-                {/* Never "all clear" while a check is still running — and never
-                    a reason to hold their pack, because submission does not
-                    wait on it. */}
-                {inFlight.map(s => s.label).join(', ')} is still being checked.
-                You can submit your information now.
-              </AlertDescription>
-            )}
           </Alert>
         )}
 
