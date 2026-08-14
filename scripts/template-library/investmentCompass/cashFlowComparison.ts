@@ -106,7 +106,16 @@ import { STANDARD_DISCLAIMER } from '../designSystem';
  * names the document and the reference instead, both of which always resolve.
  */
 const FOOTER = 'Cash flow comparison · {{cashFlowComparison.reference}}';
-const DOCUMENT_LABEL = 'Cash Flow Comparison Analysis';
+/*
+ * Not "Cash Flow Comparison Analysis". At 29 characters it was the longest
+ * running-head label in the catalogue, and on Statement Compact — the family
+ * with the narrowest head — it wrapped past the two lines `runningHeadBottom`
+ * reserves, spilling 6-7pt of head text into the section heading on the two
+ * pages whose own names are longest. The first full QA render found it;
+ * nothing shorter is lost, since the cover and every page name still carry
+ * the full format name.
+ */
+const DOCUMENT_LABEL = 'Cash Flow Comparison';
 
 /** `MIN_COMPARED_PROPERTIES` / `MAX_COMPARED_PROPERTIES`, matching the payload. */
 const MIN_PROPERTIES = 2;
@@ -238,13 +247,21 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   const pages: PageDef[] = [];
 
   /** The figures across the top of the verdict. The gap leads. */
+  /*
+   * Every note fits one line in the narrowest KPI cell — about 21 characters
+   * at six-up. The band's height model reserves exactly one note line, so a
+   * note that wraps renders the band taller than it declared, and on this
+   * page the block beneath is the optional narrative: the first full QA
+   * render found the band printed 4-21pt over it on nine of the ten
+   * families. A short note is the fix that keeps the height model honest.
+   */
   const VERDICT_KPIS: KpiItem[] = [
-    { label: 'Lead over second', value: '{{cashFlowComparison.scoreboard.leadMargin | percent}}', note: 'Share of the leader’s own return' },
-    { label: 'Ranked first', value: '{{cashFlowComparison.ranked.0.shortAddress}}', note: 'On ten-year total return' },
-    { label: 'Its total return', value: '{{cashFlowComparison.ranked.0.totalReturn | currency}}', note: 'Capital gain plus cash flow' },
-    { label: 'Properties', value: '{{cashFlowComparison.propertyCount | fixed:0}}', note: 'Compared over {{cashFlowComparison.termYears}} years' },
-    { label: 'Its return on capital', value: '{{cashFlowComparison.ranked.0.roi | percent}}', note: 'On the cash it took to buy' },
-    { label: 'Profile', value: '{{cashFlowComparison.investorProfile}}', note: 'The ranking was made for' },
+    { label: 'Lead over second', value: '{{cashFlowComparison.scoreboard.leadMargin | percent}}', note: 'Of the top return' },
+    { label: 'Ranked first', value: '{{cashFlowComparison.ranked.0.shortAddress}}', note: 'Ten-year return' },
+    { label: 'Its total return', value: '{{cashFlowComparison.ranked.0.totalReturn | currency}}', note: 'Gain plus cash flow' },
+    { label: 'Properties', value: '{{cashFlowComparison.propertyCount | fixed:0}}', note: 'Over {{cashFlowComparison.termYears}} years' },
+    { label: 'Its return on capital', value: '{{cashFlowComparison.ranked.0.roi | percent}}', note: 'On cash invested' },
+    { label: 'Profile', value: '{{cashFlowComparison.investorProfile}}', note: 'Ranking made for' },
   ];
 
   // ── 01 Cover ─────────────────────────────────────────────────────────────
