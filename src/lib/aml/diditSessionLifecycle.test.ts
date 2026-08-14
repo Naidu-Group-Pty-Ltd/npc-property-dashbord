@@ -35,9 +35,22 @@ import {
  * ## What must stay true
  *
  * Superseding a stale session is a TECHNICAL event. It is not a verification
- * failure, it consumes no attempt, and it writes no identity outcome. And the
- * dedup that protects against double-clicks must survive — the fix scopes the
- * key to a real attempt, it does not randomise it.
+ * failure, it consumes no attempt, and it writes no identity outcome.
+ *
+ * ## The attempt scope was REVERSED, deliberately
+ *
+ * Attempt scoping broke the provider's dedup on purpose, and that had a cost
+ * nobody had measured at the time: Didit groups sessions into a Directory user
+ * by the exact `vendor_data` string, so a key carrying the attempt made one
+ * applicant several users in the Business Console. Case `8c58cc07…` is in
+ * production with two of them.
+ *
+ * The hosted key is therefore person-scoped again — `npc:<case>:<party>` — and
+ * the dedup it restores is now load-bearing rather than merely tolerated: it is
+ * the outermost guard against a refresh or a double-click buying a second paid
+ * session. What that costs is stated where it is decided (`buildVendorData`):
+ * the staleness guard below can release NPC's row but cannot re-mint under a
+ * new configuration while the provider's session is alive.
  */
 
 const CASE_ID = '11111111-1111-4111-8111-111111111111';
@@ -84,35 +97,41 @@ describe('a session minted under superseded configuration is not reused', () => 
   });
 });
 
-describe('a new attempt can obtain a genuinely new session', () => {
-  it('scopes the provider key to the attempt', () => {
-    // This is the whole fix: the provider upserts on workflow_id +
-    // vendor_data, so two attempts must not share a key.
-    const first = buildVendorData(CASE_ID, PARTY_ID, 1);
-    const second = buildVendorData(CASE_ID, PARTY_ID, 2);
-    expect(first).not.toBe(second);
-    expect(parseVendorData(second)?.attempt).toBe(2);
+describe('the hosted key identifies the PERSON, not the attempt', () => {
+  it('is the three-part person-scoped form, carrying no attempt', () => {
+    // What makes one applicant one Didit Directory user. A fourth segment
+    // would split them into one user per attempt, which is the production
+    // state this reversed.
+    const key = buildVendorData(CASE_ID, PARTY_ID);
+    expect(key).toBe(`npc:${CASE_ID}:${PARTY_ID}`);
+    expect(parseVendorData(key)?.attempt).toBeNull();
   });
 
-  it('keeps the same attempt idempotent, so a double-click cannot buy two sessions', () => {
-    // Deliberately NOT randomised. Repeated requests for one logical attempt
-    // must land on one session — that protection is what the attempt scope
-    // had to preserve while breaking the cross-attempt one.
-    expect(buildVendorData(CASE_ID, PARTY_ID, 3)).toBe(buildVendorData(CASE_ID, PARTY_ID, 3));
+  it('is stable across attempts, so every session aggregates under one user', () => {
+    expect(buildVendorData(CASE_ID, PARTY_ID)).toBe(buildVendorData(CASE_ID, PARTY_ID));
   });
 
-  it('derives the attempt from server state, never from the browser', () => {
+  it('differs between parties and between cases', () => {
+    const mine = buildVendorData(CASE_ID, PARTY_ID);
+    expect(mine).not.toBe(buildVendorData(CASE_ID, 'someone-else'));
+    expect(mine).not.toBe(buildVendorData('other-case', PARTY_ID));
+    // The case subject is a distinct person from a declared related party.
+    expect(mine).not.toBe(buildVendorData(CASE_ID, null));
+  });
+
+  it('is derived from server state, never from the browser', () => {
     const portal = readFileSync('supabase/functions/aml-client-portal/index.ts', 'utf8');
     const block = portal.slice(
       portal.indexOf("case 'start_hosted_verification'"),
       portal.indexOf("case 'submit_verification'"));
-    // `captureSequence` comes from nextCaptureSequence(), a max()+1 over the
-    // case's own rows.
-    expect(block).toContain('const captureSequence = await nextCaptureSequence(');
-    expect(block).toContain('buildVendorData(c.id, partyId, captureSequence)');
-    // Nothing from the request body reaches the provider key.
+    expect(block).toContain('buildVendorData(c.id, partyId)');
+    // `c.id` is the case resolved against this portal session, `partyId` is
+    // matched against the case's own parties. Nothing from the request body
+    // reaches the provider key.
     const vendorLine = block.slice(block.indexOf('vendorData:'), block.indexOf('metadata:'));
     expect(vendorLine).not.toContain('body.');
+    // And the attempt must not creep back in: it is what fragments the user.
+    expect(vendorLine).not.toContain('captureSequence');
   });
 });
 

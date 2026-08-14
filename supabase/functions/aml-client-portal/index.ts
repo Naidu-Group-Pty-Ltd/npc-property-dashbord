@@ -58,7 +58,7 @@ import {
 import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
-import { DiditApiError } from "../_shared/aml/providers/diditClient.ts";
+import { DiditApiError, diditConfigured } from "../_shared/aml/providers/diditClient.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
@@ -591,27 +591,29 @@ async function clientSafeIdvState(
     }
 
     /**
-     * The hosted capture experience is RETIRED, and a tenant still configured
-     * for it has no electronic path — not a popup.
+     * The hosted session is available again, and it is a deliberate reversal.
      *
-     * This used to answer `available` + `hosted_session`, which the portal
-     * rendered as a window opening on the provider's own page. That is the
-     * defect this hotfix exists to remove, and removing it only from the
-     * browser would leave the server still asking for it: an older bundle, a
-     * cached page or a second client would all still obey.
+     * It was refused here — `manual_verification_required` — as the third lock
+     * of the standalone cutover, whose product decision was that no customer is
+     * sent to a verification vendor's page. That decision has been reversed for
+     * a reason the standalone architecture cannot satisfy at all: the
+     * Standalone APIs are called with `save_api_request=false`, so Didit
+     * persists nothing and NPC's verifications never appear in the Business
+     * Console's Verifications → User Verifications or Directory → Users. A
+     * hosted session is the only shape of this integration that creates a
+     * provider-side verification record.
      *
-     * So the refusal is here as well. `manual_verification_required` is the
-     * honest answer — the adviser arranges verification from documents, which
-     * is a real route the portal already renders and which disadvantages
-     * nobody. The flow word is `capture`, because that is the only capture
-     * experience that exists now; `availability` is what actually gates the
-     * customer.
-     *
-     * Nothing about hosted RESULTS changes. The webhook, the decision parsing
-     * and every historical row stay exactly as they were.
+     * Readiness is the adapter's own: `getHostedIdvProvider` resolves the
+     * credential, and `diditConfigured` requires the webhook secret and a
+     * workflow id as well — a deployment holding only the API key would create
+     * chargeable sessions whose results could never be accepted.
      */
     if (flow === 'hosted_session') {
-      return { availability: 'manual_verification_required', flow, standalone };
+      getHostedIdvProvider({ resolved, admin });
+      if (!diditConfigured(diditWorkflowId(resolved))) {
+        return { availability: 'temporarily_unavailable', flow, standalone };
+      }
+      return { availability: 'available', flow, standalone };
     }
 
     const provider = getIdvProvider({ resolved, admin });
@@ -1220,15 +1222,22 @@ const __corsWrappedHandler = async (req: Request) => {
          * do is change which sentence the client reads.
          */
         /*
-         * The hosted branch is gone from here too.
+         * The hosted branch is back, and it answers the same question the
+         * capture branch does: "is a check already open for this party?"
          *
-         * `activeHostedCheck` is what produced "Continue verification" — the
-         * button that reopened the provider's window. There is no window to
-         * continue into any more, so reporting an old hosted session as
-         * in-progress could only offer the customer a door that no longer
-         * exists. Those rows are retired by `20260911000300`; a late signed
-         * outcome for one still settles, server-side, exactly as before.
+         * It is what produces "Continue verification" rather than "Start",
+         * which is what stops a refreshed page — which has lost the window
+         * handle and every scrap of local state — from asking the customer to
+         * begin again while their session is still sitting open behind the
+         * browser. Still a boolean: no session id, no URL, no token.
          */
+        if (flow === 'hosted_session') {
+          for (const party of parties) {
+            party.verification_in_progress = Boolean(
+              await activeHostedCheck(admin, c.id, party.party_id));
+          }
+        }
+
         if (standalone) {
           /**
            * The same boolean, for the capture journey.
@@ -1253,16 +1262,12 @@ const __corsWrappedHandler = async (req: Request) => {
           enabled: true,
           availability,
           /*
-           * Always `capture`. There is one customer capture experience and it
-           * is NPC's own.
-           *
-           * This used to be `hosted` whenever the tenant resolved a
-           * hosted-session provider, and that single word is what the portal
-           * turned into a window on the provider's page. `availability` is now
-           * what carries a retired-provider tenant — to the documentary route
-           * — so no value of this field can send anybody off NPC.
+           * Which experience to render, resolved server-side and never sent by
+           * the browser: `hosted` opens the provider's own window, `capture` is
+           * NPC's camera journey. The provider KEY, the workflow id and the
+           * environment stay server-side — the portal learns one of two words.
            */
-          provider_flow: 'capture',
+          provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture',
           max_attempts: MAX_VERIFICATION_ATTEMPTS,
           // The biometric consent is separate (APP 3.3) and is what unlocks
           // the facial check specifically.
@@ -1287,44 +1292,20 @@ const __corsWrappedHandler = async (req: Request) => {
        * session token, so it is handed to their browser and never persisted,
        * logged, or written to the timeline.
        */
-      case 'start_hosted_verification': {
-        /**
-         * RETIRED. This operation can no longer mint or resume a session.
-         *
-         * It is kept, rather than deleted, for one reason: a browser running a
-         * cached build from before the cutover will still call it, and a typed
-         * 409 is a far better answer for that customer than a 400 on an unknown
-         * op. The portal treats `hosted_flow_retired` as an availability
-         * refusal, re-reads, and lands them on the documentary route.
-         *
-         * The refusal is UNCONDITIONAL and comes before every other check —
-         * before the case lookup, before consent, before provider resolution.
-         * There is deliberately no tenant, provider or configuration under
-         * which this returns a URL, because "never creates a hosted session
-         * after cutover" is only true if no branch can reach the creation.
-         *
-         * Server-side settlement of sessions that ALREADY exist is untouched:
-         * `didit-webhook` still verifies a signed outcome, still re-fetches the
-         * decision over an authenticated call, and still settles the canonical
-         * row. This closes the door to new sessions, not to old results.
-         */
-        return jsonResponse({
-          error: 'Please continue with the verification step shown on your screen.',
-          code: 'hosted_flow_retired',
-        }, 409);
-      }
-
-      /*
-       * Everything from here to the end of this block is the former body of
-       * `start_hosted_verification`, now unreachable. It is retained for one
-       * release so the reconciliation logic it contains — stale-session
-       * detection, decision re-fetch, correlation — can be lifted into the
-       * webhook path if a late outcome ever needs it, rather than being
-       * rewritten from memory. It is deleted in the follow-up that removes the
-       * hosted adapter; see docs/aml/DIDIT_STANDALONE_IDV.md for the drain
-       * condition that gates that.
+      /**
+       * Start (or resume) the provider-hosted verification session.
+       *
+       * REACTIVATED. This op was stubbed to a 409 `hosted_flow_retired` by the
+       * standalone cutover; the body below is that cutover's own preserved
+       * implementation, restored rather than rewritten, because it already
+       * carries the reconciliation, correlation and one-session-per-party
+       * rules that were proven against the live API.
+       *
+       * What changed on reactivation is exactly one line — `vendorData` is now
+       * person-scoped (no attempt suffix), so the applicant is ONE Didit
+       * Directory user rather than one per attempt. See `buildVendorData`.
        */
-      case '__retired_start_hosted_verification': {
+      case 'start_hosted_verification': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
 
@@ -1386,6 +1367,26 @@ const __corsWrappedHandler = async (req: Request) => {
               ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
               : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
             code: availability,
+          }, 409);
+        }
+
+        /**
+         * A verified party never buys another session.
+         *
+         * The exhaustion gate below cannot catch this: a verified party has
+         * typically consumed one of their three attempts. The portal hides the
+         * button once a party projects as verified, but the endpoint is the
+         * boundary — a refresh, a stale tab or a direct call must meet the same
+         * refusal. `projectParty` is the one place "verified" is decided
+         * (electronic pass or accepted staff sighting), so it is consulted
+         * rather than re-derived.
+         */
+        const startingParty = (await verificationParties(admin, c.id))
+          .find((p) => (p.party_id ?? null) === (partyId ?? null));
+        if (startingParty?.status === 'verified') {
+          return jsonResponse({
+            error: 'Your identity has already been verified. There is nothing more to do for this step.',
+            code: 'already_verified',
           }, 409);
         }
 
@@ -1595,16 +1596,18 @@ const __corsWrappedHandler = async (req: Request) => {
         try {
           const session = await provider.createSession({
             /*
-             * Opaque, and scoped to THIS attempt. Never a name, email,
-             * document number or DOB.
+             * Opaque, person-scoped, and never a name, email, document number
+             * or DOB.
              *
-             * The attempt is what makes this a create rather than a lookup:
-             * `POST /v3/session/` upserts on `workflow_id + vendor_data`, so
-             * without it a second request returns the first session — which is
-             * how a customer stayed pinned to a session minted before the
-             * workflow was reconfigured.
+             * The attempt is deliberately NOT part of it. Didit groups
+             * sessions into a Directory user by this exact string, so a key
+             * carrying the attempt made one applicant several users in the
+             * provider's console — measured on this account. Person-scoped, it
+             * also makes `POST /v3/session/` idempotent for an unstarted
+             * session: a refresh or a double-click returns the same session
+             * instead of buying another. See `buildVendorData`.
              */
-            vendorData: buildVendorData(c.id, partyId, captureSequence),
+            vendorData: buildVendorData(c.id, partyId),
             // Internal identifiers only — echoed back on every webhook.
             metadata: {
               verification_check_id: created.id,
@@ -1634,10 +1637,20 @@ const __corsWrappedHandler = async (req: Request) => {
             outcome_detail: {
               ...(created.outcome_detail ?? {}),
               didit_session: {
-                // Identifiers only. The hosted URL and the session token are
-                // NOT stored: the URL embeds the token, so persisting it would
-                // put a live credential in the case record.
+                /**
+                 * Identifiers only. The hosted URL and the session token are
+                 * NOT stored: the URL embeds the token, so persisting it would
+                 * put a live credential in the case record — one that opens
+                 * that customer's verification flow to anyone who can read the
+                 * row. Resuming does not need it: the URL is re-read from the
+                 * decision endpoint over an authenticated call and handed
+                 * straight to that customer's browser.
+                 */
                 session_id: session.sessionId,
+                // The correlation key this session was minted under, stored so
+                // a later reader can see WHICH Didit user this attempt belongs
+                // to without re-deriving it from code that may have changed.
+                vendor_data: buildVendorData(c.id, partyId),
                 workflow_id: session.workflowId,
                 workflow_version: session.workflowVersion,
                 // Which NPC attempt this session belongs to, and the workflow

@@ -175,23 +175,39 @@ export function isInFlightDiditStatus(status: string): boolean {
  * retained. `npc:<case-id>:<party-id|primary>:<attempt>` correlates exactly as
  * well and discloses nothing.
  *
- * ## Why the attempt is part of it
+ * ## The hosted session is keyed on the PERSON, and the attempt is omitted
  *
  * `POST /v3/session/` is not a create — it is an upsert keyed on
- * `workflow_id + vendor_data`. Measured against the live API: two creates with
- * the same pair returned byte-identical `session_id` and token, keeping
- * `session_number` at 3 and merely overwriting `metadata`; changing one
- * character of `vendor_data` returned a genuinely new session.
+ * `workflow_id + vendor_data`. Re-measured against the live API on 2026-08-14:
+ * two creates with the same pair returned byte-identical `session_id`,
+ * `session_token`, `url` and `session_number`, and merely overwrote
+ * `metadata`.
  *
- * That is what stranded a customer on a session minted eight minutes before
- * the workflow was reconfigured. With a case-and-party-only key there was no
- * way to ask for a session under the new configuration — every request, for
- * seven days, returned the same pre-change one.
+ * Didit groups sessions into a Directory user BY that exact string — so the
+ * suffix decides whether one applicant is one person or several in the
+ * provider's console. Measured on this account: case `8c58cc07…` produced TWO
+ * Directory users, `npc:8c58cc07…:primary` and `npc:8c58cc07…:primary:3`,
+ * because the key carried the attempt. The hosted flow therefore mints the
+ * three-part, person-scoped form and `attempt` is left off:
  *
- * `attempt` is the server-side capture sequence already stored on the check
- * row (`capture_sequence`). It is monotonic per case and party, carries no
- * PII, and is not a *charged* attempt: attempts are counted from settled
- * outcomes, so a technical re-mint costs the customer nothing.
+ *   - one NPC applicant is one Didit user, and every session they ever run
+ *     aggregates under it (Verifications → User Verifications, Directory →
+ *     Users);
+ *   - the upsert becomes the outermost duplicate-charge guard, because a
+ *     refresh, a double-click or a second tab all return the SAME unstarted
+ *     session rather than buying another.
+ *
+ * The cost of that choice is recorded honestly: a key that no longer varies
+ * cannot force a fresh session, so the `workflow_revised_at` guard can release
+ * NPC's row but cannot re-mint under a new configuration while the provider's
+ * session is still alive (7 days, `session_expiration_time`). A settled or
+ * expired session is replaced normally. That is a deliberate trade of
+ * reconfiguration latency for provider-side identity, and it is the trade the
+ * Directory requirement asks for.
+ *
+ * `attempt` is still ACCEPTED on the way in — sessions minted under the
+ * four-part form are live for seven days and their decisions must still
+ * correlate. See `parseVendorData`.
  */
 export function buildVendorData(
   caseId: string, partyId: string | null, attempt?: number | null,

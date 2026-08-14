@@ -27,7 +27,7 @@ import {
  *    attempts, so nothing stopped a stale tab or a direct call from buying a
  *    fresh three-call Didit sequence for an identity already settled.
  *
- * Wiring is asserted from source, the same way `hostedIdvRetired.test.ts`
+ * Wiring is asserted from source, the same way `hostedIdvSession.test.ts`
  * does: whether the op consults the shared rule is a property of which code
  * exists, and a unit test around the pure function cannot see an op that
  * declines to call it.
