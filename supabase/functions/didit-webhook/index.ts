@@ -34,7 +34,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import {
   verifyDiditWebhook, fetchDiditDecision, DiditApiError,
 } from '../_shared/aml/providers/diditClient.ts';
-import { diditWorkflowId, resolveTenantProvider, currentEnvironment } from '../_shared/aml/providers/index.ts';
+import {
+  diditWorkflowId, resolveTenantProvider, currentEnvironment, isStandaloneIdvProvider,
+} from '../_shared/aml/providers/index.ts';
 import {
   applyDiditDecision, DiditCorrelationError,
   HOSTED_CHECK_COLUMNS, type HostedCheckRow,
@@ -206,6 +208,43 @@ Deno.serve(async (req) => {
   const check = ((checkRows ?? [])[0] ?? null) as unknown as HostedCheckRow | null;
 
   if (!check) {
+    /**
+     * Nothing hosted matched. Before calling it unknown, work out whether this
+     * is the ONE case that is expected and benign: a persisted **Standalone**
+     * request.
+     *
+     * `save_api_request=true` persists each Standalone call as an API-type
+     * session, and Didit emits `status.updated` for those too. So this endpoint
+     * now receives events for checks whose authoritative result NPC already
+     * has — the synchronous response the call itself returned.
+     *
+     * Such an event must be acknowledged and then do NOTHING. The Standalone
+     * architecture has exactly one authoritative result path and this is not
+     * it: settling from a webhook here would create a second one, racing the
+     * response the orchestrator already composed and potentially overwriting a
+     * settled attempt. There is deliberately no branch below that could.
+     *
+     * Classified rather than lumped in with `unknown_session`, because an
+     * operator reading a log of "unknown session" for every routine
+     * verification would be reading an alarm that means nothing is wrong.
+     */
+    const { data: standaloneRows } = await admin.schema('aml')
+      .from('verification_checks')
+      .select('id, provider')
+      .eq('provider_reference', sessionId)
+      .limit(1);
+    const standalone = (standaloneRows ?? [])[0] as { id: string; provider: string } | undefined;
+    if (standalone && isStandaloneIdvProvider(standalone.provider)) {
+      await markEvent({
+        verification_check_id: standalone.id,
+        error: 'standalone_session_ignored',
+        processed_at: new Date().toISOString(),
+      });
+      // 2xx: acknowledged, so Didit stops retrying. `processed: false` because
+      // nothing was applied, and nothing ever will be from here.
+      return json({ ok: true, processed: false, reason: 'standalone_session_ignored' }, 202);
+    }
+
     // A session NPC did not create, or one whose row is gone. Accepted so it
     // is not retried, recorded so it is visible, and it changes nothing.
     await markEvent({ error: 'unknown_session', processed_at: new Date().toISOString() });

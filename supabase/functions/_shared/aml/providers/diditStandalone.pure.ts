@@ -99,6 +99,87 @@ export const COULD_NOT_RECOGNIZE_DOCUMENT = 'COULD_NOT_RECOGNIZE_DOCUMENT';
  * the credit refusal carries an `error` naming credits, and the unreadable
  * document carries `{"error": "COULD_NOT_RECOGNIZE_DOCUMENT"}`.
  */
+/* ─────────────────────── media-URL policy (SSRF) ────────────────────────── */
+
+/**
+ * Hosts NPC will fetch a persisted image from.
+ *
+ * Measured off the live account on 2026-08-14 rather than guessed: a persisted
+ * `portrait_image` came back as
+ * `https://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com/ocr/…-portrait_image-….jpg?X-Amz-…`.
+ * Didit's own docs write the host as a `<media-host>` placeholder, so the real
+ * value is only knowable by observation — which is exactly why this is an
+ * allow-list with an override rather than a pattern somebody inferred.
+ *
+ * EXACT host matches only. A suffix rule like `.s3.amazonaws.com` would admit
+ * every bucket on S3, including one an attacker can create and name in a
+ * response — which is the vulnerability, not the fix.
+ */
+export const DEFAULT_DIDIT_MEDIA_HOSTS: readonly string[] = [
+  'service-didit-verification-production-a1c5f9b8.s3.amazonaws.com',
+  'verification.didit.me',
+];
+
+/** Hostnames that must never be fetched, whatever an allow-list says. */
+const FORBIDDEN_HOST_PATTERNS: readonly RegExp[] = [
+  /^localhost$/i,
+  /\.local$/i,
+  /\.internal$/i,
+  /\.localdomain$/i,
+];
+
+/**
+ * Whether a hostname is an IP literal, and if so whether it is one that must
+ * never be reached. IP literals are refused outright — the allow-list is
+ * expressed as names, so a literal can only be an attempt to bypass it.
+ */
+function isIpLiteral(host: string): boolean {
+  // IPv6 arrives bracketed from `URL.hostname` stripped, so test both shapes.
+  if (host.includes(':')) return true;
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+
+/**
+ * May this URL be fetched as a Face Match reference image?
+ *
+ * Pure, so the policy is testable without a network. Every rule is a refusal;
+ * the default answer is no.
+ *
+ * The allow-list is the primary control. The private-range and IP-literal
+ * checks sit in front of it as defence in depth: they are redundant while the
+ * list holds only public provider hosts, and they are what stops a
+ * mis-configured `DIDIT_MEDIA_HOSTS` entry (`127.0.0.1`, `metadata.internal`,
+ * an RFC1918 address) from turning this into a request primitive pointed at
+ * NPC's own infrastructure.
+ */
+export function isAllowedMediaUrl(
+  value: unknown, allowedHosts: readonly string[] = DEFAULT_DIDIT_MEDIA_HOSTS,
+): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  // HTTPS only. No http, no data:, no file:, no gopher:, nothing else.
+  if (url.protocol !== 'https:') return false;
+  // Credentials in the URL would be sent to the host; refuse the shape.
+  if (url.username || url.password) return false;
+  // A non-default port is not something the provider's media host uses, and it
+  // is the usual way an internal service is addressed.
+  if (url.port && url.port !== '443') return false;
+
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return false;
+  if (isIpLiteral(host)) return false;
+  if (FORBIDDEN_HOST_PATTERNS.some((rx) => rx.test(host))) return false;
+
+  return allowedHosts.some((allowed) => host === allowed.toLowerCase());
+}
+
 export function classifyStandaloneHttpError(
   status: number, body: string,
 ): StandaloneErrorCategory {

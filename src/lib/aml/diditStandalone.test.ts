@@ -13,6 +13,8 @@ import {
   scrubStandalonePayload,
   STANDALONE_REDACTED,
   COULD_NOT_RECOGNIZE_DOCUMENT,
+  isAllowedMediaUrl,
+  DEFAULT_DIDIT_MEDIA_HOSTS,
 } from '../../../supabase/functions/_shared/aml/providers/diditStandalone.pure.ts';
 import { canonicalOutcome } from '../../../supabase/functions/_shared/aml/verificationOutcome.pure.ts';
 import {
@@ -488,5 +490,103 @@ describe('what a Standalone outcome does to the attempt allowance', () => {
 
   it('never exhausts on a referral, however many have happened', () => {
     expect(settle('manual_review', 2).status).toBe('referred');
+  });
+});
+
+/* ─────────────── the media-URL allow-list (SSRF, save_api_request=true) ──── */
+
+/**
+ * `save_api_request=true` returns `portrait_image` as a media URL rather than
+ * inline base64, so NPC has to fetch it to have a Face Match reference at all.
+ * That is server-side egress driven by a third party's payload — SSRF by
+ * construction unless it is fenced — and this is the fence.
+ *
+ * The real host was measured off the live account rather than inferred: a
+ * persisted portrait came back from
+ * `service-didit-verification-production-a1c5f9b8.s3.amazonaws.com`. Didit's
+ * docs write it as a `<media-host>` placeholder, which is exactly why this is
+ * an allow-list with a configurable override and not a pattern.
+ */
+describe('media URL allow-list', () => {
+  const ALLOWED = 'https://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com'
+    + '/ocr/874516ec-portrait_image-d363733e.jpg?X-Amz-Signature=abc';
+
+  it('admits the measured provider media host', () => {
+    expect(isAllowedMediaUrl(ALLOWED)).toBe(true);
+    expect(DEFAULT_DIDIT_MEDIA_HOSTS)
+      .toContain('service-didit-verification-production-a1c5f9b8.s3.amazonaws.com');
+  });
+
+  it('refuses any other https host, however plausible', () => {
+    for (const url of [
+      // The attacker-controlled cases: a bucket they can create, a lookalike,
+      // and a subdomain of an allowed name.
+      'https://evil.s3.amazonaws.com/ocr/portrait.jpg',
+      'https://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com.evil.com/x.jpg',
+      'https://didit.me.evil.com/portrait.jpg',
+      'https://evil.com/ocr/portrait_image.jpg',
+      'https://verification.didit.me.attacker.net/x.jpg',
+    ]) {
+      expect(isAllowedMediaUrl(url), url).toBe(false);
+    }
+  });
+
+  it('refuses everything that is not https on the default port', () => {
+    for (const url of [
+      'http://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com/x.jpg',
+      'file:///etc/passwd',
+      'data:image/jpeg;base64,AAAA',
+      'gopher://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com/',
+      // A non-443 port is how an internal service is usually addressed.
+      'https://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com:8080/x.jpg',
+      // Credentials in the URL would be sent to the host.
+      'https://user:pw@service-didit-verification-production-a1c5f9b8.s3.amazonaws.com/x.jpg',
+    ]) {
+      expect(isAllowedMediaUrl(url), url).toBe(false);
+    }
+  });
+
+  it('refuses loopback, private, link-local and internal names even if allow-listed', () => {
+    /*
+     * Defence in depth. These are unreachable while the list holds only public
+     * provider hosts — the point is that a mis-configured `DIDIT_MEDIA_HOSTS`
+     * entry cannot turn this into a request primitive aimed at NPC's own
+     * infrastructure or a cloud metadata endpoint.
+     */
+    const hostile = [
+      'https://localhost/x.jpg',
+      'https://127.0.0.1/x.jpg',
+      'https://10.0.0.5/x.jpg',
+      'https://192.168.1.10/x.jpg',
+      'https://172.16.0.9/x.jpg',
+      'https://169.254.169.254/latest/meta-data/',
+      'https://[::1]/x.jpg',
+      'https://[fd00::1]/x.jpg',
+      'https://kong.internal/x.jpg',
+      'https://db.local/x.jpg',
+      'https://host.localdomain/x.jpg',
+    ];
+    for (const url of hostile) {
+      expect(isAllowedMediaUrl(url), `default: ${url}`).toBe(false);
+      // And still refused when somebody puts the host ON the list.
+      const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+      expect(isAllowedMediaUrl(url, [host]), `allow-listed: ${url}`).toBe(false);
+    }
+  });
+
+  it('refuses anything that is not a parseable URL string', () => {
+    for (const value of [null, undefined, '', 'not a url', '/ocr/portrait.jpg', 42, {}, []]) {
+      expect(isAllowedMediaUrl(value), String(value)).toBe(false);
+    }
+  });
+
+  it('honours a configured override, exactly and case-insensitively', () => {
+    const custom = 'https://media.example-didit.com/ocr/p.jpg';
+    expect(isAllowedMediaUrl(custom)).toBe(false);
+    expect(isAllowedMediaUrl(custom, ['media.example-didit.com'])).toBe(true);
+    expect(isAllowedMediaUrl(custom, ['MEDIA.EXAMPLE-DIDIT.COM'])).toBe(true);
+    // An override does not admit a sibling host.
+    expect(isAllowedMediaUrl('https://other.example-didit.com/p.jpg',
+      ['media.example-didit.com'])).toBe(false);
   });
 });

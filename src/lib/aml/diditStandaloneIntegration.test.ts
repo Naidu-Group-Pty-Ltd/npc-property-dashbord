@@ -173,7 +173,13 @@ describe('the provider calls', () => {
     const fetcher = CLIENT.slice(
       CLIENT.indexOf('export async function fetchRemoteImage('),
       CLIENT.indexOf('export async function resolveReferenceImage('));
-    expect(fetcher).toMatch(/\^https:\\\/\\\//);      // https only
+    // The host allow-list gates the fetch, and it is the FIRST thing that
+    // runs — scheme, port, credentials, IP literals and internal names are all
+    // refused inside it (see diditStandalone.test.ts, which exercises the
+    // policy for real rather than by reading the source).
+    expect(fetcher).toContain('isAllowedMediaUrl(value, allowedMediaHosts())');
+    expect(fetcher.indexOf('isAllowedMediaUrl'))
+      .toBeLessThan(fetcher.indexOf('await fetch('));
     expect(fetcher).toContain("redirect: 'error'");    // never chased
     expect(fetcher).toContain('AbortSignal.timeout');
     expect(fetcher).toContain("contentType.startsWith('image/')");
@@ -312,8 +318,10 @@ describe('provider readiness', () => {
   it('does not require a workflow id or a webhook secret', () => {
     // Readiness is decided by `standaloneIdvReadiness`, which reads the key and
     // the two thresholds and nothing else. There is no workflow on this path,
-    // and with save_api_request=false no webhook is ever emitted — requiring
-    // either would refuse a correctly configured deployment.
+    // and the synchronous response is the authoritative result — a persisted
+    // request does emit `status.updated`, but NPC ignores it, so the webhook
+    // secret is not what makes this path usable. Requiring either would refuse
+    // a correctly configured deployment.
     const fn = REGISTRY.slice(REGISTRY.indexOf('export function standaloneIdvReadiness'));
     const body = fn.slice(0, fn.indexOf('\n}'));
     expect(body).toContain('DIDIT_API_KEY');
@@ -534,12 +542,11 @@ describe('the hosted and capture journeys do not bleed into each other', () => {
      * that already ran must still settle the canonical record, and removing
      * them would strand it.
      *
-     * The hosted operation was reactivated (`20260914000000`) because the
-     * Standalone APIs persist nothing on the provider's side and the business
-     * requires a Didit-side verification record — see hostedIdvSession.test.ts
-     * for the contract it now holds. The standalone adapter, its provider row
-     * and every standalone evidence row stay exactly where they are, which is
-     * what makes the switch two `UPDATE`s in either direction.
+     * The hosted operation is reachable again as code, but NO tenant resolves
+     * it: `didit_standalone` is the active provider row, and there is no
+     * migration in the tree that flips them. The provider-side record the
+     * business needed comes from `save_api_request=true` on the Standalone
+     * calls instead — the customer stays on NPC's own camera.
      */
     expect(REGISTRY).toContain('"didit": (opts) => makeDiditIdvProvider(opts)');
     expect(PORTAL).toContain("case 'start_hosted_verification':");

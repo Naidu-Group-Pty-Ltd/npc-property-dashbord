@@ -56,6 +56,8 @@
 
 import {
   classifyStandaloneHttpError,
+  isAllowedMediaUrl,
+  DEFAULT_DIDIT_MEDIA_HOSTS,
   type StandaloneErrorCategory,
 } from './diditStandalone.pure.ts';
 
@@ -324,6 +326,21 @@ export function decodeInlineImage(value: string | null): Uint8Array | null {
 const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
 
 /**
+ * The hosts a persisted image may be fetched from.
+ *
+ * Defaults to the measured provider media hosts. `DIDIT_MEDIA_HOSTS` overrides
+ * the list (comma-separated) for a deployment whose media host differs or
+ * changes — the value is a list of hostnames, never a pattern, and every entry
+ * still passes the IP-literal and internal-name refusals in
+ * `isAllowedMediaUrl`.
+ */
+function allowedMediaHosts(): readonly string[] {
+  const configured = (Deno.env.get('DIDIT_MEDIA_HOSTS') ?? '')
+    .split(',').map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0);
+  return configured.length > 0 ? configured : DEFAULT_DIDIT_MEDIA_HOSTS;
+}
+
+/**
  * Fetch the portrait Didit stored, when it answered with a URL instead of bytes.
  *
  * ## Why this exists at all
@@ -338,15 +355,21 @@ const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
  *
  * This code previously refused to follow a URL out of a provider response, and
  * that instinct was right: it is server-side egress driven by a third party's
- * payload. It is admitted here under conditions that keep it from being a
- * general fetch primitive:
+ * payload, which is SSRF by construction unless it is fenced. It is admitted
+ * here under conditions that keep it from being a general fetch primitive:
  *
- *   - **https only.** No http, no `file:`, no other scheme.
+ *   - **The host must be on the allow-list** (`isAllowedMediaUrl`) — an exact
+ *     match against the measured provider media hosts, overridable by
+ *     `DIDIT_MEDIA_HOSTS`. This is the primary control; everything else is
+ *     defence in depth. IP literals, non-443 ports, embedded credentials,
+ *     `localhost`, `.local`/`.internal` names and every non-https scheme are
+ *     refused before the list is even consulted.
  *   - **The credential is never sent.** The URL is pre-signed and belongs to a
  *     media host, not to the API — attaching `x-api-key` would hand NPC's key
  *     to whatever that payload named.
  *   - **It must answer with an image**, under a size cap and a timeout.
- *   - **Redirects are not followed.** A 3xx is refused rather than chased.
+ *   - **Redirects are not followed.** A 3xx is refused rather than chased, so
+ *     an allow-listed host cannot bounce the request somewhere else.
  *   - **It cannot throw, and it never returns a partial image.** Anything
  *     unexpected is null, which is the same referral the missing-portrait path
  *     has always produced. Unknown is never passed.
@@ -356,7 +379,7 @@ const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
  * by-name sanitiser keep the field out of `outcome_detail` regardless.
  */
 export async function fetchRemoteImage(value: string | null): Promise<Uint8Array | null> {
-  if (typeof value !== 'string' || !/^https:\/\//i.test(value)) return null;
+  if (!isAllowedMediaUrl(value, allowedMediaHosts())) return null;
   try {
     const res = await fetch(value, {
       method: 'GET',

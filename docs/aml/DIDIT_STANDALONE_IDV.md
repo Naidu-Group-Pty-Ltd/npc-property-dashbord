@@ -103,10 +103,28 @@ chose, so `getStandaloneIdvProvider` **throws** when either is missing or out of
 range, the portal reads that as unavailable, and no biometric is collected.
 
 `DIDIT_WORKFLOW_ID` and `DIDIT_WEBHOOK_SECRET` are **not** required here. There
-is no workflow on this path, and although `save_api_request=true` now persists
-each request, these endpoints still answer synchronously and emit no webhook —
-the response is the result. Requiring either would refuse a correctly
-configured deployment. They remain required by the *hosted* adapter.
+is no workflow on this path, and the endpoints answer synchronously — **that
+response is the authoritative result**. Requiring either would refuse a
+correctly configured deployment. They remain required by the *hosted* adapter.
+
+### A persisted request DOES emit a webhook, and NPC ignores it
+
+`save_api_request=true` persists each call as an API-type session, and Didit
+emits `status.updated` for a persisted session. So `didit-webhook` receives
+events for Standalone checks, and it must do **nothing** with them.
+
+This architecture has exactly one authoritative result: the synchronous
+response `standaloneVerification.ts` already composed. Settling from a webhook
+would be a second authoritative path racing the first, able to overwrite an
+attempt that has already been decided — including one already settled and
+counted. There is deliberately no branch that could.
+
+What happens instead: the hosted lookup (`provider = 'didit'`) does not match a
+`didit_standalone` row, and rather than reporting the routine case as an
+alarming `unknown_session`, the receiver recognises it —
+`standalone_session_ignored`, acknowledged **202** so Didit stops retrying,
+`processed: false`, recorded against the check for visibility, and no decision
+fetched, no status written, no attempt consumed.
 
 Both thresholds are written onto every attempt (`outcome_detail.standalone
 .thresholds_applied`) so a reviewer months later can see the policy in force on

@@ -403,3 +403,71 @@ describe('customer-facing errors stay simple', () => {
     }
   });
 });
+
+/* ────────── a persisted STANDALONE session must never settle anything ────── */
+
+/**
+ * `save_api_request=true` persists each Standalone call as an API-type session,
+ * and Didit emits `status.updated` for those too — so this endpoint now
+ * receives events for checks it must not touch.
+ *
+ * The Standalone architecture has exactly ONE authoritative result: the
+ * synchronous response the call itself returned, composed by
+ * `standaloneVerification.ts`. A webhook settling those rows would be a second
+ * authoritative path racing the first, able to overwrite an attempt that has
+ * already been decided. There is deliberately no branch that could.
+ */
+describe('a persisted standalone session is acknowledged and ignored', () => {
+  const block = receiver.slice(
+    receiver.indexOf('if (!check) {'),
+    receiver.indexOf('await markEvent({ verification_check_id: check.id })'));
+
+  it('is recognised rather than reported as an alarming unknown session', () => {
+    expect(block).toContain("reason: 'standalone_session_ignored'");
+    expect(block).toContain("error: 'standalone_session_ignored'");
+    // Classified by the provider on the row, not by guessing from the payload.
+    expect(block).toContain('isStandaloneIdvProvider(standalone.provider)');
+  });
+
+  it('acknowledges with a 2xx, so Didit stops retrying it', () => {
+    const branch = block.slice(block.indexOf('if (standalone &&'));
+    expect(branch).toMatch(/return json\(\{[^}]*\}, 202\)/);
+    // Never a 5xx: that is what would have it retried for ever.
+    expect(branch).not.toContain('500');
+    expect(branch).not.toContain('503');
+  });
+
+  it('applies nothing — no decision fetch, no settle, no outcome', () => {
+    const branch = codeOnly(block.slice(block.indexOf('if (standalone &&')));
+    for (const forbidden of [
+      'applyDiditDecision', 'fetchDiditDecision', 'canonicalOutcome',
+      'attempt_consumed', 'status:', 'outcome_detail',
+    ]) {
+      expect(branch, forbidden).not.toContain(forbidden);
+    }
+    // `processed: false` — acknowledged, not acted on.
+    expect(branch).toContain('processed: false');
+  });
+
+  it('reaches that branch BEFORE any hosted settlement can run', () => {
+    // The standalone check sits inside `if (!check)`, i.e. only when no hosted
+    // row matched, and returns — so it can never fall through into the
+    // settlement path below.
+    const ignored = receiver.indexOf("reason: 'standalone_session_ignored'");
+    const settle = receiver.indexOf('applyDiditDecision({');
+    expect(ignored).toBeGreaterThan(-1);
+    expect(settle).toBeGreaterThan(-1);
+    expect(ignored).toBeLessThan(settle);
+  });
+
+  it('still finds hosted rows the way it always did', () => {
+    // The hosted lookup is unchanged: provider = 'didit', by stored session id.
+    expect(receiver).toContain("eq('provider', 'didit')");
+    expect(receiver).toContain("eq('provider_reference', sessionId)");
+  });
+
+  it('a session belonging to nobody is still refused as unknown', () => {
+    expect(block).toContain("error: 'unknown_session'");
+    expect(block).toContain("reason: 'unknown_session'");
+  });
+});
