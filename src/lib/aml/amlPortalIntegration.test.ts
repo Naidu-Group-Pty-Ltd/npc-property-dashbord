@@ -166,9 +166,31 @@ describe("client-safe readiness", () => {
 
 describe("actionable requests and responses", () => {
   it("only the closed action vocabulary projects to the client, with whitelisted routing fields", () => {
-    expect(portalFn).toContain("CLIENT_ACTION_CODES.includes(String(r.action_code");
-    const projection = portalFn.slice(portalFn.indexOf("action_target: {"), portalFn.indexOf("due_at: r.due_at"));
-    expect(projection).not.toMatch(/url|href|link/i);
+    // The vocabulary moved again — from this function into
+    // `_shared/aml/clientRequestContract.pure.ts` — so the writer
+    // (`aml-cases`), the reader (this function) and the router
+    // (`portalRequestRoute`) share one list instead of three. A code the
+    // writer accepted and the reader dropped reached the client as a request
+    // with no button, and nothing reported it.
+    //
+    // Same guarantee, asserted at the single source: closed code vocabulary,
+    // whitelisted routing fields, never a URL.
+    expect(portalFn).toContain("sanitiseActionCode(r.action_code)");
+    expect(portalFn).toContain("sanitiseActionTarget(r.action_target)");
+
+    const contract = readFileSync(
+      "supabase/functions/_shared/aml/clientRequestContract.pure.ts", "utf8");
+    // The target is built field by field from allow-list tests — there is no
+    // spread of the input, so an unrecognised key cannot survive.
+    expect(contract).toContain("export function sanitiseActionTarget");
+    expect(contract).not.toMatch(/\.\.\.\s*t\b/);
+    const sanitiser = contract.slice(
+      contract.indexOf("export function sanitiseActionTarget"),
+      contract.indexOf("export function sanitiseActionCode"));
+    expect(sanitiser).not.toMatch(/url|href|link/i);
+    for (const field of ["target_step", "requirement_id", "section_code"]) {
+      expect(sanitiser).toContain(field);
+    }
   });
   it("the migration constrains action codes and adds notification state", () => {
     expect(outboxMigration).toContain("'complete_identity_verification'");
@@ -420,13 +442,37 @@ describe("client portal request actions", () => {
     // resolver could be unit-tested as behaviour rather than as source text
     // (see portalRequestRoute.test.ts). The page must consume it, not
     // reimplement it.
+    //
+    // It has now moved once further, into the shared contract, so the SERVER
+    // shares it too. The router derives its table rather than restating it —
+    // asserted here, because a second literal list is exactly the drift this
+    // consolidation removes.
     expect(portalPage2).toContain("resolveRequestStep");
     const routeModule = readFileSync("src/lib/aml/portalRequestRoute.ts", "utf8");
     expect(routeModule).toContain("REQUEST_ACTIONS");
-    for (const code of ["complete_identity_verification", "upload_document",
-      "update_questionnaire_section", "review_consent", "provide_clarification", "review_and_submit"]) {
-      expect(routeModule).toContain(code);
-    }
+    expect(routeModule).toContain("clientRequestContract.pure");
+    expect(routeModule).toContain("CLIENT_ACTIONS");
+
+    const contract = readFileSync(
+      "supabase/functions/_shared/aml/clientRequestContract.pure.ts", "utf8");
+    const CODES = ["complete_identity_verification", "upload_document",
+      "update_questionnaire_section", "review_consent", "provide_clarification",
+      "review_and_submit"];
+    for (const code of CODES) expect(contract).toContain(code);
+
+    // …and the router must not restate the TABLE.
+    //
+    // `TARGET_STEPS` is excluded first: it is a different vocabulary that
+    // happens to share the spelling `upload_document` with an action code —
+    // one is where a request OPENS, the other is what it ASKS FOR, and
+    // conflating them is how a narrowing assertion starts failing on correct
+    // code. What remains may contain exactly one action literal:
+    // `complete_identity_verification` is genuinely special-cased, being the
+    // only action whose destination depends on provider readiness.
+    const withoutTargetSteps = routeModule.replace(
+      /export const TARGET_STEPS[\s\S]*?as const;/, "");
+    const restated = CODES.filter((c) => withoutTargetSteps.includes(`'${c}'`));
+    expect(restated).toEqual(["complete_identity_verification"]);
     const nav = portalPage2.slice(portalPage2.indexOf("onNavigate={(target"), portalPage2.indexOf("/>", portalPage2.indexOf("onNavigate={(target")));
     expect(nav).not.toMatch(/action_url|window\.location|href/);
   });

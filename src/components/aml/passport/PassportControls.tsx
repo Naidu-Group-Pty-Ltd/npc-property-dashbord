@@ -19,11 +19,10 @@ import type { PassportView } from "@/lib/aml/passport";
  *
  * Nothing here writes state directly. Issue calls `issue_attestation`,
  * suspend and revoke call `set_service_gate` — all MLRO-gated server-side,
- * all reason-bearing, all writing their own hash-chained case event. The
- * client-information request and partner sharing keep their existing homes
- * (the Requests section and the Compliance Sharing panel), because those
- * surfaces carry inputs this rail has no business duplicating; the rail
- * says where they are rather than pretending to be them.
+ * all reason-bearing, all writing their own hash-chained case event. Sharing
+ * and client requests are handed upward as callbacks: this rail presents the
+ * action, the surface that owns navigation decides where it goes, and the
+ * canonical operation still owns the write.
  *
  * Affordance is not authorisation: the buttons are shown to MLROs for
  * discoverability, and the server refuses anyone else regardless.
@@ -59,12 +58,20 @@ const RESTRICTED: RestrictedAction[] = [
 ];
 
 export function PassportControls({
-  caseId, view, isMlro, onChanged,
+  caseId, view, isMlro, onChanged, onShare, onRequestClientInformation,
 }: {
   caseId: string;
   view: PassportView;
   isMlro: boolean;
   onChanged: () => void;
+  /**
+   * Open Partner Access. Supplied by the surface that owns Passport page
+   * navigation, because this rail has no business knowing how pages are
+   * selected — and a DOM anchor is not navigation.
+   */
+  onShare: () => void;
+  /** Open the client-request composer over the canonical request operation. */
+  onRequestClientInformation: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, setPending] = useState<RestrictedAction | null>(null);
@@ -146,22 +153,26 @@ export function PassportControls({
                 {view.versions.length === 0 ? "Issue Passport" : "Issue new version"}
               </Button>
 
-              {/* Sharing and client requests keep their existing homes — this
-                  rail points at them rather than duplicating their forms. */}
-              <Button size="sm" variant="outline" asChild>
-                <a href="#compliance-sharing">
-                  <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Share Passport
-                </a>
+              {/* These used to be `<a href="#compliance-sharing">`. That anchor
+                  names an element in the CASE workspace, and the dedicated
+                  Passport page does not contain it — so on the surface these
+                  buttons actually live on, both did nothing at all. A control
+                  that silently no-ops is worse than one that is absent.
+
+                  The parent now supplies the behaviour: sharing opens the
+                  Partner Access page this Passport already has, and the client
+                  request opens the composer over the canonical request
+                  operation. Neither knows a DOM id. */}
+              <Button size="sm" variant="outline" onClick={onShare} disabled={busy !== null}>
+                <Share2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Share Passport
               </Button>
-              <Button size="sm" variant="outline" asChild>
-                <a href="#compliance-sharing">
-                  <FileQuestion className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Request client information
-                </a>
+              <Button size="sm" variant="outline" onClick={onRequestClientInformation} disabled={busy !== null}>
+                <FileQuestion className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Request client information
               </Button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Sharing, partner access and client requests are performed in the Compliance Sharing panel below, which
-              owns their inputs and their audit records.
+              Sharing opens Partner Access, where each partner's readiness and legal route are shown. A client
+              request is created through the same operation the case workspace uses, and appears in both places.
             </p>
           </div>
 

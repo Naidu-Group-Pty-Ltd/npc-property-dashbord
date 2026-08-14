@@ -46,6 +46,12 @@ import {
 } from "../_shared/aml/providers/index.ts";
 import { callInternalFunction } from "../_shared/internalCall.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+import {
+  CLIENT_ACTION_CODES as SHARED_CLIENT_ACTION_CODES,
+  QUESTIONNAIRE_SECTION_CODES,
+  sanitiseActionCode,
+  sanitiseActionTarget,
+} from "../_shared/aml/clientRequestContract.pure.ts";
 import { buildPassportView } from "../_shared/aml/passport/passportView.pure.ts";
 import { buildClientStampInput } from "../_shared/aml/passport/passportStamps.pure.ts";
 // The journey is the one canonical statement of where a client is, and four
@@ -131,7 +137,10 @@ const QUESTIONNAIRE_VERSION = '2';
 
 const BASE_SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
 const CONDITIONAL_SECTIONS = ['entity_details', 'related_parties'] as const;
-const ALL_SECTIONS: readonly string[] = [...BASE_SECTIONS, ...CONDITIONAL_SECTIONS];
+/** The full section vocabulary is the shared contract's — the same list a
+ *  request's `section_code` is validated against, so a section this function
+ *  will accept a write for is exactly a section a request may route to. */
+const ALL_SECTIONS: readonly string[] = QUESTIONNAIRE_SECTION_CODES;
 
 const ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership']);
 const MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership']);
@@ -276,11 +285,13 @@ const MAX_VERIFICATION_ATTEMPTS = 3;
 const STALE_PROCESSING_MS = 15 * 60 * 1000;
 
 /** Closed client-action vocabulary (Stage 12) — mirrored by the CHECK
- * constraint in 20260831000100. Anything else projects as null. */
-const CLIENT_ACTION_CODES = [
-  'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
-  'review_consent', 'provide_clarification', 'review_and_submit',
-];
+ * constraint in 20260831000100. Anything else projects as null.
+ *
+ * Read from the shared contract rather than restated: this list and the one
+ * `aml-cases` writes with must be the same list, or a code the writer accepts
+ * is a code the reader drops — which reaches the client as a request with no
+ * button rather than as an error anybody sees. */
+const CLIENT_ACTION_CODES: readonly string[] = SHARED_CLIENT_ACTION_CODES;
 
 /**
  * Attempts already CONSUMED by this party on the electronic path.
@@ -885,12 +896,8 @@ const __corsWrappedHandler = async (req: Request) => {
             // Closed action vocabulary only — anything uncatalogued projects
             // as null, and routing fields are the safe whitelisted subset.
             // Arbitrary URLs from request payloads never reach the client.
-            action_code: CLIENT_ACTION_CODES.includes(String(r.action_code ?? '')) ? r.action_code : null,
-            action_target: {
-              target_step: typeof r.action_target?.target_step === 'string' ? r.action_target.target_step.slice(0, 60) : null,
-              requirement_id: typeof r.action_target?.requirement_id === 'string' ? r.action_target.requirement_id : null,
-              section_code: typeof r.action_target?.section_code === 'string' ? r.action_target.section_code.slice(0, 60) : null,
-            },
+            action_code: sanitiseActionCode(r.action_code),
+            action_target: sanitiseActionTarget(r.action_target),
             due_at: r.due_at ?? null,
           })),
           recent_submissions: submissions ?? [],

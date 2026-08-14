@@ -36,6 +36,9 @@ import {
   projectPartyScreeningState,
 } from "../_shared/aml/partyScreening.pure.ts";
 
+import {
+  sanitiseActionCode, sanitiseActionTarget,
+} from "../_shared/aml/clientRequestContract.pure.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
@@ -1076,21 +1079,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!['additional_info','new_document','clarification','re_consent'].includes(r.kind)) {
           return jsonResponse({ error: 'Invalid kind' }, 400);
         }
-        // Closed action vocabulary. An unrecognised code is dropped rather than
-        // stored, so the portal can never be handed a route it does not know.
-        const CLIENT_ACTION_CODES = [
-          'complete_identity_verification', 'upload_document', 'update_questionnaire_section',
-          'review_consent', 'provide_clarification', 'review_and_submit',
-        ];
-        const actionCode = CLIENT_ACTION_CODES.includes(String(r.action_code ?? ''))
-          ? String(r.action_code) : null;
-        // Routing is whitelisted fields only — never a URL.
-        const actionTarget = {
-          target_step: typeof r.action_target?.target_step === 'string'
-            ? r.action_target.target_step.slice(0, 60) : null,
-          requirement_id: typeof r.action_target?.requirement_id === 'string'
-            ? r.action_target.requirement_id : null,
-        };
+        // Closed action vocabulary and closed routing, both from the shared
+        // contract. An unrecognised code is dropped rather than stored, so the
+        // portal can never be handed a route it does not know.
+        //
+        // `sanitiseActionTarget` also carries `section_code`, which this path
+        // used to discard: the portal routes questionnaire amendments by it,
+        // so a request created anywhere except Submission Review reached the
+        // client with nowhere to go. It is validated against the questionnaire
+        // vocabulary rather than merely copied.
+        const actionCode = sanitiseActionCode(r.action_code);
+        const actionTarget = sanitiseActionTarget(r.action_target);
 
         // Idempotency: one unresolved request per action on a case. A repeated
         // click (or a double-submit) returns the request that already exists
@@ -1330,11 +1329,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           const actionCode = op === 'request_submission_document' ? 'upload_document'
             : op === 'request_submission_clarification' ? 'provide_clarification'
             : 'review_and_submit';
-          const actionTarget: Record<string, unknown> = {};
-          if (body.requirement_id) actionTarget.requirement_id = String(body.requirement_id);
-          if (body.section_code) actionTarget.section_code = String(body.section_code);
-          actionTarget.target_step = op === 'request_submission_document' ? 'documents'
-            : op === 'request_submission_clarification' ? 'review' : 'review';
+          // Through the same validator as every other request. This path used
+          // to take `String(body.section_code)` verbatim — an unvalidated
+          // routing value is a routing value the caller chooses.
+          const actionTarget = sanitiseActionTarget({
+            requirement_id: body.requirement_id,
+            section_code: body.section_code,
+            target_step: op === 'request_submission_document' ? 'documents' : 'review',
+          });
           const { data: reqRow, error: reqErr } = await admin.schema('aml').from('client_requests').insert({
             case_id: sub.case_id,
             kind: op === 'request_submission_document' ? 'new_document'
