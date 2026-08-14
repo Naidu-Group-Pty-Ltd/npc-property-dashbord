@@ -3,7 +3,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportTemplate/cascadeMap';
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
-import type { BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
+import type { BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 import { applyOrganisationAndBrand } from './organisation';
 
 function flatten(obj: any): Record<string, any> {
@@ -66,6 +66,41 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
   legacyFallback: {
     label: 'Investment legacy PDF generator',
     reason: 'Used when no active WeasyPrint template matches the investment report context.',
+  },
+
+  /**
+   * Through `get-investment-reports` — the same edge function and therefore
+   * the same `reports` module permission check as every other read of this
+   * table — with the direct-table fallback `loadInvestmentReport` has.
+   */
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data: resp, error } = await invokeSecureFunction('get-investment-reports', {
+        listMode: true,
+        listOptions: {
+          select: 'id, property_address, created_at',
+          orderBy: 'created_at',
+          orderAsc: false,
+          limit,
+        },
+      } as any);
+      let rows: any[] | null = (resp as any)?.reports ?? null;
+      if ((error || !rows) && supabase) {
+        const r = await supabase
+          .from('investment_reports')
+          .select('id, property_address, created_at')
+          .order('created_at', { ascending: false })
+          .limit(limit);
+        rows = r.error ? null : (r.data as any[]);
+      }
+      return (rows ?? []).map((row) => ({
+        id: String(row.id),
+        label: (row.property_address as string) || `Report ${String(row.id).slice(0, 8)}`,
+        savedAt: (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {

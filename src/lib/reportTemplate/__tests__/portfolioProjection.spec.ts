@@ -334,3 +334,191 @@ describe('the adapter registry', () => {
     expect(getAdapter('portfolio')?.legacyFallback?.reason).toBeTruthy();
   });
 });
+
+describe('the legacy document, restated through its own normaliser', () => {
+  /*
+   * Everything here goes through `buildPortfolioReview` — the legacy engine's
+   * own normaliser — rather than being re-derived: the built narrative, the
+   * band vocabulary, a verdict's pairing of the ranking with the review's
+   * scoring, a scenario's impact split into a signed delta and a level. The
+   * document fixture extends ROW with the analysis blocks shaped as the
+   * generator writes them, and the review row is shaped from the live
+   * `portfolio_reviews` table.
+   *
+   * One shape rule bit while writing this: the verdict pairing matches the
+   * strategic context by full address, falling back to the street line — and
+   * the street key does not normalise abbreviations, so `Regent St` does not
+   * match `Regent Street`. That is the legacy's own behaviour, kept.
+   */
+  const DOC_ROW = {
+    ...ROW,
+    report_data: {
+      ...ROW.report_data,
+      analysis: {
+        ...ROW.report_data.analysis,
+        compositionAnalysis: {
+          propertyMixAssessment: 'Two apartments and two houses, weighted to houses by value.',
+          assetAllocation: 'Four-fifths of the value sits inside one postcode ring.',
+          recommendations: ['Diversify the next purchase by geography', 'Hold the current mix otherwise'],
+        },
+        marketConditions: {
+          marketCycleSummary: 'Mid-cycle.', clientPositioning: 'Well placed.',
+          lendingEnvironment: 'Tightening.', rbaOutlook: 'On hold.',
+        },
+        projections: {
+          years: 10, projectedPortfolioValue: 5560000, projectedEquity: 3470000,
+          projectedMonthlyCashflow: 2150,
+          plainEnglishSummary: 'If growth holds, the debt stays static while the value compounds.',
+          assumptions: ['5.2% capital growth', '3.1% rental growth', 'Rates flat'],
+        },
+        borrowingCapacityUtilisation: {
+          estimatedCapacity: 2900000, totalDebtDeployed: 2088000, availableCapacity: 812000,
+          utilisationPercentage: 72,
+          commentary: 'Roughly a quarter of assessed capacity remains available.',
+        },
+        propertyRankings: [{
+          address: '9/44 Regent Street, Newtown', rank: 1, performanceRating: 'Strong',
+          strengths: ['Low vacancy'], concerns: ['Strata costs'],
+          recommendation: 'Hold and refinance off the expiring fixed rate.',
+        }],
+        propertyStrategicContext: [{
+          address: '9/44 Regent Street, Newtown', strategicRole: 'Equity Builder',
+          individualOutlook: 'Inner-ring apartments lag houses but hold occupancy.',
+        }],
+      },
+    },
+  };
+  /** Shaped from the live `portfolio_reviews` table. */
+  const REVIEW = {
+    status: 'completed',
+    review_date: '2026-08-02T14:16:14.279Z',
+    next_review_due: '2027-08-02T14:16:21.98Z',
+    overall_score: 55, portfolio_health: 67, cash_flow_score: 30,
+    growth_potential: 80, data_completeness_score: 97,
+    risk_level: 'medium',
+    executive_summary: 'Portfolio review completed with an overall score of 55/100.',
+    key_findings: ['Portfolio consists of 4 properties worth $3,410,000', 'Current LVR: 61.2%'],
+    recommendations: [{
+      title: 'Improve Portfolio Cash Flow', category: 'Cash Flow', priority: 'high',
+      description: 'Portfolio is cash-flow negative.',
+      actionItems: ['Review expenses', 'Consider rent reviews'],
+    }],
+    property_scores: [{
+      address: '9/44 Regent Street, Newtown', classification: 'Star', overallScore: 88,
+      strengths: ['Low leverage'], concerns: ['Low rental yield'],
+    }],
+    scenarios: [{
+      name: '+1% Interest Rate', description: 'Impact of a 1% rate rise',
+      impact: { cashFlowChange: -1188.69, newNetCashflow: -2173.82 },
+    }],
+  };
+  const data: any = applyPortfolioProjection({}, DOC_ROW, REVIEW);
+  const pf = data.portfolio;
+
+  it('writes the overview from the totals, so it cannot disagree with them', () => {
+    expect(pf.overview).toBe(
+      '4 properties worth $3,410,000, carrying $2,088,000 of debt against $1,322,000 of equity, '
+      + 'and costs $1,183 a month to hold. Overall health is assessed as moderate.',
+    );
+    expect(data.summary.band).toBe('moderate');
+    expect(data.summary.bandLabel).toBe('Moderate');
+  });
+
+  it('publishes the composition as the legacy composes it', () => {
+    expect(pf.composition.paragraphs).toHaveLength(2);
+    expect(pf.composition.groups).toEqual([{
+      label: 'What we recommend',
+      items: ['Diversify the next purchase by geography', 'Hold the current mix otherwise'],
+    }]);
+  });
+
+  it('pairs the ranking with the review score and context, by address', () => {
+    expect(pf.verdicts.rows[0]).toEqual({
+      address: '9/44 Regent Street, Newtown',
+      rating: 'Strong',
+      scoreLabel: '88',
+      recommendation: 'Hold and refinance off the expiring fixed rate.',
+      strategicRole: 'Equity Builder',
+      outlook: 'Inner-ring apartments lag houses but hold occupancy.',
+      strengths: ['Low vacancy'],
+      concerns: ['Strata costs'],
+      reviewClassification: 'Star',
+    });
+    expect(pf.verdicts.rowCount).toBe(1);
+  });
+
+  it('formats the forward-looking figures through the engine', () => {
+    expect(pf.projection.yearsLabel).toBe('10 years');
+    expect(pf.projection.valueLabel).toBe('$5,560,000');
+    expect(pf.projection.cashflowLabel).toBe('$2,150/mo');
+    expect(pf.projection.assumptions).toHaveLength(3);
+    expect(pf.capacity.utilisationLabel).toBe('72.0%');
+    expect(pf.capacity.estimatedLabel).toBe('$2,900,000');
+  });
+
+  it('splits a scenario impact into a signed delta and a level', () => {
+    // Flattening `{ cashFlowChange, newNetCashflow }` to one number plots a
+    // delta against a level; the legacy keeps both and so does this.
+    expect(pf.scenarios.rows[0]).toEqual({
+      name: '+1% Interest Rate',
+      description: 'Impact of a 1% rate rise',
+      changeLabel: '-$1,189/mo',
+      resultLabel: '-$2,174/mo',
+    });
+  });
+
+  it('carries the review record with its scores labelled', () => {
+    expect(pf.review.statusLabel).toBe('Completed');
+    expect(pf.review.riskLevel).toBe('Medium');
+    expect(pf.review.scores.map((s: any) => [s.label, s.scoreLabel])).toEqual([
+      ['Overall', '55'], ['Portfolio health', '67'], ['Cash flow', '30'],
+      ['Growth potential', '80'], ['Data completeness', '97'],
+    ]);
+    expect(pf.review.findings).toHaveLength(2);
+  });
+
+  it('merges the review recommendations into the action plan, attributed', () => {
+    // Under `actionPlan`, not `actions` — the voice template binds
+    // `portfolio.actions` as an array, and an object would break it. The
+    // analysis's own priority actions sort first at equal priority (the
+    // legacy's stable order); the review's entries keep their detail and
+    // steps, and say where they came from.
+    expect(pf.actionPlan.rows[0].sourceLabel).toBe('The analysis');
+    expect(pf.actionPlan.rows[0].title).toBe('Refinance the Newtown facility');
+    const fromReview = pf.actionPlan.rows.find((r: any) => r.sourceLabel === 'The review');
+    expect(fromReview).toEqual({
+      title: 'Improve Portfolio Cash Flow',
+      detail: 'Portfolio is cash-flow negative.',
+      priorityLabel: 'Priority',
+      category: 'Cash Flow',
+      sourceLabel: 'The review',
+      steps: ['Review expenses', 'Consider rent reviews'],
+    });
+  });
+
+  it('cascades without a review: analysis sections stay, review ones go dark', () => {
+    // The join is the caller's, exactly as `render-portfolio-review-pdf`
+    // performs it, and `includeReview: false` is a real render mode.
+    const solo: any = applyPortfolioProjection({}, DOC_ROW);
+    expect(solo.portfolio.composition).toBeTruthy();
+    expect(solo.portfolio.projection).toBeTruthy();
+    expect(solo.portfolio.verdicts.rows[0].rating).toBe('Strong');
+    expect(solo.portfolio.verdicts.rows[0].scoreLabel).toBeUndefined();
+    expect(solo.portfolio.verdicts.rows[0].reviewClassification).toBeUndefined();
+    expect(solo.portfolio.review).toBeUndefined();
+    expect(solo.portfolio.scenarios).toBeUndefined();
+  });
+
+  it('publishes none of it for a row the legacy engine refuses', () => {
+    // `buildPortfolioReview` throws on a report with no holdings — a
+    // portfolio review of no properties is a different document — so the
+    // document namespaces stay absent rather than shells.
+    const gated: any = applyPortfolioProjection({}, {
+      id: 'x', client_name: 'X',
+      report_data: { portfolioMetrics: {}, propertyAnalyses: [], analysis: {} },
+    });
+    for (const key of ['overview', 'composition', 'verdicts', 'projection', 'capacity', 'scenarios', 'review', 'actionPlan']) {
+      expect((gated.portfolio ?? {})[key], key).toBeUndefined();
+    }
+  });
+});

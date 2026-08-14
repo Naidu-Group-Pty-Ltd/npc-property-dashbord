@@ -10,20 +10,30 @@
  * never filled in. Rendering a real historical report answers that, and it is
  * the difference between "this looks nice" and "this works for my files".
  *
+ * ## Every production format, through its own adapter
+ *
+ * This picker was hard-wired to `investment_reports` — one hook, one shim —
+ * for as long as the adapter interface had no way to list. So a Borrowing
+ * Capacity template's card said "production ready" while its preview could
+ * only ever show sample data, for all nine formats but one. The adapter is
+ * now the whole surface: `listRecentReports` fills the picker from the
+ * format's own table, and `buildBindingContext` loads the chosen report —
+ * the identical call the production route makes, so what the preview shows
+ * is what a render would bind.
+ *
  * ## Why sample data stays the default
  *
- * A real report populates only the namespaces its adapter emits — `property.*`,
- * `financials.*`, `scores.*`, `demographics.*`, `economic.*`, `location.*` and
- * `sections.*`. The catalogue's templates also bind `market.*`, `client.*`,
- * `risks.*` and others that no adapter produces today, so a real-data preview
- * is legitimately patchy. Opening on it would make every template look broken.
- * So: sample by default, real on request, and the gap reported rather than
- * hidden.
+ * A real report populates only the namespaces its adapter emits. The
+ * catalogue's templates also bind paths that a sparse row legitimately leaves
+ * empty — 742 of 775 clients hold nothing financial — so a real-data preview
+ * is legitimately patchy. Opening on it would make every template look
+ * broken. So: sample by default, real on request, and the gap reported rather
+ * than hidden.
  *
- * Nothing here widens access. Reports load through `investmentReportAdapter`,
- * which goes via the `get-investment-reports` edge function and therefore
- * through the same `reports` module permission check as everywhere else. A user
- * without `reports:view` simply sees no reports to choose from.
+ * Nothing here widens access. Every adapter loads through the same table
+ * reads (or, for investment, the same edge function) as the production render
+ * path, under the caller's own session. A user who cannot read a table simply
+ * sees no reports to choose from.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -31,14 +41,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Loader2, TriangleAlert } from 'lucide-react';
-import { useSecureInvestmentReports } from '@/hooks/useSecureInvestmentReports';
-import { buildTemplateBindingContext } from '@/lib/reportTemplate/buildBindingContext';
-import { supportsProduction } from '@/lib/reportTemplate/adapters';
+import { getAdapter, type ReportListing } from '@/lib/reportTemplate/adapters';
 import { SAMPLE_REPORT_DATA } from '@/lib/templateLibrary/sampleReportData';
 
 export const SAMPLE_SOURCE = 'sample';
-
-interface ReportOption { id: string; label: string }
 
 interface Props {
   /** The template's report type, which decides whether an adapter exists. */
@@ -61,36 +67,40 @@ function coverage(data: Record<string, unknown>, bindings: string[]): number {
   return filled / bindings.length;
 }
 
+/** "12 Aug 2026", or nothing a bad timestamp could turn into "Invalid Date". */
+function shortDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 export function TemplateDataSource({ reportType, requiredBindings, onData }: Props) {
-  const { listReports } = useSecureInvestmentReports();
   const [source, setSource] = useState<string>(SAMPLE_SOURCE);
-  const [reports, setReports] = useState<ReportOption[] | null>(null);
+  const [reports, setReports] = useState<ReportListing[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [realCoverage, setRealCoverage] = useState<number | null>(null);
 
-  const adapterExists = supportsProduction(reportType);
+  const adapter = getAdapter(reportType);
+  const adapterExists = !!adapter?.supportsProduction;
 
-  // Load the picker's options once, and only for templates that could use them.
+  // Load the picker's options once, and only for templates that could use
+  // them. An adapter without a lister degrades to sample-only rather than
+  // hiding the control's honesty about what the preview shows.
   useEffect(() => {
     if (!adapterExists || reports !== null) return;
     let cancelled = false;
     (async () => {
       try {
-        const rows = await listReports({ limit: 20, orderBy: 'created_at', orderAsc: false });
-        if (cancelled) return;
-        setReports(
-          (rows ?? []).map((r) => ({
-            id: r.id,
-            label: r.property_address || `Report ${r.id.slice(0, 8)}`,
-          })),
-        );
+        const rows = await adapter?.listRecentReports?.({ limit: 20 });
+        if (!cancelled) setReports(rows ?? []);
       } catch {
         if (!cancelled) setReports([]);
       }
     })();
     return () => { cancelled = true; };
-  }, [adapterExists, reports, listReports]);
+  }, [adapterExists, reports, adapter]);
 
   const choose = useCallback(async (next: string) => {
     setSource(next);
@@ -104,7 +114,9 @@ export function TemplateDataSource({ reportType, requiredBindings, onData }: Pro
 
     setLoading(true);
     try {
-      const ctx = await buildTemplateBindingContext(next);
+      // The identical call the production route makes for this format, so the
+      // preview binds what a render would bind.
+      const ctx = await adapter?.buildBindingContext({ reportId: next });
       if (!ctx?.data) {
         // Say which of the two it is: no permission, or nothing stored.
         setProblem('That report could not be loaded, or holds no data this template can use.');
@@ -122,7 +134,7 @@ export function TemplateDataSource({ reportType, requiredBindings, onData }: Pro
     } finally {
       setLoading(false);
     }
-  }, [onData, reports, requiredBindings]);
+  }, [adapter, onData, reports, requiredBindings]);
 
   if (!adapterExists) return null;
 
@@ -136,11 +148,20 @@ export function TemplateDataSource({ reportType, requiredBindings, onData }: Pro
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={SAMPLE_SOURCE}>Sample data</SelectItem>
-          {(reports ?? []).map((r) => (
-            <SelectItem key={r.id} value={r.id} className="max-w-[22rem]">
-              <span className="truncate">{r.label}</span>
-            </SelectItem>
-          ))}
+          {(reports ?? []).map((r) => {
+            const when = shortDate(r.savedAt);
+            return (
+              <SelectItem key={r.id} value={r.id} className="max-w-[22rem]">
+                <span className="truncate">
+                  {r.label}
+                  {/* The date is what tells two assessments of one client
+                      apart, so it rides every row rather than only ambiguous
+                      ones. */}
+                  {when && <span className="text-muted-foreground"> · {when}</span>}
+                </span>
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
 

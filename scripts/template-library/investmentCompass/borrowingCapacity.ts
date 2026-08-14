@@ -24,16 +24,22 @@
  *  | Income analysis                  | Income analysis                       |
  *  | Expenses & liabilities           | Commitments                           |
  *  | Capacity breakdown, warnings     | Serviceability, recommendations       |
- *  | How this was calculated          | **omitted** — `explanation` is null   |
- *  | Audit trail                      | **omitted** — see below               |
+ *  | Executive summary                | The assessment (narrative)            |
+ *  | Assessment ledger                | How the assessment reads              |
+ *  | Assumptions                      | What was assumed                      |
+ *  | How this was calculated          | conditional — column null on old rows |
+ *  | Audit trail                      | conditional — column null on old rows |
+ *  | Scenarios                        | conditional — no stored producer      |
  *  | Closing                          | Important information                 |
  *
- * Two pages are deliberately absent. `explanation` is null on all 143 stored
- * assessments, so a "How this was calculated" page would render empty on every
- * report. The audit trail is a raw-versus-assessed ledger whose row count is
- * unbounded, and this page model is fixed-position with no reflow — a
- * twelve-entry trail would run off the paper. Both belong in the format's own
- * generator, which can paginate, rather than in a fixed template pretending to.
+ * `explanation` and `audit_trail` are columns the calculator now writes, null
+ * on every row stored before its keep-update landed — so those pages render
+ * nothing today and light up per row as new runs land, with no template
+ * change. Scenario presets never reach a column at all (they only travel in a
+ * render request), so that page stays dark by construction. The audit table is
+ * capped at the projection's fourteen rows with a whole-sentence omission note
+ * beyond that, which is what makes a fixed-position page safe against an
+ * unbounded trail.
  *
  * ## Bindings
  *
@@ -61,12 +67,14 @@ import {
   furniture,
   kpiCapacity,
   kpis,
+  oneOf,
   page,
   prose,
   recommendation,
   rule,
   sectionHeading,
   table,
+  textHeight,
   verdict,
   withFurniture,
   type KpiItem,
@@ -108,6 +116,18 @@ const LENGTHS = {
   recommendation: 70,
   /** 63 stored warnings, 35-59. */
   warning: 59,
+  /**
+   * The legacy engine's executive summary, measured by running all 143
+   * assessments through `buildSnapshot` itself: p50 358, p90 473, max 606.
+   */
+  narrative: 650,
+  /**
+   * Sized from the producer rather than production (the column is null on all
+   * 143 stored rows): `generateExplanationServer`'s longest format string is
+   * the expenses step with the property-cashflow rider, ~120 characters with
+   * production-sized figures. 160 covers it with a figure's worth of slack.
+   */
+  explanationStep: 160,
 } as const;
 
 const BORROWING_CAPACITY_FORMAT: ReportFormat = {
@@ -220,8 +240,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         sectionHeading({ eyebrow: 'In this snapshot', heading: 'Contents', numeral: nextNumeral() }),
         contents([
           'The position and the figures behind it',
+          'The assessment in brief',
           'Income analysis',
           'Commitments',
+          'How the assessment reads',
+          'What was assumed',
           'Serviceability and recommendations',
           'Important information',
         ]),
@@ -256,6 +279,37 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ], contentTop()),
   ]), FOOTER));
 
+  // ── 02b The assessment in brief ──────────────────────────────────────────
+  //
+  // The legacy document opens with a written summary, and the snapshot
+  // projection restates it verbatim from `buildSnapshot` — the paragraph
+  // carries its own figures through `formatMeasure`, so nothing here rebinds
+  // them. Utilisation exists on 66 of 143 assessments; its callout carries a
+  // whole-sentence verdict so nothing strands when it is absent.
+  pages.push({
+    ...withFurniture(page('The assessment', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Summary'), 'The assessment'),
+      ...flow([
+        sectionHeading({
+          eyebrow: 'In brief',
+          heading: 'How this assessment reads',
+          numeral: nextNumeral(),
+        }),
+        prose('{{summary.narrative}}', textHeight(LENGTHS.narrative)),
+        {
+          ...callout(
+            'Proposed loan against capacity',
+            '{{utilisation.verdict}} The proposed {{utilisation.proposedLoan | currency}} '
+            + 'is {{utilisation.shareLabel}} of the assessed '
+            + '{{utilisation.capacity | currency}}.',
+          ),
+          conditional: 'utilisation && utilisation.verdict',
+        },
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'summary && summary.narrative',
+  });
+
   // ── 03 Income ────────────────────────────────────────────────────────────
   pages.push(withFurniture(page('Income analysis', [
     ...furniture(DOCUMENT_LABEL, nextPart('Income'), 'Income analysis'),
@@ -267,18 +321,40 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         standfirst: 'Lenders discount income they consider less certain. The shaded column '
           + 'is what the assessment actually used.',
       }),
-      table({
-        headers: ['Component', 'Gross', 'Shading', 'Assessed'],
-        rows: [
-          ['{{income.items.0.component}}', '{{income.items.0.grossAmount | currency}}', '{{income.items.0.shadingRate | percent:0}}', '{{income.items.0.shadedAmount | currency}}'],
-          ['{{income.items.1.component}}', '{{income.items.1.grossAmount | currency}}', '{{income.items.1.shadingRate | percent:0}}', '{{income.items.1.shadedAmount | currency}}'],
-          ['{{income.items.2.component}}', '{{income.items.2.grossAmount | currency}}', '{{income.items.2.shadingRate | percent:0}}', '{{income.items.2.shadedAmount | currency}}'],
-          ['{{income.items.3.component}}', '{{income.items.3.grossAmount | currency}}', '{{income.items.3.shadingRate | percent:0}}', '{{income.items.3.shadedAmount | currency}}'],
-          ['Total assessable', '{{income.gross | currency}}', '', '{{income.shaded | currency}}'],
-        ],
-        columnWidths: [0.43, 0.19, 0.15, 0.23],
-        totals: [4],
-      }),
+      /*
+       * `income.rows` is the legacy engine's own composition (label, gross,
+       * assessed-at rate, shaded). Three depths under mutually exclusive
+       * conditionals: production holds one to seven components, clustered at
+       * two (66 of 143) — one seven-row table would rule off five empty rows
+       * beneath the commonest report, and the four-row table this replaces
+       * silently dropped rows five to seven of the deep ones. `shadingLabel`
+       * is the retention rate the engine applied ("100%" means unshaded), so
+       * the column head says what the number is.
+       */
+      (() => {
+        const incomeTable = (n: number) => table({
+          headers: ['Component', 'Gross', 'Assessed at', 'Assessed'],
+          rows: [
+            ...Array.from({ length: n }, (_, i) => [
+              `{{income.rows.${i}.label}}`,
+              `{{income.rows.${i}.gross | currency}}`,
+              `{{income.rows.${i}.shadingLabel}}`,
+              `{{income.rows.${i}.shaded | currency}}`,
+            ]),
+            ['Total assessable', '{{income.gross | currency}}', '', '{{income.shaded | currency}}'],
+          ],
+          columnWidths: [0.43, 0.19, 0.15, 0.23],
+          totals: [n],
+          // A component label runs to 65 characters in production, which
+          // wraps to two lines in this column.
+          wraps: { chars: 65, columnWidth: c.contentWidth * 0.43 },
+        });
+        return oneOf(
+          { when: 'income && income.rows && income.rows.length <= 2', item: incomeTable(2) },
+          { when: 'income && income.rows && income.rows.length > 2 && income.rows.length <= 4', item: incomeTable(4) },
+          { when: 'income && income.rows && income.rows.length > 4', item: incomeTable(7) },
+        );
+      })(),
       callout(
         'Shading applied',
         '{{income.shadingApplied | currency}} of gross income was discounted before '
@@ -305,19 +381,123 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ],
         columnWidths: [0.5, 0.25, 0.25],
       }),
-      table({
-        headers: ['Liability', 'Balance', 'Limit', 'Monthly'],
-        rows: [
-          ['{{liabilities.items.0.type}}', '{{liabilities.items.0.balance | currency}}', '{{liabilities.items.0.limit | currency}}', '{{liabilities.items.0.monthlyServicing | currency}}'],
-          ['{{liabilities.items.1.type}}', '{{liabilities.items.1.balance | currency}}', '{{liabilities.items.1.limit | currency}}', '{{liabilities.items.1.monthlyServicing | currency}}'],
-          ['{{liabilities.items.2.type}}', '{{liabilities.items.2.balance | currency}}', '{{liabilities.items.2.limit | currency}}', '{{liabilities.items.2.monthlyServicing | currency}}'],
-          ['Total servicing', '', '', '{{liabilities.monthly | currency}}'],
-        ],
-        columnWidths: [0.37, 0.21, 0.21, 0.21],
-        totals: [3],
-      }),
+      /*
+       * `liabilities.rows` carries the legacy engine's display label — kind
+       * plus provider, composed in the projection so a template cannot strand
+       * the separator. Three depths: production holds none to six, clustered
+       * at one to three (91 of 143) — the three-row table this replaces
+       * silently dropped half of a deep report's commitments, and one six-row
+       * table would rule off five empty rows beside a single credit card. A
+       * report with no liabilities at all (26 of 143) draws no table, which
+       * is the truthful rendering of no commitments.
+       */
+      (() => {
+        const liabilityTable = (n: number) => table({
+          headers: ['Liability', 'Balance', 'Limit', 'Monthly'],
+          rows: [
+            ...Array.from({ length: n }, (_, i) => [
+              `{{liabilities.rows.${i}.label}}`,
+              `{{liabilities.rows.${i}.balance | currency}}`,
+              `{{liabilities.rows.${i}.limit | currency}}`,
+              `{{liabilities.rows.${i}.servicing | currency}}`,
+            ]),
+            ['Total servicing', '', '', '{{liabilities.monthly | currency}}'],
+          ],
+          columnWidths: [0.37, 0.21, 0.21, 0.21],
+          totals: [n],
+          wraps: { chars: 48, columnWidth: c.contentWidth * 0.37 },
+        });
+        return oneOf(
+          { when: 'liabilities && liabilities.rows && liabilities.rows.length <= 1', item: liabilityTable(1) },
+          { when: 'liabilities && liabilities.rows && liabilities.rows.length > 1 && liabilities.rows.length <= 3', item: liabilityTable(3) },
+          { when: 'liabilities && liabilities.rows && liabilities.rows.length > 3', item: liabilityTable(6) },
+        );
+      })(),
     ], contentTop()),
   ]), FOOTER));
+
+  // ── 04b How the assessment reads ─────────────────────────────────────────
+  //
+  // The legacy document's ledger, restated verbatim by the projection from
+  // `buildSnapshot`. `amountLabel` is the formatted measure with its unit —
+  // "$302,640 pa" beside "-$2,200/mo" is the point of a ledger, and a bare
+  // `| currency` filter would erase the distinction. Eight rows by
+  // construction: the engine builds exactly eight.
+  pages.push({
+    ...withFurniture(page('How the assessment reads', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Ledger'), 'How the assessment reads'),
+      ...flow([
+        sectionHeading({
+          eyebrow: 'The ledger',
+          heading: 'From income to capacity',
+          numeral: nextNumeral(),
+        }),
+        table({
+          headers: ['Line', 'Amount'],
+          rows: Array.from({ length: 8 }, (_, i) => [
+            `{{ledger.rows.${i}.label}}`,
+            `{{ledger.rows.${i}.amountLabel}}`,
+          ]),
+          columnWidths: [0.62, 0.38],
+          totals: [7],
+        }),
+        callout(
+          'Reading the ledger',
+          'Income lines are annual, outgoings are monthly, and the deductions are '
+          + 'shown with their sign. The final line is what the assessment concluded.',
+        ),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'ledger && ledger.rows',
+  });
+
+  // ── 04c What was assumed ─────────────────────────────────────────────────
+  //
+  // The legacy document prints every assumption the run recorded — five to 17
+  // in production, clustered at eleven (88 of 143) — so the table is drawn at
+  // three depths, and the split points follow the cluster: a nine-row split
+  // here once put the commonest report in the 17-row table with six ruled
+  // empty rows under it.
+  //
+  // No `wraps` here, deliberately. Measured over all 143 production runs, the
+  // labels top out at 26 characters and every value but one fits a line in the
+  // 0.55 column — the exception is the 59-character existing-loan stress-rate
+  // sentence, and no report carries more than one value over 40. Charging every
+  // row the wrapped height (the `wraps` contract) put the 17-row variant 54 to
+  // 120pt past the footer; the honest budget is flat rows plus two spare lines
+  // for the one that wraps.
+  {
+    const wrapSlack = 2 * Math.round(c.scale.cell * 1.6);
+    const assumptionRows = (n: number) => {
+      const t = table({
+        headers: ['Assumption', 'Value'],
+        rows: Array.from({ length: n }, (_, i) => [
+          `{{assumptions.rows.${i}.label}}`,
+          `{{assumptions.rows.${i}.value}}`,
+        ]),
+        columnWidths: [0.45, 0.55],
+      });
+      return { height: t.height + wrapSlack, block: t.block };
+    };
+    pages.push({
+      ...withFurniture(page('What was assumed', [
+        ...furniture(DOCUMENT_LABEL, nextPart('Assumptions'), 'What was assumed'),
+        ...flow([
+          sectionHeading({
+            eyebrow: 'The inputs',
+            heading: 'What this assessment assumed',
+            numeral: nextNumeral(),
+          }),
+          oneOf(
+            { when: 'assumptions && assumptions.rows && assumptions.rows.length <= 7', item: assumptionRows(7) },
+            { when: 'assumptions && assumptions.rows && assumptions.rows.length > 7 && assumptions.rows.length <= 11', item: assumptionRows(11) },
+            { when: 'assumptions && assumptions.rows && assumptions.rows.length > 11', item: assumptionRows(17) },
+          ),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: 'assumptions && assumptions.rows',
+    });
+  }
 
   // ── 05 Serviceability ────────────────────────────────────────────────────
   pages.push(withFurniture(page('Serviceability', [
@@ -331,14 +511,28 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       // Every definition here is a figure or a lender name — one line, which is
       // the default reserve. Measured, not assumed: `assumptions
       // .selectedLenderName` is at most 30 characters.
+      /*
+       * No 'Lender' row: `loan.lender` is set on 26 of 143, and a definition
+       * list prints its term whether or not the definition resolves — a
+       * stranded "Lender" label on 82% of reports. The lender moved to the
+       * conditional callout below. Debt-to-income took its place; the ratio is
+       * on all 143 rows and `dtiLabel` is the legacy engine's own formatting.
+       */
       definitions('Assessment basis', [
-        { term: 'Lender', definition: '{{loan.lender}}' },
+        { term: 'Debt to income', definition: '{{capacity.dtiLabel}}' },
         { term: 'Interest rate used', definition: '{{loan.interestRate | percent}}' },
         { term: 'Serviceability buffer', definition: '{{loan.bufferRate | percent}}' },
         { term: 'Assessment rate', definition: '{{loan.assessmentRate | percent}}' },
         { term: 'Loan term', definition: '{{loan.termYears}} years' },
         { term: 'Expense method', definition: '{{expenses.methodLabel}}' },
       ]),
+      {
+        ...callout(
+          'Lender policy',
+          'This assessment was run under {{report.lenderName}} policy settings.',
+        ),
+        conditional: 'report && report.lenderName',
+      },
       // 3 of 143 assessments carry LMI. The page must not print an empty panel
       // for the other 140, so the whole block is conditional on the projection
       // having emitted an LMI namespace at all.
@@ -351,13 +545,152 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         conditional: 'lmi && lmi.amount',
       },
       rule(),
+      // 146 characters of fixed copy — two lines at every family's measure, so
+      // the height is taken from the text rather than guessed generous. The
+      // guessed 76-92pt put pb-03 seven points past the footer.
       prose(
         'Capacity is assessed at a rate above the one you would pay, so the loan stays '
         + 'serviceable if rates move. It is not a pre-approval and not an offer.',
-        spacious ? 92 : 76,
+        textHeight(150, { extra: 10 }),
       ),
     ], contentTop()),
   ]), FOOTER));
+
+  // ── 05b How the engine reached this ──────────────────────────────────────
+  //
+  // The `explanation` column is null on every stored row (the calculator's
+  // keep-update post-dates them all), so these pages are sized from the
+  // producer: `generateExplanationServer` emits eight unconditional steps,
+  // plus one for a non-default lender policy and one for LMI — eight to ten,
+  // never fewer. Ten three-line definitions do not fit one page, so the legacy
+  // section becomes two: steps one to five here, the rest on a continuation
+  // page conditional on there being a rest. The headline goes in an 'In short'
+  // callout exactly as the legacy render sets it — at heading size its ~80
+  // characters would wrap to three display lines on the tighter families.
+  //
+  // The continuation page draws its list three times at one position under
+  // mutually exclusive step-count conditionals (8, 9, 10), the assumptions
+  // table's own pattern — a definition row whose bindings resolve empty still
+  // prints its ruled band, so a fixed ten-row list would rule off two empty
+  // rows on the commonest report.
+  pages.push({
+    ...withFurniture(page('How this was calculated', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Method'), 'How this was calculated'),
+      ...flow([
+        sectionHeading({
+          eyebrow: 'The method',
+          heading: 'How the engine reached this figure',
+          numeral: nextNumeral(),
+        }),
+        {
+          ...callout('In short', '{{explanation.headline}}'),
+          conditional: 'explanation && explanation.headline',
+        },
+        definitions('Steps', Array.from({ length: 5 }, (_, i) => ({
+          term: `{{explanation.steps.${i}.title}}`,
+          definition: `{{explanation.steps.${i}.narrative}}`,
+        })), LENGTHS.explanationStep),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'explanation && explanation.steps',
+  });
+  {
+    const stepRows = (from: number, to: number) => definitions(
+      'Steps, continued',
+      Array.from({ length: to - from }, (_, i) => ({
+        term: `{{explanation.steps.${from + i}.title}}`,
+        definition: `{{explanation.steps.${from + i}.narrative}}`,
+      })),
+      LENGTHS.explanationStep,
+    );
+    pages.push({
+      ...withFurniture(page('How this was calculated, continued', [
+        ...furniture(DOCUMENT_LABEL, nextPart('Method'), 'How this was calculated'),
+        ...flow([
+          sectionHeading({
+            eyebrow: 'The method, continued',
+            heading: 'The remaining steps',
+            numeral: nextNumeral(),
+          }),
+          oneOf(
+            { when: 'explanation && explanation.steps && explanation.steps.length <= 8', item: stepRows(5, 8) },
+            { when: 'explanation && explanation.steps && explanation.steps.length == 9', item: stepRows(5, 9) },
+            { when: 'explanation && explanation.steps && explanation.steps.length > 9', item: stepRows(5, 10) },
+          ),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: 'explanation && explanation.steps && explanation.steps.length > 5',
+    });
+  }
+
+  // ── 05c The audit trail ──────────────────────────────────────────────────
+  // The `audit_trail` column is likewise null on every stored row and cascades
+  // per run. The builder writes one entry per adjustment with no ceiling, so
+  // the projection caps at fourteen — the row count that fits the tightest
+  // family with the omission callout beneath (twenty ran the spacious -03
+  // variants up to 61pt past the footer) — and says what it left out in a
+  // whole sentence rather than omitting silently. The item cell arrives
+  // composed as the legacy table sets it: category caption, em-rule, label.
+  pages.push({
+    ...withFurniture(page('The audit trail', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Audit'), 'The audit trail'),
+      ...flow([
+        sectionHeading({
+          eyebrow: 'Raw against assessed',
+          heading: 'What the engine adjusted',
+          numeral: nextNumeral(),
+        }),
+        (() => {
+          const auditTable = (n: number) => table({
+            headers: ['Item', 'Raw', 'Assessed', 'Change'],
+            rows: Array.from({ length: n }, (_, i) => [
+              `{{audit.rows.${i}.label}}`,
+              `{{audit.rows.${i}.rawLabel}}`,
+              `{{audit.rows.${i}.assessedLabel}}`,
+              `{{audit.rows.${i}.deltaLabel}}`,
+            ]),
+            columnWidths: [0.4, 0.2, 0.2, 0.2],
+          });
+          return oneOf(
+            { when: 'audit && audit.rows && audit.rows.length <= 7', item: auditTable(7) },
+            { when: 'audit && audit.rows && audit.rows.length > 7', item: auditTable(14) },
+          );
+        })(),
+        {
+          ...callout('Further entries', '{{audit.omissionNote}}'),
+          conditional: 'audit && audit.omissionNote',
+        },
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'audit && audit.rows',
+  });
+
+  // ── 05d Scenarios ────────────────────────────────────────────────────────
+  // Saved what-if presets, when the export came from the scenario modeller.
+  pages.push({
+    ...withFurniture(page('Scenarios', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Scenarios'), 'Scenarios'),
+      ...flow([
+        sectionHeading({
+          eyebrow: 'What if',
+          heading: 'Scenarios modelled beside this assessment',
+          numeral: nextNumeral(),
+        }),
+        table({
+          headers: ['Scenario', 'Capacity', 'Surplus', 'Band'],
+          rows: Array.from({ length: 6 }, (_, i) => [
+            `{{scenarios.rows.${i}.name}}`,
+            `{{scenarios.rows.${i}.capacity | currency}}`,
+            `{{scenarios.rows.${i}.surplus | currency}}`,
+            `{{scenarios.rows.${i}.bandLabel}}`,
+          ]),
+          columnWidths: [0.34, 0.22, 0.22, 0.22],
+          wraps: { chars: 46, columnWidth: c.contentWidth * 0.34 },
+        }),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'scenarios && scenarios.rows',
+  });
 
   // ── 06 Recommendations ───────────────────────────────────────────────────
   pages.push(withFurniture(page('Recommendations', [

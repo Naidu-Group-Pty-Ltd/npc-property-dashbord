@@ -272,6 +272,68 @@ describe('a truncated record', () => {
     // The loop has to actually exercise the path it claims to.
     expect(cutsWithRankings).toBeGreaterThan(0);
   });
+
+  it('publishes the two sections only a damaged record carries', () => {
+    /*
+     * `marketTiming` and `competitiveAdvantages` have no column: the writer
+     * that destructures a successful response drops them, and only the salvage
+     * path reads them back — 23 and 10 of the 27 stored salvaged rows. The
+     * projection's header claimed they were published from the start; the code
+     * dropped both until the binding audit compared it against the payload.
+     */
+    const richRaw = JSON.stringify({
+      executiveSummary: 'Two properties compared in Brisbane.',
+      rankings: [ranking(1, 1, 82, '1 Alpha Street, Ashgrove'), ranking(2, 2, 70, '2 Beta Road, Bardon')],
+      marketTiming: {
+        buyFirst: { propertyNumber: 1, reason: 'Momentum favours acting on Ashgrove now.' },
+        holdingPeriods: [
+          { propertyNumber: 1, recommendedPeriod: '7-10 years', reason: 'Growth case needs a full cycle.' },
+          { propertyNumber: 2, recommendedPeriod: '5+ years', reason: 'Yield carries the hold.' },
+        ],
+      },
+      competitiveAdvantages: [
+        { propertyNumber: 1, advantages: ['Corner block', 'Walk score 91'] },
+        { propertyNumber: 2, advantages: ['Newer build'] },
+      ],
+      recommendations: { bestOverall: { propertyNumber: 1, reason: 'Wins on entry price.' } },
+    });
+    const p = projectComparison({
+      row: { ...ROW_B, executive_summary: richRaw.slice(0, richRaw.length - 40) },
+      now: NOW,
+    });
+    const timing = p.comparison.timing as Record<string, any>;
+    expect(timing.buyFirstWinner).toContain('Alpha');
+    expect(timing.buyFirstReason).toContain('Momentum');
+    expect(timing.holds).toHaveLength(2);
+    expect(timing.holds[0]).toMatchObject({ period: '7-10 years', reason: 'Growth case needs a full cycle.' });
+    const advantages = p.comparison.advantages as Array<Record<string, any>>;
+    expect(advantages).toHaveLength(2);
+    expect(advantages[0].line).toBe('Corner block · Walk score 91');
+    expect(advantages[0].winner).toContain('Alpha');
+  });
+
+  it('composes the truncation note in the legacy callout sentences', () => {
+    // On a salvaged row `recommendations` is absent on all but two of the 27 —
+    // the verdict page shows this note in the pick's place, so a missing
+    // recommendation reads as "the response was cut off", never as a blank
+    // display-size heading.
+    const p = projectComparison({ row: ROW_B, now: NOW });
+    const note = String(p.comparison.truncationNote);
+    expect(p.comparison.truncated).toBe(true);
+    expect(note).toContain('The analysis was cut short while it was being written');
+    expect(note).toContain('read back');
+    expect(note).toContain('Re-running the comparison would produce them.');
+    // A whole sentence names what was never written, in the legacy's labels.
+    expect(note).toMatch(/never written: .*the final recommendation/);
+  });
+
+  it('publishes none of the salvage vocabulary for an intact record', () => {
+    const p = projectComparison({ row: ROW_A, clientName: 'Example Client', now: NOW });
+    expect(p.comparison.timing).toBeUndefined();
+    expect(p.comparison.advantages).toBeUndefined();
+    expect(p.comparison.truncated).toBeUndefined();
+    expect(p.comparison.truncationNote).toBeUndefined();
+  });
 });
 
 describe('applying it to a binding context', () => {

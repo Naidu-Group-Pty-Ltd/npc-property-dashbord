@@ -27,6 +27,15 @@ vi.mock('@/lib/reports/commercialCapacity/requestCapacityReport', () => ({
   requestCapacityReport: (...args: unknown[]) => requestCapacityReport(...args),
   downloadCapacityReport: (...args: unknown[]) => downloadCapacityReport(...args),
 }));
+// The hook now asks for an activated Template Builder template before
+// rendering its own way. Stubbed to "there is none", which is this
+// deployment's state and the path these tests are about; the wiring itself is
+// covered by `lib/reports/__tests__/templateRouteWiring.spec.ts`.
+const tryTemplateDocument = vi.fn(async () => null);
+vi.mock('@/lib/reportTemplate/templateDocument', () => ({
+  tryTemplateDocument: (...args: unknown[]) => tryTemplateDocument(...args),
+  saveTemplateDocument: vi.fn(),
+}));
 vi.mock('@/hooks/use-toast', () => ({ toast: (...args: unknown[]) => toast(...args) }));
 
 // Imported after the mocks so the hook picks them up.

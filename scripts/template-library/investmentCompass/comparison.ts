@@ -49,6 +49,7 @@ import {
   ifItFits,
   kpiCapacity,
   kpis,
+  oneOf,
   page,
   prose,
   rule,
@@ -102,6 +103,28 @@ const LENGTHS = {
   investorReasoning: 399,
   rankingBullet: 123,
   bestSuitedFor: 142,
+  /*
+   * The salvage-only sections, measured over the 27 damaged rows: market
+   * timing on 23 (buy-first reason ≤325, holding reasons ≤325, periods ≤52),
+   * competitive advantages on 10 (a block's joined list ≤453). The truncation
+   * note is composed by the projection in the legacy callout's own sentences
+   * and tops out at 469.
+   */
+  buyFirstReason: 325,
+  /*
+   * Not the single-row maximum. One hold reason runs to 325 characters, but a
+   * report's five reasons **together** run to 958 — so reserving five rows at
+   * the single maximum charges 1,625 characters of height for at most 958 of
+   * text, which put the rationale page 16pt past the footer on the spacious
+   * variants. A four-line row (240 characters at the definition measure)
+   * makes the block's total reserve equal the worst case the record can
+   * produce — ceil(958/line) plus one partial line per row — so the one
+   * five-line reason borrows the slack its shorter neighbours leave, and the
+   * block as a whole never sets taller than it declares.
+   */
+  holdReason: 240,
+  advantagesLine: 470,
+  truncationNote: 480,
   /*
    * The whole risk list, joined — not one entry.
    *
@@ -284,6 +307,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           'Risk register',
           'Who each property suits',
           'What to do',
+          'Market timing',
+          'Competitive advantages',
           'Alternatives and basis',
           'Important information',
         ]),
@@ -292,26 +317,66 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   }
 
   // ── 02 The verdict ───────────────────────────────────────────────────────
-  pages.push(withFurniture(page('The verdict', [
-    ...furniture(DOCUMENT_LABEL, nextPart('Verdict'), 'The verdict'),
-    ...flow(ifItFits([
-      sectionHeading({
-        eyebrow: 'The analysis would buy',
-        heading: '{{comparison.recommendations.bestOverall.winner}}',
-        numeral: nextNumeral(),
-      }),
-      callout(
-        'Why',
-        '{{comparison.recommendations.bestOverall.reason}}',
-        textHeight(LENGTHS.bestOverallReason, { size: c.scale.cell, extra: 34 }),
-      ),
-      kpis(VERDICT_KPIS.slice(0, kpiCapacity())),
-    ], [
-      // A sentence this format builds itself rather than one the model wrote —
-      // how many properties, where, which ranks first and what it scored.
-      prose('{{comparison.narrative}}', textHeight(260)),
-    ], contentTop()), contentTop()),
-  ]), FOOTER));
+  //
+  // Two mutually exclusive treatments, because `recommendations` is absent on
+  // 25 of the 50 stored rows — every salvaged row bar two. The old page bound
+  // only the pick, so half of production rendered a display-size heading with
+  // nothing in it and a "Why" callout above an empty body. With no pick, the
+  // page leads with what every comparison does have — who ranked first — and
+  // the callout carries the projection's truncation note, which says in the
+  // legacy's own sentences why there is no recommendation to print.
+  {
+    const hasPick = 'comparison && comparison.recommendations && comparison.recommendations.bestOverall';
+    const noPick = 'comparison && !(comparison.recommendations && comparison.recommendations.bestOverall)';
+    pages.push(withFurniture(page('The verdict', [
+      ...furniture(DOCUMENT_LABEL, nextPart('Verdict'), 'The verdict'),
+      ...flow(ifItFits([
+        oneOf(
+          {
+            when: hasPick,
+            item: sectionHeading({
+              eyebrow: 'The analysis would buy',
+              heading: '{{comparison.recommendations.bestOverall.winner}}',
+              numeral: nextNumeral(),
+            }),
+          },
+          {
+            when: noPick,
+            item: sectionHeading({
+              eyebrow: 'Ranked first',
+              heading: '{{comparison.ranked.0.shortAddress}}',
+              // The same numeral: the two are one page, drawn one way or the
+              // other, and only one renders.
+              numeral: nextNumeral(),
+            }),
+          },
+        ),
+        oneOf(
+          {
+            when: hasPick,
+            item: callout(
+              'Why',
+              '{{comparison.recommendations.bestOverall.reason}}',
+              textHeight(LENGTHS.bestOverallReason, { size: c.scale.cell, extra: 34 }),
+            ),
+          },
+          {
+            when: noPick,
+            item: callout(
+              'Why there is no recommendation here',
+              '{{comparison.truncationNote}}',
+              textHeight(LENGTHS.truncationNote, { size: c.scale.cell, extra: 34 }),
+            ),
+          },
+        ),
+        kpis(VERDICT_KPIS.slice(0, kpiCapacity())),
+      ], [
+        // A sentence this format builds itself rather than one the model wrote —
+        // how many properties, where, which ranks first and what it scored.
+        prose('{{comparison.narrative}}', textHeight(260)),
+      ], contentTop()), contentTop()),
+    ]), FOOTER));
+  }
 
   // ── 03 Executive summary ─────────────────────────────────────────────────
   pages.push(withFurniture(page('Executive summary', [
@@ -499,8 +564,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // ── 11 What to do ────────────────────────────────────────────────────────
   //
   // `runners` and `avoid` are empty on some comparisons — minimum 0 across the
-  // stored rows — so both are conditional rather than drawn blank.
-  pages.push(withFurniture(page('What to do', [
+  // stored rows — so both are conditional rather than drawn blank. The whole
+  // page is conditional too: `recommendations` is absent on half the stored
+  // rows, and the verdict page's truncation treatment already says why.
+  pages.push({
+    ...withFurniture(page('What to do', [
     ...furniture(DOCUMENT_LABEL, nextPart('Actions'), 'What to do'),
     ...flow([
       sectionHeading({
@@ -524,7 +592,116 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           + ' && comparison.recommendations.avoid[0]',
       },
     ], contentTop()),
-  ]), FOOTER));
+    ]), FOOTER),
+    conditional: 'comparison && comparison.recommendations && comparison.recommendations.bestOverall',
+  });
+
+  // ── 11b Market timing ────────────────────────────────────────────────────
+  //
+  // Salvage-only: which to buy first and how long to hold each, recovered on
+  // 23 of the 27 damaged rows and dropped on the floor by the writer that
+  // handles a successful response — so the richest records are the broken
+  // ones, and until this page nothing rendered what they held.
+  {
+    const holdsTable = (n: number) => table({
+      headers: ['Property', 'Suggested hold'],
+      rows: Array.from({ length: n }, (_, i) => [
+        `{{comparison.timing.holds.${i}.winner}}`,
+        `{{comparison.timing.holds.${i}.period}}`,
+      ]),
+      columnWidths: [0.55, 0.45],
+      // A suggested hold runs to 52 characters ("re-assess at the five-year
+      // mark…"), which wraps in its column.
+      wraps: { chars: 52, columnWidth: c.contentWidth * 0.45 },
+    });
+    pages.push({
+      ...withFurniture(page('Market timing', [
+        ...furniture(DOCUMENT_LABEL, nextPart('Timing'), 'Market timing'),
+        ...flow([
+          sectionHeading({
+            eyebrow: 'Sequence',
+            heading: 'Which to buy first',
+            numeral: nextNumeral(),
+          }),
+          {
+            ...callout(
+              '{{comparison.timing.buyFirstWinner}}',
+              '{{comparison.timing.buyFirstReason}}',
+              textHeight(LENGTHS.buyFirstReason, { size: c.scale.cell, extra: 34 }),
+            ),
+            conditional: 'comparison && comparison.timing && comparison.timing.buyFirstWinner',
+          },
+          oneOf(
+            { when: 'comparison && comparison.timing && comparison.timing.holds && comparison.timing.holds.length <= 3', item: holdsTable(3) },
+            { when: 'comparison && comparison.timing && comparison.timing.holds && comparison.timing.holds.length == 4', item: holdsTable(4) },
+            { when: 'comparison && comparison.timing && comparison.timing.holds && comparison.timing.holds.length > 4', item: holdsTable(5) },
+          ),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: 'comparison && comparison.timing',
+    });
+    const rationaleRows = (n: number) => definitions(
+      'Why those holds',
+      Array.from({ length: n }, (_, i) => ({
+        term: `{{comparison.timing.holds.${i}.winner}}`,
+        definition: `{{comparison.timing.holds.${i}.reason}}`,
+      })),
+      LENGTHS.holdReason,
+    );
+    pages.push({
+      ...withFurniture(page('The holding rationale', [
+        ...furniture(DOCUMENT_LABEL, nextPart('Timing'), 'The holding rationale'),
+        ...flow([
+          sectionHeading({
+            eyebrow: 'Sequence, continued',
+            heading: 'Why those holds',
+            numeral: nextNumeral(),
+          }),
+          oneOf(
+            { when: 'comparison && comparison.timing && comparison.timing.holds && comparison.timing.holds.length <= 3', item: rationaleRows(3) },
+            { when: 'comparison && comparison.timing && comparison.timing.holds && comparison.timing.holds.length == 4', item: rationaleRows(4) },
+            { when: 'comparison && comparison.timing && comparison.timing.holds && comparison.timing.holds.length > 4', item: rationaleRows(5) },
+          ),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: 'comparison && comparison.timing && comparison.timing.holds',
+    });
+  }
+
+  // ── 11c Competitive advantages ───────────────────────────────────────────
+  //
+  // Salvage-only, recovered on 10 rows: what sets each property apart, three
+  // blocks to a page as the investor-fit pages draw theirs. A block's joined
+  // list runs to 453 characters.
+  {
+    const advantagePage = (name: string, from: number, count: number): PageDef =>
+      withFurniture(page(name, [
+        ...furniture(DOCUMENT_LABEL, nextPart('Advantages'), name),
+        ...flow([
+          sectionHeading({
+            eyebrow: 'What sets each apart',
+            heading: 'Competitive advantages',
+            numeral: nextNumeral(),
+          }),
+          ...Array.from({ length: count }, (_, k) => ({
+            ...callout(
+              `{{comparison.advantages.${from + k}.winner}}`,
+              `{{comparison.advantages.${from + k}.line}}`,
+              textHeight(LENGTHS.advantagesLine, { size: c.scale.cell, extra: 30 }),
+            ),
+            conditional: `comparison && comparison.advantages && comparison.advantages[${from + k}]`,
+          })),
+        ], contentTop()),
+      ]), FOOTER);
+    pages.push({
+      ...advantagePage('Competitive advantages', 0, 3),
+      conditional: 'comparison && comparison.advantages',
+    });
+    pages.push({
+      ...advantagePage('Competitive advantages · continued', 3, 2),
+      conditional: 'comparison && comparison.advantages && comparison.advantages[3]',
+    });
+  }
 
   // ── 12 Alternatives and basis ────────────────────────────────────────────
   pages.push(withFurniture(page('Alternatives and basis', [

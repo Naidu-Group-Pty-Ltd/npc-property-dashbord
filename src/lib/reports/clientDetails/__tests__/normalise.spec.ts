@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildClientDetails,
   ClientDetailsPayloadError,
+  composeClientName,
   humanise,
   propertyOutgoings,
   shortAddress,
@@ -260,6 +261,65 @@ describe('an address short enough to head a column', () => {
   it('copes with an address that has no commas at all', () => {
     expect(shortAddress('No commas here')).toBe('No commas here');
     expect(shortAddress('')).toBe('');
+  });
+});
+
+describe('a name is cased for print', () => {
+  /**
+   * 746 of the 775 stored clients have an all-lowercase first name and 740 an
+   * all-lowercase surname. This module printed them as stored, so a fact-find
+   * addressed to a broker opened with "sachin mathew" — while the legacy
+   * `FormaraPDFGenerator`, which has always run the same columns through
+   * `smartCapitalize`, printed "Sachin Mathew" for the same client. The
+   * divergence was between two documents of the same record, not a house style.
+   */
+  it('title-cases the ordinary lowercase record', () => {
+    const p = build({ client: { id: ID, primary_first_name: 'sachin', primary_surname: 'mathew' } });
+    expect(p.meta.clientName).toBe('Sachin Mathew');
+    expect(p.household.contacts[0].name).toBe('Sachin Mathew');
+  });
+
+  it('quiets a shouted one and leaves a deliberately cased one alone', () => {
+    expect(composeClientName({ primary_first_name: 'JORDAN', primary_surname: 'NGUYEN' }))
+      .toBe('Jordan Nguyen');
+    // Mixed case is somebody's own spelling of their name, and re-casing it
+    // would be the same defect in the other direction.
+    expect(composeClientName({ primary_first_name: 'Fiona', primary_surname: 'McDonald' }))
+      .toBe('Fiona McDonald');
+  });
+
+  it('keeps the middle name and joins a household the way the pages read', () => {
+    expect(composeClientName({
+      primary_first_name: 'ada', primary_middle_name: 'beatrice', primary_surname: 'lovelace',
+    })).toBe('Ada Beatrice Lovelace');
+    expect(composeClientName({
+      primary_first_name: 'ada', primary_surname: 'lovelace',
+      secondary_first_name: 'charles', secondary_surname: 'babbage',
+    })).toBe('Ada Lovelace & Charles Babbage');
+    expect(composeClientName({})).toBe('Client');
+  });
+
+  it('composes meta.clientName and the contact block identically', () => {
+    // Two compositions of one person's name are two chances to disagree, on
+    // the page and in the file. The adapter titles the document with
+    // `composeClientName` without loading the other eight tables, so this is
+    // the assertion that keeps that shortcut honest.
+    const client = {
+      id: ID,
+      primary_first_name: 'ada', primary_middle_name: 'beatrice', primary_surname: 'lovelace',
+      secondary_first_name: 'charles', secondary_surname: 'babbage',
+    };
+    const p = build({ client });
+    expect(p.meta.clientName).toBe(composeClientName(client));
+    expect(p.household.contacts.map((c) => c.name).join(' & ')).toBe(p.meta.clientName);
+  });
+
+  it('does not re-case an asset, which is not a person', () => {
+    // `joinName` composes a vehicle's make and model as well as a name, and
+    // title-casing that turns "BMW X5" into "Bmw X5". Only names may be
+    // re-cased, which is why the casing lives in a second helper.
+    const p = build({ assets: [{ asset_type: 'vehicle', make_model: 'BMW X5' }] });
+    expect(p.assets[0].description).toBe('BMW X5');
   });
 });
 

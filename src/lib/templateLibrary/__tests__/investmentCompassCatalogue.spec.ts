@@ -504,7 +504,21 @@ describe('image plates', () => {
        * The assertion here is about the photographs: a plate that is not bound
        * must leave nothing behind, and the mark is not a plate.
        */
-      const plateImages = (h: string) => (h.match(/<img [^>]*src="(?!data:image\/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB)/g) ?? []).length;
+      /*
+       * "No plate image" must not count the brand mark, which is an `<img>`
+       * too. The exclusion is derived from the sample's own mark values rather
+       * than a hard-coded base64 prefix — it briefly keyed on the 1x1 PNG the
+       * sample used to carry, which broke the moment the sample's mark became
+       * a visible picture.
+       */
+      const markSrcs = [
+        String((SAMPLE as any).org?.mark ?? ''),
+        String((SAMPLE as any).org?.markMono ?? ''),
+      ].filter(Boolean);
+      const plateImages = (h: string) => {
+        const srcs = [...h.matchAll(/<img [^>]*src="([^"]*)"/g)].map((m) => m[1]);
+        return srcs.filter((s) => !markSrcs.includes(s)).length;
+      };
       expect(plateImages(bare), template.name).toBe(0);
       expect(plateImages(full), template.name).toBeGreaterThan(0);
 

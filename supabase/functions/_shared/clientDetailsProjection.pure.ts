@@ -74,6 +74,7 @@ import type {
   PropertyRow,
   AddressPeriod,
 } from './reports/clientDetails/payload.pure.ts';
+import { formatMeasure } from './reportDesign/measure.pure.ts';
 
 /** What the masters draw, per collection. See the header for the measurements. */
 export const CAPS = {
@@ -157,10 +158,43 @@ function projectLiability(l: LiabilityRow): Record<string, unknown> {
   return out;
 }
 
+/**
+ * The holding's particulars in one line — kind, lender, ownership and loan
+ * terms, restating the rows the legacy holdings table draws (`render.pure.ts`'s
+ * Ownership / Lender / Interest rate / Repayment type, formatted by the same
+ * `formatMeasure` its `show()` uses).
+ *
+ * Composed here rather than bound piecewise so a master cannot strand a
+ * separator: an unresolved binding renders as the empty string, and the
+ * production client this format was measured against stores `lender_name: null`
+ * on all three holdings — a template that binds `{{kind}} · {{lender}} · …`
+ * prints "Investment · · rent…" on every one of them.
+ */
+function holdingStrapline(p: PropertyRow): string | undefined {
+  const parts: string[] = [];
+  const kind = str(p.kindLabel);
+  if (kind) parts.push(kind);
+  const lender = str(p.lender);
+  if (lender) parts.push(lender);
+  if (p.ownershipPercentage) parts.push(`${formatMeasure(p.ownershipPercentage)} ownership`);
+  const repayment = str(p.repaymentType);
+  const rate = p.interestRate ? formatMeasure(p.interestRate) : undefined;
+  if (repayment && rate) parts.push(`${repayment.toLowerCase()} at ${rate}`);
+  else if (repayment) parts.push(repayment.toLowerCase());
+  else if (rate) parts.push(`interest at ${rate}`);
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
 function projectProperty(p: PropertyRow): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   put(out, 'kind', str(p.kindLabel));
   put(out, 'address', str(p.address));
+  // The per-holding heading, with the legacy's own fallback — `holdingsSection`
+  // heads a holding with no stored address "address not recorded" rather than
+  // leaving the line blank, and an unresolved binding would leave it blank.
+  out.heading = str(p.address) ?? 'Address not recorded';
+  put(out, 'strapline', holdingStrapline(p));
+  put(out, 'ownershipPercentage', measure(p.ownershipPercentage));
   put(out, 'shortAddress', str(p.shortAddress));
   put(out, 'value', measure(p.value));
   put(out, 'loanRemaining', measure(p.loanRemaining));
@@ -249,7 +283,11 @@ export function projectClientDetails(details: ClientDetails): ProjectedClientDet
   put(out, 'maritalStatus', str(d.household.maritalStatus));
   put(out, 'dependents', measure(d.household.dependents));
 
-  const primaryResidence = d.household.residences[0]?.residence;
+  // By role, not by position — the normaliser only pushes a residence it can
+  // stand behind, so a record whose primary address is empty while the
+  // secondary's is not would put the secondary at index 0.
+  const residenceByRole = new Map(d.household.residences.map((entry) => [entry.contact, entry]));
+  const primaryResidence = residenceByRole.get('primary')?.residence;
   if (primaryResidence) {
     const r: Record<string, unknown> = {};
     put(r, 'address', str(primaryResidence.address));
@@ -260,6 +298,44 @@ export function projectClientDetails(details: ClientDetails): ProjectedClientDet
     put(r, 'livingSituation', str(primaryResidence.livingSituation));
     put(r, 'residentialStatus', str(primaryResidence.residentialStatus));
     if (Object.keys(r).length) out.residence = r;
+  }
+
+  /**
+   * The second contact's residence, which the legacy contact block draws and
+   * this projection used to drop entirely.
+   *
+   * Two shapes, restating `render.pure.ts`'s `contactBlock` exactly: a
+   * secondary who shares gets the sentence ("Lives at the same address as the
+   * primary contact."), a secondary who lives apart gets their own address
+   * composed the way the legacy composes it — address, suburb, state postcode,
+   * country, joined and trimmed. `line` is the one path a definitions row
+   * binds; the parts are published beside it. Production holds one of each
+   * shape across the 13 records with a second contact.
+   */
+  const secondaryEntry = residenceByRole.get('secondary');
+  if (secondaryEntry) {
+    const s: Record<string, unknown> = {};
+    s.sharedWithPrimary = yesNo(secondaryEntry.sharedWithPrimary);
+    if (secondaryEntry.sharedWithPrimary) {
+      s.line = 'Lives at the same address as the primary contact.';
+    } else {
+      const r = secondaryEntry.residence;
+      const address = [r.address, r.suburb, `${r.state} ${r.postcode}`.trim(), r.country]
+        .map((x) => (typeof x === 'string' ? x.trim() : ''))
+        .filter(Boolean)
+        .join(', ');
+      put(s, 'address', str(r.address));
+      put(s, 'suburb', str(r.suburb));
+      put(s, 'state', str(r.state));
+      put(s, 'postcode', str(r.postcode));
+      put(s, 'livingSituation', str(r.livingSituation));
+      put(s, 'residentialStatus', str(r.residentialStatus));
+      // The normaliser only keeps a residence with something in it, so this
+      // line is never empty when the entry exists.
+      put(s, 'line', [address, str(r.livingSituation), str(r.residentialStatus)]
+        .filter(Boolean).join(' · '));
+    }
+    out.secondaryResidence = s;
   }
 
   const history = d.household.history;

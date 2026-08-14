@@ -9,6 +9,7 @@
  * *place to go* rather than as a second download — see
  * `ComparisonDownloadButton`.
  */
+import { tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
 import { requestComparisonPdf, type ComparisonPdfRequest } from './requestComparisonPdf';
 
 export interface DeliveredComparison {
@@ -19,6 +20,14 @@ export interface DeliveredComparison {
   recordComplete: boolean;
   /** Which sections the record does not hold. */
   missingSections: string[];
+  /**
+   * Rendered from an activated template. The diagnostics above describe the
+   * flowing render and are left neutral — a truncated record is not lost by
+   * that, because the projection composes the cut-off note into the document
+   * itself and the masters draw it, so the warning reaches the reader on the
+   * page rather than in a toast the sender saw once.
+   */
+  templated?: boolean;
 }
 
 /**
@@ -47,6 +56,18 @@ function saveToBrowser(url: string, fileName: string): void {
 export async function deliverComparisonPdf(
   request: ComparisonPdfRequest,
 ): Promise<DeliveredComparison> {
+  const templated = await tryTemplateDocument('comparison', request.comparisonId);
+  if (templated) {
+    saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName);
+    return {
+      fileName: templated.fileName,
+      brandGaps: [],
+      recordComplete: true,
+      missingSections: [],
+      templated: true,
+    };
+  }
+
   const result = await requestComparisonPdf(request);
 
   // A signed URL. Fetched rather than followed, so the file is *saved* — a PDF
@@ -77,6 +98,16 @@ export async function comparisonPdfBlob(request: ComparisonPdfRequest): Promise<
   brandGaps: string[];
   recordComplete: boolean;
 }> {
+  const templated = await tryTemplateDocument('comparison', request.comparisonId);
+  if (templated) {
+    return {
+      blob: templated.blob,
+      fileName: templated.fileName,
+      brandGaps: [],
+      recordComplete: true,
+    };
+  }
+
   const result = await requestComparisonPdf(request);
   const response = await fetch(result.url);
   if (!response.ok) throw new Error(`Could not read the rendered document (${response.status})`);

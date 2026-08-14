@@ -427,5 +427,79 @@ binding resolves. The Borrowing Capacity, Comparison and Cash Flow masters name
 their subject instead, because their source tables carry no client at all; all
 three shipped a blank cover title before that was measured.
 
+### The routing read named two columns that do not exist
+
+`resolveRoutingContext` selected `id, first_name, last_name, updated_at,
+created_at` from `clients`. **The table has neither `first_name` nor
+`last_name`** — it stores `primary_first_name` / `primary_surname`, plus the
+secondary applicant's pair. PostgREST does not drop an unknown column, it fails
+the whole statement with `42703`; supabase-js returned `{ data: null, error }`;
+the function's `if (error || !data) return null` turned that into "no such
+client" for **all 775 of them**. Routing resolves before binding, so the fifty
+masters were unreachable through the product path for every client in the
+database.
+
+It was invisible for the reason this class always is. `buildBindingContext`
+selects `*` on the same table and was therefore always correct, so the
+production-fit harness, the catalogue specs and every render in this programme
+exercised the document happily while the one read that decides whether a
+document may be produced at all failed on contact with the schema. The same
+misspelling had already 404'd `render-borrowing-capacity-pdf` for every client
+once, which is why `_shared/clientName.ts` exists and exports
+`CLIENT_NAME_COLUMNS` as a single string — so a caller cannot ask for three of
+the four columns, or invent a fourth spelling. The routing read now uses it.
+
+The rule that follows: **a column name is not checked by TypeScript anywhere on
+this path** — every row crosses the boundary as `Record<string, any>` — so
+`__tests__/adapterSelectColumns.spec.ts` checks each one against the generated
+`src/integrations/supabase/types.ts`, which mirrors the live schema. It covers
+the select list *and* the filters, because `.eq('is_actve', true)` raises the
+same `42703` as a mistyped select, and because the nine-table load above is nine
+`select('*')` reads whose only column references are their filters.
+
+### The name on the page was the name in the box
+
+`clients` stores names as they were typed, and they were typed in lower case:
+**746 of the 775 records have an all-lowercase first name and 740 an
+all-lowercase surname.** `toContacts` set them on the page exactly as stored,
+so the fixture this format is measured against — a real two-person record —
+opened with "lavanethaan ravachandran & Kunjimon Koothy", two casings in one
+line, on a document whose purpose is to be sent to a broker.
+
+This was not a house style, it was a divergence between two documents of the
+same record: `FormaraPDFGenerator`, the legacy generator this format replaces,
+has always run the same four columns through `smartCapitalize`, so the
+rasterised PDF a client already receives says "Lavanethaan Ravachandran". The
+normaliser now composes a person's name with `personName`, which imports that
+same function rather than restating it.
+
+Two rules come out of it. **Only a name may be re-cased.** `joinName` also
+composes a vehicle's make and model, where title-casing turns "BMW X5" into
+"Bmw X5" — so the casing lives in a second helper and a spec asserts the asset
+description is untouched. And **one composition, used by both callers**:
+`composeClientName` is exported and the adapter titles the document with it,
+because the routing context used to compose `first + surname` while the
+document composed `first + middle + surname` and joined a couple with "&" —
+so the eleven records carrying a middle name, and the thirteen describing two
+people, produced a file titled for a differently-named person than the pages
+named. The routing read selects the two middle-name columns on top of
+`CLIENT_NAME_COLUMNS` rather than widening that constant, because the
+Borrowing Capacity cover deliberately prints two parts.
+
+### The preview picker offered the 96% that has nothing in it
+
+**34 of the 775 clients hold any property, asset, liability, employment or
+expense record at all.** `listRecentReports` ordered by `updated_at`, so
+"preview with one of your own reports" mostly produced a document of empty
+tables — the one thing that view exists to avoid, since sample data already
+proves the design and only a real record can show how it holds real numbers.
+
+Most of the list is now clients that have records, and the rest is whatever is
+most recent. Not all of it, deliberately: a client with a name and nothing else
+is this format's ordinary case (D5 above) and the masters are built around it,
+so both shapes stay one click away. The five reads that decide this are a
+preference and not a requirement — a table the caller cannot read contributes
+nothing rather than emptying the picker.
+
 See [`../template-library/07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)
 for the design system these 50 masters are drawn in.

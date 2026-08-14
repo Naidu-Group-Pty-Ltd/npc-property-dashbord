@@ -33,7 +33,9 @@ function property(kindLabel: string, address: string, value: number, loan: numbe
   return {
     kind: 'investment' as const, kindLabel, address, shortAddress: address.split(',')[0],
     value: aud(value), loanRemaining: aud(loan), equity: aud(value - loan),
-    lvr: pct((loan / value) * 100), interestRate: pct(6.02), ownershipPercentage: pct(100),
+    lvr: pct((loan / value) * 100), interestRate: pct(6.02),
+    // Precision 0, as the normaliser builds it: `percent(x, 0)`.
+    ownershipPercentage: { value: 100, unit: 'percent' as const, precision: 0 },
     lender: 'CommBank', repaymentType: 'Principal and interest',
     rentMonthly: perMonth(2450), rentWeekly: { value: 565, unit: 'aud/week' as const },
     expensesMonthly: perMonth(1180), netMonthly: perMonth(1270), smsf: null,
@@ -252,6 +254,92 @@ describe('the bounding', () => {
     const p = projectClientDetails(fullDetails({ properties }));
     expect(p.clientDetails.properties).toHaveLength(4);
     expect(p.clientDetails.propertiesShown).toBe(4);
+  });
+});
+
+describe('the residences', () => {
+  const secondaryApart = {
+    contact: 'secondary' as const,
+    residence: {
+      address: '2/18 Harbour Lane', suburb: 'Kirribilli', state: 'NSW', postcode: '2061',
+      country: 'Australia', livingSituation: 'Renting', residentialStatus: 'Australian citizen',
+    },
+    sharedWithPrimary: false,
+  };
+  const primaryEntry = (fullDetails() as any).household.residences[0];
+
+  it('finds the primary by role, not by position', () => {
+    // The normaliser only pushes a residence it can stand behind, so a record
+    // whose primary address is empty while the secondary's is not puts the
+    // secondary at index 0 — and the household page must not present it as
+    // where the household lives.
+    const p = projectClientDetails(fullDetails({
+      household: { ...(fullDetails() as any).household, residences: [secondaryApart, primaryEntry] },
+    }));
+    expect((p.clientDetails.residence as any).suburb).toBe('Newtown');
+  });
+
+  it('restates the shared secondary as the legacy sentence', () => {
+    const p = projectClientDetails(fullDetails({
+      household: {
+        ...(fullDetails() as any).household,
+        residences: [primaryEntry, { ...secondaryApart, sharedWithPrimary: true }],
+      },
+    }));
+    const s = p.clientDetails.secondaryResidence as any;
+    // `render.pure.ts`'s `contactBlock`, word for word.
+    expect(s.line).toBe('Lives at the same address as the primary contact.');
+    expect(s.sharedWithPrimary).toBe('Yes');
+    // The sentence is the whole of it — the shared shape publishes no address
+    // of its own, because the primary's residence is already on the page.
+    expect(s.address).toBeUndefined();
+  });
+
+  it('composes the apart secondary from its own columns', () => {
+    const p = projectClientDetails(fullDetails({
+      household: { ...(fullDetails() as any).household, residences: [primaryEntry, secondaryApart] },
+    }));
+    const s = p.clientDetails.secondaryResidence as any;
+    expect(s.sharedWithPrimary).toBe('No');
+    expect(s.line).toBe('2/18 Harbour Lane, Kirribilli, NSW 2061, Australia · Renting · Australian citizen');
+    expect(s.suburb).toBe('Kirribilli');
+  });
+
+  it('omits the namespace when the record carries no second residence', () => {
+    // 11 of the 13 records with a second contact store no residence for them
+    // at all — the definitions row must go dark, not print an empty band.
+    expect('secondaryResidence' in projectClientDetails(fullDetails()).clientDetails).toBe(false);
+  });
+});
+
+describe('each holding', () => {
+  const p = projectClientDetails(fullDetails());
+
+  it('carries ownership, lender and loan terms in one composed strapline', () => {
+    // The rows the legacy holdings table draws — Ownership, Lender, Interest
+    // rate, Repayment type — formatted by the same `formatMeasure` its `show()`
+    // uses, and joined here so a master cannot strand a separator.
+    expect((p.clientDetails.properties as any[])[0].strapline)
+      .toBe('Investment · CommBank · 100% ownership · principal and interest at 6.02%');
+    expect((p.clientDetails.properties as any[])[0].ownershipPercentage).toBe(100);
+  });
+
+  it('strands no separator when the record holds no lender', () => {
+    // The production client this format was measured against stores
+    // `lender_name: null` on all three holdings; `{{kind}} · {{lender}} · …`
+    // printed "Investment · · rent…" on every one of them.
+    const bare = { ...property('Investment', '7 Wardell Road, Dulwich Hill', 640000, 288000), lender: '' };
+    const q = projectClientDetails(fullDetails({ properties: [bare] }));
+    expect((q.clientDetails.properties as any[])[0].strapline)
+      .toBe('Investment · 100% ownership · principal and interest at 6.02%');
+  });
+
+  it('heads a holding with no stored address the way the legacy does', () => {
+    const unaddressed = { ...property('Investment', '', 640000, 288000), shortAddress: 'Investment' };
+    const q = projectClientDetails(fullDetails({ properties: [unaddressed] }));
+    expect((q.clientDetails.properties as any[])[0].heading).toBe('Address not recorded');
+    // And a holding with one is headed by it.
+    expect((p.clientDetails.properties as any[])[0].heading).toBe('7 Wardell Road, Dulwich Hill');
   });
 });
 

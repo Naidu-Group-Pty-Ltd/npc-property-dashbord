@@ -60,6 +60,10 @@
  *    an object never reaches a template as `[object Object]`.
  */
 
+import { buildPortfolioReview } from './reports/portfolio/normalise.pure.ts';
+import type { NarrativeBlock, PortfolioReview } from './reports/portfolio/payload.pure.ts';
+import { formatDelta, formatMeasure, type Measure } from './reportDesign/measure.pure.ts';
+
 export interface PortfolioRowLike {
   client_name?: string | null;
   health_score?: number | string | null;
@@ -348,10 +352,213 @@ export function projectPortfolio(row: PortfolioRowLike): ProjectedPortfolio {
   return { portfolio, properties, summary, health, risk, actions, client, report };
 }
 
-/** Merge the projection into a binding-context `data` object. */
+// ─────────────────────────────────────────────────────────────────────────────
+// The legacy document's own structure, restated
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Collection caps for the document-shaped section, measured by running all 21
+ * stored reports (paired with each client's newest completed review, the join
+ * `render-portfolio-review-pdf` itself performs) through the legacy
+ * `buildPortfolioReview`:
+ *
+ *  | collection          | max in production | cap |
+ *  | ------------------- | ----------------- | --- |
+ *  | verdicts            | 4                 | 6   |
+ *  | projection assumpts | 6                 | 8   |
+ *  | scenarios           | 4 (of legacy 12)  | 6   |
+ *  | review findings     | 5                 | 8   |
+ *  | merged action rows  | 21 (of legacy 24) | 24  |
+ *
+ * The action rows keep the legacy's own cap: they are published for the
+ * cascade (a custom template, or the day a page model can paginate them) and
+ * bound nowhere in the seeded masters — twenty-one rows of 345-character
+ * titles measured out at over two fixed-position pages, and a six-row excerpt
+ * of a priority-ordered list would silently drop the review's own entries.
+ */
+export const DOCUMENT_CAPS = {
+  verdicts: 6,
+  projectionAssumptions: 8,
+  scenarios: 6,
+  reviewFindings: 8,
+  actionRows: 24,
+} as const;
+
+/** `formatMeasure`, as absence rather than an em dash mid-template. */
+function fm(m: Measure | null | undefined): string | undefined {
+  if (!m || m.unit === 'none') return undefined;
+  const s = formatMeasure(m);
+  return s === '' || s === '—' ? undefined : s;
+}
+
+/** A built narrative block, published in its own composition. */
+function projectNarrativeBlock(block: NarrativeBlock | null): Record<string, unknown> | undefined {
+  if (!block) return undefined;
+  const out: Record<string, unknown> = {};
+  if (block.paragraphs.length) out.paragraphs = [...block.paragraphs];
+  if (block.facts.length) out.facts = block.facts.map((f) => ({ label: f.label, value: f.value }));
+  if (block.bullets.length) {
+    out.groups = block.bullets.map((g) => ({ label: g.label, items: [...g.items] }));
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * The legacy document's sections, from `buildPortfolioReview` itself.
+ *
+ * Everything here goes through the legacy normaliser rather than being
+ * re-derived — the built narrative's sentences, the band vocabulary, a
+ * verdict's pairing of ranking with review score, a scenario's impact split
+ * into delta and level. A second implementation of any of it would drift, and
+ * the drift would read as a different assessment of the same portfolio.
+ *
+ * Published under the format's own `portfolio.*` namespace (and two additive
+ * `summary` leaves), because the shared sample data is one object serving
+ * every format's preview: `market`, `review` and `scenarios` all mean
+ * something else to another catalogue, and a colliding leaf previews one
+ * format's prose on another format's page.
+ */
+export function projectPortfolioDocument(doc: PortfolioReview): {
+  portfolio: Record<string, unknown>;
+  summary: Record<string, unknown>;
+} {
+  const portfolio: Record<string, unknown> = {};
+  const summary: Record<string, unknown> = {};
+
+  // ── the headline, in the document's own vocabulary ───────────────────────
+  put(summary, 'band', doc.headline.band === 'unrated' ? undefined : doc.headline.band);
+  put(summary, 'bandLabel', doc.headline.bandLabel === 'Not rated' ? undefined : doc.headline.bandLabel);
+
+  // The built two-sentence description — figures restated from the totals, so
+  // it cannot disagree with the tables beside it. Not `portfolio.narrative`,
+  // which the shipping voice template already binds as the financial-health
+  // analysis prose.
+  put(portfolio, 'overview', str(doc.narrative));
+  if (doc.notes.length) portfolio.notes = [...doc.notes];
+
+  // ── the narrative sections, as the legacy composes them ──────────────────
+  put(portfolio, 'composition', projectNarrativeBlock(doc.composition));
+  put(portfolio, 'market', projectNarrativeBlock(doc.market));
+  put(portfolio, 'growth', projectNarrativeBlock(doc.growth));
+
+  // ── per-property verdicts: the ranking beside the review's rubric ────────
+  if (doc.verdicts.length) {
+    const rows = doc.verdicts.slice(0, DOCUMENT_CAPS.verdicts).map((v) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'address', str(v.address));
+      put(row, 'rating', str(v.rating));
+      put(row, 'scoreLabel', fm(v.score));
+      put(row, 'recommendation', str(v.recommendation));
+      put(row, 'strategicRole', str(v.strategicRole));
+      put(row, 'outlook', str(v.outlook));
+      if (v.strengths.length) row.strengths = [...v.strengths];
+      if (v.concerns.length) row.concerns = [...v.concerns];
+      // The review's own classification of the same property, attributed —
+      // the two sources are produced independently and do disagree, and the
+      // disagreement is something the reader should see.
+      put(row, 'reviewClassification', v.review ? str(v.review.classification) : undefined);
+      return row;
+    }).filter((r) => Object.keys(r).length > 0);
+    if (rows.length) {
+      portfolio.verdicts = { rows };
+      put(portfolio.verdicts as Record<string, unknown>, 'rowCount', doc.verdicts.length);
+    }
+  }
+
+  // ── forward-looking blocks, figures formatted by the engine ──────────────
+  if (doc.projection) {
+    const p: Record<string, unknown> = {};
+    put(p, 'yearsLabel', fm(doc.projection.years));
+    put(p, 'valueLabel', fm(doc.projection.projectedValue));
+    put(p, 'equityLabel', fm(doc.projection.projectedEquity));
+    put(p, 'cashflowLabel', fm(doc.projection.projectedMonthlyCashflow));
+    put(p, 'summary', str(doc.projection.summary));
+    const assumptions = doc.projection.assumptions.slice(0, DOCUMENT_CAPS.projectionAssumptions);
+    if (assumptions.length) p.assumptions = [...assumptions];
+    if (Object.keys(p).length) portfolio.projection = p;
+  }
+
+  if (doc.capacity) {
+    const c: Record<string, unknown> = {};
+    put(c, 'estimatedLabel', fm(doc.capacity.estimatedCapacity));
+    put(c, 'deployedLabel', fm(doc.capacity.totalDebtDeployed));
+    put(c, 'availableLabel', fm(doc.capacity.availableCapacity));
+    put(c, 'utilisationLabel', fm(doc.capacity.utilisation));
+    put(c, 'commentary', str(doc.capacity.commentary));
+    if (Object.keys(c).length) portfolio.capacity = c;
+  }
+
+  // ── the review's what-ifs: a delta and a level, never one number ─────────
+  if (doc.scenarios.length) {
+    const rows = doc.scenarios.slice(0, DOCUMENT_CAPS.scenarios).map((s) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'name', str(s.name));
+      put(row, 'description', str(s.description));
+      // Signed, so a reader can tell the change from the position without
+      // reading the column head; a zero delta is an em dash, never `+$0`.
+      put(row, 'changeLabel', s.cashFlowChange.unit === 'none' ? undefined : formatDelta(s.cashFlowChange));
+      put(row, 'resultLabel', fm(s.newNetCashflow));
+      return row;
+    }).filter((r) => typeof r.name === 'string');
+    if (rows.length) portfolio.scenarios = { rows };
+  }
+
+  // ── the review beside the analysis ───────────────────────────────────────
+  if (doc.review) {
+    const r: Record<string, unknown> = {};
+    put(r, 'statusLabel', str(doc.review.status));
+    put(r, 'reviewedOn', str(doc.review.reviewedOn));
+    put(r, 'nextReviewDue', str(doc.review.nextReviewDue ?? undefined));
+    put(r, 'riskLevel', str(doc.review.riskLevel));
+    put(r, 'summary', str(doc.review.summary));
+    if (doc.review.scores.length) {
+      r.scores = doc.review.scores
+        .map((s) => ({ label: s.label, scoreLabel: fm(s.score) }))
+        .filter((s) => s.scoreLabel);
+    }
+    const findings = doc.review.findings.slice(0, DOCUMENT_CAPS.reviewFindings);
+    if (findings.length) r.findings = [...findings];
+    if (Object.keys(r).length) portfolio.review = r;
+  }
+
+  // ── the merged action plan, for the cascade ──────────────────────────────
+  // Analysis horizons and review recommendations in one priority-ordered
+  // list, exactly as `toActions` merges them. Not `portfolio.actions`: the
+  // voice template binds that as an array, and an object would break it.
+  if (doc.actions.length) {
+    portfolio.actionPlan = {
+      rows: doc.actions.slice(0, DOCUMENT_CAPS.actionRows).map((a) => {
+        const row: Record<string, unknown> = {};
+        put(row, 'title', str(a.title));
+        put(row, 'detail', str(a.detail));
+        put(row, 'priorityLabel', str(a.priorityLabel));
+        put(row, 'category', str(a.category));
+        put(row, 'sourceLabel', a.source === 'review' ? 'The review' : 'The analysis');
+        if (a.steps.length) row.steps = [...a.steps];
+        return row;
+      }),
+    };
+  }
+
+  return { portfolio, summary };
+}
+
+/**
+ * Merge the projection into a binding-context `data` object.
+ *
+ * `reviewRow` is the client's newest **completed** `portfolio_reviews` row, or
+ * null — the join `render-portfolio-review-pdf` performs before it builds the
+ * same document. The caller does the join for the same reason it hands the
+ * Borrowing Capacity projection a client row: a pure module does not query,
+ * and which review counts is the route's stated contract, not a guess made
+ * here. Without it the document still builds; the review section, its
+ * scenarios and its per-property scores are simply absent, which is exactly
+ * how the legacy route renders `includeReview: false`.
+ */
 export function applyPortfolioProjection(
   data: Record<string, any>,
   row: PortfolioRowLike,
+  reviewRow?: Record<string, unknown> | null,
 ): Record<string, any> {
   const p = projectPortfolio(row);
   const merge = (key: string, extra: Record<string, unknown>) => {
@@ -366,5 +573,27 @@ export function applyPortfolioProjection(
   merge('client', p.client);
   merge('report', p.report);
   if (p.properties.length) data.properties = p.properties;
+
+  /*
+   * The document-shaped section goes through the legacy `buildPortfolioReview`
+   * itself. It throws on a row with no holdings — a portfolio review of no
+   * properties is a different document, and `generate-portfolio-analysis`
+   * refuses to produce one — so a row that cannot build a document publishes
+   * none of these namespaces rather than a fabricated shell.
+   */
+  try {
+    const doc = buildPortfolioReview({
+      report: row as Record<string, unknown>,
+      review: reviewRow ?? null,
+      clientName: str(row.client_name) ?? 'the client',
+      now: str(row.updated_at) ?? str(row.created_at) ?? '',
+    });
+    const extras = projectPortfolioDocument(doc);
+    merge('portfolio', extras.portfolio);
+    merge('summary', extras.summary);
+  } catch {
+    // A row the legacy engine refuses is a row these sections stay absent for.
+  }
+
   return data;
 }

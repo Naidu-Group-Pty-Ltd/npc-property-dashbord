@@ -23,11 +23,14 @@ import { getAdapter, supportsProduction, normaliseReportType } from '../adapters
 const ROW = {
   id: 'bc-1',
   gross_annual_income: 245000,
-  shaded_annual_income: 228500,
+  shaded_annual_income: 228320,
+  // `shadingRate` is a **0–1 fraction of income counted** — production holds
+  // 0.8 and 1, never a whole-number percent. The first draft of this fixture
+  // wrote 25, which the legacy normaliser dutifully formatted as "2,500%".
   income_breakdown: [
-    { component: 'PAYG salary — applicant 1', grossAmount: 165000, shadedAmount: 165000, shadingRate: 0 },
-    { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25 },
-    { component: 'Bonus', grossAmount: 33200, shadedAmount: 28400, shadingRate: 15 },
+    { component: 'PAYG salary — applicant 1', grossAmount: 165000, shadedAmount: 165000, shadingRate: 1 },
+    { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 0.75 },
+    { component: 'Bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 0.85 },
   ],
   living_expenses_monthly: 6420,
   expense_method: 'hem',
@@ -50,7 +53,17 @@ const ROW = {
   dti_ratio: 5.6,
   recommendations: ['Reduce the credit card limit to lift capacity', 'Consider a 30-year term'],
   warnings: ['Assessment rate includes a 3.00% buffer'],
+  // The stored column is a bare array on 86 of 143 rows and this object shape
+  // — an `items` list beside the calculator's flags — on the other 57. The
+  // legacy normaliser accepts both; the flags ride only on the object shape,
+  // which is where `selectedLenderName` lives on all 26 rows that have one.
   assumptions: {
+    items: [
+      { key: 'Serviceability Basis', value: 'After-Tax Income' },
+      { key: 'Buffer Rate', value: '3%' },
+      { key: 'Assessment Rate', value: '9.14%' },
+      { key: 'Loan Term', value: '30 years' },
+    ],
     selectedLenderName: 'Example Bank', calculationMode: 'standard',
     dtiCapEnabled: true, dtiCapLimit: 6, isFirstHomeBuyer: false,
     lmiMode: 'none', proposedRentalIncome: 46800,
@@ -112,7 +125,7 @@ describe('the projection', () => {
     expect(p.loan.proposed).toBe(1032000);
     expect(p.loan.assessmentRate).toBe(9.14);
     expect(p.income.gross).toBe(245000);
-    expect(p.income.shaded).toBe(228500);
+    expect(p.income.shaded).toBe(228320);
   });
 
   it('converts months to years as arithmetic, not as a second opinion', () => {
@@ -120,13 +133,13 @@ describe('the projection', () => {
     expect(p.liabilities.annual).toBe(1840 * 12);
     expect(p.capacity.annualSurplus).toBe(1290 * 12);
     // Stated rather than left for the reader to subtract.
-    expect(p.income.shadingApplied).toBe(245000 - 228500);
+    expect(p.income.shadingApplied).toBe(245000 - 228320);
   });
 
   it('keeps the real array shapes, element keys and all', () => {
     expect(p.income.items).toHaveLength(3);
     expect((p.income.items as any[])[1]).toEqual({
-      component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25,
+      component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 0.75,
     });
     expect(p.liabilities.items).toHaveLength(2);
     expect((p.liabilities.items as any[])[1].limit).toBe(15000);
@@ -259,5 +272,179 @@ describe('the client on the cover', () => {
     expect(applyBorrowingCapacityProjection({}, ROW, {
       primary_first_name: '  ', primary_surname: '',
     }).client).toBeUndefined();
+  });
+});
+
+describe('the legacy document, restated through its own normaliser', () => {
+  /*
+   * Everything here goes through `buildSnapshot` — the legacy engine's own
+   * normaliser — rather than being re-derived: the narrative's sentences, the
+   * ledger's composition, a shading label, a band's vocabulary. A second
+   * implementation of any of it would drift, and the drift would read as a
+   * different assessment of the same row.
+   */
+  const jane = { primary_first_name: 'Jane', primary_surname: 'Smith' };
+  const data: any = applyBorrowingCapacityProjection({}, ROW, jane);
+
+  it('writes the executive summary in the legacy engine sentences, named', () => {
+    expect(data.summary.narrative).toContain(
+      'Jane Smith has an estimated maximum borrowing capacity of $1,180,000',
+    );
+    expect(data.summary.narrative).toContain('assessment rate of 9.14% over a 30-year loan term');
+    expect(data.summary.narrative).toContain('The overall serviceability position is assessed as moderate.');
+  });
+
+  it('says "the applicant" when no client resolves, not the legacy "Client"', () => {
+    // The legacy route's placeholder reads as a mail-merge failure on a page
+    // of prose; a projection that cannot name the person still writes prose.
+    const anon: any = applyBorrowingCapacityProjection({}, ROW);
+    expect(anon.summary.narrative).toContain('the applicant has an estimated maximum');
+    expect(anon.summary.narrative).not.toContain('Client has');
+  });
+
+  it('formats the DTI as the legacy engine does', () => {
+    expect(data.capacity.dtiLabel).toBe('5.6x');
+    expect(data.report.lenderName).toBe('Example Bank');
+  });
+
+  it('judges utilisation and states the verdict as a whole sentence', () => {
+    expect(data.utilisation).toEqual({
+      proposedLoan: 1032000,
+      capacity: 1180000,
+      shareLabel: '87%',
+      withinCapacity: true,
+      verdict: 'The proposed loan sits inside the assessed capacity.',
+    });
+    // No proposed loan, no utilisation — not a utilisation full of zeros.
+    const without: any = applyBorrowingCapacityProjection({}, { ...ROW, proposed_loan_amount: null });
+    expect(without.utilisation).toBeUndefined();
+  });
+
+  it('assembles the ledger in the legacy composition, units and all', () => {
+    // "$245,000 pa" beside "-$6,420/mo" is the point of the ledger; a bare
+    // `| currency` filter would erase the period distinction, so the amount
+    // travels formatted. The gap before "pa" is the engine's own no-break
+    // space, asserted as such — a unit that wraps away from its figure at a
+    // line end misreads.
+    expect(data.ledger.rows.map((r: any) => [r.label, r.amountLabel])).toEqual([
+      ['Gross Annual Income', '$245,000\u00A0pa'],
+      ['Shaded Annual Income', '$228,320\u00A0pa'],
+      ['Living Expenses', '-$6,420/mo'],
+      ['Existing Commitments', '-$1,840/mo'],
+      ['Monthly Surplus', '$1,290/mo'],
+      ['Assessment Rate Applied', '9.14%'],
+      ['Loan Term', '30 years'],
+      ['Maximum Borrowing Capacity', '$1,180,000'],
+    ]);
+    expect(data.ledger.rows[2].direction).toBe('adverse');
+  });
+
+  it('publishes income rows with the legacy shading labels, and the count', () => {
+    expect(data.income.rows).toEqual([
+      { label: 'PAYG salary — applicant 1', gross: 165000, shaded: 165000, shadingLabel: '100%' },
+      { label: 'Rental income', gross: 46800, shaded: 35100, shadingLabel: '75%' },
+      { label: 'Bonus', gross: 33200, shaded: 28220, shadingLabel: '85%' },
+    ]);
+    expect(data.income.rowCount).toBe(3);
+  });
+
+  it('composes a liability label the way the legacy table sets its cell', () => {
+    expect(data.liabilities.rows.map((r: any) => r.label)).toEqual(['Home Loan', 'Credit Card']);
+    expect(data.liabilities.rows[1].limit).toBe(15000);
+  });
+
+  it('reads assumptions from both shapes the column has held', () => {
+    // 57 rows store an object with `items`; 86 store the bare array.
+    expect(data.assumptions.rows).toHaveLength(4);
+    expect(data.assumptions.rows[1]).toEqual({ label: 'Buffer Rate', value: '3%' });
+    const bare: any = applyBorrowingCapacityProjection({}, {
+      ...ROW,
+      assumptions: [{ key: 'Buffer Rate', value: '3%' }],
+    });
+    expect(bare.assumptions.rows).toEqual([{ label: 'Buffer Rate', value: '3%' }]);
+  });
+
+  it('publishes none of it for a row with no capacity figure', () => {
+    // `buildSnapshot` on an empty row manufactures a ledger of zeros and a
+    // narrative that says "$0"; a fabricated figure on a client's page is
+    // worse than an absent section.
+    const gated: any = applyBorrowingCapacityProjection({}, { id: 'x', recommendations: [], warnings: [] });
+    for (const nsName of ['summary', 'utilisation', 'ledger', 'explanation', 'audit', 'scenarios']) {
+      expect(gated[nsName], nsName).toBeUndefined();
+    }
+  });
+});
+
+describe('the sections that cascade in as the calculator stores them', () => {
+  /*
+   * `explanation` and `audit_trail` are columns null on all 143 stored rows —
+   * the calculator's keep-update post-dates every one — so these fixtures are
+   * shaped from the **producer**: `generateExplanationServer`'s report shape
+   * and `AuditTrailBuilder.build()`'s trail shape, verbatim.
+   */
+  const producerSteps = (n: number) => Array.from({ length: n }, (_, i) => ({
+    step: i + 1, title: `Step ${i + 1}`, narrative: `Narrative ${i + 1}.`,
+    figures: [{ label: 'Gross', value: '$245,000' }], icon: 'income',
+  }));
+  // `income/shading_applied` on every entry: both sides are aud/year, so the
+  // delta is computable. A liability entry's raw is a balance and its assessed
+  // a monthly repayment (F13), and the normaliser's honest answer for that
+  // non-comparable pair is a null delta — the em dash, tested separately.
+  const producerEntries = (n: number) => Array.from({ length: n }, (_, i) => ({
+    seq: i + 1,
+    category: 'income',
+    action: 'shading_applied',
+    label: `Line ${i + 1}`,
+    rawValue: 1000 + i,
+    assessedValue: i === 0 ? 1000 : 900 + i,
+    rule: 'APRA',
+    delta: i === 0 ? 0 : -100,
+    impact: i === 0 ? 'neutral' : 'decrease',
+  }));
+
+  it('projects the stored explanation up to the producer ceiling of ten', () => {
+    const d: any = applyBorrowingCapacityProjection({}, {
+      ...ROW,
+      explanation: { headline: 'In short.', steps: producerSteps(12), executiveSummary: 'x', generatedAt: 'x' },
+    });
+    expect(d.explanation.headline).toBe('In short.');
+    // Eight unconditional steps plus lender policy plus LMI is the producer's
+    // own ceiling; a cap of eight was cutting the stress test and the band
+    // off the end of every explanation.
+    expect(d.explanation.steps).toHaveLength(10);
+    expect(d.explanation.steps[0]).toEqual({ title: 'Step 1', narrative: 'Narrative 1.' });
+  });
+
+  it('composes audit labels as the legacy table does, and signs the deltas', () => {
+    const d: any = applyBorrowingCapacityProjection({}, {
+      ...ROW,
+      audit_trail: { entries: producerEntries(3), summary: {}, generatedAt: 'x' },
+    });
+    // Category caption, em-rule, label — the legacy item cell, composed in the
+    // projection so a template cannot strand the separator.
+    expect(d.audit.rows[0].label).toBe('Income — Line 1');
+    expect(d.audit.rows[1].label).toBe('Income — Line 2');
+    // A zero delta is "did not move", which is an em dash and never "+$0";
+    // a moved one arrives signed, unit and no-break space intact.
+    expect(d.audit.rows[0].deltaLabel).toBe('—');
+    expect(d.audit.rows[1].deltaLabel).toBe('-$100\u00A0pa');
+    expect(d.audit.omissionNote).toBeUndefined();
+  });
+
+  it('caps the audit at fourteen rows and says what it left out', () => {
+    const d: any = applyBorrowingCapacityProjection({}, {
+      ...ROW,
+      audit_trail: { entries: producerEntries(17), summary: {}, generatedAt: 'x' },
+    });
+    expect(d.audit.rows).toHaveLength(14);
+    // A whole sentence, never a fragment for the page to complete.
+    expect(d.audit.omissionNote).toBe('3 further audit entries are not shown in this edition.');
+  });
+
+  it('never publishes scenarios from a row, because no column carries them', () => {
+    // Scenario presets only ever travel in a render request; a row-shaped
+    // fixture claiming otherwise would assert a cascade that cannot happen.
+    const d: any = applyBorrowingCapacityProjection({}, ROW);
+    expect(d.scenarios).toBeUndefined();
   });
 });

@@ -122,6 +122,115 @@ describe('the catalogue', () => {
   });
 });
 
+describe('the conditionals', () => {
+  it('constructs every expression, because one that throws is a silently dark page', () => {
+    /*
+     * A conditional is JavaScript, not a binding path — `assets.0.value` is a
+     * SyntaxError there, and a conditional that throws at construction is
+     * logged once and answers false forever. Two portfolio pages shipped dark
+     * exactly this way; constructing each expression is the whole test.
+     */
+    const seen = new Set<string>();
+    for (const t of CLIENT_DETAILS_TEMPLATES.slice(0, 5)) {
+      const collect = (node: any) => {
+        if (!node || typeof node !== 'object') return;
+        if (typeof node.conditional === 'string') seen.add(node.conditional);
+        for (const v of Object.values(node)) {
+          if (Array.isArray(v)) v.forEach(collect);
+          else collect(v);
+        }
+      };
+      (t.schema.pages as any[]).forEach(collect);
+    }
+    expect(seen.size).toBeGreaterThan(10);
+    for (const cond of seen) {
+      expect(
+        () => new Function('clientDetails', 'client', 'org', 'report', `return (${cond});`),
+        `does not parse: ${cond}`,
+      ).not.toThrow();
+    }
+  });
+
+  it('draws every variable-depth table under mutually exclusive depths', () => {
+    /*
+     * Depth variants share a page and a position; for any count the projection
+     * can publish, exactly one may hold — two holding prints tables over each
+     * other, none rules the section off the page. The variants here key on the
+     * published counts rather than `.length`, so the groups are recovered by
+     * count name, and only from table blocks — the over-cap callout mentions
+     * the same count and is deliberately additive, not a variant.
+     */
+    const COUNTS = [
+      'assetCount', 'liabilityCount', 'employmentCount',
+      'addressHistoryCount', 'expenseCategoryCount', 'propertiesShown',
+    ];
+    const evalWith = (cond: string, clientDetails: Record<string, unknown>) => {
+      try {
+        return Boolean(new Function('clientDetails', `return (${cond});`)(clientDetails));
+      } catch { return false; }
+    };
+    let groupsSeen = 0;
+    for (const t of CLIENT_DETAILS_TEMPLATES.slice(0, 5)) {
+      for (const page of t.schema.pages as any[]) {
+        for (const name of COUNTS) {
+          const conds = ((page.blocks ?? []) as any[])
+            .filter((b) => b.type === 'data-table'
+              && typeof b.conditional === 'string' && b.conditional.includes(name))
+            .map((b) => String(b.conditional));
+          if (conds.length < 2) continue;
+          groupsSeen += 1;
+          for (let n = 1; n <= 20; n += 1) {
+            const clientDetails = {
+              assets: [{}], liabilities: [{}], employment: [{}], addressHistory: [{}],
+              expenseGroups: [{}], properties: [{}], [name]: n,
+            };
+            const holding = conds.filter((cond) => evalWith(cond, clientDetails));
+            expect(holding.length, `${t.name} "${page.name}" ${name} n=${n}`).toBe(1);
+          }
+        }
+      }
+    }
+    // Assets, liabilities, employment, history, expenses and holdings — all
+    // five masters of each family carry all six variant sets.
+    expect(groupsSeen).toBe(5 * 6);
+  });
+});
+
+describe('the second contact and the holdings', () => {
+  /**
+   * The secondary-residence row rides in an `ifItFits` optional slot, so not
+   * every structural variant need carry it — but at least one must, or the
+   * projection publishes a line no master can draw.
+   */
+  const withSecondary = CLIENT_DETAILS_TEMPLATES.filter(
+    (t) => JSON.stringify(t.schema).includes('Where the second contact lives'),
+  );
+
+  it('draws the second contact’s residence somewhere in every family', () => {
+    expect(withSecondary.length).toBeGreaterThan(0);
+    expect(new Set(withSecondary.map((t) => t.designMeta.familyKey)).size).toBe(10);
+  });
+
+  it('says a shared address in the legacy sentence, and drops the row without one', () => {
+    const t = withSecondary[0];
+    const shared = renderTemplateToHtml(t.schema as any, { data: SAMPLE }).html;
+    // The sample household shares — `render.pure.ts`'s `contactBlock` sentence.
+    expect(shared).toContain('Lives at the same address as the primary contact.');
+
+    const bare = renderTemplateToHtml(t.schema as any, { data: EMPTY_RECORD }).html;
+    expect(bare).not.toContain('Where the second contact lives');
+  });
+
+  it('draws each holding under its composed strapline, with no stranded separator', () => {
+    // Composed in the projection: the production client this page was measured
+    // against stores no lender on any holding, and the piecewise binding this
+    // replaced printed "Investment · · rent…" on all three callouts.
+    const { html } = renderTemplateToHtml(CLIENT_DETAILS_TEMPLATES[0].schema as any, { data: SAMPLE });
+    expect(html).toContain('Investment · CommBank · 100% ownership · principal and interest at 6.02%');
+    expect(html).not.toMatch(/·\s*·/);
+  });
+});
+
 describe('the 742 clients whose record holds nothing', () => {
   it('drops every financial page and keeps the document intact', () => {
     for (const t of CLIENT_DETAILS_TEMPLATES) {

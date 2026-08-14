@@ -19,12 +19,18 @@
  *  - `expense_breakdown` is an **object** of `{ declaredExpenses, hemBenchmark }`.
  *  - `recommendations` is an **array of plain strings**, on all 143.
  *  - `warnings` is a Postgres `text[]`, non-empty on 41.
- *  - `assumptions` is an object carrying `selectedLenderName`, `calculationMode`,
+ *  - `assumptions` has held two shapes: a bare `{key, value}[]` on 86 rows and,
+ *    on the other 57, an object whose `items` is that array beside the
+ *    calculator's flags — `selectedLenderName`, `calculationMode`,
  *    `dtiCapEnabled`, `dtiCapLimit`, `isFirstHomeBuyer`, `lmiMode`,
- *    `lmiDepositAmount`, `lmiPropertyValue`, `proposedRentalIncome`.
- *  - `explanation` is **null on every row**, so the format's "How this was
- *    calculated" page has no source. It is not projected, and a template that
- *    wants that page must make it conditional.
+ *    `lmiDepositAmount`, `lmiPropertyValue`, `proposedRentalIncome`. The
+ *    lender name lives only on the object shape (26 of those 57 have one).
+ *  - `explanation` and `audit_trail` are columns, **null on all 143 stored
+ *    rows** — the calculator's keep-update that writes them post-dates every
+ *    stored assessment. They are passed through to `buildSnapshot` and
+ *    projected when present, so the format's "How this was calculated" and
+ *    audit pages light up per row as new runs land; a template binding them
+ *    must stay conditional.
  *
  * ## Units
  *
@@ -44,7 +50,8 @@
  *  - `net_purchase_capacity` is populated on **3 of 143**, so it is emitted only
  *    when present rather than defaulted to zero. Zero would read as "you can
  *    buy nothing", which is a different claim from "not calculated".
- *  - `explanation.*` — null on every row, as above.
+ *  - `explanation.*` and `audit.*` on rows stored before the calculator's
+ *    keep-update — null there, as above, and projected only when present.
  *
  * ## The applicants
  *
@@ -67,6 +74,12 @@
  */
 
 import { clientDisplayName, type ClientNameRow } from './clientName.ts';
+import { buildSnapshot } from './reports/borrowingCapacity/normalise.pure.ts';
+import type {
+  BorrowingCapacitySnapshot,
+  Band,
+} from './reports/borrowingCapacity/payload.pure.ts';
+import { formatDelta, formatMeasure, type Measure } from './reportDesign/measure.pure.ts';
 
 export interface BorrowingCapacityRowLike {
   gross_annual_income?: number | string | null;
@@ -288,6 +301,274 @@ function expenseMethodLabel(method: string | undefined): string | undefined {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The legacy document's own structure, restated
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Collection caps for the snapshot-shaped section, measured across all 143
+ * stored assessments run through the legacy normaliser itself:
+ *
+ *  | collection        | max in production | cap |
+ *  | ----------------- | ----------------- | --- |
+ *  | income rows       | 7                 | 8   |
+ *  | liability rows    | 6                 | 8   |
+ *  | assumption rows   | 17                | 18  |
+ *  | ledger rows       | 8 (fixed)         | 10  |
+ *
+ * `explanation` and `audit_trail` are columns null on every stored row (the
+ * calculator's keep-update post-dates them all), so their caps are sized from
+ * the **producer** rather than production: `generateExplanationServer` emits
+ * eight unconditional steps plus one for a non-default lender policy and one
+ * for LMI — ten is its ceiling, and a cap of eight was silently cutting the
+ * stress test and the band off the end. The audit builder writes one entry per
+ * adjustment and has no ceiling at all, so its cap is the row count the page
+ * fits and the projection says what it left out (`omissionNote`) rather than
+ * omitting silently. `scenarios` genuinely has no stored producer — presets
+ * only ever travel in a render request — so its binding stays dark on every
+ * row; the cap exists for the day a column does.
+ */
+export const SNAPSHOT_CAPS = {
+  incomeRows: 8,
+  liabilityRows: 8,
+  assumptionRows: 18,
+  ledgerRows: 10,
+  explanationSteps: 10,
+  figuresPerStep: 6,
+  auditRows: 14,
+  scenarioRows: 6,
+} as const;
+
+function fm(m: Measure | null | undefined): string | undefined {
+  if (!m) return undefined;
+  const s = formatMeasure(m);
+  return s === '' ? undefined : s;
+}
+
+/** The same vocabulary `capacity.bandLabel` uses, for the payload's Band. */
+function payloadBandLabel(band: Band | undefined): string | undefined {
+  switch (band) {
+    case 'strong': return 'Comfortable';
+    case 'moderate': return 'Serviceable with limited headroom';
+    case 'limited': return 'Constrained';
+    default: return undefined;
+  }
+}
+
+/**
+ * The audit table's category captions, restating the legacy render's own map
+ * (`render.pure.ts` keeps its `CATEGORY_CAPTION` private). An unknown category
+ * passes through as itself, exactly as the legacy table shows it.
+ */
+const AUDIT_CATEGORY_CAPTION: Record<string, string> = {
+  income: 'Income',
+  tax: 'Tax',
+  expense: 'Expenses',
+  property: 'Property cashflow',
+  liability: 'Liabilities',
+  constraint: 'Constraints',
+  policy: 'Lender policy',
+};
+
+function auditCategoryCaption(category: string): string {
+  return AUDIT_CATEGORY_CAPTION[category] ?? category;
+}
+
+/**
+ * The legacy Snapshot document, restated for templates.
+ *
+ * ## Why this goes through the legacy normaliser
+ *
+ * `projectBorrowingCapacity` above reads the raw row, and stays — the seeded
+ * masters bind its vocabulary. But the raw row is not the document: the legacy
+ * engine's `buildSnapshot` is where the narrative is written, the ledger is
+ * assembled, a liability's display label is composed from kind and provider,
+ * and utilisation is judged. Re-deriving any of that here would be a second
+ * copy that drifts. So this section is a projection of the **snapshot payload**
+ * — the exact structure the shipping document renders — published additively
+ * beside the raw-row vocabulary.
+ *
+ * ## What cascades to absent, and why that is correct
+ *
+ * `explanation`, `audit` and `scenarios` are parameters the stored row cannot
+ * supply (computed, returned, never persisted — F12). They project to nothing
+ * today, the masters' pages for them are conditional, and the day the
+ * calculator starts persisting them the pages appear with no further change.
+ * That is the cascade working, not a gap.
+ */
+export function projectBorrowingCapacitySnapshot(
+  snapshot: BorrowingCapacitySnapshot,
+): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {};
+  const ns = (key: string): Record<string, unknown> => (out[key] ??= {});
+
+  // ── the executive summary, as the legacy engine writes it ────────────────
+  // Longest across the 143: 606 characters. A whole paragraph, never a
+  // fragment — the narrative carries its own figures through `formatMeasure`.
+  put(ns('summary'), 'narrative', str(snapshot.narrative));
+
+  // ── headline figures the raw-row section does not carry ──────────────────
+  // DTI is on all 143 rows; the raw projection predates it.
+  if (snapshot.headline.dti) {
+    put(ns('capacity'), 'dti', snapshot.headline.dti.value);
+    put(ns('capacity'), 'dtiLabel', fm(snapshot.headline.dti));
+  }
+  put(ns('report'), 'lenderName', str(snapshot.meta.lenderName));
+
+  // ── utilisation: the proposed loan against the assessed capacity ─────────
+  // Present on 66 of 143. `verdict` is a whole sentence for the same reason
+  // every omission note is: a template concatenating around a boolean strands
+  // its literal when the value is absent.
+  if (snapshot.utilisation) {
+    const u = snapshot.utilisation;
+    const util = ns('utilisation');
+    put(util, 'proposedLoan', u.proposedLoan.value);
+    put(util, 'capacity', u.capacity.value);
+    put(util, 'shareLabel', fm(u.share));
+    util.withinCapacity = u.withinCapacity;
+    put(util, 'verdict', u.withinCapacity
+      ? 'The proposed loan sits inside the assessed capacity.'
+      : 'The proposed loan exceeds the assessed capacity.');
+  }
+
+  // ── income rows, in the legacy engine's own composition ──────────────────
+  const incomeRows = snapshot.income.rows.slice(0, SNAPSHOT_CAPS.incomeRows)
+    .map((r) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'label', str(r.label));
+      put(row, 'gross', r.gross.value);
+      put(row, 'shaded', r.shaded.value);
+      put(row, 'shadingLabel', fm(r.shading));
+      return row;
+    })
+    .filter((r) => Object.keys(r).length > 0);
+  if (incomeRows.length) {
+    ns('income').rows = incomeRows;
+    put(ns('income'), 'rowCount', snapshot.income.rows.length);
+  }
+
+  // ── liabilities, with the display label the legacy document composes ─────
+  // Kind plus provider, joined here so a template cannot strand a separator
+  // beside an absent provider.
+  const liabilityRows = snapshot.expenses.liabilities
+    .slice(0, SNAPSHOT_CAPS.liabilityRows)
+    .map((l) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'label', l.provider ? `${l.kind} · ${l.provider}` : l.kind);
+      put(row, 'balance', l.balance?.value);
+      put(row, 'limit', l.limit?.value);
+      put(row, 'servicing', l.monthlyServicing.value);
+      put(row, 'note', str(l.note));
+      return row;
+    })
+    .filter((r) => Object.keys(r).length > 0);
+  if (liabilityRows.length) {
+    ns('liabilities').rows = liabilityRows;
+    put(ns('liabilities'), 'rowCount', snapshot.expenses.liabilities.length);
+  }
+
+  // ── the assessment ledger ─────────────────────────────────────────────────
+  // `amountLabel` is the formatted measure, units and all — "$302,640 pa"
+  // beside "-$2,200/mo" is the point of the ledger, and a bare `| currency`
+  // filter would erase the distinction.
+  const ledgerRows = snapshot.ledger.slice(0, SNAPSHOT_CAPS.ledgerRows)
+    .map((l) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'label', str(l.label));
+      put(row, 'amountLabel', fm(l.amount));
+      put(row, 'direction', str(l.direction));
+      put(row, 'emphasis', str(l.emphasis));
+      return row;
+    })
+    .filter((r) => typeof r.label === 'string' && typeof r.amountLabel === 'string');
+  if (ledgerRows.length) ns('ledger').rows = ledgerRows;
+
+  // ── assumptions, as label/value rows ─────────────────────────────────────
+  const assumptionRows = snapshot.assumptions
+    .slice(0, SNAPSHOT_CAPS.assumptionRows)
+    .map((a) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'label', str(a.label));
+      put(row, 'value', str(a.value));
+      return row;
+    })
+    .filter((r) => typeof r.label === 'string' && typeof r.value === 'string');
+  if (assumptionRows.length) {
+    ns('assumptions').rows = assumptionRows;
+    put(ns('assumptions'), 'rowCount', snapshot.assumptions.length);
+  }
+
+  // ── how the engine reached this (column null on stored rows; cascades) ───
+  if (snapshot.explanation && snapshot.explanation.steps.length) {
+    const e = ns('explanation');
+    put(e, 'headline', str(snapshot.explanation.headline));
+    e.steps = snapshot.explanation.steps.slice(0, SNAPSHOT_CAPS.explanationSteps)
+      .map((s) => {
+        const step: Record<string, unknown> = {};
+        put(step, 'title', str(s.title));
+        put(step, 'narrative', str(s.narrative));
+        const figures = s.figures.slice(0, SNAPSHOT_CAPS.figuresPerStep)
+          .map((f) => ({ label: f.label, valueLabel: fm(f.value) }))
+          .filter((f) => f.label && f.valueLabel);
+        if (figures.length) step.figures = figures;
+        return step;
+      });
+  }
+
+  // ── the audit trail (column null on every stored row; cascades per run) ──
+  // The label is composed as the legacy table's item cell — category caption,
+  // em-rule, entry label — and the delta goes through `formatDelta`, so a
+  // change is signed and "did not move" is an em dash rather than `+$0`.
+  if (snapshot.audit && snapshot.audit.groups.length) {
+    const rows = snapshot.audit.groups
+      .flatMap((g) => g.rows.map((r) => ({ category: g.category, r })))
+      .slice(0, SNAPSHOT_CAPS.auditRows)
+      .map(({ category, r }) => {
+        const row: Record<string, unknown> = {};
+        put(row, 'label', `${auditCategoryCaption(category)} — ${r.label}`);
+        put(row, 'category', str(r.category));
+        put(row, 'action', str(r.action));
+        put(row, 'rule', str(r.rule));
+        put(row, 'note', str(r.note));
+        put(row, 'rawLabel', fm(r.raw));
+        put(row, 'assessedLabel', fm(r.assessed));
+        put(row, 'deltaLabel', r.delta ? formatDelta(r.delta) : '—');
+        put(row, 'direction', str(r.direction));
+        return row;
+      })
+      .filter((r) => Object.keys(r).length > 0);
+    if (rows.length) {
+      const audit = ns('audit');
+      audit.rows = rows;
+      const total = snapshot.audit.groups.reduce((n, g) => n + g.rows.length, 0);
+      if (total > SNAPSHOT_CAPS.auditRows) {
+        put(audit, 'omissionNote',
+          `${total - SNAPSHOT_CAPS.auditRows} further audit entries are not shown in this edition.`);
+      }
+    }
+  }
+
+  // ── scenarios (no stored producer at all — presets never reach a column) ─
+  if (snapshot.scenarios && snapshot.scenarios.length) {
+    ns('scenarios').rows = snapshot.scenarios.slice(0, SNAPSHOT_CAPS.scenarioRows)
+      .map((s) => {
+        const row: Record<string, unknown> = {};
+        put(row, 'name', str(s.name));
+        put(row, 'capacity', s.capacity.value);
+        put(row, 'surplus', s.monthlySurplus.value);
+        put(row, 'bandLabel', payloadBandLabel(s.band));
+        put(row, 'changeLabel', fm(s.change));
+        // Joined here, so a table cell is one string and a template cannot
+        // strand a separator against an empty tail.
+        put(row, 'adjustments', s.adjustments.length ? s.adjustments.join(' · ') : undefined);
+        return row;
+      })
+      .filter((r) => Object.keys(r).length > 0);
+  }
+
+  return out;
+}
+
 /**
  * Merge the projection into a binding-context `data` object.
  *
@@ -320,5 +601,39 @@ export function applyBorrowingCapacityProjection(
   merge('report', p.report);
   if (p.recommendations.length) data.recommendations = p.recommendations;
   if (p.warnings.length) data.warnings = p.warnings;
+
+  /*
+   * The legacy document's structure, on top of the raw row.
+   *
+   * Built through the legacy engine's own `buildSnapshot`, so the narrative,
+   * the ledger and the composed labels are the shipping document's and not a
+   * second copy. Gated on the row carrying a capacity figure: `buildSnapshot`
+   * on an empty row manufactures a ledger of zeros and a narrative that says
+   * "$0", and a fabricated figure on a client's page is worse than an absent
+   * section.
+   *
+   * The narrative names its subject, so an assessment whose client cannot be
+   * resolved reads "the applicant" rather than losing the paragraph — the
+   * legacy route's own fallback is the placeholder 'Client', which reads as a
+   * mail-merge failure on a page of prose.
+   */
+  if (num(row.borrowing_capacity) !== undefined) {
+    /*
+     * `audit_trail` and `explanation` are columns the calculator has written
+     * since its keep-update landed, null on every row stored before it — so
+     * they are passed through rather than assumed, and the pages bound to them
+     * light up per row as the data arrives. Scenario presets have no column at
+     * all (they only ever travel in a render request), so `scenarios.*` has no
+     * producer here and its page stays dark by construction.
+     */
+    const snapshot = buildSnapshot({
+      clientName: name || 'the applicant',
+      assessment: row as never,
+      auditTrail: row.audit_trail,
+      explanation: row.explanation,
+    });
+    const extras = projectBorrowingCapacitySnapshot(snapshot);
+    for (const [key, value] of Object.entries(extras)) merge(key, value);
+  }
   return data;
 }

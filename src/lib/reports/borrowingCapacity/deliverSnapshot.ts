@@ -23,6 +23,7 @@
  * the layout they know, and it is offered beside the other on every surface that
  * produces this document.
  */
+import { tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
 import { requestBorrowingCapacitySnapshot, type SnapshotRequest } from './requestSnapshot';
 
 /** Which renderer produces the document. */
@@ -50,6 +51,12 @@ export interface DeliveredSnapshot {
   fileName: string;
   /** What the tenant's brand snapshot was missing. Always empty for the legacy path. */
   brandGaps: string[];
+  /**
+   * Rendered from an activated template. Still `source: 'server'`, because
+   * that field answers "typeset, or the in-browser generator?" and this is the
+   * typeset one.
+   */
+  templated?: boolean;
 }
 
 /**
@@ -89,6 +96,20 @@ async function deliverLegacy(legacy: () => Promise<LegacySnapshot>): Promise<Del
  */
 export async function deliverSnapshot(input: DeliverSnapshotInput): Promise<DeliveredSnapshot> {
   if (input.variant === 'legacy') return deliverLegacy(input.legacy);
+
+  // Never over `variant: 'legacy'`, which is a person choosing the layout they
+  // know — the whole reason that parameter exists is that a renderer should
+  // not change under somebody who asked for a particular one.
+  //
+  // And only when the request names an assessment. `assessmentId` is optional
+  // here ("omit for the most recent"), and resolving "most recent" is the
+  // render route's job against the server's view of the data; an adapter needs
+  // the row it is rendering.
+  const templated = await tryTemplateDocument('borrowing_capacity', input.request.assessmentId);
+  if (templated) {
+    saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName, true);
+    return { source: 'server', fileName: templated.fileName, brandGaps: [], templated: true };
+  }
 
   const result = await requestBorrowingCapacitySnapshot(input.request, async () => {
     const produced = await input.legacy();
@@ -134,6 +155,15 @@ export async function snapshotBlob(input: DeliverSnapshotInput): Promise<{
     const produced = await input.legacy();
     if (!produced?.blob) throw new Error('The in-browser generator produced no document');
     return { blob: produced.blob, fileName: produced.fileName, source: 'legacy', brandGaps: [] };
+  }
+
+  // The same rule as the download path: this is the file a broker portal
+  // uploads, and it should be the document the tenant activated.
+  const templated = await tryTemplateDocument('borrowing_capacity', input.request.assessmentId);
+  if (templated) {
+    return {
+      blob: templated.blob, fileName: templated.fileName, source: 'server', brandGaps: [],
+    };
   }
 
   let legacyBlob: Blob | null = null;

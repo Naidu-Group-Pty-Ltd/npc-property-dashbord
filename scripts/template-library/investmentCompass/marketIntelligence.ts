@@ -45,12 +45,16 @@ import {
 import {
   beginCompassTemplate,
   callout,
+  contents,
   contentTop,
   cover,
+  definitions,
   disclaimerPage,
   flow,
+  ifItFits,
   markdown,
   MARKDOWN_LINES_PER_PAGE,
+  oneOf,
   page,
   prose,
   sectionHeading,
@@ -59,6 +63,7 @@ import {
   withFurniture,
   type PageDef,
 } from './blocks';
+import { hasContents } from './resolvers';
 import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
@@ -86,6 +91,10 @@ const LENGTHS = {
   strategy: 1100,
   /** Longest event name across the stored reports; 47, rounded up. */
   eventName: 50,
+  /** Longest stored event description is 193 characters; the cap is 400. */
+  eventNote: 210,
+  /** The longest audience panel runs 262 characters. */
+  audiencePanel: 290,
 } as const;
 
 const MARKET_INTELLIGENCE_FORMAT: ReportFormat = {
@@ -125,11 +134,19 @@ const HAS_INTEL = 'marketIntel';
  */
 const EVENTS_FIRST_PAGE = 8;
 
+/**
+ * The legacy timeline's own cells: the short date, the event, the category
+ * with its underscores folded, and the impact as a capitalised word — the
+ * legacy encoded impact as a coloured dot alone, and colour is never the only
+ * channel in this design system. The raw `impact` used to be bound here and
+ * printed "neutral" lowercase in a column of sentence-case cells.
+ */
 function eventRow(collection: string, i: number): string[] {
   return [
-    `{{marketIntel.${collection}.${i}.date}}`,
+    `{{marketIntel.${collection}.${i}.dateLabel}}`,
     `{{marketIntel.${collection}.${i}.event}}`,
-    `{{marketIntel.${collection}.${i}.impact}}`,
+    `{{marketIntel.${collection}.${i}.categoryLabel}}`,
+    `{{marketIntel.${collection}.${i}.impactLabel}}`,
   ];
 }
 
@@ -143,6 +160,17 @@ function eventRow(collection: string, i: number): string[] {
 function layerPages(index: number, bodyHeight: number, firstHeight: number): PageDef[] {
   const out: PageDef[] = [];
   const source = `{{marketIntel.layers.${index}.content}}`;
+  /*
+   * `layers[${index}]`, bracketed — a page conditional is JavaScript, and
+   * `marketIntel.layers.0` is a SyntaxError that logs once and answers false
+   * forever. Every one of these thirty-two layer pages shipped silently dark
+   * on all fifty masters: the format's eight layers — the document — never
+   * rendered, while the cover, the summary and the calendar did. Found the
+   * same way the Report Q&A's dark page and the two portfolio market pages
+   * were found, and now guarded the same way: the catalogue spec constructs
+   * every conditional.
+   */
+  const has = `marketIntel && marketIntel.layers && marketIntel.layers[${index}]`;
 
   out.push({
     ...withFurniture(page(`Layer ${index + 1}`, [
@@ -154,7 +182,7 @@ function layerPages(index: number, bodyHeight: number, firstHeight: number): Pag
         markdown(source, 0, firstHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),
     ]), FOOTER),
-    conditional: `marketIntel && marketIntel.layers && marketIntel.layers.${index}`,
+    conditional: has,
   });
 
   for (let p = 1; p < LAYER_PAGES; p += 1) {
@@ -164,8 +192,7 @@ function layerPages(index: number, bodyHeight: number, firstHeight: number): Pag
           markdown(source, p, bodyHeight, MARKDOWN_LINES_PER_PAGE),
         ], contentTop()),
       ]), FOOTER),
-      conditional: `marketIntel && marketIntel.layers && marketIntel.layers.${index}`
-        + ` && marketIntel.layers.${index}.pages > ${p}`,
+      conditional: `${has} && marketIntel.layers[${index}].pages > ${p}`,
     });
   }
 
@@ -177,8 +204,7 @@ function layerPages(index: number, bodyHeight: number, firstHeight: number): Pag
         callout('This section continues', `{{marketIntel.layers.${index}.omissionNote}}`),
       ], contentTop()),
     ]), FOOTER),
-    conditional: `marketIntel && marketIntel.layers && marketIntel.layers.${index}`
-      + ` && marketIntel.layers.${index}.omissionNote`,
+    conditional: `${has} && marketIntel.layers[${index}].omissionNote`,
   });
 
   return out;
@@ -201,7 +227,7 @@ const PROSE_PAGES = 3;
  * before layout rather than printing it blank.
  */
 function prosePages(opts: {
-  key: 'executiveSummary' | 'strategy';
+  key: 'executiveSummary' | 'strategy' | 'keyInsights';
   name: string;
   eyebrow: string;
   heading: string;
@@ -258,11 +284,40 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     locations: 'Prepared {{marketIntel.meta.preparedOn | date}}',
     facts: [
       { label: 'Period', value: '{{marketIntel.meta.reportPeriod}}' },
-      { label: 'Edition', value: '{{marketIntel.meta.audienceSegment}}' },
+      // The words the legacy's edition line uses — the raw segment printed
+      // "general" as an edition name on every stored report's cover.
+      { label: 'Edition', value: '{{marketIntel.meta.editionLabel}}' },
       { label: 'Sections', value: '{{marketIntel.meta.layersShown | fixed:0}}' },
       { label: 'Sources', value: '{{marketIntel.citationCount | fixed:0}}' },
     ],
   }));
+
+  // ── Contents, where the family declares one ──────────────────────────────
+  //
+  // The list is fixed while the pages are conditional, so it names what this
+  // format covers rather than promising a page number — the same rule the
+  // Client Details contents holds, for the same reason.
+  if (hasContents(manifest.toc_style)) {
+    pages.push({
+      ...withFurniture(page('Contents', [
+        ...flow([
+          sectionHeading({ eyebrow: 'In this report', heading: 'Contents' }),
+          contents([
+            'Where the market stands',
+            'In summary',
+            'Key insights',
+            'The intelligence layers',
+            'What moved the market',
+            'What to watch',
+            'Where this points',
+            'The next step',
+            'Sources',
+          ]),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: HAS_INTEL,
+    });
+  }
 
   // ── Where it stands ──────────────────────────────────────────────────────
   //
@@ -292,15 +347,17 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   }));
 
   // ── What stands out ──────────────────────────────────────────────────────
-  pages.push({
-    ...withFurniture(page('What stands out', [
-      ...flow([
-        sectionHeading({ eyebrow: 'This period', heading: 'Key insights' }),
-        prose('{{marketIntel.prose.keyInsights}}', textHeight(LENGTHS.keyInsights)),
-      ], contentTop()),
-    ]), FOOTER),
-    conditional: 'marketIntel && marketIntel.prose && marketIntel.prose.keyInsights',
-  });
+  //
+  // Paged like the summary and the strategy: the stored briefing measures
+  // 1,146 characters, already past the 1,100-character block it used to be
+  // set into, and a model writes it — its length is nobody's to promise.
+  pages.push(...prosePages({
+    key: 'keyInsights',
+    name: 'What stands out',
+    eyebrow: 'This period',
+    heading: 'Key insights',
+    c,
+  }));
 
   // ── The eight layers ─────────────────────────────────────────────────────
   const firstHeight = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
@@ -315,11 +372,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...flow([
         sectionHeading({ eyebrow: 'Dated', heading: 'What moved the market' }),
         table({
-          headers: ['Date', 'Event', 'Impact'],
+          headers: ['Date', 'Event', 'Category', 'Impact'],
           rows: Array.from({ length: EVENTS_FIRST_PAGE }, (_, i) => eventRow('events', i)),
-          columnWidths: [80, c.contentWidth - 200, 120],
+          columnWidths: [78, c.contentWidth - 256, 100, 78],
           numeric: [],
-          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 200 },
+          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 256 },
         }),
       ], contentTop()),
     ]), FOOTER),
@@ -332,12 +389,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...flow([
         sectionHeading({ eyebrow: 'Dated', heading: 'What moved the market' }),
         table({
-          headers: ['Date', 'Event', 'Impact'],
+          headers: ['Date', 'Event', 'Category', 'Impact'],
           rows: Array.from({ length: ROWS.events - EVENTS_FIRST_PAGE }, (_, i) =>
             eventRow('events', EVENTS_FIRST_PAGE + i)),
-          columnWidths: [80, c.contentWidth - 200, 120],
+          columnWidths: [78, c.contentWidth - 256, 100, 78],
           numeric: [],
-          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 200 },
+          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 256 },
         }),
       ], contentTop()),
     ]), FOOTER),
@@ -349,15 +406,91 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ...flow([
         sectionHeading({ eyebrow: 'Ahead', heading: 'What to watch' }),
         table({
-          headers: ['Date', 'Event', 'Impact'],
+          headers: ['Date', 'Event', 'Category', 'Impact'],
           rows: Array.from({ length: ROWS.upcoming }, (_, i) => eventRow('upcoming', i)),
-          columnWidths: [80, c.contentWidth - 200, 120],
+          columnWidths: [78, c.contentWidth - 256, 100, 78],
           numeric: [],
+          wraps: { chars: LENGTHS.eventName, columnWidth: c.contentWidth - 256 },
         }),
       ], contentTop()),
     ]), FOOTER),
     conditional: 'marketIntel && marketIntel.upcoming',
   });
+
+  // ── What each event meant ────────────────────────────────────────────────
+  //
+  // The sidenotes the legacy sets under its timeline, labelled with the event
+  // rather than only its date — every one of the stored report's twelve events
+  // carries a description, and none of them reached a page. Two pages of four,
+  // each drawn only as deep as the record.
+  const eventNoteRows = (from: number, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      term: `{{marketIntel.eventNotes.${from + i}.label}}`,
+      definition: `{{marketIntel.eventNotes.${from + i}.description}}`,
+    }));
+  pages.push({
+    ...withFurniture(page('What each meant', [
+      ...flow(ifItFits([
+        sectionHeading({ eyebrow: 'Dated', heading: 'What each event meant' }),
+        (() => oneOf(
+          { when: 'marketIntel && marketIntel.eventNotes && marketIntel.eventNotes.length <= 2', item: definitions('The events, in brief', eventNoteRows(0, 2), LENGTHS.eventNote) },
+          { when: 'marketIntel && marketIntel.eventNotes && marketIntel.eventNotes.length > 2', item: definitions('The events, in brief', eventNoteRows(0, 4), LENGTHS.eventNote) },
+        ))(),
+      ], [
+        {
+          ...callout('Not every event is described', '{{marketIntel.eventNotesOmitted}}'),
+          conditional: 'marketIntel && marketIntel.eventNotesOmitted',
+        },
+      ], contentTop()), contentTop()),
+    ]), FOOTER),
+    conditional: 'marketIntel && marketIntel.eventNotes',
+  });
+  pages.push({
+    ...withFurniture(page('What each meant (2)', [
+      ...flow([
+        (() => oneOf(
+          { when: 'marketIntel && marketIntel.eventNotes && marketIntel.eventNotes.length <= 6', item: definitions('The events, continued', eventNoteRows(4, 2), LENGTHS.eventNote) },
+          { when: 'marketIntel && marketIntel.eventNotes && marketIntel.eventNotes.length > 6', item: definitions('The events, continued', eventNoteRows(4, 4), LENGTHS.eventNote) },
+        ))(),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'marketIntel && marketIntel.eventNotes && marketIntel.eventNotes[4]',
+  });
+
+  // ── The correlation view ─────────────────────────────────────────────────
+  //
+  // Persisted by the generator since this migration and absent on every earlier
+  // row — so these pages light up as new correlation reports land, exactly as
+  // the Report Q&A citations page does. Both bodies are model Markdown and get
+  // the paged treatment everything of unknown length here gets.
+  const corrFirst = c.contentBottom - contentTop() - c.spacing.headingGap - 104;
+  const corrCont = c.contentBottom - contentTop() - 12;
+  for (const [key, pagesKey, name, heading] of [
+    ['analysis', 'analysisPages', 'Correlation highlights', 'Correlation highlights'],
+    ['research', 'researchPages', 'Correlation research', 'What the research found'],
+  ] as const) {
+    const has = `marketIntel && marketIntel.correlation && marketIntel.correlation.${key}`;
+    const source = `{{marketIntel.correlation.${key}}}`;
+    pages.push({
+      ...withFurniture(page(name, [
+        ...flow([
+          sectionHeading({ eyebrow: 'Correlation', heading }),
+          markdown(source, 0, corrFirst, MARKDOWN_LINES_PER_PAGE),
+        ], contentTop()),
+      ]), FOOTER),
+      conditional: has,
+    });
+    for (let p = 1; p < 3; p += 1) {
+      pages.push({
+        ...withFurniture(page(`${name} (${p + 1})`, [
+          ...flow([
+            markdown(source, p, corrCont, MARKDOWN_LINES_PER_PAGE),
+          ], contentTop()),
+        ]), FOOTER),
+        conditional: `${has} && marketIntel.correlation.${pagesKey} > ${p}`,
+      });
+    }
+  }
 
   // The strategy is the other long one — 4,315 characters — so it is paged
   // rather than tucked under the calendar table.
@@ -368,6 +501,51 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     heading: 'Where this points',
     c,
   }));
+
+  // ── The next step ────────────────────────────────────────────────────────
+  //
+  // The audience panels the segment decides — the legacy's closing callouts on
+  // the suburb layer — and the brand's own close, its two boxes with the brand
+  // name bound from the letterhead. Neither is `prose.ctaContent`, which stays
+  // deliberately unbound: that is the model's copy for the email this PDF was
+  // attached to, and it stays out of the document.
+  pages.push({
+    ...withFurniture(page('The next step', [
+      ...flow(ifItFits([
+        sectionHeading({ eyebrow: 'For you', heading: 'The next step' }),
+        {
+          ...callout(
+            '{{marketIntel.audiencePanels.0.title}}',
+            '{{marketIntel.audiencePanels.0.body}}',
+            textHeight(LENGTHS.audiencePanel, { size: c.scale.cell, extra: 34 }),
+          ),
+          conditional: 'marketIntel && marketIntel.audiencePanels && marketIntel.audiencePanels[0]',
+        },
+        {
+          ...callout(
+            '{{marketIntel.audiencePanels.1.title}}',
+            '{{marketIntel.audiencePanels.1.body}}',
+            textHeight(LENGTHS.audiencePanel, { size: c.scale.cell, extra: 34 }),
+          ),
+          conditional: 'marketIntel && marketIntel.audiencePanels && marketIntel.audiencePanels[1]',
+        },
+      ], [
+        // The brand's close, as the legacy prints it — with the name bound
+        // from the letterhead rather than written into fifty masters.
+        callout(
+          'Why {{org.name}}?',
+          '{{org.name}} is a strategic property advisory that delivers data-driven, '
+          + 'insight-led guidance — enabling clients to act on opportunities others do not see.',
+          textHeight(200, { size: c.scale.cell, extra: 34 }),
+        ),
+        callout(
+          'Ready to take the next step?',
+          'Contact {{org.name}} to discuss your personalised property strategy.',
+        ),
+      ], contentTop()), contentTop()),
+    ]), FOOTER),
+    conditional: 'marketIntel && marketIntel.audiencePanels',
+  });
 
   // ── Sources ──────────────────────────────────────────────────────────────
   pages.push({

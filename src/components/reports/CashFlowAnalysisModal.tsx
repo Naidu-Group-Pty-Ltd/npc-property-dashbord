@@ -26,6 +26,11 @@ import { readBaseFinancials } from '@/lib/reports/cashFlow/readBaseFinancials';
 import { toWireComparison, type WireComparison } from '@/lib/reports/cashFlowComparison/toWireComparison';
 import { CashFlowComparisonDownloadButton } from '@/components/cash-flow/modal/CashFlowComparisonDownloadButton';
 import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
+import { matchStoredScenario } from '@/lib/reports/cashFlow/storedSeriesMatch';
+import {
+  saveTemplateDocument,
+  tryTemplateDocument,
+} from '@/lib/reportTemplate/templateDocument';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
 import { Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
 import { ComposedChart, LineChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -3614,6 +3619,34 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           ? []
           : ['Depreciation is excluded from this projection at the adviser\'s direction.'],
       });
+
+      // An activated template renders this format **only when the series on
+      // screen is the series that is stored**. The adapter reads
+      // `financial_calculations.projections`; this modal recomputes ten years
+      // in the browser from `manual_overrides` plus whatever has been changed
+      // since it opened. Whenever those differ, the templated document would
+      // carry figures the adviser is not looking at, so `matchStoredScenario`
+      // has to name a scenario before the question is even asked — and it
+      // answers null for anything it cannot be certain of.
+      const storedScenario = matchStoredScenario(wire, report);
+      const templated = storedScenario
+        ? await tryTemplateDocument('cashflow', report.id, { variant: storedScenario })
+        : null;
+      if (templated) {
+        saveTemplateDocument(templated);
+        logActivityDirect({
+          actionType: 'report_pdf_downloaded',
+          entityType: 'investment_report',
+          entityId: report.id,
+          entityName: report.property_address,
+          metadata: { format: 'pdf', source: 'cash_flow_template', scenario: storedScenario },
+        });
+        toast({
+          title: 'Cash Flow Analysis ready',
+          description: 'Your download should begin shortly.',
+        });
+        return;
+      }
 
       const result = await requestCashFlowPdf(
         { reportId: report.id, projection: wire },

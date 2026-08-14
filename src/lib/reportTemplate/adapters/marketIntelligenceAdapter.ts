@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 import {
   buildMarketIntelligenceReport,
@@ -66,9 +66,37 @@ export const marketIntelligenceAdapter: ReportTemplateAdapter = {
       + 'number of pages per section and says on the page where one is clipped.',
   },
 
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('marketing_intelligence_reports')
+        .select('id, report_period, generated_at')
+        .order('generated_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: row.report_period
+          ? `Market Intelligence — ${row.report_period}`
+          : 'Market Intelligence',
+        savedAt: (row.generated_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
+  },
+
   async resolveRoutingContext({ reportId, variant }): Promise<RoutingContext | null> {
     const row = await loadReport(reportId);
     if (!row) return null;
+    // The two of the normaliser's refusals this read can already answer, so
+    // routing does not resolve for a report the binding will decline. All six
+    // stored reports are `completed` and carry a payload, so both are latent —
+    // and free, because `REPORT_COLUMNS` already selects them. The third
+    // refusal (nothing substantial to typeset) needs the build itself, which
+    // is 305 KB of layers and not something routing should do.
+    if (!row.report_data) return null;
+    if (row.status && row.status !== 'completed') return null;
     const audience = AUDIENCES.has(String(variant)) ? String(variant) : null;
     return {
       reportId,

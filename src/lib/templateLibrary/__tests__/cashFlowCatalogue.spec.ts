@@ -203,6 +203,21 @@ describe('rendering', () => {
     }
   });
 
+  it('opens on the built narrative, which cannot disagree with the tables', () => {
+    /*
+     * The legacy document leads with two sentences built from the series'
+     * own ends. The sample is the projection's own output, so the narrative
+     * arrives composed — and asserting the break-even sentence pins the
+     * production truth that no stored moderate scenario ever turns positive.
+     */
+    expect(String(cashflow.overview)).toContain('a week to hold in year one');
+    for (const t of CASH_FLOW_COMPASS_TEMPLATES.slice(0, 5)) {
+      const { html } = renderTemplateToHtml(t.schema as any, { data: SAMPLE });
+      expect(html, t.name).toContain('a week to hold in year one');
+      expect(html, t.name).toContain('of capital growth');
+    }
+  });
+
   it('titles and foots every page, which a client-bound cover did not', () => {
     for (const t of CASH_FLOW_COMPASS_TEMPLATES) {
       const { html } = renderTemplateToHtml(t.schema as any, { data: SAMPLE });
