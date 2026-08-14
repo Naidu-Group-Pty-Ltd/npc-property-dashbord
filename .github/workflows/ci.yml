@@ -354,6 +354,7 @@ jobs:
           node scripts/security/check-feedback-campaign-authz.mjs
           node scripts/security/check-mfa-recovery-code-lifecycle.mjs
           node scripts/security/check-webauthn-lifecycle-step-up.mjs
+          node scripts/security/check-finance-session-transport.mjs
           node scripts/solicitor-portal/security-check.mjs
           node scripts/builder-portal/security-check.mjs
 

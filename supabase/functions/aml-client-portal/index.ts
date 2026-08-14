@@ -52,7 +52,9 @@ import { buildClientStampInput } from "../_shared/aml/passport/passportStamps.pu
 // portal surfaces render it. It lives in a pure module so it is testable
 // without a database — see the header there for the documents defect that
 // hiding it in this file concealed.
-import { buildJourney } from "../_shared/aml/portalJourney.pure.ts";
+import {
+  buildJourney, documentsJourneyStatus, submissionBlockers, verificationJourneyStatus,
+} from "../_shared/aml/portalJourney.pure.ts";
 import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
@@ -1970,6 +1972,27 @@ const __corsWrappedHandler = async (req: Request) => {
         const partyLabel = String(
           body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
 
+        /**
+         * A verified party never buys another sequence.
+         *
+         * Every standalone attempt is up to three billed provider calls, and a
+         * verified party has typically consumed only one of their three
+         * attempts — so the exhaustion gate below cannot catch this. The
+         * portal hides the button once a party projects as verified, but the
+         * endpoint is the boundary: a refresh, a stale tab or a direct call
+         * must meet the same refusal. `projectParty` is the one place
+         * "verified" is decided (electronic pass or accepted staff sighting),
+         * so it is consulted rather than re-derived.
+         */
+        const preparingParty = (await verificationParties(admin, c.id))
+          .find((p) => (p.party_id ?? null) === (partyId ?? null));
+        if (preparingParty?.status === 'verified') {
+          return jsonResponse({
+            error: 'Your identity has already been verified. There is nothing more to do for this step.',
+            code: 'already_verified',
+          }, 409);
+        }
+
         const used = await verificationAttemptsUsed(admin, c.id, partyId);
         if (used >= MAX_VERIFICATION_ATTEMPTS) {
           return jsonResponse({
@@ -2192,6 +2215,18 @@ const __corsWrappedHandler = async (req: Request) => {
               ? 'Electronic verification is not available for your case. Your adviser will arrange verification another way.'
               : 'Verification is temporarily unavailable. Please try again shortly — nothing has been used up.',
             code: standalone ? availability : 'capture_flow_unavailable',
+          }, 409);
+        }
+
+        // Re-checked at submission, same as availability: a draft prepared
+        // before the party became verified (a second tab, a staff sighting
+        // recorded in between) must not turn into three billed calls now.
+        const submittingParty = (await verificationParties(admin, c.id))
+          .find((p) => (p.party_id ?? null) === (attempt.party_id ?? null));
+        if (submittingParty?.status === 'verified') {
+          return jsonResponse({
+            error: 'Your identity has already been verified. There is nothing more to do for this step.',
+            code: 'already_verified',
           }, 409);
         }
 
@@ -2604,6 +2639,40 @@ const __corsWrappedHandler = async (req: Request) => {
           return jsonResponse({
             error: 'Cannot submit — some sections are incomplete',
             missing_sections: missingSections,
+          }, 400);
+        }
+        /**
+         * The canonical gate — the SAME rule the journey renders as "ready to
+         * send" (`submissionBlockers` in portalJourney.pure.ts). The two checks
+         * above stay for their detailed error payloads; this is the authority,
+         * and it closes the two holes they left: identity verification was
+         * never consulted at all, and a rejected document against a
+         * requirement row still marked `uploaded` slipped the row-only check.
+         * Documents with NO requirement rows stay optional here exactly as
+         * they are in the journey — see `stepHoldsSubmission`. A caller who
+         * skips the portal UI meets exactly the same rule the UI shows.
+         */
+        const submitBlockers = submissionBlockers({
+          consent: 'complete',       // gated above by loadConsentState
+          questionnaire: 'complete', // gated above via missingSections
+          documents: documentsJourneyStatus({
+            requirements: reqs ?? [],
+            documents: (docs ?? []).map((d: any) => ({
+              requirement_id: d.requirement_id, status: d.status,
+            })),
+          }),
+          verification: verificationJourneyStatus(await verificationParties(admin, c.id)),
+        });
+        if (submitBlockers.length > 0) {
+          const blockerLabels: Record<string, string> = {
+            documents: 'documents', verification: 'identity verification',
+            consent: 'consents', questionnaire: 'your information',
+          };
+          return jsonResponse({
+            error: `Cannot submit — still outstanding: ${
+              submitBlockers.map((b) => blockerLabels[b] ?? b).join(', ')}`,
+            code: 'submission_requirements_incomplete',
+            blockers: submitBlockers,
           }, 400);
         }
         const { data: lastSub } = await admin.schema('aml').from('submission_versions')
