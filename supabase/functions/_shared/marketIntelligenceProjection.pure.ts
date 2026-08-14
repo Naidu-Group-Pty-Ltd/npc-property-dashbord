@@ -65,7 +65,78 @@ export const CAPS = {
   events: 10,
   upcomingEvents: 6,
   citations: 12,
+  /** Event descriptions drawn as their own ruled rows; the stored report carries 12. */
+  eventNotes: 8,
+  /** Pages each correlation body may run to, like the other paged prose. */
+  correlationPages: 3,
 } as const;
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** `2026-04-22` → `22 Apr 2026` — the legacy timeline column's own format. */
+function shortDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
+  if (!m) return iso ?? '';
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${m[3]} ${month.slice(0, 3)} ${m[1]}` : iso;
+}
+
+/**
+ * The audience editions, as the legacy labels them — its `AUDIENCE_LABELS`
+ * map. The legacy's general edition carries no edition line at all; a labelled
+ * cover fact with nothing beside it reads as a rendering fault, so the general
+ * edition is worded here instead of left blank.
+ */
+const EDITION_LABELS: Readonly<Record<string, string>> = {
+  general: 'General',
+  investor: 'Investor Edition',
+  homebuyer: 'Homebuyer Edition',
+};
+
+/**
+ * The per-audience insight panels, carried verbatim from the legacy's
+ * `audiencePanels` — hardcoded English, not model output, and it says the same
+ * thing on every report; but somebody wrote it for a client-facing document,
+ * so it is carried rather than quietly dropped. One panel for a named
+ * audience, two for the general edition, exactly as `render.pure.ts` emits
+ * them.
+ */
+function audiencePanelsFor(segment: string | undefined): Array<{ title: string; body: string }> {
+  if (segment === 'investor') {
+    return [{
+      title: 'What this means for your portfolio',
+      body: 'These suburbs have been identified based on their yield-to-growth ratio, '
+        + 'supply-demand dynamics, and infrastructure pipeline. Each represents a strategic '
+        + 'entry point for portfolio growth with strong rental demand underpinning cash flow '
+        + 'stability.',
+    }];
+  }
+  if (segment && segment !== 'general') {
+    return [{
+      title: 'What this means for your home search',
+      body: 'These suburbs offer strong lifestyle value alongside genuine capital growth '
+        + 'potential. They represent areas where buying now positions you for long-term wealth '
+        + 'building, with improving amenities and transport connectivity.',
+    }];
+  }
+  return [
+    {
+      title: 'What this means for investors',
+      body: 'Focus on yield-to-growth ratios and supply-demand dynamics in the suburbs '
+        + 'identified. Each represents a strategic entry point for portfolio growth with strong '
+        + 'rental demand underpinning cash flow.',
+    },
+    {
+      title: 'What this means for homebuyers',
+      body: 'These suburbs offer genuine lifestyle value alongside capital growth potential. '
+        + 'Buying in these locations now positions you for long-term wealth building in a less '
+        + 'competitive market.',
+    },
+  ];
+}
 
 function put(target: Record<string, unknown>, key: string, value: unknown): void {
   if (value !== undefined && value !== null && value !== '') target[key] = value;
@@ -122,8 +193,17 @@ function projectLayer(layer: Layer, linesPerPage: number): Record<string, unknow
 function projectEvent(event: MarketEvent): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   put(out, 'date', str(event.date));
+  put(out, 'dateLabel', shortDate(event.date));
   put(out, 'event', str(event.event));
   put(out, 'category', str(event.category));
+  // The legacy table's own cells: the category with its underscores folded
+  // ("interest_rate" → "interest rate") and the impact as a capitalised word
+  // in its own column — the legacy encoded it as a coloured dot alone, and
+  // colour is never the only channel in this design system.
+  put(out, 'categoryLabel', str(event.category)?.replace(/_/g, ' '));
+  out.impactLabel = event.impact
+    ? event.impact.charAt(0).toUpperCase() + event.impact.slice(1)
+    : '—';
   put(out, 'impact', str(event.impact));
   put(out, 'description', str(event.description));
   // `relevanceScore` is nullable and a null is not a zero — a zero would sort
@@ -160,10 +240,20 @@ export function projectMarketIntelligence(
   put(meta, 'reportPeriod', str(r.meta?.reportPeriod));
   put(meta, 'reportTypeLabel', str(r.meta?.reportTypeLabel));
   put(meta, 'audienceSegment', str(r.meta?.audienceSegment));
+  // The words the legacy's edition line uses, never the raw enum — the cover
+  // bound `audienceSegment` and printed "general" as an edition name.
+  const segment = str(r.meta?.audienceSegment);
+  if (segment) put(meta, 'editionLabel', EDITION_LABELS[segment] ?? segment);
   put(meta, 'preparedOn', str(r.meta?.preparedOn));
   put(meta, 'generatedAt', str(r.meta?.generatedAt));
   put(meta, 'layersShown', filled.length || undefined);
   if (Object.keys(meta).length) marketIntel.meta = meta;
+
+  // The closing panels the audience segment decides — the one thing besides
+  // the edition line it changes. Static copy from the legacy, so the preview
+  // and the flowing route say the same words.
+  const panels = audiencePanelsFor(segment);
+  if (panels.length) marketIntel.audiencePanels = panels;
 
   put(marketIntel, 'narrative', str(r.narrative));
 
@@ -187,6 +277,11 @@ export function projectMarketIntelligence(
     layerPageCount(String(prose.executiveSummary ?? ''), linesPerPage) || undefined);
   put(proseOut, 'strategyPages',
     layerPageCount(String(prose.actionableStrategy ?? ''), linesPerPage) || undefined);
+  // The briefing too: it measures 1,146 characters on the stored report,
+  // already past the 1,100-character block it used to be set into — a model
+  // writes it, so its length is nobody's to promise.
+  put(proseOut, 'keyInsightsPages',
+    layerPageCount(String(prose.keyInsightsSnapshot ?? ''), linesPerPage) || undefined);
   // `ctaContent` is deliberately not published. It is the generator's
   // call-to-action for the email the legacy attached this PDF to; a template is
   // a document rather than a campaign, and a "book a call" panel in the middle
@@ -218,6 +313,46 @@ export function projectMarketIntelligence(
   if (upcoming.length) {
     marketIntel.upcoming = upcoming.slice(0, CAPS.upcomingEvents).map(projectEvent);
     put(marketIntel, 'upcomingCount', upcoming.length);
+  }
+
+  /*
+   * What each event meant — the sidenotes the legacy sets under its timeline,
+   * labelled with the event rather than only its date, "because a date alone
+   * makes a reader flip back to the table". Every one of the stored report's
+   * twelve events carries a description, and none of them reached a page.
+   * Upcoming first, then past — the legacy single table's own reading order.
+   */
+  const noted = [...upcoming, ...past].filter((e) => str(e?.description));
+  if (noted.length) {
+    marketIntel.eventNotes = noted.slice(0, CAPS.eventNotes).map((e) => ({
+      label: `${shortDate(e.date)} · ${str(e.event) ?? ''}`.trim(),
+      description: str(e.description),
+    }));
+    put(marketIntel, 'eventNoteCount', noted.length);
+    if (noted.length > CAPS.eventNotes) {
+      put(marketIntel, 'eventNotesOmitted',
+        `${noted.length - CAPS.eventNotes} further ${noted.length - CAPS.eventNotes === 1 ? 'event is' : 'events are'} `
+        + 'described only in the calendar above.');
+    }
+  }
+
+  /*
+   * The correlation block — persisted by the generator since this migration and
+   * absent on every earlier row, so these pages light up as new correlation
+   * reports land rather than pretending on the six that exist. Both bodies are
+   * model Markdown and get the paged treatment everything of unknown length
+   * here gets.
+   */
+  const correlation = r.correlation;
+  if (correlation) {
+    const corr: Record<string, unknown> = {};
+    put(corr, 'analysis', str(correlation.aiAnalysis));
+    put(corr, 'analysisPages',
+      layerPageCount(String(correlation.aiAnalysis ?? ''), linesPerPage) || undefined);
+    put(corr, 'research', str(correlation.perplexityResearch));
+    put(corr, 'researchPages',
+      layerPageCount(String(correlation.perplexityResearch ?? ''), linesPerPage) || undefined);
+    if (Object.keys(corr).length) marketIntel.correlation = corr;
   }
 
   // ── sources ──────────────────────────────────────────────────────────────

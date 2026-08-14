@@ -37,8 +37,10 @@ import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowPro
 import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
 import { projectCashFlowComparison } from '../../../supabase/functions/_shared/cashFlowComparisonProjection.pure';
 import { projectCommercialCapacity } from '../../../supabase/functions/_shared/commercialCapacityProjection.pure';
+import { projectMarketIntelligence } from '../../../supabase/functions/_shared/marketIntelligenceProjection.pure';
 import { projectReportQa } from '../../../supabase/functions/_shared/reportQaProjection.pure';
 import { buildReportQaDocument } from '../../../supabase/functions/_shared/reports/reportQa/normalise.pure';
+import { buildMarketIntelligenceReport } from '../../../supabase/functions/_shared/reports/marketIntelligence/normalise.pure';
 
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
@@ -997,6 +999,141 @@ const COMMERCIAL_CAPACITY_SAMPLE = (() => {
   return projectCommercialCapacity(snapshot as never).capacity;
 })();
 
+/**
+ * Market Intelligence, through the format's own normaliser and projection.
+ *
+ * The `marketIntel` namespace was absent from the sample entirely, so every
+ * Market Intelligence preview rendered a cover with no title and every page
+ * past it dark — the fourth format found with the same defect. Going through
+ * `buildMarketIntelligenceReport` matters more here than anywhere: the
+ * normaliser's editorial strips are what keep the model's hedging and its
+ * duplicated brand tagline off a client's page, and the brand name is an
+ * input to them.
+ *
+ * One layer is deliberately empty so the preview exercises `layersOmitted`;
+ * the investor segment previews the edition label and the audience panel; two
+ * events sit after `preparedOn` so the upcoming table draws.
+ */
+const MARKET_INTELLIGENCE_SAMPLE = (() => {
+  const layer = (content: string, citations: string[] = []) => ({ content, citations });
+  const event = (
+    date: string, name: string, category: string, impact: string, description: string,
+  ) => ({ date, event: name, category, impact, description, relevance_score: 72 });
+
+  const row = {
+    id: '00000000-0000-4000-8000-00000000000b',
+    status: 'completed',
+    report_period: 'August 2026',
+    report_type: 'full',
+    audience_segment: 'investor',
+    generated_at: '2026-08-01T21:15:00.000Z',
+    include_advisory_strategy: true,
+    report_data: {
+      reportTypeLabel: 'Full Market Intelligence Report',
+      audienceSegment: 'investor',
+      includedLayers: ['layer1', 'layer2', 'layer3', 'layer4', 'layer6', 'layer7', 'layer8', 'layer5'],
+      executiveSummary:
+        'The cash rate held at **3.35%** this month, and the market has moved from asking '
+        + '*whether* the easing cycle has ended to asking how long the plateau runs. Auction '
+        + 'clearance in the inner west held above 71% for a sixth week, listings remain 12% '
+        + 'below the five-year average, and the gap between advertised rents and renewed rents '
+        + 'has narrowed to $20 a week.\n\nFor buyers this reads as a market with less '
+        + 'competition than the clearance rate implies: stock is thin, but so is the crowd.',
+      keyInsightsSnapshot:
+        'Your 60-second briefing:\n\n'
+        + '- The RBA held at **3.35%** and the statement dropped its easing bias.\n'
+        + '- Inner-west clearance held above **71%** for a sixth straight week.\n'
+        + '- Listings sit **12% below** the five-year average for August.\n'
+        + '- Advertised-to-renewed rent gap narrowed to **$20 a week**.\n'
+        + '- Construction approvals fell again — the 2028 supply gap is widening.',
+      actionableStrategy:
+        '## What to do now\n\nBring settlement-ready finance to any listing inside the '
+        + 'corridor — vendors are meeting the market within three weeks.\n\n## What to avoid\n\n'
+        + 'Paying clearance-rate premiums for stock outside the corridor; the auction heat is '
+        + 'not general.\n\n## Timing\n\nThe spring listing lift is four to six weeks away; '
+        + 'the thin-stock window closes with it.',
+      ctaContent: 'Book a strategy call today to position your portfolio for the spring market.',
+      layer1_rba: layer(
+        '## Where rates stand\n\nThe Reserve Bank held the cash rate at **3.35%** and removed '
+        + 'the explicit easing bias from its statement. Market pricing now implies one further '
+        + 'cut by March 2027, down from two.\n\n- Three of the four majors trimmed fixed rates '
+        + 'inside a week of the decision.\n- The average new owner-occupier variable rate fell '
+        + 'to 5.84%.\n\nFor leveraged buyers the practical read is that serviceability '
+        + 'assessments have stopped tightening.',
+        ['RBA Statement on Monetary Policy, August 2026'],
+      ),
+      layer2_housing: layer(
+        '## The pulse\n\nNational dwelling values rose **0.4%** in July, the seventh '
+        + 'consecutive monthly rise.\n\n| Capital | Monthly change |\n| --- | --- |\n'
+        + '| Sydney | +0.5% |\n| Melbourne | +0.3% |\n| Brisbane | +0.6% |\n\nListings '
+        + 'remain 12% below the five-year August average.',
+        ['CoreLogic Home Value Index, August 2026'],
+      ),
+      layer3_sentiment: layer(
+        '## Sentiment\n\nConsumer sentiment lifted to **97.2** — its highest reading since '
+        + 'early 2022 — with the time-to-buy-a-dwelling sub-index up 6.1% on the month. '
+        + 'Investor finance commitments rose for the fifth straight month and now account '
+        + 'for 38% of new lending, the highest share since 2017.',
+        ['Westpac–Melbourne Institute Consumer Sentiment, August 2026'],
+      ),
+      layer4_regulatory: layer(''),
+      layer6_economic: layer(
+        '## The dashboard\n\nUnemployment held at **4.2%**, trimmed-mean inflation printed '
+        + '2.8% annualised, and wage growth ran at 3.4%. The combination — real wage growth '
+        + 'with inflation inside the band — is the backdrop the RBA said it wanted before '
+        + 'considering any further move.',
+        ['ABS Labour Force, July 2026'],
+      ),
+      layer7_micro: layer(
+        '## The corridor\n\nThe inner-west corridor — Leichhardt, Haberfield, Five Dock — '
+        + 'continues to outperform: clearance above 71%, median days on market at 24, and '
+        + 'rental vacancy at 1.1%. Infrastructure works on the metro extension remain on '
+        + 'schedule for 2028, which is the corridor’s structural story.',
+        ['Domain Auction Report, August 2026'],
+      ),
+      layer8_competitive_edge: layer(
+        '## The edge\n\nThe advertised-to-renewed rent gap is the quiet signal this month: '
+        + 'at **$20 a week** it is a third of what it was a year ago, which says landlords '
+        + 'are holding tenants rather than chasing the market. Combined with sub-1.5% vacancy, '
+        + 'the rental floor under corridor valuations is firm — a downside protection most '
+        + 'buyers are not pricing.',
+      ),
+      layer5_outlook: layer(
+        '## The next ninety days\n\nExpect the plateau to hold through the October meeting, '
+        + 'the spring listing lift to arrive four to six weeks out, and corridor stock to '
+        + 'stay thin until it does. The window for negotiating on settlement terms rather '
+        + 'than price closes with the spring lift.',
+      ),
+      marketEvents: [
+        event('2026-09-16', 'RBA Board meeting', 'interest_rate', 'neutral',
+          'The first meeting under the new statement language; pricing implies no change.'),
+        event('2026-08-28', 'CPI monthly indicator', 'economic', 'positive',
+          'The July indicator prints; a sub-3% read would cement the plateau narrative.'),
+        event('2026-07-29', 'Q2 CPI release', 'economic', 'positive',
+          'Trimmed mean printed 2.8% annualised, inside the band for a second quarter.'),
+        event('2026-07-15', 'Auction clearance peak', 'housing', 'positive',
+          'Inner-west clearance touched 74%, the highest Saturday result of the winter.'),
+        event('2026-07-08', 'RBA held at 3.35%', 'interest_rate', 'neutral',
+          'The hold was expected; the dropped easing bias was not.'),
+        event('2026-06-30', 'Stamp duty concession sunset', 'regulatory', 'negative',
+          'The first-home concession stepped down, pulling forward June settlements.'),
+      ],
+      allCitations: ['SQM Research Vacancy Rates, July 2026'],
+    },
+  };
+
+  const built = buildMarketIntelligenceReport({
+    row: row as never,
+    preparedOn: '2026-08-02T00:00:00.000Z',
+    brandName: 'Meridian Property Advisory',
+    audienceOverride: null,
+  } as never);
+  if (!(built as { ok: boolean }).ok) {
+    throw new Error(`MARKET_INTELLIGENCE_SAMPLE refused: ${(built as { error?: string }).error}`);
+  }
+  return projectMarketIntelligence((built as { report: never }).report).marketIntel;
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -1035,6 +1172,9 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
 
   /** Report Q&A's namespace. See `REPORT_QA_SAMPLE`. */
   qa: REPORT_QA_SAMPLE,
+
+  /** Market Intelligence's namespace. See `MARKET_INTELLIGENCE_SAMPLE`. */
+  marketIntel: MARKET_INTELLIGENCE_SAMPLE,
 
   org: {
     name: 'Meridian Property Advisory',
