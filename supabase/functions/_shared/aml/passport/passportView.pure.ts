@@ -387,6 +387,8 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
   const allPending = derivePendingStamps(input.stamp_input, allStamps, {
     subject_type: input.case.subject_type ?? null,
     case_status: input.case.status,
+    case_stage: input.case.case_stage ?? null,
+    service_gate_status: input.case.service_gate_status ?? null,
   });
   const pending_stamps = audience === "client" ? clientSafePending(allPending) : allPending;
 

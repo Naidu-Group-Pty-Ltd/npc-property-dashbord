@@ -398,3 +398,76 @@ describe('refresh: the ask and the answer are different facts', () => {
       .not.toContain('passport_refresh_completed');
   });
 });
+
+describe('the programme reads the CASE, not only its child rows', () => {
+  // Measured against production: both live cases in enhanced CDD carry
+  // `status = edd_required` / `case_stage = enhanced_cdd` and ZERO
+  // `aml.edd_cases` rows. Deriving applicability from child rows alone left
+  // the register silent about the certification those cases most obviously owe.
+  it('a case declared edd_required owes EDD even with no EDD record', () => {
+    expect(pendingFor({}, { case_status: 'edd_required' }).map((p) => p.code))
+      .toContain('edd_completed');
+    expect(pendingFor({}, { case_stage: 'enhanced_cdd' }).map((p) => p.code))
+      .toContain('edd_completed');
+    // …and a case with neither the record nor the declaration still owes nothing.
+    expect(pendingFor({}, { case_status: 'kyc_in_progress' }).map((p) => p.code))
+      .not.toContain('edd_completed');
+  });
+
+  it('the declaration never raises a CLIENT-visible item', () => {
+    // Source of wealth is client-safe; enhanced due diligence is not. If the
+    // declared EDD state raised the client-visible SoW seal, the client's own
+    // Passport would become an inference channel for a Command-only fact.
+    // `edd_completed` is the only thing the declaration may raise, and
+    // client_safe strips it.
+    const declared = pendingFor({}, { case_status: 'edd_required' });
+    expect(declared.map((p) => p.code)).not.toContain('source_of_wealth_reviewed');
+    expect(clientSafePending(declared).map((p) => p.code)).not.toContain('edd_completed');
+
+    // An actual EDD record does raise it — that is a record, not an inference.
+    expect(pendingFor({ edd_cases: [{ status: 'open' }] }).map((p) => p.code))
+      .toContain('source_of_wealth_reviewed');
+  });
+
+  it('a terminated service gate owes nothing, like a closed case', () => {
+    expect(pendingFor({}, { service_gate_status: 'terminated' })).toEqual([]);
+    // An active gate mid-CDD is still working.
+    expect(pendingFor({}, { service_gate_status: 'information_outstanding' }).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('reproduces the live cases exactly', () => {
+    // AML-2026-00001 `rugesh naidu`: 7 consents, 1 passed electronic_idv,
+    // individual, edd_required, no documents/screening/owners/funding/grants.
+    const live: PassportStampInput = {
+      ...empty,
+      consents: [{ id: 'c1', kind: 'privacy_notice', accepted_at: '2026-08-14T08:42:43Z' }],
+      verification_checks: [{
+        id: 'v1', party_label: null, check_type: 'electronic_idv',
+        status: 'passed', completed_at: '2026-08-14T08:51:52Z',
+      }],
+    };
+    const earned = derivePassportStamps(live);
+    expect(earned.map((s) => s.code)).toEqual(['client_consent_recorded', 'identity_verified']);
+
+    const pending = derivePendingStamps(live, earned, {
+      subject_type: 'individual', case_status: 'edd_required', case_stage: 'enhanced_cdd',
+      service_gate_status: 'information_outstanding',
+    });
+    expect(pending.map((p) => p.code)).toEqual([
+      'documents_verified',
+      'screening_completed',
+      'source_of_funds_reviewed',
+      'edd_completed',
+      'passport_issued',
+    ]);
+    // An individual has no beneficial owners and this case has no transaction.
+    expect(pending.map((p) => p.code)).not.toContain('ownership_verified');
+    expect(pending.map((p) => p.code)).not.toContain('transaction_completed');
+
+    // AML-2026-00002, closed and terminated: a finished file owes nothing.
+    expect(derivePendingStamps(empty, [], {
+      subject_type: 'individual', case_status: 'closed', service_gate_status: 'terminated',
+    })).toEqual([]);
+  });
+});
