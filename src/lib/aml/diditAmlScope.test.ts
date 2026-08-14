@@ -208,10 +208,12 @@ describe('portal privacy boundary', () => {
       expect(portalApi).not.toContain(secretish);
       expect(step).not.toContain(secretish);
     }
-    // The step no longer branches INTO a hosted experience — it recognises the
-    // retired flow token only to refuse it and render the documentary route.
+    // The step branches on the flow WORD and nothing else. `hosted` and
+    // `capture` are the only two values it can receive, and neither carries a
+    // provider key, a workflow id or an environment.
     expect(step).toContain("provider_flow ?? 'capture') === 'hosted'");
-    expect(step).toContain("? 'temporarily_unavailable'");
+    // The provider is still never named in code on this side — the browser
+    // renders an experience, not an integration.
     expect(codeOnly(step).toLowerCase()).not.toContain('didit');
   });
 
@@ -255,31 +257,30 @@ describe('portal privacy boundary', () => {
     expect(code).not.toContain('qr');
     expect(code).not.toMatch(/cross[_-]?device/);
     /*
-     * These used to assert the RECOVERY controls for the hosted window:
-     * "Re-open verification" and "Continue verification" were first-class
-     * buttons because a window the customer had closed was not a fault they
-     * should have to admit to. Both are gone with the window, and their
-     * absence is now the property worth holding.
+     * The recovery controls are back with the window they belong to: a window
+     * the customer has closed or the browser has blocked is not a fault they
+     * should have to admit to, and neither costs an attempt. What must stay
+     * absent is the CROSS-DEVICE handoff — a QR code on a screen the customer
+     * cannot use is the failure this suite was written for.
      */
     expect(codeOnly(step)).not.toContain('Re-open verification');
-    expect(codeOnly(step)).not.toContain('Continue verification');
-    expect(codeOnly(step)).not.toMatch(/window\s*\.\s*open\s*\(/);
+    expect(codeOnly(step)).toContain('Continue verification');
   });
 
-  it('has no cross-window message listener at all', () => {
+  it('the cross-window listener is bounded to this origin and settles nothing', () => {
     /*
-     * There used to be one, and it was carefully bounded: origin-checked
+     * It exists because a window NPC opened needs a way to say "the customer
+     * came back". It is bounded exactly as it was before: origin-checked
      * against NPC's own origin, matched on a bare type, and able to do exactly
-     * one thing — re-read server state. It existed because a window NPC had
-     * opened needed a way to say "the customer came back".
-     *
-     * No window is opened now, so nothing can speak, so there is nothing to
-     * listen to. The narrowest boundary is the one that is not there.
+     * one thing — re-read server state. The message carries no status field,
+     * so there is nothing in it a future edit could start trusting.
      */
     const code = codeOnly(step);
-    expect(code).not.toContain('addEventListener(\'message\'');
-    expect(code).not.toContain('const onMessage');
+    expect(code).toContain("addEventListener('message'");
+    expect(code).toContain('event.origin !== window.location.origin');
+    // It listens; it never speaks, and it never asserts an outcome.
     expect(code).not.toMatch(/\bpostMessage\s*\(/);
+    expect(code).not.toMatch(/setStatus\(\s*'verified'|status:\s*'verified'/);
     // The provider is still never named in code on this side.
     expect(code.toLowerCase()).not.toContain('didit');
   });

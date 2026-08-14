@@ -606,35 +606,75 @@ describe('the NPC capture journey', () => {
     );
   }, 15000);
 
-  it('refuses to obey a backend that still says hosted', async () => {
+  it('opens the secure window synchronously, before the session request', async () => {
     /*
-     * The production defect, as a test.
+     * The ordering the hosted flow rests on, exercised rather than read.
      *
-     * On 2026-08-11 the server answered `provider_flow: 'hosted'` — the
-     * migrations were unapplied, `didit` was still the active provider — and
-     * the portal opened `verify.didit.me/session/…` in a window. A customer saw
-     * a vendor's page.
-     *
-     * The same answer now lands on the documentary route. This is the
-     * defence-in-depth line: a stale deployment cannot produce a popup, only a
-     * safe and actionable state.
+     * `window.open` must be called inside the customer's click and BEFORE the
+     * session request resolves — a window opened after an `await` is an
+     * unsolicited popup and is blocked on default settings in Safari and
+     * Firefox. Asserted by holding the session request open: the window must
+     * already exist while the promise is still pending.
      */
-    const camera = mockCamera();
-    const open = vi.spyOn(window, 'open');
+    mockCamera();
+    const fakeWindow = { location: { replace: vi.fn() }, closed: false, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(fakeWindow as unknown as Window);
     verificationStatus.mockResolvedValue(status({ provider_flow: 'hosted' }));
+
+    let release!: (v: unknown) => void;
+    startHostedVerification.mockReturnValue(new Promise((r) => { release = r; }));
 
     renderStep();
 
-    expect(await screen.findByRole('button', { name: /upload identity document/i }))
-      .toBeTruthy();
-    expect(await screen.findByText(/nothing has been used up/i)).toBeTruthy();
-    // No "Continue verification", no window, no camera, no hosted request.
-    expect(screen.queryByRole('button', { name: /continue verification/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^start$/i })).toBeNull();
-    expect(open).not.toHaveBeenCalled();
-    expect(camera.getUserMedia).not.toHaveBeenCalled();
-    expect(startHostedVerification).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    fireEvent.click(await screen.findByRole('radio', { name: /passport/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /begin/i }));
+
+    // The window exists while the session request is still in flight.
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    expect(open.mock.calls[0][0], 'opened blank, then navigated').toBe('');
+    expect(open.mock.calls[0][1], 'one named window').toBe('npc-identity-verification');
+    expect(fakeWindow.location.replace).not.toHaveBeenCalled();
+
+    release({ started: true, verification_url: 'https://verify.example/session/abc' });
+
+    await waitFor(() => expect(fakeWindow.location.replace)
+      .toHaveBeenCalledWith('https://verify.example/session/abc'));
+    // Exactly one session was requested for one click.
+    expect(startHostedVerification).toHaveBeenCalledTimes(1);
+    // The provider is never framed inside NPC's own page.
     expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('recovers a blocked window in one press, without a second session', async () => {
+    mockCamera();
+    // The browser refuses the window: `window.open` returns null.
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    verificationStatus.mockResolvedValue(status({ provider_flow: 'hosted' }));
+    startHostedVerification.mockResolvedValue({
+      started: true, verification_url: 'https://verify.example/session/abc',
+    });
+
+    renderStep();
+
+    fireEvent.click(await screen.findByRole('button', { name: /^start$/i }));
+    fireEvent.click(await screen.findByRole('radio', { name: /passport/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /continue/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /begin/i }));
+
+    expect(await screen.findByText(/blocked the secure window/i)).toBeTruthy();
+    // The session was created and nothing was used up — recovery is one press.
+    expect(await screen.findByText(/nothing has been used up/i)).toBeTruthy();
+    expect(startHostedVerification).toHaveBeenCalledTimes(1);
+
+    open.mockReturnValue({ closed: false } as unknown as Window);
+    fireEvent.click(screen.getByRole('button', { name: /open secure check/i }));
+
+    // Re-opened from the URL held in memory: no second session was bought.
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
+    expect(open.mock.calls[1][0]).toBe('https://verify.example/session/abc');
+    expect(startHostedVerification).toHaveBeenCalledTimes(1);
   });
 
   it('never shows the customer a provider window, frame or brand', async () => {
@@ -660,29 +700,27 @@ describe('the NPC capture journey', () => {
 });
 
 /**
- * The hosted secure-identity check was removed on 2026-08-11.
+ * The hosted secure-identity check: removed 2026-08-11, reactivated 2026-08-14.
  *
- * ~470 lines of tests lived here: the popup rule (open the window
- * synchronously inside the click, or browsers block it), blocked-window
- * recovery, close polling, the origin-checked return message, and the
- * guarantee that none of it could mark anybody verified. They were good tests
- * of a flow that no longer exists.
+ * It was retired on a product decision — no customer reaches a verification
+ * vendor's page — and `src/lib/aml/hostedIdvRetired.test.ts` held that as an
+ * absence: no `window.open`, no iframe, no navigation, no way to ask for a
+ * session. That suite is gone, because the decision was reversed for a reason
+ * the NPC-camera architecture cannot satisfy at any setting: the Standalone
+ * APIs are called with `save_api_request=false`, so Didit persists nothing and
+ * a completed verification appears nowhere in the Business Console.
  *
- * A customer showed "Continue verification" in production and was sent to
- * `verify.didit.me/session/...`. The product decision that followed is final:
- * no customer reaches a verification vendor's page again. The component, the
- * window, the listener and the client API method are all gone.
+ * What guards the flow now is `src/lib/aml/hostedIdvSession.test.ts` plus the
+ * two behavioural tests above — the popup ORDERING (open synchronously inside
+ * the click, before the session request) and blocked-window recovery without a
+ * second session. The properties that outlived the reversal are kept and are
+ * asserted in `identityDocumentSession.test.ts`: no iframe, no credential in
+ * the bundle, no session URL in storage or a log, and no path from any browser
+ * event to a verification outcome.
  *
- * What replaced these tests is stronger than they were, because it asserts an
- * absence rather than a behaviour: `src/lib/aml/hostedIdvRetired.test.ts` fails
- * if any client-side identity module contains an executable `window.open`, an
- * iframe, a navigation, a `postMessage`, or any way to ask the server for a
- * hosted session. A test of how the popup behaved cannot fail when somebody
- * reintroduces one; that test can.
- *
- * Hosted RESULTS are still covered — `diditDecision.test.ts`,
- * `diditWebhookSecurity.test.ts` and `diditSessionLifecycle.test.ts` are
- * untouched, because a late signed outcome for a session that already ran must
+ * Hosted RESULTS were never in question — `diditDecision.test.ts`,
+ * `diditWebhookSecurity.test.ts` and `diditSessionLifecycle.test.ts` cover
+ * them, because a late signed outcome for a session that already ran must
  * still settle the canonical record.
  */
 

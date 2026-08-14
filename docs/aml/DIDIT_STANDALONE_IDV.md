@@ -1,10 +1,27 @@
 # Identity verification inside NPC — the Didit Standalone APIs
 
+> **⚠ NOT THE ACTIVE INTEGRATION as of 2026-08-14.** New attempts run the
+> provider-hosted session again — [`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md)
+> is the document to read first, and `20260913210000` is the switch.
+>
+> **Why the reversal.** Everything below is accurate and the code is intact,
+> but this architecture cannot produce a provider-side verification record at
+> any setting. `save_api_request=false` means Didit stores nothing, so a
+> completed verification appears nowhere under **Verifications → User
+> Verifications** and creates no **Directory → Users** entry. The business
+> requires those records; `POST /v3/session/` is the only shape of this
+> integration that creates them.
+>
+> **Nothing here was deleted.** The provider row stays seeded, every standalone
+> evidence row is untouched, and switching back is two `UPDATE`s — see the
+> `ROLLBACK:` header on `20260913210000`. The three counter-intuitive rules
+> below still govern this code if it is reactivated.
+
 **Read this before touching anything in the identity path.** The customer's
 whole experience, the money, and the attempt allowance all hang off decisions
 recorded here, and three of them are counter-intuitive.
 
-The hosted flow that this replaces is [`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md).
+The hosted flow is [`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md).
 It is not deleted and must not be — see [Legacy](#legacy-what-is-still-wired-and-why).
 
 ## The shape
