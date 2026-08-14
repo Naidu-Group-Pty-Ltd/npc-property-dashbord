@@ -51,7 +51,13 @@ export interface ReportTemplateSelectionRow {
  * format at once.
  */
 const TEMPLATE_COLUMNS =
-  'id,name,description,report_type,engine,is_active,is_default,is_draft,scope,variant,tier,priority,updated_at,thumbnail_url';
+  'id,name,description,report_type,engine,is_active,is_default,is_draft,scope,variant,tier,priority,updated_at,thumbnail_url,'
+  // The lineage block alone, NOT `config` (which carries megabytes of page
+  // definition on some rows). It is how the picker recognises that an active
+  // row IS a library design — the seeded masters and adopted copies both
+  // carry it — so the library list can show "this one is yours already"
+  // instead of listing the same design twice.
+  + 'libraryLineage:config->libraryLineage';
 
 /**
  * Every active template, so the caller can group them by format itself.

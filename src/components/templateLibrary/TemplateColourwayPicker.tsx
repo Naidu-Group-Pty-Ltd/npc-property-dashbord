@@ -28,6 +28,12 @@ interface Props {
   onSelect: (id: string) => void;
   /** Compact form for the reader's footer bar. */
   size?: 'sm' | 'default';
+  /**
+   * What the choice applies to, for the accessible name. The default names the
+   * reader's preview, which is where this control was born; a caller putting it
+   * somewhere with different consequences must say so.
+   */
+  ariaLabel?: string;
 }
 
 /**
@@ -66,7 +72,10 @@ function Swatch({ colourway, size = 15 }: { colourway: ApprovedColourway; size?:
   );
 }
 
-export function TemplateColourwayPicker({ colourways, selectedId, onSelect, size = 'default' }: Props) {
+export function TemplateColourwayPicker({
+  colourways, selectedId, onSelect, size = 'default',
+  ariaLabel = 'Colourway used in this preview',
+}: Props) {
   if (colourways.length === 0) return null;
 
   const light = colourways.filter((c) => c.ground === 'light');
@@ -96,7 +105,7 @@ export function TemplateColourwayPicker({ colourways, selectedId, onSelect, size
     <Select value={selected.id} onValueChange={onSelect}>
       <SelectTrigger
         className={size === 'sm' ? 'h-8 w-[13.5rem] text-xs' : 'h-9 w-[15rem] text-sm'}
-        aria-label="Colourway used in this preview"
+        aria-label={ariaLabel}
       >
         <SelectValue>
           <span className="flex items-center gap-2">

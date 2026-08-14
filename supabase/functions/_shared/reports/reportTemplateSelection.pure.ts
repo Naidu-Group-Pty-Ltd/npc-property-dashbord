@@ -95,6 +95,28 @@ export interface SelectableTemplateRow {
   priority?: number | null;
   updated_at?: string | null;
   thumbnail_url?: string | null;
+  /**
+   * Where the row came from, when it came from the Template Library.
+   *
+   * The `libraryLineage` block `buildWorkingCopyPayload` writes into `config`,
+   * selected on its own so the chooser can tie an active row back to the
+   * catalogue entry it was copied from without ever fetching `config` itself.
+   * Absent (or null) on hand-built templates, which is itself the signal: a
+   * row with no lineage is not a library design.
+   */
+  libraryLineage?: {
+    entryId?: string | null;
+    entrySlug?: string | null;
+    entryVersion?: number | null;
+    familyKey?: string | null;
+    familyName?: string | null;
+    templateCode?: string | null;
+    variantAxis?: string | null;
+    density?: string | null;
+    colourway?: string | null;
+    colourwayName?: string | null;
+    ground?: string | null;
+  } | null;
 }
 
 /**

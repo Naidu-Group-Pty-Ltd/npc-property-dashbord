@@ -261,3 +261,45 @@ documents with **no stored selection** route through the design system instead
 of the legacy generator. A stored selection still beats the ranking, every
 failure path still falls back to legacy, and deactivating the master returns
 the format to exactly its previous behaviour.
+
+## The library is the choice, not a place the choice points at
+
+The picker used to list only rows already in `report_templates` — after the
+seed, one master per format — while the fifty designs the library holds per
+format were reachable only through the Library page, and only as *editing*
+copies (`instantiate` deliberately creates inactive drafts). Choosing a design
+for generation is a different act, so the picker now offers the library
+directly: the format's published, production-ready, WeasyPrint designs, grouped
+by design family with the family's curated colourways beside them, on every
+download surface at once.
+
+The path from the catalogue to a choice is `use_for_reports` in
+`manage-template-library`: given an entry (and optionally a colourway), it
+returns a **selectable** `report_templates` row — active, approved,
+**user-scoped**, every safety-critical field fixed server-side. It carries the
+same authority bar as `instantiate` (module `can_edit`), because the copy it
+creates is visible only to its owner and can only ever affect that owner's own
+documents — the superadmin activation gate protects the *global* candidate
+set, which this operation cannot touch. `validateEntryForReportUse` refuses
+anything the render path would silently drop (unpublished, preview-only,
+non-WeasyPrint, no production pipeline), because a selection that changes
+nothing is worse than a refusal with a reason.
+
+Four rules carry the tie-up, pinned by `reportUseCopy.spec.ts` and
+`reportTemplatePickerLibrary.test.tsx`:
+
+- **Adoption is idempotent on (entry, entry version, colourway).** Reuse is
+  matched on the `libraryLineage` block, global rows first — so adopting the
+  house default finds the seeded master rather than minting a private
+  duplicate of it, and asking twice returns the same row.
+- **The entry's default colourway is recorded as null** — the authored
+  palette, unbaked — which is how the seeded masters record it. This is NOT
+  what `instantiate` does (it resolves and bakes the default); baking here
+  would stamp the default's id into the lineage and break the reuse match.
+- **An active row that descends from a listed design is folded into that
+  design's row** (the picker fetches `config->libraryLineage` as its own tiny
+  column, never `config`), so one choice never looks like two. Hand-built
+  templates and the Compass pilot keep their own rows.
+- **A library version bump is a different design.** A copy of v1 is never
+  reused for a v2 pick — the user chose the design as the library shows it
+  now — and the stale copy simply stops being offered.
