@@ -427,5 +427,35 @@ binding resolves. The Borrowing Capacity, Comparison and Cash Flow masters name
 their subject instead, because their source tables carry no client at all; all
 three shipped a blank cover title before that was measured.
 
+### The routing read named two columns that do not exist
+
+`resolveRoutingContext` selected `id, first_name, last_name, updated_at,
+created_at` from `clients`. **The table has neither `first_name` nor
+`last_name`** — it stores `primary_first_name` / `primary_surname`, plus the
+secondary applicant's pair. PostgREST does not drop an unknown column, it fails
+the whole statement with `42703`; supabase-js returned `{ data: null, error }`;
+the function's `if (error || !data) return null` turned that into "no such
+client" for **all 775 of them**. Routing resolves before binding, so the fifty
+masters were unreachable through the product path for every client in the
+database.
+
+It was invisible for the reason this class always is. `buildBindingContext`
+selects `*` on the same table and was therefore always correct, so the
+production-fit harness, the catalogue specs and every render in this programme
+exercised the document happily while the one read that decides whether a
+document may be produced at all failed on contact with the schema. The same
+misspelling had already 404'd `render-borrowing-capacity-pdf` for every client
+once, which is why `_shared/clientName.ts` exists and exports
+`CLIENT_NAME_COLUMNS` as a single string — so a caller cannot ask for three of
+the four columns, or invent a fourth spelling. The routing read now uses it.
+
+The rule that follows: **a column name is not checked by TypeScript anywhere on
+this path** — every row crosses the boundary as `Record<string, any>` — so
+`__tests__/adapterSelectColumns.spec.ts` checks each one against the generated
+`src/integrations/supabase/types.ts`, which mirrors the live schema. It covers
+the select list *and* the filters, because `.eq('is_actve', true)` raises the
+same `42703` as a mistyped select, and because the nine-table load above is nine
+`select('*')` reads whose only column references are their filters.
+
 See [`../template-library/07-investment-compass-families.md`](../template-library/07-investment-compass-families.md)
 for the design system these 50 masters are drawn in.
