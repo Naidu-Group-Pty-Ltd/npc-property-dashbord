@@ -17,16 +17,26 @@
  * every internal proportion exactly as designed, at any viewport. The
  * arithmetic lives in `bookletGeometry` so it is testable without a DOM.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { cn } from "@/lib/utils";
 import {
   LEAF_H,
   LEAF_W,
+  bookletCover,
   bookletGeometry,
   bookletLabel,
   bookletSpreads,
   type BookletGeometry,
   type BookletPage,
+  type PassportView,
 } from "@/lib/aml/passport";
 import { BookletBlockView } from "./BookletBlocks";
 
@@ -41,7 +51,12 @@ import { BookletBlockView } from "./BookletBlocks";
 export function BookletCover({ page }: { page: BookletPage }) {
   return (
     <section
-      className="passport-cover passport-board__leaf relative flex flex-col items-center rounded-[11px] text-center"
+      // `passport-cover` is the navy leather MATERIAL and is shared with other
+      // surfaces (the partner strip paints itself with it). `--board` is the
+      // front-board COMPOSITION — the design's own page margins and vertical
+      // rhythm — and belongs only to this element. Keeping them one class put
+      // 58px of cover padding on a partner strip that had asked for 16px.
+      className="passport-cover passport-cover--board passport-board__leaf relative flex flex-col items-center rounded-[11px] text-center"
       style={{ width: LEAF_W, height: LEAF_H }}
       aria-label="Passport cover"
     >
@@ -347,5 +362,67 @@ export function PassportBook({
         </button>
       </div>
     </div>
+  );
+}
+
+/* ── cover thumbnail ──────────────────────────────────────────────────── */
+
+/**
+ * A miniature of the real cover.
+ *
+ * It renders `BookletCover` itself, at design size, under the same uniform
+ * transform the book uses for a leaf — it is NOT a second, simplified drawing
+ * of the cover. That matters for the same reason the client and the officer
+ * share one viewer: a hand-drawn "thumbnail version" is a copy, and a copy
+ * drifts. Change the cover once — the emblem, the frame rules, the gold, the
+ * type — and every surface that shows one follows, including this.
+ *
+ * Because it is the real artwork built from the real projection, it is
+ * per-customer by construction. Nothing here is specialised to a case; pass a
+ * different `view` and you get that customer's bearer, credential and state.
+ *
+ * ## Why nothing here measures anything
+ *
+ * The cover is a fixed 470×648 composition, so a miniature is a slot width and
+ * a scale factor — and those two are the SAME number. Deriving them separately
+ * is how a miniature ends up clipped: a first draft took the width from CSS
+ * (112px on a phone) and the scale from JS, and any moment the two disagreed —
+ * before the first layout effect, in a server render, on a hidden tab — the
+ * board was drawn at one size inside a box of another and lost its clasp to
+ * `overflow: hidden`.
+ *
+ * So the size is declared ONCE, as the unitless `--passport-thumb-w`, and the
+ * stylesheet derives both the box (`calc(var(--passport-thumb-w) * 1px)`) and
+ * the scale (`calc(var(--passport-thumb-w) / 470)`) from it. They cannot
+ * disagree, there is no JS in the path at all, and a surface resizes the cover
+ * by setting one custom property.
+ */
+export function PassportCoverThumb({
+  view,
+  width,
+  className,
+}: {
+  view: PassportView;
+  /**
+   * Override the slot width, in CSS pixels. Omit to take the size from the
+   * stylesheet, which is where it belongs for the surfaces we ship.
+   */
+  width?: number;
+  className?: string;
+}) {
+  const page = useMemo(() => bookletCover(view), [view]);
+  return (
+    <span
+      className={cn("passport-cover-thumb", className)}
+      style={width ? ({ "--passport-thumb-w": width } as CSSProperties) : undefined}
+    >
+      {/* Hidden from assistive tech: whatever frames this miniature states the
+          bearer, credential and state at full size, so announcing the cover's
+          own text a second time is noise. The control that wraps it carries
+          the accessible name. */}
+      <span aria-hidden="true" className="passport-cover-thumb__art">
+        <BookletCover page={page} />
+      </span>
+    </span>
   );
 }

@@ -23,6 +23,7 @@ import { formatPassportDate } from "../format";
 import { PassportControls } from "../PassportControls";
 import { PassportStateBadge } from "../PassportStateBadge";
 import { PassportBooklet } from "./PassportBooklet";
+import { PassportCoverThumb } from "./PassportBook";
 import { PassportPortalStrip, StampRecordDialog } from "./PassportPortals";
 import { PASSPORT_PAGES } from "./pageRegister";
 
@@ -103,16 +104,24 @@ export function PassportWorkspace({
       {/* ── identity strip ── */}
       <section className="passport-shell__strip flex flex-wrap items-stretch gap-4 px-5">
         <div className="flex flex-1 items-center gap-4 py-4" style={{ flexBasis: "min(100%, 420px)" }}>
-          <button
-            type="button"
-            onClick={() => setBookletOpen(true)}
-            aria-label="View the digital passport"
-            className="passport-cover relative h-[70px] w-[52px] flex-none overflow-hidden rounded-md"
-          >
-            <span className="passport-mono absolute inset-x-0 bottom-2 text-[6.5px] text-[color:var(--passport-gold-faint)]">
-              AUX·AML
-            </span>
-          </button>
+          {/* The record shows the document, not a stand-in for it. This is the
+              same `BookletCover` the booklet opens on, scaled — so the
+              miniature and the page it opens can never disagree, and the
+              emblem, frame, gold and type are the approved cover's rather
+              than a second drawing of them.
+
+              The control OVERLAYS the cover rather than wrapping it: a button
+              may only contain phrasing content, and the board is a <section>
+              of headings and figures. */}
+          <span className="passport-cover-thumb__slot flex-none">
+            <PassportCoverThumb view={view} />
+            <button
+              type="button"
+              onClick={() => setBookletOpen(true)}
+              aria-label="View the digital passport"
+              className="passport-cover-thumb__open"
+            />
+          </span>
 
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">

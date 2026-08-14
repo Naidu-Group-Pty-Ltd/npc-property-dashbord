@@ -75,8 +75,38 @@ describe('PassportWorkspace', () => {
   it('renders the identity strip from the projection', async () => {
     getPassportView.mockResolvedValue({ passport: commandView() });
     render(<PassportWorkspace caseId="c1" />);
-    expect(await screen.findByText('Meridian Coast Holdings')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Meridian Coast Holdings' })).toBeInTheDocument();
     expect(screen.getByText('AUX-AML-2026-0001-V1')).toBeInTheDocument();
+  });
+
+  it('shows the customer’s own passport cover in the record, not a placeholder', async () => {
+    // The record shows the document. This is the same `BookletCover` the
+    // booklet opens on, scaled — so what a reader sees on the record and what
+    // they see when they open it cannot disagree.
+    getPassportView.mockResolvedValue({ passport: commandView() });
+    const { container } = render(<PassportWorkspace caseId="c1" />);
+    await screen.findByRole('heading', { name: 'Meridian Coast Holdings' });
+
+    const cover = container.querySelector('.passport-cover-thumb');
+    expect(cover).not.toBeNull();
+    expect(cover!.querySelector('img')).toHaveAttribute('src', '/brand/aurixa-emblem.png');
+    // Drawn from this customer's projection rather than fixed artwork.
+    expect(cover).toHaveTextContent('Meridian Coast Holdings');
+    // The placeholder it replaced.
+    expect(container).not.toHaveTextContent('AUX·AML');
+    // The control overlays the artwork rather than wrapping it: a <button>
+    // may not contain the <section> of headings the board is.
+    expect(cover!.querySelector('button')).toBeNull();
+  });
+
+  it('keeps “View digital passport” working from the cover and the button', async () => {
+    getPassportView.mockResolvedValue({ passport: commandView() });
+    render(<PassportWorkspace caseId="c1" />);
+    await screen.findByRole('heading', { name: 'Meridian Coast Holdings' });
+    expect(screen.queryByTestId('booklet')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'View the digital passport' }));
+    expect(await screen.findByTestId('booklet')).toBeInTheDocument();
   });
 
   it('opens on the journey and navigates by the page rail', async () => {

@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  bookletCover,
   bookletLabel,
   bookletSpreads,
   buildBooklet,
@@ -155,6 +156,53 @@ describe('buildBooklet', () => {
       '',
     );
     expect(json).not.toMatch(/not_pep|possible_match|candidate|risk_score|rationale|storage_path/i);
+  });
+});
+
+describe('bookletCover', () => {
+  const coverFor = (over: Partial<PassportViewInput> = {}) =>
+    bookletCover(buildPassportView('command', input(over)));
+
+  it('IS the booklet’s first page, not a second drawing of it', () => {
+    // Every surface that shows a cover — the record miniature and page 1 of
+    // the book — asks this one function. A separate "thumbnail version" is a
+    // copy, and a copy drifts: a customer whose miniature says one thing and
+    // whose booklet says another has been shown two documents.
+    expect(bookletCover(buildPassportView('command', input()))).toEqual(bookletFor()[0]);
+  });
+
+  it('names its bearer, credential and state, so it is per-customer', () => {
+    const cover = coverFor();
+    expect(cover.sub).toBe('Meridian Coast Holdings');
+    expect(cover.foot).toContain('AUX-AML-2026-1184-V1');
+
+    // The same function, a different case: nothing about a cover can be
+    // specialised to one customer.
+    const other = coverFor({
+      case: {
+        id: 'c2', case_reference: 'AML-2026-2201', subject_display_name: 'Harriet Vance',
+        subject_type: 'individual', status: 'in_progress', case_stage: 'verification',
+        service_gate_status: 'pending', opened_at: '2026-08-02T00:00:00Z', closed_at: null,
+      },
+    });
+    expect(other.sub).toBe('Harriet Vance');
+    expect(other.foot).not.toBe(cover.foot);
+  });
+
+  it('is a cover rather than a leaf: unnumbered, and carrying no blocks', () => {
+    const cover = coverFor();
+    expect(cover.variant).toBe('cover');
+    expect(cover.numeral).toBeNull();
+    expect(cover.blocks).toHaveLength(0);
+  });
+
+  it('carries the short evidence fingerprint and never the full digest', () => {
+    // The front board prints what a verifier checks by hand. The full hash is
+    // not a cover element, and a miniature must not become the place it leaks.
+    const cover = coverFor();
+    expect(cover.fingerprint).toBeTruthy();
+    expect(cover.fingerprint!.length).toBeLessThan(64);
+    expect(JSON.stringify(cover)).not.toContain('a'.repeat(64));
   });
 });
 
