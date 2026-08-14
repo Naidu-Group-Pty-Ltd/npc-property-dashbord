@@ -15,7 +15,24 @@ const h = vi.hoisted(() => ({
   routeCalls: [] as Array<[string, string, unknown]>,
   routeThrows: false,
   fetchImpl: null as null | ((url: string) => Promise<Response>),
+  selections: [] as Array<{ id: string; report_type: string; template_id: string }>,
+  selectionsThrow: false,
+  selectionCalls: 0,
 }));
+
+vi.mock('@/lib/reportTemplate/templateSelection', async (importOriginal) => {
+  // The pure half stays real, so the alias map decides which format a
+  // selection belongs to — the same map the picker and the server use.
+  const actual = await importOriginal<typeof import('../templateSelection')>();
+  return {
+    ...actual,
+    fetchTemplateSelections: async () => {
+      h.selectionCalls += 1;
+      if (h.selectionsThrow) throw new Error('selections unreadable');
+      return h.selections;
+    },
+  };
+});
 
 vi.mock('@/lib/reportTemplate/compassRoute', () => ({
   tryRouteThroughTemplateBuilderFor: async (
@@ -39,9 +56,63 @@ beforeEach(() => {
   h.routeCalls = [];
   h.routeThrows = false;
   h.fetchImpl = null;
+  h.selections = [];
+  h.selectionsThrow = false;
+  h.selectionCalls = 0;
   vi.stubGlobal('fetch', async (url: string) => (h.fetchImpl
     ? h.fetchImpl(url)
     : body('%PDF-1.7 rendered')));
+});
+
+describe("the person's chosen template", () => {
+  /**
+   * The picker offers a choice for every format and says it is kept. Only the
+   * Compass button ever passed the chosen id, so on the other eight formats a
+   * selection was stored, displayed as selected, and ignored by the generator
+   * it was a choice about.
+   */
+  it('is looked up and carried into the route', async () => {
+    h.selections = [{ id: 's1', report_type: 'client_details', template_id: 'tpl-chosen' }];
+    await tryTemplateDocument('client_details', 'client-1');
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: 'tpl-chosen' });
+  });
+
+  it('is matched through the alias map, not by raw spelling', async () => {
+    // A format is stored under up to four spellings and they are one format;
+    // a selection saved as `formara` belongs to the Client Details document.
+    h.selections = [{ id: 's1', report_type: 'formara', template_id: 'tpl-alias' }];
+    await tryTemplateDocument('client_details', 'client-1');
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: 'tpl-alias' });
+  });
+
+  it('carries null when this format has no choice, so the ranking decides', async () => {
+    h.selections = [{ id: 's1', report_type: 'portfolio', template_id: 'tpl-other' }];
+    await tryTemplateDocument('qa', 'conv-1');
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: null });
+  });
+
+  it('still produces the document when the selection cannot be read', async () => {
+    // The choice is an improvement on a working path, so failing to read it
+    // resolves by ranking rather than costing somebody their file.
+    h.selectionsThrow = true;
+    const doc = await tryTemplateDocument('portfolio', 'p-1');
+    expect(doc).toBeTruthy();
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: null });
+  });
+
+  it('is read fresh, so changing it changes the next document', async () => {
+    h.selections = [{ id: 's1', report_type: 'portfolio', template_id: 'tpl-first' }];
+    await tryTemplateDocument('portfolio', 'p-1');
+    h.selections = [{ id: 's1', report_type: 'portfolio', template_id: 'tpl-second' }];
+    await tryTemplateDocument('portfolio', 'p-1');
+    expect(h.routeCalls[1][2]).toMatchObject({ templateId: 'tpl-second' });
+    expect(h.selectionCalls).toBe(2);
+  });
+
+  it('is not looked up at all without a report to render', async () => {
+    await tryTemplateDocument('portfolio', null);
+    expect(h.selectionCalls).toBe(0);
+  });
 });
 
 describe('asking for the templated document', () => {
@@ -50,7 +121,9 @@ describe('asking for the templated document', () => {
     expect(await doc?.blob.text()).toBe('%PDF-1.7 rendered');
     expect(doc?.fileName).toBe('x.pdf');
     expect(doc?.templateId).toBe('tpl-1');
-    expect(h.routeCalls).toEqual([['qa', 'conv-1', { variant: 'answer' }]]);
+    // `templateId` rides alongside the variant now — null here, because this
+    // person has chosen no template for the format.
+    expect(h.routeCalls).toEqual([['qa', 'conv-1', { variant: 'answer', templateId: null }]]);
   });
 
   it('asks nothing at all without a report id', async () => {

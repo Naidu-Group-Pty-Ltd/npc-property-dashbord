@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
+import { useReportTemplateSelection } from '@/hooks/useReportTemplateSelection';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 import { Dialog } from '@/components/ui/dialog';
@@ -227,6 +228,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const [isSaving, setIsSaving] = useState(false);
   /** The typeset PDF is a round trip to a render service; the menu says so. */
   const [isExportingServerPdf, setIsExportingServerPdf] = useState(false);
+  /**
+   * Whether this person has chosen a template for the 10 Year Cash Flow.
+   *
+   * Read only so the export can *explain itself*. This format is the one whose
+   * template cannot always be used — the projection below is recomputed in the
+   * browser from the adviser's overrides, and a template renders the stored
+   * series — so somebody who chose one and received the standard layout is owed
+   * the reason rather than left to think the choice did nothing. The query is
+   * the picker's own and is already cached, so this costs no extra request.
+   */
+  const cashFlowTemplateChoice = useReportTemplateSelection('cashflow');
   const [hasChanges, setHasChanges] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [editingCell, setEditingCell] = useState<{ year: number; field: EditableFieldKey } | null>(null);
@@ -3692,13 +3704,28 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         metadata: { format: 'pdf', source: `cash_flow_${result.source}`, pages: result.pageCount },
       });
 
-      toast({
-        title: result.source === 'server' ? 'Cash Flow Analysis ready' : 'Generated with the legacy layout',
-        description: result.source === 'server'
+      // Said only to somebody it is news for: this person chose a template for
+      // this format, and did not get it. The reason is specific and worth
+      // hearing — their projection is not the stored one, so a template, which
+      // renders what is stored, would have printed different figures from the
+      // ones on screen. Without this the choice looks broken.
+      const chosenTemplateUnused = !storedScenario
+        && cashFlowTemplateChoice.state?.status === 'selected';
+      const notes = [
+        result.source === 'server'
           ? (result.brandGaps.length
             ? `Your download should begin shortly. Note: ${result.brandGaps.join('; ')}.`
             : 'Your download should begin shortly.')
           : 'The server renderer is not deployed yet, so the in-browser generator was used.',
+        chosenTemplateUnused
+          ? 'Your chosen template was not used: this projection includes adjustments, '
+            + 'and a template prints the saved projection instead.'
+          : null,
+      ].filter(Boolean);
+
+      toast({
+        title: result.source === 'server' ? 'Cash Flow Analysis ready' : 'Generated with the legacy layout',
+        description: notes.join(' '),
       });
     } catch (error) {
       console.error('[CashFlowAnalysisModal] server PDF failed', error);
@@ -3710,7 +3737,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     } finally {
       setIsExportingServerPdf(false);
     }
-  }, [report, baseFinancialData, projections, isExportingServerPdf, exportSingleReportPDF, toast]);
+  }, [
+    report, baseFinancialData, projections, isExportingServerPdf, exportSingleReportPDF, toast,
+    cashFlowTemplateChoice.state?.status,
+  ]);
 
   // Print-friendly view in new window
   const openPrintView = useCallback(() => {

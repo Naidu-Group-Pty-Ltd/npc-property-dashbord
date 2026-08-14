@@ -60,7 +60,7 @@ export function tryRouteThroughTemplateBuilder(
 export function tryRouteThroughTemplateBuilderFor(
   reportType: string,
   reportId: string,
-  opts?: { variant?: string | null; brand?: unknown },
+  opts?: { variant?: string | null; brand?: unknown; templateId?: string | null },
 ): Promise<TemplateBuilderRouteResult | null> {
   const adapter = getAdapter(reportType);
   if (!adapter?.supportsProduction) return Promise.resolve(null);
@@ -68,6 +68,11 @@ export function tryRouteThroughTemplateBuilderFor(
     reportType: normaliseReportType(reportType),
     variant: opts?.variant ?? null,
     brand: opts?.brand,
+    // The template the person chose for this format. Forwarded rather than
+    // resolved here: the route re-reads it server-side and falls back to the
+    // ranking when the choice no longer applies. Omitting it is what made a
+    // stored choice inert on every format but the Compass one.
+    templateId: opts?.templateId ?? null,
   });
 }
 
