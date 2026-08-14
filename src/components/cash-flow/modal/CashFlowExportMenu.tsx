@@ -47,7 +47,7 @@ export function CashFlowExportMenu({
   // Which template this comes out in. The 10 Year Cash Flow only uses it when
   // the projection on screen is the saved one — the export says so when it
   // cannot — but the choice belongs here either way, beside the button.
-  const template = useReportTemplateMenu('cashflow', '10 Year Cash Flow');
+  const template = useReportTemplateMenu('cashflow', { formatLabel: '10 Year Cash Flow' });
   return (
     <>
     <DropdownMenu>

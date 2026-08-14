@@ -90,7 +90,10 @@ export function ReportQaDownloadButton({
 }: ReportQaDownloadButtonProps) {
   const [running, setRunning] = useState<ReportQaSubjectName | null>(null);
   // Which template this comes out in, offered beside the button that uses it.
-  const template = useReportTemplateMenu('qa');
+  // One call for both shapes below. The full menu has items above the
+  // template and rules off from them; the single-subject menu is the template
+  // alone, where a leading separator would rule off from nothing.
+  const template = useReportTemplateMenu('qa', { separator: !only });
 
   const run = async (
     subject: ReportQaSubjectName,
@@ -136,19 +139,51 @@ export function ReportQaDownloadButton({
 
   const busy = running !== null;
 
-  // One subject, one button. Nothing to choose between, so nothing to open.
+  /**
+   * One subject, one action — and still a choice.
+   *
+   * This used to be a bare button, on the reasoning that a single subject has
+   * nothing to choose between. That was true of the *document* and not of the
+   * template it comes out in: this control typesets an answer for a broker, and
+   * which template it uses was answerable only on the Template Library page.
+   * So it takes the split-button shape the other formats' download controls
+   * use — the action stays one press, and the chevron opens the one thing there
+   * is to decide.
+   */
   if (only) {
     return (
-      <Button
-        variant={variant}
-        size={size}
-        className={cn('gap-1.5', className)}
-        disabled={busy || !conversationId}
-        onClick={() => run(only)}
-      >
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-        {label}
-      </Button>
+      <>
+        <div className={cn('inline-flex items-stretch', className)}>
+          <Button
+            variant={variant}
+            size={size}
+            className="gap-1.5 rounded-r-none"
+            disabled={busy || !conversationId}
+            onClick={() => run(only)}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            {label}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={variant}
+                size={size}
+                disabled={busy || !conversationId}
+                aria-label="Which template this comes out in"
+                className="rounded-l-none border-l-0 px-2"
+              >
+                <ChevronDown className="h-3 w-3 opacity-60" aria-hidden="true" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-72">
+              {/* The whole of this menu, so it rules off from nothing. */}
+              {template.section}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {template.dialog}
+      </>
     );
   }
 

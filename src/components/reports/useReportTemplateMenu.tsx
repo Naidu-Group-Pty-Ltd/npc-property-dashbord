@@ -45,18 +45,31 @@ export interface ReportTemplateMenu {
   dialog: ReactNode;
 }
 
-/**
- * `formatLabel` is optional: the adapter registry already names every format,
- * and a caller that passes nothing gets the name the Library page uses, which
- * is the point of having one registry.
- */
+export interface ReportTemplateMenuOptions {
+  /**
+   * What to call the format on screen.
+   *
+   * Optional: the adapter registry already names every format, and a caller
+   * that passes nothing gets the name the Library page uses, which is the
+   * point of having one registry.
+   */
+  formatLabel?: string;
+  /**
+   * Whether to rule off from the items above. Default true.
+   *
+   * False for a menu this section is the *whole* of — a separator as the first
+   * thing in a menu rules off from nothing and reads as a missing item.
+   */
+  separator?: boolean;
+}
+
 export function useReportTemplateMenu(
   reportType: string,
-  formatLabel?: string,
+  options?: ReportTemplateMenuOptions,
 ): ReportTemplateMenu {
   const [pickerOpen, setPickerOpen] = useState(false);
   const format = findReportFormat(reportType);
-  const label = formatLabel ?? format?.label ?? 'this format';
+  const label = options?.formatLabel ?? format?.label ?? 'this format';
   const { state, isLoading, error } = useReportTemplateSelection(reportType);
 
   // A format a choice cannot change must not offer one. The preview-only
@@ -88,7 +101,7 @@ export function useReportTemplateMenu(
 
   const section = (
     <>
-      <DropdownMenuSeparator />
+      {options?.separator !== false && <DropdownMenuSeparator />}
       <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
         Which template this comes out in
       </DropdownMenuLabel>
