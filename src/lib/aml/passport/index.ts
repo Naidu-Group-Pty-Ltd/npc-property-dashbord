@@ -87,3 +87,26 @@ export {
   type BookletPage,
   type BookletTone,
 } from '../../../../supabase/functions/_shared/aml/passport/passportBooklet.pure';
+
+export {
+  DISTRIBUTION_BLOCKERS,
+  DISTRIBUTION_STATES,
+  EVIDENCE_CLASSES,
+  NEVER_DISCLOSABLE,
+  classifyEvidence,
+  distributionStateFor,
+  evaluateDistribution,
+  evaluateDistributionBatch,
+  summariseBatch,
+  type DistributionBlocker,
+  type DistributionCandidate,
+  type DistributionContext,
+  type DistributionReadiness,
+  type DistributionState,
+  type EvidenceClass,
+  type EvidenceFacts,
+  type EvidenceReadiness,
+  type ExistingGrantInput,
+  type MembershipInput,
+  type PassportCurrency,
+} from '../../../../supabase/functions/_shared/aml/passport/passportDistribution.pure';
