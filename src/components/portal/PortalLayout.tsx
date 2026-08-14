@@ -170,11 +170,11 @@ export function PortalLayout() {
 
       {/* Mobile Header */}
       <div className="client-portal-topbar fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b px-4 py-3 md:hidden">
-        <div className="flex items-center gap-2.5">
-          <BrandLogo slot="sidebar-icon" className="h-8 w-8 object-contain" fallbackClassName="h-8 w-8" />
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <BrandLogo slot="sidebar-icon" className="h-8 w-8 shrink-0 object-contain" fallbackClassName="h-8 w-8 shrink-0" />
           <span className="font-bold text-foreground truncate">{settings.companyName}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <PortalNotificationBell />
           <Avatar className="h-8 w-8 border border-primary/20">
             <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
