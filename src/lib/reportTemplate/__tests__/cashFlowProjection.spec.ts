@@ -154,7 +154,12 @@ describe('the series', () => {
     expect(o.cumulativeCashFlow).toBe(years[9].cumulativeCashFlow);
     expect(o.valueGrowth).toBe(years[9].propertyValue - years[0].propertyValue);
     expect(o.equityGrowth).toBe(years[9].equity - years[0].equity);
-    expect(p.cashflow.firstYear).toEqual(years[0]);
+    // The first year plus the one derived weekly figure the legacy year-one
+    // block carries (÷52 — arithmetic, never `keyMetrics.weeklyNet`).
+    expect(p.cashflow.firstYear).toEqual({
+      ...years[0],
+      cashFlowWeekly: (years[0] as any).cashFlow / 52,
+    });
   });
 
   it('sets the equity gained against the cash it took, and nothing else', () => {
@@ -341,5 +346,73 @@ describe('merging', () => {
   it('publishes the generation date under the ambient report namespace', () => {
     const data = applyCashFlowProjection({}, ROW);
     expect(data.report.generatedDate).toBe('2026-08-02T00:00:00.000Z');
+  });
+});
+
+describe('the legacy document narrative, restated', () => {
+  /*
+   * `describeProjection` in `reports/cashFlow/normalise.pure.ts` cannot run on
+   * a stored row — it takes the browser's twenty-field years and throws on
+   * anything less, which is its contract. The projection restates its
+   * sentences from the series' own ends, with one deliberate change: the
+   * legacy says "a week after tax", and the stored series does not state its
+   * tax treatment, so the restatement claims nothing the record does not.
+   */
+  it('composes the narrative from the series ends, in the legacy sentences', () => {
+    const p = projectCashFlow(ROW);
+    const narrative = String(p.cashflow.overview);
+    expect(narrative).toContain('14 Marlborough Street, Leichhardt NSW 2040');
+    // -37,916 in year one is $729 a week, and the wording claims no tax basis.
+    expect(narrative).toContain('costs $729 a week to hold in year one');
+    expect(narrative).not.toContain('after tax');
+    expect(narrative).toContain('of capital growth');
+    expect(narrative).toContain('of equity at the end of the term.');
+    // Production's answer on every stored moderate scenario.
+    expect(narrative).toContain('does not turn cash-flow positive within the projected term');
+    expect((p.cashflow.outcome as any).breakEvenYear).toBeUndefined();
+  });
+
+  it('publishes the weekly year-one figure as arithmetic on the series', () => {
+    // Never `keyMetrics.weeklyNet` (-413 on this fixture), which disagrees
+    // with the series' own year one on every stored report.
+    const p = projectCashFlow(ROW);
+    expect((p.cashflow.firstYear as any).cashFlowWeekly).toBeCloseTo(-37916 / 52, 6);
+  });
+
+  it('names the break-even year when the series has one', () => {
+    const years = series(1.052, 1).map((y, i) => ({
+      ...y,
+      // Positive from year six on.
+      cashFlow: i >= 5 ? 1200 : y.cashFlow,
+    }));
+    const p = projectCashFlow({
+      ...ROW,
+      financial_calculations: {
+        ...(ROW.financial_calculations as any),
+        projections: { moderate: years },
+      },
+    });
+    expect((p.cashflow.outcome as any).breakEvenYear).toBe(6);
+    expect(String(p.cashflow.overview)).toContain('turns cash-flow positive in year 6.');
+  });
+
+  it('says a year-one-positive projection returns rather than costs', () => {
+    const years = series(1.052, 1).map((y) => ({ ...y, cashFlow: 2600 }));
+    const p = projectCashFlow({
+      ...ROW,
+      financial_calculations: {
+        ...(ROW.financial_calculations as any),
+        projections: { moderate: years },
+      },
+    });
+    const narrative = String(p.cashflow.overview);
+    expect(narrative).toContain('returns $50 a week in year one');
+    expect(narrative).toContain('It is cash-flow positive from the first year.');
+  });
+
+  it('composes nothing for a report with no stored series', () => {
+    const p = projectCashFlow({ id: 'x', financial_calculations: { projections: {} } });
+    expect(p.cashflow.overview).toBeUndefined();
+    expect(p.hasProjections).toBe(false);
   });
 });

@@ -36,6 +36,7 @@ import { applyInvestmentProjection } from '../../supabase/functions/_shared/repo
 import { applyBorrowingCapacityProjection } from '../../supabase/functions/_shared/borrowingCapacityProjection.pure';
 import { applyPortfolioProjection } from '../../supabase/functions/_shared/portfolioProjection.pure';
 import { applyComparisonProjection } from '../../supabase/functions/_shared/comparisonProjection.pure';
+import { applyCashFlowProjection } from '../../supabase/functions/_shared/cashFlowProjection.pure';
 import { applyOrganisationProjection } from '../../supabase/functions/_shared/organisationProjection.pure';
 import { applyReportQaProjection } from '../../supabase/functions/_shared/reportQaProjection.pure';
 import { applyCommercialCapacityProjection } from '../../supabase/functions/_shared/commercialCapacityProjection.pure';
@@ -47,6 +48,7 @@ import { INVESTMENT_COMPASS_TEMPLATES } from './investmentCompass/templates';
 import { BORROWING_CAPACITY_TEMPLATES } from './investmentCompass/borrowingCapacity';
 import { PORTFOLIO_TEMPLATES } from './investmentCompass/portfolio';
 import { COMPARISON_TEMPLATES } from './investmentCompass/comparison';
+import { CASH_FLOW_COMPASS_TEMPLATES } from './investmentCompass/cashFlow';
 import { REPORT_QA_TEMPLATES } from './investmentCompass/reportQa';
 import { COMMERCIAL_CAPACITY_TEMPLATES } from './investmentCompass/commercialCapacity';
 import { MARKET_INTELLIGENCE_TEMPLATES } from './investmentCompass/marketIntelligence';
@@ -194,6 +196,13 @@ function marketData(row: any): Record<string, any> {
   return data;
 }
 
+function cashFlowData(row: any): Record<string, any> {
+  const data: Record<string, any> = { report: {}, analysis: row, brand: {} };
+  applyCashFlowProjection(data, row);
+  applyOrganisationProjection(data, ORG as any, MARKS);
+  return data;
+}
+
 const SETS: Array<[string, any[], Record<string, any>]> = [
   ['Investment Compass', INVESTMENT_COMPASS_TEMPLATES as any[], investmentData(ROWS.investment)],
   ['Borrowing Capacity', BORROWING_CAPACITY_TEMPLATES as any[], borrowingData(ROWS.borrowing_capacity)],
@@ -205,6 +214,9 @@ const SETS: Array<[string, any[], Record<string, any>]> = [
   // advantages pages render only on this shape, so measuring the intact row
   // alone leaves half of production's pages unmeasured.
   ['Property Comparison (salvaged)', COMPARISON_TEMPLATES as any[], comparisonData(ROWS.comparison_salvaged)],
+  // The 10 Year Cash Flow reads the same investment_reports row the Compass
+  // does — 162 of the 1,182 carry a projection, and the fixture is one.
+  ['Ten Year Cash Flow', CASH_FLOW_COMPASS_TEMPLATES as any[], cashFlowData(ROWS.investment)],
   ['Report Q&A', REPORT_QA_TEMPLATES as any[], qaData(ROWS2.qa)],
   ['Commercial Capacity', COMMERCIAL_CAPACITY_TEMPLATES as any[], capacityData(ROWS2.commercial_capacity)],
   ['Market Intelligence', MARKET_INTELLIGENCE_TEMPLATES as any[], marketData(ROWS2.market_intelligence)],
