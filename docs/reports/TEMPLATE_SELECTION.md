@@ -148,3 +148,44 @@ generate button reaches its renderer by its own path, and
 working copy and editing one are now two buttons instead of one action with a
 side effect — the copy is inactive either way, so there was never anything about
 it that had to be finished in an editor.
+
+## The choice has to reach the document, on every format
+
+The picker lists every format the adapter registry knows and tells the reader
+"a choice is kept for every report of that format until it is changed here".
+That was true of one format. `PremiumPdfButton` passed the chosen id into the
+Compass route; the shared path every other format's delivery goes through —
+`tryTemplateDocument` — did not accept one, so on the other eight a selection
+was **stored, displayed as `selected`, and ignored by the generator it was a
+choice about**. The UI promised something the system did not do, which is worse
+than not offering the choice: the person has no way to tell, because a document
+still arrives and it looks fine.
+
+`tryTemplateDocument` now resolves the selection itself and forwards it.
+Deliberately looked up there rather than threaded through eight `deliver*`
+signatures: that would have fixed the surfaces that remembered to pass it and
+left the same hole open for the email, attachment and broker-portal paths,
+which never touch the picker's hook. The lookup is **not cached** — somebody
+who changes their template and generates again expects the new one — and a
+failed read resolves by ranking, exactly as it did before selections existed.
+
+Nothing else changes about resolution: the id is still re-read and revalidated
+server-side by `loadSelectedTemplate`, and a choice that no longer applies
+still falls back to the ranking rather than failing the generation.
+
+### The one format whose choice cannot always be honoured
+
+The 10 Year Cash Flow renders from a projection the modal recomputes in the
+browser, and a template renders the stored one. When they differ — which is
+the normal case for a report with adviser overrides — the export cannot use a
+template without printing different figures from the ones on screen, so it does
+not. That is correct, and it used to be silent: the person had chosen a
+template and received the standard layout with no explanation, which is
+indistinguishable from the choice being broken. The export now says so, and
+only to somebody it is news for — a person with a selection for that format who
+did not get it.
+
+`templateRouteEnforcement.spec.ts` holds the whole contract for every format at
+once: each production format has an adapter that can list, route and bind; each
+one's delivery path asks for a templated document; that request carries the
+chosen template; and a format whose choice cannot change anything says so.

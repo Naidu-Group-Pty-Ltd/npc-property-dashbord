@@ -31,12 +31,50 @@
  * never be the reason somebody cannot get their file.
  */
 import { tryRouteThroughTemplateBuilderFor } from './compassRoute';
+import {
+  fetchTemplateSelections,
+  normaliseReportType,
+  selectionsByFormat,
+} from './templateSelection';
 
 export interface TemplateDocument {
   blob: Blob;
   fileName: string;
   /** Which template rendered it, for the caller that wants to say. */
   templateId: string;
+}
+
+/**
+ * The template this person chose for this format, if they chose one.
+ *
+ * ## Why this is looked up here rather than passed in
+ *
+ * The picker lists **every** format the adapter registry knows, and its own
+ * words are "a choice is kept for every report of that format until it is
+ * changed here". Only `PremiumPdfButton` ever passed the chosen id, so on the
+ * other eight formats a selection was stored, displayed as selected, and then
+ * ignored by the thing it was a choice about — the UI promising something the
+ * generator did not do, which is worse than not offering the choice.
+ *
+ * Threading the id through eight `deliver*` signatures would have fixed the
+ * surfaces that remembered to pass it and left the same hole open for the
+ * email, attachment and portal paths that do not use the picker's hook. Asking
+ * here means the choice is honoured wherever a document is produced, which is
+ * what the picker says happens.
+ *
+ * Not cached: a person who changes their template and generates again expects
+ * the new one, and one edge call against a download that already takes seconds
+ * is the cheaper side of that trade. A failed read answers null and the format
+ * resolves by ranking, exactly as it did before selections existed.
+ */
+async function selectedTemplateFor(reportType: string): Promise<string | null> {
+  try {
+    const rows = await fetchTemplateSelections();
+    const key = normaliseReportType(reportType);
+    return selectionsByFormat(rows).get(key)?.template_id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -76,6 +114,10 @@ export async function tryTemplateDocument(
   try {
     const routed = await tryRouteThroughTemplateBuilderFor(reportType, reportId, {
       variant: opts?.variant ?? null,
+      // The person's own answer to "which template does this format come out
+      // in", honoured here so that every surface gets it rather than only the
+      // ones that remembered to ask. See `selectedTemplateFor`.
+      templateId: await selectedTemplateFor(reportType),
     });
     if (!routed?.fileUrl) return null;
 

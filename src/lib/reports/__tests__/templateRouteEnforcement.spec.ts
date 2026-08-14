@@ -1,0 +1,160 @@
+/**
+ * One contract, enforced for every format at once.
+ *
+ * Each round of this programme fixed a hole that existed because a format was
+ * wired *nearly* all the way: an adapter with no lister, a `variant` nothing
+ * passed, a route that rendered a refusal, a picker whose choice the generator
+ * ignored. Every one of them was invisible per-format and obvious across
+ * formats, which is what this file is for — a tenth format cannot be added half
+ * wired, and a ninth cannot quietly lose a half it already had.
+ *
+ * The rules, in the order they bite:
+ *
+ *  1. A production format has an adapter that can list, route and bind.
+ *  2. Its delivery path asks for a templated document before rendering its own
+ *     way, so activating a template actually changes the document.
+ *  3. That request carries the **person's chosen template**, because the picker
+ *     offers a choice for every format and says it is kept.
+ *  4. A format whose choice cannot change anything says so, rather than
+ *     offering a choice that does nothing.
+ */
+import { describe, expect, it } from 'vitest';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { listAdapters, getAdapter } from '@/lib/reportTemplate/adapters';
+import { listReportFormats } from '@/lib/reportTemplate/reportFormats';
+
+const ROOT = join(__dirname, '../../../..');
+const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');
+const stripComments = (source: string) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
+/**
+ * Where each production format's documents are produced.
+ *
+ * The `deliver*` module, or the one surface that plays that part for a format
+ * that has none. This list is the map from "format" to "the code a person's
+ * download actually runs", and it is written out rather than derived because
+ * being wrong about it is the failure this file exists to catch.
+ */
+const DELIVERY_PATHS: Record<string, string[]> = {
+  investment: ['src/components/reports/PremiumPdfButton.tsx'],
+  borrowing_capacity: ['src/lib/reports/borrowingCapacity/deliverSnapshot.ts'],
+  portfolio: ['src/lib/reports/portfolio/deliverPortfolioReview.ts'],
+  comparison: ['src/lib/reports/propertyComparison/deliverComparisonPdf.ts'],
+  client_details: ['src/lib/reports/clientDetails/deliverClientDetailsPdf.ts'],
+  qa: ['src/lib/reports/reportQa/deliverReportQaPdf.ts'],
+  commercial_capacity: ['src/hooks/useCapacityReport.ts'],
+  market_intelligence: ['src/lib/reports/marketIntelligence/deliverMarketIntelligencePdf.ts'],
+  // The 10 Year Cash Flow produces its document from the modal, because the
+  // projection is an argument rather than a lookup and only that surface holds
+  // it. See `cashFlowTemplateRouteGuarded.spec.ts`.
+  cashflow: ['src/components/reports/CashFlowAnalysisModal.tsx'],
+};
+
+const productionFormats = () => listAdapters().filter((a) => a.supportsProduction);
+
+describe('every production format is wired the whole way', () => {
+  it('has the nine adapters this programme migrated, and no half-built tenth', () => {
+    const types = productionFormats().map((a) => a.reportType).sort();
+    expect(types).toEqual([
+      'borrowing_capacity', 'cashflow', 'client_details', 'commercial_capacity',
+      'comparison', 'investment', 'market_intelligence', 'portfolio', 'qa',
+    ]);
+  });
+
+  it.each(productionFormats().map((a) => a.reportType))(
+    '%s: the adapter can list, route and bind',
+    (reportType) => {
+      const adapter = getAdapter(reportType)!;
+      // A format with no lister is one the preview picker cannot offer a real
+      // report for — the state eight of the nine were in.
+      expect(typeof adapter.listRecentReports, 'no listRecentReports').toBe('function');
+      expect(typeof adapter.resolveRoutingContext).toBe('function');
+      expect(typeof adapter.buildBindingContext).toBe('function');
+      // The legacy generator is named, because it stays the default until a
+      // template is activated and a person is entitled to know what produced
+      // their document.
+      expect(adapter.legacyFallback?.reason, 'no legacyFallback reason').toBeTruthy();
+      expect(adapter.label).toBeTruthy();
+    },
+  );
+
+  it.each(Object.entries(DELIVERY_PATHS))(
+    '%s: its delivery path asks for a templated document',
+    (reportType, paths) => {
+      expect(getAdapter(reportType)?.supportsProduction, `${reportType} is not production`).toBe(true);
+      for (const path of paths) {
+        expect(existsSync(join(ROOT, path)), `${path} does not exist`).toBe(true);
+        const code = stripComments(read(path));
+        // Either the shared question, or the Compass pilot's own entry — the
+        // two doors, and nothing generates a templated document without one.
+        expect(
+          /tryTemplateDocument\(|tryRouteThroughTemplateBuilder\(/.test(code),
+          `${path} never asks for a templated document, so activating a template `
+          + `for ${reportType} changes nothing a person can see`,
+        ).toBe(true);
+      }
+    },
+  );
+
+  it('covers every production format — the map cannot fall behind the registry', () => {
+    // Adding an adapter without adding it here would leave the rule above
+    // enforcing nothing for the new format.
+    expect(Object.keys(DELIVERY_PATHS).sort())
+      .toEqual(productionFormats().map((a) => a.reportType).sort());
+  });
+});
+
+describe("the person's chosen template reaches the document", () => {
+  /**
+   * The picker lists every format and says "a choice is kept for every report
+   * of that format until it is changed here". It was true of one format.
+   * `PremiumPdfButton` passed the chosen id; the shared path did not accept
+   * one, so on the other eight a selection was stored, shown as selected, and
+   * ignored by the generator it was a choice about.
+   */
+  it('the shared path forwards a chosen template to the router', () => {
+    const code = stripComments(read('src/lib/reportTemplate/compassRoute.ts'));
+    // The generic entry takes it and passes it on.
+    expect(code).toMatch(/tryRouteThroughTemplateBuilderFor[\s\S]*?templateId/);
+    expect(code).toMatch(/templateId:\s*opts\?\.templateId/);
+  });
+
+  it('the shared question resolves the selection itself, for every surface', () => {
+    const code = stripComments(read('src/lib/reportTemplate/templateDocument.ts'));
+    // Looked up rather than threaded through eight signatures: the email,
+    // attachment and portal paths do not use the picker's hook and would
+    // otherwise keep ignoring the choice.
+    expect(code).toMatch(/fetchTemplateSelections/);
+    expect(code).toMatch(/templateId:\s*await selectedTemplateFor\(reportType\)/);
+  });
+
+  it('the Compass pilot still forwards its own', () => {
+    const code = stripComments(read('src/components/reports/PremiumPdfButton.tsx'));
+    expect(code).toMatch(/tryRouteThroughTemplateBuilder\(\s*reportId\s*,\s*\w+/);
+  });
+});
+
+describe('the picker never offers a choice that does nothing', () => {
+  it('lists exactly the registry, production formats first', () => {
+    const formats = listReportFormats();
+    expect(formats.map((f) => f.reportType).sort())
+      .toEqual(listAdapters().map((a) => a.reportType).sort());
+
+    const firstPreviewOnly = formats.findIndex((f) => !f.supportsProduction);
+    const lastProduction = formats.map((f) => f.supportsProduction).lastIndexOf(true);
+    expect(lastProduction, 'a preview-only format sorts above a production one')
+      .toBeLessThan(firstPreviewOnly);
+  });
+
+  it('says why, for every format a choice cannot change', () => {
+    for (const format of listReportFormats().filter((f) => !f.supportsProduction)) {
+      // Offering a choice that changes nothing, without saying so, is the same
+      // defect as the ignored selection in the other direction.
+      expect(format.previewOnlyReason, `${format.reportType} offers a silent no-op`)
+        .toBeTruthy();
+    }
+  });
+});
