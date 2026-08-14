@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { amlPortalApi } from '@/lib/aml/amlPortalApi';
 import { buildBooklet, type PassportView } from '@/lib/aml/passport';
-import { StampSeal } from '@/components/aml/passport/StampSeal';
 import { PassportBook } from '@/components/aml/passport/design/PassportBook';
 import {
   formatPassportCurrency,

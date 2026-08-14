@@ -72,6 +72,109 @@ describe('the catalogue', () => {
     }
     expect([...bound].filter((ns) => ns !== 'comparison' && !AMBIENT.includes(ns))).toEqual([]);
   });
+
+  it('carries the salvage-only pages, every one conditional', () => {
+    // Market timing rides 23 of the 27 damaged rows and competitive
+    // advantages 10 — content the intact rows never hold, because the writer
+    // that destructures a successful response has no column for them. The
+    // pages are conditional so an intact record renders no empty furniture.
+    const CASCADE = [
+      'Market timing',
+      'The holding rationale',
+      'Competitive advantages',
+      'Competitive advantages · continued',
+      'What to do',
+    ];
+    for (const t of COMPARISON_TEMPLATES) {
+      const pages = t.schema.pages as any[];
+      for (const name of CASCADE) {
+        const page = pages.find((p) => p.name === name);
+        expect(page, `${t.name} lacks the "${name}" page`).toBeTruthy();
+        expect(String((page as any).conditional ?? ''), `${t.name} "${name}" is unconditional`)
+          .not.toBe('');
+      }
+    }
+  });
+
+  it('writes every conditional as an expression that actually evaluates', () => {
+    // A conditional is JavaScript, not a binding path — `ranked.0.score` is a
+    // SyntaxError there, and a conditional that throws at construction answers
+    // false forever: the block is silently dark on every render. Constructing
+    // each expression is the whole test.
+    const seen = new Set<string>();
+    const collect = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (typeof node.conditional === 'string') seen.add(node.conditional);
+      for (const v of Object.values(node)) {
+        if (Array.isArray(v)) v.forEach(collect);
+        else collect(v);
+      }
+    };
+    for (const t of COMPARISON_TEMPLATES.slice(0, 5)) (t.schema.pages as any[]).forEach(collect);
+    expect(seen.size).toBeGreaterThan(10);
+    for (const cond of seen) {
+      expect(
+        () => new Function('comparison', 'client', 'org', 'report', `return (${cond});`),
+        `does not parse: ${cond}`,
+      ).not.toThrow();
+    }
+  });
+});
+
+describe('the verdict has a treatment for both storage shapes', () => {
+  /*
+   * `recommendations` is absent on 25 of the 50 stored rows — every salvaged
+   * row bar two — and the old page bound only the pick, so half of production
+   * rendered a display-size heading with nothing in it. The two treatments are
+   * mutually exclusive: for any record exactly one heading and one callout
+   * render.
+   */
+  const verdictConds = (t: any) => (t.schema.pages as any[])
+    .find((p) => p.name === 'The verdict')!
+    .blocks.map((b: any) => String(b.conditional ?? ''))
+    .filter((cond: string) => cond.includes('recommendations'));
+
+  it('draws two mutually exclusive treatments', () => {
+    for (const t of COMPARISON_TEMPLATES.slice(0, 5)) {
+      const conds = verdictConds(t);
+      // Two headings and two callouts, each pair split by the same guard.
+      expect(conds.length, t.name).toBe(4);
+      for (const state of [
+        { recommendations: { bestOverall: { winner: 'x' } } },
+        { recommendations: undefined },
+        {},
+      ]) {
+        const holding = conds.filter((cond: string) => {
+          const fn = new Function('comparison', `return (${cond});`);
+          return Boolean(fn(state));
+        });
+        // One heading and one callout — never zero, never both treatments.
+        expect(holding.length, `${t.name} ${JSON.stringify(state)}`).toBe(2);
+      }
+    }
+  });
+
+  it('renders the fallback with the ranked-first property and the note', () => {
+    const t: any = COMPARISON_TEMPLATES[0];
+    const salvagedComparison = {
+      ...comparison,
+      recommendations: undefined,
+      truncated: true,
+      truncationNote: 'The analysis was cut short while it was being written, and the '
+        + 'sections it had completed were stored as raw text rather than as a finished report.',
+    };
+    const { html } = renderTemplateToHtml(t.schema, {
+      data: { ...SAMPLE, comparison: salvagedComparison },
+    });
+    expect(html).toContain('Why there is no recommendation here');
+    expect(html).toContain('cut short while it was being written');
+    // The "What to do" page is dark without a recommendation.
+    expect(html).not.toContain('Runners-up');
+
+    const intact = renderTemplateToHtml(t.schema, { data: SAMPLE }).html;
+    expect(intact).not.toContain('Why there is no recommendation here');
+    expect(intact).toContain('Runners-up');
+  });
 });
 
 describe('the ranking is drawn once per property count', () => {

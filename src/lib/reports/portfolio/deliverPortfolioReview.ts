@@ -27,6 +27,7 @@
  */
 import { secureStorageDownload } from '@/hooks/useSecureStorage';
 import { parseStorageRef } from '@/lib/reports/storageRef';
+import { tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
 import { requestPortfolioReview, type PortfolioReviewRequest } from './requestPortfolioReview';
 
 /** Which document. */
@@ -55,6 +56,8 @@ export interface DeliveredPortfolioReview {
   brandGaps: string[];
   /** Whether a review was folded in. Unknown, so false, for `stored`. */
   reviewIncluded: boolean;
+  /** Rendered from an activated template rather than by the flowing route. */
+  templated?: boolean;
 }
 
 /** The default storage bucket for generated client documents. */
@@ -108,6 +111,28 @@ export async function deliverPortfolioReview(
 ): Promise<DeliveredPortfolioReview> {
   if (input.variant === 'stored') return deliverStored(input);
 
+  // Not for `stored`, which is a request for one particular file that already
+  // exists — this module's own rule is that substituting a document from a
+  // renderer the person did not choose is the thing never to do.
+  //
+  // And not when the caller asked for the analysis without the review: the
+  // adapter always joins the client's newest completed review, exactly as this
+  // route does by default, so it cannot produce the without-review document.
+  if (input.request.includeReview !== false) {
+    const templated = await tryTemplateDocument('portfolio', input.request.reportId);
+    if (templated) {
+      saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName);
+      return {
+        source: 'server',
+        fileName: templated.fileName,
+        brandGaps: [],
+        // The adapter performs the join, so the review is in the document.
+        reviewIncluded: true,
+        templated: true,
+      };
+    }
+  }
+
   const result = await requestPortfolioReview(input.request);
 
   // A signed URL. Fetched rather than followed, so the file is *saved* — a PDF
@@ -152,6 +177,16 @@ export async function portfolioReviewBlob(input: DeliverPortfolioInput): Promise
       source: 'stored',
       brandGaps: [],
     };
+  }
+
+  // The same two guards as the download path above.
+  if (input.request.includeReview !== false) {
+    const templated = await tryTemplateDocument('portfolio', input.request.reportId);
+    if (templated) {
+      return {
+        blob: templated.blob, fileName: templated.fileName, source: 'server', brandGaps: [],
+      };
+    }
   }
 
   const result = await requestPortfolioReview(input.request);

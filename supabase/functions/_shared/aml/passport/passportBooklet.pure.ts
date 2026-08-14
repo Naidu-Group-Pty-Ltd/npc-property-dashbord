@@ -25,6 +25,7 @@
  */
 
 import type { PassportView } from "./passportView.pure.ts";
+import type { PassportStamp, PendingStamp } from "./passportStamps.pure.ts";
 
 /* ── block vocabulary (mirrors the design's PassportPage component) ─────── */
 
@@ -59,10 +60,43 @@ export type BookletBlock =
       title: string;
       items: Array<{ k: string; sub: string; v: string; date: string; tone: BookletTone }>;
     }
-  /** Wax seals, laid out centred. */
-  | { kind: "seals"; items: Array<{ t: string; cap: string; tone: SealTone; earned: boolean }> }
-  /** One large seal with a sentence under it. */
-  | { kind: "hero"; title: string; tone: SealTone; text: string; earned: boolean }
+  /**
+   * Certification impressions, laid out centred.
+   *
+   * The stamps are carried WHOLE — the same `PassportStamp` objects the
+   * register page draws, not a projection of them. This block used to flatten
+   * each one to `{t, cap, tone, earned}`, which dropped the code, the org, the
+   * timestamp, the actor, the version, the die shape and the provenance; the
+   * booklet then drew a generic wax blob while the register drew the approved
+   * struck impression, and the two surfaces disagreed about the same
+   * certification. Passing the record itself is what makes that class of drift
+   * unrepresentable: there is nothing left to re-derive.
+   *
+   * `issuer_org` rides along because the design inks a stamp by WHAT IT SPEAKS
+   * FOR (`stampFaceTone`) — a partner's decision is inked differently from the
+   * issuer's own certification, and that comparison needs the issuer.
+   */
+  | {
+      kind: "seals";
+      issuer_org: string;
+      earned: PassportStamp[];
+      pending: PendingStamp[];
+    }
+  /**
+   * One large impression with a sentence under it.
+   *
+   * Also a real certification rather than hand-authored seal text: whichever of
+   * `stamp` (struck) or `pending` (the die, never struck) the record supports.
+   * Both null means the page carries its sentence alone — a seal with no record
+   * behind it is exactly what this document may not print.
+   */
+  | {
+      kind: "hero";
+      issuer_org: string;
+      stamp: PassportStamp | null;
+      pending: PendingStamp | null;
+      text: string;
+    }
   /** The journey, as a dated register. */
   | { kind: "timeline"; title: string; items: Array<{ time: string; t: string; sub: string; src: string }> }
   /** Credential verification. */
@@ -75,7 +109,6 @@ export type BookletBlock =
   | { kind: "banner"; text: string };
 
 export type BookletTone = "ok" | "info" | "warn" | "bad" | "na";
-export type SealTone = "gold" | "green" | "navy" | "blue" | "red";
 
 export type BookletPage = {
   /** Stable id — used as the React key and by tests. */
@@ -532,20 +565,9 @@ export function buildBooklet(view: PassportView): BookletPage[] {
       blocks: [
         {
           kind: "seals",
-          items: [
-            ...view.stamps.map((s) => ({
-              t: s.title,
-              cap: s.portal,
-              tone: s.tone as SealTone,
-              earned: true,
-            })),
-            ...pendingSeals.map((p) => ({
-              t: p.title,
-              cap: "Outstanding",
-              tone: p.tone as SealTone,
-              earned: false,
-            })),
-          ],
+          issuer_org: h.issuer_org,
+          earned: view.stamps,
+          pending: pendingSeals,
         },
       ],
     });
@@ -598,6 +620,12 @@ export function buildBooklet(view: PassportView): BookletPage[] {
 
   /* XV — Transaction Completion (only once there is something to complete) */
   if (view.transactions.length > 0) {
+    // The completion impression is the register's OWN `transaction_completed`
+    // certification, struck or unstruck — not a third seal with its own
+    // wording. This page used to invent "SETTLEMENT COMPLETE" / "AWAITING
+    // SETTLEMENT" for a certification the vocabulary already names once, so the
+    // same fact appeared under two names in one document.
+    const struck = view.stamps.find((s) => s.code === "transaction_completed") ?? null;
     push({
       id: "completion",
       kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
@@ -608,9 +636,11 @@ export function buildBooklet(view: PassportView): BookletPage[] {
       blocks: [
         {
           kind: "hero",
-          title: settled ? "SETTLEMENT COMPLETE" : "AWAITING SETTLEMENT",
-          tone: settled ? "green" : "navy",
-          earned: settled,
+          issuer_org: h.issuer_org,
+          stamp: struck,
+          pending: struck
+            ? null
+            : pendingSeals.find((p) => p.code === "transaction_completed") ?? null,
           text: settled
             ? "The Passport moves into retained-record status and is kept for the full compliance retention period."
             : "This seal is applied only on confirmed settlement. Until then the impression is left empty.",

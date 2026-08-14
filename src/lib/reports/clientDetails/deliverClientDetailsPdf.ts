@@ -22,6 +22,7 @@
  * the other formats: a PDF that opens in a tab is a PDF someone has to find
  * again.
  */
+import { tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
 import {
   requestClientDetailsPdf,
   type ClientDetailsPdfResult,
@@ -37,6 +38,12 @@ export interface DeliveredClientDetails {
   propertyCount: number;
   /** The document itself, for the email and Finance Portal paths. */
   blob: Blob;
+  /**
+   * Rendered from an activated Template Builder template rather than by the
+   * flowing route. The diagnostics above describe the flowing render and are
+   * left empty when this is true — they are not zero, they are not measured.
+   */
+  templated?: boolean;
 }
 
 /** Save a file the way a browser saves files. */
@@ -66,6 +73,23 @@ export async function deliverClientDetailsPdf(
   clientId: string,
   options: { save?: boolean; edition?: string | null } = {},
 ): Promise<DeliveredClientDetails> {
+  // An activated template wins, and answers null when there is none. See
+  // `templateDocument.ts`; every one of its failure modes lands here as null,
+  // so the route below stays the way this document is produced.
+  const templated = await tryTemplateDocument('client_details', clientId);
+  if (templated) {
+    if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);
+    return {
+      fileName: templated.fileName,
+      pageCount: null,
+      brandGaps: [],
+      sections: [],
+      propertyCount: 0,
+      blob: templated.blob,
+      templated: true,
+    };
+  }
+
   const result: ClientDetailsPdfResult = await requestClientDetailsPdf(clientId, options.edition);
 
   const response = await fetch(result.url);

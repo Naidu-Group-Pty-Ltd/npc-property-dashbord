@@ -101,6 +101,28 @@ function looksUndeployed(error: { message?: string; status?: number } | null): b
  *
  * `legacyFallback` is passed in rather than imported so this module does not
  * drag the jsPDF generator into every bundle that touches the button.
+ *
+ * ## The Template Builder route here is guarded, not automatic
+ *
+ * Every other migrated format asks `tryTemplateDocument` first and renders an
+ * activated template instead of calling its flowing route. This one may not ask
+ * unconditionally, and the reason is the first line of this module's contract:
+ * **the projection is an argument, not a lookup.**
+ *
+ * It arrives from `CashFlowAnalysisModal`, which recomputes ten years in the
+ * browser from the report's `manual_overrides` plus whatever the adviser has
+ * changed since the modal opened. `cashFlowAdapter` cannot see any of that — it
+ * reads the stored `financial_calculations.projections`, a different series
+ * whenever an override exists, which is the normal case for the reports this
+ * modal is opened on. Asking regardless would hand the client a document whose
+ * numbers are not the numbers the adviser is looking at while they send it, and
+ * a wrong figure in a client's financial report outranks a nicer layout.
+ *
+ * So `storedSeriesMatch.ts` has to name a stored scenario first — every field
+ * both series state, in every year, plus a cash-flow column that corresponds
+ * consistently — and the modal asks only then, for that scenario. It answers
+ * null for anything it cannot be certain of.
+ * `cashFlowTemplateRouteGuarded.spec.ts` keeps the guard attached to the call.
  */
 export async function requestCashFlowPdf(
   request: { reportId: string; projection: WireProjection; edition?: string | null },

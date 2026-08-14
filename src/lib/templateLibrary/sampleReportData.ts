@@ -36,6 +36,11 @@
 import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
 import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
 import { projectCashFlowComparison } from '../../../supabase/functions/_shared/cashFlowComparisonProjection.pure';
+import { projectCommercialCapacity } from '../../../supabase/functions/_shared/commercialCapacityProjection.pure';
+import { projectMarketIntelligence } from '../../../supabase/functions/_shared/marketIntelligenceProjection.pure';
+import { projectReportQa } from '../../../supabase/functions/_shared/reportQaProjection.pure';
+import { buildReportQaDocument } from '../../../supabase/functions/_shared/reports/reportQa/normalise.pure';
+import { buildMarketIntelligenceReport } from '../../../supabase/functions/_shared/reports/marketIntelligence/normalise.pure';
 
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
@@ -338,7 +343,10 @@ const CLIENT_DETAILS_SAMPLE = (() => {
   ) => ({
     kind, kindLabel, address, shortAddress: shortAddr,
     value: aud(value), loanRemaining: aud(loan), equity: aud(value - loan),
-    lvr: pct((loan / value) * 100), interestRate: pct(6.02), ownershipPercentage: pct(100),
+    lvr: pct((loan / value) * 100), interestRate: pct(6.02),
+    // Precision 0, as the normaliser builds it — `percent(x, 0)` — so the
+    // strapline reads "100% ownership" rather than "100.00% ownership".
+    ownershipPercentage: { value: 100, unit: 'percent' as const, precision: 0 },
     lender, repaymentType: 'Principal and interest',
     rentMonthly: perMonth(rent), rentWeekly: { value: (rent * 12) / 52, unit: 'aud/week' as const },
     expensesMonthly: perMonth(outgoings), netMonthly: perMonth(rent - outgoings),
@@ -370,6 +378,17 @@ const CLIENT_DETAILS_SAMPLE = (() => {
           residentialStatus: 'Australian citizen',
         },
         sharedWithPrimary: false,
+      }, {
+        // The commoner of the two secondary shapes — the projection turns this
+        // into the legacy sentence, and the preview exercises the
+        // second-contact residence row with it.
+        contact: 'secondary' as const,
+        residence: {
+          address: '9/44 Regent Street', suburb: 'Newtown', state: 'NSW', postcode: '2042',
+          country: 'Australia', livingSituation: 'Owner occupied',
+          residentialStatus: 'Australian citizen',
+        },
+        sharedWithPrimary: true,
       }],
       maritalStatus: 'Married',
       dependents: { value: 2, unit: 'rate' as const },
@@ -658,6 +677,463 @@ const CASH_FLOW_COMPARISON_SAMPLE = (() => {
   return projectCashFlowComparison(comparison as never).cashFlowComparison;
 })();
 
+/**
+ * Report Q&A, through the format's own normaliser and projection.
+ *
+ * Until this existed the `qa` namespace was absent from the sample entirely,
+ * so every Report Q&A preview rendered a cover with **no title** and every
+ * page past it dark — the exact defect class `CLAUDE.md` records against
+ * fixtures written in the catalogue's own vocabulary, except here there was
+ * no fixture at all.
+ *
+ * The conversation is the same fictional engagement as the rest of this file:
+ * three exchanges about the Leichhardt purchase, grounded in two reports the
+ * other namespaces describe, with citations on the first answer so the
+ * citations page previews. The answer carries the constructs the corpus
+ * actually holds — 70% of stored answers use inline bold, 48% a heading,
+ * 57% a list, 19% a pipe table.
+ */
+const REPORT_QA_SAMPLE = (() => {
+  const answer = [
+    '## Yield on the Marlborough Street purchase',
+    '',
+    'The **gross yield** at the asking price is 3.84%, against an inner-west '
+      + 'median of 3.1%. Net of outgoings the figure is **2.79%**.',
+    '',
+    '| Measure | Figure |',
+    '| --- | --- |',
+    '| Gross yield | 3.84% |',
+    '| Net yield | 2.79% |',
+    '| Suburb median | 3.10% |',
+    '',
+    'Three things support the rent the projection assumes:',
+    '',
+    '- the vacancy rate in Leichhardt has held under 1.2% for six quarters;',
+    '- comparable three-bedroom terraces let within 16 days;',
+    '- the projected rent of $895 a week sits at the 60th percentile of '
+      + 'current listings, not the top of the market.',
+  ].join('\n');
+
+  const citations = [
+    {
+      document_name: 'Investment Compass — 14 Marlborough Street',
+      page_number: 12, paragraph_index: 3, similarity: 0.91,
+      snippet: 'Gross rental yield at the recommended purchase price is 3.84 per cent, '
+        + 'against a trailing twelve-month suburb median of 3.10 per cent.',
+    },
+    {
+      document_name: 'Suburb Profile — Leichhardt NSW 2040',
+      page_number: 4, paragraph_index: 1, similarity: 0.84,
+      snippet: 'Vacancy has remained below 1.2 per cent for six consecutive quarters.',
+    },
+  ];
+
+  const messages = [
+    { id: '00000000-0000-4000-8000-000000000001', role: 'user', content: 'What rental yield does the Marlborough Street purchase achieve, and how does it compare with the suburb?', created_at: '2026-08-01T09:00:00.000Z' },
+    { id: '00000000-0000-4000-8000-000000000002', role: 'assistant', content: answer, created_at: '2026-08-01T09:00:41.000Z', model_provider: 'openai', model_version: 'gpt-5.2', citations },
+    { id: '00000000-0000-4000-8000-000000000003', role: 'user', content: 'How sensitive is the cash flow to a rate rise?', created_at: '2026-08-01T09:03:12.000Z' },
+    { id: '00000000-0000-4000-8000-000000000004', role: 'assistant', content: 'At **6.64%** the weekly position moves from -$118 to -$186; the surplus absorbs it.', created_at: '2026-08-01T09:03:44.000Z', model_provider: 'openai', model_version: 'gpt-5.2' },
+    { id: '00000000-0000-4000-8000-000000000005', role: 'user', content: 'Which of the shortlisted suburbs had the strongest five-year growth?', created_at: '2026-08-01T09:05:02.000Z' },
+    { id: '00000000-0000-4000-8000-000000000006', role: 'assistant', content: 'Leichhardt, at **6.2% a year** compounding over the five years to June 2026.', created_at: '2026-08-01T09:05:30.000Z', model_provider: 'openai', model_version: 'gpt-5.2' },
+  ];
+
+  const built = buildReportQaDocument({
+    conversation: {
+      id: '00000000-0000-4000-8000-00000000000a',
+      title: 'Rental yield on the Leichhardt purchase',
+      report_names: ['Investment Compass — 14 Marlborough Street.pdf', 'Suburb Profile — Leichhardt NSW 2040.pdf'],
+      structured_report: null,
+      created_at: '2026-08-01T08:58:00.000Z',
+    },
+    messages,
+    subject: 'transcript',
+    messageId: null,
+    preparedOn: '2026-08-02T00:00:00.000Z',
+  });
+  if (!built.ok) throw new Error(`REPORT_QA_SAMPLE refused: ${built.error}`);
+  return projectReportQa(built.document).qa;
+})();
+
+/**
+ * Commercial & Industrial Capacity, through the format's own projection.
+ *
+ * The `capacity` namespace was absent from the sample entirely, so every
+ * Commercial Capacity preview rendered a cover with no title and every page
+ * past it dark — the same defect the Report Q&A sample closed.
+ *
+ * The snapshot below is hand-authored **on the payload contract** (every
+ * number a `Measure`, absence as `null`) and shaped on the one stored
+ * production run: a decline, bound by the debt service coverage ratio, three
+ * of the eight tests carrying neither threshold nor actual — because a
+ * decline is not this format's edge case, it is the whole corpus. The story
+ * is the same fictional engagement as the rest of this file: Nguyen Holdings
+ * buying a Wetherill Park warehouse through Meridian.
+ */
+const COMMERCIAL_CAPACITY_SAMPLE = (() => {
+  const m = (value: number, unit = 'aud', precision?: number) =>
+    (precision === undefined ? { value, unit } : { value, unit, precision });
+  const aud = (value: number) => m(value);
+  const perYear = (value: number) => m(value, 'aud/year');
+  const pct = (value: number, precision = 2) => m(value, 'percent', precision);
+  const rate = (value: number, precision = 1) => m(value, 'rate', precision);
+  const ratio = (value: number) => m(value, 'ratio', 2);
+  const years = (value: number) => m(value, 'years', 0);
+  const count = (value: number) => m(value, 'count', 0);
+
+  const snapshot = {
+    meta: {
+      subject: 'Nguyen Holdings Pty Ltd',
+      reference: 'CI-2026-014',
+      title: 'Wetherill Park warehouse purchase',
+      assessedOn: '2026-08-01T00:00:00.000Z',
+      assessmentId: 'sample-assessment',
+      segment: 'industrial' as const,
+      assessmentTypeLabel: 'Purchase',
+      engineVersion: '2.4.1',
+      policyVersion: '2026.07',
+      lenderProfile: 'Mainstream commercial bank',
+    },
+    property: {
+      address: '2/18 Fabrication Drive, Wetherill Park NSW 2164',
+      assetClass: 'Warehouse',
+      gstTreatment: 'Going concern (GST-free)',
+      lettableArea: count(840),
+      purchasePrice: aud(1_600_000),
+      valuation: aud(1_600_000),
+      valuationBasis: 'Lower of purchase price and valuation (price)',
+    },
+    headline: {
+      outcome: 'outside_current_assumptions' as const,
+      outcomeLabel: 'Outside current assumptions',
+      outcomeReason:
+        'The debt service coverage ratio falls below the policy floor at the requested facility.',
+      maximumCapacity: aud(1_040_000),
+      requestedLoan: aud(1_120_000),
+      difference: aud(-80_000),
+      requiredContribution: aud(560_000),
+      bindingConstraint: 'Debt service coverage ratio',
+      assessmentRate: pct(7.8),
+      loanTerm: years(15),
+      amortisation: years(25),
+      monthlyDebtService: aud(10_674),
+      surplus: perYear(52_340),
+      sensitisedSurplus: perYear(38_512),
+    },
+    narrative:
+      'On the figures supplied, the facility supports an indicative capacity of $1,040,000 '
+      + 'against a request of $1,120,000. Capacity is set by the debt service coverage ratio. '
+      + 'The shortfall of $80,000 would need to be met by a larger contribution or a smaller '
+      + 'facility before the request fits current assumptions.',
+    ratios: {
+      lvr: rate(0.70), lvrCeiling: rate(0.65),
+      dscr: ratio(1.04), dscrFloor: ratio(1.25),
+      icr: ratio(1.31), icrFloor: ratio(1.50),
+      debtYield: rate(0.058), debtYieldFloor: rate(0.09),
+      ltc: rate(0.632), ltcCeiling: rate(0.70),
+      debtToEbitda: ratio(3.1),
+    },
+    constraints: [
+      { key: 'lvr', label: 'Loan-to-value ratio', cap: aud(1_040_000), formula: 'Valuation × max LVR 65%', binding: false, applied: true, threshold: rate(0.65), actual: rate(0.70) },
+      { key: 'ltc', label: 'Loan-to-cost ratio', cap: aud(1_240_250), formula: 'Total cost × max LTC 70%', binding: false, applied: true, threshold: rate(0.70), actual: rate(0.632) },
+      { key: 'dscr', label: 'Debt service coverage ratio', cap: aud(986_400), formula: 'NOI ÷ min DSCR 1.25x, capitalised at 7.80% over 25 years', binding: true, applied: true, threshold: ratio(1.25), actual: ratio(1.04) },
+      { key: 'icr', label: 'Interest cover ratio', cap: aud(1_101_300), formula: 'NOI ÷ (min ICR 1.50x × assessment rate)', binding: false, applied: true, threshold: ratio(1.50), actual: ratio(1.31) },
+      { key: 'debt_yield', label: 'Debt yield', cap: aud(1_040_000), formula: 'NOI ÷ minimum debt yield 9%', binding: false, applied: true, threshold: rate(0.09), actual: rate(0.058) },
+      { key: 'contribution', label: 'Available borrower contribution', cap: aud(1_120_000), formula: 'Cash and equity available at settlement', binding: false, applied: true, threshold: null, actual: null },
+      { key: 'global', label: 'Global servicing surplus', cap: aud(2_680_000), formula: 'Surplus across the group at the sensitised rate', binding: false, applied: true, threshold: null, actual: null },
+      { key: 'policy', label: 'Policy maximum', cap: aud(1_120_000), formula: 'Lender profile ceiling for the asset class', binding: false, applied: false, threshold: null, actual: null },
+    ],
+    transaction: {
+      lines: [
+        { label: 'Purchase price', amount: aud(1_600_000), emphasis: 'normal' as const },
+        { label: 'Stamp duty and government charges', amount: aud(88_400), emphasis: 'normal' as const },
+        { label: 'Legal and due diligence', amount: aud(21_600), emphasis: 'normal' as const },
+        { label: 'Lender and valuation fees', amount: aud(14_250), emphasis: 'normal' as const },
+        { label: 'Total project cost', amount: aud(1_724_250), emphasis: 'total' as const },
+      ],
+      totalProjectCost: aud(1_724_250),
+      borrowerContribution: aud(604_250),
+      fundingGap: null,
+      cashOut: null,
+    },
+    propertyIncome: {
+      lines: [
+        { label: 'Passing rent', amount: perYear(124_800), emphasis: 'normal' as const },
+        { label: 'Less outgoings shortfall', amount: perYear(-9_200), emphasis: 'normal' as const },
+        { label: 'Less vacancy allowance at 5%', amount: perYear(-6_240), emphasis: 'normal' as const },
+        { label: 'Net operating income', amount: perYear(109_360), emphasis: 'total' as const },
+      ],
+      netOperatingIncome: perYear(109_360),
+      capitalisationRate: rate(0.0585, 2),
+      breakEvenOccupancy: rate(0.72, 0),
+      wale: m(3.4, 'years', 1),
+      tenantCount: count(2),
+      tenantConcentration: rate(0.62, 0),
+      tenancies: [
+        { tenant: 'Coastal Fabrication Services Pty Ltd', area: count(520), passingRent: perYear(77_400), expiry: '2029-10-31', remainingTerm: m(3.2, 'years', 1), share: rate(0.62, 0) },
+        { tenant: 'Inner West Logistics Group', area: count(320), passingRent: perYear(47_400), expiry: '2028-03-31', remainingTerm: m(1.6, 'years', 1), share: rate(0.38, 0) },
+      ],
+    },
+    businessIncome: {
+      periods: [
+        { label: 'FY2026', periodEnd: '2026-06-30', basis: 'Accountant-prepared', verification: 'Accountant-prepared', reportedEbitda: perYear(510_000), confirmedAddbacks: perYear(68_500), unconfirmedAddbacks: perYear(0), adjustedEbitda: perYear(578_500), assessable: perYear(520_650) },
+        { label: 'FY2025', periodEnd: '2025-06-30', basis: 'Lodged returns', verification: 'Lodged returns', reportedEbitda: perYear(468_200), confirmedAddbacks: perYear(54_100), unconfirmedAddbacks: perYear(12_000), adjustedEbitda: perYear(522_300), assessable: perYear(470_070) },
+        { label: 'FY2024', periodEnd: '2024-06-30', basis: 'Lodged returns', verification: 'Lodged returns', reportedEbitda: perYear(431_800), confirmedAddbacks: perYear(49_700), unconfirmedAddbacks: perYear(0), adjustedEbitda: perYear(481_500), assessable: perYear(433_350) },
+      ],
+      selectionBasis: 'Weighted 3:2:1 across 3 periods, most recent weighted highest',
+      adjustedEbitda: perYear(578_500),
+      assessableIncome: perYear(520_650),
+      verificationStatus: 'Accountant-prepared',
+      trend: null,
+      decliningIncome: false,
+    },
+    serviceability: {
+      rows: [
+        { label: 'Assessable business and personal income', amount: perYear(520_650), emphasis: 'normal' as const, direction: 'favourable' as const },
+        { label: 'Proposed asset rent, after shading', amount: perYear(87_552), emphasis: 'normal' as const, direction: 'favourable' as const },
+        { label: 'Portfolio rent, after shading', amount: perYear(31_480), emphasis: 'normal' as const, direction: 'favourable' as const },
+        { label: 'Total assessable income', amount: perYear(639_682), emphasis: 'total' as const, direction: 'neutral' as const },
+        { label: 'Less existing debt commitments', amount: perYear(-121_400), emphasis: 'normal' as const, direction: 'adverse' as const },
+        { label: 'Less proposed facility at the assessment rate', amount: perYear(-128_093), emphasis: 'normal' as const, direction: 'adverse' as const },
+        { label: 'Surplus after debt service', amount: perYear(390_189), emphasis: 'total' as const, direction: 'favourable' as const },
+      ],
+      assessmentRateBasis: 'Contract rate 6.80% plus 1.00% buffer.',
+    },
+    portfolio: {
+      rows: [
+        { label: 'Portfolio value', current: aud(2_450_000), proposed: aud(4_050_000), change: aud(1_600_000), direction: 'favourable' as const },
+        { label: 'Total debt', current: aud(1_431_000), proposed: aud(2_551_000), change: aud(1_120_000), direction: 'adverse' as const },
+        { label: 'Net equity', current: aud(1_019_000), proposed: aud(1_499_000), change: aud(480_000), direction: 'favourable' as const },
+        { label: 'Portfolio LVR', current: rate(0.584), proposed: rate(0.63), change: rate(0.046), direction: 'adverse' as const },
+        { label: 'Portfolio DSCR', current: ratio(1.62), proposed: ratio(1.38), change: ratio(-0.24), direction: 'adverse' as const },
+        { label: 'Annual debt service', current: perYear(121_400), proposed: perYear(249_493), change: perYear(128_093), direction: 'adverse' as const },
+        { label: 'Net cash flow', current: perYear(64_200), proposed: perYear(45_920), change: perYear(-18_280), direction: 'adverse' as const },
+      ],
+      direction: 'weakens' as const,
+      assetCount: count(2),
+      crossCollateralisedShare: rate(0.40, 0),
+    },
+    compliance: {
+      classificationLabel: 'Business purpose (indicative)',
+      requiresComplianceReview: false,
+      requiresSpecialistReview: false,
+      flags: [
+        {
+          code: 'GST_TREATMENT',
+          severity: 'review' as const,
+          message: 'The going-concern GST treatment relies on both parties being registered at settlement.',
+          action: 'Confirm GST registration of vendor and purchaser before exchange.',
+        },
+      ],
+    },
+    warnings: [
+      { severity: 'critical' as const, category: 'Financial', message: 'The requested facility exceeds the maximum indicative capacity under the selected assumptions.' },
+      { severity: 'warning' as const, category: 'Financial', message: 'Debt service coverage sits below the policy floor at the requested amount.' },
+      { severity: 'info' as const, category: 'Verification', message: 'Business income is accountant-prepared and has not been verified against lodged returns.' },
+    ],
+    outstanding: [
+      { label: 'Executed lease for Unit B', blocking: true },
+      { label: 'FY2026 accountant declaration', blocking: true },
+      { label: 'Confirmation of plant and equipment exclusions', blocking: false },
+    ],
+    nextActions: [
+      'Obtain the executed Unit B lease and updated tenancy schedule.',
+      'Model the facility at $1,040,000 with the client before resubmission.',
+      'Confirm GST registration of both parties ahead of exchange.',
+    ],
+    method: [
+      { group: 'Income', label: 'Net operating income', inputs: ['Passing rent', 'Outgoings'], formula: 'Rent − outgoings shortfall − vacancy', value: '$109,360 pa', note: null },
+      { group: 'Servicing', label: 'Debt service capacity', inputs: ['NOI', 'Assessment rate'], formula: 'NOI ÷ min DSCR 1.25x', value: '$986,400', note: 'Capitalised at 7.80% over 25 years' },
+      { group: 'Security', label: 'LVR cap', inputs: ['Valuation'], formula: 'Valuation × 65%', value: '$1,040,000', note: null },
+      { group: 'Outcome', label: 'Indicative capacity', inputs: ['All caps'], formula: 'Lowest of the applied caps', value: '$1,040,000', note: 'Bound by the DSCR' },
+    ],
+    analysis: {
+      interpretation:
+        'The deal is short on servicing rather than on security. The asset itself covers the '
+        + 'request comfortably at valuation, but net operating income of $109,360 cannot carry '
+        + 'the requested facility at the sensitised rate, and the group surplus — while strong — '
+        + 'is weighted to business income that remains accountant-prepared. The gap is small '
+        + 'enough that structure, not price, is the likeliest path: a longer amortisation or a '
+        + 'modestly smaller facility both close it on the engine’s own arithmetic.',
+      findings: [
+        { title: 'Security is not the constraint', detail: 'The LVR cap permits the full request; the shortfall comes entirely from debt service.', significance: 'strength' },
+        { title: 'Verification is the soft point', detail: 'The strongest income period is accountant-prepared; a lender will discount it until lodged returns confirm it.', significance: 'risk' },
+        { title: 'Concentration is manageable', detail: 'The larger tenancy carries 62% of passing rent but has 3.2 years of term against a 15-year facility.', significance: 'neutral' },
+      ],
+      scenarios: [
+        {
+          name: 'Extend the amortisation to 30 years',
+          reasoning: 'Debt service is sized on the amortisation period, not the term. Extending it lowers the monthly commitment the DSCR is tested against, and the engine’s own capitalisation moves the DSCR cap above the requested facility.',
+          estimatedImpact: 'Indicative capacity rises above the $1,120,000 request; the DSCR ceases to bind.',
+          executionRisk: 'medium',
+          evidenceRequired: ['Lender term sheet confirming 30-year amortisation on the asset class'],
+        },
+        {
+          name: 'Reduce the facility to the assessed capacity',
+          reasoning: 'A facility of $1,040,000 passes every applied test as assessed today, and the additional $80,000 of contribution is within the funds the assessment already records at settlement.',
+          estimatedImpact: 'The request fits current assumptions with no change to the deal’s structure.',
+          executionRisk: 'low',
+          evidenceRequired: ['Updated contribution statement'],
+        },
+        {
+          name: 'Verify FY2026 business income',
+          reasoning: 'The weighted income basis discounts the strongest period while it is accountant-prepared. Lodged returns confirming FY2026 lift assessable income and with it the global servicing surplus.',
+          estimatedImpact: 'Assessable income rises by roughly the FY2026 discount; the servicing gap narrows.',
+          executionRisk: 'low',
+          evidenceRequired: ['Lodged FY2026 returns', 'ATO lodgement confirmation'],
+        },
+      ],
+      questionsForCredit: [
+        'Is a 30-year amortisation available on industrial assets under this profile?',
+        'Will the lender rely on accountant-prepared FY2026 income, and at what discount?',
+        'Does the going-concern GST treatment survive if the Unit B lease completes after exchange?',
+        'What rate buffer applies on review if the facility is written at the assessed capacity?',
+      ],
+      model: 'google/gemini-2.5-flash',
+      generatedAt: '2026-08-01T00:00:00.000Z',
+    },
+    disclaimer:
+      'This assessment is indicative only, is not a lender decision or an offer of finance, and '
+      + 'relies on the accuracy of the information supplied.',
+  };
+
+  return projectCommercialCapacity(snapshot as never).capacity;
+})();
+
+/**
+ * Market Intelligence, through the format's own normaliser and projection.
+ *
+ * The `marketIntel` namespace was absent from the sample entirely, so every
+ * Market Intelligence preview rendered a cover with no title and every page
+ * past it dark — the fourth format found with the same defect. Going through
+ * `buildMarketIntelligenceReport` matters more here than anywhere: the
+ * normaliser's editorial strips are what keep the model's hedging and its
+ * duplicated brand tagline off a client's page, and the brand name is an
+ * input to them.
+ *
+ * One layer is deliberately empty so the preview exercises `layersOmitted`;
+ * the investor segment previews the edition label and the audience panel; two
+ * events sit after `preparedOn` so the upcoming table draws.
+ */
+const MARKET_INTELLIGENCE_SAMPLE = (() => {
+  const layer = (content: string, citations: string[] = []) => ({ content, citations });
+  const event = (
+    date: string, name: string, category: string, impact: string, description: string,
+  ) => ({ date, event: name, category, impact, description, relevance_score: 72 });
+
+  const row = {
+    id: '00000000-0000-4000-8000-00000000000b',
+    status: 'completed',
+    report_period: 'August 2026',
+    report_type: 'full',
+    audience_segment: 'investor',
+    generated_at: '2026-08-01T21:15:00.000Z',
+    include_advisory_strategy: true,
+    report_data: {
+      reportTypeLabel: 'Full Market Intelligence Report',
+      audienceSegment: 'investor',
+      includedLayers: ['layer1', 'layer2', 'layer3', 'layer4', 'layer6', 'layer7', 'layer8', 'layer5'],
+      executiveSummary:
+        'The cash rate held at **3.35%** this month, and the market has moved from asking '
+        + '*whether* the easing cycle has ended to asking how long the plateau runs. Auction '
+        + 'clearance in the inner west held above 71% for a sixth week, listings remain 12% '
+        + 'below the five-year average, and the gap between advertised rents and renewed rents '
+        + 'has narrowed to $20 a week.\n\nFor buyers this reads as a market with less '
+        + 'competition than the clearance rate implies: stock is thin, but so is the crowd.',
+      keyInsightsSnapshot:
+        'Your 60-second briefing:\n\n'
+        + '- The RBA held at **3.35%** and the statement dropped its easing bias.\n'
+        + '- Inner-west clearance held above **71%** for a sixth straight week.\n'
+        + '- Listings sit **12% below** the five-year average for August.\n'
+        + '- Advertised-to-renewed rent gap narrowed to **$20 a week**.\n'
+        + '- Construction approvals fell again — the 2028 supply gap is widening.',
+      actionableStrategy:
+        '## What to do now\n\nBring settlement-ready finance to any listing inside the '
+        + 'corridor — vendors are meeting the market within three weeks.\n\n## What to avoid\n\n'
+        + 'Paying clearance-rate premiums for stock outside the corridor; the auction heat is '
+        + 'not general.\n\n## Timing\n\nThe spring listing lift is four to six weeks away; '
+        + 'the thin-stock window closes with it.',
+      ctaContent: 'Book a strategy call today to position your portfolio for the spring market.',
+      layer1_rba: layer(
+        '## Where rates stand\n\nThe Reserve Bank held the cash rate at **3.35%** and removed '
+        + 'the explicit easing bias from its statement. Market pricing now implies one further '
+        + 'cut by March 2027, down from two.\n\n- Three of the four majors trimmed fixed rates '
+        + 'inside a week of the decision.\n- The average new owner-occupier variable rate fell '
+        + 'to 5.84%.\n\nFor leveraged buyers the practical read is that serviceability '
+        + 'assessments have stopped tightening.',
+        ['RBA Statement on Monetary Policy, August 2026'],
+      ),
+      layer2_housing: layer(
+        '## The pulse\n\nNational dwelling values rose **0.4%** in July, the seventh '
+        + 'consecutive monthly rise.\n\n| Capital | Monthly change |\n| --- | --- |\n'
+        + '| Sydney | +0.5% |\n| Melbourne | +0.3% |\n| Brisbane | +0.6% |\n\nListings '
+        + 'remain 12% below the five-year August average.',
+        ['CoreLogic Home Value Index, August 2026'],
+      ),
+      layer3_sentiment: layer(
+        '## Sentiment\n\nConsumer sentiment lifted to **97.2** — its highest reading since '
+        + 'early 2022 — with the time-to-buy-a-dwelling sub-index up 6.1% on the month. '
+        + 'Investor finance commitments rose for the fifth straight month and now account '
+        + 'for 38% of new lending, the highest share since 2017.',
+        ['Westpac–Melbourne Institute Consumer Sentiment, August 2026'],
+      ),
+      layer4_regulatory: layer(''),
+      layer6_economic: layer(
+        '## The dashboard\n\nUnemployment held at **4.2%**, trimmed-mean inflation printed '
+        + '2.8% annualised, and wage growth ran at 3.4%. The combination — real wage growth '
+        + 'with inflation inside the band — is the backdrop the RBA said it wanted before '
+        + 'considering any further move.',
+        ['ABS Labour Force, July 2026'],
+      ),
+      layer7_micro: layer(
+        '## The corridor\n\nThe inner-west corridor — Leichhardt, Haberfield, Five Dock — '
+        + 'continues to outperform: clearance above 71%, median days on market at 24, and '
+        + 'rental vacancy at 1.1%. Infrastructure works on the metro extension remain on '
+        + 'schedule for 2028, which is the corridor’s structural story.',
+        ['Domain Auction Report, August 2026'],
+      ),
+      layer8_competitive_edge: layer(
+        '## The edge\n\nThe advertised-to-renewed rent gap is the quiet signal this month: '
+        + 'at **$20 a week** it is a third of what it was a year ago, which says landlords '
+        + 'are holding tenants rather than chasing the market. Combined with sub-1.5% vacancy, '
+        + 'the rental floor under corridor valuations is firm — a downside protection most '
+        + 'buyers are not pricing.',
+      ),
+      layer5_outlook: layer(
+        '## The next ninety days\n\nExpect the plateau to hold through the October meeting, '
+        + 'the spring listing lift to arrive four to six weeks out, and corridor stock to '
+        + 'stay thin until it does. The window for negotiating on settlement terms rather '
+        + 'than price closes with the spring lift.',
+      ),
+      marketEvents: [
+        event('2026-09-16', 'RBA Board meeting', 'interest_rate', 'neutral',
+          'The first meeting under the new statement language; pricing implies no change.'),
+        event('2026-08-28', 'CPI monthly indicator', 'economic', 'positive',
+          'The July indicator prints; a sub-3% read would cement the plateau narrative.'),
+        event('2026-07-29', 'Q2 CPI release', 'economic', 'positive',
+          'Trimmed mean printed 2.8% annualised, inside the band for a second quarter.'),
+        event('2026-07-15', 'Auction clearance peak', 'housing', 'positive',
+          'Inner-west clearance touched 74%, the highest Saturday result of the winter.'),
+        event('2026-07-08', 'RBA held at 3.35%', 'interest_rate', 'neutral',
+          'The hold was expected; the dropped easing bias was not.'),
+        event('2026-06-30', 'Stamp duty concession sunset', 'regulatory', 'negative',
+          'The first-home concession stepped down, pulling forward June settlements.'),
+      ],
+      allCitations: ['SQM Research Vacancy Rates, July 2026'],
+    },
+  };
+
+  const built = buildMarketIntelligenceReport({
+    row: row as never,
+    preparedOn: '2026-08-02T00:00:00.000Z',
+    brandName: 'Meridian Property Advisory',
+    audienceOverride: null,
+  } as never);
+  if (!(built as { ok: boolean }).ok) {
+    throw new Error(`MARKET_INTELLIGENCE_SAMPLE refused: ${(built as { error?: string }).error}`);
+  }
+  return projectMarketIntelligence((built as { report: never }).report).marketIntel;
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -668,6 +1144,10 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
    */
   report: {
     generatedDate: '2 August 2026',
+    // The lender profile a Borrowing Capacity run was assessed under. Set on
+    // 26 of 143 assessments, so the masters keep the block conditional; the
+    // sample shows the named-lender path and matches `loan.lender` below.
+    lenderName: 'Meridian Mutual',
   },
 
   /**
@@ -690,6 +1170,12 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   /** The Cash Flow Comparison's namespace. See `CASH_FLOW_COMPARISON_SAMPLE`. */
   cashFlowComparison: CASH_FLOW_COMPARISON_SAMPLE,
 
+  /** Report Q&A's namespace. See `REPORT_QA_SAMPLE`. */
+  qa: REPORT_QA_SAMPLE,
+
+  /** Market Intelligence's namespace. See `MARKET_INTELLIGENCE_SAMPLE`. */
+  marketIntel: MARKET_INTELLIGENCE_SAMPLE,
+
   org: {
     name: 'Meridian Property Advisory',
     abn: '42 618 305 774',
@@ -698,19 +1184,27 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     email: 'advice@meridianproperty.example',
     website: 'meridianproperty.example',
     /*
-     * The brand marks, as a 1x1 PNG.
+     * The brand marks: a drawn "M" monogram for the fictional tenant.
      *
-     * Deliberately not the house monogram. This sample belongs to a fictional
-     * tenant — "Meridian Property Advisory" — and the whole point of binding a
-     * mark rather than baking one is that a tenant gets their own or none at
-     * all. A preview that quietly showed NPC's monogram over Meridian's name
-     * would be the exact confusion the arrangement exists to prevent.
+     * Deliberately not the house monogram — this sample belongs to "Meridian
+     * Property Advisory", and the whole point of binding a mark rather than
+     * baking one is that a tenant gets their own or none at all. A preview that
+     * quietly showed NPC's monogram over Meridian's name would be the exact
+     * confusion the arrangement exists to prevent.
      *
-     * Two of them because the mark is never auto-inverted: `mark` is the lockup
-     * for ivory paper and `markMono` the one for an obsidian ground.
+     * And deliberately not a 1x1 pixel. It briefly was one, which made every
+     * library preview render the mark *invisibly* — the binding resolved, the
+     * image drew, and a person looking at the page saw no logo anywhere. A
+     * placeholder in preview data has to be visible or the preview lies about
+     * the template. These are 480x384 PNGs (~3KB), drawn at build time from an
+     * SVG "M" with the catalogue's gold.
+     *
+     * Two of them because the mark is never auto-inverted: `mark` is the ink
+     * lockup for ivory paper and `markMono` the gold one for an obsidian
+     * ground.
      */
-    mark: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-    markMono: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    mark: 'data:image/png;base64,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',
+    markMono: 'data:image/png;base64,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',
   },
   author: { name: 'Alexandra Whitfield', title: 'Senior Investment Adviser' },
   /**
@@ -835,6 +1329,25 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   assumptions: {
     capitalGrowth: 5.2, rentalGrowth: 3.1, interestRate: 6.14,
     expenseInflation: 2.8, vacancy: 2.0, taxRate: 39, sellingCosts: 2.5,
+    // ── Borrowing Capacity Snapshot ──────────────────────────────────────────
+    // The run's recorded assumptions as the legacy normaliser publishes them —
+    // eleven rows because that is the production cluster (88 of 143 runs), so
+    // the preview exercises the eleven-row table variant the median report
+    // draws. Values reconcile with `loan` and `capacity` below.
+    rowCount: 11,
+    rows: [
+      { label: 'Serviceability Basis', value: 'After-Tax Income' },
+      { label: 'Lender Profile', value: 'Meridian Mutual' },
+      { label: 'Buffer Rate', value: '3%' },
+      { label: 'Assessment Rate', value: '9.14%' },
+      { label: 'Loan Term', value: '30 years' },
+      { label: 'Expense Method', value: 'HEM benchmark' },
+      { label: 'HEM Benchmark', value: '$6,420/mo' },
+      { label: 'Rental Shading', value: '75% of gross rent' },
+      { label: 'Bonus Shading', value: '85% of declared bonus' },
+      { label: 'DTI Cap', value: 'Enabled at 6.0x' },
+      { label: 'LMI Mode', value: 'None' },
+    ],
   },
 
   market: {
@@ -910,9 +1423,19 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   },
 
   summary: {
+    /*
+     * One string, two binders. The voice one-pagers set this in 72-92pt
+     * assessment slots, and the Borrowing Capacity masters set it as the
+     * legacy engine's executive summary — so it is written in that engine's
+     * own sentences (truncated to fit the voice heights) with figures that
+     * reconcile against `capacity` below. A property-flavoured string here
+     * read as the wrong document on fifty Snapshot previews; a longer one
+     * overflows three voice blocks.
+     */
     narrative:
-      'A land-led acquisition in a supply-constrained inner-west suburb, bought below the '
-      + 'suburb median with a clear path to a second income stream.',
+      'Based on the financial information provided, Jordan & Sarah Nguyen have an estimated '
+      + 'maximum borrowing capacity of $1,180,000, with a monthly surplus of $1,290 and a '
+      + 'debt-to-income ratio of 6.0x. The overall serviceability position is assessed as moderate.',
     strength: [
       '412m² of R2 land, 18% above the suburb average lot size',
       'Compliant secondary-dwelling footprint confirmed at concept level',
@@ -1220,6 +1743,153 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       headline: 'Diversify the next purchase by geography',
       body: 'Concentration is now the largest uncompensated risk in the portfolio.',
     },
+
+    // ── The legacy document's sections, as the projection publishes them ───
+    //
+    // Everything below mirrors what `projectPortfolioDocument` composes from a
+    // stored report and its review, so the cascade pages preview with real
+    // shapes. The overview is `describePortfolio`'s own sentence built from
+    // the totals above; the figures reconcile line by line.
+    overview:
+      '4 properties worth $3,410,000, carrying $2,088,000 of debt against $1,322,000 of '
+      + 'equity, and costs $1,183 a month to hold. Overall health is assessed as moderate.',
+    composition: {
+      paragraphs: [
+        'Two apartments and two houses, weighted to houses by value — a mix that favours land '
+        + 'over yield, which is consistent with the growth-led strategy on file.',
+        'Four-fifths of the value sits inside one inner-west postcode ring, so the portfolio '
+        + 'moves with a single market rather than averaging several.',
+      ],
+      groups: [{
+        label: 'What we recommend',
+        items: [
+          'Diversify the next purchase by geography',
+          'Hold the current house-to-apartment mix otherwise',
+        ],
+      }],
+    },
+    market: {
+      paragraphs: [
+        'The inner-west market is mid-cycle: prices have recovered their 2024 drawdown, '
+        + 'stock remains a fifth below the ten-year average, and days on market are falling.',
+        'This portfolio entered before the recovery, so its holdings carry the growth rather '
+        + 'than chasing it — the positioning question is concentration, not timing.',
+      ],
+      facts: [
+        {
+          label: 'Lending environment',
+          value: 'Serviceability buffers remain at 3%, and investor credit growth is running '
+            + 'ahead of owner-occupier for the first time since 2022.',
+        },
+        {
+          label: 'RBA outlook',
+          value: 'Market pricing implies one further cut this cycle; the projection assumes '
+            + 'rates flat from here, which is the conservative reading.',
+        },
+      ],
+    },
+    growth: {
+      groups: [
+        { label: 'The next purchase', items: [
+          'A yield-led acquisition outside the inner west would lift income and cut concentration in one move.',
+          'Borrowing capacity supports one further purchase at the current LVR.',
+        ] },
+        { label: 'Releasing equity', items: [
+          'The Dulwich Hill holding could release around $160,000 at an 80% LVR.',
+        ] },
+        { label: 'Refinancing', items: [
+          'The Newtown facility rolls off its fixed rate in November and should go to market.',
+        ] },
+        { label: 'Optimising what you hold', items: [
+          'A depreciation schedule for the Leichhardt purchase is outstanding.',
+          'Rent on the Lewisham unit sits eight per cent under market.',
+        ] },
+      ],
+    },
+    verdicts: {
+      rowCount: 4,
+      rows: [
+        {
+          address: '7 Wardell Road, Dulwich Hill', rating: 'Strong', scoreLabel: '84',
+          reviewClassification: 'Star',
+          recommendation: 'Hold. Release equity here first if the next purchase proceeds — the '
+            + 'lowest LVR in the portfolio and the strongest cash position.',
+        },
+        {
+          address: '12/3 Denison Road, Lewisham', rating: 'Good', scoreLabel: '76',
+          reviewClassification: 'Good',
+          recommendation: 'Hold and lift the rent to market at the next review.',
+        },
+        {
+          address: '9/44 Regent Street, Newtown', rating: 'Good', scoreLabel: '71',
+          reviewClassification: 'Good',
+          recommendation: 'Refinance off the expiring fixed rate before November.',
+        },
+        {
+          address: '14 Marlborough Street, Leichhardt', rating: 'Underperforming', scoreLabel: '58',
+          reviewClassification: 'Underperformer',
+          recommendation: 'Review against the original thesis at year end; the shortfall is '
+            + 'funded from salary and the growth case has two years to show.',
+        },
+      ],
+    },
+    projection: {
+      yearsLabel: '10 years',
+      valueLabel: '$5,560,000',
+      equityLabel: '$3,470,000',
+      cashflowLabel: '$2,150/mo',
+      summary: 'If growth holds at the assumed rates, the debt stays static while the value '
+        + 'compounds — the portfolio turns cash-positive in year six as rents catch up.',
+      assumptions: [
+        '5.2% capital growth, weighted to the house holdings',
+        '3.1% rental growth across the portfolio',
+        'Interest rates flat from here',
+        'No further purchases or sales in the window',
+        'Vacancy at the current 2% through the period',
+      ],
+    },
+    capacity: {
+      estimatedLabel: '$2,900,000',
+      deployedLabel: '$2,088,000',
+      availableLabel: '$812,000',
+      utilisationLabel: '72.0%',
+      commentary: 'Roughly a quarter of assessed capacity remains available — enough for one '
+        + 'further acquisition at the current deposit profile without touching existing equity.',
+    },
+    scenarios: {
+      rows: [
+        { name: '+1% Interest Rate', description: 'Impact of a 1% rate rise on the portfolio',
+          changeLabel: '-$1,189/mo', resultLabel: '-$2,372/mo' },
+        { name: 'Vacancy — 3 months', description: 'One holding vacant for a quarter',
+          changeLabel: '-$975/mo', resultLabel: '-$2,158/mo' },
+        { name: 'Rent to market', description: 'Lewisham and Newtown rents lifted to market',
+          changeLabel: '+$310/mo', resultLabel: '-$873/mo' },
+        { name: 'Sell the drag', description: 'Leichhardt sold and debt retired',
+          changeLabel: '+$1,790/mo', resultLabel: '$607/mo' },
+      ],
+    },
+    review: {
+      statusLabel: 'Completed',
+      reviewedOn: '2026-08-02T00:00:00.000Z',
+      nextReviewDue: '2027-08-02T00:00:00.000Z',
+      riskLevel: 'Medium',
+      summary: 'Portfolio review completed with an overall score of 62/100 — sound growth '
+        + 'position, cash flow the binding constraint.',
+      scores: [
+        { label: 'Overall', scoreLabel: '62' },
+        { label: 'Portfolio health', scoreLabel: '68' },
+        { label: 'Cash flow', scoreLabel: '41' },
+        { label: 'Growth potential', scoreLabel: '79' },
+        { label: 'Data completeness', scoreLabel: '92' },
+      ],
+      findings: [
+        'Portfolio consists of 4 properties worth $3,410,000',
+        'Current LVR: 61.2%',
+        'Net cash position: -$1,183 a month',
+        'Concentration: all holdings inside 6km',
+        'One fixed rate expiring inside 90 days',
+      ],
+    },
   },
 
   ranking: [
@@ -1388,6 +2058,43 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       investorProfile: 'growth',
       model: 'sonar-pro',
     },
+
+    // ── Market timing and competitive advantages ────────────────────────────
+    //
+    // In production these two ride only the salvaged rows — the writer that
+    // destructures a successful response has no column for them — so an intact
+    // record carrying them is a state the table cannot hold. The sample carries
+    // them anyway, because a preview's job is to show what the pages draw, and
+    // the truncation vocabulary (`truncated`, `truncationNote`) stays absent so
+    // the verdict previews the recommendation treatment, not the fallback.
+    timing: {
+      buyFirstWinner: '22 Chapel Street, Marrickville NSW 2204',
+      buyFirstReason: 'Marrickville should be acted on first: its growth phase is already '
+        + 'under way, stock is tightening, and the entry price still sits under the suburb '
+        + 'median. The other two hold their value cases without the same urgency.',
+      holds: [
+        { winner: '22 Chapel Street', period: '7-10 years',
+          reason: 'The growth case needs a full cycle; selling inside five years gives the '
+          + 'transaction costs the compounding instead of the owner.' },
+        { winner: ADDRESS.split(',')[0], period: '10+ years',
+          reason: 'Land-led theses mature slowly. The second-dwelling path is what pays, and '
+          + 'it needs planning, construction and a letting history inside the hold.' },
+        { winner: '7 Wardell Road', period: '5+ years, re-assess at five',
+          reason: 'Held for income, reviewed against the portfolio rather than the market — '
+          + 'if the yield advantage narrows, the capital is better rotated.' },
+      ],
+    },
+    advantages: [
+      { winner: '22 Chapel Street, Marrickville NSW 2204',
+        items: ['Renovated 2021 — no capital works inside the hold', 'Strongest 12-month growth of the three (7.2%)', 'Under the suburb median at entry'],
+        line: 'Renovated 2021 — no capital works inside the hold · Strongest 12-month growth of the three (7.2%) · Under the suburb median at entry' },
+      { winner: ADDRESS,
+        items: ['412 m² of R2 land, 18% above the suburb average', 'Compliant secondary-dwelling footprint at concept level'],
+        line: '412 m² of R2 land, 18% above the suburb average · Compliant secondary-dwelling footprint at concept level' },
+      { winner: '7 Wardell Road, Dulwich Hill NSW 2203',
+        items: ['The only one of the three cash-positive from settlement', 'Lowest entry price and lowest holding risk'],
+        line: 'The only one of the three cash-positive from settlement · Lowest entry price and lowest holding risk' },
+    ],
 
     a: {
       address: ADDRESS, price: 1285000, rent: 950, yield: 3.84, net: -413, land: '412 m²',
@@ -1896,6 +2603,16 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   // real data — which is precisely what happened to the Investment Compass
   // masters before the projection landed.
   capacity: {
+    /*
+     * Two formats share this namespace: the keys below serve the voice
+     * templates' residential borrowing vocabulary, and the spread carries the
+     * Commercial & Industrial Capacity projection's output — absent entirely
+     * until August 2026, so every Commercial Capacity preview rendered a
+     * cover with no title and every page past it dark. The key sets do not
+     * overlap; `commercialCapacityCatalogue.spec.ts` asserts they stay that
+     * way. See `COMMERCIAL_CAPACITY_SAMPLE`.
+     */
+    ...(COMMERCIAL_CAPACITY_SAMPLE as Record<string, unknown>),
     borrowing: 1180000,
     stressTested: 1042000,
     monthlySurplus: 1290,
@@ -1907,6 +2624,10 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     // the column is `dti_ratio` and reads like a rate, which is why the
     // templates set it with `| fixed` and label it "x assessable income".
     dti: 5.95,
+    // The legacy engine's own formatting of the ratio above (5.95 renders as
+    // 6.0x at its one-decimal precision), for the definition slot that shows
+    // it as prose rather than a bare figure.
+    dtiLabel: '6.0x',
     depositAmount: 258000,
     propertyValueEstimate: 1290000,
     // `netPurchase` is deliberately absent: populated on 3 of 143 rows, so the
@@ -1924,11 +2645,24 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     gross: 280000,
     shaded: 263320,
     shadingApplied: 16680,
+    // `shadingRate` is a **0–1 fraction of income counted** — production holds
+    // 0.8 and 1, never a whole-number percent. An earlier draft wrote 25 here,
+    // which the legacy normaliser formats as "2,500%".
     items: [
-      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 0 },
-      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 0 },
-      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 25 },
-      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 15 },
+      { component: 'PAYG salary — applicant 1', grossAmount: 118000, shadedAmount: 118000, shadingRate: 1 },
+      { component: 'PAYG salary — applicant 2', grossAmount: 82000, shadedAmount: 82000, shadingRate: 1 },
+      { component: 'Rental income', grossAmount: 46800, shadedAmount: 35100, shadingRate: 0.75 },
+      { component: 'Annual bonus', grossAmount: 33200, shadedAmount: 28220, shadingRate: 0.85 },
+    ],
+    // The same lines as the legacy engine's own composition — `shadingLabel`
+    // is the retention rate it applied, formatted by it. Four rows exercises
+    // the four-row table variant; the totals above reconcile against these.
+    rowCount: 4,
+    rows: [
+      { label: 'PAYG salary — applicant 1', gross: 118000, shaded: 118000, shadingLabel: '100%' },
+      { label: 'PAYG salary — applicant 2', gross: 82000, shaded: 82000, shadingLabel: '100%' },
+      { label: 'Rental income', gross: 46800, shaded: 35100, shadingLabel: '75%' },
+      { label: 'Annual bonus', gross: 33200, shaded: 28220, shadingLabel: '85%' },
     ],
   },
   expenses: {
@@ -1947,6 +2681,15 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       { type: 'Credit card', balance: 4200, limit: 15000, monthlyServicing: 300 },
       { type: 'Novated lease', balance: 18600, limit: 18600, monthlyServicing: 0 },
     ],
+    // The legacy engine's display labels for the same commitments (it
+    // title-cases the kind, and appends the provider where one is recorded).
+    // Three rows exercises the three-row table variant, the production mode.
+    rowCount: 3,
+    rows: [
+      { label: 'Owner Occupier Home Loan', balance: 612000, limit: 612000, servicing: 1540 },
+      { label: 'Credit Card', balance: 4200, limit: 15000, servicing: 300 },
+      { label: 'Novated Lease', balance: 18600, limit: 18600, servicing: 0 },
+    ],
   },
   loan: {
     proposed: 1032000,
@@ -1957,8 +2700,39 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     assessmentRate: 9.14,
     lender: 'Meridian Mutual',
   },
+  // The assessment ledger, exactly as the legacy engine assembles it — eight
+  // lines by construction, `amountLabel` formatted by it with the unit kept:
+  // "$280,000 pa" beside "-$6,420/mo" is the point of a ledger, and stripping
+  // the period would misstate which figures are annual. Reconciles line by
+  // line against `income`, `expenses`, `liabilities` and `capacity`.
+  ledger: {
+    rows: [
+      { label: 'Gross Annual Income', amountLabel: '$280,000 pa', direction: 'favourable', emphasis: 'normal' },
+      { label: 'Shaded Annual Income', amountLabel: '$263,320 pa', direction: 'favourable', emphasis: 'normal' },
+      { label: 'Living Expenses', amountLabel: '-$6,420/mo', direction: 'adverse', emphasis: 'normal' },
+      { label: 'Existing Commitments', amountLabel: '-$1,840/mo', direction: 'adverse', emphasis: 'normal' },
+      { label: 'Monthly Surplus', amountLabel: '$1,290/mo', direction: 'favourable', emphasis: 'normal' },
+      { label: 'Assessment Rate Applied', amountLabel: '9.14%', direction: 'neutral', emphasis: 'normal' },
+      { label: 'Loan Term', amountLabel: '30 years', direction: 'neutral', emphasis: 'normal' },
+      { label: 'Maximum Borrowing Capacity', amountLabel: '$1,180,000', direction: 'neutral', emphasis: 'total' },
+    ],
+  },
+  // The proposed loan against the assessed capacity, verdict included — the
+  // verdict is a whole sentence from the projection, never composed on the
+  // page, so an unresolved half cannot strand a fragment.
+  utilisation: {
+    proposedLoan: 1032000,
+    capacity: 1180000,
+    shareLabel: '87%',
+    withinCapacity: true,
+    verdict: 'The proposed loan sits inside the assessed capacity.',
+  },
   // Empty on 140 of 143 assessments, so the LMI block stays conditional and the
-  // sample exercises the common path.
+  // sample exercises the common path. `explanation`, `audit` and `scenarios`
+  // are likewise absent: the first two are columns null on every stored row
+  // (they cascade in as the calculator stores them) and scenario presets never
+  // reach a column at all — a sample that showed those pages would preview a
+  // document no production render can produce today.
   lmi: {},
   // Kept inside the lengths production actually writes: 43-70 characters a
   // recommendation across 270 stored ones, 35-59 a warning across 63. The

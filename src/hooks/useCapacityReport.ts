@@ -13,6 +13,10 @@
 import { useCallback, useState } from 'react';
 import { toast } from '@/hooks/use-toast';
 import {
+  saveTemplateDocument,
+  tryTemplateDocument,
+} from '@/lib/reportTemplate/templateDocument';
+import {
   downloadCapacityReport,
   requestCapacityReport,
 } from '@/lib/reports/commercialCapacity/requestCapacityReport';
@@ -43,6 +47,20 @@ export function useCapacityReport(): UseCapacityReport {
     });
 
     try {
+      // An activated template serves the plain "give me the report" case.
+      // Never when the caller asked to refresh the analysis: that is a request
+      // to re-run the model and persist a new analysis against the run, and a
+      // template renders what is stored — answering it with the previous
+      // analysis would be answering a different question.
+      const templated = options?.refreshAnalysis === true
+        ? null
+        : await tryTemplateDocument('commercial_capacity', assessmentId);
+      if (templated) {
+        saveTemplateDocument(templated);
+        toast({ title: 'Capacity report ready', description: templated.fileName });
+        return;
+      }
+
       const result = await requestCapacityReport({
         assessmentId,
         refreshAnalysis: options?.refreshAnalysis === true,

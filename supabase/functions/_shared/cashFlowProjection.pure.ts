@@ -307,10 +307,61 @@ export function projectCashFlow(
       // exactly what it is: the deposit and the purchase costs are not in it.
       if (shortfall !== undefined) put(outcome, 'equityGrowthLessShortfall', (e10 - e1) + shortfall);
     }
+
+    // The legacy outcome block carries the year the cash flow first turns
+    // positive. Derived from the series exactly as `toOutcome` derives it —
+    // and null on every moderate scenario in production (the four positive
+    // elements across all 4,860 are optimistic), which the narrative below
+    // says in the legacy's own sentence.
+    const breakEven = series.find((y) => {
+      const cf = num(y.cashFlow);
+      return cf !== undefined && cf >= 0;
+    });
+    if (breakEven) put(outcome, 'breakEvenYear', num(breakEven.year));
+
     if (Object.keys(outcome).length) cashflow.outcome = outcome;
 
     const firstYear: Record<string, unknown> = { ...first };
+    // The weekly figure the legacy year-one block carries — arithmetic on the
+    // series (÷52), never `keyMetrics.weeklyNet`, which disagrees with the
+    // series' own year one by a median of $477 a week.
+    const cf1 = num(first.cashFlow);
+    if (cf1 !== undefined) put(firstYear, 'cashFlowWeekly', cf1 / 52);
     if (Object.keys(firstYear).length) cashflow.firstYear = firstYear;
+
+    /*
+     * The narrative, in the legacy document's own sentence shapes.
+     *
+     * `describeProjection` in `reports/cashFlow/normalise.pure.ts` cannot run
+     * here: it takes the browser's twenty-field years and throws on anything
+     * less, which is its contract — the stored series carries eight fields.
+     * So the sentences are restated from it with one deliberate change: the
+     * legacy says "a week after tax", and the stored series does not state
+     * its tax treatment, so this says "a week" and claims nothing the record
+     * does not.
+     */
+    const moneyWord = (n: number): string => {
+      const grouped = String(Math.abs(Math.round(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return `${n < 0 ? '-' : ''}$${grouped}`;
+    };
+    const growth = num(outcome.valueGrowth);
+    if (cf1 !== undefined && growth !== undefined && e10 !== undefined) {
+      const weekly = cf1 / 52;
+      const position = weekly >= 0
+        ? `returns ${moneyWord(weekly)} a week in year one`
+        : `costs ${moneyWord(Math.abs(weekly))} a week to hold in year one`;
+      const breakEvenSentence = breakEven
+        ? (num(breakEven.year) === 1
+          ? 'It is cash-flow positive from the first year.'
+          : `On these assumptions it turns cash-flow positive in year ${num(breakEven.year)}.`)
+        : 'On these assumptions it does not turn cash-flow positive within the projected term.';
+      // `overview`, not `narrative` — the voice catalogue's ten-year table
+      // already binds `cashflow.narrative` as its own hand-written paragraph,
+      // and in the shared preview sample one string cannot serve two series.
+      cashflow.overview = `${str(row.property_address) ?? 'The property'} ${position}. `
+        + `Over ${series.length} years the projection shows ${moneyWord(growth)} of capital growth `
+        + `and ${moneyWord(e10)} of equity at the end of the term. ${breakEvenSentence}`;
+    }
   }
 
   // The purchase and the loan are INPUTS to the series rather than competing

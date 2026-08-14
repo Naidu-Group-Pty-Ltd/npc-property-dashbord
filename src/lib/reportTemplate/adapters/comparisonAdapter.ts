@@ -20,7 +20,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { applyComparisonProjection } from '../../../../supabase/functions/_shared/comparisonProjection.pure';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
 async function loadComparison(reportId: string): Promise<Record<string, any> | null> {
@@ -59,6 +59,24 @@ export const comparisonAdapter: ReportTemplateAdapter = {
   legacyFallback: {
     label: 'Comparison Analysis legacy generator',
     reason: 'The pdf-lib generator remains the default until a template is activated for this report type.',
+  },
+
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('property_comparisons')
+        .select('id, report_title, created_at')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: (row.report_title as string) || 'Property comparison',
+        savedAt: (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {

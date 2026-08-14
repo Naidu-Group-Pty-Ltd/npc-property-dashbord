@@ -5,16 +5,19 @@
  * other four and contributes only its own page sequence — see
  * `docs/template-library/07-investment-compass-families.md`.
  *
- * ## This is the only one of the five with no prose in it
+ * ## The only prose here is built, never written
  *
  * Investment Compass, the Portfolio Review and the Comparison all bind
  * paragraphs a model wrote, and every height on their pages is a
  * `textHeight(chars)` measured against production, because a paragraph that
  * sets taller than its declared height prints over the block beneath it.
  *
- * Nothing here is prose. Every figure on every page is a number the report
- * stored, and the risk moves to the other end: **ten-row tables**, five of
- * them, on a page model that cannot paginate. A table is `24 + rows *
+ * The one paragraph in this format is the opening narrative, and the
+ * projection composes it from the series' own ends in the legacy document's
+ * sentence shapes — so it is bounded by construction and cannot disagree with
+ * the tables behind it. Every other figure on every page is a number the
+ * report stored, and the risk moves to the other end: **ten-row tables**,
+ * five of them, on a page model that cannot paginate. A table is `24 + rows *
  * rowHeight`, and the spacing scales run from 13pt a row to 22 — so the same
  * ten rows are 154pt on Swiss Minimal and 244pt on Private Banking. That is why
  * each series table gets a page rather than sharing one, and why the QA
@@ -70,6 +73,7 @@ import {
   kpiCapacity,
   kpis,
   page,
+  prose,
   rule,
   scenarioChart,
   sectionHeading,
@@ -122,7 +126,7 @@ const CASH_FLOW_FORMAT: ReportFormat = {
 const POSITION_KPIS: KpiItem[] = [
   { label: 'Value at year ten', value: '{{cashflow.outcome.propertyValue | currency}}', note: 'From {{cashflow.firstYear.propertyValue | currency}} at year one' },
   { label: 'Equity at year ten', value: '{{cashflow.outcome.equity | currency}}', note: 'Value less loan balance' },
-  { label: 'Cash flow, year one', value: '{{cashflow.firstYear.cashFlow | currency}}', note: 'Rent less holding costs and repayments' },
+  { label: 'Cash flow, year one', value: '{{cashflow.firstYear.cashFlow | currency}}', note: '{{cashflow.firstYear.cashFlowWeekly | currency}} a week, rent less costs and repayments' },
   { label: 'Cumulative to year ten', value: '{{cashflow.outcome.cumulativeCashFlow | currency}}', note: 'Total contributed over the term' },
   { label: 'Return at year ten', value: '{{cashflow.outcome.roi | percent}}', note: 'On the {{cashflow.scenario}} scenario' },
   { label: 'Value growth', value: '{{cashflow.outcome.valueGrowth | currency}}', note: '{{cashflow.outcome.valueGrowthPercent | percent}} over ten years' },
@@ -222,6 +226,19 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         standfirst: 'Figures are the {{cashflow.scenario}} scenario. The other two are set '
           + 'side by side later in the document.',
       }),
+      /*
+       * The legacy document's opening narrative, in its own sentence shapes —
+       * the weekly cost of holding, the growth and equity at the end of the
+       * term, and whether the projection ever turns cash-flow positive
+       * (production's answer: not once, in any moderate scenario stored).
+       * Built by the projection from the series' own ends, so it cannot
+       * disagree with the table pages behind it. Bounded at ~330 characters
+       * by composition — a 67-character address plus fixed sentences.
+       */
+      {
+        ...prose('{{cashflow.overview}}', textHeight(340)),
+        conditional: 'cashflow && cashflow.overview',
+      },
       kpis(POSITION_KPIS.slice(0, kpiCapacity())),
     ], [
       // The one figure in the record that sets the paper gain against what it

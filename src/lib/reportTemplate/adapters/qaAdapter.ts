@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 import {
   buildReportQaDocument,
@@ -51,6 +51,30 @@ async function loadConversation(id: string) {
   return data as Record<string, any>;
 }
 
+/**
+ * Does this conversation contain an answer?
+ *
+ * Routing resolves before binding, and until this existed the two disagreed:
+ * routing resolved for any conversation that loaded, while binding refuses one
+ * with no assistant turn — which is **22 of the 252 stored conversations**, 21
+ * of them holding no message at all. A routing context that resolves for a
+ * record the binding cannot serve offers an operator a ready-looking template
+ * and then produces nothing, which is the failure `cashFlowAdapter` documents
+ * at length and checks in both of its methods for the same reason.
+ *
+ * One id, one row, `head` so no body comes back: cheaper than the transcript
+ * read it saves when the answer is that there is nothing to render.
+ */
+async function hasAnswer(conversationId: string): Promise<boolean> {
+  const { count, error } = await supabase
+    .from('report_qa_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', conversationId)
+    .eq('role', 'assistant');
+  if (error) return false;
+  return (count ?? 0) > 0;
+}
+
 async function loadMessages(conversationId: string) {
   const { data, error } = await supabase
     .from('report_qa_messages')
@@ -74,10 +98,37 @@ export const qaAdapter: ReportTemplateAdapter = {
       + 'default for a long transcript.',
   },
 
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('report_qa_conversations')
+        .select('id, title, created_at')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      // A conversation with no assistant turn will decline at selection — the
+      // binding context returns null — which is honest enough for a picker;
+      // filtering here would cost a message count per row.
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: (row.title as string) || 'Report Q&A',
+        savedAt: (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
+  },
+
   async resolveRoutingContext({ reportId, variant }): Promise<RoutingContext | null> {
     const conversation = await loadConversation(reportId);
     if (!conversation) return null;
+    // The same test the binding applies. See `hasAnswer`.
+    if (!await hasAnswer(reportId)) return null;
     const subject = subjectFor(variant);
+    // The normaliser's other refusal this read can already answer: asked for
+    // the structured report, a conversation that stores none produces nothing.
+    // Free, because `CONVERSATION_COLUMNS` already selects the column.
+    if (subject === 'structured' && !conversation.structured_report) return null;
     return {
       reportId,
       reportType: 'qa',

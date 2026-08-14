@@ -116,4 +116,4 @@ export function supportsProduction(reportType?: string | null): boolean {
   return !!getAdapter(reportType)?.supportsProduction;
 }
 
-export type { BrandContext, LegacyFallbackDescriptor, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
+export type { BrandContext, LegacyFallbackDescriptor, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';

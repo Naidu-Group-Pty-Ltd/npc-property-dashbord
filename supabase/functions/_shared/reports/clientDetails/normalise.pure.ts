@@ -38,6 +38,8 @@
  */
 import type { Measure } from '../../reportDesign/measure.pure.ts';
 import { aud, audPerMonth, audPerYear, count, percent } from '../../reportDesign/measure.pure.ts';
+// The one casing rule for a person's name in this repo. See `personName`.
+import { smartCapitalize } from '../../clientName.ts';
 import {
   buildHouseholdIncome,
   buildLiabilityServicing,
@@ -112,6 +114,49 @@ const contactRole = (value: unknown): ContactRole =>
 const joinName = (...parts: unknown[]): string =>
   parts.map((p) => text(p, 60)).filter(Boolean).join(' ');
 
+/**
+ * A person's name, cased for print.
+ *
+ * Separate from `joinName` because only *names* may be re-cased: `joinName`
+ * also composes an asset's make and model, and title-casing that turns "BMW
+ * X5" into "Bmw X5".
+ *
+ * 746 of the 775 stored clients have an all-lowercase first name and 740 an
+ * all-lowercase surname — the data is entered that way — and this module
+ * printed them exactly as stored, so a fact-find addressed to a broker opened
+ * with "sachin mathew". The legacy `FormaraPDFGenerator` has always run the
+ * same names through `smartCapitalize`, so this was a divergence from the
+ * document clients actually receive rather than a house style: the shipping
+ * PDF said "Sachin Mathew" and the WeasyPrint route, and every template drawn
+ * from this payload, said "sachin mathew".
+ *
+ * `smartCapitalize` is the sanctioned implementation and is imported rather
+ * than restated: it leaves a name that is already mixed case alone, so
+ * "McDonald" and "van Dijk" survive, and title-cases one that is all upper or
+ * all lower, which is what both spellings in this table need.
+ */
+const personName = (...parts: unknown[]): string =>
+  parts.map((p) => smartCapitalize(text(p, 60))).filter(Boolean).join(' ');
+
+/**
+ * The document's own name for its subject — "Ada Lovelace", or "Ada Lovelace &
+ * Charles Babbage" for the thirteen records that describe two people.
+ *
+ * Exported because the Template Builder adapter needs the same string to title
+ * a document without loading all nine tables to get it, and two compositions
+ * of one person's name are two chances to disagree on the page and in the
+ * file. `clientDetailsAdapter.resolveRoutingContext` calls this.
+ */
+export function composeClientName(client: Row): string {
+  const primary = personName(
+    client.primary_first_name, client.primary_middle_name, client.primary_surname,
+  );
+  const secondary = personName(
+    client.secondary_first_name, client.secondary_middle_name, client.secondary_surname,
+  );
+  return [primary, secondary].filter(Boolean).join(' & ') || 'Client';
+}
+
 /** Past this, a column heading wraps and the matrix loses a row of height. */
 const SHORT_ADDRESS_CHARS = 30;
 
@@ -148,7 +193,9 @@ export function shortAddress(address: string): string {
 function toContacts(client: Row): Contact[] {
   const contacts: Contact[] = [{
     role: 'primary',
-    name: joinName(client.primary_first_name, client.primary_middle_name, client.primary_surname),
+    name: personName(
+      client.primary_first_name, client.primary_middle_name, client.primary_surname,
+    ),
     email: text(client.primary_email, 120),
     mobile: text(client.primary_mobile, 40),
     gender: humanise(client.primary_gender),
@@ -158,7 +205,7 @@ function toContacts(client: Row): Contact[] {
   // A second person exists when they are named, not when the columns exist.
   // Every client row has all fourteen secondary columns; three of 771 records
   // actually describe two people.
-  const secondaryName = joinName(
+  const secondaryName = personName(
     client.secondary_first_name, client.secondary_middle_name, client.secondary_surname,
   );
   if (secondaryName) {
@@ -452,8 +499,10 @@ export function buildClientDetails(input: BuildClientDetailsInput): ClientDetail
 
   const household = toHousehold(client, input.addressHistory);
   const hasSecondaryContact = household.contacts.length > 1;
-  const clientName = household.contacts.map((c) => c.name).filter(Boolean).join(' & ')
-    || 'Client';
+  // One composition, so the name in `meta` cannot drift from the names on the
+  // contact block — or from the title the adapter gives the file, which calls
+  // this same function rather than joining the columns itself.
+  const clientName = composeClientName(client);
 
   const allProperties = rows(input.properties).map(toProperty);
   const ownerOccupied = allProperties.find((p) => p.kind === 'owner-occupied') ?? null;

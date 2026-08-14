@@ -212,12 +212,104 @@ describe('the fifty masters', () => {
   });
 
   it('make every layer continuation conditional on the projection page count', () => {
+    /*
+     * Bracket-indexed, and this assertion used to demand the opposite: it
+     * matched `marketIntel.layers.0.pages`, the dot-numeric form that is a
+     * SyntaxError inside a page conditional — so the spec enforced exactly the
+     * defect that kept all thirty-two layer pages dark on every master. The
+     * catalogue spec now constructs each expression as well, so the broken
+     * form cannot come back under either file.
+     */
     const master = MARKET_INTELLIGENCE_TEMPLATES[0];
     const conts = (master.schema.pages as any[])
       .filter((p) => /^Layer \d+ \(\d+\)$/.test(p.name));
     expect(conts.length).toBeGreaterThan(0);
     for (const p of conts) {
-      expect(p.conditional).toMatch(/marketIntel\.layers\.\d+\.pages > \d+/);
+      expect(p.conditional).toMatch(/marketIntel\.layers\[\d+\]\.pages > \d+/);
+      expect(() => new Function('marketIntel', `return (${p.conditional});`)).not.toThrow();
     }
+  });
+});
+
+describe('what the legacy document says, restated', () => {
+  it('labels the edition in the legacy cover line\'s words, never the enum', () => {
+    expect((projectMarketIntelligence(report()).marketIntel.meta as any).editionLabel).toBe('General');
+    const investor = projectMarketIntelligence(report({
+      meta: { ...report().meta, audienceSegment: 'investor' },
+    }));
+    expect((investor.marketIntel.meta as any).editionLabel).toBe('Investor Edition');
+  });
+
+  it('publishes the audience panels the segment decides — one named, two general', () => {
+    const general = projectMarketIntelligence(report()).marketIntel;
+    expect((general.audiencePanels as any[]).map((p) => p.title)).toEqual([
+      'What this means for investors', 'What this means for homebuyers',
+    ]);
+    const investor = projectMarketIntelligence(report({
+      meta: { ...report().meta, audienceSegment: 'investor' },
+    })).marketIntel;
+    expect((investor.audiencePanels as any[])).toHaveLength(1);
+    expect((investor.audiencePanels as any[])[0].title).toBe('What this means for your portfolio');
+  });
+
+  it('composes the timeline cells the legacy composes', () => {
+    const { marketIntel } = projectMarketIntelligence(report());
+    const ev = (marketIntel.events as any[])[0];
+    expect(ev.dateLabel).toBe('01 Apr 2026');
+    expect(ev.categoryLabel).toBe('interest rate');
+    expect(ev.impactLabel).toBe('Neutral');
+  });
+
+  it('prints the em dash for an impact the record does not carry', () => {
+    const { marketIntel } = projectMarketIntelligence(report({
+      events: [{ date: '2026-04-01', event: 'X', category: 'economic', impact: '', description: 'd', relevanceScore: null, upcoming: false }],
+    }));
+    expect((marketIntel.events as any[])[0].impactLabel).toBe('—');
+  });
+
+  it('labels each event note with the event, upcoming first', () => {
+    // "A date alone makes a reader flip back to the table" — the legacy's own
+    // sidenote rule, and none of the stored report's twelve descriptions had
+    // ever reached a page.
+    const { marketIntel } = projectMarketIntelligence(report());
+    const notes = marketIntel.eventNotes as any[];
+    expect(notes.map((n) => n.label)).toEqual([
+      '01 Dec 2026 · December meeting', '01 Apr 2026 · RBA holds',
+    ]);
+    expect(notes[1].description).toBe('Held');
+    expect(marketIntel.eventNotesOmitted).toBeUndefined();
+  });
+
+  it('caps the notes and says so in a whole sentence', () => {
+    const many = Array.from({ length: 11 }, (_, i) => ({
+      date: `2026-03-${String(i + 1).padStart(2, '0')}`, event: `E${i}`, category: 'economic',
+      impact: 'neutral', description: `D${i}`, relevanceScore: null, upcoming: false,
+    }));
+    const { marketIntel } = projectMarketIntelligence(report({ events: many }));
+    expect((marketIntel.eventNotes as any[])).toHaveLength(CAPS.eventNotes);
+    expect(marketIntel.eventNotesOmitted)
+      .toBe('3 further events are described only in the calendar above.');
+  });
+
+  it('pages the briefing like the other prose a model writes', () => {
+    // The stored briefing measures 1,146 characters, already past the
+    // 1,100-character block it used to be set into.
+    const { marketIntel } = projectMarketIntelligence(report());
+    expect((marketIntel.prose as any).keyInsightsPages).toBe(1);
+  });
+
+  it('publishes the correlation bodies paged, and nothing when there is none', () => {
+    expect(projectMarketIntelligence(report()).marketIntel.correlation).toBeUndefined();
+    const { marketIntel } = projectMarketIntelligence(report({
+      correlation: {
+        aiAnalysis: '## Correlation\n\nRates and clearance moved together.',
+        perplexityResearch: 'The research corroborates the correlation.',
+        citations: ['Source A'],
+      },
+    }));
+    const corr = marketIntel.correlation as any;
+    expect(corr.analysis).toContain('moved together');
+    expect(corr.analysisPages).toBe(1);
+    expect(corr.researchPages).toBe(1);
   });
 });

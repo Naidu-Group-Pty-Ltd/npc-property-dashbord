@@ -18,6 +18,7 @@
  * the other formats: a PDF that opens in a tab is a PDF someone has to find
  * again.
  */
+import { tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
 import {
   requestReportQaPdf,
   type ReportQaPdfResult,
@@ -40,6 +41,12 @@ export interface DeliveredReportQa {
   attachment: ReportQaPdfResult['attachment'];
   /** The document itself, for the email and attachment paths. */
   blob: Blob;
+  /**
+   * Rendered from an activated template. The counts above describe the flowing
+   * render and are left at zero when this is true — a template carries a fixed
+   * page sequence, so "13 of 20 exchanges" is a claim it cannot make.
+   */
+  templated?: boolean;
 }
 
 /** Save a file the way a browser saves files. */
@@ -71,6 +78,29 @@ export async function deliverReportQaPdf(
   subject: ReportQaSubjectName,
   options: RequestReportQaOptions & { save?: boolean } = {},
 ): Promise<DeliveredReportQa> {
+  // The subject is this format's variant — transcript, single answer or the
+  // structured report — and the adapter reads it to decide which of the three
+  // documents a conversation makes. Passing it is what stops every templated
+  // export being a transcript.
+  const templated = await tryTemplateDocument('qa', conversationId, { variant: subject });
+  if (templated) {
+    if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);
+    return {
+      fileName: templated.fileName,
+      pageCount: null,
+      brandGaps: [],
+      sections: [],
+      subject,
+      turnCount: 0,
+      turnsShown: 0,
+      truncated: false,
+      generated: false,
+      attachment: null,
+      blob: templated.blob,
+      templated: true,
+    };
+  }
+
   const result = await requestReportQaPdf(conversationId, subject, options);
 
   const response = await fetch(result.url);

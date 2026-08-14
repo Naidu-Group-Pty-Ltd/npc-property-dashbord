@@ -191,13 +191,32 @@ describe('the arithmetic half', () => {
     expect((flat.cashFlowComparison.scoreboard as any).hasLeadMargin).toBe(false);
   });
 
-  it('names a category with no winner rather than leaving the row blank', () => {
+  it('resolves the leader to its street line, and names a tie in words', () => {
+    /*
+     * The winner was once published as the raw property number, and a master
+     * printing "1" as a leader's name is a database index on a client's page.
+     * Scoreboard winners are computed server-side over the real property list
+     * — unlike the model prose's pointers — so this one is safe to resolve,
+     * and the legacy wins table's own cell is what it resolves to.
+     */
     const winners = (p.cashFlowComparison.scoreboard as any).winners;
-    expect(winners[0].winner).toBe(1);
-    expect(winners[1].winner).toBe('No clear winner');
+    expect(winners[0].winner).toBe('14 Marlborough Street');
+    expect(winners[0].winnerNumber).toBe(1);
+    expect(winners[1].winner).toBe('No clear leader');
+    expect(winners[1].winnerNumber).toBeUndefined();
     // The clear air to second place, because a win by $400 over ten years is
     // not a difference a client should act on.
     expect(winners[0].margin).toBe(120000);
+  });
+
+  it('composes the figure and margin labels, because the units differ by row', () => {
+    // Eight categories mix dollars, percent and years in one column; a
+    // template cannot pick one filter for the table, so the labels arrive
+    // formatted by the engine's own measure formatter.
+    const winners = (p.cashFlowComparison.scoreboard as any).winners;
+    expect(winners[0].valueLabel).toBe('$380,000');
+    expect(winners[0].marginLabel).toBe('$120,000');
+    expect(winners[1].valueLabel).toBeUndefined();
   });
 
   it('keeps the two break-evens apart, and words the one that never arrives', () => {

@@ -48,9 +48,21 @@ import type { ReportQaDocument, QaTurn } from './reports/reportQa/payload.pure.t
  */
 export const CAPS = {
   turns: 12,
-  /** Answer pages a master declares. Beyond this the answer is cut and says so. */
-  answerPages: 10,
+  /**
+   * Answer pages a master declares — one opening page plus seven continuations,
+   * the same `ANSWER_PAGES` the composer sets. This used to say 10 while the
+   * masters declared 8, which meant the guard the composer's comment promised —
+   * "beyond it the truncation note prints" — fired two pages after the tail had
+   * already stopped being drawn. Nine of the 565 stored answers run past eight
+   * pages, so the gap was real. `reportQaOnTheFamilies.spec.ts` now asserts the
+   * two numbers agree.
+   */
+  answerPages: 8,
   citationsPerTurn: 6,
+  /** Document-level citations drawn by the citations page. */
+  citations: 6,
+  /** Grounding reports listed on the sources page. */
+  sources: 8,
 } as const;
 
 function put(target: Record<string, unknown>, key: string, value: unknown): void {
@@ -60,6 +72,54 @@ function put(target: Record<string, unknown>, key: string, value: unknown): void
 function str(v: unknown): string | undefined {
   const s = typeof v === 'string' ? v.trim() : '';
   return s === '' ? undefined : s;
+}
+
+/** Which of the three documents, in the words a reader would use — restating
+ * `render.pure.ts`'s private `SUBJECT_LABEL`. The cover used to bind the raw
+ * enum and print "answer" as a document type. */
+const SUBJECT_LABEL: Record<ReportQaDocument['meta']['subject'], string> = {
+  structured: 'Structured report',
+  answer: 'Single answer',
+  transcript: 'Conversation transcript',
+};
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * `2026-08-02T…` → `02 August 2026` — restating `render.pure.ts`'s exported
+ * `formatReportDate` rather than importing it, because importing would pull the
+ * whole renderer (primitives, css, structure) into every bundle that carries
+ * this projection. `reportQaProjection.spec.ts` imports the renderer's own
+ * function and asserts the two agree, so a drift fails CI rather than a page.
+ */
+function formatReportDate(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? '');
+  if (!m) return '';
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${m[3]} ${month} ${m[1]}` : '';
+}
+
+/**
+ * How an answer was produced, as one line — `render.pure.ts`'s `provenance`,
+ * word for word: provider · version, whether a human edited it, how many
+ * sources it cited, and when it was asked, joined with em-dash separators.
+ * The line the legacy prints under every question and the exporters drop.
+ */
+function provenanceLine(turn: QaTurn): string | undefined {
+  const parts: string[] = [];
+  if (turn.modelProvider && turn.modelProvider !== 'system') {
+    parts.push(turn.modelVersion ? `${turn.modelProvider} · ${turn.modelVersion}` : turn.modelProvider);
+  }
+  if (turn.answerWasEdited) parts.push('edited before export');
+  if (turn.citations.length) {
+    parts.push(`${turn.citations.length} source${turn.citations.length === 1 ? '' : 's'}`);
+  }
+  const when = formatReportDate(turn.askedAt);
+  if (when) parts.push(when);
+  return parts.length ? parts.join(' — ') : undefined;
 }
 
 /** How many pages this Markdown needs at the master's line budget. */
@@ -86,14 +146,20 @@ function projectTurn(turn: QaTurn, linesPerPage: number): Record<string, unknown
 
   const model = [str(turn.modelProvider), str(turn.modelVersion)].filter(Boolean).join(' ');
   put(out, 'model', model || undefined);
+  // Only under an answered turn — the legacy's `turnBody` returns its "No
+  // answer" callout before provenance is ever composed, and a provenance line
+  // holding nothing but a date under an unanswered question would read as
+  // "how it was answered".
+  if (str(turn.answer)) put(out, 'provenanceLine', provenanceLine(turn));
 
   const citations = turn.citations.slice(0, CAPS.citationsPerTurn).map((c) => {
     const cite: Record<string, unknown> = {};
     put(cite, 'documentName', str(c.documentName));
+    // ` · ` between page and paragraph, as the legacy sources table sets it.
     const locus = [
       c.page != null ? `p.${c.page}` : null,
       c.paragraph != null ? `¶${c.paragraph}` : null,
-    ].filter(Boolean).join(' ');
+    ].filter(Boolean).join(' · ');
     put(cite, 'locus', locus || undefined);
     put(cite, 'snippet', str(c.snippet));
     return cite;
@@ -129,10 +195,42 @@ export function projectReportQa(
   if (!hasContent) return { qa };
 
   put(qa, 'title', str(doc.meta.title));
+  /*
+   * The cover sets the title at display size in a fixed box, and a
+   * conversation's title is whatever its first question was — the stored tail
+   * reaches the normaliser's 160-character cap, and a 144-character title ran
+   * 256pt past the footer on one family's cover when this was measured; 80
+   * still ran 118pt over. The budget is 56 because ~55 is the longest string
+   * any family's cover is *proven* against — the Property Comparison sets
+   * street lines that long on all ten families — and 204 of the 252 stored
+   * titles fit it whole. Bounded on a word, the cut said by an ellipsis; the
+   * running foot and the record keep the full title.
+   */
+  const fullTitle = str(doc.meta.title);
+  if (fullTitle) {
+    put(qa, 'coverTitle', fullTitle.length <= 56
+      ? fullTitle
+      : `${fullTitle.slice(0, 56).replace(/\s+\S*$/, '')}…`);
+  }
   put(qa, 'subject', doc.meta.subject);
+  // The words a reader would use, not the enum — the legacy cover prints
+  // "Single answer", never "answer".
+  put(qa, 'subjectLabel', SUBJECT_LABEL[doc.meta.subject]);
   put(qa, 'preparedOn', str(doc.meta.preparedOn));
   put(qa, 'turnCount', doc.meta.turnCount || undefined);
   put(qa, 'turnsShown', doc.meta.turnsShown || undefined);
+  // The legacy cover's Exchanges value: "13 of 20" when the transcript budget
+  // cut the conversation, the plain count when it did not.
+  if (doc.meta.turnCount > 0) {
+    put(qa, 'exchangesLabel', doc.meta.turnsShown < doc.meta.turnCount
+      ? `${doc.meta.turnsShown} of ${doc.meta.turnCount}`
+      : String(doc.meta.turnCount));
+  }
+
+  // Two or three sentences framing the document, built by `narrativeFor` from
+  // the record — the lede the legacy opens its first chapter with, and the one
+  // piece of prose here no model wrote.
+  put(qa, 'narrative', str(doc.narrative));
 
   const turns = doc.turns.slice(0, CAPS.turns);
   if (turns.length) qa.turns = turns.map((t) => projectTurn(t, linesPerPage));
@@ -142,7 +240,28 @@ export function projectReportQa(
   if (first) {
     put(qa, 'question', str(first.question));
     put(qa, 'answer', str(first.answer));
-    put(qa, 'answerPages', answerPageCount(first.answer, linesPerPage) || undefined);
+    if (str(first.answer)) put(qa, 'provenanceLine', provenanceLine(first));
+    const pages = answerPageCount(first.answer, linesPerPage);
+    put(qa, 'answerPages', pages || undefined);
+    if (pages) {
+      // What the document actually sets, for the cover — the full count drives
+      // the continuation conditionals, but a cover claiming fifteen pages over
+      // a document that sets eight would be the document overstating itself.
+      put(qa, 'answerPagesShown', Math.min(pages, CAPS.answerPages));
+      if (pages > CAPS.answerPages) {
+        put(
+          qa,
+          'answerCutNote',
+          `The answer runs to ${pages} pages and this document sets the first `
+          + `${CAPS.answerPages}. The complete text is in the Markdown export.`,
+        );
+      }
+    }
+    // A question that was asked and never answered. The legacy prints this as
+    // a caution callout rather than an empty page, and so do the masters.
+    if (str(first.question) && !str(first.answer)) {
+      put(qa, 'answerMissingNote', 'This question has no answer recorded against it.');
+    }
   }
 
   /*
@@ -177,11 +296,56 @@ export function projectReportQa(
   // report the reader cannot identify is not checkable.
   const names = (doc.grounding?.reportNames ?? []).map(str).filter(Boolean) as string[];
   if (names.length) {
-    qa.sources = names.slice(0, 8).map((name) => ({ name }));
+    qa.sources = names.slice(0, CAPS.sources).map((name) => ({ name }));
     put(qa, 'sourceCount', names.length);
     put(qa, 'sourceSummary', names.length === 1
       ? `Grounded in ${names[0]}.`
       : `Grounded in ${names.length} reports.`);
+    if (names.length > CAPS.sources) {
+      // Three stored conversations name seventeen reports. A whole sentence,
+      // or nothing — the rule every omission note here follows.
+      put(
+        qa,
+        'sourcesOmittedNote',
+        `The conversation names ${names.length} reports; the first ${CAPS.sources} are listed here.`,
+      );
+    }
+  }
+
+  /*
+   * The passages the answers were drawn from — the document-level citations
+   * list the legacy sources chapter tables, deduplicated across every turn by
+   * the normaliser. Zero messages in the record carry one, which is exactly
+   * when closing the gap is cheap: the page lights up as citations land, and
+   * until then it costs nothing. `locus` and `match` carry the legacy table's
+   * own em-dash for absent values, because a table cell resolves an absent
+   * binding to the empty string and a blank cell reads as a missing figure.
+   */
+  const allCitations = (doc.citations ?? []).slice(0, CAPS.citations);
+  if (allCitations.length) {
+    qa.citations = allCitations.map((c, i) => {
+      const cite: Record<string, unknown> = { n: i + 1 };
+      put(cite, 'documentName', str(c.documentName));
+      const locus = [
+        c.page != null ? `p.${c.page}` : null,
+        c.paragraph != null ? `¶${c.paragraph}` : null,
+      ].filter(Boolean).join(' · ');
+      cite.locus = locus || '—';
+      cite.match = c.similarity !== null && c.similarity !== undefined
+        ? `${Math.round(c.similarity * 100)}%`
+        : '—';
+      put(cite, 'snippet', str(c.snippet));
+      return cite;
+    });
+    put(qa, 'citationCount', (doc.citations ?? []).length);
+    if ((doc.citations ?? []).length > CAPS.citations) {
+      put(
+        qa,
+        'citationsNote',
+        `The answers cite ${(doc.citations ?? []).length} passages; `
+        + `the first ${CAPS.citations} are shown here.`,
+      );
+    }
   }
 
   return { qa };
