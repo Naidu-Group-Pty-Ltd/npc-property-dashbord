@@ -28,19 +28,22 @@ import { PortalOnboardingTour } from './PortalOnboardingTour';
 type MediaListener = (e: { matches: boolean }) => void;
 
 /** A controllable window.matchMedia whose `change` events actually fire. */
-function installMatchMedia(initialMatches: boolean) {
+function installMatchMedia(initialMatches: boolean, seenQueries: string[] = []) {
   const listeners = new Set<MediaListener>();
   let matches = initialMatches;
-  window.matchMedia = ((query: string) => ({
-    get matches() { return matches; },
-    media: query,
-    onchange: null,
-    addEventListener: (_type: string, cb: MediaListener) => { listeners.add(cb); },
-    removeEventListener: (_type: string, cb: MediaListener) => { listeners.delete(cb); },
-    addListener: (cb: MediaListener) => { listeners.add(cb); },
-    removeListener: (cb: MediaListener) => { listeners.delete(cb); },
-    dispatchEvent: () => false,
-  })) as typeof window.matchMedia;
+  window.matchMedia = ((query: string) => {
+    seenQueries.push(query);
+    return {
+      get matches() { return matches; },
+      media: query,
+      onchange: null,
+      addEventListener: (_type: string, cb: MediaListener) => { listeners.add(cb); },
+      removeEventListener: (_type: string, cb: MediaListener) => { listeners.delete(cb); },
+      addListener: (cb: MediaListener) => { listeners.add(cb); },
+      removeListener: (cb: MediaListener) => { listeners.delete(cb); },
+      dispatchEvent: () => false,
+    };
+  }) as typeof window.matchMedia;
   return {
     setMatches(next: boolean) {
       matches = next;
@@ -84,6 +87,20 @@ describe('PortalOnboardingTour', () => {
 
     expect(screen.getByText('Welcome to Your Portal')).toBeInTheDocument();
     expect(fullScreenFixedLayers().length).toBeGreaterThan(0);
+  });
+
+  it('gates on input capability, not width alone — the query demands hover and a fine pointer', () => {
+    // A fold/tablet in desktop-site mode satisfies (min-width: 768px) while
+    // its only input is a finger. The gate must therefore be a single media
+    // query that ANDs width with hover + fine pointer, so a touch-only
+    // device can never satisfy it regardless of reported width.
+    const seen: string[] = [];
+    installMatchMedia(false, seen);
+    render(<PortalOnboardingTour />);
+    const gate = seen.find((q) => q.includes('(min-width: 768px)'));
+    expect(gate).toBeDefined();
+    expect(gate).toContain('(hover: hover)');
+    expect(gate).toContain('(pointer: fine)');
   });
 
   it('does not activate for a user who has completed onboarding', () => {

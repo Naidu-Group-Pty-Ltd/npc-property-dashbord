@@ -89,12 +89,16 @@ const TOUR_STEPS: TourStep[] = [
   },
 ];
 
-// Tailwind's `md` breakpoint — the width at which the sidebar the tour points
-// at exists. Every tour target lives inside the desktop sidebar
-// (`hidden md:flex`), so below this width there is nothing to highlight, and
-// the tour's full-screen fixed overlay would sit over the whole portal
-// silently swallowing every touch and tap.
-const DESKTOP_MEDIA_QUERY = '(min-width: 768px)';
+// "Desktop" means a real desktop input, not just a desktop width. Every tour
+// target lives inside the desktop sidebar (`hidden md:flex`), so below `md`
+// there is nothing to highlight and the tour's full-screen fixed overlay
+// would sit over the whole portal silently swallowing every touch and tap.
+// Width alone is not enough to prove desktop: Android's desktop-site mode,
+// folds/tablets and display scaling can all report >= 768px while the only
+// input is a finger — so the gate also demands a pointer that can hover and
+// point precisely. The tour must never mount on a touch-only device.
+const DESKTOP_MEDIA_QUERY =
+  '(min-width: 768px) and (hover: hover) and (pointer: fine)';
 
 export function PortalOnboardingTour() {
   const { user, completeOnboarding } = usePortalAuth();
