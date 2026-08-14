@@ -142,6 +142,23 @@ would have picked and it produces the legacy document either way; and a
 selection that goes stale resolves to **`unavailable`**, never silently to a
 different template.
 
+**A document can be completely correct and still never reach the renderer.**
+Read [`docs/reports/RENDER_BOUNDARY.md`](./docs/reports/RENDER_BOUNDARY.md)
+before touching `renderResourcePolicy.pure.ts`, `printFontPolicy.pure.ts`,
+`tokensToFontFaceCss` or anything that compiles HTML for WeasyPrint.
+`render-template-pdf` asserts the HTML can make **no** network request before
+it invokes the engine, and all 500 seeded masters name their typefaces with a
+Google Fonts `cssUrl` — so every design-system render was refused at that gate,
+after parsing, binding and drawing 84 blocks correctly. It was invisible
+because the gate ran *before* the `template_render_jobs` row was written and
+before `templateId` was read, so a refusal left no row in the ledger and none
+in `template_events`; the route fell back, and the legacy generator produces a
+well-typeset document too. Two rules: **for print the container is the font
+source** (`compileTemplateHtmlForPdf` forces it, and the production route goes
+through that compiler rather than its own copy of the step), and **a family the
+image lacks is substituted explicitly, never left to fontconfig** — an unknown
+face prints as the engine default with no warning from anything.
+
 Read [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 before touching any PDF generator — print has different contrast, colour and font
 rules from screen, and most of the repo's "logo" files are email-signature banners

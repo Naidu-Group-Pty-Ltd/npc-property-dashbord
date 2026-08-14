@@ -67,13 +67,26 @@ function findUnresolvedRasterPages(template: ReportTemplate): number[] {
  * WeasyPrint fetches itself, while smaller assets still inline. Inlining the
  * rasters instead would blow the renderer's 25 MB payload ceiling at about two
  * pages.
+ *
+ * ## `fontSource: 'container'` is forced, not defaulted
+ *
+ * The same argument as the raster resolution above, and it cost the same kind
+ * of silence. `render-template-pdf` asserts the HTML can make no network
+ * request before it calls the engine, and every one of the 500 seeded masters
+ * declares its typefaces with a Google Fonts `cssUrl` — so one `@import`
+ * failed the entire document, before a `template_render_jobs` row was even
+ * written, and the caller fell through to its legacy generator with a chosen
+ * template silently unused. It is overridden here rather than merged from
+ * `options` because there is no PDF render for which `'remote'` is correct:
+ * the engine has the faces, and asking it to fetch one is the failure.
+ * See `printFontPolicy.pure.ts`.
  */
 export async function compileTemplateHtmlForPdf(
   template: ReportTemplate,
   options: HtmlRenderOptions = {},
 ): Promise<CompiledTemplatePdfHtml> {
   const prepared = await preloadImages(template, { mode: 'reference' });
-  const { html } = renderTemplateToHtml(prepared, options);
+  const { html } = renderTemplateToHtml(prepared, { ...options, fontSource: 'container' });
   return { html, unresolvedRasterPages: findUnresolvedRasterPages(prepared) };
 }
 
