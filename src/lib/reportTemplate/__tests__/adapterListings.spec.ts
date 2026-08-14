@@ -40,10 +40,18 @@ const harness: {
 function builderFor(table: string) {
   const log: QueryLog = { table, select: null, eq: [], in: [], not: [], order: [], limit: null };
   harness.queries.push(log);
-  const result = () => ({
-    data: harness.errors[table] ? null : (harness.rows[table] ?? []),
-    error: harness.errors[table] ?? null,
-  });
+  const result = () => {
+    if (harness.errors[table]) return { data: null, error: harness.errors[table] };
+    let data = harness.rows[table] ?? [];
+    // `.in('id', [...])` is honoured, because a lister that reads one table
+    // twice under different filters is otherwise untestable — the stub would
+    // answer both with everything and the ordering under test would look
+    // right for the wrong reason.
+    for (const [col, values] of log.in) {
+      data = data.filter((row) => (values as unknown[]).includes(row[col]));
+    }
+    return { data, error: null };
+  };
   const chain: Record<string, unknown> = {
     select: (cols: string) => { log.select = cols; return chain; },
     eq: (col: string, val: unknown) => { log.eq.push([col, val]); return chain; },
@@ -174,8 +182,52 @@ describe('each lister reads its own table', () => {
       { id: 'c2', primary_first_name: 'sam', primary_surname: 'taylor', updated_at: '2026-08-05' },
     ];
     const rows = await getAdapter('client_details')!.listRecentReports!();
-    expect(lastQuery('clients')?.select).toBe(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`);
+    expect(lastQuery('clients')?.select).toBe(
+      `${CLIENT_NAME_COLUMNS}, primary_middle_name, secondary_middle_name, updated_at, created_at`,
+    );
     expect(rows).toEqual([{ id: 'c2', label: 'Sam Taylor', savedAt: '2026-08-05' }]);
+  });
+
+  it('client details offers the clients who have something to show first', async () => {
+    // 34 of 775 production clients hold any financial record, so ordering by
+    // recency alone filled the picker with documents of empty tables.
+    harness.rows.client_properties = [{ client_id: 'has-property' }];
+    harness.rows.client_assets = [{ client_id: 'has-asset' }, { client_id: 'has-property' }];
+    harness.rows.client_liabilities = [];
+    harness.rows.client_employment = [];
+    harness.rows.client_expenses = [{ client_id: 'has-expenses' }];
+    harness.rows.clients = [
+      { id: 'empty-1', primary_first_name: 'em', primary_surname: 'one', updated_at: '2026-08-14' },
+      { id: 'empty-2', primary_first_name: 'em', primary_surname: 'two', updated_at: '2026-08-13' },
+      { id: 'has-property', primary_first_name: 'pat', primary_surname: 'property', updated_at: '2026-08-02' },
+      { id: 'has-asset', primary_first_name: 'ash', primary_surname: 'asset', updated_at: '2026-08-01' },
+      { id: 'has-expenses', primary_first_name: 'ex', primary_surname: 'expense', updated_at: '2026-07-30' },
+    ];
+
+    const rows = await getAdapter('client_details')!.listRecentReports!({ limit: 5 });
+    const ids = rows.map((r) => r.id);
+    // The three with records lead, despite being the three least recently
+    // touched, and each appears once.
+    expect(ids.slice(0, 3)).toEqual(['has-property', 'has-asset', 'has-expenses']);
+    expect(new Set(ids).size).toBe(ids.length);
+    // And a client with nothing recorded is still one click away, because that
+    // is 96% of the table and what these masters are built around.
+    expect(ids).toContain('empty-1');
+  });
+
+  it('client details still lists when the record tables cannot be read', async () => {
+    harness.errors.client_properties = { message: 'permission denied' };
+    harness.errors.client_assets = { message: 'permission denied' };
+    harness.errors.client_liabilities = { message: 'permission denied' };
+    harness.errors.client_employment = { message: 'permission denied' };
+    harness.errors.client_expenses = { message: 'permission denied' };
+    harness.rows.clients = [
+      { id: 'c9', primary_first_name: 'ada', primary_surname: 'lovelace', updated_at: '2026-08-05' },
+    ];
+    // The preference is a preference: a picker ordered by recency is still a
+    // picker, and this read failing must not empty it.
+    const rows = await getAdapter('client_details')!.listRecentReports!();
+    expect(rows.map((r) => r.label)).toEqual(['Ada Lovelace']);
   });
 
   it('report q&a labels by the conversation title', async () => {
@@ -225,8 +277,43 @@ describe('the client details routing read', () => {
     const routing = await clientDetailsAdapter.resolveRoutingContext({ reportId: 'c3' });
     const q = lastQuery('clients');
     // `first_name, last_name` was a PostgREST 42703 that declined every
-    // client; the constant is what keeps a fourth spelling out.
-    expect(q?.select).toBe(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`);
+    // client; the constant is what keeps a fourth spelling out. The middle
+    // names ride on top of it because the document composes its subject's name
+    // from all three parts.
+    expect(q?.select).toBe(
+      `${CLIENT_NAME_COLUMNS}, primary_middle_name, secondary_middle_name, updated_at, created_at`,
+    );
     expect(routing?.title).toBe('Client details — Jordan Nguyen');
+  });
+
+  it('titles the file with the name the document prints, middle name and all', async () => {
+    harness.rows.clients = [{
+      id: 'c4',
+      primary_first_name: 'ada', primary_middle_name: 'beatrice', primary_surname: 'lovelace',
+      updated_at: '2026-08-05',
+    }];
+    const routing = await clientDetailsAdapter.resolveRoutingContext({ reportId: 'c4' });
+    // Eleven production records carry a middle name and the pages print it;
+    // the file used to be titled for a differently-named person.
+    expect(routing?.title).toBe('Client details — Ada Beatrice Lovelace');
+  });
+
+  it('titles a two-person record the way the document names the household', async () => {
+    harness.rows.clients = [{
+      id: 'c5',
+      primary_first_name: 'ada', primary_surname: 'lovelace',
+      secondary_first_name: 'charles', secondary_surname: 'babbage',
+      updated_at: '2026-08-05',
+    }];
+    const routing = await clientDetailsAdapter.resolveRoutingContext({ reportId: 'c5' });
+    expect(routing?.title).toBe('Client details — Ada Lovelace & Charles Babbage');
+  });
+
+  it('falls back to the plain title when the record names nobody', async () => {
+    harness.rows.clients = [{ id: 'c6', updated_at: '2026-08-05' }];
+    const routing = await clientDetailsAdapter.resolveRoutingContext({ reportId: 'c6' });
+    // `composeClientName` answers 'Client' rather than empty, and a file
+    // called "Client details — Client" reads like a bug.
+    expect(routing?.title).toBe('Client details');
   });
 });

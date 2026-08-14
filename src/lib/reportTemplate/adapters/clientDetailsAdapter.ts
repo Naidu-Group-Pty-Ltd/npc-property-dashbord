@@ -29,11 +29,9 @@
  * clock. The adapter is the edge, so the adapter supplies it.
  */
 import { supabase } from '@/integrations/supabase/client';
-import { buildClientDetails } from '@/lib/reports/clientDetails/normalise.pure';
+import { buildClientDetails, composeClientName } from '@/lib/reports/clientDetails/normalise.pure';
 import { applyClientDetailsProjection } from '../../../../supabase/functions/_shared/clientDetailsProjection.pure';
-import {
-  CLIENT_NAME_COLUMNS, clientDisplayName, type ClientNameRow,
-} from '../../../../supabase/functions/_shared/clientName';
+import { CLIENT_NAME_COLUMNS } from '../../../../supabase/functions/_shared/clientName';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
@@ -96,22 +94,67 @@ async function loadClientRecord(clientId: string): Promise<ClientRecord | null> 
 }
 
 /**
- * Just the client row, for routing — nine reads to decide a title is waste.
+ * The columns a name is composed from, for the two reads that only need one.
  *
- * The name columns come from `CLIENT_NAME_COLUMNS` and nowhere else. This
- * function shipped selecting `first_name, last_name`, and **neither column
- * exists on `clients`** — the table stores `primary_first_name` /
- * `primary_surname`. PostgREST answered `42703` for the whole statement, the
- * error branch returned null, and routing declined every client in the
- * database: the format's fifty masters were unreachable through the product
- * path while `buildBindingContext` (which selects `*`) worked in every
- * harness. The same misspelling 404'd `render-borrowing-capacity-pdf` for
- * every client once before, which is exactly why that constant exists.
+ * `CLIENT_NAME_COLUMNS` is the sanctioned spelling of the four name columns
+ * and is used rather than restated — this function shipped selecting
+ * `first_name, last_name`, and **neither column exists on `clients`**, so
+ * PostgREST answered `42703` for the whole statement, the error branch
+ * returned null, and routing declined every client in the database while
+ * `buildBindingContext` (which selects `*`) worked in every harness. The same
+ * misspelling 404'd `render-borrowing-capacity-pdf` for every client once
+ * before, which is why that constant exists.
+ *
+ * The middle names are added on top of it: the document composes its subject's
+ * name from all three parts, and this read exists to say what the document
+ * will say. They are not in the shared constant because
+ * `clientDisplayName` — the Borrowing Capacity Snapshot's cover — deliberately
+ * prints two parts, and widening the constant would quietly change what a
+ * different format's caller receives.
  */
+const NAME_COLUMNS =
+  `${CLIENT_NAME_COLUMNS}, primary_middle_name, secondary_middle_name`;
+
+/**
+ * The clients who have any financial record at all, for the picker's ordering.
+ *
+ * Five reads of one column each, against the five sparse tables — 794 rows in
+ * total today, resolving to 34 distinct clients. A table this caller cannot
+ * read contributes nothing rather than failing the list: the ordering is a
+ * preference, and a picker ordered by recency is still a picker.
+ *
+ * The identifiers are capped before they become an `.in(...)` filter, because
+ * that clause is a query string and an unbounded one is a 414 rather than a
+ * slow request. At the current size the cap is never reached; it is here so
+ * that the day these tables fill, the picker degrades to "the first 200
+ * clients with records" instead of failing outright.
+ */
+const MAX_RECORDED_IDS = 200;
+
+async function clientIdsWithRecords(): Promise<string[]> {
+  const [properties, assets, liabilities, employment, expenses] = await Promise.all([
+    supabase.from('client_properties').select('client_id'),
+    supabase.from('client_assets').select('client_id'),
+    supabase.from('client_liabilities').select('client_id'),
+    supabase.from('client_employment').select('client_id'),
+    supabase.from('client_expenses').select('client_id'),
+  ]);
+
+  const ids = new Set<string>();
+  for (const res of [properties, assets, liabilities, employment, expenses]) {
+    if (res.error || !res.data) continue;
+    for (const row of res.data as Array<{ client_id?: unknown }>) {
+      if (typeof row.client_id === 'string' && row.client_id) ids.add(row.client_id);
+    }
+  }
+  return [...ids].slice(0, MAX_RECORDED_IDS);
+}
+
+/** Just the client row, for routing — nine reads to decide a title is waste. */
 async function loadClientRow(clientId: string): Promise<Record<string, any> | null> {
   const { data, error } = await supabase
     .from('clients')
-    .select(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`)
+    .select(`${NAME_COLUMNS}, updated_at, created_at`)
     .eq('id', clientId)
     .maybeSingle();
   if (error || !data) return null;
@@ -130,19 +173,63 @@ export const clientDetailsAdapter: ReportTemplateAdapter = {
       + 'this migration’s value.',
   },
 
+  /**
+   * Recent clients, the ones with something to show first.
+   *
+   * Ordering by `updated_at` alone made this picker nearly useless for its own
+   * purpose. **34 of the 775 clients have any property, asset, liability,
+   * employment or expense record at all**, so twenty of the most recently
+   * touched are twenty documents of empty tables — and the whole reason to
+   * preview against a real record is to see how the design holds your own
+   * numbers.
+   *
+   * It is not sorted *entirely* by that, because a client with a name and
+   * nothing else is not an edge case in this format, it is the ordinary one
+   * (see D5 in `docs/reports/CLIENT_DETAILS.md`) and the masters are built
+   * around it. So most of the list is clients with records and the rest is
+   * whatever is most recent, which keeps both shapes one click away.
+   */
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
     try {
-      const { data, error } = await supabase
+      const listing = (row: Record<string, any>): ReportListing => ({
+        id: String(row.id),
+        // The document's own name for its subject, so the picker and the page
+        // it renders agree.
+        label: composeClientName(row),
+        savedAt: (row.updated_at as string) ?? (row.created_at as string) ?? null,
+      });
+
+      const recorded = await clientIdsWithRecords();
+      const withRecords: Record<string, any>[] = [];
+      if (recorded.length > 0) {
+        const { data } = await supabase
+          .from('clients')
+          .select(`${NAME_COLUMNS}, updated_at, created_at`)
+          .in('id', recorded)
+          .order('updated_at', { ascending: false })
+          .limit(Math.max(1, Math.floor(limit * 0.75)));
+        withRecords.push(...((data ?? []) as Record<string, any>[]));
+      }
+
+      const { data: recent, error } = await supabase
         .from('clients')
-        .select(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`)
+        .select(`${NAME_COLUMNS}, updated_at, created_at`)
         .order('updated_at', { ascending: false })
         .limit(limit);
-      if (error || !data) return [];
-      return (data as Array<ClientNameRow & Record<string, any>>).map((row) => ({
-        id: String(row.id),
-        label: clientDisplayName(row) || 'Client',
-        savedAt: (row.updated_at as string) ?? (row.created_at as string) ?? null,
-      }));
+      // The recorded half is a preference, not a requirement: if that read
+      // failed there is still a picker, and if this one failed there is not.
+      if (error && withRecords.length === 0) return [];
+
+      const out: ReportListing[] = [];
+      const seen = new Set<string>();
+      for (const row of [...withRecords, ...((recent ?? []) as Record<string, any>[])]) {
+        const id = String(row.id);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push(listing(row));
+        if (out.length >= limit) break;
+      }
+      return out;
     } catch {
       return [];
     }
@@ -151,13 +238,18 @@ export const clientDetailsAdapter: ReportTemplateAdapter = {
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {
     const row = await loadClientRow(reportId);
     if (!row) return null;
-    const name = clientDisplayName(row as ClientNameRow);
+    // The document's own composition, not a second one: the middle name the
+    // eleven records that carry one print, the household's `A & B` for the
+    // thirteen that describe two people, and the same casing. A file titled
+    // for a different person than the pages name is a small wrong that is
+    // very visible on a document sent to a broker.
+    const name = composeClientName(row);
     return {
       reportId,
       reportType: 'client_details',
       variant: null,
       tier: null,
-      title: name ? `Client details — ${name}` : 'Client details',
+      title: name !== 'Client' ? `Client details — ${name}` : 'Client details',
       fileLabel: 'client-details',
       sourceTable: 'clients',
       legacyFallback: clientDetailsAdapter.legacyFallback,

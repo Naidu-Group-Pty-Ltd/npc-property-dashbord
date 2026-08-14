@@ -65,9 +65,13 @@ function schemaTables(): Map<string, Set<string>> {
  * line, so a parser that only reads single-line literals would skip exactly
  * the longest and most typo-prone ones.
  */
-function stringConstants(source: string): Map<string, string> {
+function stringConstants(source: string, extra?: Map<string, string>): Map<string, string> {
   const consts = new Map<string, string>();
-  for (const m of source.matchAll(/(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*([\s\S]*?);\n/g)) {
+  const declarations = [...source.matchAll(
+    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*([\s\S]*?);\n/g,
+  )];
+
+  for (const m of declarations) {
     const body = m[2];
     if (!/^[\s'"+\w,.\->()]*$/.test(body)) continue;
     const parts = [...body.matchAll(/'([^']*)'|"([^"]*)"/g)].map((p) => p[1] ?? p[2]);
@@ -75,6 +79,22 @@ function stringConstants(source: string): Map<string, string> {
     // Only a pure concatenation of literals; anything else is not a column list.
     if (body.replace(/'[^']*'|"[^"]*"/g, '').replace(/[\s+]/g, '') !== '') continue;
     consts.set(m[1], parts.join(''));
+  }
+
+  // A second pass for a constant built from another one — `const NAME_COLUMNS =
+  // `${CLIENT_NAME_COLUMNS}, primary_middle_name`` — which is how a format
+  // extends a shared column list without widening it for every other caller.
+  // One pass deep: a chain of these would be harder to read than the query.
+  for (const m of declarations) {
+    const body = m[2].trim();
+    if (consts.has(m[1]) || !/^`[^`]*`$/.test(body)) continue;
+    let missing = false;
+    const filled = body.slice(1, -1).replace(/\$\{([\w$]+)\}/g, (_all, name: string) => {
+      const value = consts.get(name) ?? extra?.get(name) ?? null;
+      if (value === null) missing = true;
+      return value ?? '';
+    });
+    if (!missing) consts.set(m[1], filled);
   }
   return consts;
 }
@@ -113,7 +133,7 @@ function selectArgAfter(source: string, from: number): string | null {
 interface Selection { table: string; columns: string[] }
 
 function selectionsIn(source: string, rel: string): { selections: Selection[]; unresolved: string[] } {
-  const consts = stringConstants(source);
+  const consts = stringConstants(source, sharedConstants);
   const lookup = (name: string) => consts.get(name) ?? sharedConstants.get(name) ?? null;
   const selections: Selection[] = [];
   const unresolved: string[] = [];
