@@ -1057,13 +1057,45 @@ itself, and Client Details' nine-table read can fail for reasons that are not a
 property of the record. Those land on the router's refusal, which is why that
 one has to be right.
 
-### The door is open and nobody knocks yet
+### Every format now asks, and it asks in one place
 
-`tryRouteThroughTemplateBuilderFor(reportType, reportId)` routes any of the nine
-production formats. Only the Compass pilot entry is wired to a surface
-(`PremiumPdfButton`), so the other eight formats' fifty masters each remain
-unreachable from the product until a surface calls it. It is inert until a
-template is activated — resolution matches only active `report_templates` rows
-— and it deliberately does not intercept the formats' flowing request helpers,
-whose contracts (render ledgers, audit events, the `pdf_storage_path` a
-scheduled email later attaches) are theirs to keep.
+`tryTemplateDocument(reportType, reportId, { variant })` is the question, and
+the `deliver*` modules are where it is asked — not the buttons — because that
+is where every surface for a format already meets: the download, the email
+attachment, the blob a broker portal uploads. Wiring one module reaches all of
+them.
+
+It is inert until somebody activates a template (resolution matches only active
+`report_templates` rows), and **every failure is a fallback, never an error**: a
+refused adapter, no active template, a render that failed, a signed URL that
+will not fetch, a zero-byte body. A templated document is an improvement on a
+working path, so it may never be the reason somebody cannot get their file.
+
+Seven formats route. The metadata each `deliver*` returns — brand gaps, section
+lists, turn counts — describes the *flowing* render, so on the templated path
+it is left empty and a `templated: true` flag says why. Every caller's toast
+notes are already conditional, so they simply say less rather than saying zero.
+
+**The exceptions are documents somebody asked for by name**, and each is a
+guard rather than an oversight:
+
+| Format | Routes except when |
+| --- | --- |
+| Borrowing Capacity | `variant: 'legacy'` (a chosen layout), or no `assessmentId` — "most recent" is the route's job, not an adapter's |
+| Portfolio | the `stored` variant (one particular existing file), or `includeReview: false` — the adapter always joins the review |
+| Market Intelligence | `persist` is on — that writes the `pdf_storage_path` a scheduled email attaches, and the template route does not write it |
+| Commercial Capacity | `refreshAnalysis` — a request to re-run the model, which a stored-run render cannot answer |
+
+**The 10 Year Cash Flow does not route at all**, and that is the one worth
+reading twice. `requestCashFlowPdf` takes the projection *as an argument*:
+`CashFlowAnalysisModal` recomputes ten years in the browser from
+`manual_overrides` plus whatever the adviser has changed since it opened.
+`cashFlowAdapter` reads the stored `financial_calculations.projections` — a
+different series whenever an override exists, which is the normal case for the
+reports that modal is opened on. Routing it would hand a client a document
+whose numbers are not the ones the adviser was looking at while they sent it.
+A misread figure in a client's financial report is this programme's top risk
+and it outranks a nicer layout, so the format keeps its working adapter (the
+Template Library previews with it) and this surface keeps the flowing route.
+`cashFlowTemplateRouteAbsent.spec.ts` holds that decision against somebody
+pattern-matching the other seven.
