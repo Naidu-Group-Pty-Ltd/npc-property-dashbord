@@ -33,6 +33,10 @@
 import { toast } from 'sonner';
 import { tryRouteThroughTemplateBuilderFor } from './compassRoute';
 import {
+  TEMPLATE_ROUTE_REFUSAL_TEXT,
+  type TemplateRouteRefusal,
+} from './routeReportThroughTemplate';
+import {
   fetchTemplateSelections,
   normaliseReportType,
   selectionsByFormat,
@@ -151,9 +155,13 @@ export async function tryTemplateDocument(
   if (!reportId) return null;
 
   const selectedId = await selectedTemplateFor(reportType);
+  // Which gate closed, when one does — so the notice below names the cause
+  // rather than saying the same thing for every one of them.
+  let refusal: TemplateRouteRefusal | null = null;
   try {
     const routed = await tryRouteThroughTemplateBuilderFor(reportType, reportId, {
       variant: opts?.variant ?? null,
+      onRefusal: (reason) => { refusal = reason; },
       // The person's own answer to "which template does this format come out
       // in", honoured here so that every surface gets it rather than only the
       // ones that remembered to ask. See `selectedTemplateFor`.
@@ -161,7 +169,9 @@ export async function tryTemplateDocument(
       payload: opts?.payload ?? null,
     });
     if (!routed?.fileUrl) {
-      if (selectedId) notifySelectionNotUsed();
+      if (selectedId) {
+        notifySelectionNotUsed(refusal ? TEMPLATE_ROUTE_REFUSAL_TEXT[refusal] : undefined);
+      }
       return null;
     }
 

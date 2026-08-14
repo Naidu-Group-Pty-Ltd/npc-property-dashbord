@@ -123,7 +123,17 @@ describe('asking for the templated document', () => {
     expect(doc?.templateId).toBe('tpl-1');
     // `templateId` rides alongside the variant now — null here, because this
     // person has chosen no template for the format.
-    expect(h.routeCalls).toEqual([['qa', 'conv-1', { variant: 'answer', templateId: null, payload: null }]]);
+    // `onRefusal` rides along too — the route tells the caller which gate it
+    // closed at, so the notice can name the cause. Matched rather than
+    // compared whole, because a diagnostic callback is not part of what this
+    // test is about.
+    expect(h.routeCalls).toHaveLength(1);
+    expect(h.routeCalls[0][0]).toBe('qa');
+    expect(h.routeCalls[0][1]).toBe('conv-1');
+    expect(h.routeCalls[0][2]).toMatchObject({
+      variant: 'answer', templateId: null, payload: null,
+    });
+    expect(typeof (h.routeCalls[0][2] as any).onRefusal).toBe('function');
   });
 
   it('asks nothing at all without a report id', async () => {

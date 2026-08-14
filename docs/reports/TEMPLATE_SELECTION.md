@@ -416,3 +416,23 @@ generator — which is **exactly** what the direct read produced for everybody,
 permission or not. The worst case after this change equals the best case before
 it, so no surface can generate less than it did; the surfaces whose users hold
 the permission simply start getting the document they chose.
+
+### A refusal names the gate it closed at
+
+`routeReportThroughTemplate` answers `null` for ten distinct reasons, and every
+one of them falls back to the format's own composer — which on the migrated
+formats is itself a well-typeset WeasyPrint document. So "your template
+rendered" and "your template was skipped" were indistinguishable from the
+outside *and* in the console, and diagnosing one refusal meant querying
+`template_render_jobs` in production to see whether a render had even been
+attempted.
+
+The route now records which gate closed (`TemplateRouteRefusal`) and reports it
+through an `onRefusal` callback; `tryTemplateDocument` puts the wording in the
+notice the person is already reading. The contract is unchanged — a refusal is
+still a fallback, still `null`, still never an error — only its silence is
+gone. Two things came out of writing it: `parseTemplate` used to throw straight
+past every remaining gate into the outer `catch`, where an unreadable schema
+looked exactly like a network failure, so it now parses inside its own guard;
+and the shim reports `no_adapter` itself, because it refuses before the route
+is entered at all.
