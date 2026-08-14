@@ -129,6 +129,40 @@ beforeEach(() => {
   h.invokeResult = { data: { url: 'https://cdn.example/x.pdf', fileName: 'x.pdf' }, error: null };
 });
 
+describe('an adapter that declines is not overruled', () => {
+  /**
+   * The worst outcome this pipeline can produce is not an error — it is a
+   * plausible document that is wrong, and a blank one under the client's own
+   * letterhead is exactly that.
+   */
+  it('renders nothing when the adapter cannot build a context', async () => {
+    h.bindingResult = null;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await routeReportThroughTemplate(REPORT_ID, { reportType: 'portfolio' });
+
+    // Null is the adapter saying "this record cannot make a document", and its
+    // documented consequence is the legacy generator. This used to read
+    // `ctx?.data ?? {}`: since an unresolved binding renders as the empty
+    // string, the route produced the whole document with every field empty,
+    // uploaded it, and returned a URL — so the caller never fell back.
+    expect(result).toBeNull();
+    expect(h.invokeCalls, 'a PDF was rendered for a record the adapter refused')
+      .toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('declined report'));
+    warn.mockRestore();
+  });
+
+  it('does not render an empty document when the context carries no data', async () => {
+    // The same refusal in its other shape — a context object with nothing in
+    // it is no more renderable than no context at all.
+    h.bindingResult = { data: {} } as { data: Record<string, unknown> };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await routeReportThroughTemplate(REPORT_ID, { reportType: 'portfolio' })).toBeNull();
+    expect(h.invokeCalls).toEqual([]);
+    warn.mockRestore();
+  });
+});
+
 describe('the variant reaches the adapter', () => {
   it('passes the caller\'s variant to both adapter calls, unchanged', async () => {
     const result = await routeReportThroughTemplate(REPORT_ID, {

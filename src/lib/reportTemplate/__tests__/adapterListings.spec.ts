@@ -25,6 +25,7 @@ interface QueryLog {
   eq: Array<[string, unknown]>;
   in: Array<[string, unknown[]]>;
   not: Array<[string, string, unknown]>;
+  head?: boolean;
   order: Array<[string, Record<string, unknown>]>;
   limit: number | null;
 }
@@ -50,10 +51,20 @@ function builderFor(table: string) {
     for (const [col, values] of log.in) {
       data = data.filter((row) => (values as unknown[]).includes(row[col]));
     }
-    return { data, error: null };
+    for (const [col, value] of log.eq) {
+      data = data.filter((row) => row[col] === value);
+    }
+    // `.select('id', { count: 'exact', head: true })` asks how many rows match
+    // and asks for none of them; a stub that answered only `data` could not
+    // express the difference.
+    return { data, count: data.length, error: null };
   };
   const chain: Record<string, unknown> = {
-    select: (cols: string) => { log.select = cols; return chain; },
+    select: (cols: string, opts?: Record<string, unknown>) => {
+      log.select = cols;
+      if (opts?.head) log.head = true;
+      return chain;
+    },
     eq: (col: string, val: unknown) => { log.eq.push([col, val]); return chain; },
     in: (col: string, vals: unknown[]) => { log.in.push([col, vals]); return chain; },
     not: (col: string, op: string, val: unknown) => { log.not.push([col, op, val]); return chain; },
@@ -266,6 +277,75 @@ describe('each lister reads its own table', () => {
   it('returns an empty list — never throws — when the read errors', async () => {
     harness.errors.portfolio_analysis_reports = { message: 'permission denied' };
     await expect(getAdapter('portfolio')!.listRecentReports!()).resolves.toEqual([]);
+  });
+});
+
+describe('routing declines what binding would decline', () => {
+  /**
+   * Routing resolves before binding. If it resolves for a record the binding
+   * then refuses, the operator is offered a ready-looking template that
+   * produces nothing — and until the router was fixed to honour a null
+   * context, it produced something far worse: the whole document with every
+   * field empty. `cashFlowAdapter` documents this rule and checks it in both
+   * of its methods; these two did not.
+   */
+  it('report q&a refuses a conversation with no answer in it', async () => {
+    // 22 of the 252 stored conversations have no assistant turn, 21 of them no
+    // message at all.
+    harness.rows.report_qa_conversations = [{ id: 'q1', title: 'Unanswered', created_at: '2026-08-04' }];
+    harness.rows.report_qa_messages = [
+      { id: 'm1', conversation_id: 'q1', role: 'user', content: 'What about Newtown?' },
+    ];
+    expect(await getAdapter('qa')!.resolveRoutingContext({ reportId: 'q1' })).toBeNull();
+
+    const counted = harness.queries.find((q) => q.table === 'report_qa_messages');
+    // Asked as a count with no body: cheaper than the transcript read it saves.
+    expect(counted?.head).toBe(true);
+    expect(counted?.eq).toEqual([['conversation_id', 'q1'], ['role', 'assistant']]);
+  });
+
+  it('report q&a routes a conversation that has one', async () => {
+    harness.rows.report_qa_conversations = [{ id: 'q2', title: 'Answered', created_at: '2026-08-04' }];
+    harness.rows.report_qa_messages = [
+      { id: 'm1', conversation_id: 'q2', role: 'user', content: 'What about Newtown?' },
+      { id: 'm2', conversation_id: 'q2', role: 'assistant', content: 'Here is the answer.' },
+    ];
+    const routing = await getAdapter('qa')!.resolveRoutingContext({ reportId: 'q2' });
+    expect(routing?.title).toBe('Answered');
+  });
+
+  it('report q&a refuses the structured subject when none is stored', async () => {
+    harness.rows.report_qa_messages = [
+      { id: 'm2', conversation_id: 'q3', role: 'assistant', content: 'Here is the answer.' },
+    ];
+    harness.rows.report_qa_conversations = [
+      { id: 'q3', title: 'Answered', structured_report: null, created_at: '2026-08-04' },
+    ];
+    const qa = getAdapter('qa')!;
+    // The transcript is there to render; the structured report is not.
+    expect(await qa.resolveRoutingContext({ reportId: 'q3', variant: 'structured' })).toBeNull();
+    expect(await qa.resolveRoutingContext({ reportId: 'q3', variant: 'transcript' })).toBeTruthy();
+  });
+
+  it('market intelligence refuses a report the normaliser would refuse', async () => {
+    const payload = { suburbName: 'Newtown' };
+    // Both latent today — all six stored reports are completed and carry a
+    // payload — and both free, because the routing read already selects them.
+    harness.rows.marketing_intelligence_reports = [
+      { id: 'm1', report_data: null, status: 'completed', report_period: 'March 2026' },
+    ];
+    expect(await getAdapter('market_intelligence')!.resolveRoutingContext({ reportId: 'm1' })).toBeNull();
+
+    harness.rows.marketing_intelligence_reports = [
+      { id: 'm2', report_data: payload, status: 'generating', report_period: 'March 2026' },
+    ];
+    expect(await getAdapter('market_intelligence')!.resolveRoutingContext({ reportId: 'm2' })).toBeNull();
+
+    harness.rows.marketing_intelligence_reports = [
+      { id: 'm3', report_data: payload, status: 'completed', report_period: 'March 2026' },
+    ];
+    const routing = await getAdapter('market_intelligence')!.resolveRoutingContext({ reportId: 'm3' });
+    expect(routing?.title).toBe('Market Intelligence — March 2026');
   });
 });
 

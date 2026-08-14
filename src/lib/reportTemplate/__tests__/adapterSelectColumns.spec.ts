@@ -142,7 +142,11 @@ function selectionsIn(source: string, rel: string): { selections: Selection[]; u
     const table = m[1];
     const raw = selectArgAfter(source, m.index! + m[0].length);
     if (raw === null) continue;
-    const arg = raw.trim();
+    // `.select('id', { count: 'exact', head: true })` asks how many rows match
+    // and for none of their bodies. The options are not columns, and the
+    // column list never contains a brace, so they come off before parsing —
+    // the column still gets checked, which is the point.
+    const arg = raw.trim().replace(/,\s*\{[\s\S]*\}$/, '').trim();
 
     let text: string | null = null;
     if (/^'[^']*'$/.test(arg) || /^"[^"]*"$/.test(arg)) text = arg.slice(1, -1);

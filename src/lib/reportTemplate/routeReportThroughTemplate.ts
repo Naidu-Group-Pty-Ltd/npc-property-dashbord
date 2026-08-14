@@ -74,7 +74,32 @@ export async function routeReportThroughTemplate(
         variant: opts?.variant ?? null,
         brand: opts?.brand,
       });
-      const bindingData = ctx?.data ?? {};
+      // Null is every adapter's way of saying "I cannot produce a document
+      // from this record" — no stored projection, a conversation with no
+      // answer in it, one of nine reads that errored — and its documented
+      // consequence is the legacy generator.
+      //
+      // This read `ctx?.data ?? {}` and carried on. An unresolved binding
+      // renders as the empty string rather than as a visible `{{…}}`, so the
+      // refusal did not produce an error or a blank page: it produced the
+      // whole document with every field empty, uploaded it, and returned it as
+      // a success — which also meant the caller never fell back, because it
+      // had a URL. A client would have received a report of blank tables under
+      // their own letterhead. Falling through here is what makes the adapters'
+      // "returns null rather than a document full of blanks" true of the
+      // pipeline and not only of the adapter.
+      // An empty context is refused on the same ground rather than on a
+      // separate one: every adapter publishes at least `report` and `brand`,
+      // so there is no record for which `{}` is the right answer, and it
+      // renders identically to the null case.
+      if (!ctx?.data || Object.keys(ctx.data).length === 0) {
+        console.warn(
+          `[routeReportThroughTemplate] ${adapter.reportType} declined report `
+          + `${reportId}; falling back to its legacy generator`,
+        );
+        continue;
+      }
+      const bindingData = ctx.data;
 
       const schema = parseTemplate(tplRow.schema);
 

@@ -1002,3 +1002,68 @@ the Property Snapshot's own description puts it. Their first page is the face of
 the document, so `brandMark()` puts the paper lockup at the head of it as a flow
 item, which moves the heading down rather than printing over it. The other 528
 carry it on a `cover` block.
+
+---
+
+## The adapter layer's contract with the router
+
+An adapter turns a stored record into the one data object a template binds:
+load the rows, run them through the format's own legacy normaliser, project
+the result, add the letterhead. Nine of them are production-capable, and each
+answers two questions — `resolveRoutingContext`, which is cheap and decides
+*whether and as what* this record may be rendered, and `buildBindingContext`,
+which does the reading.
+
+### Null means "do not produce a document"
+
+Every adapter's header promises the same thing: it returns `null` rather than a
+document full of blanks, and the caller falls back to the legacy generator.
+That promise was true of the adapters and false of the pipeline.
+`routeReportThroughTemplate` read the context as `ctx?.data ?? {}` and carried
+on, and because **an unresolved binding renders as the empty string rather than
+as a visible `{{…}}`**, a refusal did not raise an error or print a marker: it
+rendered the entire document with every field empty, uploaded it, and returned
+a URL. The caller then had a successful result and never fell back, so a client
+could have received a report of blank tables under their own letterhead — the
+one outcome this programme's rules exist to prevent, produced by the only code
+path that had no rule of its own.
+
+The route now falls through on a null or empty context, with the adapter and
+report id in the warning. An empty object is refused on the same ground rather
+than a separate one: every adapter publishes at least `report` and `brand`, so
+there is no record for which `{}` is the right answer.
+
+### Routing must decline whatever binding would decline
+
+Routing resolves first. If it resolves for a record the binding then refuses,
+the operator is offered a ready-looking template that produces nothing — and,
+before the fix above, something worse. `cashFlowAdapter` states the rule and
+checks `hasProjections` in both methods; `commercialCapacityAdapter` shares one
+loader between them for the same reason.
+
+Two adapters did not, and one was live: **Report Q&A resolved routing for any
+conversation that loaded, while its binding refuses one with no assistant turn
+— 22 of the 252 stored conversations, 21 of them holding no message at all.**
+It now counts assistant messages with a `head` request (a count, no body), and
+refuses the `structured` subject for a conversation that stores no structured
+report, which is free because the routing read already selects that column.
+Market Intelligence likewise refuses a row with no payload and one whose
+`status` is not `completed` — both latent across the six stored reports, both
+free for the same reason.
+
+What routing deliberately does **not** replicate is a refusal it cannot reach
+cheaply: Market Intelligence's "nothing substantial to typeset" needs the build
+itself, and Client Details' nine-table read can fail for reasons that are not a
+property of the record. Those land on the router's refusal, which is why that
+one has to be right.
+
+### The door is open and nobody knocks yet
+
+`tryRouteThroughTemplateBuilderFor(reportType, reportId)` routes any of the nine
+production formats. Only the Compass pilot entry is wired to a surface
+(`PremiumPdfButton`), so the other eight formats' fifty masters each remain
+unreachable from the product until a surface calls it. It is inert until a
+template is activated — resolution matches only active `report_templates` rows
+— and it deliberately does not intercept the formats' flowing request helpers,
+whose contracts (render ledgers, audit events, the `pdf_storage_path` a
+scheduled email later attaches) are theirs to keep.
