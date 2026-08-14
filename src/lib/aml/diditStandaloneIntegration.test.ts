@@ -466,7 +466,7 @@ describe('the hosted and capture journeys do not bleed into each other', () => {
      * that already ran must still settle the canonical record, and removing
      * them would strand it.
      *
-     * The hosted operation was reactivated (`20260913210000`) because the
+     * The hosted operation was reactivated (`20260914000000`) because the
      * Standalone APIs persist nothing on the provider's side and the business
      * requires a Didit-side verification record — see hostedIdvSession.test.ts
      * for the contract it now holds. The standalone adapter, its provider row

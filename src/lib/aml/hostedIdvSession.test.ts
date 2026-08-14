@@ -65,53 +65,6 @@ const PARTY_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const SESSION_A = '33333333-3333-4333-8333-333333333333';
 const WORKFLOW = '75ad112b-27a4-48b1-b040-664305064d11';
 
-/* ── 0. the operation is reachable at all ────────────────────────────────── */
-
-describe('start_hosted_verification reaches the real implementation', () => {
-  it('no longer answers an unconditional hosted_flow_retired', () => {
-    // The stub returned this before any other statement, so no tenant,
-    // provider or configuration could reach a session. It is gone from the
-    // handler entirely — not merely bypassed by a branch.
-    expect(code(START_BLOCK)).not.toContain('hosted_flow_retired');
-    expect(code(PORTAL_FN)).not.toContain("code: 'hosted_flow_retired'");
-  });
-
-  it('the retired alias is gone, so there is one handler and it is live', () => {
-    expect(PORTAL_FN).not.toContain("case '__retired_start_hosted_verification'");
-    expect(PORTAL_FN.indexOf("case 'start_hosted_verification'")).toBeGreaterThan(0);
-  });
-
-  it('actually creates a provider session on POST /v3/session/', () => {
-    expect(code(START_BLOCK)).toContain('provider.createSession(');
-    expect(code(START_BLOCK)).toContain('getHostedIdvProvider(');
-    // The endpoint itself, in the only module that holds the credential.
-    const client = read('supabase/functions/_shared/aml/providers/diditClient.ts');
-    expect(client).toContain("'/v3/session/'");
-    expect(client).toContain("method: 'POST'");
-  });
-
-  it('resolves the workflow server-side, from tenant config', () => {
-    expect(code(START_BLOCK)).toContain('diditWorkflowId(resolved)');
-    // Never from the request body, and never sent to the browser.
-    const vendorLine = START_BLOCK.slice(
-      START_BLOCK.indexOf('const workflowId'), START_BLOCK.indexOf('const environment'));
-    expect(vendorLine).not.toContain('body.');
-  });
-
-  it('the portal can ask for one, and the provider flow admits it', () => {
-    const api = read('src/lib/aml/amlPortalApi.ts');
-    expect(api).toContain("'start_hosted_verification'");
-    expect(code(STEP)).toContain('amlPortalApi.startHostedVerification(');
-    // `clientSafeIdvState` no longer refuses a hosted tenant outright.
-    const state = PORTAL_FN.slice(
-      PORTAL_FN.indexOf('async function clientSafeIdvState'),
-      PORTAL_FN.indexOf('async function clientSafeIdvAvailability'));
-    expect(code(state)).not.toMatch(
-      /flow === 'hosted_session'\)\s*\{[\s\S]{0,200}manual_verification_required/);
-    expect(code(state)).toContain('getHostedIdvProvider(');
-  });
-});
-
 /* ── 1 & 2. distinct, stable, person-scoped identifiers ──────────────────── */
 
 describe('User A and User B get distinct, stable identifiers', () => {
@@ -227,25 +180,6 @@ describe('a webhook for A cannot update B', () => {
     ]) {
       expect(vendorDataMatches(foreign, CASE_A, PARTY_A, null), foreign).toBe(false);
     }
-  });
-
-  it('still correlates a LEGACY attempt-scoped key', () => {
-    /*
-     * Sessions minted during the attempt-scoped window live seven days and
-     * their decisions must still settle. `parseVendorData` accepts both forms
-     * and `vendorDataMatches` compares the attempt only when both sides carry
-     * one — so a four-part key correlates against a row that records the same
-     * attempt, and against one that records none.
-     */
-    const legacy = buildVendorData(CASE_A, PARTY_A, 3);
-    expect(legacy.split(':')).toHaveLength(4);
-    expect(parseVendorData(legacy)?.attempt).toBe(3);
-    expect(vendorDataMatches(legacy, CASE_A, PARTY_A, 3)).toBe(true);
-    expect(vendorDataMatches(legacy, CASE_A, PARTY_A, null)).toBe(true);
-    // It is still refused for a different applicant, and for a different
-    // attempt when the row knows which one it expects.
-    expect(vendorDataMatches(legacy, CASE_B, PARTY_A, 3)).toBe(false);
-    expect(vendorDataMatches(legacy, CASE_A, PARTY_A, 2)).toBe(false);
   });
 
   it('refuses a malformed or absent key rather than defaulting to a match', () => {

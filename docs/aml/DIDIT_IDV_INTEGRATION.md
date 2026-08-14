@@ -211,7 +211,7 @@ days, and refusing to parse them would strand a live customer's decision.
 ### Why this flow was reactivated
 
 `20260911000300` retired it on a product decision — no customer is sent to a
-verification vendor's page — and `20260913210000` reverses that. The reason is
+verification vendor's page — and `20260914000000` reverses that. The reason is
 one the standalone architecture cannot satisfy at any setting.
 
 The Standalone APIs are called with `save_api_request=false`, whose published
@@ -225,7 +225,7 @@ create produced both a session and a Directory user whose `source` is
 
 The standalone implementation is **not deleted**. Its provider row stays seeded,
 its evidence rows stay untouched, and the switch back is two `UPDATE`s — see the
-`ROLLBACK:` header on `20260913210000`.
+`ROLLBACK:` header on `20260914000000`.
 
 ### Stale configuration
 
