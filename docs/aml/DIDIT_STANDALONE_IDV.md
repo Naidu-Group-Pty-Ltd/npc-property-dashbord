@@ -2,7 +2,7 @@
 
 > **⚠ NOT THE ACTIVE INTEGRATION as of 2026-08-14.** New attempts run the
 > provider-hosted session again — [`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md)
-> is the document to read first, and `20260914000000` is the switch.
+> is the document to read first, and `20260913210000` is the switch.
 >
 > **Why the reversal.** Everything below is accurate and the code is intact,
 > but this architecture cannot produce a provider-side verification record at
@@ -14,7 +14,7 @@
 >
 > **Nothing here was deleted.** The provider row stays seeded, every standalone
 > evidence row is untouched, and switching back is two `UPDATE`s — see the
-> `ROLLBACK:` header on `20260914000000`. The three counter-intuitive rules
+> `ROLLBACK:` header on `20260913210000`. The three counter-intuitive rules
 > below still govern this code if it is reactivated.
 
 **Read this before touching anything in the identity path.** The customer's

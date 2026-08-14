@@ -33,7 +33,7 @@ import { readFileSync } from 'node:fs';
 const step = readFileSync('src/components/portal/IdentityVerificationStep.tsx', 'utf8');
 const portal = readFileSync('supabase/functions/aml-client-portal/index.ts', 'utf8');
 
-/** The capture journey only — the legacy hosted component sits above it. */
+/** The capture journey only — the hosted component sits above it in the file. */
 const journey = step.slice(step.indexOf('function SecureCaptureCheck('));
 
 const stripComments = (source: string) => source.split('\n')

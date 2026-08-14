@@ -75,8 +75,9 @@ describe('the customer never sees, and the browser never calls, the provider', (
   it('the capture journey opens no window, embeds nothing and redirects nowhere', () => {
     // The whole of `SecureCaptureCheck` — from its declaration to the end of
     // the file's capture section — must contain none of the hosted flow's
-    // machinery. The hosted component above it still may: it is legacy and
-    // serves sessions opened before the cutover.
+    // machinery. `HostedVerificationCheck` above it is where all of that
+    // lives; the two experiences share a step but never each other's code, so
+    // a tenant on the capture journey cannot reach a window by any path.
     const start = STEP.indexOf('function SecureCaptureCheck(');
     expect(start).toBeGreaterThan(0);
     const capture = STEP.slice(start);
@@ -450,9 +451,9 @@ describe('what is written to the case record', () => {
   });
 });
 
-/* ─────────────────────── the hosted flow is legacy ─────────────────────── */
+/* ──────────────── the two flows stay separate from each other ───────────── */
 
-describe('the hosted cutover', () => {
+describe('the hosted and capture journeys do not bleed into each other', () => {
   it('creates no new hosted session from the capture journey', () => {
     const start = STEP.indexOf('function SecureCaptureCheck(');
     const capture = STEP.slice(start);
@@ -465,7 +466,7 @@ describe('the hosted cutover', () => {
      * that already ran must still settle the canonical record, and removing
      * them would strand it.
      *
-     * The hosted operation was reactivated (`20260914000000`) because the
+     * The hosted operation was reactivated (`20260913210000`) because the
      * Standalone APIs persist nothing on the provider's side and the business
      * requires a Didit-side verification record — see hostedIdvSession.test.ts
      * for the contract it now holds. The standalone adapter, its provider row
