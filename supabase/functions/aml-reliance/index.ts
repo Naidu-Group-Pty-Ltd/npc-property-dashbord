@@ -1427,7 +1427,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             .select("id, status, decided_at, assessor_name, reliance_agreements:agreement_id(partner_org_name, partner_org_type)")
             .eq("case_id", caseId),
           admin.schema("aml").from("partner_refresh_obligations")
-            .select("id, created_at, status").eq("case_id", caseId),
+            .select("id, created_at, status, completed_at, cancelled_at, due_at").eq("case_id", caseId),
           admin.schema("aml").from("case_events")
             .select("id, category, summary, actor_label, created_at")
             .eq("case_id", caseId).order("created_at", { ascending: false }).limit(300),
@@ -1667,8 +1667,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               partner_org_name: a.reliance_agreements?.partner_org_name ?? null,
               partner_org_type: a.reliance_agreements?.partner_org_type ?? null,
             })),
+            // completed_at / cancelled_at / due_at were dropped here, so the
+            // stamp engine could not tell a finished refresh from an
+            // outstanding one and every completed obligation still read as a
+            // standing request.
             refresh_obligations: (refreshObs ?? []).map((r: any) => ({
               id: r.id, created_at: r.created_at, status: r.status,
+              completed_at: r.completed_at ?? null,
+              cancelled_at: r.cancelled_at ?? null,
+              due_at: r.due_at ?? null,
             })),
             transactions: (txns ?? []).map((t: any) => ({
               id: t.id, status: t.status, settlement_date: t.settlement_date,

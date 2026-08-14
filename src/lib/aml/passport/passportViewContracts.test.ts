@@ -136,6 +136,24 @@ describe('command projection', () => {
     expect(view.versions[1].state).toBe('current');
     expect(view.versions[1].fingerprint_short).toMatch(/^[0-9A-F·]+$/);
   });
+
+  it('`stamps` stays EARNED-only; what is outstanding lives in its own field', () => {
+    // Everything downstream that counts, seals or filters on `stamps` means
+    // "earned". Folding an outstanding certification in beside them would
+    // make every one of those counts assert a control that was not performed.
+    const view = buildPassportView('command', richInput());
+    for (const s of view.stamps) {
+      expect(s.at).toBeTruthy();
+      expect(s.source).toBeTruthy();
+    }
+    expect(Array.isArray(view.pending_stamps)).toBe(true);
+    const earned = new Set(view.stamps.map((s) => s.code));
+    for (const p of view.pending_stamps) {
+      // The one code that can be both is a past refresh alongside a new
+      // obligation; nothing else may appear on both sides.
+      if (p.code !== 'passport_refresh_completed') expect(earned.has(p.code)).toBe(false);
+    }
+  });
 });
 
 describe('client projection — strict boundary', () => {
@@ -146,6 +164,18 @@ describe('client projection — strict boundary', () => {
     expect('screening' in view).toBe(false);
     expect('funding' in view).toBe(false);
     expect('partners' in view).toBe(false);
+  });
+
+  it('an OUTSTANDING certification obeys the same audience rule as an earned one', () => {
+    // An unearned seal discloses just as loudly as an earned one: "ENHANCED
+    // DUE DILIGENCE COMPLETED — outstanding" tells a client they are under
+    // EDD, which is exactly what the client_safe flag exists to prevent.
+    const command = buildPassportView('command', richInput());
+    const commandCodes = command.pending_stamps.map((p) => p.code);
+    const clientCodes = view.pending_stamps.map((p) => p.code);
+    expect(clientCodes).not.toContain('edd_completed');
+    expect(commandCodes.length).toBeGreaterThanOrEqual(clientCodes.length);
+    expect(json).not.toMatch(/ENHANCED DUE DILIGENCE/i);
   });
 
   it('cannot receive screening, PEP or sanctions material', () => {

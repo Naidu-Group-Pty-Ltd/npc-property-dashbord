@@ -515,21 +515,37 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   }
 
   /* XII — Certification Seals */
-  if (view.stamps.length > 0) {
+  // The leaf carries the whole set, struck and unstruck. A booklet that
+  // printed only what was earned gave a reader no way to tell a nearly
+  // complete record from a barely started one, which is the single thing this
+  // page exists to communicate. `earned: false` draws an empty impression —
+  // the block has modelled that since it was written.
+  const pendingSeals = view.pending_stamps ?? [];
+  if (view.stamps.length > 0 || pendingSeals.length > 0) {
     push({
       id: "seals",
       kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Certification Seals",
-      sub: "Every seal is earned from a system record.",
+      sub: pendingSeals.length > 0
+        ? `${view.stamps.length} of ${view.stamps.length + pendingSeals.length} earned. An unearned seal is left as an empty impression.`
+        : "Every seal is earned from a system record.",
       blocks: [
         {
           kind: "seals",
-          items: view.stamps.map((s) => ({
-            t: s.title,
-            cap: s.portal,
-            tone: s.tone as SealTone,
-            earned: true,
-          })),
+          items: [
+            ...view.stamps.map((s) => ({
+              t: s.title,
+              cap: s.portal,
+              tone: s.tone as SealTone,
+              earned: true,
+            })),
+            ...pendingSeals.map((p) => ({
+              t: p.title,
+              cap: "Outstanding",
+              tone: p.tone as SealTone,
+              earned: false,
+            })),
+          ],
         },
       ],
     });

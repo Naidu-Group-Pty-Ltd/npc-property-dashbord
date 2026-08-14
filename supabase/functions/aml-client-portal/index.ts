@@ -955,7 +955,7 @@ const __corsWrappedHandler = async (req: Request) => {
             .select('id, status, decided_at, assessor_name, reliance_agreements:agreement_id(partner_org_name, partner_org_type)')
             .eq('case_id', c.id),
           admin.schema('aml').from('partner_refresh_obligations')
-            .select('id, created_at, status').eq('case_id', c.id),
+            .select('id, created_at, status, completed_at, cancelled_at, due_at').eq('case_id', c.id),
           admin.schema('aml').from('client_requests')
             .select('id, kind, subject, status, created_at').eq('case_id', c.id)
             .order('created_at', { ascending: false }),
@@ -1043,6 +1043,9 @@ const __corsWrappedHandler = async (req: Request) => {
             })),
             refresh_obligations: (refreshObs ?? []).map((r: any) => ({
               id: r.id, created_at: r.created_at, status: r.status,
+              completed_at: r.completed_at ?? null,
+              cancelled_at: r.cancelled_at ?? null,
+              due_at: r.due_at ?? null,
             })),
             transactions: (txns ?? []).map((t: any) => ({
               id: t.id, status: t.status, settlement_date: t.settlement_date,
