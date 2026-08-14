@@ -1071,10 +1071,12 @@ refused adapter, no active template, a render that failed, a signed URL that
 will not fetch, a zero-byte body. A templated document is an improvement on a
 working path, so it may never be the reason somebody cannot get their file.
 
-Seven formats route. The metadata each `deliver*` returns — brand gaps, section
-lists, turn counts — describes the *flowing* render, so on the templated path
-it is left empty and a `templated: true` flag says why. Every caller's toast
-notes are already conditional, so they simply say less rather than saying zero.
+All eight route — seven of them by simply asking, and the Cash Flow behind the
+proof described at the end of this section. The metadata each `deliver*`
+returns — brand gaps, section lists, turn counts — describes the *flowing*
+render, so on the templated path it is left empty and a `templated: true` flag
+says why. Every caller's toast notes are already conditional, so they simply
+say less rather than saying zero.
 
 **The exceptions are documents somebody asked for by name**, and each is a
 guard rather than an oversight:
@@ -1086,16 +1088,39 @@ guard rather than an oversight:
 | Market Intelligence | `persist` is on — that writes the `pdf_storage_path` a scheduled email attaches, and the template route does not write it |
 | Commercial Capacity | `refreshAnalysis` — a request to re-run the model, which a stored-run render cannot answer |
 
-**The 10 Year Cash Flow does not route at all**, and that is the one worth
+**The 10 Year Cash Flow routes only behind a proof**, and it is the one worth
 reading twice. `requestCashFlowPdf` takes the projection *as an argument*:
 `CashFlowAnalysisModal` recomputes ten years in the browser from
 `manual_overrides` plus whatever the adviser has changed since it opened.
 `cashFlowAdapter` reads the stored `financial_calculations.projections` — a
 different series whenever an override exists, which is the normal case for the
-reports that modal is opened on. Routing it would hand a client a document
-whose numbers are not the ones the adviser was looking at while they sent it.
-A misread figure in a client's financial report is this programme's top risk
-and it outranks a nicer layout, so the format keeps its working adapter (the
-Template Library previews with it) and this surface keeps the flowing route.
-`cashFlowTemplateRouteAbsent.spec.ts` holds that decision against somebody
-pattern-matching the other seven.
+reports that modal is opened on. Asking unconditionally would hand a client a
+document whose numbers are not the ones the adviser was looking at while they
+sent it, and a misread figure in a client's financial report outranks a nicer
+layout.
+
+So `storedSeriesMatch.ts` has to name a stored scenario before the question is
+asked, and the modal then asks for *that* scenario — not the adapter's
+`moderate` default, which would typeset the wrong series of the three. The
+match is deliberately hard to satisfy, because the two mistakes are not worth
+the same: refusing a series that does match costs the legacy layout, accepting
+one that does not ships wrong figures. Equal lengths; every field both sides
+state equal in every year (`annualRent` against the wire's `rentalIncome`);
+the stored `cashFlow` equal to *the same one* of the wire's `preTaxAnnual` and
+`afterTaxAnnual` in every year, because the stored series states no tax
+treatment; and exactly one scenario matching, since the page prints the
+scenario's name and a document labelled with an assumption nobody made is
+wrong even when its figures are right.
+
+Two facts from production shape it. All 162 stored projections carry ten years
+numbered from 1 — lining up with a wire series that has already dropped its
+settlement row — and **`loanBalance` is identical across all three scenarios**,
+because amortisation does not depend on a growth assumption. A check on
+balances alone could not tell the three apart, which is why the property value,
+the rent and the cash flow are compared too. That last one is the check that
+matters most: an interest-rate override moves the cash flow and leaves the
+balances exactly where they were.
+
+`cashFlowTemplateRouteGuarded.spec.ts` asserts the request stays conditional
+and carries the matched scenario; `storedSeriesMatch.spec.ts` runs the whole
+question against a row taken verbatim from production.
