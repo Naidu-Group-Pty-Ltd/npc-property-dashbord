@@ -1,0 +1,15 @@
+name: npc_auth
+description: Native staff/portal sessions, refresh, secure storage and device seats.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+environment:
+  sdk: ^3.13.0
+dependencies:
+  http: ^1.2.0
+  meta: ^1.16.0
+  npc_core: ^0.1.0
+  npc_tenant: ^0.1.0
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  test: ^1.25.0

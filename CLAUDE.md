@@ -520,19 +520,44 @@ family** — it is what the publish path deprecates siblings by, so overloading 
 would make publishing one master deprecate the other four; family metadata lives
 in the additive `design_meta` column instead.
 
-## Mobile (Flutter) translation
-The four portals are being translated into one cross-platform Flutter app.
-[`mobile/plan.md`](./mobile/plan.md) is the master plan — architecture
-decisions, the server-side prerequisites in this repo (bearer auth for the
-cookie portals, a native Turnstile replacement, the missing account-deletion
-flow), and the store verification rule catalog for the App Store, Google
-Play **and Huawei AppGallery** (HMS devices have no Google services — the
-push/attestation abstractions are three-platform by rule). Per-portal plans
-live in `mobile/portals/*/plan.md`; listing/launch practice for all three
-stores is `mobile/store-listing/plan.md`. Two generated artefacts feed the
-Flutter workspace and must never be hand-edited: `mobile/design-tokens.json`
-(`npm run mobile:tokens`) and `mobile/api-surface.json`
-(`npm run mobile:api`); both have `:check` drift modes.
+## Mobile (Flutter)
+**Read [`mobile/ARCHITECTURE.md`](./mobile/ARCHITECTURE.md) before writing any
+Dart or touching anything mobile depends on.** It records what was measured in
+this codebase rather than assumed, and four of its findings decide the whole
+design. [`mobile/plan.md`](./mobile/plan.md) is the master plan (five apps,
+Command Centre first, the three-store rule catalog); the Flutter workspace is
+`mobile/` and `mobile/apps/command_centre/plan.md` carries the feature matrix.
+
+Five apps, not one — the Command Centre plus one per portal, sharing six
+packages. The Command Centre is **privately distributed** (Apple Business
+Manager / Play managed), which is what keeps five binaries clear of Apple
+Guideline 4.3.
+
+Four rules that bite:
+
+- **Never use `supabase.from()` for a protected table, and never expect
+  realtime.** Both projects sign ES256, so an HS256 token is rejected by
+  PostgREST and the query returns **empty rather than failing** — a screen built
+  that way looks like it works and shows nothing. Everything goes through Edge
+  Functions; live surfaces poll a stamp (`syncStamp.pure.ts` is the pattern).
+- **The backend is resolved at runtime, never compiled in.** Mission Control
+  provisions one clone per tenant, so a hardcoded Supabase URL serves exactly
+  one of them. Apps read `/.well-known/npc-mobile.json` off the tenant's own
+  subdomain, and no Mission Control credential ever reaches a device.
+- **Staff auth already works over Bearer** (`verifyAuth` accepts it, `enforceCsrf`
+  correctly stands aside for a cookieless request) — but that token lives 24
+  hours and **cannot be revoked**, so the legacy path is refused in production
+  until `mobile-auth-login` ships. Never restore a header/body session fallback
+  on the web to serve mobile: `extractSessionToken` stays cookie-only.
+- **A mobile install consumes a paid device seat** (`mission-control-devices`,
+  reused unchanged). The Starter plan allows two, so one browser plus one phone
+  is the cap.
+
+Four generated artefacts feed the workspace and must never be hand-edited —
+`design-tokens.json`, `api-surface.json` and the two `.g.dart` tables. All have
+`:check` drift modes and **all are CI gates**, along with `mobile:scope:check`,
+which fails a build that names an edge function outside its app's scope.
+Flutter's own analyze/format/test run in `.github/workflows/mobile.yml`.
 
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.

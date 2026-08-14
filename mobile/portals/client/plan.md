@@ -1,4 +1,9 @@
-# Client portal — Flutter plan (phase 1)
+# Client — Flutter app (phase 2)
+
+> **Its own binary.** Superseded architecture had one app with four portal
+> modes; the app now ships per audience (master plan `R-ARCH-1`). This is the
+> **one public consumer listing**, so its store posture leads the whole estate.
+> Read [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) before starting.
 
 The consumer-facing surface: property-buying clients tracking their purchase,
 documents, appointments and compliance steps. This is the portal App Review
@@ -20,7 +25,7 @@ Reports · Messages · Emails · Notifications · Appointments · Booking ·
 Action items · Finance hub · Lenders · Legal (+ detail) · AML ·
 Employment · Profile · Auth / AcceptInvite / Handoff.
 
-Phase-1 cut: Dashboard, Deal progress, Documents, Messages, Notifications,
+First release cut: Dashboard, Deal progress, Documents, Messages, Notifications,
 Appointments, Action items, AML, Profile, and the auth trio. The rest ships
 behind the same navigation when ready — do not stub visible dead ends
 (R-BOTH-1: no screen may dead-end).

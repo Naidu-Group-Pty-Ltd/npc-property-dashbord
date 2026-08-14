@@ -1,0 +1,26 @@
+# Flutter workspace root for the NPC mobile estate.
+#
+# Five apps (mobile/plan.md R-ARCH-1) over six shared packages, resolved as a
+# single Dart pub workspace so every member shares one lockfile and cannot
+# drift onto different versions of the same dependency.
+#
+# This tree imports nothing from `src/`. Its only inputs from the web app are
+# the two generated contracts in this directory (design-tokens.json,
+# api-surface.json), which is what keeps it extractable — see plan.md R-ARCH-5.
+name: npc_mobile_workspace
+publish_to: none
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - apps/command_centre
+  - apps/client
+  - apps/finance
+  - apps/solicitor
+  - apps/builder
+  - packages/npc_core
+  - packages/npc_tenant
+  - packages/npc_auth
+  - packages/npc_api
+  - packages/npc_design_system
+  - packages/npc_brand

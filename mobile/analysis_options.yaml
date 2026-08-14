@@ -1,0 +1,31 @@
+# Lint policy for the whole mobile workspace.
+#
+# `flutter analyze` must be clean before any PR — it is the only structural
+# verification available in the cloud dev environment (ARCHITECTURE.md A9),
+# so it is treated as a gate rather than as advice.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+    - windows/**
+    - macos/**
+    - linux/**
+  errors:
+    # Generated code is checked by its generator's --check mode, not by hand.
+    todo: ignore
+    # An unawaited future in an app that polls (R-ARCH-7) is a real defect.
+    unawaited_futures: error
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_print
+    - prefer_final_locals
+    - prefer_single_quotes
+    - require_trailing_commas
+    - unawaited_futures

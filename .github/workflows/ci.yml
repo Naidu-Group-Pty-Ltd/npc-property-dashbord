@@ -123,6 +123,34 @@ jobs:
       - name: Report asset drift check
         run: npm run reportkit:assets:check
 
+      # The Flutter app consumes mobile/design-tokens.json and
+      # mobile/api-surface.json as contracts. Both are generated from this repo
+      # (src/styles/*.css and the security registry), and the API surface had
+      # already drifted by 11 functions before this gate existed — a mobile
+      # client would have been generated against a surface that no longer
+      # matches what is deployed. These two checks are what make the contracts
+      # real; without them the drift is invisible until it reaches a device.
+      - name: Mobile design-token drift
+        run: npm run mobile:tokens:check
+
+      - name: Mobile API-surface drift
+        run: npm run mobile:api:check
+
+      # The Dart tables the Flutter app compiles against are generated from the
+      # two JSON contracts above. Checking only the JSON would leave the Dart
+      # free to drift from it, which is the same failure one layer down.
+      - name: Mobile Dart token drift
+        run: npm run mobile:dart:tokens:check
+
+      - name: Mobile Dart API-catalogue drift
+        run: npm run mobile:dart:api:check
+
+      # R-ARCH-4: an app may only name edge functions in its own scope. The
+      # runtime client also refuses, but a runtime refusal is a crash in front
+      # of a user — `mobileScope` exists so the check can be mechanical.
+      - name: Mobile edge-function scope
+        run: npm run mobile:scope:check
+
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)

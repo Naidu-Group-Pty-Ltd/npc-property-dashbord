@@ -1,0 +1,85 @@
+# Flutter verification for the mobile estate.
+#
+# Separate from ci.yml deliberately: Flutter brings its own toolchain, cache and
+# cadence, and the mobile tree imports nothing from `src/`. Keeping it in its
+# own workflow is what makes `mobile/` extractable later (plan.md R-ARCH-5)
+# without unpicking the web app's CI.
+#
+# The *contract* gates (token drift, API-surface drift, scope) live in ci.yml
+# instead, because they are generated from this repo and must fail whoever
+# changes the source — not only whoever touches Dart.
+#
+# Release builds are not here. An Android AAB needs signing material from the
+# release environment, and an iOS archive needs macOS (ARCHITECTURE.md A9);
+# both belong to a release workflow with the credentials to do them.
+name: Mobile (Flutter)
+
+on:
+  pull_request:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/mobile.yml'
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Analyze, format and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          # Pinned. A Flutter bump changes the analyzer's opinion and the
+          # generated Gradle config, so it is a deliberate commit, not a drift.
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - name: Resolve workspace
+        run: flutter pub get
+
+      # Zero issues, not "no errors". The lint policy in analysis_options.yaml
+      # is the only structural verification available in the cloud dev
+      # environment, so it is treated as a gate rather than as advice.
+      - name: Analyze
+        run: flutter analyze
+
+      # Two exclusions, both deliberate. Generated tables carry `dart format off`
+      # and are asserted by the `:check` modes in ci.yml. `.dart_tool/` holds
+      # build artefacts Flutter regenerates (dart_plugin_registrant.dart), which
+      # are gitignored — formatting them would fail the gate on a file nobody
+      # can commit.
+      - name: Format
+        run: |
+          dart format --set-exit-if-changed \
+            $(find apps packages -name '*.dart' \
+                -not -name '*.g.dart' \
+                -not -path '*/.dart_tool/*' \
+                -not -path '*/build/*')
+
+      - name: Test
+        run: |
+          set -e
+          for dir in packages/* apps/*; do
+            [ -d "$dir/test" ] || continue
+            echo "::group::$dir"
+            (cd "$dir" && flutter test)
+            echo "::endgroup::"
+          done
