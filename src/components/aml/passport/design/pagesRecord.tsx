@@ -19,6 +19,7 @@ import {
   type PassportTone,
 } from "./primitives";
 import type { PassportPageProps } from "./pagesJourney";
+import { PartnerDistribution } from "./PartnerDistribution";
 
 const dash = (v: string | null | undefined) => (v && v.length > 0 ? v : "—");
 
@@ -201,7 +202,7 @@ const DISCLOSURE_TONE: Record<string, PassportTone> = {
   withheld: "na",
 };
 
-export function PartnersPage({ view }: PassportPageProps) {
+export function PartnersPage({ view, caseId, isMlro, onChanged }: PassportPageProps) {
   const partners = view.partners;
   if (!partners) {
     return (
@@ -218,6 +219,21 @@ export function PartnersPage({ view }: PassportPageProps) {
         title="Partner Access"
         meta={`${partners.length} grant${partners.length === 1 ? "" : "s"}`}
       />
+
+      {/* Distribution — how a Passport REACHES a partner. The list below is
+          what has already reached one; both read the same backend, and this
+          section decides nothing on its own. */}
+      {caseId && (
+        <div className="mb-5">
+          <PartnerDistribution
+            caseId={caseId}
+            isMlro={Boolean(isMlro)}
+            onShared={onChanged}
+          />
+        </div>
+      )}
+
+      <SectionTitle>Current partner access</SectionTitle>
 
       {partners.length === 0 ? (
         <NoRecord>This Passport has not been shared with any partner.</NoRecord>

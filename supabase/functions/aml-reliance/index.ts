@@ -40,6 +40,12 @@ import {
   evaluatePartnerLinkForReliance,
 } from "../_shared/aml/relianceEligibility.ts";
 import {
+  evaluateDistribution,
+  summariseBatch,
+  type DistributionCandidate,
+  type DistributionContext,
+} from "../_shared/aml/passport/passportDistribution.pure.ts";
+import {
   DEFAULT_ALLOWED_ATTRIBUTE_CODES,
   DEFAULT_DENIED_CLASSES,
   evaluateManifestForRead,
@@ -61,6 +67,7 @@ import {
 } from "../_shared/aml/partnerEvents.ts";
 import { evaluateEvidenceObjectDelivery } from "../_shared/aml/partnerRetention.ts";
 import { buildPassportView } from "../_shared/aml/passport/passportView.pure.ts";
+import { derivePassportState } from "../_shared/aml/passport/passportState.pure.ts";
 import {
   DEFAULT_SLA_TARGETS,
   REGISTER_DEFS,
@@ -1361,6 +1368,323 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("*").eq("case_id", body.case_id).order("version", { ascending: false });
         if (error) throw error;
         return jr({ attestations: data ?? [] });
+      }
+
+      /* ── Passport partner distribution (Phase 1) ────────────────────────
+         Readiness and distribution are SERVER-DERIVED. The body names a case
+         and, optionally, which partners to consider; it can never assert that
+         a partner is eligible, that an arrangement is current, that consent
+         exists or that the Passport is issued — every one of those is read
+         from the database here and decided by
+         `passportDistribution.pure.ts`.
+
+         The distribution flag gates the WRITE path and the readiness answer.
+         With it off these operations report `distribution_disabled` and
+         nothing else in this function changes behaviour. */
+
+      case "get_passport_distribution_readiness":
+      case "get_passport_distribution_status":
+      case "share_passport_to_partner":
+      case "share_passport_to_partners": {
+        if (!isMlro) return jr({ error: "MLRO role required" }, 403);
+        const distributionEnabled = await flagEnabled(admin, "aml_passport_partner_distribution");
+        const isWrite = op === "share_passport_to_partner" || op === "share_passport_to_partners";
+        if (!distributionEnabled && isWrite) {
+          return jr({
+            error: "Passport partner distribution is not enabled for this environment.",
+            code: "distribution_disabled",
+          }, 409);
+        }
+
+        const caseId = String(body.case_id ?? "");
+        if (!caseId) return jr({ error: "case_id is required" }, 400);
+
+        const { data: caseRow } = await admin.schema("aml").from("cases")
+          .select("id, tenant_id, subject_type, status, service_gate_status")
+          .eq("id", caseId).maybeSingle();
+        if (!caseRow) return jr({ error: "Case not found" }, 404);
+        const caseTenant = caseRow.tenant_id ?? "default";
+
+        // Current, non-superseded attestation — the exact version distribution
+        // pins to (§15). Never taken from the body.
+        const { data: att } = await admin.schema("aml").from("compliance_attestations")
+          .select("id, version, payload_sha256, issued_at, superseded_at, schema_version")
+          .eq("case_id", caseId).is("superseded_at", null)
+          .order("version", { ascending: false }).limit(1).maybeSingle();
+
+        const { data: consentRow } = await admin.schema("aml").from("consents")
+          .select("id").eq("case_id", caseId).eq("kind", "compliance_sharing")
+          .order("accepted_at", { ascending: false }).limit(1).maybeSingle();
+
+        const { count: openRefresh } = await admin.schema("aml")
+          .from("partner_refresh_obligations")
+          .select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).eq("status", "open");
+
+        const attestations = att
+          ? [{ version: att.version, issued_at: att.issued_at, superseded_at: att.superseded_at }]
+          : [];
+        const passportState = derivePassportState({
+          attestations,
+          service_gate_status: caseRow.service_gate_status,
+          case_status: caseRow.status,
+          material_inputs_current: true,
+          open_refresh_obligations: openRefresh ?? 0,
+        });
+
+        // Candidate partners are the ACTIVE links on this case. A body may
+        // narrow the set but never widen it — an organisation with no link
+        // cannot be introduced by naming it.
+        const { data: linkRows } = await admin.schema("aml").from("partner_case_links")
+          .select("id, case_id, tenant_id, partner_org_id, portal_type, relationship_role, legal_route, purpose, state")
+          .eq("case_id", caseId);
+        const requested: string[] = Array.isArray(body.partner_org_ids)
+          ? body.partner_org_ids.map((v: unknown) => String(v))
+          : typeof body.partner_org_id === "string" ? [body.partner_org_id] : [];
+        const orgIds = [...new Set((linkRows ?? []).map((l: any) => l.partner_org_id).filter(Boolean))]
+          .filter((id) => requested.length === 0 || requested.includes(String(id)));
+
+        const distCtx: DistributionContext = {
+          caseId, caseTenantId: caseTenant,
+          caseSubjectType: caseRow.subject_type ?? null,
+          sharingConsentId: consentRow?.id ?? null,
+          passport: {
+            attestation: att ?? null,
+            stateCode: passportState.code,
+            openRefreshObligations: openRefresh ?? 0,
+            serviceGateStatus: caseRow.service_gate_status ?? null,
+          },
+          distributionEnabled,
+          now: new Date(),
+        };
+
+        const evaluations: Array<{ candidate: DistributionCandidate; readiness: any; agreementId: string | null }> = [];
+        for (const orgId of orgIds) {
+          const links = (linkRows ?? []).filter((l: any) => l.partner_org_id === orgId);
+          const primary = links.find((l: any) => l.state === "active") ?? links[0];
+
+          const { data: org } = await admin.schema("aml").from("partner_organisations")
+            .select("id, legal_name, status, classification_status")
+            .eq("id", orgId).maybeSingle();
+
+          const { data: membership } = await admin.schema("aml").from("partner_portal_memberships")
+            .select("id, partner_org_id, portal_type, portal_user_source, portal_user_id, status")
+            .eq("partner_org_id", orgId).eq("status", "active")
+            .limit(1).maybeSingle();
+
+          const { data: agreement } = await admin.schema("aml").from("reliance_agreements")
+            .select("id, status, next_review_due, eligibility_classification, scope_procedures, scope_customer_types, effective_from, expires_on, partner_org_id")
+            .eq("partner_org_id", orgId).eq("status", "active")
+            .order("created_at", { ascending: false }).limit(1).maybeSingle();
+
+          const { data: assessment } = agreement
+            ? await admin.schema("aml").from("arrangement_assessments")
+              .select("decision, next_due_at, status")
+              .eq("agreement_id", agreement.id).eq("status", "operative").maybeSingle()
+            : { data: null };
+
+          const { data: grant } = await admin.schema("aml").from("reliance_grants")
+            .select("id, attestation_id, expires_at, revoked_at, refresh_required_at, partner_org_id")
+            .eq("case_id", caseId).eq("partner_org_id", orgId)
+            .order("granted_at", { ascending: false }).limit(1).maybeSingle();
+
+          const { count: manifestCount } = att && grant
+            ? await admin.schema("aml").from("disclosure_manifests")
+              .select("id", { count: "exact", head: true })
+              .eq("attestation_id", att.id).eq("grant_id", grant.id).is("revoked_at", null)
+            : { count: 0 };
+
+          const [docs, checks, owners, txns, deliveries] = await Promise.all([
+            admin.schema("aml").from("documents").select("id", { count: "exact", head: true })
+              .eq("case_id", caseId).eq("status", "accepted"),
+            admin.schema("aml").from("verification_checks").select("id", { count: "exact", head: true })
+              .eq("case_id", caseId).eq("status", "passed"),
+            admin.schema("aml").from("beneficial_owners").select("id", { count: "exact", head: true })
+              .eq("entity_id", caseRow.id),
+            admin.schema("aml").from("transactions").select("id", { count: "exact", head: true })
+              .eq("case_id", caseId),
+            admin.schema("aml").from("partner_evidence_deliveries").select("id", { count: "exact", head: true })
+              .eq("case_id", caseId).eq("partner_org_id", orgId).is("revoked_at", null),
+          ]);
+
+          const candidate: DistributionCandidate = {
+            partnerOrgId: String(orgId),
+            partnerOrgName: org?.legal_name ?? null,
+            portalType: primary?.portal_type ?? null,
+            legalRoute: primary?.legal_route ?? null,
+            relationshipRole: primary?.relationship_role ?? null,
+            purpose: primary?.purpose ?? null,
+            partnerOrg: org ? { id: org.id, status: org.status } : null,
+            classificationStatus: org?.classification_status ?? null,
+            links: (links ?? []).map((l: any) => ({
+              id: l.id, case_id: l.case_id, tenant_id: l.tenant_id,
+              partner_org_id: l.partner_org_id, legal_route: l.legal_route, state: l.state,
+            })),
+            membership: membership ?? null,
+            arrangement: agreement
+              ? {
+                id: agreement.id, status: agreement.status,
+                next_review_due: agreement.next_review_due,
+                eligibility_classification: agreement.eligibility_classification ?? "unassessed",
+                scope_procedures: agreement.scope_procedures ?? null,
+                scope_customer_types: agreement.scope_customer_types ?? null,
+                effective_from: agreement.effective_from ?? null,
+                expires_on: agreement.expires_on ?? null,
+                partner_org_id: agreement.partner_org_id ?? null,
+              }
+              : null,
+            assessment: assessment ?? null,
+            existingGrant: grant ?? null,
+            manifestPresent: (manifestCount ?? 0) > 0,
+            evidence: {
+              identityDocumentsAccepted: docs.count ?? 0,
+              verificationPassed: checks.count ?? 0,
+              addressEvidenceAccepted: 0,
+              entityEvidenceAccepted: caseRow.subject_type === "individual" ? 0 : (docs.count ?? 0),
+              ownershipRecords: owners.count ?? 0,
+              authorityRecords: 0,
+              transactionRecords: txns.count ?? 0,
+              deliveriesToPartner: deliveries.count ?? 0,
+            },
+          };
+          evaluations.push({
+            candidate,
+            readiness: evaluateDistribution(distCtx, candidate),
+            agreementId: agreement?.id ?? null,
+          });
+        }
+
+        if (op === "get_passport_distribution_readiness" || op === "get_passport_distribution_status") {
+          return jr({
+            enabled: distributionEnabled,
+            passport: {
+              attestation_id: att?.id ?? null,
+              version: att?.version ?? null,
+              payload_sha256: att?.payload_sha256 ?? null,
+              issued_at: att?.issued_at ?? null,
+              state: passportState,
+            },
+            partners: evaluations.map((e) => e.readiness),
+            summary: summariseBatch(evaluations.map((e) => e.readiness)),
+          });
+        }
+
+        /* Write path. Each partner is executed independently: one failure
+           never reports another as shared, and an ALREADY_CURRENT partner is
+           a no-op rather than a duplicate grant (§10). */
+        const outcomes: any[] = [];
+        for (const e of evaluations) {
+          const r = e.readiness;
+          if (!r.ready) {
+            outcomes.push({
+              partner_org_id: r.partner.org_id, state: r.state, shared: false,
+              blockers: r.blockers, messages: r.messages,
+            });
+            continue;
+          }
+          if (r.state === "ALREADY_CURRENT") {
+            outcomes.push({
+              partner_org_id: r.partner.org_id, state: "ALREADY_CURRENT", shared: false,
+              grant_id: e.candidate.existingGrant?.id ?? null,
+              note: "This partner already holds the current Passport version.",
+            });
+            continue;
+          }
+          if (!e.agreementId) {
+            // Non-reliance routes carry no arrangement, so there is no grant
+            // to create here. Phase 2 wires their portal surface; Phase 1
+            // reports the readiness rather than inventing a record.
+            outcomes.push({
+              partner_org_id: r.partner.org_id, state: r.state, shared: false,
+              code: "route_not_grant_backed",
+              note: `The ${r.legal_route} route does not create a reliance grant. Readiness is recorded; portal delivery follows in Phase 2.`,
+            });
+            continue;
+          }
+
+          const { data: existing } = await admin.schema("aml").from("reliance_grants")
+            .select("id").eq("case_id", caseId)
+            .eq("partner_org_id", r.partner.org_id)
+            .eq("attestation_id", att!.id).is("revoked_at", null)
+            .limit(1).maybeSingle();
+          if (existing) {
+            outcomes.push({
+              partner_org_id: r.partner.org_id, state: "ALREADY_CURRENT",
+              shared: false, grant_id: existing.id,
+            });
+            continue;
+          }
+
+          const rawToken = `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, "");
+          const grantInsert: Record<string, unknown> = {
+            case_id: caseId, agreement_id: e.agreementId, attestation_id: att!.id,
+            consent_id: distCtx.sharingConsentId,
+            access_token_hash: await sha256Hex(rawToken),
+            granted_by: userId,
+            expires_at: new Date(Date.now() + GRANT_TTL_DAYS * 864e5).toISOString(),
+            partner_org_id: r.partner.org_id,
+          };
+          const activeLink = e.candidate.links.find((l) => l.state === "active");
+          if (activeLink) grantInsert.partner_case_link_id = activeLink.id;
+          const { data: grant, error: grantError } = await admin.schema("aml")
+            .from("reliance_grants").insert(grantInsert).select("*").single();
+          if (grantError) {
+            outcomes.push({
+              partner_org_id: r.partner.org_id, state: "ACTION_REQUIRED", shared: false,
+              code: "grant_write_failed",
+            });
+            continue;
+          }
+
+          if ((att!.schema_version ?? 1) === 2 && await attestationV2Enabled(admin)) {
+            const manifestScope = {
+              allowed_attribute_codes: DEFAULT_ALLOWED_ATTRIBUTE_CODES,
+              allowed_record_classes: [] as string[],
+              denied_classes: DEFAULT_DENIED_CLASSES,
+            };
+            const manifestSha = await sha256HexCanonical({
+              ...manifestScope, attestation_id: att!.id, grant_id: grant.id, version: 1,
+            });
+            await admin.schema("aml").from("disclosure_manifests").insert({
+              attestation_id: att!.id, grant_id: grant.id,
+              partner_org_id: r.partner.org_id,
+              partner_case_link_id: activeLink?.id ?? null,
+              purpose: "passport_distribution",
+              consent_id: distCtx.sharingConsentId,
+              ...manifestScope,
+              manifest_sha256: manifestSha,
+              expires_at: grant.expires_at,
+              created_by: userId,
+            });
+          }
+
+          await appendCaseEvent(admin, caseId, "mlro_decision",
+            `Passport v${att!.version} distributed to ${r.partner.org_name} (${r.legal_route})`,
+            {
+              grant_id: grant.id, agreement_id: e.agreementId,
+              attestation_id: att!.id, attestation_version: att!.version,
+              partner_org_id: r.partner.org_id, legal_route: r.legal_route,
+              evidence_classes: r.evidence.available,
+            }, userId, userEmail);
+
+          outcomes.push({
+            partner_org_id: r.partner.org_id, state: "CURRENTLY_SHARED", shared: true,
+            grant_id: grant.id, attestation_version: att!.version,
+            access_token: rawToken,
+            evidence_classes: r.evidence.available,
+          });
+        }
+
+        return jr({
+          passport: { attestation_id: att?.id ?? null, version: att?.version ?? null },
+          outcomes,
+          summary: {
+            total: outcomes.length,
+            shared: outcomes.filter((o) => o.shared).length,
+            already_current: outcomes.filter((o) => o.state === "ALREADY_CURRENT").length,
+            blocked: outcomes.filter((o) => !o.shared && o.state !== "ALREADY_CURRENT").length,
+          },
+        });
       }
 
       case "get_passport_view": {

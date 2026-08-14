@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { ShieldCheck } from "lucide-react";
 import { StampSeal } from "@/components/aml/passport/StampSeal";
 import { shortFingerprint } from "@/lib/aml/passport";
+import { routeExplanation, routeHeadline } from "@/lib/aml/passport/distributionPresentation.pure";
 import type { PassportStamp } from "@/lib/aml/passport";
 import type { PartnerPortalAdapter } from "./types";
 import type { PartnerWorkspaceDto } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
@@ -77,6 +78,17 @@ export function PartnerPassportStrip({
           {shortFingerprint(att.sha256) ? (
             <span className="font-mono" title={att.sha256}>{shortFingerprint(att.sha256)}</span>
           ) : null}
+        </div>
+        {/* The legal basis, stated. A partner must never have to infer whether
+            it may rely, and a generic blanket-approval label would say nothing
+            about the basis on which this organisation is entitled to act. The
+            route is already in the DTO this portal lawfully receives; naming it
+            discloses nothing new and is read, never derived here. */}
+        <div className="mt-1.5 text-xs opacity-90">
+          <span className="font-semibold uppercase tracking-[0.12em]">
+            {routeHeadline(workspace.link.legal_route)}
+          </span>
+          <span className="ml-2 opacity-90">{routeExplanation(workspace.link.legal_route)}</span>
         </div>
         {det?.refresh_required ? (
           <p className="mt-1.5 text-xs opacity-90">

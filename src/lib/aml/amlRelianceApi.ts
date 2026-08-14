@@ -177,6 +177,52 @@ export interface PartnerOrgNameMapping {
   note: string | null;
 }
 
+/**
+ * Passport distribution readiness, exactly as the server derives it.
+ *
+ * `partners[]` is `DistributionReadiness` from
+ * `_shared/aml/passport/passportDistribution.pure.ts`. It is typed here
+ * through the browser mirror so the two cannot drift, and it is the ONLY
+ * source of a partner's route, blockers and evidence classes — the UI never
+ * recomputes any of them.
+ */
+export interface PassportDistributionReadinessResponse {
+  enabled: boolean;
+  passport: {
+    attestation_id: string | null;
+    version: number | null;
+    payload_sha256: string | null;
+    issued_at: string | null;
+    state: { code: string; label: string; tone: string } & Record<string, unknown>;
+  };
+  partners: import("./passport/distributionPresentation.pure").ReadinessView[];
+  summary: { total: number; ready: number; already_current: number; blocked: number };
+}
+
+/**
+ * The result of a distribution. One entry per partner considered — a bulk
+ * share never collapses to a single verdict, because one partner failing must
+ * not report the others as successful.
+ *
+ * `access_token` is the partner's raw token, returned exactly once for a
+ * newly created grant, mirroring `grant_access`. It is never re-readable.
+ */
+export interface PassportShareResponse {
+  passport: { attestation_id: string | null; version: number | null };
+  outcomes: Array<{
+    partner_org_id: string | null;
+    state: string;
+    shared: boolean;
+    code?: string | null;
+    note?: string | null;
+    grant_id?: string | null;
+    attestation_version?: number | null;
+    access_token?: string;
+    evidence_classes?: string[];
+  }>;
+  summary: { total: number; shared: number; already_current: number; blocked: number };
+}
+
 export const amlRelianceApi = {
   listAgreements: () =>
     invoke<{ agreements: RelianceAgreement[] }>({ op: "list_agreements" }),
@@ -216,6 +262,40 @@ export const amlRelianceApi = {
     invoke<{ passport: import("./passport").PassportView }>({ op: "get_passport_view", case_id }),
   listAccessLog: (case_id: string) =>
     invoke<{ access_log: any[] }>({ op: "list_access_log", case_id }),
+
+  /* ── Passport partner distribution ────────────────────────────────────
+     Readiness is SERVER-DERIVED. These calls send a case id and, at most,
+     which partners to consider — never a claim about eligibility, route,
+     arrangement currency or Passport state. The browser renders the answer
+     and re-decides nothing.
+
+     `partner_org_ids` NARROWS the evaluated set; it cannot widen it. The
+     server starts from the active partner links on the case, so naming an
+     organisation that is not linked introduces nothing. */
+
+  getPassportDistributionReadiness: (case_id: string, partner_org_ids?: string[]) =>
+    invoke<PassportDistributionReadinessResponse>({
+      op: "get_passport_distribution_readiness", case_id,
+      ...(partner_org_ids ? { partner_org_ids } : {}),
+    }),
+  getPassportDistributionStatus: (case_id: string) =>
+    invoke<PassportDistributionReadinessResponse>({
+      op: "get_passport_distribution_status", case_id,
+    }),
+  /** Distributes to one partner. Returns that partner's individual outcome. */
+  sharePassportToPartner: (case_id: string, partner_org_id: string) =>
+    invoke<PassportShareResponse>({
+      op: "share_passport_to_partner", case_id, partner_org_id,
+    }),
+  /**
+   * Distributes to every eligible linked partner, or to the named subset.
+   * Outcomes are per partner: one failure never reports another as shared.
+   */
+  sharePassportToPartners: (case_id: string, partner_org_ids?: string[]) =>
+    invoke<PassportShareResponse>({
+      op: "share_passport_to_partners", case_id,
+      ...(partner_org_ids ? { partner_org_ids } : {}),
+    }),
 
   /* ── canonical partner identity (Phase 1) ─────────────────────────────── */
 

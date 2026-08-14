@@ -30,6 +30,18 @@ export type PassportPageProps = {
   onOpenBooklet?: () => void;
   /** Stamps page only — opens the record a seal was earned from. */
   onOpenStamp?: (code: string) => void;
+  /**
+   * Partner Access page only — the case the Passport belongs to, the viewer's
+   * MLRO standing, and a way to refetch after a distribution.
+   *
+   * Optional because eleven of the twelve pages are pure functions of the
+   * projection and must stay that way. Distribution is the one page that acts
+   * as well as reads, and it still decides nothing itself — every answer comes
+   * from the server.
+   */
+  caseId?: string;
+  isMlro?: boolean;
+  onChanged?: () => void;
 };
 
 const dash = (v: string | null | undefined) => (v && v.length > 0 ? v : "—");
