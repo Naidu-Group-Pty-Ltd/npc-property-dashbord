@@ -122,7 +122,10 @@ function borrowingData(row: any): Record<string, any> {
 
 function portfolioData(row: any): Record<string, any> {
   const data: Record<string, any> = { report: {}, analysis: row, brand: {} };
-  applyPortfolioProjection(data, row);
+  // The client's newest completed review, joined exactly as
+  // `render-portfolio-review-pdf` joins it — the fixture carries the real one,
+  // so the review, scenario and verdict-score pages render and are measured.
+  applyPortfolioProjection(data, row, ROWS.portfolio_review ?? null);
   applyOrganisationProjection(data, ORG as any, MARKS);
   return data;
 }

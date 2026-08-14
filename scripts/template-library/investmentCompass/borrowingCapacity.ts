@@ -67,6 +67,7 @@ import {
   furniture,
   kpiCapacity,
   kpis,
+  oneOf,
   page,
   prose,
   recommendation,
@@ -76,7 +77,6 @@ import {
   textHeight,
   verdict,
   withFurniture,
-  type FlowItem,
   type KpiItem,
   type PageDef,
 } from './blocks';
@@ -181,27 +181,6 @@ const SUMMARY_KPIS: KpiItem[] = [
     note: '{{loan.interestRate | percent}} + {{loan.bufferRate | percent}} buffer',
   },
 ];
-
-/**
- * Draw one of several depths of the same block at one position, under
- * mutually exclusive conditionals — the comparison ranking table's pattern,
- * named. A table or a definition list prints every declared row whether or
- * not its bindings resolve, so one depth sized for the deepest report rules
- * off empty rows beneath the median one, and a depth sized for the median
- * silently drops the deep report's tail. With variants, one renders and the
- * others do not exist. The reserved height is the deepest variant's, so
- * whatever follows clears whichever renders.
- */
-function oneOf(...variants: Array<{ when: string; item: FlowItem }>): FlowItem {
-  return {
-    height: Math.max(...variants.map((v) => v.item.height)),
-    block: (y) => variants.map(({ when, item }) => {
-      const b = item.block(y);
-      const one = Array.isArray(b) ? b[0] : b;
-      return { ...one, conditional: when };
-    }),
-  };
-}
 
 function buildTemplate(family: DesignFamily, variant: VariantDefinition): CompassSeedTemplate {
   const manifest = resolveManifest(family, variant);

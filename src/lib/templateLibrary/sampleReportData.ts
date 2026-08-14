@@ -1261,6 +1261,153 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       headline: 'Diversify the next purchase by geography',
       body: 'Concentration is now the largest uncompensated risk in the portfolio.',
     },
+
+    // ── The legacy document's sections, as the projection publishes them ───
+    //
+    // Everything below mirrors what `projectPortfolioDocument` composes from a
+    // stored report and its review, so the cascade pages preview with real
+    // shapes. The overview is `describePortfolio`'s own sentence built from
+    // the totals above; the figures reconcile line by line.
+    overview:
+      '4 properties worth $3,410,000, carrying $2,088,000 of debt against $1,322,000 of '
+      + 'equity, and costs $1,183 a month to hold. Overall health is assessed as moderate.',
+    composition: {
+      paragraphs: [
+        'Two apartments and two houses, weighted to houses by value — a mix that favours land '
+        + 'over yield, which is consistent with the growth-led strategy on file.',
+        'Four-fifths of the value sits inside one inner-west postcode ring, so the portfolio '
+        + 'moves with a single market rather than averaging several.',
+      ],
+      groups: [{
+        label: 'What we recommend',
+        items: [
+          'Diversify the next purchase by geography',
+          'Hold the current house-to-apartment mix otherwise',
+        ],
+      }],
+    },
+    market: {
+      paragraphs: [
+        'The inner-west market is mid-cycle: prices have recovered their 2024 drawdown, '
+        + 'stock remains a fifth below the ten-year average, and days on market are falling.',
+        'This portfolio entered before the recovery, so its holdings carry the growth rather '
+        + 'than chasing it — the positioning question is concentration, not timing.',
+      ],
+      facts: [
+        {
+          label: 'Lending environment',
+          value: 'Serviceability buffers remain at 3%, and investor credit growth is running '
+            + 'ahead of owner-occupier for the first time since 2022.',
+        },
+        {
+          label: 'RBA outlook',
+          value: 'Market pricing implies one further cut this cycle; the projection assumes '
+            + 'rates flat from here, which is the conservative reading.',
+        },
+      ],
+    },
+    growth: {
+      groups: [
+        { label: 'The next purchase', items: [
+          'A yield-led acquisition outside the inner west would lift income and cut concentration in one move.',
+          'Borrowing capacity supports one further purchase at the current LVR.',
+        ] },
+        { label: 'Releasing equity', items: [
+          'The Dulwich Hill holding could release around $160,000 at an 80% LVR.',
+        ] },
+        { label: 'Refinancing', items: [
+          'The Newtown facility rolls off its fixed rate in November and should go to market.',
+        ] },
+        { label: 'Optimising what you hold', items: [
+          'A depreciation schedule for the Leichhardt purchase is outstanding.',
+          'Rent on the Lewisham unit sits eight per cent under market.',
+        ] },
+      ],
+    },
+    verdicts: {
+      rowCount: 4,
+      rows: [
+        {
+          address: '7 Wardell Road, Dulwich Hill', rating: 'Strong', scoreLabel: '84',
+          reviewClassification: 'Star',
+          recommendation: 'Hold. Release equity here first if the next purchase proceeds — the '
+            + 'lowest LVR in the portfolio and the strongest cash position.',
+        },
+        {
+          address: '12/3 Denison Road, Lewisham', rating: 'Good', scoreLabel: '76',
+          reviewClassification: 'Good',
+          recommendation: 'Hold and lift the rent to market at the next review.',
+        },
+        {
+          address: '9/44 Regent Street, Newtown', rating: 'Good', scoreLabel: '71',
+          reviewClassification: 'Good',
+          recommendation: 'Refinance off the expiring fixed rate before November.',
+        },
+        {
+          address: '14 Marlborough Street, Leichhardt', rating: 'Underperforming', scoreLabel: '58',
+          reviewClassification: 'Underperformer',
+          recommendation: 'Review against the original thesis at year end; the shortfall is '
+            + 'funded from salary and the growth case has two years to show.',
+        },
+      ],
+    },
+    projection: {
+      yearsLabel: '10 years',
+      valueLabel: '$5,560,000',
+      equityLabel: '$3,470,000',
+      cashflowLabel: '$2,150/mo',
+      summary: 'If growth holds at the assumed rates, the debt stays static while the value '
+        + 'compounds — the portfolio turns cash-positive in year six as rents catch up.',
+      assumptions: [
+        '5.2% capital growth, weighted to the house holdings',
+        '3.1% rental growth across the portfolio',
+        'Interest rates flat from here',
+        'No further purchases or sales in the window',
+        'Vacancy at the current 2% through the period',
+      ],
+    },
+    capacity: {
+      estimatedLabel: '$2,900,000',
+      deployedLabel: '$2,088,000',
+      availableLabel: '$812,000',
+      utilisationLabel: '72.0%',
+      commentary: 'Roughly a quarter of assessed capacity remains available — enough for one '
+        + 'further acquisition at the current deposit profile without touching existing equity.',
+    },
+    scenarios: {
+      rows: [
+        { name: '+1% Interest Rate', description: 'Impact of a 1% rate rise on the portfolio',
+          changeLabel: '-$1,189/mo', resultLabel: '-$2,372/mo' },
+        { name: 'Vacancy — 3 months', description: 'One holding vacant for a quarter',
+          changeLabel: '-$975/mo', resultLabel: '-$2,158/mo' },
+        { name: 'Rent to market', description: 'Lewisham and Newtown rents lifted to market',
+          changeLabel: '+$310/mo', resultLabel: '-$873/mo' },
+        { name: 'Sell the drag', description: 'Leichhardt sold and debt retired',
+          changeLabel: '+$1,790/mo', resultLabel: '$607/mo' },
+      ],
+    },
+    review: {
+      statusLabel: 'Completed',
+      reviewedOn: '2026-08-02T00:00:00.000Z',
+      nextReviewDue: '2027-08-02T00:00:00.000Z',
+      riskLevel: 'Medium',
+      summary: 'Portfolio review completed with an overall score of 62/100 — sound growth '
+        + 'position, cash flow the binding constraint.',
+      scores: [
+        { label: 'Overall', scoreLabel: '62' },
+        { label: 'Portfolio health', scoreLabel: '68' },
+        { label: 'Cash flow', scoreLabel: '41' },
+        { label: 'Growth potential', scoreLabel: '79' },
+        { label: 'Data completeness', scoreLabel: '92' },
+      ],
+      findings: [
+        'Portfolio consists of 4 properties worth $3,410,000',
+        'Current LVR: 61.2%',
+        'Net cash position: -$1,183 a month',
+        'Concentration: all holdings inside 6km',
+        'One fixed rate expiring inside 90 days',
+      ],
+    },
   },
 
   ranking: [

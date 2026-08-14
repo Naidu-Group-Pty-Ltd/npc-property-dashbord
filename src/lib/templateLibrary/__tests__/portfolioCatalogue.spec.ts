@@ -23,7 +23,7 @@ import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-libra
 import { BORROWING_CAPACITY_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/borrowingCapacity';
 import { SEED_TEMPLATES } from '../../../../scripts/template-library/templates';
 import { deriveEntryFacts } from '../../../../supabase/functions/_shared/templateLibraryCore.pure';
-import { projectPortfolio } from '../../../../supabase/functions/_shared/portfolioProjection.pure';
+import { applyPortfolioProjection, projectPortfolio } from '../../../../supabase/functions/_shared/portfolioProjection.pure';
 import { colourwaysForFamily, colourwayTokenOverride } from '../colourways';
 import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
 
@@ -74,11 +74,135 @@ describe('the catalogue', () => {
       expect(() => parseTemplate(t.schema), t.name).not.toThrow();
     }
   });
+
+  it('carries the legacy document sections, every one conditional', () => {
+    // The spine order and presence rates are `sections.pure.ts`'s own:
+    // composition, verdicts, projection and growth on all 21 stored reports,
+    // market and capacity on 9, the review and its scenarios on 20. Each page
+    // is conditional on the projection having published its namespace, so a
+    // thinner analysis renders a thinner document rather than empty furniture.
+    const CASCADE = [
+      'What the portfolio is made of',
+      'How each property is performing',
+      'What each property needs',
+      'Borrowing capacity and headroom',
+      'Market conditions',
+      'Your position in it',
+      'The ten-year outlook',
+      'What the projection assumes',
+      'Growth opportunities',
+      'Growth opportunities, continued',
+      'Scenarios',
+      'This review',
+    ];
+    for (const t of PORTFOLIO_TEMPLATES) {
+      const pages = t.schema.pages as any[];
+      for (const name of CASCADE) {
+        const page = pages.find((p) => p.name === name);
+        expect(page, `${t.name} lacks the "${name}" page`).toBeTruthy();
+        expect(String((page as any).conditional ?? ''), `${t.name} "${name}" is unconditional`)
+          .not.toBe('');
+      }
+    }
+  });
+
+  it('writes every conditional as an expression that actually evaluates', () => {
+    /*
+     * A conditional is JavaScript, not a binding path — `groups.0.items` is a
+     * SyntaxError there, and a conditional that throws at construction is
+     * logged once and answers false forever: the page is silently dark on
+     * every render, which is how two market pages shipped dark the first time
+     * this catalogue was measured. Constructing each expression is the whole
+     * test.
+     */
+    const seen = new Set<string>();
+    for (const t of PORTFOLIO_TEMPLATES.slice(0, 5)) {
+      const collect = (node: any) => {
+        if (!node || typeof node !== 'object') return;
+        if (typeof node.conditional === 'string') seen.add(node.conditional);
+        for (const v of Object.values(node)) {
+          if (Array.isArray(v)) v.forEach(collect);
+          else collect(v);
+        }
+      };
+      (t.schema.pages as any[]).forEach(collect);
+    }
+    expect(seen.size).toBeGreaterThan(10);
+    for (const cond of seen) {
+      expect(
+        () => new Function('portfolio', 'properties', 'summary', 'actions', 'client', 'org', 'report', `return (${cond});`),
+        `does not parse: ${cond}`,
+      ).not.toThrow();
+    }
+  });
+
+  it('draws every variable-depth table under mutually exclusive depths', () => {
+    /*
+     * Depth variants share a page and a position; for any count the
+     * projection can publish, exactly one may hold while the page shows —
+     * two holding prints tables over each other, none drops the section.
+     * Groups are recovered from the schema itself: block conditionals on the
+     * same page guarding the same `.length` path are one variant set.
+     */
+    const materialise = (path: string, n: number) => {
+      const root: Record<string, any> = {};
+      let cur: any = root;
+      const segs = path.split(/\.|(?=\[)/).flatMap((s) => s.split(/[[\]]/).filter(Boolean));
+      for (let i = 0; i < segs.length; i += 1) {
+        const seg = segs[i];
+        const last = i === segs.length - 1;
+        const nextNumeric = !last && /^\d+$/.test(segs[i + 1]);
+        if (last) cur[seg] = Array.from({ length: n }, () => ({ items: [] }));
+        else if (/^\d+$/.test(seg)) { /* index handled by parent */ }
+        else if (nextNumeric) {
+          const idx = Number(segs[i + 1]);
+          const arr: any[] = Array.from({ length: idx + 1 }, () => ({}));
+          cur[seg] = arr; cur = arr[idx]; i += 1;
+        } else { cur[seg] = {}; cur = cur[seg]; }
+      }
+      return root;
+    };
+    const evalWith = (cond: string, env: Record<string, any>) => {
+      try {
+        const fn = new Function('portfolio', 'properties', 'summary', 'actions', `return (${cond});`);
+        return Boolean(fn(env.portfolio, env.properties, env.summary, env.actions));
+      } catch { return false; }
+    };
+    for (const t of PORTFOLIO_TEMPLATES.slice(0, 5)) {
+      for (const page of t.schema.pages as any[]) {
+        const groups = new Map<string, string[]>();
+        for (const b of (page.blocks ?? []) as any[]) {
+          const cond = String(b.conditional ?? '');
+          const m = cond.match(/([a-zA-Z_][a-zA-Z0-9_.[\]]*)\.length/);
+          if (!m) continue;
+          groups.set(m[1], [...(groups.get(m[1]) ?? []), cond]);
+        }
+        for (const [path, conds] of groups) {
+          if (conds.length < 2) continue;
+          for (let n = 1; n <= 8; n += 1) {
+            const env = materialise(path, n);
+            const pageShown = page.conditional ? evalWith(String(page.conditional), env) : true;
+            const holding = conds.filter((cond) => evalWith(cond, env));
+            if (pageShown) {
+              expect(holding.length, `${t.name} "${page.name}" ${path} n=${n}`).toBe(1);
+            }
+          }
+        }
+      }
+    }
+  });
 });
 
 describe('every bound figure has a source', () => {
-  /** What the projection publishes for a fully-populated stored report. */
-  const projected = projectPortfolio({
+  /**
+   * The whole apply over a fully-populated stored report and its review —
+   * document sections included, so the leaf check below covers the legacy
+   * pages too. Trailing array indexes are not normalised by that check, so
+   * every list is fixture-populated to the deepest index a master binds:
+   * eight projection assumptions, five findings, three composition
+   * recommendations, two paragraphs and facts, one note.
+   */
+  const projected = applyPortfolioProjection({}, {
     client_name: 'Example Client',
     health_score: 68, overall_health: 'Moderate',
     portfolio_value: 3410000, total_equity: 1322000, total_properties: 4,
@@ -90,6 +214,9 @@ describe('every bound figure has a source', () => {
         investmentCount: 3, ownerOccupiedCount: 1, averageLVR: 55.96, averageYield: 4.31,
         netMonthlyCashflow: -1183.33, totalMonthlyRentalIncome: 11691.58,
         totalMonthlyExpenses: 12874.91,
+        // False beside a counted owner-occupied holding, so the projection
+        // publishes the note the overview page binds.
+        includeOwnerOccupied: false,
         bestPerformer: { address: 'a', value: 1, net_monthly_cashflow: 1, property_type: 'House' },
         worstPerformer: { address: 'b', value: 1, net_monthly_cashflow: -1, property_type: 'House' },
       },
@@ -121,8 +248,44 @@ describe('every bound figure has a source', () => {
           priorityActions: ['a', 'b', 'c'],
           shortTerm: ['st'], mediumTerm: ['mt'], longTerm: ['lt'],
         },
+        compositionAnalysis: {
+          propertyMixAssessment: 'x', assetAllocation: 'x',
+          recommendations: ['r1', 'r2', 'r3'],
+        },
+        growthOpportunities: {
+          nextPurchaseRecommendations: ['g1', 'g2'],
+        },
+        marketConditions: {
+          marketCycleSummary: 'x', clientPositioning: 'x',
+          lendingEnvironment: 'x', rbaOutlook: 'x',
+        },
+        projections: {
+          years: 10, projectedPortfolioValue: 1, projectedEquity: 1,
+          projectedMonthlyCashflow: 1, plainEnglishSummary: 'x',
+          assumptions: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8'],
+        },
+        borrowingCapacityUtilisation: {
+          estimatedCapacity: 1, totalDebtDeployed: 1, availableCapacity: 1,
+          utilisationPercentage: 1, commentary: 'x',
+        },
+        propertyRankings: [{
+          address: 'a', rank: 1, performanceRating: 'Strong',
+          strengths: ['s'], concerns: ['c'], recommendation: 'x',
+        }],
+        propertyStrategicContext: [{
+          address: 'a', strategicRole: 'x', individualOutlook: 'x',
+        }],
       },
     },
+  }, {
+    status: 'completed', review_date: '2026-08-02T00:00:00Z', next_review_due: '2027-08-02T00:00:00Z',
+    overall_score: 55, portfolio_health: 67, cash_flow_score: 30,
+    growth_potential: 80, data_completeness_score: 97, risk_level: 'medium',
+    executive_summary: 'x',
+    key_findings: ['f1', 'f2', 'f3', 'f4', 'f5'],
+    recommendations: [{ title: 'x', category: 'x', priority: 'high', description: 'x', actionItems: ['a'] }],
+    property_scores: [{ address: 'a', classification: 'Star', overallScore: 88, strengths: ['s'], concerns: ['c'] }],
+    scenarios: [{ name: 's', description: 'd', impact: { cashFlowChange: -1, newNetCashflow: -2 } }],
   });
 
   it('binds only namespaces the projection publishes', () => {
