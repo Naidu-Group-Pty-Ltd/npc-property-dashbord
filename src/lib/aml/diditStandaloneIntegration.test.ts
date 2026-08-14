@@ -775,8 +775,10 @@ describe('an operator can tell WHICH thing is unconfigured', () => {
   });
 
   it('does not ask a Standalone deployment for hosted-only secrets', () => {
-    // There is no workflow and no webhook on this path, so reporting them
-    // would send an operator hunting for a secret that is correctly absent.
+    // There is no workflow on this path, and the synchronous response is the
+    // authoritative result — a persisted request can emit status.updated, but
+    // NPC ignores those. Reporting these would send an operator hunting for a
+    // secret that is correctly absent.
     const secrets = VERIFICATION.slice(
       VERIFICATION.indexOf('const isStandalone = capability === "idv"'),
       VERIFICATION.indexOf('const standaloneReadiness'));

@@ -37,6 +37,7 @@ import {
 import {
   diditWorkflowId, resolveTenantProvider, currentEnvironment, isStandaloneIdvProvider,
 } from '../_shared/aml/providers/index.ts';
+import { vendorDataMatches } from '../_shared/aml/providers/didit.pure.ts';
 import {
   applyDiditDecision, DiditCorrelationError,
   HOSTED_CHECK_COLUMNS, type HostedCheckRow,
@@ -62,6 +63,115 @@ function errorCategoryFor(e: DiditApiError): string {
     case 'provider_rejected_request': return 'provider_misconfigured';
     default: return 'provider_unavailable';
   }
+}
+
+/**
+ * An id NPC could plausibly have written. Read-only lookups only, and the row
+ * still has to prove it is standalone before anything is concluded from it.
+ */
+const NPC_ID = /^[0-9a-zA-Z-]{1,64}$/;
+
+interface StandaloneClassification {
+  id: string;
+  /** How confidently this was tied back to the check. Diagnostic only. */
+  correlation:
+  | 'standalone_metadata_correlated'
+  | 'standalone_metadata_uncorrelated_session'
+  | 'standalone_request_id_correlated';
+}
+
+/**
+ * Is this event a persisted STANDALONE request, and which check is it about?
+ *
+ * ## Why `provider_reference` alone could not answer this
+ *
+ * `standaloneVerification.ts` writes `provider_reference = id.requestId` — the
+ * **ID Verification** request id, and only at settlement. The other two
+ * persisted requests live in
+ * `outcome_detail.standalone.provider_request_ids.{passive_liveness,face_match}`.
+ * So a Face Match `status.updated` matched nothing at all, and an ID event
+ * racing the sequence arrived before the column was written.
+ *
+ * ## What is used instead
+ *
+ * `metadata.npc_verification_check_id` — a value NPC itself supplied on the
+ * request and Didit echoes back, inside a body whose HMAC has already been
+ * verified. It identifies the check from the first call onwards, so it does
+ * not race the sequence.
+ *
+ * This is **classification only**. Nothing here settles, and the row is
+ * returned solely so the event can be recorded against it and acknowledged.
+ * The provider check is what makes that safe: a hosted row can never be
+ * reached through this path, so this cannot become a second way to settle one.
+ *
+ * `vendor_data` and the stored request ids are checked when they are
+ * available, and recorded when they disagree — but never required. Requiring
+ * them would fail exactly the early-arrival case this exists to handle, and
+ * since the outcome is "acknowledge and do nothing", a mismatch cannot harm a
+ * customer. It is a diagnostic, not a gate.
+ */
+async function classifyStandaloneEvent(
+  // `any`, as everywhere else this schema is reached: the generated client
+  // types resolve a non-`public` schema argument to `never`.
+  admin: any,
+  args: { npcCheckId: string; sessionId: string; vendorData: unknown },
+): Promise<StandaloneClassification | null> {
+  const { npcCheckId, sessionId, vendorData } = args;
+  const COLUMNS = 'id, case_id, party_id, provider, provider_reference, outcome_detail';
+
+  type Candidate = {
+    id: string; case_id: string; party_id: string | null;
+    provider: string | null; provider_reference: string | null;
+    outcome_detail: Record<string, unknown> | null;
+  };
+
+  let candidate: Candidate | null = null;
+
+  if (NPC_ID.test(npcCheckId)) {
+    const { data } = await admin.schema('aml').from('verification_checks')
+      .select(COLUMNS).eq('id', npcCheckId).limit(1);
+    candidate = ((data ?? [])[0] ?? null) as unknown as Candidate | null;
+  }
+
+  // Fallback for an event carrying no usable metadata: the ID request id does
+  // land on `provider_reference` once the sequence settles.
+  let viaRequestId = false;
+  if (!candidate && sessionId) {
+    const { data } = await admin.schema('aml').from('verification_checks')
+      .select(COLUMNS).eq('provider_reference', sessionId).limit(1);
+    candidate = ((data ?? [])[0] ?? null) as unknown as Candidate | null;
+    viaRequestId = Boolean(candidate);
+  }
+
+  if (!candidate || !isStandaloneIdvProvider(candidate.provider ?? '')) return null;
+
+  if (viaRequestId) return { id: candidate.id, correlation: 'standalone_request_id_correlated' };
+
+  /*
+   * Corroboration, not authorisation. The session id is compared against every
+   * request id the row has recorded so far — `provider_reference` plus the
+   * three in `provider_request_ids` — and `vendor_data` against the key NPC
+   * would have minted for this case and party. Absent is normal early in the
+   * sequence; disagreeing is worth seeing in the event log.
+   */
+  const requestIds = new Set<string>();
+  if (candidate.provider_reference) requestIds.add(String(candidate.provider_reference));
+  const recorded = (candidate.outcome_detail as Record<string, any> | null)
+    ?.standalone?.provider_request_ids as Record<string, unknown> | undefined;
+  for (const value of Object.values(recorded ?? {})) {
+    if (typeof value === 'string' && value) requestIds.add(value);
+  }
+
+  const sessionKnown = requestIds.size === 0 || requestIds.has(sessionId);
+  const vendorOk = vendorData === undefined || vendorData === null
+    || vendorDataMatches(vendorData, candidate.case_id, candidate.party_id ?? null);
+
+  return {
+    id: candidate.id,
+    correlation: sessionKnown && vendorOk
+      ? 'standalone_metadata_correlated'
+      : 'standalone_metadata_uncorrelated_session',
+  };
 }
 
 Deno.serve(async (req) => {
@@ -105,6 +215,17 @@ Deno.serve(async (req) => {
   const webhookType = String(payload['webhook_type'] ?? 'unknown');
   const sessionId = String(payload['session_id'] ?? '');
   const eventEnvironment = String(payload['environment'] ?? '');
+  /*
+   * Correlation material NPC itself supplied, echoed back inside a body whose
+   * HMAC is already verified. Used ONLY to recognise and acknowledge a
+   * persisted standalone request — never to settle one. See
+   * `classifyStandaloneEvent`.
+   */
+  const eventMetadata = (payload['metadata'] ?? null) as Record<string, unknown> | null;
+  const npcCheckId = String(
+    (eventMetadata && typeof eventMetadata === 'object'
+      ? eventMetadata['npc_verification_check_id'] : '') ?? '');
+  const vendorData = payload['vendor_data'];
 
   if (!eventId || !sessionId) {
     return json({ ok: false, reason: 'missing_event_id_or_session_id' }, 400);
@@ -228,21 +349,21 @@ Deno.serve(async (req) => {
      * operator reading a log of "unknown session" for every routine
      * verification would be reading an alarm that means nothing is wrong.
      */
-    const { data: standaloneRows } = await admin.schema('aml')
-      .from('verification_checks')
-      .select('id, provider')
-      .eq('provider_reference', sessionId)
-      .limit(1);
-    const standalone = (standaloneRows ?? [])[0] as { id: string; provider: string } | undefined;
-    if (standalone && isStandaloneIdvProvider(standalone.provider)) {
+    const standalone = await classifyStandaloneEvent(admin, {
+      npcCheckId, sessionId, vendorData,
+    });
+    if (standalone) {
       await markEvent({
         verification_check_id: standalone.id,
-        error: 'standalone_session_ignored',
+        error: standalone.correlation,
         processed_at: new Date().toISOString(),
       });
       // 2xx: acknowledged, so Didit stops retrying. `processed: false` because
       // nothing was applied, and nothing ever will be from here.
-      return json({ ok: true, processed: false, reason: 'standalone_session_ignored' }, 202);
+      return json({
+        ok: true, processed: false, reason: 'standalone_session_ignored',
+        correlation: standalone.correlation,
+      }, 202);
     }
 
     // A session NPC did not create, or one whose row is gone. Accepted so it

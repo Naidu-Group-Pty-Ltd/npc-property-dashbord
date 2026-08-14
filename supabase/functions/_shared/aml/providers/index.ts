@@ -150,8 +150,10 @@ export interface HostedIdvProvider {
  * that matters most about it — that each step costs money — inside an
  * adapter that looks free.
  *
- * It is also NOT `HostedIdvProvider`: there is no session, no hosted URL, no
- * callback and no webhook. The customer never leaves NPC.
+ * It is also NOT `HostedIdvProvider`: there is no hosted workflow journey, no
+ * hosted URL and no callback, and the customer never leaves NPC. A persisted
+ * request can emit `status.updated`, but NPC acknowledges and ignores those —
+ * the synchronous response is the authoritative result.
  *
  * The provider object itself is deliberately thin: it holds the credential and
  * the thresholds and exposes the three calls. The composition rule lives in

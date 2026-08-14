@@ -17,10 +17,16 @@
  *   POST /v3/passive-liveness/ → `{ request_id, liveness: {...} }`
  *   POST /v3/face-match/       → `{ request_id, face_match: {...} }`
  *
- * There is no session, no workflow, no webhook and no `decision` — so there is
- * nothing to correlate against and nothing to re-fetch. **NPC** does the
- * roll-up, which is the point: the composition rule is ours, it is written
- * once, here, and it is covered by tests.
+ * There is no hosted workflow journey and no `decision` object — nothing to
+ * re-fetch, and **this synchronous response is the authoritative result**.
+ * NPC does the roll-up, which is the point: the composition rule is ours, it
+ * is written once, here, and it is covered by tests.
+ *
+ * `save_api_request=true` does persist each call as an API-type session, and a
+ * persisted session can emit `status.updated`. Those webhooks are
+ * acknowledged and ignored — see `didit-webhook`'s `classifyStandaloneEvent` —
+ * because settling from one would be a second authoritative path racing this
+ * response.
  *
  * ## The three rules the module serves
  *
@@ -114,10 +120,16 @@ export const COULD_NOT_RECOGNIZE_DOCUMENT = 'COULD_NOT_RECOGNIZE_DOCUMENT';
  * EXACT host matches only. A suffix rule like `.s3.amazonaws.com` would admit
  * every bucket on S3, including one an attacker can create and name in a
  * response — which is the vulnerability, not the fix.
+ *
+ * ONE entry, and only because it was observed. `verification.didit.me` was
+ * briefly listed here and has been removed: it is the API host, no persisted
+ * image URL has ever been seen pointing at it, and an allow-list entry nobody
+ * has evidence for is just widened attack surface. If the media host changes,
+ * `DIDIT_MEDIA_HOSTS` is the controlled way to say so — adding a guess here is
+ * not.
  */
 export const DEFAULT_DIDIT_MEDIA_HOSTS: readonly string[] = [
   'service-didit-verification-production-a1c5f9b8.s3.amazonaws.com',
-  'verification.didit.me',
 ];
 
 /** Hostnames that must never be fetched, whatever an allow-list says. */

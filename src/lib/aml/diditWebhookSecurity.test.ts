@@ -424,13 +424,43 @@ describe('a persisted standalone session is acknowledged and ignored', () => {
 
   it('is recognised rather than reported as an alarming unknown session', () => {
     expect(block).toContain("reason: 'standalone_session_ignored'");
-    expect(block).toContain("error: 'standalone_session_ignored'");
-    // Classified by the provider on the row, not by guessing from the payload.
-    expect(block).toContain('isStandaloneIdvProvider(standalone.provider)');
+    expect(block).toContain('classifyStandaloneEvent(admin, {');
+  });
+
+  it('correlates on the metadata NPC supplied, not on provider_reference', () => {
+    /*
+     * `provider_reference` holds ONLY the ID request id, and only from
+     * settlement onwards — so it cannot see a Face Match event at all, and an
+     * ID event can beat the write. `metadata.npc_verification_check_id` is set
+     * on the first call and echoed back inside an already-verified body.
+     */
+    const fn = receiver.slice(
+      receiver.indexOf('async function classifyStandaloneEvent('),
+      receiver.indexOf('Deno.serve('));
+    expect(fn).toContain("eq('id', npcCheckId)");
+    // The key itself is read off the verified payload in the handler.
+    expect(receiver).toContain("eventMetadata['npc_verification_check_id']");
+    // The provider on the row is what makes the classification safe: a hosted
+    // row can never be reached through this path.
+    expect(fn).toContain('isStandaloneIdvProvider(candidate.provider');
+    // Corroboration is recorded, never required — requiring it would fail the
+    // early-arrival case this exists to handle.
+    expect(fn).toContain('provider_request_ids');
+    expect(fn).toContain('vendorDataMatches(');
+    expect(fn).toContain('standalone_metadata_uncorrelated_session');
+  });
+
+  it('reads nothing but identifiers — it can never settle', () => {
+    const fn = codeOnly(receiver.slice(
+      receiver.indexOf('async function classifyStandaloneEvent('),
+      receiver.indexOf('Deno.serve(')));
+    for (const forbidden of ['update(', 'insert(', 'applyDiditDecision', 'fetchDiditDecision']) {
+      expect(fn, forbidden).not.toContain(forbidden);
+    }
   });
 
   it('acknowledges with a 2xx, so Didit stops retrying it', () => {
-    const branch = block.slice(block.indexOf('if (standalone &&'));
+    const branch = block.slice(block.indexOf('if (standalone) {'));
     expect(branch).toMatch(/return json\(\{[^}]*\}, 202\)/);
     // Never a 5xx: that is what would have it retried for ever.
     expect(branch).not.toContain('500');
@@ -438,7 +468,7 @@ describe('a persisted standalone session is acknowledged and ignored', () => {
   });
 
   it('applies nothing — no decision fetch, no settle, no outcome', () => {
-    const branch = codeOnly(block.slice(block.indexOf('if (standalone &&')));
+    const branch = codeOnly(block.slice(block.indexOf('if (standalone) {')));
     for (const forbidden of [
       'applyDiditDecision', 'fetchDiditDecision', 'canonicalOutcome',
       'attempt_consumed', 'status:', 'outcome_detail',

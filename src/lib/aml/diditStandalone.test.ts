@@ -511,10 +511,15 @@ describe('media URL allow-list', () => {
   const ALLOWED = 'https://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com'
     + '/ocr/874516ec-portrait_image-d363733e.jpg?X-Amz-Signature=abc';
 
-  it('admits the measured provider media host', () => {
+  it('admits the measured provider media host, and ONLY that', () => {
     expect(isAllowedMediaUrl(ALLOWED)).toBe(true);
-    expect(DEFAULT_DIDIT_MEDIA_HOSTS)
-      .toContain('service-didit-verification-production-a1c5f9b8.s3.amazonaws.com');
+    // Exactly one entry, and it is the host actually observed returning a
+    // persisted portrait. An entry nobody has evidence for is widened attack
+    // surface; `DIDIT_MEDIA_HOSTS` is the controlled way to add one.
+    expect([...DEFAULT_DIDIT_MEDIA_HOSTS])
+      .toEqual(['service-didit-verification-production-a1c5f9b8.s3.amazonaws.com']);
+    // The API host is NOT a media host and is not listed.
+    expect(isAllowedMediaUrl('https://verification.didit.me/ocr/portrait.jpg')).toBe(false);
   });
 
   it('refuses any other https host, however plausible', () => {

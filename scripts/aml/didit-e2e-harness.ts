@@ -565,6 +565,162 @@ await scenario('20. GET is refused', async () => {
   check('405', r.status === 405, `got ${r.status}`);
 });
 
+/* ───────────── persisted STANDALONE requests: acknowledged, ignored ─────── */
+
+/**
+ * `save_api_request=true` persists each Standalone call, and Didit emits
+ * `status.updated` for a persisted session — so this endpoint receives events
+ * for checks whose authoritative result NPC already has.
+ *
+ * These are REAL deliveries: genuinely signed, over HTTP, against the real
+ * function. What they prove is that the receiver recognises them from the
+ * metadata NPC itself supplied and then does nothing at all.
+ *
+ * `provider_reference` cannot answer this on its own, which is why these exist:
+ * the orchestrator writes only the ID request id there, and only at
+ * settlement.
+ */
+
+/** Seed the single row as a standalone check rather than a hosted one. */
+function makeStandalone(over: Row = {}) {
+  const r = row();
+  r.provider = 'didit_standalone';
+  r.provider_reference = null;
+  r.outcome_detail = {};
+  Object.assign(r, over);
+  db.provider_configs[0].provider_key = 'didit_standalone';
+  db.provider_configs[0].config = { flow: 'capture' };
+}
+
+/** Every field a standalone webhook must leave exactly as it found it. */
+function frozen() {
+  const r = row();
+  return JSON.stringify({
+    status: r.status,
+    attempt_consumed: r.attempt_consumed,
+    processing_status: r.processing_status,
+    outcome_detail: r.outcome_detail,
+  });
+}
+
+await scenario('21. Persisted standalone ID Verification event', async () => {
+  // Settled: the ID request id is on provider_reference, the other two are in
+  // outcome_detail — the shape the orchestrator actually writes.
+  makeStandalone({
+    provider_reference: 'req-id-verification',
+    outcome_detail: {
+      standalone: {
+        provider_request_ids: {
+          id_verification: 'req-id-verification',
+          passive_liveness: 'req-liveness',
+          face_match: 'req-face-match',
+        },
+      },
+    },
+  });
+  const before = frozen();
+  const r = await deliver(event('req-id-verification', {
+    metadata: { npc_verification_check_id: 'check-1', npc_capture_sequence: 1 },
+  }));
+  check('acknowledged 202', r.status === 202, `got ${r.status}`);
+  check('reason is standalone_session_ignored',
+    r.json.reason === 'standalone_session_ignored', JSON.stringify(r.json));
+  check('processed: false', r.json.processed === false);
+  check('correlated from metadata',
+    r.json.correlation === 'standalone_metadata_correlated', String(r.json.correlation));
+  check('AML state completely untouched', frozen() === before);
+  check('no decision was fetched', db.case_events.length === 0);
+});
+
+await scenario('22. Persisted standalone FACE MATCH event', async () => {
+  /*
+   * The case `provider_reference` could never have matched: the face-match
+   * request id is only ever in `outcome_detail`, never in that column.
+   */
+  makeStandalone({
+    provider_reference: 'req-id-verification',
+    outcome_detail: {
+      standalone: {
+        provider_request_ids: {
+          id_verification: 'req-id-verification',
+          passive_liveness: 'req-liveness',
+          face_match: 'req-face-match',
+        },
+      },
+    },
+  });
+  const before = frozen();
+  const r = await deliver(event('req-face-match', {
+    metadata: { npc_verification_check_id: 'check-1', npc_capture_sequence: 1 },
+  }));
+  check('acknowledged 202', r.status === 202, `got ${r.status}`);
+  check('reason is standalone_session_ignored',
+    r.json.reason === 'standalone_session_ignored', JSON.stringify(r.json));
+  check('recognised despite not being provider_reference',
+    r.json.correlation === 'standalone_metadata_correlated', String(r.json.correlation));
+  check('AML state completely untouched', frozen() === before);
+});
+
+await scenario('23. Standalone event arriving BEFORE settlement', async () => {
+  /*
+   * Mid-sequence: nothing has been written to `provider_reference` and no
+   * request ids are recorded yet. The metadata is the only thing that can
+   * identify the check, which is the whole reason it is what is used.
+   */
+  makeStandalone({ provider_reference: null, outcome_detail: {} });
+  const before = frozen();
+  const r = await deliver(event('req-liveness', {
+    metadata: { npc_verification_check_id: 'check-1', npc_capture_sequence: 1 },
+  }));
+  check('acknowledged 202', r.status === 202, `got ${r.status}`);
+  check('reason is standalone_session_ignored',
+    r.json.reason === 'standalone_session_ignored', JSON.stringify(r.json));
+  check('correlated with no stored request ids yet',
+    r.json.correlation === 'standalone_metadata_correlated', String(r.json.correlation));
+  check('status still pending', row().status === 'pending');
+  check('attempt not consumed', row().attempt_consumed === false);
+  check('AML state completely untouched', frozen() === before);
+});
+
+await scenario('24. Standalone event whose vendor_data is another applicant', async () => {
+  // A mismatch is recorded, never acted on — the outcome is the same do-nothing
+  // acknowledgement, because there is nothing here that could be abused.
+  makeStandalone({ provider_reference: 'req-id-verification' });
+  const before = frozen();
+  const r = await deliver(event('req-id-verification', {
+    vendor_data: 'npc:00000000-0000-4000-8000-000000000999:primary',
+    metadata: { npc_verification_check_id: 'check-1' },
+  }));
+  check('still acknowledged 202', r.status === 202, `got ${r.status}`);
+  check('flagged as uncorrelated',
+    r.json.correlation === 'standalone_metadata_uncorrelated_session',
+    String(r.json.correlation));
+  check('AML state completely untouched', frozen() === before);
+});
+
+await scenario('25. A session belonging to nobody is still unknown', async () => {
+  makeStandalone({ provider_reference: 'req-id-verification' });
+  const before = frozen();
+  const r = await deliver(event('a-session-npc-never-made', {
+    metadata: { npc_verification_check_id: 'no-such-check' },
+  }));
+  check('acknowledged 202', r.status === 202, `got ${r.status}`);
+  check('reason is unknown_session', r.json.reason === 'unknown_session',
+    JSON.stringify(r.json));
+  check('NOT classified as standalone', r.json.correlation === undefined);
+  check('AML state completely untouched', frozen() === before);
+});
+
+await scenario('26. A HOSTED event still settles normally', async () => {
+  // The regression guard: adding the standalone branch must not have taken
+  // anything away from the hosted path.
+  const sid = (globalThis as any).__sid;
+  const r = await deliver(event(sid));
+  check('applied', r.json.outcome === 'applied', JSON.stringify(r.json));
+  check('canonical status = passed', row().status === 'passed', `got ${row().status}`);
+  check('attempt consumed', row().attempt_consumed === true);
+});
+
 /* ──────────────────────────────── teardown ────────────────────────────── */
 
 console.log(`\n${'─'.repeat(60)}`);

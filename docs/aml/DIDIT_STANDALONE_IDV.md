@@ -50,9 +50,10 @@ customer
 ```
 
 The browser never calls Didit, never holds the key, never sees a score or a
-threshold, and never opens a window. There is no `verification_url`, no
-callback, no webhook and no SDK on this path — the authenticated response IS
-the result.
+threshold, and never opens a window. There is no hosted workflow journey on
+this path — no `verification_url`, no callback and no SDK — and the
+authenticated response IS the authoritative result. A persisted request can
+emit `status.updated`; NPC acknowledges and ignores those (below).
 
 Each request is persisted on Didit's side and visible in the Business Console
 under **Manual Checks**, grouped by the person-scoped `vendor_data`

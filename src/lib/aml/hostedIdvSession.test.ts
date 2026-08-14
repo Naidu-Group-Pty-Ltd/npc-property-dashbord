@@ -205,7 +205,7 @@ describe('a webhook for A cannot update B', () => {
 
   it('finds the row by the session NPC itself stored, never from the body', () => {
     const lookup = WEBHOOK.slice(
-      WEBHOOK.indexOf("from('verification_checks')"),
+      WEBHOOK.indexOf('const { data: checkRows }'),
       WEBHOOK.indexOf('if (!check)'));
     expect(lookup).toContain("eq('provider_reference', sessionId)");
     // Nothing in the payload names a case or a party.
@@ -221,7 +221,7 @@ describe('a webhook for A cannot update B', () => {
      * 500 and then, once Didit stopped retrying, into no outcome at all.
      */
     const lookup = WEBHOOK.slice(
-      WEBHOOK.indexOf("from('verification_checks')"),
+      WEBHOOK.indexOf('const { data: checkRows }'),
       WEBHOOK.indexOf('if (!check)'));
     expect(lookup).not.toContain('maybeSingle()');
     expect(lookup).toContain("order('superseded_at'");

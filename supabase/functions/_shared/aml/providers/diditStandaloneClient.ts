@@ -36,8 +36,9 @@
  *     NPC's private buckets are no longer the only copy — and the image fields
  *     come back as **short-lived media URLs instead of inline base64**, which
  *     is why `resolveReferenceImage` exists. The authenticated response is
- *     still the result: there is no webhook on this path and no decision to
- *     re-fetch.
+ *     still the authoritative result: there is no decision to re-fetch, and
+ *     although a persisted session can emit `status.updated`, NPC
+ *     acknowledges and ignores those rather than opening a second result path.
  *  3. **A failure is typed, never prose.** Every non-2xx becomes a
  *     `DiditStandaloneError` carrying a `StandaloneErrorCategory`, so an outage,
  *     an empty credit balance and an unreadable photograph can never be
