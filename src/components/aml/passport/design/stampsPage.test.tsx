@@ -61,7 +61,7 @@ describe('StampsPage', () => {
     // is waiting for.
     expect(screen.getAllByText('IDENTITY VERIFIED')).toHaveLength(2);
     expect(screen.getAllByText('PASSPORT ISSUED')).toHaveLength(2);
-    expect(container.querySelectorAll('.passport-seal--pending').length).toBeGreaterThan(3);
+    expect(container.querySelectorAll('.passport-stamp--pending').length).toBeGreaterThan(3);
   });
 
   it('counts the set rather than just the earned half', () => {
@@ -73,7 +73,7 @@ describe('StampsPage', () => {
     // Nothing to open — there is no record behind it. And the distinction is
     // in words, not only in the dashed border, so it survives a screen reader.
     const { container } = pageFor();
-    const pending = container.querySelector('.passport-seal--pending')!;
+    const pending = container.querySelector('.passport-stamp--pending')!;
     expect(pending.tagName).not.toBe('BUTTON');
     expect(pending.closest('button')).toBeNull();
     expect(pending.getAttribute('aria-label')).toMatch(/not yet earned/i);
@@ -81,8 +81,32 @@ describe('StampsPage', () => {
 
   it('captions each earned stamp with the portal its record came from', () => {
     const { container } = pageFor();
-    const earned = container.querySelector('.passport-seal:not(.passport-seal--pending)')!;
-    expect(within(earned.parentElement!.parentElement!).getByText('Client Portal')).toBeInTheDocument();
+    const earned = container.querySelector('.passport-stamp:not(.passport-stamp--pending)')!;
+    expect(within(earned.closest('.passport-stamp-button')!).getByText('Client Portal'))
+      .toBeInTheDocument();
+  });
+
+  it('every struck impression carries the Aurixa watermark', () => {
+    // The layer the approved design is built around, and the one the previous
+    // face omitted entirely: an impression carries the mark of the system that
+    // struck it. An unstruck die does not — nothing pressed it.
+    const { container } = pageFor();
+    const struck = container.querySelector('.passport-stamp:not(.passport-stamp--pending)')!;
+    expect(struck.querySelector('.passport-stamp__watermark'))
+      .toHaveAttribute('src', '/brand/aurixa-emblem.png');
+    expect(struck.querySelector('.passport-stamp__grain')).not.toBeNull();
+    expect(struck.querySelector('.passport-stamp__inner')).not.toBeNull();
+
+    const unstruck = container.querySelector('.passport-stamp--pending')!;
+    expect(unstruck.querySelector('.passport-stamp__watermark')).toBeNull();
+  });
+
+  it('inks a stamp by what it speaks for, in the design’s three tones', () => {
+    const { container } = pageFor();
+    // The issuer's own certification.
+    expect(container.querySelector('.passport-stamp--gold')).not.toBeNull();
+    // …and the terminal one, which the design inks green.
+    expect(container.querySelector('.passport-stamp--final')).toBeNull(); // not yet issued
   });
 
   it('says what each outstanding certification is waiting for', () => {
@@ -96,15 +120,20 @@ describe('StampsPage', () => {
         transactions: [{ id: 't1', status: 'under_contract', settlement_date: '2026-10-15T00:00:00Z' }],
       },
     });
-    expect(screen.getByText(/Settlement of the linked transaction is confirmed/)).toBeInTheDocument();
-    expect(screen.getByText(/expected/)).toBeInTheDocument();
+    // The design closes the page with its own panel for the settlement stamp,
+    // so it is drawn there rather than in the outstanding list — and it is
+    // drawn once, not in both.
+    expect(screen.getByText('Final completion stamp — awaiting settlement')).toBeInTheDocument();
+    expect(screen.getByText(/Applied on confirmed settlement, expected 15 Oct 2026/))
+      .toBeInTheDocument();
+    expect(screen.getAllByText(/TRANSACTION\s*COMPLETED/)).toHaveLength(1);
   });
 
   it('a closed case shows a finished register, not an action list', () => {
     const closed = pageFor({
       case: { ...input().case, status: 'closed', closed_at: NOW },
     });
-    expect(closed.container.querySelector('.passport-seal--pending')).toBeNull();
+    expect(closed.container.querySelector('.passport-stamp--pending')).toBeNull();
     expect(screen.queryByText(/still outstanding/)).not.toBeInTheDocument();
   });
 });
