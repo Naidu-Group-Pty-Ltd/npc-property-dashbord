@@ -284,10 +284,21 @@ stamps … render in pending style"*). It was never built.
   direction — a Passport is complete whether or not it is ever shared, so a
   pending `FINANCE PASSPORT SHARED` would invent an obligation on the officer.
 - **Nothing is shown for a dimension the engagement does not have.** An
-  individual is never offered a pending ownership seal, a case with no EDD
-  never a pending EDD seal, a case with no transaction never a pending
-  settlement. A closed case owes nothing at all — listing what a finished file
-  will never now earn reads as an open action list on a case nobody is working.
+  individual is never offered a pending ownership seal, a case with no
+  transaction never a pending settlement. A closed case — or one whose service
+  gate is terminated — owes nothing at all; listing what a finished file will
+  never now earn reads as an open action list on a case nobody is working.
+- **Applicability reads the CASE, not only its child rows.** This cost a round.
+  The first version asked "does a row exist?", and in production the answer is
+  no for almost everything: both live cases in enhanced CDD carry
+  `status = edd_required` / `case_stage = enhanced_cdd` and **zero**
+  `aml.edd_cases` rows, because the obligation is declared on the case before
+  any EDD record is opened. The register was therefore silent about the one
+  certification those cases most obviously owe. The declaration is now a
+  first-class input — and it raises **`edd_completed` alone**. Source of wealth
+  stays record-driven on purpose: it is client-visible where EDD is not, so
+  letting the declaration raise it would turn the client's own Passport into an
+  inference channel for a Command-only fact.
 - **The audience rule is identical to the earned one.** An unearned seal
   discloses as loudly as an earned one: *"ENHANCED DUE DILIGENCE COMPLETED —
   outstanding"* tells a client they are under EDD, which is exactly what
@@ -309,6 +320,40 @@ a stamp. `StampSeal` carried `org` and not `portal`.
 The booklet's Certification Seals leaf gets the same treatment. Its `seals`
 block has modelled `earned: false` since it was written and had never been
 passed one.
+
+### Two halves, two deploy routes
+
+The Passport ships by **two independent paths**: the projection lives in
+`aml-reliance` / `aml-client-portal` and reaches production through
+`deploy-supabase-functions.yml`; the page that draws it ships with the site
+build. Both are keyed to `main`.
+
+That is worth stating because it produced a confusing hour. The functions were
+deployed from a branch while the page was still `main`'s, so the API returned
+`pending_stamps` and nothing rendered it — the live page still read
+`{n} earned` and the pre-change note copy, which is exactly what the reported
+screenshot showed. Neither half is wrong on its own; a feature that spans them
+is only live when **both** are on `main`.
+
+The page is defensive about the order (`view.pending_stamps ?? []`), so either
+half may lead without breaking the other. What it cannot do is render a field
+the bundle it is built from has no code for.
+
+### What is deliberately NOT persisted
+
+Stamps are **derived on every read** and stored nowhere — there is no stamps
+table, and V1's objective is zero new Passport record tables. So "are the stamps
+persisted against the passport?" has a deliberate answer: no, and persisting
+them would be the defect. A stored stamp can outlive the record that justified
+it; a derived one cannot. The provenance a reader needs travels on the stamp
+(`source`: table + id), and the record behind it is the only thing that can be
+stale.
+
+The same choice is why refresh, re-login and redeploy are consistent by
+construction: there is no cache to invalidate and no write to miss.
+`PassportWorkspace` fetches on mount keyed to `caseId`, and both flags
+(`aml_passport_command_view`, `aml_passport_client_view`) have been on in
+production since 2026-08-13.
 
 ## Connected portals, not a portal switcher
 

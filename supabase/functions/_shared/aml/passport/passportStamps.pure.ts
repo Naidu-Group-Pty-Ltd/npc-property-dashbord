@@ -411,6 +411,17 @@ export type StampProgrammeFacts = {
   subject_type?: string | null;
   /** Case status; a closed case is no longer working toward anything. */
   case_status?: string | null;
+  /**
+   * Case stage and service gate. These are here because applicability is NOT
+   * only a question of which child rows exist. Both live cases in enhanced CDD
+   * carry `status = edd_required` / `case_stage = enhanced_cdd` and **zero**
+   * `aml.edd_cases` rows — the obligation is declared on the case before any
+   * EDD record is opened. Deriving applicability from child rows alone made
+   * the register silent about the one certification those cases most obviously
+   * owe.
+   */
+  case_stage?: string | null;
+  service_gate_status?: string | null;
 };
 
 /**
@@ -481,14 +492,20 @@ export function derivePendingStamps(
 ): PendingStamp[] {
   const has = new Set(earned.map((s) => s.code));
 
-  // A closed case is finished, whatever it did or did not collect. Listing
-  // what it will never now earn reads as an open action list on a file
-  // nobody is working.
-  if (facts.case_status === "closed") return [];
+  // A finished engagement is finished, whatever it did or did not collect.
+  // Listing what it will never now earn reads as an open action list on a file
+  // nobody is working — a closed case, or one whose service gate has been
+  // terminated, owes nothing.
+  if (facts.case_status === "closed" || facts.service_gate_status === "terminated") return [];
 
   const isEntity = ENTITY_SUBJECTS.has(String(facts.subject_type ?? "").toLowerCase()) ||
     (input.owners ?? []).length > 0;
-  const hasEdd = (input.edd_cases ?? []).length > 0;
+
+  // The case ITSELF can declare enhanced due diligence, and in production that
+  // is the only place it is declared: two live cases sit at `edd_required` /
+  // `enhanced_cdd` with no `aml.edd_cases` row at all.
+  const eddDeclared = facts.case_status === "edd_required" || facts.case_stage === "enhanced_cdd";
+  const eddRecorded = (input.edd_cases ?? []).length > 0;
   const hasSow = (input.source_of_wealth ?? []).length > 0;
 
   // A partner we shared with, who has not yet recorded a decision.
@@ -516,8 +533,14 @@ export function derivePendingStamps(
   const applies = (code: PassportStampCode): boolean => {
     switch (code) {
       case "ownership_verified": return isEntity;
-      case "source_of_wealth_reviewed": return hasSow || hasEdd;
-      case "edd_completed": return hasEdd;
+      // Deliberately RECORD-driven, and not from `eddDeclared`. Source of
+      // wealth is client-visible; enhanced due diligence is not. Letting the
+      // declared EDD state raise a client-visible item would turn the client's
+      // own Passport into an inference channel for a Command-only fact — the
+      // declaration drives `edd_completed` alone, which `client_safe: false`
+      // strips before the client ever sees it.
+      case "source_of_wealth_reviewed": return hasSow || eddRecorded;
+      case "edd_completed": return eddRecorded || eddDeclared;
       case "reliance_accepted_finance": return awaitingPartner.has("finance");
       case "reliance_accepted_solicitor": return awaitingPartner.has("solicitor");
       case "reliance_accepted_builder": return awaitingPartner.has("builder");
