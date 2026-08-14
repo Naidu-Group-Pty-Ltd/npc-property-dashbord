@@ -465,14 +465,17 @@ describe('the hosted cutover', () => {
      * that already ran must still settle the canonical record, and removing
      * them would strand it.
      *
-     * What changed at the cutover is that no customer can start or resume one.
-     * The operation still exists so a cached browser build gets a typed 409
-     * rather than an unknown-op error — see hostedIdvRetired.test.ts, which
-     * asserts the refusal precedes every other statement in it.
+     * The hosted operation was reactivated (`20260914000000`) because the
+     * Standalone APIs persist nothing on the provider's side and the business
+     * requires a Didit-side verification record — see hostedIdvSession.test.ts
+     * for the contract it now holds. The standalone adapter, its provider row
+     * and every standalone evidence row stay exactly where they are, which is
+     * what makes the switch two `UPDATE`s in either direction.
      */
     expect(REGISTRY).toContain('"didit": (opts) => makeDiditIdvProvider(opts)');
     expect(PORTAL).toContain("case 'start_hosted_verification':");
-    expect(PORTAL).toContain("code: 'hosted_flow_retired'");
+    // Both adapters stay registered; configuration decides which one runs.
+    expect(REGISTRY).toContain('didit_standalone');
   });
 
   it('refuses the older single-shot capture ops under the standalone provider', () => {
@@ -486,12 +489,14 @@ describe('the hosted cutover', () => {
     expect(doc).toContain("provider = 'didit'");
   });
 
-  it('answers the portal with `capture` and never names the integration', () => {
+  it('answers the portal with an experience word and never names the integration', () => {
     const status = PORTAL.slice(PORTAL.indexOf("case 'verification_status':"));
     const body = status.slice(0, status.indexOf("case 'start_hosted_verification':"));
-    // Unconditional since the hosted cutover — see hostedIdvRetired.test.ts.
-    expect(body).toContain("provider_flow: 'capture'");
+    // Two values, both experiences. The provider key, the workflow id and the
+    // environment stay server-side whichever integration is active.
+    expect(body).toContain("provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture'");
     expect(body).not.toContain("'didit_standalone'");
+    expect(body).not.toContain('workflow_id');
   });
 });
 

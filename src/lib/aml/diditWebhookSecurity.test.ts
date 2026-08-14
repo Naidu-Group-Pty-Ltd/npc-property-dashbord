@@ -311,10 +311,9 @@ describe('provider selection stays server-side', () => {
   });
 
   it('the browser is told only capture|hosted, never the provider key', () => {
-    // Since the hosted cutover this is unconditional: there is one customer
-    // capture experience and it is NPC's own. A tenant still configured for the
-    // retired provider is carried by `availability`, to the documentary route.
-    expect(portal).toContain("provider_flow: 'capture'");
+    // Two experience words and nothing else. Which one is server-resolved from
+    // the tenant's active provider; the browser cannot ask for the other.
+    expect(portal).toContain("provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture'");
     const statusBlock = portal.slice(
       portal.indexOf("case 'verification_status'"), portal.indexOf("case 'start_hosted_verification'"));
     expect(statusBlock).not.toContain('didit');
@@ -352,7 +351,9 @@ describe('session creation gates', () => {
   });
 
   it('uses an opaque vendor_data and internal-only metadata', () => {
-    expect(block).toContain('buildVendorData(c.id, partyId, captureSequence)');
+    // Person-scoped: internal identifiers only, and no attempt suffix — the
+    // key is what Didit groups an applicant's sessions by.
+    expect(block).toContain('buildVendorData(c.id, partyId)');
     expect(block).toContain('verification_check_id: created.id');
     // No customer identifiers travel to the provider as correlation data.
     const meta = block.slice(block.indexOf('metadata: {'), block.indexOf('});', block.indexOf('metadata: {')));

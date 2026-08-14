@@ -175,12 +175,35 @@ Deno.serve(async (req) => {
    * caller-supplied `case_id` would be an open door onto any case in the
    * system, and the payload does not get to choose which row it settles.
    */
-  const { data: checkRow } = await admin.schema('aml').from('verification_checks')
+  /*
+   * Deliberately NOT `.maybeSingle()`.
+   *
+   * `vendor_data` is person-scoped, and `POST /v3/session/` upserts on
+   * `workflow_id + vendor_data` — so one session id can legitimately be
+   * referenced by more than one NPC row: a row released as superseded (a
+   * workflow revision, a changed document choice) and the live row that
+   * replaced it both carry it. `maybeSingle()` fails outright on a second row,
+   * which would turn a real customer's outcome into a 500 and, after Didit
+   * stopped retrying, into no outcome at all.
+   *
+   * The live row is the one that may settle, so the ordering states that:
+   * un-superseded first, then most recently created. The rows are already
+   * scoped to one case and party by construction — every one of them was
+   * minted for this session — so this chooses between attempts of the same
+   * applicant, never between applicants.
+   */
+  const { data: checkRows } = await admin.schema('aml').from('verification_checks')
     .select(HOSTED_CHECK_COLUMNS)
     .eq('provider', 'didit')
     .eq('provider_reference', sessionId)
-    .maybeSingle();
-  const check = checkRow as HostedCheckRow | null;
+    .order('superseded_at', { ascending: true, nullsFirst: true })
+    .order('created_at', { ascending: false })
+    .limit(1);
+  // Through `unknown` because postgrest-js infers the row type from the literal
+  // text of the select and gives up on this one, yielding `GenericStringError`
+  // rather than a row — the reason `HOSTED_CHECK_COLUMNS` states its shape once
+  // and callers assert it.
+  const check = ((checkRows ?? [])[0] ?? null) as unknown as HostedCheckRow | null;
 
   if (!check) {
     // A session NPC did not create, or one whose row is gone. Accepted so it
