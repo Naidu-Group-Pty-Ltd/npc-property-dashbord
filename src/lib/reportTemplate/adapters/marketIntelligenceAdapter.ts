@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 import {
   buildMarketIntelligenceReport,
@@ -64,6 +64,26 @@ export const marketIntelligenceAdapter: ReportTemplateAdapter = {
       'The archetype route fits its page budget block by block against the real '
       + 'render, so it carries a long section in full. A template allocates a fixed '
       + 'number of pages per section and says on the page where one is clipped.',
+  },
+
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('marketing_intelligence_reports')
+        .select('id, report_period, generated_at')
+        .order('generated_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: row.report_period
+          ? `Market Intelligence — ${row.report_period}`
+          : 'Market Intelligence',
+        savedAt: (row.generated_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId, variant }): Promise<RoutingContext | null> {

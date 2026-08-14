@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 import {
   buildCapacitySnapshot,
@@ -117,6 +117,35 @@ export const commercialCapacityAdapter: ReportTemplateAdapter = {
       'The archetype route renders the full assessment including the method trail. '
       + 'A template carries the assessment and its analysis, and stays available for '
       + 'an assessment with a stored calculation run.',
+  },
+
+  /**
+   * Only assessments a document can be produced for: reportable status and a
+   * linked run. `isReportable` is applied here exactly as it gates the render,
+   * so the picker cannot offer a row the adapter would then decline — of the
+   * sixteen in production, three would list. Filtered after the read because
+   * the policy lives in `isReportable`, not in a status list this file would
+   * have to keep in step.
+   */
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('commercial_industrial_assessments')
+        .select('id, title, reference, status, current_calculation_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(Math.max(limit * 3, 30));
+      if (error || !data) return [];
+      return (data as Record<string, any>[])
+        .filter((row) => isReportable(row.status) && row.current_calculation_id)
+        .slice(0, limit)
+        .map((row) => ({
+          id: String(row.id),
+          label: (row.title as string) || (row.reference as string) || 'Capacity assessment',
+          savedAt: (row.created_at as string) ?? null,
+        }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {

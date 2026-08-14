@@ -30,11 +30,11 @@
 import { supabase } from '@/integrations/supabase/client';
 import { applyBorrowingCapacityProjection } from '../../../../supabase/functions/_shared/borrowingCapacityProjection.pure';
 import {
-  CLIENT_NAME_COLUMNS, type ClientNameRow,
+  CLIENT_NAME_COLUMNS, clientDisplayName, type ClientNameRow,
 } from '../../../../supabase/functions/_shared/clientName';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
 async function loadAssessment(reportId: string): Promise<Record<string, any> | null> {
@@ -79,6 +79,46 @@ export const borrowingCapacityAdapter: ReportTemplateAdapter = {
   legacyFallback: {
     label: 'Borrowing Capacity Snapshot legacy generator',
     reason: 'The jsPDF Snapshot remains the default until a template is activated for this report type.',
+  },
+
+  /**
+   * Two reads: the assessments, then one `.in()` on `clients` for the names —
+   * through `CLIENT_NAME_COLUMNS`, because this table's columns have already
+   * been misspelt into a 404 for every client once. An assessment whose client
+   * cannot be read still lists; it just lists without a name.
+   */
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('borrowing_capacity_assessments')
+        .select('id, client_id, created_at')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+
+      const clientIds = [...new Set(
+        data.map((row: Record<string, any>) => row.client_id).filter((v: unknown) => typeof v === 'string'),
+      )] as string[];
+      const names = new Map<string, string>();
+      if (clientIds.length > 0) {
+        const { data: clients } = await supabase
+          .from('clients')
+          .select(CLIENT_NAME_COLUMNS)
+          .in('id', clientIds);
+        for (const c of (clients ?? []) as Array<ClientNameRow & { id: string }>) {
+          const name = clientDisplayName(c);
+          if (name) names.set(c.id, name);
+        }
+      }
+
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: names.get(String(row.client_id)) ?? 'Borrowing capacity assessment',
+        savedAt: (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {

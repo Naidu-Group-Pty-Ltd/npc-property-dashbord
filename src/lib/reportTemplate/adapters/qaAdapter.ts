@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 import {
   buildReportQaDocument,
@@ -72,6 +72,27 @@ export const qaAdapter: ReportTemplateAdapter = {
       'The flowing route paginates a conversation of any length. A template is a '
       + 'fixed page sequence and carries the first exchanges, so it stays the '
       + 'default for a long transcript.',
+  },
+
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('report_qa_conversations')
+        .select('id, title, created_at')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      // A conversation with no assistant turn will decline at selection — the
+      // binding context returns null — which is honest enough for a picker;
+      // filtering here would cost a message count per row.
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: (row.title as string) || 'Report Q&A',
+        savedAt: (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId, variant }): Promise<RoutingContext | null> {

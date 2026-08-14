@@ -31,9 +31,12 @@
 import { supabase } from '@/integrations/supabase/client';
 import { buildClientDetails } from '@/lib/reports/clientDetails/normalise.pure';
 import { applyClientDetailsProjection } from '../../../../supabase/functions/_shared/clientDetailsProjection.pure';
+import {
+  CLIENT_NAME_COLUMNS, clientDisplayName, type ClientNameRow,
+} from '../../../../supabase/functions/_shared/clientName';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
 interface ClientRecord {
@@ -92,11 +95,23 @@ async function loadClientRecord(clientId: string): Promise<ClientRecord | null> 
   };
 }
 
-/** Just the client row, for routing — nine reads to decide a title is waste. */
+/**
+ * Just the client row, for routing — nine reads to decide a title is waste.
+ *
+ * The name columns come from `CLIENT_NAME_COLUMNS` and nowhere else. This
+ * function shipped selecting `first_name, last_name`, and **neither column
+ * exists on `clients`** — the table stores `primary_first_name` /
+ * `primary_surname`. PostgREST answered `42703` for the whole statement, the
+ * error branch returned null, and routing declined every client in the
+ * database: the format's fifty masters were unreachable through the product
+ * path while `buildBindingContext` (which selects `*`) worked in every
+ * harness. The same misspelling 404'd `render-borrowing-capacity-pdf` for
+ * every client once before, which is exactly why that constant exists.
+ */
 async function loadClientRow(clientId: string): Promise<Record<string, any> | null> {
   const { data, error } = await supabase
     .from('clients')
-    .select('id, first_name, last_name, updated_at, created_at')
+    .select(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`)
     .eq('id', clientId)
     .maybeSingle();
   if (error || !data) return null;
@@ -115,11 +130,28 @@ export const clientDetailsAdapter: ReportTemplateAdapter = {
       + 'this migration’s value.',
   },
 
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`)
+        .order('updated_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      return (data as Array<ClientNameRow & Record<string, any>>).map((row) => ({
+        id: String(row.id),
+        label: clientDisplayName(row) || 'Client',
+        savedAt: (row.updated_at as string) ?? (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
+  },
+
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {
     const row = await loadClientRow(reportId);
     if (!row) return null;
-    const name = [row.first_name, row.last_name]
-      .map((p) => String(p ?? '').trim()).filter(Boolean).join(' ');
+    const name = clientDisplayName(row as ClientNameRow);
     return {
       reportId,
       reportType: 'client_details',

@@ -1,0 +1,232 @@
+/**
+ * The adapters' report listers, and the routing read they exposed.
+ *
+ * `listRecentReports` is what generalised the template preview's real-data
+ * picker: it was hard-wired to `investment_reports` for as long as the adapter
+ * interface could not list, so eight of the nine production formats' templates
+ * could only ever be previewed against sample data. Each lister here is pinned
+ * to its own table, its own label column, and `[]` on error.
+ *
+ * The second half pins a bug this work surfaced. `clientDetailsAdapter`'s
+ * routing read selected `first_name, last_name` — **neither column exists on
+ * `clients`**, which stores `primary_first_name` / `primary_surname` — so
+ * PostgREST answered `42703`, routing declined every client in the database,
+ * and the format's fifty masters were unreachable through the product path
+ * while `buildBindingContext` (`select('*')`) worked in every harness. The
+ * same misspelling once 404'd `render-borrowing-capacity-pdf` for every
+ * client; `CLIENT_NAME_COLUMNS` exists so there cannot be a fourth spelling,
+ * and the assertion here is that the routing read uses it.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+interface QueryLog {
+  table: string;
+  select: string | null;
+  eq: Array<[string, unknown]>;
+  in: Array<[string, unknown[]]>;
+  not: Array<[string, string, unknown]>;
+  order: Array<[string, Record<string, unknown>]>;
+  limit: number | null;
+}
+
+const harness: {
+  rows: Record<string, Array<Record<string, unknown>>>;
+  errors: Record<string, { message: string } | null>;
+  queries: QueryLog[];
+  secure: { data: unknown; error: unknown };
+  secureCalls: Array<[string, Record<string, unknown>]>;
+} = { rows: {}, errors: {}, queries: [], secure: { data: null, error: null }, secureCalls: [] };
+
+function builderFor(table: string) {
+  const log: QueryLog = { table, select: null, eq: [], in: [], not: [], order: [], limit: null };
+  harness.queries.push(log);
+  const result = () => ({
+    data: harness.errors[table] ? null : (harness.rows[table] ?? []),
+    error: harness.errors[table] ?? null,
+  });
+  const chain: Record<string, unknown> = {
+    select: (cols: string) => { log.select = cols; return chain; },
+    eq: (col: string, val: unknown) => { log.eq.push([col, val]); return chain; },
+    in: (col: string, vals: unknown[]) => { log.in.push([col, vals]); return chain; },
+    not: (col: string, op: string, val: unknown) => { log.not.push([col, op, val]); return chain; },
+    order: (col: string, opts: Record<string, unknown>) => { log.order.push([col, opts]); return chain; },
+    limit: (n: number) => { log.limit = n; return chain; },
+    maybeSingle: async () => {
+      const r = result();
+      return { data: (r.data as unknown[])?.[0] ?? null, error: r.error };
+    },
+    // Supabase builders are thenables; the listers await the chain itself.
+    then: (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
+      Promise.resolve(result()).then(onOk, onErr),
+  };
+  return chain;
+}
+
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: { from: (table: string) => builderFor(table) },
+}));
+
+vi.mock('@/lib/secureInvoke', () => ({
+  invokeSecureFunction: async (name: string, payload: Record<string, unknown>) => {
+    harness.secureCalls.push([name, payload]);
+    return harness.secure;
+  },
+}));
+
+import { listAdapters, getAdapter } from '../adapters';
+import { clientDetailsAdapter } from '../adapters/clientDetailsAdapter';
+import { CLIENT_NAME_COLUMNS } from '../../../../supabase/functions/_shared/clientName';
+
+const lastQuery = (table: string) =>
+  [...harness.queries].reverse().find((q) => q.table === table);
+
+beforeEach(() => {
+  harness.rows = {};
+  harness.errors = {};
+  harness.queries = [];
+  harness.secureCalls = [];
+  harness.secure = { data: null, error: null };
+});
+
+describe('every production adapter can list', () => {
+  it('implements listRecentReports on all nine, so no format is picker-blind again', () => {
+    const production = listAdapters().filter((a) => a.supportsProduction);
+    expect(production).toHaveLength(9);
+    for (const adapter of production) {
+      expect(typeof adapter.listRecentReports, adapter.reportType).toBe('function');
+    }
+  });
+});
+
+describe('each lister reads its own table', () => {
+  it('investment lists through the secure edge function', async () => {
+    harness.secure = {
+      data: { reports: [{ id: 'i1', property_address: '12 Harbour St, Kirribilli', created_at: '2026-08-01' }] },
+      error: null,
+    };
+    const rows = await getAdapter('investment')!.listRecentReports!();
+    expect(harness.secureCalls[0][0]).toBe('get-investment-reports');
+    expect(harness.secureCalls[0][1]).toMatchObject({ listMode: true });
+    expect(rows).toEqual([
+      { id: 'i1', label: '12 Harbour St, Kirribilli', savedAt: '2026-08-01' },
+    ]);
+  });
+
+  it('investment falls back to the table when the edge function fails', async () => {
+    harness.secure = { data: null, error: { message: 'unavailable' } };
+    harness.rows.investment_reports = [
+      { id: 'i2', property_address: '4/9 Bent St, Neutral Bay', created_at: '2026-07-20' },
+    ];
+    const rows = await getAdapter('investment')!.listRecentReports!();
+    expect(rows.map((r) => r.label)).toEqual(['4/9 Bent St, Neutral Bay']);
+    expect(lastQuery('investment_reports')).toBeTruthy();
+  });
+
+  it('borrowing capacity joins the client names through CLIENT_NAME_COLUMNS', async () => {
+    harness.rows.borrowing_capacity_assessments = [
+      { id: 'b1', client_id: 'c1', created_at: '2026-08-10' },
+      { id: 'b2', client_id: 'c-missing', created_at: '2026-08-09' },
+    ];
+    harness.rows.clients = [
+      { id: 'c1', primary_first_name: 'JORDAN', primary_surname: 'NGUYEN' },
+    ];
+    const rows = await getAdapter('borrowing_capacity')!.listRecentReports!();
+    const clientQuery = lastQuery('clients');
+    expect(clientQuery?.select).toBe(CLIENT_NAME_COLUMNS);
+    expect(clientQuery?.in).toEqual([['id', ['c1', 'c-missing']]]);
+    // The name is cased for print, and a client that cannot be read still
+    // lists — without a name, not without a row.
+    expect(rows.map((r) => r.label)).toEqual(['Jordan Nguyen', 'Borrowing capacity assessment']);
+  });
+
+  it('portfolio labels by the stored client name', async () => {
+    harness.rows.portfolio_analysis_reports = [
+      { id: 'p1', client_name: 'Jordan & Sarah Nguyen', created_at: '2026-08-12' },
+    ];
+    const rows = await getAdapter('portfolio')!.listRecentReports!();
+    expect(rows).toEqual([
+      { id: 'p1', label: 'Jordan & Sarah Nguyen', savedAt: '2026-08-12' },
+    ]);
+  });
+
+  it('comparison labels by the report title', async () => {
+    harness.rows.property_comparisons = [
+      { id: 'x1', report_title: 'Newtown vs Marrickville', created_at: '2026-08-11' },
+      { id: 'x2', report_title: null, created_at: '2026-08-10' },
+    ];
+    const rows = await getAdapter('comparison')!.listRecentReports!();
+    expect(rows.map((r) => r.label)).toEqual(['Newtown vs Marrickville', 'Property comparison']);
+  });
+
+  it('cash flow lists only reports that store a projection', async () => {
+    harness.rows.investment_reports = [
+      { id: 'i3', property_address: '7 Regent St, Newtown', created_at: '2026-08-08' },
+    ];
+    const rows = await getAdapter('cashflow')!.listRecentReports!();
+    const q = lastQuery('investment_reports');
+    // The server-side approximation of `hasProjections`: 162 rows, not 1,182.
+    expect(q?.not).toEqual([['financial_calculations->projections', 'is', null]]);
+    expect(rows.map((r) => r.label)).toEqual(['7 Regent St, Newtown']);
+  });
+
+  it('client details lists clients by their real name columns', async () => {
+    harness.rows.clients = [
+      { id: 'c2', primary_first_name: 'sam', primary_surname: 'taylor', updated_at: '2026-08-05' },
+    ];
+    const rows = await getAdapter('client_details')!.listRecentReports!();
+    expect(lastQuery('clients')?.select).toBe(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`);
+    expect(rows).toEqual([{ id: 'c2', label: 'Sam Taylor', savedAt: '2026-08-05' }]);
+  });
+
+  it('report q&a labels by the conversation title', async () => {
+    harness.rows.report_qa_conversations = [
+      { id: 'q1', title: 'Questions about the Newtown report', created_at: '2026-08-04' },
+      { id: 'q2', title: null, created_at: '2026-08-03' },
+    ];
+    const rows = await getAdapter('qa')!.listRecentReports!();
+    expect(rows.map((r) => r.label))
+      .toEqual(['Questions about the Newtown report', 'Report Q&A']);
+  });
+
+  it('commercial capacity offers only what the render route would accept', async () => {
+    harness.rows.commercial_industrial_assessments = [
+      { id: 'a1', title: 'Warehouse — Botany', reference: 'CIA-001', status: 'completed', current_calculation_id: 'run-1', created_at: '2026-08-02' },
+      { id: 'a2', title: 'Draft deal', reference: 'CIA-002', status: 'draft', current_calculation_id: 'run-2', created_at: '2026-08-01' },
+      { id: 'a3', title: 'No run yet', reference: 'CIA-003', status: 'completed', current_calculation_id: null, created_at: '2026-07-30' },
+      { id: 'a4', title: '', reference: 'CIA-004', status: 'linked', current_calculation_id: 'run-4', created_at: '2026-07-29' },
+    ];
+    const rows = await getAdapter('commercial_capacity')!.listRecentReports!();
+    // `isReportable` plus a linked run — the picker cannot offer a row the
+    // adapter would then decline. The empty title falls back to the reference.
+    expect(rows.map((r) => r.label)).toEqual(['Warehouse — Botany', 'CIA-004']);
+  });
+
+  it('market intelligence labels by the edition period', async () => {
+    harness.rows.marketing_intelligence_reports = [
+      { id: 'm1', report_period: 'March 2026', generated_at: '2026-03-02' },
+      { id: 'm2', report_period: null, generated_at: '2026-02-02' },
+    ];
+    const rows = await getAdapter('market_intelligence')!.listRecentReports!();
+    expect(rows.map((r) => r.label))
+      .toEqual(['Market Intelligence — March 2026', 'Market Intelligence']);
+  });
+
+  it('returns an empty list — never throws — when the read errors', async () => {
+    harness.errors.portfolio_analysis_reports = { message: 'permission denied' };
+    await expect(getAdapter('portfolio')!.listRecentReports!()).resolves.toEqual([]);
+  });
+});
+
+describe('the client details routing read', () => {
+  it('selects the columns that exist, through the one sanctioned constant', async () => {
+    harness.rows.clients = [
+      { id: 'c3', primary_first_name: 'JORDAN', primary_surname: 'NGUYEN', updated_at: '2026-08-05', created_at: '2026-08-01' },
+    ];
+    const routing = await clientDetailsAdapter.resolveRoutingContext({ reportId: 'c3' });
+    const q = lastQuery('clients');
+    // `first_name, last_name` was a PostgREST 42703 that declined every
+    // client; the constant is what keeps a fourth spelling out.
+    expect(q?.select).toBe(`${CLIENT_NAME_COLUMNS}, updated_at, created_at`);
+    expect(routing?.title).toBe('Client details — Jordan Nguyen');
+  });
+});

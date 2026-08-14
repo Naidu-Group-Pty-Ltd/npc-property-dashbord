@@ -35,7 +35,7 @@ import {
 } from '../../../../supabase/functions/_shared/cashFlowProjection.pure';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
-  BrandContext, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
+  BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
 /**
@@ -85,6 +85,33 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
     reason:
       'The pdf-lib generator remains the default until a template is activated for this report type, '
       + 'and stays permanently for the reports that store no projection.',
+  },
+
+  /**
+   * Only reports that store a projection — the 162, not the 1,182. The filter
+   * is the server-side approximation (`projections` present on the blob);
+   * `projectCashFlow`'s structural check still guards the render, so a
+   * mis-shaped projection is refused at selection rather than listed out. The
+   * blob itself is deliberately not selected here: pulling twenty of them to
+   * label a picker is the exact waste `COLUMNS` exists to avoid.
+   */
+  async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
+    try {
+      const { data, error } = await supabase
+        .from('investment_reports')
+        .select('id, property_address, created_at')
+        .not('financial_calculations->projections', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error || !data) return [];
+      return (data as Record<string, any>[]).map((row) => ({
+        id: String(row.id),
+        label: (row.property_address as string) || '10 Year Cash Flow',
+        savedAt: (row.created_at as string) ?? null,
+      }));
+    } catch {
+      return [];
+    }
   },
 
   async resolveRoutingContext({ reportId, variant }): Promise<RoutingContext | null> {
