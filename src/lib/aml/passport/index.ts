@@ -31,13 +31,20 @@ export {
 
 export {
   STAMP_VOCABULARY,
+  clientSafePending,
   clientSafeStamps,
   derivePassportStamps,
+  derivePendingStamps,
+  stampFaceTone,
+  stampRotation,
+  type StampFaceTone,
   type PassportStamp,
   type PassportStampCode,
   type PassportStampInput,
   type PassportStampShape,
   type PassportStampTone,
+  type PendingStamp,
+  type StampProgrammeFacts,
 } from '../../../../supabase/functions/_shared/aml/passport/passportStamps.pure';
 
 export {
@@ -55,3 +62,29 @@ export {
   type PassportView,
   type PassportViewInput,
 } from '../../../../supabase/functions/_shared/aml/passport/passportView.pure';
+
+export {
+  IDV_COMPONENTS,
+  classifyIdvCheck,
+  summariseIdv,
+  type IdvCheckFact,
+  type IdvComponent,
+  type IdvComponentCode,
+  type IdvComponentResult,
+  type IdvSummary,
+} from '../../../../supabase/functions/_shared/aml/passport/passportIdv.pure';
+
+export {
+  LEAF_H,
+  LEAF_W,
+  bookletCover,
+  bookletGeometry,
+  bookletLabel,
+  bookletSpreads,
+  buildBooklet,
+  type BookletGeometry,
+  type BookletBlock,
+  type BookletPage,
+  type BookletTone,
+  type SealTone,
+} from '../../../../supabase/functions/_shared/aml/passport/passportBooklet.pure';

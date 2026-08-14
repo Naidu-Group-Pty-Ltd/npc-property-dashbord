@@ -92,12 +92,14 @@ describe('PortalPassport', () => {
     getPassport.mockResolvedValue({ passport: clientView() });
     renderPage();
     await screen.findByText('Jordan Client');
-    screen.getByRole('button', { name: 'Identity' }).click();
+    // Navigation is by numbered page chip; the accessible name carries the
+    // leaf title, which is how a screen-reader user finds a page too.
+    screen.getByRole('button', { name: /Identity Information/ }).click();
     expect(await screen.findByText('Engineer')).toBeInTheDocument();
   });
 
-  // Flag-off (server rejection) semantics are pinned in
-  // src/components/aml/passport/loadState.test.ts and rendered-state in
-  // CommandPassportSection.test.tsx — see loadState.test.ts header for why
-  // a rejection inside this page's full graph cannot be asserted here.
+  // Flag-off (server rejection) semantics and the branch they drive are both
+  // pinned in src/components/aml/passport/loadState.test.ts — see that file's
+  // header for why a rejection inside this page's full graph cannot be
+  // asserted here.
 });

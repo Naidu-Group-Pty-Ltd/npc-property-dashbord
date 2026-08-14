@@ -36,6 +36,7 @@ export type PassportStampCode =
   | "reliance_accepted_builder"
   | "independent_cdd_recorded"
   | "passport_refresh_requested"
+  | "passport_refresh_completed"
   | "access_revoked"
   | "transaction_completed";
 
@@ -90,9 +91,53 @@ export const STAMP_VOCABULARY: Record<PassportStampCode, VocabEntry> = {
   reliance_accepted_builder: { title: "BUILDER / DEVELOPER RELIANCE ACCEPTED", shape: "seal", tone: "blue", client_safe: true },
   independent_cdd_recorded: { title: "INDEPENDENT CDD RECORDED", shape: "rect", tone: "blue", client_safe: true },
   passport_refresh_requested: { title: "PASSPORT REFRESH REQUESTED", shape: "rect", tone: "navy", client_safe: true },
+  // The refresh being ASKED FOR and the refresh being DONE are two different
+  // facts, and only the first had a stamp — so a completed obligation still
+  // read as an outstanding request for ever. `completed_at` is the record.
+  passport_refresh_completed: { title: "PASSPORT REFRESHED", shape: "circle", tone: "gold", client_safe: true },
   access_revoked: { title: "ACCESS REVOKED", shape: "rect", tone: "red", client_safe: true },
   transaction_completed: { title: "TRANSACTION COMPLETED", shape: "circle", tone: "green", client_safe: true },
 };
+
+/* ── how a stamp face is inked (the approved design's own rule) ─────────── */
+
+/**
+ * The design inks a stamp by **what it speaks for**, not by a per-code palette.
+ *
+ * `AML Compliance Passport.dc.html` derives it in one line:
+ *
+ *   org !== 'AURIXA SYSTEMS' ? 'partner'
+ *     : /TRANSACTION COMPLETED|PASSPORT ISSUED/.test(title) ? 'final'
+ *     : 'gold'
+ *
+ * Three inks, and the reasoning is legible on the page: gold is the issuing
+ * entity's own certification, blue is somebody else's decision recorded in our
+ * register, green is a terminal certification — the Passport issued, and the
+ * matter completed. Reproduced here against the CODE rather than the title so
+ * a wording change cannot silently repaint a stamp, and against the issuer
+ * passed in rather than a literal so it holds for any tenant.
+ */
+export type StampFaceTone = "gold" | "partner" | "final";
+
+export function stampFaceTone(
+  stamp: { code: PassportStampCode; org: string },
+  issuerOrg: string,
+): StampFaceTone {
+  if (stamp.org && issuerOrg && stamp.org !== issuerOrg) return "partner";
+  if (stamp.code === "passport_issued" || stamp.code === "transaction_completed") return "final";
+  return "gold";
+}
+
+/**
+ * The design rotates each impression by a fixed amount taken from its position
+ * — `[-6, 3, -2.5, 4.5, -4][i % 5]`. Struck impressions are never square to
+ * the page, and a random angle would move on every render.
+ */
+const STAMP_ROTATIONS = [-6, 3, -2.5, 4.5, -4];
+
+export function stampRotation(index: number): number {
+  return STAMP_ROTATIONS[((index % STAMP_ROTATIONS.length) + STAMP_ROTATIONS.length) % STAMP_ROTATIONS.length];
+}
 
 /* ── source facts (rows the edge function already fetched) ──────────────── */
 
@@ -121,7 +166,14 @@ export type StampAssessmentFact = {
   partner_org_name: string | null;
   partner_org_type: string | null;
 };
-export type StampRefreshFact = { id: string | null; created_at: string | null; status: string };
+export type StampRefreshFact = {
+  id: string | null;
+  created_at: string | null;
+  status: string;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  due_at?: string | null;
+};
 export type StampTransactionFact = { id: string | null; status: string; settlement_date: string | null; property_address?: string | null };
 
 export type PassportStampInput = {
@@ -330,11 +382,17 @@ export function derivePassportStamps(input: PassportStampInput): PassportStamp[]
     }
   }
 
-  // Refresh requested — open or completed obligations both record the ask.
+  // Refresh — the ask and the answer are separate records, and a completed
+  // obligation earns both: the request happened, and so did the refresh.
   for (const r of input.refresh_obligations ?? []) {
     if (r.created_at) {
       make("passport_refresh_requested", r.created_at, {
         portal: "System",
+        source: { kind: "aml.partner_refresh_obligations", id: r.id },
+      });
+    }
+    if (r.completed_at) {
+      make("passport_refresh_completed", r.completed_at, {
         source: { kind: "aml.partner_refresh_obligations", id: r.id },
       });
     }
@@ -356,6 +414,220 @@ export function derivePassportStamps(input: PassportStampInput): PassportStamp[]
 /** The client's own view: vocabulary-flagged subset, same order. */
 export function clientSafeStamps(stamps: PassportStamp[]): PassportStamp[] {
   return stamps.filter((s) => s.client_safe);
+}
+
+/* ── the certification programme (what is still outstanding) ────────────── */
+
+/**
+ * A stamp this case is on track to earn but has not.
+ *
+ * It deliberately carries **no `at`, no `version`, no `actor` and no
+ * `source`** — there is no record behind it, and a pending stamp that looked
+ * like an earned one would be the single worst defect this page could have.
+ * The types do not overlap, so nothing that counts earned stamps can count one
+ * of these by mistake.
+ */
+export type PendingStamp = {
+  code: PassportStampCode;
+  title: string;
+  shape: PassportStampShape;
+  tone: PassportStampTone;
+  client_safe: boolean;
+  /** What the system is waiting for, in plain words. Never a promise. */
+  awaiting: string;
+  /** A date a record already carries (settlement, obligation due). */
+  expected_at: string | null;
+  /** Organisation the outstanding step belongs to, where one is named. */
+  org: string | null;
+};
+
+/**
+ * Facts about the case that decide which stamps are even *applicable*.
+ * Separate from `PassportStampInput` because these describe the shape of the
+ * engagement rather than the records it has produced.
+ */
+export type StampProgrammeFacts = {
+  /** `individual` | `entity` | … — decides whether ownership applies. */
+  subject_type?: string | null;
+  /** Case status; a closed case is no longer working toward anything. */
+  case_status?: string | null;
+  /**
+   * Case stage and service gate. These are here because applicability is NOT
+   * only a question of which child rows exist. Both live cases in enhanced CDD
+   * carry `status = edd_required` / `case_stage = enhanced_cdd` and **zero**
+   * `aml.edd_cases` rows — the obligation is declared on the case before any
+   * EDD record is opened. Deriving applicability from child rows alone made
+   * the register silent about the one certification those cases most obviously
+   * owe.
+   */
+  case_stage?: string | null;
+  service_gate_status?: string | null;
+};
+
+/**
+ * Which codes are milestones of the compliance programme, as opposed to
+ * things that merely happen.
+ *
+ * The distinction is the whole reason this is a list rather than the
+ * vocabulary: `ACCESS REVOKED` shown as an empty impression reads as a
+ * revocation the system is *waiting for*, and `PASSPORT VERSION SUPERSEDED`
+ * as an outcome somebody owes. Neither is anything a case works toward, and
+ * neither may ever be drawn as outstanding.
+ *
+ * Sharing is absent for the same reason in the other direction: a Passport is
+ * complete whether or not it is ever shared with a partner, so a pending
+ * `FINANCE PASSPORT SHARED` would invent an obligation on the officer.
+ */
+const PROGRAMME: PassportStampCode[] = [
+  "client_consent_recorded",
+  "identity_verified",
+  "documents_verified",
+  "ownership_verified",
+  "screening_completed",
+  "source_of_funds_reviewed",
+  "source_of_wealth_reviewed",
+  "edd_completed",
+  "passport_issued",
+  "reliance_accepted_finance",
+  "reliance_accepted_solicitor",
+  "reliance_accepted_builder",
+  "passport_refresh_completed",
+  "transaction_completed",
+];
+
+const AWAITING: Record<string, string> = {
+  client_consent_recorded: "The client accepts the compliance consents in their portal.",
+  identity_verified: "An identity check passes — electronic verification, DVS or a sighted document.",
+  documents_verified: "Every requested document is accepted on review.",
+  ownership_verified: "Every beneficial owner and controller is verified or waived.",
+  screening_completed: "Every party reaches a completed screening outcome.",
+  source_of_funds_reviewed: "A source-of-funds record is verified.",
+  source_of_wealth_reviewed: "A source-of-wealth record is verified.",
+  edd_completed: "The enhanced due diligence case is completed.",
+  passport_issued: "The responsible compliance officer issues the Passport.",
+  passport_refresh_completed: "The outstanding refresh obligation is completed.",
+  transaction_completed: "Settlement of the linked transaction is confirmed.",
+};
+
+const ENTITY_SUBJECTS = new Set(["entity", "company", "trust", "partnership", "association"]);
+
+/**
+ * Derive what this case has NOT yet earned.
+ *
+ * The Passport page previously drew earned stamps and stopped, which cannot
+ * distinguish "this case has one certification" from "this case is one of
+ * fourteen certifications through". Both render as a single seal on an
+ * otherwise empty page. Production makes that concrete: of five live cases,
+ * the best-covered earns two stamps and one earns none at all.
+ *
+ * Nothing here invents a record. A pending entry is a statement about the
+ * *absence* of one, and every entry is conditional on the case genuinely
+ * having that dimension — an individual is never shown a pending ownership
+ * seal, and a case with no EDD is never shown a pending EDD seal.
+ */
+export function derivePendingStamps(
+  input: PassportStampInput,
+  earned: PassportStamp[],
+  facts: StampProgrammeFacts = {},
+): PendingStamp[] {
+  const has = new Set(earned.map((s) => s.code));
+
+  // A finished engagement is finished, whatever it did or did not collect.
+  // Listing what it will never now earn reads as an open action list on a file
+  // nobody is working — a closed case, or one whose service gate has been
+  // terminated, owes nothing.
+  if (facts.case_status === "closed" || facts.service_gate_status === "terminated") return [];
+
+  const isEntity = ENTITY_SUBJECTS.has(String(facts.subject_type ?? "").toLowerCase()) ||
+    (input.owners ?? []).length > 0;
+
+  // The case ITSELF can declare enhanced due diligence, and in production that
+  // is the only place it is declared: two live cases sit at `edd_required` /
+  // `enhanced_cdd` with no `aml.edd_cases` row at all.
+  const eddDeclared = facts.case_status === "edd_required" || facts.case_stage === "enhanced_cdd";
+  const eddRecorded = (input.edd_cases ?? []).length > 0;
+  const hasSow = (input.source_of_wealth ?? []).length > 0;
+
+  // A partner we shared with, who has not yet recorded a decision.
+  const decided = new Set(
+    (input.assessments ?? [])
+      .filter((a) => a.decided_at)
+      .map((a) => orgTypeKey(a.partner_org_type))
+      .filter(Boolean) as string[],
+  );
+  const awaitingPartner = new Map<string, string | null>();
+  for (const g of input.grants ?? []) {
+    const key = orgTypeKey(g.partner_org_type);
+    if (!key || !g.created_at || g.revoked_at) continue;
+    if (decided.has(key)) continue;
+    if (!awaitingPartner.has(key)) awaitingPartner.set(key, g.partner_org_name);
+  }
+
+  const openRefresh = (input.refresh_obligations ?? []).find(
+    (r) => !r.completed_at && !r.cancelled_at && r.status !== "cancelled",
+  );
+  const unsettled = (input.transactions ?? []).find(
+    (t) => t.status !== "settled" && t.status !== "cancelled" && t.status !== "withdrawn",
+  );
+
+  const applies = (code: PassportStampCode): boolean => {
+    switch (code) {
+      case "ownership_verified": return isEntity;
+      // Deliberately RECORD-driven, and not from `eddDeclared`. Source of
+      // wealth is client-visible; enhanced due diligence is not. Letting the
+      // declared EDD state raise a client-visible item would turn the client's
+      // own Passport into an inference channel for a Command-only fact — the
+      // declaration drives `edd_completed` alone, which `client_safe: false`
+      // strips before the client ever sees it.
+      case "source_of_wealth_reviewed": return hasSow || eddRecorded;
+      case "edd_completed": return eddRecorded || eddDeclared;
+      case "reliance_accepted_finance": return awaitingPartner.has("finance");
+      case "reliance_accepted_solicitor": return awaitingPartner.has("solicitor");
+      case "reliance_accepted_builder": return awaitingPartner.has("builder");
+      case "passport_refresh_completed": return Boolean(openRefresh);
+      case "transaction_completed": return Boolean(unsettled);
+      default: return true;
+    }
+  };
+
+  const expected = (code: PassportStampCode): string | null => {
+    if (code === "transaction_completed") return unsettled?.settlement_date ?? null;
+    if (code === "passport_refresh_completed") return openRefresh?.due_at ?? null;
+    return null;
+  };
+
+  const org = (code: PassportStampCode): string | null => {
+    if (code === "reliance_accepted_finance") return awaitingPartner.get("finance") ?? null;
+    if (code === "reliance_accepted_solicitor") return awaitingPartner.get("solicitor") ?? null;
+    if (code === "reliance_accepted_builder") return awaitingPartner.get("builder") ?? null;
+    return null;
+  };
+
+  const out: PendingStamp[] = [];
+  for (const code of PROGRAMME) {
+    // `passport_refresh_completed` is the one code that can be both earned
+    // (a past refresh) and pending (a new obligation), so it is tested
+    // against the open obligation rather than against history.
+    if (code !== "passport_refresh_completed" && has.has(code)) continue;
+    if (!applies(code)) continue;
+    const vocab = STAMP_VOCABULARY[code];
+    out.push({
+      code,
+      title: vocab.title,
+      shape: vocab.shape,
+      tone: vocab.tone,
+      client_safe: vocab.client_safe,
+      awaiting: AWAITING[code] ?? "This certification has not yet been earned.",
+      expected_at: expected(code),
+      org: org(code),
+    });
+  }
+  return out;
+}
+
+/** Same audience rule as earned stamps — the vocabulary flag decides. */
+export function clientSafePending(pending: PendingStamp[]): PendingStamp[] {
+  return pending.filter((p) => p.client_safe);
 }
 
 /* ── client stamp facts ─────────────────────────────────────────────────── */

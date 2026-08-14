@@ -150,8 +150,10 @@ export interface HostedIdvProvider {
  * that matters most about it — that each step costs money — inside an
  * adapter that looks free.
  *
- * It is also NOT `HostedIdvProvider`: there is no session, no hosted URL, no
- * callback and no webhook. The customer never leaves NPC.
+ * It is also NOT `HostedIdvProvider`: there is no hosted workflow journey, no
+ * hosted URL and no callback, and the customer never leaves NPC. A persisted
+ * request can emit `status.updated`, but NPC acknowledges and ignores those —
+ * the synchronous response is the authoritative result.
  *
  * The provider object itself is deliberately thin: it holds the credential and
  * the thresholds and exposes the three calls. The composition rule lives in
@@ -1161,9 +1163,12 @@ function diditIdvConfigured(resolved?: ResolvedProvider | null): boolean {
  *
  * Notice what is NOT here. `DIDIT_WORKFLOW_ID` is absent because there is no
  * workflow — the three endpoints are called directly. `DIDIT_WEBHOOK_SECRET` is
- * absent because with `save_api_request=false` no session is persisted on the
- * provider's side and no webhook is ever emitted; the authenticated response is
- * the result. Requiring either would refuse a correctly configured deployment.
+ * absent because these endpoints answer synchronously and that response IS the
+ * authoritative result. A persisted request (`save_api_request=true`) does emit
+ * `status.updated`, but NPC deliberately ignores those — settling from one
+ * would be a second authoritative path racing the response already composed —
+ * so the secret is not what makes this path usable. Requiring either would
+ * refuse a correctly configured deployment.
  *
  * Both thresholds ARE required, and that is the deliberate half: a production
  * deployment that has not stated its liveness and face-match policy is not

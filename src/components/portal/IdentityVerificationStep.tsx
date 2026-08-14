@@ -24,14 +24,31 @@ import { frameToJpeg, toUploadableJpeg, MAX_CAPTURE_EDGE_PX } from '@/lib/aml/ca
 /**
  * Identity verification step.
  *
- * ## The whole journey is NPC's
+ * ## Two flows, and the SERVER decides which
  *
- * The customer chooses a document, photographs it, photographs themselves, and
- * waits — all inside this page. They never see a verification vendor: no
- * window opens, nothing redirects, no third-party SDK loads, and no image is
- * ever sent anywhere except NPC's own private storage over a signed upload the
- * server minted. The provider is called server-to-server, from an Edge
- * Function, with a credential this bundle has no way to reach.
+ * `verification_status` answers one of two experience words, resolved from the
+ * tenant's active provider. The browser never sends it, never learns the
+ * provider key, the workflow id or the environment, and cannot ask for the
+ * other one — each experience calls a different server operation and each of
+ * those refuses when the tenant is not on it.
+ *
+ *   hosted   NPC screens (which document, what to have ready)
+ *            → a Didit-hosted capture window, opened by this step
+ *            → back to an NPC page, and NPC's own status
+ *
+ *   capture  NPC's camera, in this page
+ *            → NPC's own private storage, over signed uploads the server minted
+ *            → server-side verification against the Standalone APIs
+ *
+ * On the `capture` flow no window opens, nothing redirects and no image leaves
+ * NPC's storage. On `hosted` the provider owns exactly one thing: the minute in
+ * which a document is photographed and a face is matched, in a separate
+ * top-level window — never an iframe, so the camera permission is asked for
+ * under the provider's own origin and the customer can see whose page is
+ * asking. NPC owns the whole journey either side of it.
+ *
+ * Either way the credential is server-side only: every provider call is made
+ * from an Edge Function with a key this bundle has no way to reach.
  *
  * ## Nothing here can mark anybody verified
  *
@@ -60,9 +77,13 @@ const UNAVAILABLE_CODES = [
   'temporarily_unavailable',
   'attempts_exhausted',
   'already_processing',
-  // The server refused because the retired hosted flow is still configured for
-  // this tenant. Not a capture failure and never something the customer did —
-  // the step re-reads and renders the documentary route.
+  // The tenant is on the OTHER flow from the one that made the request — the
+  // legacy single-shot submit reaching a hosted tenant, or a bundle older than
+  // the reactivation asking for a session a server had stopped minting.
+  // `hosted_flow_retired` cannot be produced by the current server and is kept
+  // only so a browser talking to an older deployment degrades to "unavailable"
+  // rather than an unhandled error. Neither is a capture failure and neither is
+  // anything the customer did: the step re-reads and renders what is true now.
   'hosted_verification_required',
   'hosted_flow_retired',
   // The active capture integration changed under us — the tenant moved between
@@ -212,20 +233,18 @@ export function IdentityVerificationStep({
       if ((fresh.availability ?? 'available') !== 'available' || !stillAllowed) return;
 
       /**
-       * A hosted provider runs the short capture on its own page. NPC owns
-       * everything either side of it, so this opens NPC's own screens — pick a
-       * document, then read what to have ready — and no session is created
-       * until the customer presses Begin.
+       * Both experiences are sub-screens of this step, and both open on NPC's
+       * own screens first — pick a document, then read what to have ready.
        *
-       * That ordering is not cosmetic. The verification window has to be
-       * opened synchronously inside the customer's click or the browser
-       * classifies it as an unsolicited popup and blocks it, so the click that
-       * opens the window cannot be the same click that waits for a session.
+       * On `hosted` that ordering is not cosmetic: no session is created until
+       * the customer presses Begin, because the verification window has to be
+       * opened synchronously inside that click or the browser classifies it as
+       * an unsolicited popup and blocks it. So the click that opens the step
+       * cannot be the click that waits for a session.
+       *
+       * On `capture` nothing leaves this page: the camera, the review and the
+       * upload are all NPC's.
        */
-      // Both experiences are sub-screens of this step, and both are NPC's own.
-      // `hosted` is the legacy provider-window flow, kept only while the
-      // sessions opened before the cutover can still settle; `capture` is the
-      // journey every new attempt takes, and it never leaves this page.
       setChecking(party);
     } catch (e: any) {
       if (e?.code && UNAVAILABLE_CODES.includes(e.code)) {
@@ -273,28 +292,21 @@ export function IdentityVerificationStep({
     (p) => p.status === 'verified' || p.status === 'in_review' || p.status === 'contact_adviser');
 
   /**
-   * A backend that still says `hosted` is treated as UNAVAILABLE, never obeyed.
+   * Which experience this tenant runs, decided by the SERVER.
    *
-   * The hosted capture UI is gone from this bundle, so there is nothing to
-   * render for that answer even if we wanted to. What matters is that the
-   * customer still gets somewhere real: the documentary route, which is a way
-   * to finish their onboarding rather than an error.
-   *
-   * This is the defence-in-depth line. A stale deployment, a tenant left on the
-   * retired provider, or a response from a server older than the cutover all
-   * arrive here — and the worst case is a customer told to upload their
-   * document, which is true and actionable, instead of a window opening on
-   * somebody else's website.
+   * `hosted` runs the short capture on the provider's own page, in a window
+   * this step opens; `capture` is NPC's own camera journey and never leaves
+   * the page. The browser is told one of two words and never the provider, the
+   * workflow or the environment — and it cannot ask for the other one, because
+   * each experience calls a different server operation and each of those
+   * refuses when the tenant is not on it.
    */
-  const hostedRetired = (state.provider_flow ?? 'capture') === 'hosted';
-  if (hostedRetired) reportRetiredHostedFlow(caseId);
+  const hosted = (state.provider_flow ?? 'capture') === 'hosted';
 
   // The server refuses a selfie upload URL unless a live provider can examine
   // the result. Honour that here rather than offering a capture that ends in a
   // 409 — the same contradiction the request router was fixed to avoid.
-  const availability = hostedRetired
-    ? 'temporarily_unavailable'
-    : (state.availability ?? 'available');
+  const availability = state.availability ?? 'available';
   if (availability !== 'available') {
     return (
       <Card>
@@ -363,14 +375,23 @@ export function IdentityVerificationStep({
       (p) => (p.party_id ?? null) === (checking.party_id ?? null)) ?? checking;
 
     /*
-     * There is exactly one branch, and that is the point.
-     *
-     * This used to choose between the capture journey and a hosted screen that
-     * opened the provider's own page in a new window. A backend saying `hosted`
-     * now reaches `hostedRetired` above, before this line, and never gets here
-     * — but even if it did, the only thing that can be rendered is NPC's own
-     * camera. A popup is not reachable from any state of this component.
+     * Two experiences, chosen by the server and never by the browser. Both are
+     * sub-screens of this step: NPC asks which document and says what to have
+     * ready either way, so the provider owns only the minute in which a
+     * document is photographed and a face is matched.
      */
+    if (hosted) {
+      return (
+        <HostedVerificationCheck
+          caseId={caseId}
+          party={live}
+          maxAttempts={state.max_attempts}
+          onRefresh={load}
+          onExit={async () => { setChecking(null); await load(); }}
+        />
+      );
+    }
+
     return (
       <SecureCaptureCheck
         caseId={caseId}
@@ -436,13 +457,16 @@ export function IdentityVerificationStep({
                     trace of the window on this side.
                   */}
                   {/*
-                    "Continue verification" is gone with the flow it belonged
-                    to. It meant "your window is still open" — and there is no
-                    window any more, so the only honest label for work in
-                    flight is one that offers to show progress.
+                    On the hosted flow "in progress" means a session is open
+                    and the customer can be taken back into it, so the label
+                    offers exactly that. On the capture flow there is no window
+                    to return to — the photographs are with the server — so the
+                    honest label offers to show progress instead.
                   */}
                   {party.verification_in_progress ? (
-                    <><Clock className="mr-1.5 h-3.5 w-3.5" /> Check progress</>
+                    hosted
+                      ? <><ArrowRight className="mr-1.5 h-3.5 w-3.5" /> Continue verification</>
+                      : <><Clock className="mr-1.5 h-3.5 w-3.5" /> Check progress</>
                   ) : party.attempts_used > 0 ? (
                     <><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Try again</>
                   ) : (
@@ -498,55 +522,280 @@ export function IdentityVerificationStep({
   );
 }
 
-/* ─────────────────── the hosted flow, and why it is gone ─────────────────── */
+/* ────────────────────── the provider-hosted session ─────────────────────── */
+
+/** The one window. Named, so a double-click or a re-open reuses it. */
+const HOSTED_WINDOW_NAME = 'npc-identity-verification';
+const HOSTED_WINDOW_FEATURES = 'popup=yes,width=520,height=760,noopener=no,noreferrer=no';
 
 /**
- * There is no hosted verification component here any more, and that absence is
- * the feature.
+ * The provider-hosted check.
  *
- * ## What was here
+ * NPC asks which document and says what to have ready — its own screens — and
+ * the provider owns only the minute in which the document is photographed and
+ * the face is matched. The customer comes back to an NPC page when it closes.
  *
- * `SecureIdentityCheck` — a screen that opened a separate top-level window at
- * the provider's own session URL, painted a placeholder into it, polled for it
- * closing, and listened for a return message. It existed so that hosted
- * sessions opened before the Standalone cutover could still be completed by the
- * customer who started them.
+ * ## The ordering that is not cosmetic
  *
- * ## Why it was deleted rather than disabled
+ * The window is opened SYNCHRONOUSLY inside the customer's click, before the
+ * session request: `window.open('', name, features)`, then
+ * `startHostedVerification`, then `win.location.replace(url)`. A window opened
+ * after an `await` is an unsolicited popup and is blocked on default settings
+ * in Safari and Firefox. Getting this order wrong does not degrade the flow,
+ * it ends it.
  *
- * That grandfathering was revoked as a product decision: no customer may be
- * sent to a verification vendor's page again. A component that is merely
- * unreachable is one branch away from being reachable — a stale server, a
- * misconfigured tenant, a future refactor of the flow token. Deleting it makes
- * the guarantee structural: there is no code in this bundle that can open a
- * window, so no state of the backend can produce one.
+ * ## Three rules the rest of this component exists for
  *
- * ## What deliberately still exists, server-side
+ * **A blocked window still created the session.** Its URL is held in memory —
+ * never storage, because it embeds the session token — so recovery is one
+ * press rather than another round trip the browser would block in turn, and it
+ * costs no attempt and no second session.
  *
- * Nothing about hosted RESULTS was removed. `didit-webhook`, the decision
- * parsing, the correlation rules and every historical `provider = 'didit'` row
- * are untouched: a late signed outcome for a session that was already completed
- * is still accepted and still settles the canonical record. Retiring the
- * capture UI is not erasing the evidence.
+ * **A closed window is never a failure.** It says nothing about what happened
+ * inside it; the customer may have finished. The screen stops claiming the
+ * check is in progress, re-reads the server, and offers Continue.
+ *
+ * **Nothing here can assert an outcome.** The return page's message and the
+ * window closing are both treated as "go and ask the server", never as a
+ * result. The identity decision arrives only on a signed webhook, is re-read
+ * server-to-server, and reaches this bundle as the same portal-safe status
+ * every other surface reads.
  */
+function HostedVerificationCheck({
+  caseId, party, maxAttempts, onRefresh, onExit,
+}: {
+  caseId: string;
+  party: AmlVerificationParty;
+  maxAttempts: number;
+  onRefresh: () => Promise<void> | void;
+  onExit: () => void;
+}) {
+  const [choice, setChoice] = useState<IdentityDocumentChoice | null>(null);
+  const [phase, setPhase] = useState<'choose' | 'brief' | 'open' | 'blocked'>('choose');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  /** Held in memory only — the URL embeds the customer's session token. */
+  const [blockedUrl, setBlockedUrl] = useState<string | null>(null);
+  const windowRef = useRef<Window | null>(null);
 
-/**
- * A backend said `hosted`. Report it; never act on it.
- *
- * Defence in depth for the one thing this hotfix exists to make impossible. A
- * stale deployment, a tenant still configured for the retired provider, or a
- * response from a version of the server that predates the cutover all land
- * here — and all of them get the documentary route, which is a real way
- * forward, rather than a popup.
- *
- * Console only. This is an operator signal, not something to put in front of
- * the customer, and it carries no session, URL or provider.
- */
-function reportRetiredHostedFlow(caseId: string): void {
-  console.warn(
-    '[aml/identity] server reported a retired hosted verification flow; '
-    + 'rendering the documentary route instead',
-    { case_id: caseId },
+  /**
+   * The window closed. That is a prompt to re-read the server, never a result.
+   *
+   * Polled rather than listened for, because there is no cross-origin close
+   * event to subscribe to. The interval is cleared on unmount so a customer who
+   * leaves the step does not leave a timer running against a dead window.
+   */
+  useEffect(() => {
+    if (phase !== 'open') return;
+    const timer = window.setInterval(() => {
+      if (windowRef.current && windowRef.current.closed) {
+        windowRef.current = null;
+        window.clearInterval(timer);
+        void onRefresh();
+      }
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [phase, onRefresh]);
+
+  /**
+   * The return page tells its opener it was reached. It carries no status and
+   * none is read: the payload is `{ type: 'npc:identity-return' }` and the only
+   * response is to ask the server what actually happened.
+   */
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if ((event.data as { type?: string } | null)?.type !== 'npc:identity-return') return;
+      void onRefresh();
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [onRefresh]);
+
+  /**
+   * Begin. The window opens FIRST — see the ordering note above.
+   *
+   * `document_type` is the only thing the browser declares about the session,
+   * and it is matched against a closed list on the server rather than
+   * forwarded. Everything else — the provider, the workflow, the country, the
+   * callback, the correlation key — is server state.
+   */
+  const begin = (documentType: IdentityDocumentChoice) => {
+    setError(null);
+    setBusy(true);
+    const win = window.open('', HOSTED_WINDOW_NAME, HOSTED_WINDOW_FEATURES);
+    windowRef.current = win;
+
+    void (async () => {
+      try {
+        const res = await amlPortalApi.startHostedVerification(caseId, {
+          party_id: party.party_id, party_label: party.label,
+          document_type: documentType,
+        });
+        const url = res.verification_url;
+        if (!url) {
+          // The server declined to open one — already settled, already in
+          // flight, or already verified. Its message is customer copy.
+          win?.close();
+          windowRef.current = null;
+          toast.info(res.message ?? 'Your verification is already being checked.');
+          await onRefresh();
+          onExit();
+          return;
+        }
+        if (win && !win.closed) {
+          win.location.replace(url);
+          setPhase('open');
+        } else {
+          // Blocked, or closed before the session came back. The session exists
+          // and is theirs; one press opens it, inside a fresh user gesture.
+          setBlockedUrl(url);
+          setPhase('blocked');
+        }
+      } catch (e: unknown) {
+        win?.close();
+        windowRef.current = null;
+        const err = e as { code?: string; message?: string };
+        if (err?.code && UNAVAILABLE_CODES.includes(err.code)) {
+          toast.info(err.message ?? 'Verification is not available just now.');
+          await onRefresh();
+          onExit();
+          return;
+        }
+        setError(err?.message
+          ?? 'We could not start the secure check just now. Nothing has been used up.');
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
+  const requirements = choice ? identityCheckRequirements(choice) : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-primary" /> Verify your identity
+        </CardTitle>
+        <CardDescription>
+          {party.label} · {party.attempts_remaining} of {maxAttempts} attempts left
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {error && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>We could not start the check</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {phase === 'choose' && (
+          <>
+            <p className="text-sm">Which identity document will you use?</p>
+            <RadioGroup
+              value={choice ?? ''}
+              onValueChange={(v) => setChoice(v as IdentityDocumentChoice)}
+              className="space-y-2"
+            >
+              {IDENTITY_DOCUMENT_CHOICES.map((option) => (
+                <label
+                  key={option}
+                  className="flex cursor-pointer items-center gap-3 rounded-md border p-3 text-sm"
+                >
+                  <RadioGroupItem value={option} id={`hosted-doc-${option}`} />
+                  <span>{IDENTITY_DOCUMENT_PRESENTATION[option].label}</span>
+                </label>
+              ))}
+            </RadioGroup>
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={onExit}>
+                <ArrowLeft className="mr-1 h-4 w-4" /> Back
+              </Button>
+              <Button disabled={!choice} onClick={() => setPhase('brief')}>
+                Continue <ArrowRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        )}
+
+        {phase === 'brief' && choice && (
+          <>
+            <p className="text-sm">Before you start, have this ready:</p>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {(requirements ?? []).map((line) => <li key={line}>{line}</li>)}
+            </ul>
+            <p className="text-xs text-muted-foreground">
+              A secure window will open to complete the check. Come back to this page when it
+              closes — we will show the result here.
+            </p>
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={() => setPhase('choose')}>
+                <ArrowLeft className="mr-1 h-4 w-4" /> Back
+              </Button>
+              {/* The click that opens the window. Nothing is awaited before it. */}
+              <Button disabled={busy} onClick={() => begin(choice)}>
+                {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Begin <ArrowRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        )}
+
+        {phase === 'open' && (
+          <>
+            <Alert>
+              <Clock className="h-4 w-4" />
+              <AlertTitle className="text-sm">Continue in the secure window</AlertTitle>
+              <AlertDescription className="text-xs">
+                Finish the check in the window that opened. If you have closed it, press Check
+                progress — nothing has been used up.
+              </AlertDescription>
+            </Alert>
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={onExit}>
+                <ArrowLeft className="mr-1 h-4 w-4" /> Back
+              </Button>
+              <Button variant="outline" onClick={() => void onRefresh()}>
+                <RefreshCw className="mr-1 h-4 w-4" /> Check progress
+              </Button>
+            </div>
+          </>
+        )}
+
+        {phase === 'blocked' && (
+          <>
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle className="text-sm">Your browser blocked the secure window</AlertTitle>
+              <AlertDescription className="text-xs">
+                Your check is ready and nothing has been used up. Press Open secure check to
+                continue.
+              </AlertDescription>
+            </Alert>
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={onExit}>
+                <ArrowLeft className="mr-1 h-4 w-4" /> Back
+              </Button>
+              <Button
+                onClick={() => {
+                  // A fresh user gesture, opening the URL held in memory. No
+                  // second session is created and no attempt is consumed.
+                  if (!blockedUrl) return;
+                  const win = window.open(blockedUrl, HOSTED_WINDOW_NAME, HOSTED_WINDOW_FEATURES);
+                  windowRef.current = win;
+                  if (win) setPhase('open');
+                }}
+              >
+                Open secure check <ArrowRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

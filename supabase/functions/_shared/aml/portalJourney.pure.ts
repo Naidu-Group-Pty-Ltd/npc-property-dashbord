@@ -80,6 +80,73 @@ export interface JourneyParty {
 /** A questionnaire section is answered when the client has submitted it. */
 const SECTION_DONE = ['submitted', 'accepted', 'complete'];
 
+/** The steps a submission may be held on, in the order the client sees them. */
+export type SubmissionBlocker = 'consent' | 'questionnaire' | 'documents' | 'verification';
+
+/**
+ * Whether one step, in one state, holds the submission.
+ *
+ * Consent, the questionnaire and identity verification must be COMPLETE — a
+ * step that is not started, in progress or blocked is outstanding. `blocked`
+ * verification means the adviser has to settle the client's identity (a staff
+ * sighting projects the party as verified, which releases this), and a pack
+ * must not go to review ahead of that.
+ *
+ * ## Documents are the one deliberate exception
+ *
+ * `documentsJourneyStatus` already encodes whether anything is REQUIRED:
+ * when requirement rows exist it answers only `complete` or `action_required`
+ * (an outstanding or rejected required document is `action_required`, never
+ * `not_started`); `not_started` is reachable ONLY when no requirements exist
+ * and nothing was uploaded — the state whose customer copy is "There is
+ * nothing we need from you here right now."
+ *
+ * Requirements are raised by explicit staff action alone
+ * (`seed_default_requirements` / `upsert_requirement` in `aml-cases`, both
+ * write-role gated); nothing seeds them at case creation, and cases with zero
+ * requirement rows are the production norm. So `not_started` documents means
+ * NPC has chosen not to ask for anything — treating it as a blocker would
+ * make every such case unsubmittable until the client uploads a document
+ * nobody asked for. It does not hold the pack; `action_required` always does.
+ */
+export function stepHoldsSubmission(
+  step: SubmissionBlocker, status: PortalJourneyStatus,
+): boolean {
+  if (step === 'documents') {
+    return status !== 'complete' && status !== 'not_started';
+  }
+  return status !== 'complete';
+}
+
+/**
+ * The ONE submission-readiness rule.
+ *
+ * Shared by `buildJourney` (which renders it), `submit_for_review` in
+ * `aml-client-portal` (which enforces it) and the Review screen (which reads
+ * it through the journey and `stepHoldsSubmission`) — so the progress cards,
+ * the "everything received" banner, the Submit button and the backend
+ * validation cannot disagree.
+ *
+ * ## The contradiction this replaced
+ *
+ * Readiness used to be `consent && questionnaire && documents !== action_required`,
+ * and the backend checked only sections and *formally required* documents.
+ * Identity verification was not consulted anywhere — measured on a production
+ * case: an unfinished identity check, zero documents, three accepted
+ * submissions. Verification is now a hard requirement; documents hold the
+ * pack exactly when something REQUIRED is outstanding (see
+ * `stepHoldsSubmission` for why optional-and-untouched does not).
+ */
+export function submissionBlockers(args: {
+  consent: PortalJourneyStatus;
+  questionnaire: PortalJourneyStatus;
+  documents: PortalJourneyStatus;
+  verification: PortalJourneyStatus;
+}): SubmissionBlocker[] {
+  const steps: SubmissionBlocker[] = ['consent', 'questionnaire', 'documents', 'verification'];
+  return steps.filter((step) => stepHoldsSubmission(step, args[step]));
+}
+
 /** A requested document has arrived when a file is attached and not rejected. */
 const REQUIREMENT_MET = ['uploaded', 'accepted'];
 
@@ -223,15 +290,15 @@ export function buildJourney(args: {
   const submitted = (args.submissions ?? []).length > 0;
   const complete = args.portalStatus === 'complete';
 
-  /**
-   * What `submit_for_review` actually enforces: consent, every applicable
-   * section, and every required document. Identity verification is NOT part of
-   * it — see the note on that op — so this must not claim otherwise, or the
-   * client is told to wait for a gate that does not exist.
-   */
-  const readyToSubmit = consentStatus === 'complete'
-    && questionnaireStatus === 'complete'
-    && documentsStatus !== 'action_required';
+  // What `submit_for_review` enforces, verbatim — one function, two callers,
+  // so the sentence the client reads and the gate the server applies cannot
+  // drift apart. See `submissionBlockers`.
+  const readyToSubmit = submissionBlockers({
+    consent: consentStatus,
+    questionnaire: questionnaireStatus,
+    documents: documentsStatus,
+    verification: verificationStatus,
+  }).length === 0;
 
   const submissionStatus: PortalJourneyStatus = submitted
     ? 'complete'

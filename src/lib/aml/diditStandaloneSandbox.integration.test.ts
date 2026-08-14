@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
  *
  * It exercises the three Didit Standalone endpoints for real, against a
  * SANDBOX key, and asserts the contract this integration was written from:
- * multipart bodies with a generated boundary, `save_api_request=false`, a 200
+ * multipart bodies with a generated boundary, `save_api_request=true`, a 200
  * that carries a per-feature status rather than implying one, and an ID
  * response whose inline portrait can be decoded and used as the face-match
  * reference.
@@ -70,7 +70,7 @@ async function callSandbox(
   path: string, build: (form: FormData) => void,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const form = new FormData();
-  form.append('save_api_request', 'false');
+  form.append('save_api_request', 'true');
   form.append('vendor_data', 'npc:sandbox-test:primary:1');
   build(form);
 
@@ -171,8 +171,8 @@ describe('the sandbox test stays opt-in and quiet', () => {
     expect(SELF).not.toMatch(/readFileSync\([^)]*\.(jpe?g|png|heic)/i);
   });
 
-  it('sends save_api_request=false, like every other call in the product', () => {
-    expect(SELF).toContain("form.append('save_api_request', 'false')");
+  it('sends save_api_request=true, like every other call in the product', () => {
+    expect(SELF).toContain("form.append('save_api_request', 'true')");
   });
 
   it('never writes the multipart Content-Type by hand', () => {

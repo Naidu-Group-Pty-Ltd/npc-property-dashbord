@@ -12,7 +12,7 @@ import {
   AmlRefreshButton,
   AmlStageBadge,
 } from "@/components/aml/primitives";
-import { CommandPassportSection } from "@/components/aml/passport/CommandPassportSection";
+import { PassportWorkspace } from "@/components/aml/passport/design/PassportWorkspace";
 import { cn } from "@/lib/utils";
 
 /**
@@ -162,7 +162,7 @@ export default function AmlPassports() {
                 </div>
                 {/* Renders the derived record; shows nothing at all while the
                     server-side aml_passport_command_view flag is off. */}
-                <CommandPassportSection key={selectedCase.id} caseId={selectedCase.id} />
+                <PassportWorkspace key={selectedCase.id} caseId={selectedCase.id} />
               </div>
             )}
           </div>

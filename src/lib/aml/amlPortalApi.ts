@@ -226,21 +226,33 @@ export const amlPortalApi = {
   requestVerificationUpload: (case_id: string, kind: 'document' | 'selfie') =>
     call<{ upload_url: string; token: string; path: string; bucket: string }>(
       'request_verification_upload_url', { case_id, kind }),
-  /*
-   * `startHostedVerification` used to live here.
+  /**
+   * Create (or resume) the provider-hosted verification session.
    *
-   * It asked the server for a provider-hosted session URL, which the portal
-   * then opened in a separate window. Both halves are gone: the window, and
-   * now the only way to ask for one. The server still refuses the operation
-   * (`hosted_flow_retired`), but a client that cannot form the request is a
-   * stronger guarantee than a server that says no — there is no code path in
-   * this bundle through which a customer reaches a verification vendor's page.
+   * Returns a URL and nothing else that matters — no provider name, no
+   * workflow id, no session token of NPC's own, no threshold and no key. The
+   * URL is handed straight to `window.location.replace` on a window this
+   * bundle opened, and is never stored: it embeds the customer's session token,
+   * so writing it to storage would leave a live credential on the device.
    *
-   * Hosted RESULTS are untouched. `didit-webhook` still accepts a late signed
-   * outcome for a session that was already completed, and every historical
-   * `provider = 'didit'` row is preserved. Retiring the capture UI is not
-   * erasing the evidence.
+   * `resumed: true` means the customer already had a session and is being
+   * returned to it rather than being given a second one. That distinction is
+   * the customer-visible half of the duplicate-charge protection — the
+   * authoritative half is the server's, which refuses to mint a second session
+   * while one is in flight and refuses outright once a party is verified.
+   *
+   * Creating a session is NOT a verification and never marks anybody verified.
+   * The outcome arrives only on a signed webhook, is re-read server-to-server
+   * before it settles anything, and reaches this bundle only as the same
+   * portal-safe status every other surface reads.
    */
+  startHostedVerification: (case_id: string, params: {
+    party_id?: string | null; party_label?: string;
+    document_type?: string | null;
+  } = {}) => call<{
+    started: boolean; resumed?: boolean; verification_url?: string;
+    message?: string; code?: string;
+  }>('start_hosted_verification', { case_id, ...params }),
   submitVerification: (case_id: string, params: {
     party_id?: string | null; party_label?: string;
     document_storage_path: string; selfie_storage_path: string;

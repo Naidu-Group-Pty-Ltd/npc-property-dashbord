@@ -1,0 +1,428 @@
+/**
+ * The passport as a bound document — the shared viewer.
+ *
+ * ONE implementation, used by the Command Centre dialog and by the Client
+ * Portal page. That is deliberate: the client and the officer must be looking
+ * at the same artefact, and two renderers of "the passport" would eventually
+ * disagree about what it looks like. Audience differences are already handled
+ * upstream by the projection, so nothing here needs to know who is reading.
+ *
+ * ## Why the leaf is scaled rather than laid out fluidly
+ *
+ * Every type size, rule, seal and grid inside a leaf is authored against a
+ * 470×648 box. Letting flexbox squeeze that box — which is what the previous
+ * version did — keeps 11px body copy and 30px seals inside a 200px-wide page,
+ * so text reflows, wraps one character per line and overflows. Rendering the
+ * leaf at its design size and applying a uniform `transform: scale()` keeps
+ * every internal proportion exactly as designed, at any viewport. The
+ * arithmetic lives in `bookletGeometry` so it is testable without a DOM.
+ */
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { cn } from "@/lib/utils";
+import {
+  LEAF_H,
+  LEAF_W,
+  bookletCover,
+  bookletGeometry,
+  bookletLabel,
+  bookletSpreads,
+  type BookletGeometry,
+  type BookletPage,
+  type PassportView,
+} from "@/lib/aml/passport";
+import { BookletBlockView } from "./BookletBlocks";
+
+/* ── cover ────────────────────────────────────────────────────────────── */
+
+/**
+ * The navy leather front board.
+ *
+ * A passport opens on its cover. A booklet whose first page is a data table
+ * reads as a report, which is the opposite of what this artefact is for.
+ */
+export function BookletCover({ page }: { page: BookletPage }) {
+  return (
+    <section
+      // `passport-cover` is the navy leather MATERIAL and is shared with other
+      // surfaces (the partner strip paints itself with it). `--board` is the
+      // front-board COMPOSITION — the design's own page margins and vertical
+      // rhythm — and belongs only to this element. Keeping them one class put
+      // 58px of cover padding on a partner strip that had asked for 16px.
+      className="passport-cover passport-cover--board passport-board__leaf relative flex flex-col items-center rounded-[11px] text-center"
+      style={{ width: LEAF_W, height: LEAF_H }}
+      aria-label="Passport cover"
+    >
+      <span aria-hidden="true" className="passport-cover__frame" />
+      <span aria-hidden="true" className="passport-cover__frame-inner" />
+
+      {/* Emblem zone — the design gives the mark the upper third to itself,
+          sitting inside its own engraved halo. */}
+      <div className="passport-cover__crest relative">
+        <span aria-hidden="true" className="passport-cover__halo" />
+        <img
+          src="/brand/aurixa-emblem.png"
+          alt=""
+          aria-hidden="true"
+          className="passport-cover__emblem relative"
+          width={150}
+          height={150}
+        />
+      </div>
+
+      <h2 className="passport-cover__wordmark relative">Aurixa</h2>
+      <div className="passport-cover__systems relative">Systems</div>
+
+      <div className="passport-cover__diamond relative" aria-hidden="true">
+        <span className="passport-cover__diamond-rule" />
+        <span className="passport-cover__diamond-mark">◆</span>
+        <span className="passport-cover__diamond-rule" />
+      </div>
+
+      <div className="passport-cover__title relative">
+        AML/CTF
+        <br />
+        Compliance Passport
+      </div>
+
+      {/* Issue detail sits in the lower zone, subordinate to the crest, so the
+          board still reads as the design's cover rather than as a title page. */}
+      <div className="passport-cover__issue relative">
+        {page.sub && <div className="passport-cover__holder">{page.sub}</div>}
+        {page.foot && <div className="passport-cover__credential mt-1.5">{page.foot}</div>}
+        {page.fingerprint && (
+          <div className="passport-cover__fingerprint mt-3">
+            <div className="passport-cover__fingerprint-k">SHA-256 EVIDENCE FINGERPRINT</div>
+            <div className="passport-mono mt-0.5">{page.fingerprint}</div>
+          </div>
+        )}
+      </div>
+
+      <span aria-hidden="true" className="passport-cover__clasp" />
+    </section>
+  );
+}
+
+/* ── leaf ─────────────────────────────────────────────────────────────── */
+
+export function BookletLeaf({ page }: { page: BookletPage }) {
+  return (
+    <article
+      className="passport-leaf passport-board__leaf flex flex-col"
+      style={{ width: LEAF_W, height: LEAF_H }}
+      aria-label={page.title}
+    >
+      <span aria-hidden="true" className="passport-leaf__guilloche" />
+      <span aria-hidden="true" className="passport-leaf__frame-outer" />
+      <span aria-hidden="true" className="passport-leaf__frame-inner" />
+
+      <header className="relative flex-none text-center">
+        <div className="passport-leaf__kicker">{page.kicker}</div>
+        <h3 className="passport-leaf__title">{page.title}</h3>
+        <div className="passport-leaf__divider mx-auto my-2 w-1/2" />
+        {page.sub && <p className="passport-leaf__sub m-0 text-[9.5px] leading-relaxed">{page.sub}</p>}
+      </header>
+
+      <div className="passport-leaf__body relative mt-3 flex min-h-0 flex-1 flex-col gap-3">
+        {page.blocks.map((b, i) => (
+          <BookletBlockView key={`${page.id}-${b.kind}-${i}`} block={b} />
+        ))}
+      </div>
+
+      <footer className="passport-leaf__faint relative mt-2 flex-none text-center text-[8px] tracking-[0.2em]">
+        {page.numeral ?? ""}
+      </footer>
+    </article>
+  );
+}
+
+/* ── the book ─────────────────────────────────────────────────────────── */
+
+/**
+ * The navy margin the board keeps around the leaves, and the spine gap between
+ * two facing leaves. Both are shared with `bookletGeometry` so the arithmetic
+ * that fits the spread and the arithmetic that draws it cannot disagree — a
+ * mismatch of a few pixels is exactly what crops a leaf.
+ */
+const BOARD_FRAME = 44;
+const SPINE = 26;
+
+/** Measures the board and returns the geometry that fits it. */
+function useBookGeometry(singleOnly: boolean) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [geometry, setGeometry] = useState<BookletGeometry>(() =>
+    bookletGeometry({ availableWidth: LEAF_W, availableHeight: LEAF_H, singleOnly }),
+  );
+
+  // Measure the board's OWN box rather than deriving a height from
+  // window.innerHeight. The book is nested inside a dialog whose height is
+  // itself capped, so a window-derived guess is wrong by however much chrome
+  // sits above and below — which is how the page ended up taller than the
+  // dialog and spilled off the screen.
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return;
+    setGeometry(
+      bookletGeometry({
+        availableWidth: rect.width - BOARD_FRAME,
+        availableHeight: rect.height - BOARD_FRAME,
+        spine: SPINE,
+        singleOnly,
+      }),
+    );
+  }, [singleOnly]);
+
+  useLayoutEffect(() => {
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const ro = new ResizeObserver(measure);
+    if (ref.current) ro.observe(ref.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [measure]);
+
+  return { ref, geometry };
+}
+
+export function PassportBook({
+  pages,
+  singleOnly = false,
+  className,
+  onClose,
+}: {
+  pages: BookletPage[];
+  /** Force one leaf at a time — the client booklet reads better this way. */
+  singleOnly?: boolean;
+  className?: string;
+  onClose?: () => void;
+}) {
+  const { ref, geometry } = useBookGeometry(singleOnly);
+  const [index, setIndex] = useState(0);
+  const [turn, setTurn] = useState<"fwd" | "back" | null>(null);
+
+  const spreads = bookletSpreads(pages.length, geometry.perSpread);
+  const clamped = Math.min(index, Math.max(0, spreads.length - 1));
+  const spread = spreads[clamped] ?? [];
+
+  // Reflowing from one leaf to two must keep the reader on the page they were
+  // reading rather than resetting them to the cover.
+  useEffect(() => {
+    setIndex((i) => Math.min(i, Math.max(0, spreads.length - 1)));
+  }, [spreads.length]);
+
+  const go = useCallback(
+    (delta: number) => {
+      setIndex((i) => {
+        const next = Math.min(spreads.length - 1, Math.max(0, i + delta));
+        if (next !== i) setTurn(delta > 0 ? "fwd" : "back");
+        return next;
+      });
+    },
+    [spreads.length],
+  );
+
+  useEffect(() => {
+    if (!turn) return;
+    const t = window.setTimeout(() => setTurn(null), 420);
+    return () => window.clearTimeout(t);
+  }, [turn]);
+
+  const goToPage = (pageIndex: number) => {
+    const target = spreads.findIndex((s) => s.includes(pageIndex));
+    if (target >= 0) {
+      setTurn(target > clamped ? "fwd" : target < clamped ? "back" : null);
+      setIndex(target);
+    }
+  };
+
+  const titles = spread.map((i) => pages[i]?.title).filter(Boolean).join(" · ");
+
+  return (
+    <div
+      className={cn("flex flex-col", className)}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight") go(1);
+        if (e.key === "ArrowLeft") go(-1);
+        if (e.key === "Escape" && onClose) onClose();
+      }}
+      tabIndex={-1}
+      role="group"
+      aria-label="Digital passport"
+    >
+      {/* page chips */}
+      <div className="flex flex-none flex-wrap items-center justify-center gap-1.5 px-4 py-2.5">
+        {pages.map((p, i) => (
+          <button
+            key={p.id}
+            type="button"
+            className={cn("passport-pagechip", p.variant === "cover" && "passport-pagechip--cover")}
+            aria-current={spread.includes(i)}
+            aria-label={p.variant === "cover" ? "Cover" : `Page ${i}: ${p.title}`}
+            onClick={() => goToPage(i)}
+          >
+            {p.variant === "cover" ? "◈" : i}
+          </button>
+        ))}
+      </div>
+
+      {/* board */}
+      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+        {/* The ref sits on a padding-free box so its measured rect IS the space
+            available. Measuring a padded element and subtracting a guessed
+            padding is how the board came to be sized larger than its container. */}
+        <div ref={ref} className="flex h-full w-full items-center justify-center">
+          <div
+            className="passport-board relative overflow-hidden"
+            style={{
+              width: Math.round(geometry.width + BOARD_FRAME),
+              height: Math.round(geometry.height + BOARD_FRAME),
+            }}
+          >
+            {/* The scaled layer is ABSOLUTELY positioned, never a flex item.
+                A flex item wider than its line gets centred to a NEGATIVE left
+                offset, and `transform-origin: top left` then preserves that
+                offset — which cropped the left-hand leaf against the board's
+                overflow. Absolute positioning takes it out of flow entirely,
+                so the only thing that decides where it sits is this inset. */}
+            <div
+              className={cn(
+                "absolute origin-top-left",
+                turn === "fwd" && "passport-turn-fwd",
+                turn === "back" && "passport-turn-back",
+              )}
+              style={{
+                left: BOARD_FRAME / 2,
+                top: BOARD_FRAME / 2,
+                width: geometry.spreadWidth,
+                height: LEAF_H,
+                transform: `scale(${geometry.scale})`,
+              }}
+            >
+              <div className="flex items-start" style={{ gap: spread.length > 1 ? SPINE : 0 }}>
+                {spread.map((pageIndex, n) => {
+                  const page = pages[pageIndex];
+                  if (!page) return null;
+                  return (
+                    <div key={page.id} className="relative flex flex-none items-start">
+                      {n > 0 && <span aria-hidden="true" className="passport-board__spine" />}
+                      {page.variant === "cover" ? (
+                        <BookletCover page={page} />
+                      ) : (
+                        <BookletLeaf page={page} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* turn */}
+      <div className="flex flex-none items-center justify-between gap-3 border-t border-[color:var(--passport-hairline)] px-4 py-3">
+        <button
+          type="button"
+          className="passport-action w-auto"
+          onClick={() => go(-1)}
+          disabled={clamped === 0}
+        >
+          ← Previous
+        </button>
+        <div className="min-w-0 text-center">
+          <div className="passport-display truncate text-[13px]">{titles}</div>
+          <div className="passport-faint passport-mono text-[10px] tracking-[0.14em]">
+            {spread.includes(0) && pages[0]?.variant === "cover" && spread.length === 1
+              ? "COVER"
+              : bookletLabel(spread, pages.length)}
+          </div>
+        </div>
+        <button
+          type="button"
+          className="passport-action passport-action--primary w-auto"
+          onClick={() => go(1)}
+          disabled={clamped >= spreads.length - 1}
+        >
+          Next →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── cover thumbnail ──────────────────────────────────────────────────── */
+
+/**
+ * A miniature of the real cover.
+ *
+ * It renders `BookletCover` itself, at design size, under the same uniform
+ * transform the book uses for a leaf — it is NOT a second, simplified drawing
+ * of the cover. That matters for the same reason the client and the officer
+ * share one viewer: a hand-drawn "thumbnail version" is a copy, and a copy
+ * drifts. Change the cover once — the emblem, the frame rules, the gold, the
+ * type — and every surface that shows one follows, including this.
+ *
+ * Because it is the real artwork built from the real projection, it is
+ * per-customer by construction. Nothing here is specialised to a case; pass a
+ * different `view` and you get that customer's bearer, credential and state.
+ *
+ * ## Why nothing here measures anything
+ *
+ * The cover is a fixed 470×648 composition, so a miniature is a slot width and
+ * a scale factor — and those two are the SAME number. Deriving them separately
+ * is how a miniature ends up clipped: a first draft took the width from CSS
+ * (112px on a phone) and the scale from JS, and any moment the two disagreed —
+ * before the first layout effect, in a server render, on a hidden tab — the
+ * board was drawn at one size inside a box of another and lost its clasp to
+ * `overflow: hidden`.
+ *
+ * So the size is declared ONCE, as the unitless `--passport-thumb-w`, and the
+ * stylesheet derives both the box (`calc(var(--passport-thumb-w) * 1px)`) and
+ * the scale (`calc(var(--passport-thumb-w) / 470)`) from it. They cannot
+ * disagree, there is no JS in the path at all, and a surface resizes the cover
+ * by setting one custom property.
+ */
+export function PassportCoverThumb({
+  view,
+  width,
+  className,
+}: {
+  view: PassportView;
+  /**
+   * Override the slot width, in CSS pixels. Omit to take the size from the
+   * stylesheet, which is where it belongs for the surfaces we ship.
+   */
+  width?: number;
+  className?: string;
+}) {
+  const page = useMemo(() => bookletCover(view), [view]);
+  return (
+    <span
+      className={cn("passport-cover-thumb", className)}
+      style={width ? ({ "--passport-thumb-w": width } as CSSProperties) : undefined}
+    >
+      {/* Hidden from assistive tech: whatever frames this miniature states the
+          bearer, credential and state at full size, so announcing the cover's
+          own text a second time is noise. The control that wraps it carries
+          the accessible name. */}
+      <span aria-hidden="true" className="passport-cover-thumb__art">
+        <BookletCover page={page} />
+      </span>
+    </span>
+  );
+}

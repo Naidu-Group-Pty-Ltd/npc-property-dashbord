@@ -1,10 +1,36 @@
 # Identity verification inside NPC — the Didit Standalone APIs
 
+> **This IS the active integration.** New attempts run NPC's own camera
+> journey and the three Standalone endpoints. The hosted session
+> ([`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md)) exists in the code
+> and is **not** active: `didit_standalone` is the active provider row and
+> `didit` is not.
+>
+> **`save_api_request` is `true` as of 2026-08-14, and that is a reversal.**
+> It was `false`, on the reasoning that NPC's private buckets are the evidence
+> store and Didit should keep no copy. The consequence nobody had weighed is
+> that a completed verification then existed *nowhere* on the provider's side:
+> nothing to audit, nothing to look up, nothing in the Business Console. Each
+> request is now persisted as an API-type session and appears under **Manual
+> Checks**, correlated to the applicant by a person-scoped `vendor_data`.
+>
+> **Two things follow, and both are handled rather than assumed.** Didit now
+> **retains the customer's document images and selfie**, so NPC's buckets are
+> no longer the only copy — a privacy position worth being deliberate about,
+> not a side effect. And the image fields come back as **short-lived media
+> URLs instead of inline base64**, which is why `resolveReferenceImage` exists:
+> without it Face Match would never run and every attempt would settle as a
+> referral.
+>
+> These are **not** session-based verifications, so they do **not** appear
+> under Verifications → User Verifications or Directory → Users. That screen
+> belongs to `POST /v3/session/`. Manual Checks is the right place to look.
+
 **Read this before touching anything in the identity path.** The customer's
 whole experience, the money, and the attempt allowance all hang off decisions
 recorded here, and three of them are counter-intuitive.
 
-The hosted flow that this replaces is [`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md).
+The hosted flow is [`DIDIT_IDV_INTEGRATION.md`](./DIDIT_IDV_INTEGRATION.md).
 It is not deleted and must not be — see [Legacy](#legacy-what-is-still-wired-and-why).
 
 ## The shape
@@ -15,17 +41,24 @@ customer
   → NPC camera (getUserMedia, in the page)
   → private Supabase Storage    aml-documents / aml-biometrics
   → aml-verification-processor  (Edge Function, holds the credential)
-  → POST /v3/id-verification/     ┐
-  → POST /v3/passive-liveness/    ├ three separately billed calls
-  → POST /v3/face-match/          ┘
+  → POST /v3/id-verification/     ┐  save_api_request=true
+  → POST /v3/passive-liveness/    ├  three separately billed calls,
+  → POST /v3/face-match/          ┘  each persisted under Manual Checks
   → composeStandaloneOutcome      (one identity position)
   → aml.verification_checks       (canonical row)
   → portal-safe state
 ```
 
 The browser never calls Didit, never holds the key, never sees a score or a
-threshold, and never opens a window. There is no session, no `verification_url`,
-no callback, no webhook and no SDK on the new path.
+threshold, and never opens a window. There is no hosted workflow journey on
+this path — no `verification_url`, no callback and no SDK — and the
+authenticated response IS the authoritative result. A persisted request can
+emit `status.updated`; NPC acknowledges and ignores those (below).
+
+Each request is persisted on Didit's side and visible in the Business Console
+under **Manual Checks**, grouped by the person-scoped `vendor_data`
+(`npc:<case>:<party|primary>`). They are not session-based verifications, so
+they do not appear under Verifications → User Verifications.
 
 | Module | What it owns |
 | --- | --- |
@@ -71,9 +104,28 @@ chose, so `getStandaloneIdvProvider` **throws** when either is missing or out of
 range, the portal reads that as unavailable, and no biometric is collected.
 
 `DIDIT_WORKFLOW_ID` and `DIDIT_WEBHOOK_SECRET` are **not** required here. There
-is no workflow and, with `save_api_request=false`, no session persists on
-Didit's side and no webhook is ever emitted. Requiring either would refuse a
+is no workflow on this path, and the endpoints answer synchronously — **that
+response is the authoritative result**. Requiring either would refuse a
 correctly configured deployment. They remain required by the *hosted* adapter.
+
+### A persisted request DOES emit a webhook, and NPC ignores it
+
+`save_api_request=true` persists each call as an API-type session, and Didit
+emits `status.updated` for a persisted session. So `didit-webhook` receives
+events for Standalone checks, and it must do **nothing** with them.
+
+This architecture has exactly one authoritative result: the synchronous
+response `standaloneVerification.ts` already composed. Settling from a webhook
+would be a second authoritative path racing the first, able to overwrite an
+attempt that has already been decided — including one already settled and
+counted. There is deliberately no branch that could.
+
+What happens instead: the hosted lookup (`provider = 'didit'`) does not match a
+`didit_standalone` row, and rather than reporting the routine case as an
+alarming `unknown_session`, the receiver recognises it —
+`standalone_session_ignored`, acknowledged **202** so Didit stops retrying,
+`processed: false`, recorded against the check for visibility, and no decision
+fetched, no status written, no attempt consumed.
 
 Both thresholds are written onto every attempt (`outcome_detail.standalone
 .thresholds_applied`) so a reviewer months later can see the policy in force on
@@ -135,15 +187,33 @@ an **attempt id and nothing else**. Both buckets are private and neither has
 ever been public; the selfie stays in `aml-biometrics`, whose access policy is
 tighter and whose reads are logged.
 
-Nothing image-shaped is persisted. `portrait_image`, `front_image` and
-`back_image` are stripped **by name** before anything reaches `outcome_detail`,
-on top of the size-based sweep in `verificationEvidence.pure.ts` — the name
-list exists because a short base64 string is still a face. Extracted name,
-address, date of birth and MRZ are stripped too: they already live in the case
-record, entered by the customer and adjudicated by staff.
+Nothing image-shaped is persisted **by NPC**. `portrait_image`, `front_image`
+and `back_image` are stripped **by name** before anything reaches
+`outcome_detail`, on top of the size-based sweep in
+`verificationEvidence.pure.ts` — the name list exists because a short base64
+string is still a face, and it now also catches the media **URL** those fields
+carry under `save_api_request=true`, because a URL that fetches a face is as
+disclosing as the face. Extracted name, address, date of birth and MRZ are
+stripped too: they already live in the case record, entered by the customer and
+adjudicated by staff.
 
-The ID portrait is used **in server memory** as the face-match reference and
-discarded. It is never persisted, logged, or returned to a browser.
+The ID portrait is fetched or decoded **into server memory** as the face-match
+reference and discarded. It is never persisted, logged, or returned to a
+browser.
+
+### Didit holds a copy too, and that is deliberate
+
+`save_api_request=true` means the provider **retains the document images and
+the selfie** against the persisted request. NPC's private buckets are no longer
+the only copy, and that is a disclosure to a third party (and, since Didit
+processes in the EU, a cross-border one) rather than an implementation detail.
+It is the price of having a provider-side audit trail at all, and it was
+accepted deliberately on 2026-08-14.
+
+What follows from it: the biometric consent copy and the retention position in
+this document describe what NPC destroys and when. They do **not** govern
+Didit's own copy, which is subject to the retention configured on the Didit
+account. Anyone reasoning about the §18 clock should read both.
 
 ## Retention
 

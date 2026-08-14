@@ -89,20 +89,41 @@ const TOUR_STEPS: TourStep[] = [
   },
 ];
 
+// "Desktop" means a real desktop input, not just a desktop width. Every tour
+// target lives inside the desktop sidebar (`hidden md:flex`), so below `md`
+// there is nothing to highlight and the tour's full-screen fixed overlay
+// would sit over the whole portal silently swallowing every touch and tap.
+// Width alone is not enough to prove desktop: Android's desktop-site mode,
+// folds/tablets and display scaling can all report >= 768px while the only
+// input is a finger — so the gate also demands a pointer that can hover and
+// point precisely. The tour must never mount on a touch-only device.
+const DESKTOP_MEDIA_QUERY =
+  '(min-width: 768px) and (hover: hover) and (pointer: fine)';
+
 export function PortalOnboardingTour() {
   const { user, completeOnboarding } = usePortalAuth();
   const [currentStep, setCurrentStep] = useState(-1); // -1 = welcome screen
   const [isActive, setIsActive] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_MEDIA_QUERY).matches
+  );
   const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (user && !user.has_completed_onboarding) {
+    const mql = window.matchMedia(DESKTOP_MEDIA_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    if (user && !user.has_completed_onboarding && isDesktop) {
       // Small delay so the layout renders first
       const timer = setTimeout(() => setIsActive(true), 800);
       return () => clearTimeout(timer);
     }
-  }, [user]);
+  }, [user, isDesktop]);
 
   const positionTooltip = useCallback((stepIndex: number) => {
     if (stepIndex < 0 || stepIndex >= TOUR_STEPS.length) return;
@@ -117,19 +138,12 @@ export function PortalOnboardingTour() {
     (target as HTMLElement).style.borderRadius = '12px';
     (target as HTMLElement).style.boxShadow = '0 0 0 4px hsl(var(--primary) / 0.3)';
 
-    // Position tooltip to the right of sidebar on desktop
-    const isMobile = window.innerWidth < 768;
-    if (isMobile) {
-      setTooltipPosition({
-        top: Math.min(rect.bottom + 12, window.innerHeight - 300),
-        left: 16,
-      });
-    } else {
-      setTooltipPosition({
-        top: Math.max(rect.top - 20, 80),
-        left: rect.right + 20,
-      });
-    }
+    // Position the tooltip to the right of the sidebar target; the tour only
+    // runs at `md` and above, where that sidebar is visible.
+    setTooltipPosition({
+      top: Math.max(rect.top - 20, 80),
+      left: rect.right + 20,
+    });
   }, []);
 
   const cleanupHighlight = useCallback(() => {
@@ -138,10 +152,24 @@ export function PortalOnboardingTour() {
       if (el) {
         el.style.position = '';
         el.style.zIndex = '';
+        el.style.borderRadius = '';
         el.style.boxShadow = '';
       }
     });
   }, []);
+
+  // If the viewport leaves `md` while the tour is showing (rotation, split
+  // screen, a resized window), tear the tour down completely: no fixed
+  // overlay may remain over a viewport whose sidebar targets are hidden.
+  // Onboarding is not marked complete — the tour re-offers itself when the
+  // viewport is wide enough again.
+  useEffect(() => {
+    if (!isDesktop && isActive) {
+      cleanupHighlight();
+      setIsActive(false);
+      setCurrentStep(-1);
+    }
+  }, [isDesktop, isActive, cleanupHighlight]);
 
   useEffect(() => {
     if (currentStep >= 0) {
@@ -174,7 +202,9 @@ export function PortalOnboardingTour() {
     setCurrentStep(0);
   };
 
-  if (!isActive) return null;
+  // Never render below `md`: the render guard (not just the activation timer)
+  // is what guarantees no full-screen interaction layer can exist on mobile.
+  if (!isActive || !isDesktop) return null;
 
   const isWelcome = currentStep === -1;
   const step = currentStep >= 0 ? TOUR_STEPS[currentStep] : null;

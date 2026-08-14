@@ -367,21 +367,25 @@ describe('the callback is a receipt, never a result', () => {
     expect(RETURN_PAGE).toMatch(/postMessage\(RETURN_NOTICE, window\.location\.origin\)/);
   });
 
-  it('has no return-message handler, because nothing can message it', () => {
+  it('the return-message handler is bounded to this origin and reads no verdict', () => {
     /*
-     * There used to be one, bounded to NPC's own origin and able only to
-     * re-read server state. It existed because a window NPC had opened needed
-     * a way to say "the customer came back".
+     * The listener is back with the window it belongs to: a window NPC opened
+     * needs a way to say "the customer came back". What it may do with that is
+     * the narrow part — the message is origin-checked against NPC's own page,
+     * matched on a bare type, and its ONLY effect is to re-read server state.
      *
-     * The hosted cutover removed the window, so there is no opener, no return
-     * page in the customer's path and nothing that could speak. The listener
-     * went with it — and its absence is a narrower boundary than its most
-     * careful version was.
+     * The payload has no status field (asserted above, on the return page), so
+     * there is nothing here for a future edit to start trusting.
      */
     const code = codeOnly(STEP);
-    expect(code).not.toMatch(/event\.origin/);
-    expect(code).not.toContain('RETURN_NOTICE_TYPE');
-    expect(code).not.toMatch(/addEventListener\('message'/);
+    expect(code).toMatch(/event\.origin !== window\.location\.origin/);
+    expect(code).toMatch(/addEventListener\('message'/);
+    expect(code).toContain("'npc:identity-return'");
+    // The handler re-reads and does nothing else — no status is taken off the
+    // event, and no branch of it can reach a verification outcome.
+    const handler = code.slice(code.indexOf('const onMessage'), code.indexOf("addEventListener('message'"));
+    expect(handler).not.toMatch(/verified|approved|status\s*===/i);
+    expect(handler).toContain('onRefresh()');
   });
 
   it('the step holds no path from a browser event to a verification status', () => {
@@ -398,6 +402,9 @@ describe('the callback is a receipt, never a result', () => {
 
 describe('the provider no longer runs inside NPC', () => {
   it('the step renders no iframe and delegates no permissions', () => {
+    // The provider runs in a separate TOP-LEVEL window, not inside NPC's page.
+    // A withheld iframe capability became a silent device handoff, which is why
+    // the embed is the one thing that must never come back.
     expect(STEP).not.toMatch(/<iframe/);
     expect(STEP).not.toMatch(/HOSTED_IFRAME_ALLOW/);
     expect(STEP).not.toMatch(/iframeRef/);
@@ -408,20 +415,33 @@ describe('the provider no longer runs inside NPC', () => {
     expect(STEP).not.toMatch(/'camera',\s*\n\s*'microphone'/);
   });
 
-  it('opens no window at all — the popup rule no longer has anything to govern', () => {
+  it('opens the window SYNCHRONOUSLY inside the click, before the session request', () => {
     /*
-     * This used to assert the ordering the whole hosted flow rested on: open
-     * the window synchronously inside the click, THEN await the session, or
-     * browsers classify it as an unsolicited popup and block it.
+     * The ordering the whole hosted flow rests on: open the window inside the
+     * gesture, THEN await the session, THEN navigate the window already held.
+     * A window opened after an `await` is an unsolicited popup and is blocked
+     * on default settings in Safari and Firefox — getting this order wrong
+     * does not degrade the flow, it ends it.
      *
-     * The cutover removed the reason for the rule. A customer is never sent to
-     * a provider's page, so there is no window to open early, and the property
-     * worth holding is the absolute one.
+     * Asserted positionally rather than by reading the comment beside it,
+     * because the comment cannot fail when somebody reorders the code.
      */
     const code = codeOnly(STEP);
-    expect(code).not.toMatch(/window\s*\.\s*open\s*\(/);
-    expect(code).not.toContain('CHECK_WINDOW_TARGET');
-    expect(code).not.toContain('startHostedVerification');
+    const begin = code.slice(code.indexOf('const begin ='), code.indexOf('const requirements ='));
+    expect(begin.length).toBeGreaterThan(0);
+
+    const opened = begin.indexOf('window.open(');
+    const awaited = begin.indexOf('await amlPortalApi.startHostedVerification');
+    const navigated = begin.indexOf('location.replace(');
+    expect(opened, 'the window is opened').toBeGreaterThan(-1);
+    expect(awaited, 'the session is requested').toBeGreaterThan(-1);
+    expect(navigated, 'the window is navigated').toBeGreaterThan(-1);
+    expect(opened, 'window.open precedes the await').toBeLessThan(awaited);
+    expect(awaited, 'the navigation follows the session').toBeLessThan(navigated);
+
+    // Nothing is awaited before the window opens — that is what keeps the
+    // browser treating it as user-initiated.
+    expect(begin.slice(0, opened)).not.toContain('await');
   });
 
   it('never writes the session URL to storage or a log', () => {

@@ -6,8 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { amlPortalApi } from '@/lib/aml/amlPortalApi';
-import type { PassportView } from '@/lib/aml/passport';
+import { buildBooklet, type PassportView } from '@/lib/aml/passport';
 import { StampSeal } from '@/components/aml/passport/StampSeal';
+import { PassportBook } from '@/components/aml/passport/design/PassportBook';
 import {
   formatPassportCurrency,
   formatPassportDate,
@@ -58,21 +59,7 @@ export default function PortalPassport() {
 
   const view = state.kind === 'ready' ? state.view : null;
 
-  const pages = useMemo<BookletPage[]>(() => {
-    if (!view) return [];
-    const list: BookletPage[] = [
-      { id: 'cover', title: 'Cover', kicker: 'AML/CTF Compliance Passport' },
-      { id: 'journey', title: 'Journey', kicker: 'Your progress' },
-      { id: 'identity', title: 'Identity', kicker: 'Page I' },
-      { id: 'verification', title: 'Verification', kicker: 'Page II' },
-      { id: 'documents', title: 'Documents', kicker: 'Page III' },
-    ];
-    if (view.transactions.length > 0) list.push({ id: 'transactions', title: 'Transaction', kicker: 'Page IV' });
-    list.push({ id: 'stamps', title: 'Stamps', kicker: 'Stamp register' });
-    if (view.versions.length > 0) list.push({ id: 'versions', title: 'Versions', kicker: 'Version register' });
-    list.push({ id: 'history', title: 'Record', kicker: 'Journey record' });
-    return list;
-  }, [view]);
+  const pages = useMemo(() => (view ? buildBooklet(view) : []), [view]);
 
   useEffect(() => {
     if (!view) return;
@@ -127,7 +114,6 @@ export default function PortalPassport() {
   }
 
   const v = view!;
-  const page = pages[Math.min(pageIdx, pages.length - 1)];
 
   return (
     <div className="passport-scope mx-auto max-w-3xl space-y-4 pb-8">
@@ -141,295 +127,26 @@ export default function PortalPassport() {
         </div>
       </div>
 
-      {/* ── page chips ─────────────────────────────────────────────────── */}
-      <nav aria-label="Passport pages" className="flex flex-wrap gap-1.5">
-        {pages.map((p, i) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setPageIdx(i)}
-            aria-current={i === pageIdx ? 'page' : undefined}
-            className={
-              i === pageIdx
-                ? 'rounded-full border border-primary/50 bg-primary/10 px-3 py-1 text-xs font-medium'
-                : 'rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted'
-            }
-          >
-            {p.title}
-          </button>
-        ))}
-      </nav>
-
-      {/* ── the open page ──────────────────────────────────────────────── */}
-      {page.id === 'cover' ? (
-        <CoverPage v={v} />
-      ) : (
-        <section
-          aria-label={page.title}
-          className="passport-page relative min-h-[420px] rounded-xl p-6 sm:p-8"
-        >
-          <header className="mb-4 text-center">
-            <div className="passport-page__kicker text-[10px]">{page.kicker}</div>
-            <h2 className="mt-1 font-serif text-xl font-semibold uppercase tracking-widest">{page.title}</h2>
-            <div className="passport-cover__rule mx-auto mt-2 w-24" />
-          </header>
-
-          {page.id === 'journey' && <JourneyPage v={v} />}
-          {page.id === 'identity' && <IdentityPage v={v} />}
-          {page.id === 'verification' && <VerificationPage v={v} />}
-          {page.id === 'documents' && <DocumentsPage v={v} />}
-          {page.id === 'transactions' && <TransactionsPage v={v} />}
-          {page.id === 'stamps' && <StampsPage v={v} />}
-          {page.id === 'versions' && <VersionsPage v={v} />}
-          {page.id === 'history' && <HistoryPage v={v} />}
-        </section>
-      )}
-
-      {/* ── pagination ─────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-center gap-4">
-        <Button
-          variant="outline" size="sm" disabled={pageIdx === 0}
-          onClick={() => setPageIdx((i) => Math.max(i - 1, 0))}
-        >
-          <ChevronLeft className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Previous
-        </Button>
-        <span className="min-w-24 text-center text-xs text-muted-foreground">
-          {page.title} · {pageIdx + 1} of {pages.length}
-        </span>
-        <Button
-          variant="outline" size="sm" disabled={pageIdx >= pages.length - 1}
-          onClick={() => setPageIdx((i) => Math.min(i + 1, pages.length - 1))}
-        >
-          Next <ChevronRight className="ml-1 h-3.5 w-3.5" aria-hidden="true" />
-        </Button>
-      </div>
+      {/* ── the bound document ─────────────────────────────────────────
+          The SAME viewer the Command Centre uses. The client and the officer
+          must be looking at one artefact; the audience difference is already
+          handled by the projection, so nothing here re-decides it. */}
+      <PassportBook pages={pages} className="passport-scope rounded-xl" />
     </div>
   );
 }
 
 /* ── pages ─────────────────────────────────────────────────────────────── */
 
-function CoverPage({ v }: { v: PassportView }) {
-  return (
-    <section aria-label="Passport cover" className="passport-cover relative rounded-xl px-6 py-10 text-center sm:px-10 sm:py-14">
-      <span aria-hidden="true" className="passport-cover__frame rounded-xl" />
-      <ShieldCheck className="mx-auto h-10 w-10" aria-hidden="true" />
-      <div className="mt-4 font-serif text-2xl font-semibold uppercase tracking-[0.18em]">{v.header.issuer_org}</div>
-      <div className="passport-cover__rule mx-auto my-4 w-32" />
-      <div className="font-serif text-sm uppercase tracking-[0.3em]">AML/CTF Compliance Passport</div>
 
-      <dl className="mx-auto mt-8 grid max-w-md grid-cols-1 gap-x-8 gap-y-3 text-left sm:grid-cols-2">
-        <CoverFact k="Holder" v={v.header.subject ?? '—'} />
-        <CoverFact k="Credential" v={v.header.credential ?? 'Not yet issued'} mono />
-        <CoverFact k="Status" v={v.header.state.label} />
-        <CoverFact k="Version" v={v.header.current_version_label ?? '—'} mono />
-        <CoverFact k="First issued" v={v.header.first_issued_at ? formatPassportDate(v.header.first_issued_at) : 'Pending'} />
-        <CoverFact k="Issued by" v={v.header.issuer_org} />
-      </dl>
 
-      {v.header.evidence_fingerprint_short ? (
-        <div className="mx-auto mt-8 max-w-md rounded-md border border-current/20 px-4 py-2 font-mono text-[11px] tracking-wider opacity-90">
-          {v.header.evidence_fingerprint_short} · SHA-256 EVIDENCE FINGERPRINT
-        </div>
-      ) : null}
-    </section>
-  );
-}
 
-function CoverFact({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
-  return (
-    <div>
-      <dt className="text-[9px] font-bold uppercase tracking-[0.18em] opacity-70">{k}</dt>
-      <dd className={mono ? 'mt-0.5 font-mono text-xs' : 'mt-0.5 text-sm'}>{v}</dd>
-    </div>
-  );
-}
 
-function PageRow({ k, v: value }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 py-1.5">
-      <span className="passport-page__muted text-xs">{k}</span>
-      <span className="text-right text-sm">{value}</span>
-    </div>
-  );
-}
 
-function EmptyPage({ text }: { text: string }) {
-  return <p className="passport-page__muted py-6 text-center text-sm">{text}</p>;
-}
 
-function JourneyPage({ v }: { v: PassportView }) {
-  const j = v.journey;
-  return (
-    <div className="space-y-4">
-      <p className="passport-page__muted text-center text-[11px]">
-        {j.recorded} of {j.total} compliance milestones recorded. Each one you complete is added to your Passport.
-      </p>
-      <div
-        className="passport-progress h-1.5 overflow-hidden rounded-full"
-        role="progressbar"
-        aria-valuenow={j.percent}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-label={`${j.recorded} of ${j.total} milestones recorded`}
-      >
-        <div className="passport-progress__bar h-full rounded-full" style={{ width: `${j.percent}%` }} />
-      </div>
-      {j.phases.map((phase) => (
-        <div key={phase.phase}>
-          <div className="passport-page__kicker text-[9px]">{phase.label}</div>
-          <div className="passport-page__rule my-1.5" />
-          {phase.milestones.map((m) => (
-            <div key={m.code} className="flex items-baseline justify-between gap-3 py-1">
-              <span className={m.recorded ? 'text-xs' : 'passport-page__muted text-xs'}>
-                <span aria-hidden="true">{m.recorded ? '✓ ' : '· '}</span>{m.title}
-              </span>
-              <span className="passport-page__muted shrink-0 font-mono text-[10px]">
-                {m.at ? formatPassportDate(m.at) : ''}
-              </span>
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
 
-function IdentityPage({ v }: { v: PassportView }) {
-  if (v.identity.fields.length === 0) {
-    return <EmptyPage text="Your identity page is added as you complete the Identity & Compliance steps." />;
-  }
-  return (
-    <dl className="grid grid-cols-1 gap-x-10 gap-y-3 sm:grid-cols-2">
-      {v.identity.fields.map((f) => (
-        <div key={f.key} className="border-b border-current/10 pb-2">
-          <dt className="text-[9px] font-bold uppercase tracking-[0.18em] opacity-60">{f.label}</dt>
-          <dd className="mt-0.5 text-sm">{f.value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
 
-function VerificationPage({ v }: { v: PassportView }) {
-  if (v.verification.parties.length === 0) {
-    return <EmptyPage text="Your verification result appears here once identity verification is complete." />;
-  }
-  return (
-    <div className="space-y-5">
-      {v.verification.parties.map((p) => (
-        <div key={p.party}>
-          <div className="flex items-baseline justify-between gap-3">
-            <h3 className="text-sm font-semibold">{p.party}</h3>
-            <span className={p.verified ? 'text-xs font-bold uppercase tracking-wider' : 'passport-page__muted text-xs uppercase tracking-wider'}>
-              {p.verified ? 'Verified' : 'In progress'}
-            </span>
-          </div>
-          <div className="passport-page__rule my-2" />
-          {p.components.map((c, i) => (
-            <PageRow
-              key={i}
-              k={c.check_type.replaceAll('_', ' ')}
-              v={`${c.status.replaceAll('_', ' ')}${c.completed_at ? ` · ${formatPassportDate(c.completed_at)}` : ''}`}
-            />
-          ))}
-        </div>
-      ))}
-      <p className="passport-page__muted text-center text-[11px]">
-        Verification detail beyond this page is held by your adviser's compliance team.
-      </p>
-    </div>
-  );
-}
 
-function DocumentsPage({ v }: { v: PassportView }) {
-  if (v.documents.length === 0) {
-    return <EmptyPage text="Documents you provide are recorded here." />;
-  }
-  return (
-    <div>
-      {v.documents.map((d) => (
-        <PageRow
-          key={d.id}
-          k={d.label + (d.version_number && d.version_number > 1 ? ` (v${d.version_number})` : '')}
-          v={`${presentDocStatus(d.status)}${d.uploaded_at ? ` · ${formatPassportDate(d.uploaded_at)}` : ''}`}
-        />
-      ))}
-      <p className="passport-page__muted mt-4 text-center text-[11px]">
-        Files are opened securely from the Identity &amp; Compliance page — this register lists what is held.
-      </p>
-    </div>
-  );
-}
 
-function presentDocStatus(status: string): string {
-  const map: Record<string, string> = {
-    uploaded: 'Received', accepted: 'Accepted', rejected: 'Needs attention', superseded: 'Replaced',
-  };
-  return map[status] ?? status.replaceAll('_', ' ');
-}
 
-function TransactionsPage({ v }: { v: PassportView }) {
-  return (
-    <div className="space-y-5">
-      {v.transactions.map((t) => (
-        <div key={t.id}>
-          <h3 className="text-sm font-semibold">{t.property_address ?? 'Property transaction'}</h3>
-          <div className="passport-page__rule my-2" />
-          {t.kind ? <PageRow k="Type" v={t.kind} /> : null}
-          {t.status ? <PageRow k="Status" v={t.status.replaceAll('_', ' ')} /> : null}
-          {t.contract_date ? <PageRow k="Contract date" v={formatPassportDate(t.contract_date)} /> : null}
-          {t.settlement_date ? <PageRow k="Settlement" v={formatPassportDate(t.settlement_date)} /> : null}
-          {typeof t.purchase_price === 'number' ? <PageRow k="Purchase price" v={formatPassportCurrency(t.purchase_price)} /> : null}
-        </div>
-      ))}
-    </div>
-  );
-}
 
-function StampsPage({ v }: { v: PassportView }) {
-  if (v.stamps.length === 0) {
-    return <EmptyPage text="Stamps are added as each compliance milestone is completed — finish the journey to fill this page." />;
-  }
-  return (
-    <div className="grid grid-cols-2 justify-items-center gap-4 sm:grid-cols-3">
-      {v.stamps.map((s, i) => (
-        <StampSeal key={`${s.code}-${s.at}-${i}`} stamp={s} size="sm" />
-      ))}
-    </div>
-  );
-}
-
-function VersionsPage({ v }: { v: PassportView }) {
-  return (
-    <div>
-      <p className="passport-page__muted mb-3 text-center text-[11px]">
-        An issued version is never silently changed — updates issue a new version.
-      </p>
-      {[...v.versions].reverse().map((ver) => (
-        <PageRow
-          key={ver.version}
-          k={`${ver.label}${ver.state === 'current' ? ' · current' : ''}`}
-          v={ver.issued_at ? formatPassportDate(ver.issued_at) : '—'}
-        />
-      ))}
-    </div>
-  );
-}
-
-function HistoryPage({ v }: { v: PassportView }) {
-  if (v.history.length === 0) {
-    return <EmptyPage text="Your journey record grows as milestones are completed." />;
-  }
-  return (
-    <ol>
-      {v.history.map((h, i) => (
-        <li key={h.id ?? `${h.at}-${i}`} className="flex items-baseline gap-3 border-b border-current/10 py-1.5 last:border-0">
-          <span className="passport-page__muted w-24 shrink-0 font-mono text-[10px]">{formatPassportDateTime(h.at)}</span>
-          <span className="min-w-0 flex-1 text-xs">{h.title}</span>
-          <span className="passport-page__muted shrink-0 text-[10px]">{h.source}</span>
-        </li>
-      ))}
-    </ol>
-  );
-}

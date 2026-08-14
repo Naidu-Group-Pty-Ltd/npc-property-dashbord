@@ -7,10 +7,9 @@ import { resolve } from 'node:path';
  *
  * These are source and contract assertions, in the style the rest of this
  * directory uses, because the properties they protect are not reachable from a
- * unit test: "the browser never gets the API key", "no new attempt opens a
- * provider window", "every paid call sends save_api_request=false" and "a
- * failed paid call is never automatically retried" are statements about which
- * code exists and which does not.
+ * unit test: "the browser never gets the API key", "every paid call sends
+ * save_api_request=true" and "a failed paid call is never automatically
+ * retried" are statements about which code exists and which does not.
  *
  * Every one of them corresponds to a way this integration could be wrong that
  * would not fail any behavioural test — it would just quietly cost money, leak
@@ -75,8 +74,9 @@ describe('the customer never sees, and the browser never calls, the provider', (
   it('the capture journey opens no window, embeds nothing and redirects nowhere', () => {
     // The whole of `SecureCaptureCheck` — from its declaration to the end of
     // the file's capture section — must contain none of the hosted flow's
-    // machinery. The hosted component above it still may: it is legacy and
-    // serves sessions opened before the cutover.
+    // machinery. `HostedVerificationCheck` above it is where all of that
+    // lives; the two experiences share a step but never each other's code, so
+    // a tenant on the capture journey cannot reach a window by any path.
     const start = STEP.indexOf('function SecureCaptureCheck(');
     expect(start).toBeGreaterThan(0);
     const capture = STEP.slice(start);
@@ -130,12 +130,65 @@ describe('the provider calls', () => {
     expect(CLIENT).not.toContain('callback');
   });
 
-  it('sends save_api_request=false on every call, from one place', () => {
-    // Set in `baseForm`, which every endpoint builds on — so a fourth endpoint
-    // cannot be added without it.
-    expect(CLIENT).toContain("form.append('save_api_request', 'false')");
-    expect(CLIENT.match(/save_api_request/g)?.length).toBeGreaterThanOrEqual(1);
-    expect(CLIENT).not.toContain("'save_api_request', 'true'");
+  it('sends save_api_request=true on every call, from one place', () => {
+    /*
+     * Set in `baseForm`, which all three endpoints build on — so a fourth
+     * cannot be added without it. The flag is what persists the request as an
+     * API-type session and puts it in the Business Console under Manual
+     * Checks; a call that skipped it would be a verification with no
+     * provider-side record, which is the state this reversed.
+     */
+    expect(CLIENT).toContain("form.append('save_api_request', 'true')");
+    expect(CLIENT).not.toContain("'save_api_request', 'false'");
+    // One place, not three.
+    expect(CLIENT.match(/form\.append\('save_api_request'/g)?.length).toBe(1);
+    const baseForm = CLIENT.slice(CLIENT.indexOf('function baseForm('), CLIENT.indexOf('export interface VerifyIdentityDocumentArgs'));
+    expect(baseForm).toContain("form.append('save_api_request', 'true')");
+    expect(baseForm).toContain("form.append('vendor_data', vendorData)");
+  });
+
+  it('every endpoint goes through baseForm, so every one is persisted', () => {
+    for (const fn of ['verifyIdentityDocument', 'checkPassiveLiveness', 'compareFaces']) {
+      const start = CLIENT.indexOf(`export async function ${fn}(`);
+      expect(start, fn).toBeGreaterThan(0);
+      const body = CLIENT.slice(start, CLIENT.indexOf('\n}', start));
+      expect(body, fn).toContain('baseForm(args.vendorData, args.metadata)');
+    }
+  });
+
+  it('resolves the Face Match reference whichever shape the flag produces', () => {
+    /*
+     * `save_api_request=true` returns `portrait_image` as a media URL instead
+     * of inline base64. Without this the third call would never run and every
+     * attempt would settle as a referral — the regression that made flipping
+     * the flag alone unsafe.
+     */
+    const ORCH = read('supabase/functions/_shared/aml/standaloneVerification.ts');
+    expect(ORCH).toContain('await resolveReferenceImage(id.portraitBase64)');
+    expect(ORCH).not.toContain('decodeInlineImage(id.portraitBase64)');
+    expect(CLIENT).toContain('export async function resolveReferenceImage(');
+  });
+
+  it('following a provider URL is bounded, and can never leak the credential', () => {
+    const fetcher = CLIENT.slice(
+      CLIENT.indexOf('export async function fetchRemoteImage('),
+      CLIENT.indexOf('export async function resolveReferenceImage('));
+    // The host allow-list gates the fetch, and it is the FIRST thing that
+    // runs — scheme, port, credentials, IP literals and internal names are all
+    // refused inside it (see diditStandalone.test.ts, which exercises the
+    // policy for real rather than by reading the source).
+    expect(fetcher).toContain('isAllowedMediaUrl(value, allowedMediaHosts())');
+    expect(fetcher.indexOf('isAllowedMediaUrl'))
+      .toBeLessThan(fetcher.indexOf('await fetch('));
+    expect(fetcher).toContain("redirect: 'error'");    // never chased
+    expect(fetcher).toContain('AbortSignal.timeout');
+    expect(fetcher).toContain("contentType.startsWith('image/')");
+    expect(fetcher).toContain('MAX_REFERENCE_IMAGE_BYTES');
+    // The API key is never attached to a media host.
+    expect(fetcher).not.toContain('x-api-key');
+    expect(fetcher).not.toContain('apiKey');
+    // It cannot throw into the sequence.
+    expect(fetcher).toContain('catch {');
   });
 
   it('asks for document liveness on the ID call', () => {
@@ -163,7 +216,10 @@ describe('the provider calls', () => {
   });
 
   it('uses the provider-returned ID portrait as the face-match reference', () => {
-    expect(ORCHESTRATOR).toContain('decodeInlineImage(id.portraitBase64)');
+    // Resolved rather than decoded: under `save_api_request=true` the field is
+    // a media URL, and the older inline-only decode would have left every
+    // attempt without a reference. See the resolution test above.
+    expect(ORCHESTRATOR).toContain('await resolveReferenceImage(id.portraitBase64)');
     expect(ORCHESTRATOR).toContain('refImage: portraitBytes');
   });
 
@@ -193,8 +249,27 @@ describe('the provider calls', () => {
     expect(CLIENT).toContain('out.split(apiKey).join');
   });
 
+  it('sends a stable PERSON-scoped vendor_data, so an applicant is one identity', () => {
+    /*
+     * `npc:<case>:<party|primary>`, no attempt suffix. Didit groups persisted
+     * requests by this exact string, so a suffix would scatter one applicant's
+     * Manual Checks across several identities — the opposite of what
+     * persisting them is for. It matters more now than it did: with
+     * `save_api_request=false` the key correlated nothing that outlived the
+     * response.
+     */
+    expect(ORCHESTRATOR).toContain(
+      'const vendorData = buildVendorData(check.case_id, check.party_id ?? null);');
+    // The attempt must not creep back into the key; it is carried in metadata.
+    const line = ORCHESTRATOR.slice(
+      ORCHESTRATOR.indexOf('const vendorData = buildVendorData('),
+      ORCHESTRATOR.indexOf('const metadata = {'));
+    expect(line).not.toContain('capture_sequence');
+    expect(ORCHESTRATOR).toContain('npc_capture_sequence:');
+  });
+
   it('never sends customer PII as vendor_data or metadata', () => {
-    // vendor_data is the opaque npc:<case>:<party>:<sequence> handle.
+    // Both are stored by Didit now, so this matters more than it did.
     expect(ORCHESTRATOR).toContain('buildVendorData(');
     const metadata = ORCHESTRATOR.slice(ORCHESTRATOR.indexOf('const metadata = {'));
     const block = metadata.slice(0, metadata.indexOf('};') + 2);
@@ -243,8 +318,10 @@ describe('provider readiness', () => {
   it('does not require a workflow id or a webhook secret', () => {
     // Readiness is decided by `standaloneIdvReadiness`, which reads the key and
     // the two thresholds and nothing else. There is no workflow on this path,
-    // and with save_api_request=false no webhook is ever emitted — requiring
-    // either would refuse a correctly configured deployment.
+    // and the synchronous response is the authoritative result — a persisted
+    // request does emit `status.updated`, but NPC ignores it, so the webhook
+    // secret is not what makes this path usable. Requiring either would refuse
+    // a correctly configured deployment.
     const fn = REGISTRY.slice(REGISTRY.indexOf('export function standaloneIdvReadiness'));
     const body = fn.slice(0, fn.indexOf('\n}'));
     expect(body).toContain('DIDIT_API_KEY');
@@ -450,9 +527,9 @@ describe('what is written to the case record', () => {
   });
 });
 
-/* ─────────────────────── the hosted flow is legacy ─────────────────────── */
+/* ──────────────── the two flows stay separate from each other ───────────── */
 
-describe('the hosted cutover', () => {
+describe('the hosted and capture journeys do not bleed into each other', () => {
   it('creates no new hosted session from the capture journey', () => {
     const start = STEP.indexOf('function SecureCaptureCheck(');
     const capture = STEP.slice(start);
@@ -465,14 +542,16 @@ describe('the hosted cutover', () => {
      * that already ran must still settle the canonical record, and removing
      * them would strand it.
      *
-     * What changed at the cutover is that no customer can start or resume one.
-     * The operation still exists so a cached browser build gets a typed 409
-     * rather than an unknown-op error — see hostedIdvRetired.test.ts, which
-     * asserts the refusal precedes every other statement in it.
+     * The hosted operation is reachable again as code, but NO tenant resolves
+     * it: `didit_standalone` is the active provider row, and there is no
+     * migration in the tree that flips them. The provider-side record the
+     * business needed comes from `save_api_request=true` on the Standalone
+     * calls instead — the customer stays on NPC's own camera.
      */
     expect(REGISTRY).toContain('"didit": (opts) => makeDiditIdvProvider(opts)');
     expect(PORTAL).toContain("case 'start_hosted_verification':");
-    expect(PORTAL).toContain("code: 'hosted_flow_retired'");
+    // Both adapters stay registered; configuration decides which one runs.
+    expect(REGISTRY).toContain('didit_standalone');
   });
 
   it('refuses the older single-shot capture ops under the standalone provider', () => {
@@ -486,12 +565,14 @@ describe('the hosted cutover', () => {
     expect(doc).toContain("provider = 'didit'");
   });
 
-  it('answers the portal with `capture` and never names the integration', () => {
+  it('answers the portal with an experience word and never names the integration', () => {
     const status = PORTAL.slice(PORTAL.indexOf("case 'verification_status':"));
     const body = status.slice(0, status.indexOf("case 'start_hosted_verification':"));
-    // Unconditional since the hosted cutover — see hostedIdvRetired.test.ts.
-    expect(body).toContain("provider_flow: 'capture'");
+    // Two values, both experiences. The provider key, the workflow id and the
+    // environment stay server-side whichever integration is active.
+    expect(body).toContain("provider_flow: flow === 'hosted_session' ? 'hosted' : 'capture'");
     expect(body).not.toContain("'didit_standalone'");
+    expect(body).not.toContain('workflow_id');
   });
 });
 
@@ -694,8 +775,10 @@ describe('an operator can tell WHICH thing is unconfigured', () => {
   });
 
   it('does not ask a Standalone deployment for hosted-only secrets', () => {
-    // There is no workflow and no webhook on this path, so reporting them
-    // would send an operator hunting for a secret that is correctly absent.
+    // There is no workflow on this path, and the synchronous response is the
+    // authoritative result — a persisted request can emit status.updated, but
+    // NPC ignores those. Reporting these would send an operator hunting for a
+    // secret that is correctly absent.
     const secrets = VERIFICATION.slice(
       VERIFICATION.indexOf('const isStandalone = capability === "idv"'),
       VERIFICATION.indexOf('const standaloneReadiness'));

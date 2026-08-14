@@ -90,7 +90,7 @@ export function PortalLayout() {
 
   return (
     <PortalNotificationProvider>
-    <div className="client-portal-theme flex min-h-screen">
+    <div className="client-portal-theme flex min-h-[100dvh] md:min-h-screen">
       {/* Sidebar - Desktop */}
       <aside className="client-portal-sidebar hidden w-72 flex-col border-r md:flex">
         {/* Logo Area */}
@@ -170,11 +170,11 @@ export function PortalLayout() {
 
       {/* Mobile Header */}
       <div className="client-portal-topbar fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b px-4 py-3 md:hidden">
-        <div className="flex items-center gap-2.5">
-          <BrandLogo slot="sidebar-icon" className="h-8 w-8 object-contain" fallbackClassName="h-8 w-8" />
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <BrandLogo slot="sidebar-icon" className="h-8 w-8 shrink-0 object-contain" fallbackClassName="h-8 w-8 shrink-0" />
           <span className="font-bold text-foreground truncate">{settings.companyName}</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <PortalNotificationBell />
           <Avatar className="h-8 w-8 border border-primary/20">
             <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
@@ -190,7 +190,7 @@ export function PortalLayout() {
       {/* Mobile Nav Overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm md:hidden" onClick={() => setMobileOpen(false)}>
-          <div className="absolute left-0 right-0 top-14 animate-in slide-in-from-top-2 rounded-b-3xl border-b border-border/70 bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="absolute left-0 right-0 top-14 max-h-[calc(100dvh-3.5rem)] animate-in slide-in-from-top-2 overflow-y-auto overscroll-y-contain touch-pan-y rounded-b-3xl border-b border-border/70 bg-card/95 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl shadow-primary/10 backdrop-blur-xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-r from-primary/10 via-primary/5 to-card/90 p-3 shadow-lg shadow-primary/5">
               <Avatar className="h-9 w-9 border border-primary/20">
                 <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
@@ -236,7 +236,7 @@ export function PortalLayout() {
       )}
 
       {/* Main Content */}
-      <main className="client-portal-main flex-1 overflow-auto pt-14 md:pt-0">
+      <main className="client-portal-main min-w-0 flex-1 overflow-visible pt-14 md:overflow-auto md:pt-0">
         <PortalImpersonationBanner />
         <div className="client-portal-content">
           <Outlet />

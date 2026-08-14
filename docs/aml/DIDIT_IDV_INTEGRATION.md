@@ -166,26 +166,76 @@ second", which silently drops the outcome and strands the customer.
 ### `POST /v3/session/` is an upsert, not a create
 
 **It deduplicates on `workflow_id + vendor_data`.** Measured against the live
-API rather than inferred: two calls with the same pair returned byte-identical
-`session_id` and session token, left `session_number` unchanged, and merely
-overwrote `metadata`. Changing one character of `vendor_data` returned a
-genuinely new session.
+API rather than inferred, and re-measured on 2026-08-14: two calls with the same
+pair returned byte-identical `session_id`, `session_token`, `url` and
+`session_number`, and merely overwrote `metadata`. Changing one character of
+`vendor_data` returned a genuinely new session.
 
-That is why `vendor_data` is scoped to the attempt —
-`npc:<case>:<party|primary>:<capture-sequence>`. With a case-and-party-only key
-there was no way to ask for a session under a new configuration: the key was
-stable for the life of the case, so every request for seven days returned the
-same session, whatever had changed in between.
+### The key is the PERSON: `npc:<case>:<party|primary>`
 
-The counter is `capture_sequence`, which already existed on the row. It is
-server-generated, monotonic per case and party, and carries no PII. It is **not
-a charged attempt** — attempts are counted from settled outcomes
-(`verification_attempts_used`), so re-minting for a technical reason costs the
-customer nothing.
+**Didit groups sessions into a Directory user by that exact string**, so the key
+decides whether an applicant is one person or several in the Business Console.
+It was briefly scoped to the attempt (`…:<capture-sequence>`) to break the dedup
+on purpose, so a customer pinned to a session minted before a workflow change
+could be given a new one. That worked, and it cost something nobody had
+measured: production case `8c58cc07…` exists in Didit as **two** Directory
+users, `:primary` and `:primary:3`.
 
-`parseVendorData` accepts both the three-part and four-part forms. Sessions
-minted before attempt scoping stay valid for seven days, and refusing to parse
-them would strand a live customer's decision.
+The attempt is therefore gone from the key again, and the dedup it restores is
+now load-bearing rather than merely tolerated:
+
+- one NPC applicant is one Didit user, and every session they run aggregates
+  under it — which is the whole reason this flow was reactivated (below);
+- a refresh, a double-click or a second tab return the **same** unstarted
+  session rather than buying another. That is the outermost duplicate-charge
+  guard, outside NPC's own database.
+
+**What it costs, stated plainly:** a key that no longer varies cannot force a
+fresh session. `config.workflow_revised_at` still detects a stale session and
+still releases NPC's row, but while the provider's session is alive (7 days,
+`session_expiration_time`) a re-mint returns that same session. A settled or
+expired session is replaced normally. Reconfiguration latency was traded for
+provider-side identity, deliberately.
+
+Because a session id can now legitimately be referenced by more than one NPC row
+(a released row, and the live one that replaced it), `didit-webhook` selects the
+**un-superseded, most recent** row rather than `maybeSingle()` — which fails
+outright on a second row and would turn a real customer's outcome into a 500 and
+then, once Didit stopped retrying, into no outcome at all.
+
+`parseVendorData` accepts both the three-part and four-part forms, and
+`vendorDataMatches` compares the attempt only when both sides carry one.
+Four-part sessions minted during the attempt-scoped window stay valid for seven
+days, and refusing to parse them would strand a live customer's decision.
+
+### This flow is NOT active — read this before switching to it
+
+`20260911000300` retired it on a product decision: no customer is sent to a
+verification vendor's page. **That decision stands.** The code below is
+complete, tested and reachable, but no tenant resolves it —
+`didit_standalone` is the active provider row and `didit` is not, and
+`start_hosted_verification` answers `409 temporarily_unavailable` for a tenant
+that is not on a hosted provider.
+
+It was briefly reactivated on 2026-08-14 on the reasoning that the Standalone
+APIs could not produce a provider-side record. That reasoning was wrong about
+the cause: the Standalone calls were sending `save_api_request=false`, and
+Didit's published contract for that flag is that nothing is stored. Setting it
+to `true` persists each request as an API-type session, visible in the Business
+Console under **Manual Checks** — which is the record the business needed,
+without moving anybody off NPC's own camera. See
+[`DIDIT_STANDALONE_IDV.md`](./DIDIT_STANDALONE_IDV.md).
+
+So the two consoles answer two different questions, and it is worth being
+precise about which:
+
+| Screen | Populated by |
+| --- | --- |
+| Verifications → **User Verifications**, Directory → **Users** | `POST /v3/session/` — the hosted flow below |
+| **Manual Checks** | the three Standalone endpoints with `save_api_request=true` |
+
+Activating this flow would need a migration flipping the two provider rows, and
+that migration deliberately does not exist in the tree.
 
 ### Stale configuration
 
