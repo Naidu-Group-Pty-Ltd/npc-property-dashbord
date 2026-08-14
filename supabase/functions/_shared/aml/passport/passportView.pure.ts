@@ -34,10 +34,13 @@ import {
   type PassportVersionState,
 } from "./passportState.pure.ts";
 import {
+  clientSafePending,
   clientSafeStamps,
   derivePassportStamps,
+  derivePendingStamps,
   type PassportStamp,
   type PassportStampInput,
+  type PendingStamp,
 } from "./passportStamps.pure.ts";
 import { passportCredential, passportVersionLabel, shortFingerprint } from "./passportCredential.pure.ts";
 import { derivePassportJourney, type PassportJourney } from "./passportJourney.pure.ts";
@@ -234,6 +237,13 @@ export type PassportView = {
     verified: boolean;
   }>;
   stamps: PassportStamp[];
+  /**
+   * The rest of the certification set — what this case is on track to earn
+   * and has not. Never mixed into `stamps`: these carry no record, so a
+   * consumer that treats one as earned would be asserting a control that was
+   * never performed.
+   */
+  pending_stamps: PendingStamp[];
   /** Command: raw hash-chained events. Client: CONSTRUCTED timeline. */
   history: Array<{
     id: string | null;
@@ -370,6 +380,16 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
   const allStamps = derivePassportStamps(input.stamp_input);
   const stamps = audience === "client" ? clientSafeStamps(allStamps) : allStamps;
 
+  // What the case is still on track to earn. Kept in its OWN field rather
+  // than folded in beside the earned stamps: everything downstream that
+  // counts, filters or seals on `stamps` must keep meaning "earned", and a
+  // pending entry carries no timestamp, version, actor or source to count.
+  const allPending = derivePendingStamps(input.stamp_input, allStamps, {
+    subject_type: input.case.subject_type ?? null,
+    case_status: input.case.status,
+  });
+  const pending_stamps = audience === "client" ? clientSafePending(allPending) : allPending;
+
   // State derivation reasons are Command diagnostics. The client sees the
   // label and tone; the machine codes (e.g. `service_gate_regressed`) name
   // internal workflow the client view must not carry.
@@ -458,6 +478,7 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
       verified: ["verified", "waived"].includes(String(o.verification_state)),
     })),
     stamps,
+    pending_stamps,
     history: audience === "command"
       ? (input.events ?? []).map((e) => ({
           id: e.id,

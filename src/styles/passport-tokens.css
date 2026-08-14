@@ -628,6 +628,38 @@
   pointer-events: none;
 }
 
+/* An UNEARNED certification — the empty impression.
+   It must be unmistakable at a glance, so it differs on every axis a reader
+   uses rather than only in opacity: no ink in the field, a dashed rule where
+   an earned seal is struck solid, no rotation (an unstruck die was never
+   pressed), and neutral type. The page states "not yet earned" in words too —
+   style alone is not a distinction a screen reader can hear.
+
+   It takes the page's OWN neutral scale rather than a dimmed seal ink. The
+   seal inks are authored for the booklet's cream paper, and this face is only
+   ever drawn on the Command shell — a navy ink at 30% on a near-black surface
+   is not a faint impression, it is an invisible one. */
+.passport-seal--pending {
+  border-style: dashed;
+  border-width: 2px;
+  border-color: var(--passport-text-faint);
+  /* The `seal` shape is a clip-path, which cuts the border away on the
+     diagonals — with no fill at all the octagon reads as two stray dashes
+     rather than a shape. The "not applicable" wash restores the silhouette
+     without putting any ink in the field. */
+  background: var(--passport-tone-na-wash);
+  color: var(--passport-text-muted);
+  transform: none;
+}
+.passport-seal--pending.passport-seal--circle,
+.passport-seal--pending.passport-seal--rect,
+.passport-seal--pending.passport-seal--seal {
+  transform: none;
+}
+.passport-seal--pending .passport-seal__ring {
+  border-color: var(--passport-border-strong);
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .passport-seal { transition: transform 180ms ease-out; }
   button:hover > .passport-seal,
