@@ -208,6 +208,42 @@ exact ratio multiplied in floating point overshoots by ~1e-13, which is enough
 to trip the guard and, against a pixel-rounded board, enough to shave a
 hairline off a leaf.
 
+### The cover as a record miniature
+
+The Command record used to show a 52×70 navy rectangle with `AUX·AML` set in
+it — a stand-in for the document rather than the document. `PassportCoverThumb`
+replaces it with the **real** `BookletCover`, drawn at design size under the
+same uniform transform the book uses for a leaf.
+
+That is the whole design. There is no "thumbnail version" of the cover to keep
+in step, because a simplified copy looks right on the day it is written and
+drifts afterwards — and a customer whose miniature says one thing and whose
+booklet says another has been shown two documents. `bookletCover(view)` is the
+single statement of what a cover holds; `buildBooklet` calls it for page 1 and
+the miniature calls it for the record. Being a pure function of the projection
+also makes it per-customer by construction: nothing in the path can be
+specialised to one case, so every client record shows that client's own bearer,
+credential, state and fingerprint.
+
+**The size is one number, and both the box and the scale are derived from it.**
+`--passport-thumb-w` is unitless, so the stylesheet computes the slot
+(`calc(var(--passport-thumb-w) * 1px)`) and the scale
+(`calc(var(--passport-thumb-w) / 470)`) from the same declaration. The first
+draft did not: the slot came from CSS (112px on a phone) and the scale from a
+JS default of 132, and the two disagreed wherever a layout effect had not run —
+a server render, the first paint, a hidden tab. A board drawn 18% larger than
+its box loses its clasp to `overflow: hidden`, which is exactly what a phone
+render showed. Derived together they cannot disagree, there is no JS in the
+path at all, and a surface resizes the cover by setting one property.
+
+**`.passport-cover` is a material, not a layout.** The navy leather is shared —
+the partner compliance strip paints itself with it — so the front board's own
+page margins live on `.passport-cover--board`. They were on the shared class
+for one release, which put 58px/44px/46px of cover padding on a partner-facing
+strip that had asked for `px-5 py-4`; nothing in the AML suite renders that
+strip with a cascade, so no test could see it. `coverMaterial.test.ts` reads
+the rules.
+
 **One viewer, both portals.** `PassportBook` is shared by the Command dialog and
 the Client Portal page. The Client Portal previously carried a second booklet
 implementation — its own cover, its own page list and eight page components —

@@ -70,6 +70,7 @@ export {
 export {
   LEAF_H,
   LEAF_W,
+  bookletCover,
   bookletGeometry,
   bookletLabel,
   bookletSpreads,

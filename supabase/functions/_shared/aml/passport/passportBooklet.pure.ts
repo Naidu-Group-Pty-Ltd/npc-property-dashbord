@@ -132,6 +132,38 @@ function fmtMoney(n: number | null | undefined): string {
 }
 
 /**
+ * The front board, on its own.
+ *
+ * Exported because the cover is shown in more places than the booklet is: a
+ * record row displays it as a miniature, and the book displays it as page 1.
+ * Both must be the SAME cover, so there is one function that says what a
+ * cover holds and every surface asks it. A second, hand-drawn "thumbnail
+ * version" would be a copy, and a copy drifts — the customer whose miniature
+ * says one thing and whose booklet says another has been shown two documents.
+ *
+ * It is a pure function of the projection, so it is per-customer by
+ * construction: the bearer, credential and state on any cover are whichever
+ * projection was passed in, and nothing here can be specialised to one case.
+ */
+export function bookletCover(view: PassportView): BookletPage {
+  const h = view.header;
+  return {
+    id: "cover",
+    variant: "cover",
+    kicker: "Aurixa Systems",
+    title: "AML/CTF Compliance Passport",
+    // The cover names its bearer. Branding alone would make every issued
+    // passport look identical, and the first thing a reader needs to know is
+    // whose document they have open.
+    sub: h.subject ?? undefined,
+    numeral: null,
+    foot: [h.credential, h.state.label].filter(Boolean).join("  ·  "),
+    fingerprint: h.evidence_fingerprint_short,
+    blocks: [],
+  };
+}
+
+/**
  * Compose the booklet.
  *
  * The first two pages are always present — a passport that has not been issued
@@ -146,20 +178,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   // leaf, exactly as a physical passport does. `leafIndex` therefore counts
   // leaves rather than pages, so adding or removing the cover can never shift
   // the roman numerals printed on the paper.
-  pages.push({
-    id: "cover",
-    variant: "cover",
-    kicker: "Aurixa Systems",
-    title: "AML/CTF Compliance Passport",
-    // The cover names its bearer. Branding alone would make every issued
-    // passport look identical, and the first thing a reader needs to know is
-    // whose document they have open.
-    sub: h.subject ?? undefined,
-    numeral: null,
-    foot: [h.credential, h.state.label].filter(Boolean).join("  ·  "),
-    fingerprint: h.evidence_fingerprint_short,
-    blocks: [],
-  });
+  pages.push(bookletCover(view));
 
   const push = (p: Omit<BookletPage, "numeral" | "variant">) => {
     const leafIndex = pages.filter((x) => x.variant === "leaf").length;
