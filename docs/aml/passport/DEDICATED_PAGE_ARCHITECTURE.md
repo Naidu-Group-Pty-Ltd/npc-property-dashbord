@@ -184,6 +184,30 @@ The board also measures **its own box** rather than deriving a height from
 capped, so a window-derived guess is wrong by however much chrome sits above and
 below it.
 
+**The scaled layer is absolutely positioned, never a flex item.** This cost a
+round on its own. A flex item wider than its line is centred to a *negative*
+left offset, and `transform-origin: top left` then preserves that offset — so
+the spread rendered to the left of the board and the left-hand leaf was cropped
+against its `overflow: hidden`, while the right-hand side had room to spare.
+The asymmetry is the tell: a spread that is simply too large crops on both
+sides. Taking the layer out of flow removes the only thing that could displace
+it, so its position is decided by one inset and nothing else.
+
+Two supporting rules: the measured element is **padding-free**, because
+measuring a padded box and subtracting a guessed padding is how the board came
+to be sized larger than its container; and `BOARD_FRAME`/`SPINE` are shared by
+the component and `bookletGeometry`, because a few pixels of disagreement
+between the arithmetic that *fits* the spread and the arithmetic that *draws*
+it is exactly what crops a leaf.
+
+`bookletGeometry`'s contract is now explicit and property-tested: **the
+returned size never exceeds the space it was given**, asserted across a sweep
+of real desktop, laptop, tablet and phone dimensions. The scale is *floored*
+rather than rounded, so that holds exactly rather than within an epsilon — an
+exact ratio multiplied in floating point overshoots by ~1e-13, which is enough
+to trip the guard and, against a pixel-rounded board, enough to shave a
+hairline off a leaf.
+
 **One viewer, both portals.** `PassportBook` is shared by the Command dialog and
 the Client Portal page. The Client Portal previously carried a second booklet
 implementation — its own cover, its own page list and eight page components —

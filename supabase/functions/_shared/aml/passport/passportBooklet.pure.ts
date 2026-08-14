@@ -658,8 +658,10 @@ export const LEAF_H = 648;
 export type BookletGeometry = {
   /** Leaves shown side by side. */
   perSpread: 1 | 2;
-  /** Uniform transform applied to each leaf. */
+  /** Uniform transform applied to the spread. */
   scale: number;
+  /** UNSCALED design width of the spread — what the scaled layer is laid out at. */
+  spreadWidth: number;
   /** Rendered size of the whole spread, after scaling. */
   width: number;
   height: number;
@@ -673,18 +675,26 @@ export type BookletGeometry = {
  * than shrinking both into illegibility. `MIN_TWO_UP_SCALE` is that threshold
  * — at 0.62 a 470px leaf renders ~291px wide, which still carries the design's
  * 11px body copy at a legible ~7px.
+ *
+ * The returned `width`/`height` NEVER exceed what was given. That is the whole
+ * contract: the caller sizes the board from these numbers, so a result larger
+ * than the space available is a cropped passport. A property test asserts it
+ * across a sweep of real viewport sizes.
  */
 const MIN_TWO_UP_SCALE = 0.62;
 
+/** Absolute floor, so a tiny container degrades rather than collapsing. */
+const MIN_SCALE = 0.28;
+
 export function bookletGeometry(input: {
-  /** Space the board can use, in CSS pixels. */
+  /** Space the board can use for LEAVES, in CSS pixels (frame already removed). */
   availableWidth: number;
   availableHeight: number;
-  /** Gap between facing leaves (the spine), in design pixels. */
+  /** Gap between facing leaves, in design pixels. */
   spine?: number;
   /** Never draw a leaf larger than this multiple of its design size. */
   maxScale?: number;
-  /** Force a single leaf regardless of space (the client booklet does this). */
+  /** Force a single leaf regardless of space. */
   singleOnly?: boolean;
 }): BookletGeometry {
   const spine = input.spine ?? 26;
@@ -692,27 +702,34 @@ export function bookletGeometry(input: {
   const availW = Math.max(0, input.availableWidth);
   const availH = Math.max(0, input.availableHeight);
 
+  const designWidth = (leaves: 1 | 2) => LEAF_W * leaves + (leaves === 2 ? spine : 0);
+
   const fit = (leaves: 1 | 2) => {
-    const designW = LEAF_W * leaves + (leaves === 2 ? spine : 0);
-    const byWidth = availW / designW;
-    const byHeight = availH > 0 ? availH / LEAF_H : byWidth;
+    const byWidth = availW > 0 ? availW / designWidth(leaves) : maxScale;
+    const byHeight = availH > 0 ? availH / LEAF_H : maxScale;
     return Math.min(byWidth, byHeight, maxScale);
+  };
+
+  const build = (leaves: 1 | 2, rawScale: number): BookletGeometry => {
+    // Floored, not rounded. `designWidth * scale` must never exceed the space
+    // given, and floating-point multiplication of an exact ratio overshoots by
+    // ~1e-13 — enough to trip a `<=` guard and, with a pixel-rounded board,
+    // enough to shave a hairline off a leaf. Flooring makes the fit contract
+    // hold exactly rather than within an epsilon nobody can see but every
+    // assertion can.
+    const scale = Math.max(Math.floor(rawScale * 1e4) / 1e4, MIN_SCALE);
+    return {
+      perSpread: leaves,
+      scale,
+      spreadWidth: designWidth(leaves),
+      width: designWidth(leaves) * scale,
+      height: LEAF_H * scale,
+    };
   };
 
   if (!input.singleOnly) {
     const two = fit(2);
-    if (two >= MIN_TWO_UP_SCALE) {
-      return {
-        perSpread: 2,
-        scale: two,
-        width: (LEAF_W * 2 + spine) * two,
-        height: LEAF_H * two,
-      };
-    }
+    if (two >= MIN_TWO_UP_SCALE) return build(2, two);
   }
-
-  // A single leaf may still be tiny on a very small phone; clamp so the layout
-  // never collapses to zero and the page stays scrollable instead.
-  const one = Math.max(fit(1), 0.28);
-  return { perSpread: 1, scale: one, width: LEAF_W * one, height: LEAF_H * one };
+  return build(1, fit(1));
 }
