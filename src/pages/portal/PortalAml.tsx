@@ -31,6 +31,7 @@ import {
   buildPortalStepStates, initialStepIndex, onboardingStatusPresentation, portalProgress,
   type PortalStepState, type PortalStepTone,
 } from '@/lib/aml/portalStepPresentation';
+import { stepHoldsSubmission, type SubmissionBlocker } from '@/lib/aml/portalJourney';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -1257,14 +1258,15 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
  * had consented, uploaded and verified saw none of those three acknowledged
  * anywhere on the screen that was supposed to confirm they were finished.
  *
- * Readiness here is derived from the journey steps and nothing else — the
- * same `submissionBlockers` rule the server renders into the journey and
- * enforces at `submit_for_review`. This screen once ran its own weaker
- * calculation (sections + formally required documents), so "Documents — not
- * started" and "Everything we need from you has been received" appeared on
- * one page over an enabled Submit button, and the backend agreed with the
- * button rather than the card. A step is settled only when it is COMPLETE:
- * not started, in progress and blocked all hold the pack.
+ * Readiness here is decided by `stepHoldsSubmission` — the SAME rule the
+ * server folds into the journey (`submissionBlockers`) and enforces at
+ * `submit_for_review`. This screen once ran its own weaker calculation
+ * (sections + formally required documents), so an unfinished identity check
+ * sailed through to an enabled Submit button and the backend agreed with the
+ * button rather than the cards. The distinction the shared rule preserves:
+ * documents hold the pack only when something REQUIRED is outstanding —
+ * a Documents card reading "not started" with no requirements raised means
+ * nothing was asked for, and does not hold submission.
  */
 function ReviewStep({
   overview, stepStates, caseId, onBack, onSubmitted,
@@ -1280,8 +1282,19 @@ function ReviewStep({
 
   // Everything up to (and excluding) this screen — what the client owes us.
   const priorSteps = stepStates.filter(s => s.key !== 'review');
-  const incomplete = priorSteps.filter(s => !s.presentation.done);
-  const canSubmit = incomplete.length === 0;
+  // Which canonical submission step a portal step answers. Questionnaire
+  // sections each map onto the questionnaire; the labels stay their own.
+  const submissionStepFor = (s: PortalStepState): SubmissionBlocker | null =>
+    s.section ? 'questionnaire'
+      : s.key === 'consent' ? 'consent'
+        : s.key === 'documents' ? 'documents'
+          : s.key === 'verify' ? 'verification'
+            : null;
+  const holding = priorSteps.filter(s => {
+    const step = submissionStepFor(s);
+    return step ? stepHoldsSubmission(step, s.status) : false;
+  });
+  const canSubmit = holding.length === 0;
 
   const submit = async () => {
     setSubmitting(true);
@@ -1318,19 +1331,19 @@ function ReviewStep({
           ))}
         </ul>
 
-        {incomplete.length > 0 ? (
+        {holding.length > 0 ? (
           <Alert variant="default">
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>
-              {incomplete.length === 1
+              {holding.length === 1
                 ? 'One step still needs to be completed'
-                : `${incomplete.length} steps still need to be completed`}
+                : `${holding.length} steps still need to be completed`}
             </AlertTitle>
             <AlertDescription>
               {/* Each step with the journey's own wording, so an in-progress
                   identity check reads "in progress", not as something the
                   client did wrong. */}
-              {incomplete.map(s => `${s.label} — ${s.presentation.accessibleStatus}`).join('. ')}.
+              {holding.map(s => `${s.label} — ${s.presentation.accessibleStatus}`).join('. ')}.
             </AlertDescription>
           </Alert>
         ) : (

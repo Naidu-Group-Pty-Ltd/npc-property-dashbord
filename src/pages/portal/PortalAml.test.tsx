@@ -449,16 +449,32 @@ describe('review & submit summary', () => {
     expect(screen.getByRole('button', { name: /Submit for review/ })).toBeDisabled();
   });
 
-  it('never says everything is received while Documents is not started', async () => {
-    // The reported contradiction: "Documents — not started" on the cards with
-    // "Everything we need from you has been received" over an enabled Submit
-    // button. The banner and the button now read the same journey the cards do.
+  it('holds an unverified pack, and names identity — not optional documents', async () => {
+    // The default journey: no requirements raised, nothing uploaded, identity
+    // not started. Identity is what holds the pack; the untouched OPTIONAL
+    // documents step ("There is nothing we need from you here right now") is
+    // not named as something the client owes.
     overview.mockResolvedValue(overviewPayload({ journey: journey() }));
     await openReview();
-    expect(await screen.findByText(/2 steps still need to be completed/)).toBeTruthy();
-    expect(screen.getByText(/Documents — not started/)).toBeTruthy();
+    expect(await screen.findByText('One step still needs to be completed')).toBeTruthy();
+    expect(screen.getByText(/Verify identity — not started/)).toBeTruthy();
+    expect(screen.queryByText(/Documents — not started/)).toBeNull();
     expect(screen.queryByText('Everything we need from you has been received.')).toBeNull();
     expect(screen.getByRole('button', { name: /Submit for review/ })).toBeDisabled();
+  });
+
+  it('submits with optional documents untouched once identity is complete', async () => {
+    // A case where staff raised no document requirements: documents stay
+    // "not started" and that must not strand the submission — every current
+    // production case has zero requirement rows.
+    overview.mockResolvedValue(overviewPayload({
+      journey: journey({
+        documents: 'not_started', verification: 'complete', submission: 'action_required',
+      }),
+    }));
+    await openReview();
+    expect(await screen.findByText('Everything we need from you has been received.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Submit for review/ })).not.toBeDisabled();
   });
 
   it('enables submission when every step is complete', async () => {

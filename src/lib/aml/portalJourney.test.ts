@@ -169,7 +169,7 @@ describe('buildJourney', () => {
       .not.toContain('You are verified');
   });
 
-  it('marks submission ready only when every step, identity included, is complete', () => {
+  it('marks submission ready only when every required step, identity included, is done', () => {
     const journey = journeyFor({
       documents: [doc()], parties: [{ status: 'verified' }],
     });
@@ -178,25 +178,51 @@ describe('buildJourney', () => {
       .toBe('Everything we need from you is ready to send.');
   });
 
-  it('is NOT ready while documents are not started — the reported contradiction', () => {
-    // "Documents — not started" and "Everything we need from you has been
-    // received" appeared on one page: readiness ignored a documents step that
-    // had never begun. It may not any more, however verified the client is.
-    const journey = journeyFor({ documents: [], parties: [{ status: 'verified' }] });
+  it('is ready with NO requirements and NO uploads — optional documents do not block', () => {
+    // Requirements are raised by explicit staff action only; a case with none
+    // is one where NPC asked for nothing, and its documents copy reads "There
+    // is nothing we need from you here right now." Forcing an upload here
+    // would strand every such case — 5 of 5 production cases at the time this
+    // was written.
+    const journey = journeyFor({
+      requirements: [], documents: [], parties: [{ status: 'verified' }],
+    });
     expect(statusOf(journey, 'documents')).toBe('not_started');
+    expect(statusOf(journey, 'submission')).toBe('action_required');
+  });
+
+  it('is NOT ready while a required document is outstanding', () => {
+    const journey = journeyFor({
+      requirements: [req({ status: 'pending' })], parties: [{ status: 'verified' }],
+    });
+    expect(statusOf(journey, 'documents')).toBe('action_required');
     expect(statusOf(journey, 'submission')).toBe('not_started');
+  });
+
+  it('is NOT ready while a required document sits rejected', () => {
+    const journey = journeyFor({
+      requirements: [req({ status: 'uploaded' })],
+      documents: [doc({ requirement_id: 'req-1', status: 'rejected' })],
+      parties: [{ status: 'verified' }],
+    });
+    expect(statusOf(journey, 'submission')).toBe('not_started');
+  });
+
+  it('is ready once every required document is met', () => {
+    const journey = journeyFor({
+      requirements: [req({ status: 'accepted' })], parties: [{ status: 'verified' }],
+    });
+    expect(statusOf(journey, 'submission')).toBe('action_required');
   });
 
   it('is NOT ready while identity verification is anything short of complete', () => {
     for (const status of ['not_started', 'in_review', 'action_required', 'contact_adviser']) {
-      const journey = journeyFor({ documents: [doc()], parties: [{ status }] });
-      expect(statusOf(journey, 'submission'), `party ${status}`).toBe('not_started');
+      // Whatever the documents say — met requirements or nothing asked for.
+      for (const documents of [[doc()], []] as const) {
+        const journey = journeyFor({ documents: [...documents], parties: [{ status }] });
+        expect(statusOf(journey, 'submission'), `party ${status}`).toBe('not_started');
+      }
     }
-  });
-
-  it('does not call submission ready while a required document is outstanding', () => {
-    const journey = journeyFor({ requirements: [req({ status: 'pending' })] });
-    expect(statusOf(journey, 'submission')).toBe('not_started');
   });
 
   it('marks submission complete once a version exists', () => {
@@ -210,15 +236,21 @@ describe('buildJourney', () => {
       .toBe('in_progress');
   });
 
-  it('names every incomplete step as a blocker, in journey vocabulary', () => {
+  it('names every holding step as a blocker, in journey vocabulary', () => {
     expect(submissionBlockers({
       consent: 'complete', questionnaire: 'complete',
-      documents: 'not_started', verification: 'in_progress',
+      documents: 'action_required', verification: 'in_progress',
     })).toEqual(['documents', 'verification']);
     expect(submissionBlockers({
       consent: 'action_required', questionnaire: 'blocked',
       documents: 'complete', verification: 'complete',
     })).toEqual(['consent', 'questionnaire']);
+    // Optional-and-untouched documents are the one non-complete state that
+    // does not hold: `not_started` is unreachable while anything is required.
+    expect(submissionBlockers({
+      consent: 'complete', questionnaire: 'complete',
+      documents: 'not_started', verification: 'complete',
+    })).toEqual([]);
     expect(submissionBlockers({
       consent: 'complete', questionnaire: 'complete',
       documents: 'complete', verification: 'complete',

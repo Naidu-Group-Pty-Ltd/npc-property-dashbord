@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  submissionBlockers,
+  documentsJourneyStatus, stepHoldsSubmission, submissionBlockers,
 } from '../../../supabase/functions/_shared/aml/portalJourney.pure.ts';
 import {
   buildVendorData, parseVendorData, vendorDataMatches,
@@ -67,20 +67,65 @@ describe('the canonical rule itself', () => {
     documents: 'complete', verification: 'complete',
   } as const;
 
-  it('documents not started blocks submission — the reported contradiction', () => {
-    expect(submissionBlockers({ ...ready, documents: 'not_started' }))
+  // The full documents pipeline, end to end: what `documentsJourneyStatus`
+  // derives from requirement and document rows is exactly what
+  // `stepHoldsSubmission` reads, so these run the pair together.
+  const documentsHold = (args: Parameters<typeof documentsJourneyStatus>[0]) =>
+    stepHoldsSubmission('documents', documentsJourneyStatus(args));
+
+  it('A: no requirements and no uploads — optional documents never block', () => {
+    // Requirements exist only when staff raise them (`seed_default_requirements`
+    // / `upsert_requirement`, both write-role gated). Zero rows means nothing
+    // was asked for; the step's own copy is "There is nothing we need from
+    // you here right now", and it must not hold the pack.
+    expect(documentsHold({ requirements: [], documents: [] })).toBe(false);
+    expect(submissionBlockers({ ...ready, documents: 'not_started' })).toEqual([]);
+  });
+
+  it('B: an outstanding required document blocks', () => {
+    expect(documentsHold({
+      requirements: [{ id: 'r1', required: true, status: 'pending' }],
+      documents: [],
+    })).toBe(true);
+    expect(submissionBlockers({ ...ready, documents: 'action_required' }))
       .toEqual(['documents']);
   });
 
-  it('an identity check short of complete blocks submission', () => {
+  it('C: required documents met — submission allowed when all else is complete', () => {
+    expect(documentsHold({
+      requirements: [{ id: 'r1', required: true, status: 'accepted' }],
+      documents: [],
+    })).toBe(false);
+    expect(submissionBlockers(ready)).toEqual([]);
+  });
+
+  it('D: a rejected required document blocks', () => {
+    expect(documentsHold({
+      requirements: [{ id: 'r1', required: true, status: 'uploaded' }],
+      documents: [{ requirement_id: 'r1', status: 'rejected' }],
+    })).toBe(true);
+  });
+
+  it('E: an identity check short of complete blocks, whatever the documents say', () => {
     for (const verification of ['not_started', 'in_progress', 'action_required', 'blocked'] as const) {
-      expect(submissionBlockers({ ...ready, verification }), verification)
-        .toEqual(['verification']);
+      for (const documents of ['complete', 'not_started'] as const) {
+        expect(submissionBlockers({ ...ready, documents, verification }),
+          `verification ${verification}, documents ${documents}`)
+          .toEqual(['verification']);
+      }
     }
   });
 
-  it('everything complete submits', () => {
+  it('F: verification complete and every actual requirement complete submits', () => {
     expect(submissionBlockers(ready)).toEqual([]);
+    expect(submissionBlockers({ ...ready, documents: 'not_started' })).toEqual([]);
+  });
+
+  it('never treats an unknown documents state as optional', () => {
+    // Only the two states the derivation can legitimately produce pass; any
+    // future vocabulary fails closed.
+    expect(stepHoldsSubmission('documents', 'in_progress')).toBe(true);
+    expect(stepHoldsSubmission('documents', 'blocked')).toBe(true);
   });
 });
 
