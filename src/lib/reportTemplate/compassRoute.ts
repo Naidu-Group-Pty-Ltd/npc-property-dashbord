@@ -1,6 +1,7 @@
 import {
   routeReportThroughTemplate,
   type TemplateBuilderRouteResult,
+  type TemplateRouteRefusal,
 } from './routeReportThroughTemplate';
 import { getAdapter, normaliseReportType } from './adapters';
 
@@ -63,10 +64,14 @@ export function tryRouteThroughTemplateBuilderFor(
   opts?: {
     variant?: string | null; brand?: unknown; templateId?: string | null;
     payload?: Record<string, unknown> | null;
+    onRefusal?: (refusal: TemplateRouteRefusal) => void;
   },
 ): Promise<TemplateBuilderRouteResult | null> {
   const adapter = getAdapter(reportType);
-  if (!adapter?.supportsProduction) return Promise.resolve(null);
+  if (!adapter?.supportsProduction) {
+    opts?.onRefusal?.('no_adapter');
+    return Promise.resolve(null);
+  }
   return routeReportThroughTemplate(reportId, {
     reportType: normaliseReportType(reportType),
     variant: opts?.variant ?? null,
@@ -79,7 +84,8 @@ export function tryRouteThroughTemplateBuilderFor(
     // The caller's reviewed data, for the adapter that documents support for
     // it. See `payload` on `ReportTemplateAdapter`.
     payload: opts?.payload ?? null,
+    onRefusal: opts?.onRefusal,
   });
 }
 
-export type { TemplateBuilderRouteResult };
+export type { TemplateBuilderRouteResult, TemplateRouteRefusal };

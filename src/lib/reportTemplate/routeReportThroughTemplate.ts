@@ -14,6 +14,55 @@ import { refuseUnboundReconstruction } from '@/lib/reportTemplate/rendering/prod
 import { getAdapter, listAdapters, type ReportTemplateAdapter } from '@/lib/reportTemplate/adapters';
 import { isSelectableTemplate } from '@/lib/reportTemplate/templateSelection';
 
+/**
+ * Why the templated document was not produced.
+ *
+ * The route answers `null` for eight distinct reasons and, until this existed,
+ * said the same nothing for all of them: the caller fell back to the legacy
+ * generator, which on the migrated formats is itself a well-typeset WeasyPrint
+ * document, so "your template rendered" and "your template was skipped" looked
+ * identical from the outside AND from the console. Diagnosing one refusal cost
+ * a production ledger query and a round trip.
+ *
+ * Named here so a person can be told which gate closed, in the toast, on the
+ * first attempt rather than the third.
+ */
+export type TemplateRouteRefusal =
+  /** No production adapter claims this report type. */
+  | 'no_adapter'
+  /** The adapter cannot serve this record — unreadable, or nothing to draw. */
+  | 'adapter_declined_record'
+  /** The report type is outside the caller's allow-list (the Compass pilot). */
+  | 'report_type_not_allowed'
+  /** Nothing active is published for the format, and nothing was chosen. */
+  | 'no_active_template'
+  /** The resolved template is a jsPDF one; the design system does not draw it. */
+  | 'template_not_weasyprint'
+  /** The adapter loaded the record but published nothing bindable. */
+  | 'adapter_published_no_data'
+  /** The template's schema does not parse against the current contract. */
+  | 'template_schema_invalid'
+  /** A static copy of one client's report; see `productionTemplateGuard`. */
+  | 'template_unbound_reconstruction'
+  /** WeasyPrint, storage or the signed URL failed. */
+  | 'render_failed'
+  /** Anything unforeseen; the message is in the console. */
+  | 'unexpected_error';
+
+/** Human wording for a refusal, for the person who chose a template. */
+export const TEMPLATE_ROUTE_REFUSAL_TEXT: Readonly<Record<TemplateRouteRefusal, string>> = {
+  no_adapter: 'This report format has no design-system pipeline yet',
+  adapter_declined_record: 'This record could not be read, or holds nothing this format can draw',
+  report_type_not_allowed: 'This report type is not routed through the design system here',
+  no_active_template: 'No active template is published for this format',
+  template_not_weasyprint: 'The chosen template is not drawn by the design system',
+  adapter_published_no_data: 'This record published no data for the template to bind',
+  template_schema_invalid: 'The template could not be read against the current schema',
+  template_unbound_reconstruction: 'The template is a fixed copy of one report and cannot be reused',
+  render_failed: 'The renderer could not produce the document',
+  unexpected_error: 'Something went wrong preparing the document',
+};
+
 export interface TemplateBuilderRouteResult {
   fileUrl: string;
   fileName: string;
@@ -92,8 +141,21 @@ export async function routeReportThroughTemplate(
      * adapter validates it exactly as it validates a stored row.
      */
     payload?: Record<string, unknown> | null;
+    /**
+     * Told which gate closed, when one does. The route still answers `null` —
+     * every failure is a fallback and never an error — but the caller can now
+     * say *why* instead of "it could not be applied".
+     */
+    onRefusal?: (refusal: TemplateRouteRefusal) => void;
   },
 ): Promise<TemplateBuilderRouteResult | null> {
+  // The last gate reached, so a caller hears about the furthest the route got
+  // rather than about the first adapter that was not asked.
+  let refusedAt: TemplateRouteRefusal = 'no_adapter';
+  const refuse = (reason: TemplateRouteRefusal, detail: string): void => {
+    refusedAt = reason;
+    console.warn(`[routeReportThroughTemplate] ${reason}: ${detail}`);
+  };
   try {
     for (const adapter of candidateAdapters(opts?.reportType)) {
       if (!adapter.supportsProduction) continue;
@@ -103,8 +165,15 @@ export async function routeReportThroughTemplate(
         variant: opts?.variant ?? null,
         payload: opts?.payload ?? null,
       });
-      if (!routing?.reportType) continue;
-      if (opts?.allowedReportTypes && !opts.allowedReportTypes.includes(routing.reportType.toLowerCase())) continue;
+      if (!routing?.reportType) {
+        refuse('adapter_declined_record',
+          `${adapter.reportType} could not resolve routing for ${reportId}`);
+        continue;
+      }
+      if (opts?.allowedReportTypes && !opts.allowedReportTypes.includes(routing.reportType.toLowerCase())) {
+        refuse('report_type_not_allowed', `${routing.reportType} is outside this caller's allow-list`);
+        continue;
+      }
 
       const selected = opts?.templateId
         ? await loadSelectedTemplate(opts.templateId, routing.reportType)
@@ -118,7 +187,15 @@ export async function routeReportThroughTemplate(
           agencyId: opts?.agencyId ?? null,
           userId: opts?.userId ?? null,
         });
-      if (!resolved || resolved.engine !== 'weasyprint') continue;
+      if (!resolved) {
+        refuse('no_active_template', `nothing active is published for ${routing.reportType}`);
+        continue;
+      }
+      if (resolved.engine !== 'weasyprint') {
+        refuse('template_not_weasyprint',
+          `${resolved.template?.name ?? resolved.template?.id} is a ${resolved.engine} template`);
+        continue;
+      }
 
       const tplRow = resolved.template;
       // The same variant the routing call received: the two answers must
@@ -149,27 +226,34 @@ export async function routeReportThroughTemplate(
       // so there is no record for which `{}` is the right answer, and it
       // renders identically to the null case.
       if (!ctx?.data || Object.keys(ctx.data).length === 0) {
-        console.warn(
-          `[routeReportThroughTemplate] ${adapter.reportType} declined report `
-          + `${reportId}; falling back to its legacy generator`,
-        );
+        refuse('adapter_published_no_data',
+          `${adapter.reportType} declined report ${reportId}; falling back to its legacy generator`);
         continue;
       }
       const bindingData = ctx.data;
 
-      const schema = parseTemplate(tplRow.schema);
+      // Parsed inside the loop's own guard: a schema that does not satisfy the
+      // current contract is this template's problem, not the request's, and it
+      // used to throw past every remaining gate into the outer catch — where
+      // it was indistinguishable from a network failure.
+      let schema: ReturnType<typeof parseTemplate>;
+      try {
+        schema = parseTemplate(tplRow.schema);
+      } catch (e) {
+        refuse('template_schema_invalid',
+          `${tplRow.name ?? tplRow.id}: ${e instanceof Error ? e.message : String(e)}`);
+        continue;
+      }
 
       // A template that is a static copy of one client's report will render
       // that client's report for everybody, with only the title substituted.
       // That shipped for two months; see `productionTemplateGuard`. Refusing
       // here falls back to the legacy generator, which is wrong-looking rather
       // than wrong.
-      const refusal = refuseUnboundReconstruction(schema);
-      if (refusal) {
-        console.error(
-          `[routeReportThroughTemplate] refusing template ${tplRow.id} `
-          + `(${tplRow.name}): ${refusal.reason}`,
-        );
+      const unbound = refuseUnboundReconstruction(schema);
+      if (unbound) {
+        refuse('template_unbound_reconstruction',
+          `refusing template ${tplRow.id} (${tplRow.name}): ${unbound.reason}`);
         continue;
       }
 
@@ -197,7 +281,8 @@ export async function routeReportThroughTemplate(
         mode: 'final',
       });
       if (pdfErr || !pdfData?.url) {
-        console.warn('[routeReportThroughTemplate] render-template-pdf failed', pdfErr);
+        refuse('render_failed',
+          `render-template-pdf failed for ${tplRow.id}: ${pdfErr?.message ?? 'no url returned'}`);
         continue;
       }
 
@@ -210,9 +295,11 @@ export async function routeReportThroughTemplate(
       };
     }
 
+    opts?.onRefusal?.(refusedAt);
     return null;
   } catch (e) {
     console.warn('[routeReportThroughTemplate] unexpected error, falling back', e);
+    opts?.onRefusal?.('unexpected_error');
     return null;
   }
 }
