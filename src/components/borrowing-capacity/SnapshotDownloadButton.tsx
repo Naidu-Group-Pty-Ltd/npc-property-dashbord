@@ -20,6 +20,7 @@ import { ChevronDown, FileDown, FileText, Loader2, Sparkles } from 'lucide-react
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -97,6 +98,8 @@ export function SnapshotDownloadButton({
   triggerLabel,
 }: SnapshotDownloadButtonProps) {
   const [running, setRunning] = useState<SnapshotVariant | null>(null);
+  // Which template this comes out in, offered beside the button that uses it.
+  const template = useReportTemplateMenu('borrowing_capacity');
 
   const run = async (which: SnapshotVariant) => {
     if (running) return;
@@ -153,11 +156,13 @@ export function SnapshotDownloadButton({
           </span>
         </div>
       </DropdownMenuItem>
+      {template.section}
     </DropdownMenuContent>
   );
 
   if (appearance === 'menu') {
     return (
+      <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -174,6 +179,9 @@ export function SnapshotDownloadButton({
         </DropdownMenuTrigger>
         {choices}
       </DropdownMenu>
+      {/* Outside the menu: its content unmounts on close. */}
+      {template.dialog}
+      </>
     );
   }
 
@@ -208,6 +216,7 @@ export function SnapshotDownloadButton({
         </DropdownMenuTrigger>
         {choices}
       </DropdownMenu>
+      {template.dialog}
     </div>
   );
 }

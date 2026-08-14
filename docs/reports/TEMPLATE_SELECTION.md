@@ -189,3 +189,41 @@ did not get it.
 once: each production format has an adapter that can list, route and bind; each
 one's delivery path asks for a templated document; that request carries the
 chosen template; and a format whose choice cannot change anything says so.
+
+## The choice belongs where the document is produced
+
+Choosing a template was possible in two places: the Template Library list, and
+one export panel. Every other format's download control offered no way to see
+or change it — so the answer to "which template is this going to come out in?"
+lived a page away from the button that used it, and a person had to know that
+page existed at all to find it. Nobody should have to learn a settings screen to
+answer a question about the button in front of them.
+
+All nine production formats now carry the control at the point of download.
+Two presentations over one hook, one picker and one stored selection:
+
+- **`useReportTemplateMenu`** — a labelled section at the foot of a download
+  menu, for the seven surfaces that are split buttons with a dropdown of
+  destinations. It states the current template and opens the picker.
+- **`ReportTemplateSelector`** — the row form, for surfaces that are not menus:
+  the Market Intelligence options popover, the Commercial & Industrial card
+  header (once for the card, since every row's Generate report uses the same
+  per-format choice) and the Investment export panel it was written for.
+
+Three rules the hook keeps:
+
+- **A format a choice cannot change offers none.** Preview-only formats render
+  nothing rather than a control that does nothing — the Library page is where
+  they explain why.
+- **The picker is rendered outside the menu that opens it.** Radix unmounts
+  `DropdownMenuContent` on close, so a dialog inside it opens and vanishes in
+  the same frame. The hook returns the section and the dialog separately for
+  exactly this reason, and `templateRouteEnforcement.spec.ts` asserts no
+  surface puts the dialog inside its own menu.
+- **A failed read is not "nothing chosen"** — it says the check failed *and*
+  that generation is unaffected, because a person who reads only the first half
+  has no way to know whether their download still works.
+
+`templateRouteEnforcement.spec.ts` also holds the format→surface map complete
+against the adapter registry, so a tenth format cannot ship with a download
+control that offers no way to choose its template.

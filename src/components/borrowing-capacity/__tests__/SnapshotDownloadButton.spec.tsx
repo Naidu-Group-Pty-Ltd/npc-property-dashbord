@@ -8,6 +8,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const deliverSnapshot = vi.fn();
 vi.mock('@/lib/reports/borrowingCapacity/deliverSnapshot', () => ({
@@ -32,7 +33,14 @@ beforeEach(() => {
 });
 
 const setup = (props: Record<string, unknown> = {}) =>
-  render(<SnapshotDownloadButton request={REQUEST} legacy={legacy} {...props} />);
+  // The menu now carries the template chooser for this format, which reads the
+  // selection through react-query. Retries off so a failed read surfaces here
+  // rather than being retried three times.
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <SnapshotDownloadButton request={REQUEST} legacy={legacy} {...props} />
+    </QueryClientProvider>,
+  );
 
 /**
  * Radix opens a dropdown on `pointerdown`, and jsdom's `click` does not imply

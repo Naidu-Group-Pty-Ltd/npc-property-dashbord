@@ -19,6 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Building2, ExternalLink, Factory, FileDown, FileText, Landmark, Link2, Loader2, Paperclip,
@@ -211,6 +212,13 @@ export function ClientCommercialIndustrialTab({ clientId }: Props) {
             <Landmark className="h-4 w-4 text-primary" aria-hidden="true" />
             Linked assessments ({assessments.length})
           </CardTitle>
+          {/* Once for the card rather than once per row: the choice is per
+              format, and every Generate report action below uses it. */}
+          <ReportTemplateSelector
+            reportType="commercial_capacity"
+            formatLabel="Commercial & Industrial Capacity"
+            className="mt-3"
+          />
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto" role="region" aria-label="Linked Commercial and Industrial assessments" tabIndex={0}>

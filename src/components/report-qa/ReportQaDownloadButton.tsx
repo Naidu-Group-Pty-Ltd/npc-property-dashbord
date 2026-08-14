@@ -29,6 +29,7 @@ import { ChevronDown, FileText, Loader2, MessageSquareText, Paperclip, Sparkles 
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
+import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -88,6 +89,8 @@ export function ReportQaDownloadButton({
   className,
 }: ReportQaDownloadButtonProps) {
   const [running, setRunning] = useState<ReportQaSubjectName | null>(null);
+  // Which template this comes out in, offered beside the button that uses it.
+  const template = useReportTemplateMenu('qa');
 
   const run = async (
     subject: ReportQaSubjectName,
@@ -150,6 +153,7 @@ export function ReportQaDownloadButton({
   }
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
@@ -186,7 +190,12 @@ export function ReportQaDownloadButton({
           <Paperclip className="mr-2 h-3.5 w-3.5" />
           Add transcript to this chat
         </DropdownMenuItem>
+        {template.section}
       </DropdownMenuContent>
     </DropdownMenu>
+    {/* Outside the menu: its content unmounts on close and would take the
+        dialog with it. */}
+    {template.dialog}
+    </>
   );
 }

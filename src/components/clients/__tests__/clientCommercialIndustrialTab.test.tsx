@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const clientWorkspace = vi.fn();
 const generate = vi.fn();
@@ -84,10 +85,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 function renderTab() {
+  // The card header now carries the template chooser for this format, so the
+  // tab reads the selection through react-query. Retries off: a failed read in
+  // a test should surface immediately rather than be retried three times.
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter>
-      <ClientCommercialIndustrialTab clientId={CLIENT_ID} />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <ClientCommercialIndustrialTab clientId={CLIENT_ID} />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

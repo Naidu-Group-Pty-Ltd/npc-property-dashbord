@@ -28,6 +28,7 @@
  */
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -165,6 +166,15 @@ export function MarketIntelligenceDownloadButton({
               </Label>
               <Switch id="mi-persist-toggle" checked={persist} onCheckedChange={setPersist} />
             </div>
+
+            {/* This popover is the format's options panel, so the template
+                belongs in it rather than a page away. The row form is used
+                here because the panel is not a menu — there are no
+                `DropdownMenuItem`s for a menu section to sit among. */}
+            <ReportTemplateSelector
+              reportType="market_intelligence"
+              formatLabel="Market Intelligence"
+            />
           </div>
         </PopoverContent>
       </Popover>
