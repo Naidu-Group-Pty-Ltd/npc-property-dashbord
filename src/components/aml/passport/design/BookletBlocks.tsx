@@ -8,9 +8,10 @@
  * Everything here draws in the cream-paper palette. Colour comes from
  * `passport-tokens.css`; nothing in this file names one.
  */
-import type { BookletBlock, BookletTone, SealTone } from "@/lib/aml/passport";
+import type { BookletBlock, BookletTone } from "@/lib/aml/passport";
 import { cn } from "@/lib/utils";
 import { Wax } from "./primitives";
+import { PendingStampFace, StampFace } from "./StampFace";
 
 const TONE_INK: Record<BookletTone, string> = {
   ok: "passport-leaf__tone--ok",
@@ -147,26 +148,40 @@ export function BookletBlockView({ block }: { block: BookletBlock }) {
         </div>
       );
 
+    // The certification pages draw the SAME impression the register draws —
+    // `StampFace`, the approved five-layer die with its Aurixa watermark — from
+    // the same `PassportStamp` object. Not a paper-flavoured copy of it: a copy
+    // is what let the booklet and the register disagree. The leaf re-inks the
+    // impression for cream paper through tokens (`passport-tokens.css`), so the
+    // shape, wording, layers and watermark are one implementation and only the
+    // ink changes with the surface.
     case "seals":
       return (
-        <div className="flex flex-wrap justify-center gap-3.5 py-1">
-          {block.items.map((s, i) => (
-            <Wax
-              key={`${s.t}-${i}`}
-              tone={s.tone as SealTone}
-              title={s.t}
-              caption={s.cap}
-              earned={s.earned}
-              size={84}
-            />
+        <div className="passport-stamp-leaf">
+          {block.earned.map((s, i) => (
+            <div key={`${s.code}-${s.at}`} className="passport-stamp-leaf__slot">
+              <StampFace stamp={s} issuerOrg={block.issuer_org} index={i} />
+              {/* The portal the record came from — the first thing an auditor
+                  asks about a stamp, and what the register captions too. */}
+              <span className="passport-stamp-leaf__cap">{s.portal}</span>
+            </div>
+          ))}
+          {block.pending.map((p) => (
+            <div key={`pending-${p.code}`} className="passport-stamp-leaf__slot">
+              <PendingStampFace stamp={p} />
+              <span className="passport-stamp-leaf__cap">Outstanding</span>
+            </div>
           ))}
         </div>
       );
 
     case "hero":
       return (
-        <div className="flex flex-col items-center gap-3 py-1 text-center">
-          <Wax tone={block.tone} title={block.title} earned={block.earned} size={112} />
+        <div className="passport-stamp-leaf__hero">
+          {block.stamp && (
+            <StampFace stamp={block.stamp} issuerOrg={block.issuer_org} index={0} />
+          )}
+          {!block.stamp && block.pending && <PendingStampFace stamp={block.pending} />}
           <p className="passport-leaf__muted m-0 max-w-[32ch] text-[10px] leading-relaxed">
             {block.text}
           </p>

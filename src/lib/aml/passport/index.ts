@@ -86,5 +86,4 @@ export {
   type BookletBlock,
   type BookletPage,
   type BookletTone,
-  type SealTone,
 } from '../../../../supabase/functions/_shared/aml/passport/passportBooklet.pure';
