@@ -119,6 +119,15 @@ export interface PartnerAgreement {
   updated_by: string | null;
   created_at: string;
   updated_at: string;
+
+  /**
+   * The finance partner ACCOUNT this agreement is addressed to, resolved from
+   * `finance_agent_contact_id` — which is what the partner portal and the
+   * notification both key on, and which is allowed to differ from the typed
+   * `partner_legal_name`. Absent on a deployment older than this bundle.
+   */
+  partner_account_name?: string | null;
+  partner_account_email?: string | null;
 }
 
 export interface PartnerAgreementEvent {

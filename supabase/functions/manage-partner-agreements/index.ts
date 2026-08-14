@@ -468,20 +468,47 @@ Deno.serve(async (req) => {
       const contactIds = [...new Set((data ?? [])
         .map((row: any) => row.finance_agent_contact_id).filter(Boolean))] as string[];
       const accessByContact = new Map<string, ReturnType<typeof partnerPortalAccess>>();
+      // WHICH portal account the agreement is addressed to, by name.
+      //
+      // `partner_legal_name` is typed into the wizard; `finance_agent_contact_id`
+      // is what both the portal query and the notification resolve against. They
+      // are allowed to differ — a trading name is not a portal login — and in
+      // production they differ on half the register. Without the account on the
+      // row, "issued to ABC Finance Team" is unfalsifiable from the register:
+      // there is no way to see that the document actually went to a different
+      // partner's portal, which is the failure mode that reads as an agreement
+      // going missing.
+      const accountByContact = new Map<string, { name: string | null; email: string | null }>();
       if (contactIds.length > 0) {
-        const { data: portalUsers } = await supabase
-          .from('finance_portal_users')
-          .select('finance_contact_id, is_active, revoked_at, password_hash, invite_accepted_at, invite_sent_at')
-          .in('finance_contact_id', contactIds);
-        for (const row of portalUsers ?? []) {
+        const [portalUsersRes, contactsRes] = await Promise.all([
+          supabase
+            .from('finance_portal_users')
+            .select('finance_contact_id, is_active, revoked_at, password_hash, invite_accepted_at, invite_sent_at')
+            .in('finance_contact_id', contactIds),
+          supabase
+            .from('finance_agent_contacts')
+            .select('id, name, email')
+            .in('id', contactIds),
+        ]);
+        for (const row of portalUsersRes.data ?? []) {
           accessByContact.set(row.finance_contact_id, partnerPortalAccess({ row }));
+        }
+        for (const row of contactsRes.data ?? []) {
+          accountByContact.set(row.id, { name: row.name ?? null, email: row.email ?? null });
         }
       }
 
       return json({
         agreements: (data ?? []).map((row: any) => {
           const access = accessByContact.get(row.finance_agent_contact_id) ?? 'none';
-          return { ...row, partner_portal_access: access, delivery: agreementDelivery(row.issued_at, access) };
+          const account = accountByContact.get(row.finance_agent_contact_id) ?? null;
+          return {
+            ...row,
+            partner_portal_access: access,
+            delivery: agreementDelivery(row.issued_at, access),
+            partner_account_name: account?.name ?? null,
+            partner_account_email: account?.email ?? null,
+          };
         }),
         archived_count: archivedCount ?? 0,
       }, corsHeaders);

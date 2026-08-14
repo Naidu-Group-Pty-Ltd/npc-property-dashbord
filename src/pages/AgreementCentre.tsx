@@ -11,7 +11,7 @@
  * opens a download desk for the business that signs somewhere else. They
  * previously shared one picker, which made them look like the same thing.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,11 @@ import { cn } from '@/lib/utils';
 import {
   AGREEMENT_DASHBOARD_GROUPS,
   AGREEMENT_PRIMARY_ACTIONS,
+  AGREEMENT_STATUS_LABELS,
   agreementDispositionFromRow,
+  dashboardGroupForStatus,
+  isIssued,
+  stageToFollow,
   templateKeyForDirection,
   agreementTemplate,
   type AgreementDelivery,
@@ -139,8 +143,11 @@ export default function AgreementCentre() {
     if (group === 'executed_vault') {
       rows = rows.filter((agreement) => agreement.status === 'active');
     } else if (group !== 'all') {
-      const entry = AGREEMENT_DASHBOARD_GROUPS.find((candidate) => candidate.key === group);
-      if (entry) rows = rows.filter((agreement) => (entry.statuses as readonly string[]).includes(agreement.status));
+      // Asked of the lifecycle module rather than by searching the
+      // presentation array: `dashboardGroupForStatus` is the one mapping, and a
+      // status it cannot place is a status this filter would silently drop.
+      rows = rows.filter((agreement) =>
+        dashboardGroupForStatus(agreement.status as AgreementStatus) === group);
     }
     const query = search.trim().toLowerCase();
     if (query) {
@@ -152,6 +159,78 @@ export default function AgreementCentre() {
     }
     return rows;
   }, [agreements, group, search]);
+
+  /**
+   * Agreements that left the stage you are standing in, while you were
+   * standing in it.
+   *
+   * This is the reported bug. Issuing moves an agreement from "Ready to Issue"
+   * to "Partner Review", and the stage filter is component state that does not
+   * move with it — so the row silently leaves the view, and with the sync
+   * cursor polling it can now leave while nobody has touched anything. From
+   * the outside that is indistinguishable from the agreement being deleted.
+   *
+   * Rather than suppress the movement (which would mean showing an agreement
+   * under a stage it is no longer in — a worse lie), the register says where it
+   * went and offers to follow. Departures are only recorded when the row is
+   * still in the register under a different stage: a row that has genuinely
+   * left the working list was archived, which is a deliberate act with its own
+   * destination and its own button.
+   */
+  const [departures, setDepartures] = useState<
+    { id: string; partner: string; toGroup: string; toLabel: string }[]
+  >([]);
+  const watchRef = useRef<{ group: GroupKey; inStage: Map<string, string> }>({
+    group: 'all', inStage: new Map(),
+  });
+
+  useEffect(() => {
+    const stageOf = (agreement: PartnerAgreement): string | null => (
+      group === 'executed_vault'
+        ? (agreement.status === 'active' ? 'executed_vault' : null)
+        : dashboardGroupForStatus(agreement.status as AgreementStatus)
+    );
+    const inStage = new Map<string, string>();
+    if (group !== 'all') {
+      for (const agreement of agreements) {
+        if (stageOf(agreement) === group) inStage.set(agreement.id, agreement.status);
+      }
+    }
+
+    // Changing stage yourself is not a departure — it is navigation.
+    if (watchRef.current.group !== group) {
+      watchRef.current = { group, inStage };
+      setDepartures([]);
+      return;
+    }
+
+    const left: { id: string; partner: string; toGroup: string; toLabel: string }[] = [];
+    for (const [id, previousStatus] of watchRef.current.inStage) {
+      if (inStage.has(id)) continue;
+      const row = agreements.find((agreement) => agreement.id === id);
+      // Absent from the register entirely → archived, not moved. The archive
+      // has its own button and its own count; claiming it "moved to a stage"
+      // would send somebody to a stage it is not in.
+      if (!row || row.status === previousStatus) continue;
+      const toGroup = stageToFollow(group, row.status as AgreementStatus);
+      if (!toGroup) continue;
+      left.push({
+        id,
+        partner: row.partner_legal_name,
+        toGroup,
+        toLabel: AGREEMENT_DASHBOARD_GROUPS.find((entry) => entry.key === toGroup)?.label
+          ?? AGREEMENT_STATUS_LABELS[row.status as AgreementStatus],
+      });
+    }
+
+    watchRef.current = { group, inStage };
+    if (left.length > 0) {
+      setDepartures((current) => [
+        ...left,
+        ...current.filter((entry) => !left.some((one) => one.id === entry.id)),
+      ].slice(0, 5));
+    }
+  }, [agreements, group]);
 
   return (
     <>
@@ -260,6 +339,38 @@ export default function AgreementCentre() {
           </div>
         </div>
 
+        {/* Where it went. Shown instead of letting the row vanish out of the
+            stage you are standing in — see the `departures` effect. */}
+        {departures.length > 0 ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-foreground">
+              {departures.length === 1 ? (
+                <>
+                  <span className="font-medium">{departures[0].partner}</span> moved on to{' '}
+                  <span className="font-medium">{departures[0].toLabel}</span>. It is still in the
+                  register — this stage no longer holds it.
+                </>
+              ) : (
+                <>
+                  <span className="font-medium">{departures.length} agreements</span> moved on to
+                  other stages. They are still in the register.
+                </>
+              )}
+            </p>
+            <div className="flex shrink-0 items-center gap-2">
+              {departures.length === 1 ? (
+                <Button size="sm" variant="outline"
+                  onClick={() => navigate(`/partner-agreements/${departures[0].id}`)}>
+                  Open agreement
+                </Button>
+              ) : null}
+              <Button size="sm" variant="outline" onClick={() => setGroup('all')}>
+                Show all
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <Card>
           <CardContent className="p-0">
             {isLoading ? (
@@ -280,13 +391,39 @@ export default function AgreementCentre() {
                   Back to the working list
                 </Button>
               </div>
-            ) : filtered.length === 0 ? (
+            ) : filtered.length === 0 && agreements.length > 0 ? (
+              /* The register is NOT empty — a filter is hiding everything.
+                 This used to render "Nothing in this stage" above a Create
+                 Agreement button, which is the sentence somebody reads
+                 immediately after issuing and concludes their agreement was
+                 destroyed. An empty stage is a statement about the filter, and
+                 the only honest thing to offer is a way out of it. */
               <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
                 <FileSignature className="h-10 w-10 text-muted-foreground" />
                 <div className="space-y-1">
                   <p className="font-medium text-foreground">
-                    {group === 'all' ? 'No agreements yet' : 'Nothing in this stage'}
+                    {search.trim() ? 'Nothing matches this search' : 'Nothing at this stage right now'}
                   </p>
+                  <p className="mx-auto max-w-md text-sm text-muted-foreground">
+                    {search.trim()
+                      ? `${agreements.length} agreement${agreements.length === 1 ? ' is' : 's are'} in the register.`
+                      : `Nothing has been lost — ${agreements.length} agreement${agreements.length === 1 ? '' : 's'} `
+                        + 'in the register '
+                        + `${agreements.length === 1 ? 'is' : 'are'} at other stages. An agreement moves stage as it `
+                        + 'progresses; issuing one sends it to Partner Review.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button onClick={() => { setGroup('all'); setSearch(''); }}>
+                    Show all {agreements.length} agreement{agreements.length === 1 ? '' : 's'}
+                  </Button>
+                </div>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                <FileSignature className="h-10 w-10 text-muted-foreground" />
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">No agreements yet</p>
                   <p className="mx-auto max-w-md text-sm text-muted-foreground">
                     Create an agreement to take it through internal review, issuance to the partner
                     portal, and execution — or download the Word template to send through your own
@@ -343,6 +480,18 @@ export default function AgreementCentre() {
                             {agreement.partner_trading_name ? (
                               <div className="text-xs text-muted-foreground">{agreement.partner_trading_name}</div>
                             ) : null}
+                            {/* The portal account it is actually addressed to,
+                                shown only when it is not the name above — a
+                                trading name differing from a login is normal;
+                                a DIFFERENT PARTNER is the thing worth seeing,
+                                and the register could not show it at all. */}
+                            {agreement.partner_account_name
+                              && agreement.partner_account_name !== agreement.partner_legal_name ? (
+                                <div className="mt-0.5 text-xs text-muted-foreground">
+                                  Portal account:{' '}
+                                  <span className="text-foreground">{agreement.partner_account_name}</span>
+                                </div>
+                              ) : null}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {(agreement as { agreement_owner_label?: string | null }).agreement_owner_label ?? '—'}
@@ -353,6 +502,20 @@ export default function AgreementCentre() {
                           </TableCell>
                           <TableCell>
                             <AgreementStatusBadge status={agreement.status as AgreementStatus} />
+                            {/* Nothing in this product ever said the word
+                                "Issued". The lifecycle status says where the
+                                agreement is NOW — `partner_review`,
+                                `changes_requested`, `void` — and none of those
+                                tells you it was sent, so a person who has just
+                                issued one finds no confirmation of it anywhere
+                                in the register. Driven by `issued_at`, so it
+                                stays true after the agreement moves on or is
+                                withdrawn. */}
+                            {isIssued(agreement) ? (
+                              <span className="mt-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                Issued {format(new Date(agreement.issued_at as string), 'd MMM yyyy')}
+                              </span>
+                            ) : null}
                             {/* "Partner Review" reads the same whether the
                                 partner is reading it or cannot sign in to
                                 reach it. Without this the register cannot
