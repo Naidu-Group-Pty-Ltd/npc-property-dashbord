@@ -39,10 +39,17 @@
  * `marketTiming` and `competitiveAdvantages` are published where they exist,
  * which is **only on the damaged rows**: the writer that destructures a
  * successful response into seven columns has no column for them and drops them.
- * A salvaged document carries more of the analysis than an intact one.
+ * A salvaged document carries more of the analysis than an intact one. (This
+ * paragraph was aspiration for a while — the code below dropped both on the
+ * floor until the binding audit compared it against the payload. They are
+ * published now, with the truncation note beside them, because half the stored
+ * rows are salvaged and `recommendations` is absent on all but two of those —
+ * a verdict page that binds only the pick renders an empty display-size
+ * heading on 25 of the 50 rows in production.)
  */
 import {
   buildPropertyComparison,
+  SECTION_LABELS,
   type BuildComparisonInput,
 } from './reports/propertyComparison/normalise.pure.ts';
 import type {
@@ -242,6 +249,72 @@ export function projectComparisonModel(model: PropertyComparison): ProjectedComp
   put(basis, 'model', model.basis.model);
   if (model.basis.weights.length) {
     basis.weights = model.basis.weights.map((w) => ({ ...w }));
+  }
+
+  // ── the two sections only a damaged record carries ────────────────────────
+  // `marketTiming` and `competitiveAdvantages` have no column to live in: the
+  // writer that destructures a successful response into seven columns drops
+  // them, and only the salvage path reads them back — 23 and 10 of the 27
+  // salvaged rows respectively. The projection header always claimed these
+  // were published; until now it was wrong, and the richest sections of the
+  // richest records reached no template.
+  if (model.timing) {
+    const t: Record<string, unknown> = {};
+    if (model.timing.buyFirst) {
+      t.buyFirstWinner = model.timing.buyFirst.property
+        ? model.timing.buyFirst.property.address
+        : NO_WINNER;
+      put(t, 'buyFirstReason', model.timing.buyFirst.reason);
+    }
+    if (model.timing.holdingPeriods.length) {
+      t.holds = model.timing.holdingPeriods.map((h) => {
+        const out: Record<string, unknown> = {};
+        out.winner = h.property ? h.property.shortAddress : 'Across the comparison';
+        put(out, 'period', h.period);
+        put(out, 'reason', h.reason);
+        return out;
+      });
+    }
+    if (Object.keys(t).length) comparison.timing = t;
+  }
+  if (model.advantages.length) {
+    comparison.advantages = model.advantages.map((a) => {
+      const out: Record<string, unknown> = {};
+      // The legacy section's own fallback heading for an unattributed block.
+      out.winner = a.property ? a.property.address : 'Across the comparison';
+      if (a.advantages.length) {
+        out.items = [...a.advantages];
+        // The list as a sentence, because a callout has one body and a
+        // template cannot join an array.
+        out.line = a.advantages.join(' · ');
+      }
+      return out;
+    });
+  }
+
+  // ── what the record does not hold, said the legacy's own way ──────────────
+  // On a salvaged row `recommendations` is absent every time bar two — a
+  // ranked comparison that silently omits "which should I buy" reads as a
+  // finished document that forgot to answer its own question, so the note is
+  // composed here, whole, in the legacy truncation callout's own sentences,
+  // for the verdict page to show in the pick's place.
+  if (model.provenance.shape === 'salvaged') {
+    comparison.truncated = model.provenance.truncated;
+    const missing = model.provenance.missing
+      .map((k) => SECTION_LABELS[k] ?? k)
+      .filter(Boolean);
+    const recovered = model.provenance.recovered.length;
+    const lost = missing.length
+      ? ` ${missing.length === 1 ? 'One section was' : `${missing.length} sections were`} `
+        + `never written: ${missing.join(', ')}.`
+      : '';
+    comparison.truncationNote =
+      'The analysis was cut short while it was being written, and the sections it had '
+      + `completed were stored as raw text rather than as a finished report. ${recovered} of `
+      + `them ${recovered === 1 ? 'has' : 'have'} been read back and `
+      + `${recovered === 1 ? 'appears' : 'appear'} in this document in full.${lost} `
+      + 'Those sections are not missing from this report — they are not in the record. '
+      + 'Re-running the comparison would produce them.';
   }
 
   const client: Record<string, unknown> = {};

@@ -1577,6 +1577,43 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       model: 'sonar-pro',
     },
 
+    // ── Market timing and competitive advantages ────────────────────────────
+    //
+    // In production these two ride only the salvaged rows — the writer that
+    // destructures a successful response has no column for them — so an intact
+    // record carrying them is a state the table cannot hold. The sample carries
+    // them anyway, because a preview's job is to show what the pages draw, and
+    // the truncation vocabulary (`truncated`, `truncationNote`) stays absent so
+    // the verdict previews the recommendation treatment, not the fallback.
+    timing: {
+      buyFirstWinner: '22 Chapel Street, Marrickville NSW 2204',
+      buyFirstReason: 'Marrickville should be acted on first: its growth phase is already '
+        + 'under way, stock is tightening, and the entry price still sits under the suburb '
+        + 'median. The other two hold their value cases without the same urgency.',
+      holds: [
+        { winner: '22 Chapel Street', period: '7-10 years',
+          reason: 'The growth case needs a full cycle; selling inside five years gives the '
+          + 'transaction costs the compounding instead of the owner.' },
+        { winner: ADDRESS.split(',')[0], period: '10+ years',
+          reason: 'Land-led theses mature slowly. The second-dwelling path is what pays, and '
+          + 'it needs planning, construction and a letting history inside the hold.' },
+        { winner: '7 Wardell Road', period: '5+ years, re-assess at five',
+          reason: 'Held for income, reviewed against the portfolio rather than the market — '
+          + 'if the yield advantage narrows, the capital is better rotated.' },
+      ],
+    },
+    advantages: [
+      { winner: '22 Chapel Street, Marrickville NSW 2204',
+        items: ['Renovated 2021 — no capital works inside the hold', 'Strongest 12-month growth of the three (7.2%)', 'Under the suburb median at entry'],
+        line: 'Renovated 2021 — no capital works inside the hold · Strongest 12-month growth of the three (7.2%) · Under the suburb median at entry' },
+      { winner: ADDRESS,
+        items: ['412 m² of R2 land, 18% above the suburb average', 'Compliant secondary-dwelling footprint at concept level'],
+        line: '412 m² of R2 land, 18% above the suburb average · Compliant secondary-dwelling footprint at concept level' },
+      { winner: '7 Wardell Road, Dulwich Hill NSW 2203',
+        items: ['The only one of the three cash-positive from settlement', 'Lowest entry price and lowest holding risk'],
+        line: 'The only one of the three cash-positive from settlement · Lowest entry price and lowest holding risk' },
+    ],
+
     a: {
       address: ADDRESS, price: 1285000, rent: 950, yield: 3.84, net: -413, land: '412 m²',
       built: '1928', config: '3 bed · 2 bath · 1 car', condition: 'Original', growth: 6.1,

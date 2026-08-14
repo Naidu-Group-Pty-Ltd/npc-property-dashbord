@@ -199,6 +199,12 @@ const SETS: Array<[string, any[], Record<string, any>]> = [
   ['Borrowing Capacity', BORROWING_CAPACITY_TEMPLATES as any[], borrowingData(ROWS.borrowing_capacity)],
   ['Portfolio Review', PORTFOLIO_TEMPLATES as any[], portfolioData(ROWS.portfolio)],
   ['Property Comparison', COMPARISON_TEMPLATES as any[], comparisonData(ROWS.comparison)],
+  // A salvaged row too — 27 of the 50 stored comparisons have every jsonb
+  // column NULL and the truncated raw response in `executive_summary`. The
+  // fallback verdict, the truncation note and the salvage-only timing and
+  // advantages pages render only on this shape, so measuring the intact row
+  // alone leaves half of production's pages unmeasured.
+  ['Property Comparison (salvaged)', COMPARISON_TEMPLATES as any[], comparisonData(ROWS.comparison_salvaged)],
   ['Report Q&A', REPORT_QA_TEMPLATES as any[], qaData(ROWS2.qa)],
   ['Commercial Capacity', COMMERCIAL_CAPACITY_TEMPLATES as any[], capacityData(ROWS2.commercial_capacity)],
   ['Market Intelligence', MARKET_INTELLIGENCE_TEMPLATES as any[], marketData(ROWS2.market_intelligence)],
