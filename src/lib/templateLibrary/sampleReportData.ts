@@ -338,7 +338,10 @@ const CLIENT_DETAILS_SAMPLE = (() => {
   ) => ({
     kind, kindLabel, address, shortAddress: shortAddr,
     value: aud(value), loanRemaining: aud(loan), equity: aud(value - loan),
-    lvr: pct((loan / value) * 100), interestRate: pct(6.02), ownershipPercentage: pct(100),
+    lvr: pct((loan / value) * 100), interestRate: pct(6.02),
+    // Precision 0, as the normaliser builds it — `percent(x, 0)` — so the
+    // strapline reads "100% ownership" rather than "100.00% ownership".
+    ownershipPercentage: { value: 100, unit: 'percent' as const, precision: 0 },
     lender, repaymentType: 'Principal and interest',
     rentMonthly: perMonth(rent), rentWeekly: { value: (rent * 12) / 52, unit: 'aud/week' as const },
     expensesMonthly: perMonth(outgoings), netMonthly: perMonth(rent - outgoings),
@@ -370,6 +373,17 @@ const CLIENT_DETAILS_SAMPLE = (() => {
           residentialStatus: 'Australian citizen',
         },
         sharedWithPrimary: false,
+      }, {
+        // The commoner of the two secondary shapes — the projection turns this
+        // into the legacy sentence, and the preview exercises the
+        // second-contact residence row with it.
+        contact: 'secondary' as const,
+        residence: {
+          address: '9/44 Regent Street', suburb: 'Newtown', state: 'NSW', postcode: '2042',
+          country: 'Australia', livingSituation: 'Owner occupied',
+          residentialStatus: 'Australian citizen',
+        },
+        sharedWithPrimary: true,
       }],
       maritalStatus: 'Married',
       dependents: { value: 2, unit: 'rate' as const },

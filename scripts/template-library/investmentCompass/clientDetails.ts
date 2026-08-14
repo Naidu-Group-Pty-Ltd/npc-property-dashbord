@@ -36,6 +36,18 @@
  * against the shipping generator is not that it stops, it is that it stops with
  * nothing on the page saying so.
  *
+ * ## Below the cap, the table is as deep as the record
+ *
+ * A fixed eight-row table beside two recorded assets rules off six empty bands,
+ * so every capped table here is drawn at one of a few depths — mutually
+ * exclusive `oneOf` variants keyed on the published count, split where the
+ * production distribution actually clusters: assets {1:3, 2:4, 3:4, 7:7, 9:1,
+ * 18:1} → depths 3/7/8, liabilities {1:4, 2:4, 4:1, 8:8, 16:1} → 2/4/8,
+ * employment {1:19, 2:7, 3:2} → 1/2/3, address history {1:8, 3:8, 5:1, 20:1} →
+ * 1/3/4, holdings one to four → 1/2/3/4, and expense categories {1:2, 2:2,
+ * 14:9} → 2/14. The reserved height is the deepest variant's — the win is that
+ * no client's page rules off rows their record does not hold.
+ *
  * ## No emoji, and no borrowing capacity
  *
  * The legacy headings carry `🏠`, `📈`, `🏛️`, `💸` and `✓ ✗ ⏳ ▲ ▼ ●`. Harmless
@@ -66,6 +78,7 @@ import {
   ifItFits,
   kpiCapacity,
   kpis,
+  oneOf,
   page,
   prose,
   sectionHeading,
@@ -120,6 +133,19 @@ const LENGTHS = {
   basis: 60,
   /** `employer_name` maxes at 57 characters in the record. */
   employer: 57,
+  /**
+   * `secondaryResidence.line` — address · living situation · residential
+   * status, composed in the projection. Address caps at 55 in the record;
+   * suburb, state, postcode and the two status words add the rest.
+   */
+  secondaryResidence: 150,
+  /**
+   * The per-holding callout: `strapline` (kind · lender · ownership · terms —
+   * ~93 characters with a 26-character lender, the longest in the record) plus
+   * the rent-against-outgoings sentence (~68 with three formatted amounts).
+   * The budget the piecewise binding this replaces was measured at.
+   */
+  holdingSummary: 190,
 } as const;
 
 const CLIENT_DETAILS_FORMAT: ReportFormat = {
@@ -337,21 +363,36 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           { term: 'Residential status', definition: '{{clientDetails.residence.residentialStatus}}' },
         ], LENGTHS.address),
       ], [
-        // Address history runs to 18 periods on one record and 4 on all but
-        // two. The count beside the table is what makes the cap honest.
+        // The second contact's residence, where the record carries one. One
+        // composed line, because the projection carries both legacy shapes in
+        // it: the shared sentence, or the apart address with its status words.
         {
-          ...table({
+          ...definitions('Where the second contact lives', [
+            { term: '{{clientDetails.contacts.1.name}}', definition: '{{clientDetails.secondaryResidence.line}}' },
+          ], LENGTHS.secondaryResidence),
+          conditional: 'clientDetails && clientDetails.secondaryResidence',
+        },
+        // Address history runs to 20 periods on one record and 4 on all but
+        // two, clustering at one and three. The count beside the table is what
+        // makes the cap honest; the depth variants are what stop a one-move
+        // record ruling off three empty bands.
+        (() => {
+          const historyTable = (n: number) => table({
             headers: ['Previous address', 'From', 'To'],
-            rows: Array.from({ length: ROWS.addressHistory }, (_, i) => [
+            rows: Array.from({ length: n }, (_, i) => [
               `{{clientDetails.addressHistory.${i}.address}}`,
               `{{clientDetails.addressHistory.${i}.startDate}}`,
               `{{clientDetails.addressHistory.${i}.endDate}}`,
             ]),
             columnWidths: [0.56, 0.22, 0.22],
             numeric: [],
-          }),
-          conditional: 'clientDetails && clientDetails.addressHistory && clientDetails.addressHistory[0]',
-        },
+          });
+          return oneOf(
+            { when: 'clientDetails && clientDetails.addressHistory && clientDetails.addressHistoryCount <= 1', item: historyTable(1) },
+            { when: 'clientDetails && clientDetails.addressHistory && clientDetails.addressHistoryCount > 1 && clientDetails.addressHistoryCount <= 3', item: historyTable(3) },
+            { when: 'clientDetails && clientDetails.addressHistory && clientDetails.addressHistoryCount > 3', item: historyTable(ROWS.addressHistory) },
+          );
+        })(),
       ], contentTop()), contentTop()),
     ]), FOOTER),
     conditional: 'clientDetails && clientDetails.residence',
@@ -368,16 +409,25 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         standfirst: 'Salary is stated as the annual figure whatever frequency it was captured '
           + 'at, and every monthly total below is converted through one function.',
       }),
-      table({
-        headers: ['Employer', 'Role', 'Type', 'Gross annual'],
-        rows: Array.from({ length: ROWS.employment }, (_, i) => [
-          `{{clientDetails.employment.${i}.employer}}`,
-          `{{clientDetails.employment.${i}.role}}`,
-          `{{clientDetails.employment.${i}.employmentType}}`,
-          `{{clientDetails.employment.${i}.grossAnnual | currency}}`,
-        ]),
-        columnWidths: [0.32, 0.26, 0.2, 0.22],
-      }),
+      // 19 of the 28 clients with employment record exactly one row; a fixed
+      // three-row table rules off two empty bands for every one of them.
+      (() => {
+        const employmentTable = (n: number) => table({
+          headers: ['Employer', 'Role', 'Type', 'Gross annual'],
+          rows: Array.from({ length: n }, (_, i) => [
+            `{{clientDetails.employment.${i}.employer}}`,
+            `{{clientDetails.employment.${i}.role}}`,
+            `{{clientDetails.employment.${i}.employmentType}}`,
+            `{{clientDetails.employment.${i}.grossAnnual | currency}}`,
+          ]),
+          columnWidths: [0.32, 0.26, 0.2, 0.22],
+        });
+        return oneOf(
+          { when: 'clientDetails && clientDetails.employmentCount <= 1', item: employmentTable(1) },
+          { when: 'clientDetails && clientDetails.employmentCount == 2', item: employmentTable(2) },
+          { when: 'clientDetails && clientDetails.employmentCount > 2', item: employmentTable(ROWS.employment) },
+        );
+      })(),
       table({
         headers: ['Income, monthly', 'Amount'],
         rows: [
@@ -410,11 +460,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         standfirst: `This page draws up to ${ROWS.assets} assets. Property is not among them — `
           + 'it has its own pages, and counting a home here would state it twice.',
       }),
-      table({
-        headers: ['Type', 'Description', 'Value'],
-        rows: Array.from({ length: ROWS.assets }, (_, i) => assetRow(i)),
-        columnWidths: [0.28, 0.46, 0.26],
-      }),
+      // Depths 3/7/8: the record clusters at one to three and at exactly seven,
+      // and the cap takes everything beyond.
+      (() => {
+        const assetTable = (n: number) => table({
+          headers: ['Type', 'Description', 'Value'],
+          rows: Array.from({ length: n }, (_, i) => assetRow(i)),
+          columnWidths: [0.28, 0.46, 0.26],
+        });
+        return oneOf(
+          { when: 'clientDetails && clientDetails.assetCount <= 3', item: assetTable(3) },
+          { when: 'clientDetails && clientDetails.assetCount > 3 && clientDetails.assetCount <= 7', item: assetTable(7) },
+          { when: 'clientDetails && clientDetails.assetCount > 7', item: assetTable(ROWS.assets) },
+        );
+      })(),
       table({
         headers: ['Assets, total', 'Amount'],
         rows: [['Non-property assets', '{{clientDetails.position.otherAssets | currency}}']],
@@ -446,11 +505,19 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         standfirst: 'Servicing is what the client records paying where they record it, and a '
           + 'modelled figure where they do not. The basis is stated for each.',
       }),
-      table({
-        headers: ['Type', 'Provider', 'Balance', 'Monthly'],
-        rows: Array.from({ length: ROWS.liabilities }, (_, i) => liabilityRow(i)),
-        columnWidths: [0.26, 0.3, 0.22, 0.22],
-      }),
+      // Depths 2/4/8: half the clients who record any record one or two.
+      (() => {
+        const liabilityTable = (n: number) => table({
+          headers: ['Type', 'Provider', 'Balance', 'Monthly'],
+          rows: Array.from({ length: n }, (_, i) => liabilityRow(i)),
+          columnWidths: [0.26, 0.3, 0.22, 0.22],
+        });
+        return oneOf(
+          { when: 'clientDetails && clientDetails.liabilityCount <= 2', item: liabilityTable(2) },
+          { when: 'clientDetails && clientDetails.liabilityCount > 2 && clientDetails.liabilityCount <= 4', item: liabilityTable(4) },
+          { when: 'clientDetails && clientDetails.liabilityCount > 4', item: liabilityTable(ROWS.liabilities) },
+        );
+      })(),
       {
         ...callout(
           'This page does not show every liability',
@@ -489,12 +556,21 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           + '{{clientDetails.expenseCategoryCount}} categories; they are summed here rather '
           + 'than listed.',
       }),
-      table({
-        headers: ['Category', 'Lines', 'Monthly'],
-        rows: Array.from({ length: ROWS.expenseCategories }, (_, i) => expenseRow(i)),
-        columnWidths: [0.56, 0.16, 0.28],
-        numeric: [1, 2],
-      }),
+      // Two depths only: of the 13 clients who record expenses, nine group to
+      // exactly fourteen categories and four to one or two — the distribution
+      // is bimodal, so a middle depth would fit nobody.
+      (() => {
+        const expenseTable = (n: number) => table({
+          headers: ['Category', 'Lines', 'Monthly'],
+          rows: Array.from({ length: n }, (_, i) => expenseRow(i)),
+          columnWidths: [0.56, 0.16, 0.28],
+          numeric: [1, 2],
+        });
+        return oneOf(
+          { when: 'clientDetails && clientDetails.expenseCategoryCount <= 2', item: expenseTable(2) },
+          { when: 'clientDetails && clientDetails.expenseCategoryCount > 2', item: expenseTable(ROWS.expenseCategories) },
+        );
+      })(),
     ], contentTop()),
   ]), FOOTER), 'clientDetails.expenseGroups'));
 
@@ -512,11 +588,21 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         standfirst: 'The home they live in is not in this table. It is somewhere to live before '
           + 'it is an asset — it counts in net worth and not in what they invest.',
       }),
-      table({
-        headers: ['Property', 'Held as', 'Value', 'Owing', 'LVR', 'Monthly'],
-        rows: Array.from({ length: ROWS.properties }, (_, i) => propertyRow(i)),
-        columnWidths: [0.28, 0.16, 0.15, 0.15, 0.1, 0.16],
-      }),
+      // One depth per holding count — no client holds more than four, so every
+      // portfolio table is exactly as deep as the portfolio.
+      (() => {
+        const holdingsTable = (n: number) => table({
+          headers: ['Property', 'Held as', 'Value', 'Owing', 'LVR', 'Monthly'],
+          rows: Array.from({ length: n }, (_, i) => propertyRow(i)),
+          columnWidths: [0.28, 0.16, 0.15, 0.15, 0.1, 0.16],
+        });
+        return oneOf(
+          { when: 'clientDetails && clientDetails.propertiesShown <= 1', item: holdingsTable(1) },
+          { when: 'clientDetails && clientDetails.propertiesShown == 2', item: holdingsTable(2) },
+          { when: 'clientDetails && clientDetails.propertiesShown == 3', item: holdingsTable(3) },
+          { when: 'clientDetails && clientDetails.propertiesShown > 3', item: holdingsTable(ROWS.properties) },
+        );
+      })(),
     ], [
       table({
         headers: ['Portfolio totals', 'Amount'],
@@ -544,14 +630,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: 'Each property in turn',
         numeral: nextNumeral(),
       }),
+      // `heading` and `strapline` are composed in the projection rather than
+      // bound piecewise: the production client this page was measured against
+      // stores no lender on any holding, and `{{kind}} · {{lender}} · …`
+      // printed "Investment · · rent…" on all three callouts. The strapline
+      // also carries what the legacy holdings table draws and this page used
+      // to drop — ownership percentage, repayment type and the interest rate.
       ...Array.from({ length: ROWS.properties }, (_, i) => ({
         ...callout(
-          `{{clientDetails.properties.${i}.address}}`,
-          `{{clientDetails.properties.${i}.kind}} · {{clientDetails.properties.${i}.lender}} · `
+          `{{clientDetails.properties.${i}.heading}}`,
+          `{{clientDetails.properties.${i}.strapline}} · `
             + `rent {{clientDetails.properties.${i}.rentMonthly | currency}} a month against `
             + `outgoings of {{clientDetails.properties.${i}.expensesMonthly | currency}}, `
             + `netting {{clientDetails.properties.${i}.netMonthly | currency}}.`,
-          textHeight(190, { size: c.scale.cell, extra: 30 }),
+          textHeight(LENGTHS.holdingSummary, { size: c.scale.cell, extra: 30 }),
         ),
         conditional: `clientDetails && clientDetails.properties && clientDetails.properties[${i}]`,
       })),
