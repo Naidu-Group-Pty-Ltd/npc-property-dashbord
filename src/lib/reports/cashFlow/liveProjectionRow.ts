@@ -93,6 +93,15 @@ export interface LiveProjectionSource {
   /** The row the document is about — for its id, address and timestamps. */
   reportId: string;
   propertyAddress?: string | null;
+  /**
+   * The stored scenario this series was proved to equal, when it was.
+   *
+   * Present only when `matchStoredScenario` named one, so the document may
+   * honestly print "Moderate". Absent means the adviser shaped the series by
+   * hand and it is labelled "Adviser-reviewed" — never a scenario name the
+   * numbers do not satisfy.
+   */
+  scenario?: string | null;
 }
 
 /**
@@ -129,12 +138,19 @@ export function wireAsProjectionRow(
 export function applyLiveCashFlowProjection(
   data: Record<string, any>,
   row: Record<string, unknown>,
+  scenario?: string | null,
 ): Record<string, any> {
   applyCashFlowProjection(data, row, CARRIER_SCENARIO);
   const cashflow = data.cashflow;
   if (cashflow && typeof cashflow === 'object') {
-    cashflow.scenario = 'reviewed';
-    cashflow.scenarioLabel = 'Adviser-reviewed';
+    // A proved scenario keeps its own name; anything else is the adviser's.
+    const proved = typeof scenario === 'string' && scenario.trim() ? scenario.trim() : null;
+    cashflow.scenario = proved ?? 'reviewed';
+    cashflow.scenarioLabel = proved
+      ? proved.charAt(0).toUpperCase() + proved.slice(1)
+      : 'Adviser-reviewed';
+    // The stored three-way comparison is withheld either way: only the series
+    // on screen was reviewed, and the other two are not in this payload.
     delete cashflow.scenarios;
     delete cashflow.scenarioBasis;
   }

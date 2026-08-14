@@ -3645,7 +3645,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       const storedScenario = matchStoredScenario(wire, report);
       const templated = await tryTemplateDocument('cashflow', report.id, {
         variant: storedScenario,
-        ...(storedScenario ? {} : { payload: { wire } }),
+        // ALWAYS the series on screen, never a re-read.
+        //
+        // The payload used to be sent only when the screen and the store
+        // disagreed. That left the matched case depending on the adapter
+        // re-reading `investment_reports` — a read that can be refused (RLS
+        // under this app's custom auth, a module permission, an unreachable
+        // broker) and whose refusal is indistinguishable from "this record
+        // cannot be templated", so the document silently came out of the
+        // standard composer. Everything the template needs is already here, so
+        // nothing is re-read: the ten years, the address for the title, and
+        // the scenario name when `matchStoredScenario` proved one.
+        payload: {
+          wire,
+          propertyAddress: report.property_address ?? null,
+          scenario: storedScenario,
+        },
       });
       if (templated) {
         saveTemplateDocument(templated);
