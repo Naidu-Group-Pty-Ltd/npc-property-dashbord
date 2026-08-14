@@ -26,7 +26,7 @@ import {
 // ── Operations and authorisation ─────────────────────────────────────────────
 
 export type LibraryOperation =
-  | 'list' | 'get' | 'instantiate' | 'promote' | 'save_draft'
+  | 'list' | 'get' | 'instantiate' | 'use_for_reports' | 'promote' | 'save_draft'
   | 'publish' | 'deprecate' | 'archive' | 'restore' | 'events';
 
 export type RequiredAuthz =
@@ -34,7 +34,13 @@ export type RequiredAuthz =
   | { kind: 'superadmin' };
 
 const READ_OPERATIONS: ReadonlySet<string> = new Set(['list', 'get']);
-const EDIT_OPERATIONS: ReadonlySet<string> = new Set(['instantiate']);
+// `use_for_reports` is deliberately the same bar as `instantiate`: both copy a
+// published entry into `report_templates` with every safety-critical field
+// fixed server-side. The copy it creates is user-scoped, so it is visible only
+// to its owner and can only ever affect that owner's own documents — the
+// activation gate's superadmin bar protects the GLOBAL candidate set, which
+// this operation cannot touch.
+const EDIT_OPERATIONS: ReadonlySet<string> = new Set(['instantiate', 'use_for_reports']);
 
 /**
  * What an operation requires. Deny-by-default: anything not explicitly a read
@@ -476,6 +482,151 @@ export function buildWorkingCopyPayload(req: WorkingCopyRequest): Record<string,
     owner_user_id: req.userId,
     agency_id: null,
   };
+}
+
+// ── Using an entry for report generation ─────────────────────────────────────
+
+/**
+ * Whether this entry may back live report generation directly.
+ *
+ * Stricter than instantiation on purpose. A working copy is an editing
+ * artefact — anything published may be copied and worked on. A report-use copy
+ * goes straight into the caller's selectable set, so it must already be the
+ * whole of what the activation gate would check: a production report type, a
+ * schema of production-safe blocks, and the WeasyPrint engine. Refusing here is
+ * a 422 with a reason; refusing at render time is a silent legacy fallback the
+ * user would read as "my choice did nothing".
+ */
+export function validateEntryForReportUse(
+  entry: Record<string, unknown>,
+): PublishProblem | null {
+  if (entry.status !== 'published') {
+    return { code: 'not_published', message: 'Only published templates can be used for reports.' };
+  }
+  if (String(entry.engine ?? 'weasyprint').toLowerCase() !== 'weasyprint') {
+    return {
+      code: 'engine_not_supported',
+      message: 'This template is not rendered by the design system, so choosing it would not change your documents.',
+    };
+  }
+  if (entry.production_ready !== true) {
+    return {
+      code: 'not_production_ready',
+      message: 'This template is preview-only and cannot generate live reports yet.',
+    };
+  }
+  const key = String(entry.report_type ?? '').trim().toLowerCase();
+  if (!key || !PRODUCTION_REPORT_TEMPLATE_TYPES.has(key)) {
+    return {
+      code: 'format_not_production',
+      message: `"${key || 'untyped'}" does not have a production report pipeline yet.`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The colourway id a report-use copy is recorded under.
+ *
+ * The entry's default colourway maps to **null** — "the authored palette,
+ * unbaked" — for the same reason `instantiate` without a `colourwayId` bakes
+ * nothing: the stored schema already carries it. This is also what makes reuse
+ * find the globally seeded masters, whose lineage records `colourway: null`;
+ * treating "the default, explicitly" and "the default, implicitly" as different
+ * choices would mint a duplicate copy of a template the user already has.
+ */
+export function normaliseRequestedColourwayId(
+  entry: Record<string, unknown>,
+  requestedId: unknown,
+): string | null {
+  const requested = String(requestedId ?? '').trim();
+  if (!requested) return null;
+  const meta = (entry.design_meta && typeof entry.design_meta === 'object')
+    ? entry.design_meta as Record<string, unknown>
+    : {};
+  return requested === String(meta.defaultColourway ?? '') ? null : requested;
+}
+
+export interface ReportUseCopyRequest {
+  /** Verified session user id. Never taken from the request body. */
+  userId: string;
+  /** The published library entry being adopted. */
+  entry: Record<string, unknown>;
+  /** Validated + migrated schema. */
+  schema: unknown;
+  /** Resolved server-side; null bakes nothing and ships the authored palette. */
+  colourway?: ApprovedColourway | null;
+}
+
+/**
+ * The row a "use for my reports" adoption inserts into `report_templates`.
+ *
+ * Built ON TOP of `buildWorkingCopyPayload` so the two copies cannot drift:
+ * the schema handling, the colourway bake, the `libraryLineage` block and the
+ * FK decisions are all inherited. Three fields differ, and each is the point:
+ *
+ * - **`is_active: true`, `is_draft: false`** — the copy exists to be selectable
+ *   and resolvable, not to be edited first.
+ * - **`approval_status: 'approved'`** — the state `insertGoesLive` requires.
+ *   The review it claims happened is the library's own publish gate, which
+ *   `validateEntryForReportUse` has just re-checked; a user-scoped row affects
+ *   only its owner's documents, which is why this does not need the
+ *   superadmin approval a global activation does.
+ *
+ * The name is built here rather than taken from the caller: the copy is not
+ * the user's document, it is a catalogue design they picked, and it should be
+ * recognisable as such in every list it appears in.
+ */
+export function buildReportUseCopyPayload(req: ReportUseCopyRequest): Record<string, unknown> {
+  const { entry } = req;
+  const meta = (entry.design_meta && typeof entry.design_meta === 'object')
+    ? entry.design_meta as Record<string, unknown>
+    : {};
+
+  const familyName = String(meta.familyName ?? '').trim();
+  const baseName = String(entry.name ?? 'Template').trim();
+  const name = (familyName ? `${familyName} — ${baseName}` : baseName)
+    + (req.colourway ? ` · ${req.colourway.name}` : '');
+
+  return {
+    ...buildWorkingCopyPayload({
+      userId: req.userId,
+      name: name.slice(0, MAX_WORKING_COPY_NAME),
+      description: (entry.description as string | null) ?? null,
+      entry,
+      schema: req.schema,
+      colourway: req.colourway ?? null,
+    }),
+    is_active: true,
+    is_draft: false,
+    approval_status: 'approved',
+  };
+}
+
+/**
+ * Whether an existing `report_templates` row already IS this adoption.
+ *
+ * Matched on lineage — entry, entry version, colourway — never on name, which
+ * is display text. A version bump in the library deliberately does not match:
+ * the user picked the design as it is now, and reusing a copy of the previous
+ * version would hand them a document the library no longer shows.
+ */
+export function matchesReportUseCopy(
+  row: Record<string, unknown>,
+  entry: Record<string, unknown>,
+  colourwayId: string | null,
+): boolean {
+  if (row?.is_active !== true || row?.is_draft === true) return false;
+  const config = (row?.config && typeof row.config === 'object')
+    ? row.config as Record<string, unknown>
+    : {};
+  const lineage = (config.libraryLineage && typeof config.libraryLineage === 'object')
+    ? config.libraryLineage as Record<string, unknown>
+    : null;
+  if (!lineage) return false;
+  return lineage.entryId === entry.id
+    && Number(lineage.entryVersion ?? -1) === Number(entry.version ?? -2)
+    && ((lineage.colourway ?? null) === (colourwayId ?? null));
 }
 
 // ── Name validation ──────────────────────────────────────────────────────────

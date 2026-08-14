@@ -184,6 +184,60 @@ export function useCreateWorkingCopy() {
   });
 }
 
+export interface AdoptForReportsInput {
+  entryId: string;
+  /** Null (or the entry's default) ships the authored palette, unbaked. */
+  colourwayId?: string | null;
+}
+
+export interface AdoptForReportsResult {
+  /** The selectable `report_templates` row — existing or newly created. */
+  templateId: string;
+  /** True when an existing copy (or the seeded house master) was reused. */
+  reused: boolean;
+  colourwayId: string | null;
+}
+
+/**
+ * "Use this design for my reports" — the picker's path from the library to a
+ * selectable template.
+ *
+ * Unlike `useCreateWorkingCopy` the result is not an editing draft: the server
+ * returns an ACTIVE, user-scoped (or already-global) `report_templates` row,
+ * idempotent on (entry, version, colourway), which the caller then stores as
+ * their selection. Every safety-critical field is fixed server-side; the entry
+ * must be published, production-ready and WeasyPrint-rendered or the server
+ * refuses with the reason.
+ */
+export function useAdoptForReports() {
+  const qc = useQueryClient();
+  return useMutation<AdoptForReportsResult, Error, AdoptForReportsInput>({
+    mutationFn: async ({ entryId, colourwayId }) => {
+      const { data, error } = await invokeSecureFunction('manage-template-library', {
+        operation: 'use_for_reports',
+        entryId,
+        ...(colourwayId ? { colourwayId } : {}),
+      });
+      if (error) throw new Error(error.message);
+      const templateId = (data as any)?.templateId;
+      if (!templateId) throw new Error('The template could not be prepared');
+      return {
+        templateId,
+        reused: !!(data as any)?.reused,
+        colourwayId: (data as any)?.colourwayId ?? null,
+      };
+    },
+    onSuccess: (result) => {
+      // A new active row exists (or an existing one is about to be selected):
+      // the chooser's candidate list and the Builder list both moved.
+      qc.invalidateQueries({ queryKey: ['report-template-selection'] });
+      if (!result.reused) qc.invalidateQueries({ queryKey: ['report-templates'] });
+    },
+    // No onError toast here: the picker owns the failure copy, because "could
+    // not adopt" needs to say what still works (the current selection stands).
+  });
+}
+
 // ─── Administration (superadmin only; the server enforces it) ────────────────
 
 export function useTemplateLibraryAdminMutations() {
