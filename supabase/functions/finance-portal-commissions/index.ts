@@ -29,6 +29,7 @@ import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceSessionToken } from '../_shared/financeSessionToken.ts';
 
 const STATEMENT_BUCKET = 'finance-portal-statements';
 
@@ -203,7 +204,15 @@ Deno.serve(async (req) => {
     let partner: any = null;
 
     if (PARTNER_OPS.has(operation)) {
-      partner = await resolvePartnerFromSession(supabase, body.finance_session_token);
+      // Read `body.finance_session_token` only, and the partner's commissions
+      // went blank the moment their in-memory token was lost to a page load —
+      // the session lives in the `__Host-finance_session_token` cookie. The
+      // shared reader still prefers the header and the body, so the previous
+      // behaviour is a subset of this one.
+      partner = await resolvePartnerFromSession(
+        supabase,
+        extractFinanceSessionToken(req.headers, body) ?? undefined,
+      );
       if (!partner) {
         return new Response(JSON.stringify({ error: 'Invalid partner session' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
