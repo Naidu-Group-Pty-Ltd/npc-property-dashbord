@@ -17,7 +17,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPortalStepStates, initialStepIndex, onboardingStatusPresentation, portalProgress,
-  presentStep, resumeStepIndex, sectionJourneyStatus,
+  presentStep, resumeStepIndex, sectionJourneyStatus, submissionReceipt,
   type PortalStepDescriptor,
 } from './portalStepPresentation';
 import type { AmlPortalJourneyStatus, AmlPortalJourneyStep, AmlSection } from './amlPortalApi';
@@ -311,5 +311,73 @@ describe('onboarding status', () => {
   it('falls back safely when the server sends no label', () => {
     const result = onboardingStatusPresentation({ states: notStarted() });
     expect(result.label.length).toBeGreaterThan(0);
+  });
+});
+
+/* ── has the pack actually been submitted? ───────────────────────────────── */
+
+/**
+ * The Review screen's submitted state, which used to not exist.
+ *
+ * Pressing "Submit for review" fired a toast and refreshed; the button stayed
+ * enabled and the page stayed identical, so the client had no confirmation and
+ * nothing stopped a second submission version. Every input here is a server
+ * fact about `aml.submission_versions` — none of them is "the button was
+ * clicked" — which is what makes the confirmation survive a refresh.
+ */
+describe('submissionReceipt', () => {
+  it('is not submitted before anything has been sent', () => {
+    expect(submissionReceipt({ journeyStatus: 'action_required', recentSubmissions: [] }))
+      .toEqual({ submitted: false, submittedAt: null });
+  });
+
+  it('is not submitted merely because the screen is ready to submit', () => {
+    // "Everything we need from you is ready to send" is the state a client
+    // presses the button FROM. It must never render as the state after it.
+    expect(submissionReceipt({ journeyStatus: 'action_required' }).submitted).toBe(false);
+  });
+
+  it('is submitted once the canonical journey says a submission exists', () => {
+    expect(submissionReceipt({ journeyStatus: 'complete' }).submitted).toBe(true);
+  });
+
+  it('reads the submission rows when the server sends no journey', () => {
+    // An older deployed function; the rows the journey is derived FROM are the
+    // same fact, so a confirmation is still owed.
+    expect(submissionReceipt({
+      recentSubmissions: [{ submitted_at: '2026-08-14T02:00:00Z' }],
+    })).toEqual({ submitted: true, submittedAt: '2026-08-14T02:00:00Z' });
+  });
+
+  it('takes the newest submission date, which is the first row', () => {
+    expect(submissionReceipt({
+      journeyStatus: 'complete',
+      recentSubmissions: [
+        { submitted_at: '2026-08-14T02:00:00Z' },
+        { submitted_at: '2026-07-01T02:00:00Z' },
+      ],
+    }).submittedAt).toBe('2026-08-14T02:00:00Z');
+  });
+
+  it('covers the gap between the insert landing and the refetch', () => {
+    // The row `submit_for_review` just returned — the same row, seconds early.
+    expect(submissionReceipt({
+      journeyStatus: 'action_required',
+      recentSubmissions: [],
+      justSubmittedAt: '2026-08-14T02:00:00Z',
+    })).toEqual({ submitted: true, submittedAt: '2026-08-14T02:00:00Z' });
+  });
+
+  it('never reports a date for a pack that has not been sent', () => {
+    expect(submissionReceipt({ recentSubmissions: [] }).submittedAt).toBeNull();
+  });
+
+  it('survives a server that sends a submission with no timestamp', () => {
+    expect(submissionReceipt({ journeyStatus: 'complete', recentSubmissions: [{}] }))
+      .toEqual({ submitted: true, submittedAt: null });
+  });
+
+  it('degrades to not submitted when it is told nothing at all', () => {
+    expect(submissionReceipt({})).toEqual({ submitted: false, submittedAt: null });
   });
 });

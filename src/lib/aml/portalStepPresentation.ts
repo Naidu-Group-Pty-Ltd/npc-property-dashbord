@@ -173,6 +173,55 @@ export function buildPortalStepStates(args: {
   });
 }
 
+/** What the Review screen knows about the pack having been sent. */
+export interface SubmissionReceipt {
+  /** A submission exists. Never "the button was pressed". */
+  submitted: boolean;
+  /** When the newest one was sent, if the server said. */
+  submittedAt: string | null;
+}
+
+/**
+ * Whether the onboarding pack has actually been submitted.
+ *
+ * ## Why this is a function and not a `useState`
+ *
+ * The Review screen used to show a toast and nothing else: the summary and an
+ * enabled "Submit for review" button stayed exactly as they were, so a client
+ * who had just sent their pack was looking at the same outstanding action they
+ * had a second earlier — with nothing to tell them it worked, and nothing
+ * stopping them pressing it again and writing a second submission version.
+ *
+ * The fix is not a flag saying "I clicked it". Every input here is a SERVER
+ * fact about `aml.submission_versions`:
+ *
+ *   - `journeyStatus` is the canonical journey's `submission` step, which the
+ *     server derives as complete exactly when a submission row exists;
+ *   - `recentSubmissions` is `overview.recent_submissions`, the rows that
+ *     derivation reads, newest first — the fallback for a deployed function old
+ *     enough not to send a journey;
+ *   - `justSubmittedAt` is the row `submit_for_review` returned to THIS call,
+ *     which covers the seconds between the insert landing and the overview
+ *     refetch that will report it. It is the same row, not a second opinion.
+ *
+ * So the confirmation survives a refresh, a re-login and a different device,
+ * and appears only after the write it describes.
+ */
+export function submissionReceipt(args: {
+  journeyStatus?: AmlPortalJourneyStatus;
+  recentSubmissions?: Array<{ submitted_at?: string | null } | null | undefined>;
+  justSubmittedAt?: string | null;
+}): SubmissionReceipt {
+  const rows = (args.recentSubmissions ?? []).filter(Boolean) as Array<{ submitted_at?: string | null }>;
+  const submitted = args.journeyStatus === 'complete'
+    || rows.length > 0
+    || Boolean(args.justSubmittedAt);
+  const submittedAt = rows.map((r) => r?.submitted_at).find(Boolean)
+    ?? args.justSubmittedAt
+    ?? null;
+  return { submitted, submittedAt: submitted ? submittedAt : null };
+}
+
 export interface PortalProgress {
   completed: number;
   total: number;
