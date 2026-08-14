@@ -36,6 +36,8 @@
 import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
 import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
 import { projectCashFlowComparison } from '../../../supabase/functions/_shared/cashFlowComparisonProjection.pure';
+import { projectReportQa } from '../../../supabase/functions/_shared/reportQaProjection.pure';
+import { buildReportQaDocument } from '../../../supabase/functions/_shared/reports/reportQa/normalise.pure';
 
 const ADDRESS = '14 Marlborough Street, Leichhardt NSW 2040';
 const CLIENT = 'Jordan & Sarah Nguyen';
@@ -672,6 +674,83 @@ const CASH_FLOW_COMPARISON_SAMPLE = (() => {
   return projectCashFlowComparison(comparison as never).cashFlowComparison;
 })();
 
+/**
+ * Report Q&A, through the format's own normaliser and projection.
+ *
+ * Until this existed the `qa` namespace was absent from the sample entirely,
+ * so every Report Q&A preview rendered a cover with **no title** and every
+ * page past it dark — the exact defect class `CLAUDE.md` records against
+ * fixtures written in the catalogue's own vocabulary, except here there was
+ * no fixture at all.
+ *
+ * The conversation is the same fictional engagement as the rest of this file:
+ * three exchanges about the Leichhardt purchase, grounded in two reports the
+ * other namespaces describe, with citations on the first answer so the
+ * citations page previews. The answer carries the constructs the corpus
+ * actually holds — 70% of stored answers use inline bold, 48% a heading,
+ * 57% a list, 19% a pipe table.
+ */
+const REPORT_QA_SAMPLE = (() => {
+  const answer = [
+    '## Yield on the Marlborough Street purchase',
+    '',
+    'The **gross yield** at the asking price is 3.84%, against an inner-west '
+      + 'median of 3.1%. Net of outgoings the figure is **2.79%**.',
+    '',
+    '| Measure | Figure |',
+    '| --- | --- |',
+    '| Gross yield | 3.84% |',
+    '| Net yield | 2.79% |',
+    '| Suburb median | 3.10% |',
+    '',
+    'Three things support the rent the projection assumes:',
+    '',
+    '- the vacancy rate in Leichhardt has held under 1.2% for six quarters;',
+    '- comparable three-bedroom terraces let within 16 days;',
+    '- the projected rent of $895 a week sits at the 60th percentile of '
+      + 'current listings, not the top of the market.',
+  ].join('\n');
+
+  const citations = [
+    {
+      document_name: 'Investment Compass — 14 Marlborough Street',
+      page_number: 12, paragraph_index: 3, similarity: 0.91,
+      snippet: 'Gross rental yield at the recommended purchase price is 3.84 per cent, '
+        + 'against a trailing twelve-month suburb median of 3.10 per cent.',
+    },
+    {
+      document_name: 'Suburb Profile — Leichhardt NSW 2040',
+      page_number: 4, paragraph_index: 1, similarity: 0.84,
+      snippet: 'Vacancy has remained below 1.2 per cent for six consecutive quarters.',
+    },
+  ];
+
+  const messages = [
+    { id: '00000000-0000-4000-8000-000000000001', role: 'user', content: 'What rental yield does the Marlborough Street purchase achieve, and how does it compare with the suburb?', created_at: '2026-08-01T09:00:00.000Z' },
+    { id: '00000000-0000-4000-8000-000000000002', role: 'assistant', content: answer, created_at: '2026-08-01T09:00:41.000Z', model_provider: 'openai', model_version: 'gpt-5.2', citations },
+    { id: '00000000-0000-4000-8000-000000000003', role: 'user', content: 'How sensitive is the cash flow to a rate rise?', created_at: '2026-08-01T09:03:12.000Z' },
+    { id: '00000000-0000-4000-8000-000000000004', role: 'assistant', content: 'At **6.64%** the weekly position moves from -$118 to -$186; the surplus absorbs it.', created_at: '2026-08-01T09:03:44.000Z', model_provider: 'openai', model_version: 'gpt-5.2' },
+    { id: '00000000-0000-4000-8000-000000000005', role: 'user', content: 'Which of the shortlisted suburbs had the strongest five-year growth?', created_at: '2026-08-01T09:05:02.000Z' },
+    { id: '00000000-0000-4000-8000-000000000006', role: 'assistant', content: 'Leichhardt, at **6.2% a year** compounding over the five years to June 2026.', created_at: '2026-08-01T09:05:30.000Z', model_provider: 'openai', model_version: 'gpt-5.2' },
+  ];
+
+  const built = buildReportQaDocument({
+    conversation: {
+      id: '00000000-0000-4000-8000-00000000000a',
+      title: 'Rental yield on the Leichhardt purchase',
+      report_names: ['Investment Compass — 14 Marlborough Street.pdf', 'Suburb Profile — Leichhardt NSW 2040.pdf'],
+      structured_report: null,
+      created_at: '2026-08-01T08:58:00.000Z',
+    },
+    messages,
+    subject: 'transcript',
+    messageId: null,
+    preparedOn: '2026-08-02T00:00:00.000Z',
+  });
+  if (!built.ok) throw new Error(`REPORT_QA_SAMPLE refused: ${built.error}`);
+  return projectReportQa(built.document).qa;
+})();
+
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
@@ -707,6 +786,9 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
 
   /** The Cash Flow Comparison's namespace. See `CASH_FLOW_COMPARISON_SAMPLE`. */
   cashFlowComparison: CASH_FLOW_COMPARISON_SAMPLE,
+
+  /** Report Q&A's namespace. See `REPORT_QA_SAMPLE`. */
+  qa: REPORT_QA_SAMPLE,
 
   org: {
     name: 'Meridian Property Advisory',

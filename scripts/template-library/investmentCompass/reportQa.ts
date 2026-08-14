@@ -53,9 +53,11 @@ import {
   cover,
   disclaimerPage,
   flow,
+  ifItFits,
   kpis,
   markdown,
   MARKDOWN_LINES_PER_PAGE,
+  oneOf,
   page,
   prose,
   sectionHeading,
@@ -126,40 +128,81 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     tagline: 'Your dedicated property partner',
     marker: 'Report Q&A',
     eyebrow: 'Report Q&A',
-    title: '{{qa.title}}',
+    // `coverTitle`, not `title`: a conversation's title is its first question,
+    // and the stored tail reaches 160 characters — which ran 256pt past the
+    // footer on one family's cover. The projection bounds it on a word; the
+    // running foot keeps the full title.
+    title: '{{qa.coverTitle}}',
     standfirst:
       'A question asked of the reports on file, and the answer it drew. The '
       + 'answer is written by a language model against the documents named in '
       + 'it, and is reproduced here as it was given.',
     locations: 'Prepared {{qa.preparedOn | date}}',
     facts: [
-      { label: 'Subject', value: '{{qa.subject}}' },
-      { label: 'Exchanges', value: '{{qa.turnCount | fixed:0}}' },
+      // The words a reader would use, not the enum — the raw `subject` printed
+      // "answer" as a document type on every cover until the projection
+      // published the legacy's own label.
+      { label: 'Subject', value: '{{qa.subjectLabel}}' },
+      // "13 of 20" when the transcript budget cut the conversation — the
+      // legacy cover's own treatment, composed in the projection.
+      { label: 'Exchanges', value: '{{qa.exchangesLabel}}' },
       { label: 'Sources', value: '{{qa.sourceCount | fixed:0}}' },
-      { label: 'Answer pages', value: '{{qa.answerPages | fixed:0}}' },
+      // What this document actually sets — the full count drives the
+      // continuation conditionals, and when the answer runs past them the
+      // cut page says so rather than the cover overstating itself.
+      { label: 'Answer pages', value: '{{qa.answerPagesShown | fixed:0}}' },
     ],
   }));
 
   // ---------------------------------------------------------------- the question
   pages.push(withFurniture(page('What was asked', [
-    ...flow([
+    ...flow(ifItFits([
       sectionHeading({ eyebrow: 'What was asked', heading: 'The question' }),
       // The question is plain text — it is a heading in the record and carries
       // no markup, which is why this is prose rather than a markdown-block.
       prose('{{qa.question}}', textHeight(240)),
       { ...kpis(SUMMARY_KPIS), conditional: HAS_QA },
+      // The document's built lede — `narrativeFor`'s two or three sentences,
+      // the one piece of prose here no model wrote, and the opening the legacy
+      // sets over its first chapter. It replaces the shorter `sourceSummary`
+      // this callout used to bind, whose "Grounded in…" clause the narrative
+      // already carries.
       {
-        ...callout('What this document is', '{{qa.sourceSummary}}'),
-        conditional: 'qa && qa.sourceSummary',
+        ...callout(
+          'What this document is',
+          '{{qa.narrative}}',
+          textHeight(340, { extra: 34 }),
+        ),
+        conditional: 'qa && qa.narrative',
       },
-      // Both notes are whole sentences from the projection, or absent. A
-      // fragment concatenated into a title is what left a dangling separator on
-      // the Cash Flow Comparison's ranking page.
+      // One position, two mutually exclusive statements — the pattern the
+      // Client Details closing page set. An answered question gets the
+      // provenance line the legacy prints under every question and every
+      // exporter dropped: provider · version, whether a human edited it, how
+      // many sources it cited, when it was asked. An unanswered one gets the
+      // legacy's caution callout in its words, because the answer pages are
+      // conditional on `qa.answer` and without this the document would simply
+      // have no answer and no explanation. The projection publishes exactly
+      // one of the two.
+      oneOf(
+        {
+          when: 'qa && qa.provenanceLine',
+          item: callout('How it was answered', '{{qa.provenanceLine}}'),
+        },
+        {
+          when: 'qa && qa.answerMissingNote',
+          item: callout('No answer', '{{qa.answerMissingNote}}'),
+        },
+      ),
+    ], [
+      // A whole sentence from the projection, or absent. A fragment
+      // concatenated into a title is what left a dangling separator on the
+      // Cash Flow Comparison's ranking page.
       {
         ...callout('Not everything is shown', '{{qa.omissionNote}}'),
         conditional: 'qa && qa.omissionNote',
       },
-    ], contentTop()),
+    ], contentTop()), contentTop()),
   ]), FOOTER));
 
   // ---------------------------------------------------------------- the answer
@@ -180,7 +223,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         markdown('{{qa.answer}}', 0, firstBodyHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),
     ]), FOOTER),
-    conditional: HAS_QA,
+    // `qa.answer`, not `qa`: a question that was never answered used to render
+    // this page as a heading over nothing. The "What was asked" page carries
+    // the legacy's "No answer" callout for that record instead.
+    conditional: 'qa && qa.answer',
   });
 
   for (let i = 1; i < ANSWER_PAGES; i += 1) {
@@ -190,6 +236,24 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ], contentTop()),
     ]), FOOTER)));
   }
+
+  // ------------------------------------------------------------- the cut, said
+  // Nine of the 565 stored answers run past the eight pages above. The block
+  // simply stops drawing buckets it has no page for, so without this page the
+  // tail of a long answer vanished with nothing on the page saying so — the
+  // guard the comment above `ANSWER_PAGES` promised but nothing implemented.
+  // A page of its own rather than a callout on the last continuation, because
+  // the continuation's markdown body is sized to the full page and a callout
+  // above it would print over the text.
+  pages.push({
+    ...withFurniture(page('Not the whole answer', [
+      ...flow([
+        sectionHeading({ eyebrow: 'The reply, cut short', heading: 'Not the whole answer' }),
+        callout('Where the rest is', '{{qa.answerCutNote}}', textHeight(180, { extra: 34 })),
+      ], contentTop()),
+    ]), FOOTER),
+    conditional: 'qa && qa.answerCutNote',
+  });
 
   // ---------------------------------------------------------------- what else
   pages.push({
@@ -201,43 +265,115 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           + 'are in the full transcript rather than in this document.',
           textHeight(150),
         ),
-        table({
-          headers: ['#', 'Question'],
-          // An unresolved binding is the empty string, so a conversation with
-          // three exchanges prints three rows and blanks; the caps are what stop
-          // an unbounded collection running off a page that cannot paginate.
-          rows: Array.from({ length: FURTHER_QUESTIONS }, (_, i) => questionRow(i + 1)),
-          columnWidths: [40, c.contentWidth - 40],
-          numeric: [],
-        }),
+        // As deep as the conversation: 29 of the stored conversations have
+        // exactly two exchanges, and a fixed six-row table ruled off four
+        // blank rows for every one of them. The caps are what stop an
+        // unbounded collection running off a page that cannot paginate.
+        (() => {
+          const questionsTable = (n: number) => table({
+            headers: ['#', 'Question'],
+            rows: Array.from({ length: n }, (_, i) => questionRow(i + 1)),
+            columnWidths: [40, c.contentWidth - 40],
+            numeric: [],
+          });
+          return oneOf(
+            { when: 'qa && qa.turns && qa.turns.length <= 2', item: questionsTable(1) },
+            { when: 'qa && qa.turns && qa.turns.length > 2 && qa.turns.length <= 4', item: questionsTable(3) },
+            { when: 'qa && qa.turns && qa.turns.length > 4', item: questionsTable(FURTHER_QUESTIONS) },
+          );
+        })(),
         {
           ...callout('The complete text', '{{qa.truncationNote}}'),
           conditional: 'qa && qa.truncationNote',
         },
       ], contentTop()),
     ]), FOOTER),
-    conditional: 'qa && qa.turns && qa.turns.1',
+    // `qa.turns[1]`, bracketed: a page conditional is JavaScript, and
+    // `qa.turns.1` is a SyntaxError that logs once and answers false forever.
+    // This page shipped dark on every conversation with a second exchange —
+    // found the same way the two portfolio market pages were found.
+    conditional: 'qa && qa.turns && qa.turns[1]',
   });
 
   // ---------------------------------------------------------------- sources
   pages.push({
     ...withFurniture(page('What it read', [
-      ...flow([
+      ...flow(ifItFits([
         sectionHeading({ eyebrow: 'Grounding', heading: 'Sources' }),
         prose(
           'The answer was grounded in the reports below. A figure it states that '
           + 'is not in one of them is not supported by this document.',
           textHeight(170),
         ),
-        table({
-          headers: ['Report'],
-          rows: Array.from({ length: 8 }, (_, i) => sourceRow(i)),
-          columnWidths: [c.contentWidth],
-          numeric: [],
-        }),
-      ], contentTop()),
+        // As deep as the grounding: most grounded conversations name one or
+        // two reports, and a fixed eight-row table ruled off up to seven
+        // blank rows under them. Three conversations name seventeen — the
+        // omission callout below is theirs.
+        (() => {
+          const sourcesTable = (n: number) => table({
+            headers: ['Report'],
+            rows: Array.from({ length: n }, (_, i) => sourceRow(i)),
+            columnWidths: [c.contentWidth],
+            numeric: [],
+          });
+          return oneOf(
+            { when: 'qa && qa.sourceCount <= 1', item: sourcesTable(1) },
+            { when: 'qa && qa.sourceCount == 2', item: sourcesTable(2) },
+            { when: 'qa && qa.sourceCount > 2 && qa.sourceCount <= 5', item: sourcesTable(5) },
+            { when: 'qa && qa.sourceCount > 5', item: sourcesTable(8) },
+          );
+        })(),
+      ], [
+        {
+          ...callout('Not every report is listed', '{{qa.sourcesOmittedNote}}'),
+          conditional: 'qa && qa.sourcesOmittedNote',
+        },
+      ], contentTop()), contentTop()),
     ]), FOOTER),
     conditional: 'qa && qa.sources',
+  });
+
+  // ---------------------------------------------------------------- citations
+  // The passages the answers were drawn from — the legacy sources chapter's
+  // table, deduplicated across every turn by the normaliser. Zero messages in
+  // the record carry a citation today, so this page renders for none of them
+  // and costs nothing; it is the page that lights up as citations land, which
+  // is exactly when closing a latent gap is cheap.
+  pages.push({
+    ...withFurniture(page('What it cited', [
+      ...flow(ifItFits([
+        sectionHeading({ eyebrow: 'Citations', heading: 'What it cited' }),
+        prose(
+          'The passages below are the retrievals the answers were drawn from — '
+          + 'which document, where in it, and how close the match was.',
+          textHeight(160),
+        ),
+        table({
+          headers: ['#', 'Document', 'Located', 'Match'],
+          rows: Array.from({ length: 6 }, (_, i) => [
+            `{{qa.citations.${i}.n}}`,
+            `{{qa.citations.${i}.documentName}}`,
+            `{{qa.citations.${i}.locus}}`,
+            `{{qa.citations.${i}.match}}`,
+          ]),
+          columnWidths: [32, c.contentWidth - 32 - 150, 90, 60],
+          numeric: [3],
+        }),
+      ], [
+        {
+          ...callout('Not every passage is shown', '{{qa.citationsNote}}'),
+          conditional: 'qa && qa.citationsNote',
+        },
+        // The first retrieved passage, quoted — the snippet the legacy sets in
+        // a sidenote beside its table. One rather than six, because a fixed
+        // page cannot carry six 280-character quotations.
+        {
+          ...callout('From the sources', '{{qa.citations.0.snippet}}', textHeight(300, { extra: 34 })),
+          conditional: 'qa && qa.citations && qa.citations[0] && qa.citations[0].snippet',
+        },
+      ], contentTop()), contentTop()),
+    ]), FOOTER),
+    conditional: 'qa && qa.citations',
   });
 
   pages.push(disclaimerPage(STANDARD_DISCLAIMER));

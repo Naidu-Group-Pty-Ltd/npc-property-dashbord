@@ -30,9 +30,11 @@ import { PRODUCTION_REPORT_TEMPLATE_TYPES, PRODUCTION_SAFE_BLOCK_TYPES }
   from '../../../../supabase/functions/_shared/productionBlockTypes';
 import { DEFAULT_LINES_PER_PAGE }
   from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
+import { CAPS } from '../../../../supabase/functions/_shared/reportQaProjection.pure';
 import { REPORT_QA_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/reportQa';
 import { MARKDOWN_LINES_PER_PAGE }
   from '../../../../scripts/template-library/investmentCompass/blocks';
+import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
 
 const ROOT = resolve(__dirname, '../../../..');
 
@@ -115,6 +117,24 @@ describe('the masters and the projection must agree about page count', () => {
     }
   });
 
+  it('declares exactly the answer pages the projection caps at', () => {
+    // `CAPS.answerPages` said 10 while the masters declared 8, so the guard the
+    // composer's comment promised — "beyond it the truncation note prints" —
+    // fired two pages after the tail had already stopped being drawn. Nine of
+    // the 565 stored answers run past eight pages, so the gap was real.
+    const master = REPORT_QA_TEMPLATES[0];
+    const answerPages = master.schema.pages.filter((p: any) => /^The answer/.test(p.name));
+    expect(answerPages.length).toBe(CAPS.answerPages);
+  });
+
+  it('says on a page of its own when the answer runs past the sequence', () => {
+    for (const t of REPORT_QA_TEMPLATES) {
+      const cut = (t.schema.pages as any[]).find((p) => p.name === 'Not the whole answer');
+      expect(cut, t.slug).toBeTruthy();
+      expect(cut.conditional).toBe('qa && qa.answerCutNote');
+    }
+  });
+
   it('binds the answer as source to a markdown-block, never to a text-block', () => {
     for (const master of REPORT_QA_TEMPLATES) {
       for (const page of master.schema.pages as any[]) {
@@ -127,6 +147,122 @@ describe('the masters and the projection must agree about page count', () => {
         }
       }
     }
+  });
+});
+
+describe('the conditionals', () => {
+  it('constructs every expression, because one that throws is a silently dark page', () => {
+    /*
+     * A conditional is JavaScript, not a binding path. `qa.turns.1` — the
+     * numeric-segment SyntaxError — shipped in this catalogue's "rest of the
+     * conversation" page, which was therefore dark on every conversation with
+     * a second exchange until this file constructed each expression.
+     */
+    const seen = new Set<string>();
+    for (const t of REPORT_QA_TEMPLATES.slice(0, 5)) {
+      const collect = (node: any) => {
+        if (!node || typeof node !== 'object') return;
+        if (typeof node.conditional === 'string') seen.add(node.conditional);
+        for (const v of Object.values(node)) {
+          if (Array.isArray(v)) v.forEach(collect);
+          else collect(v);
+        }
+      };
+      (t.schema.pages as any[]).forEach(collect);
+    }
+    expect(seen.size).toBeGreaterThan(10);
+    for (const cond of seen) {
+      expect(
+        () => new Function('qa', 'org', 'report', `return (${cond});`),
+        `does not parse: ${cond}`,
+      ).not.toThrow();
+    }
+  });
+
+  it('draws the depth-varied tables under mutually exclusive depths', () => {
+    const evalWith = (cond: string, qa: Record<string, unknown>) => {
+      try { return Boolean(new Function('qa', `return (${cond});`)(qa)); }
+      catch { return false; }
+    };
+    for (const t of REPORT_QA_TEMPLATES.slice(0, 5)) {
+      for (const page of t.schema.pages as any[]) {
+        // The sources table, keyed on the published count.
+        const sourceConds = ((page.blocks ?? []) as any[])
+          .filter((b) => b.type === 'data-table'
+            && typeof b.conditional === 'string' && b.conditional.includes('sourceCount'))
+          .map((b) => String(b.conditional));
+        if (sourceConds.length >= 2) {
+          for (let n = 1; n <= 20; n += 1) {
+            const holding = sourceConds.filter((c) => evalWith(c, { sourceCount: n, sources: [{}] }));
+            expect(holding.length, `${t.name} "${page.name}" sourceCount=${n}`).toBe(1);
+          }
+        }
+        // The further-questions table, keyed on the turns the projection caps.
+        const turnConds = ((page.blocks ?? []) as any[])
+          .filter((b) => b.type === 'data-table'
+            && typeof b.conditional === 'string' && b.conditional.includes('turns.length'))
+          .map((b) => String(b.conditional));
+        if (turnConds.length >= 2) {
+          for (let n = 2; n <= 12; n += 1) {
+            const turns = Array.from({ length: n }, () => ({}));
+            const holding = turnConds.filter((c) => evalWith(c, { turns }));
+            expect(holding.length, `${t.name} "${page.name}" turns=${n}`).toBe(1);
+          }
+        }
+      }
+    }
+  });
+});
+
+describe('every bound path has a producer', () => {
+  /**
+   * The omission notes are bound but deliberately absent from a sample that
+   * shows a complete document — each is proven by `reportQaProjection.spec.ts`
+   * instead, the same allowance the Borrowing Capacity catalogue records for
+   * its scenarios.
+   */
+  const ALLOWED_ABSENT = new Set([
+    'qa.answerCutNote', 'qa.answerMissingNote', 'qa.omissionNote',
+    'qa.truncationNote', 'qa.sourcesOmittedNote', 'qa.citationsNote',
+  ]);
+
+  it('resolves every master binding against the projection-built sample', () => {
+    const paths = new Set<string>();
+    for (const t of REPORT_QA_TEMPLATES) {
+      for (const m of JSON.stringify(t.schema).matchAll(/\{\{\s*([a-zA-Z0-9_.]+)/g)) paths.add(m[1]);
+    }
+    const flat = new Set<string>();
+    const walk = (value: unknown, path: string) => {
+      flat.add(path);
+      if (value && typeof value === 'object') {
+        for (const [k, v] of Object.entries(value)) walk(v, path ? `${path}.${k}` : k);
+      }
+    };
+    walk(SAMPLE.qa, 'qa');
+    walk(SAMPLE.org, 'org');
+    walk(SAMPLE.report, 'report');
+
+    const missing = [...paths]
+      .filter((p) => p === 'qa' || p.startsWith('qa.') || p.startsWith('org.') || p.startsWith('report.'))
+      .filter((p) => !flat.has(p) && !flat.has(p.replace(/\.\d+\./g, '.0.')) && !ALLOWED_ABSENT.has(p))
+      .sort();
+    expect(missing).toEqual([]);
+  });
+
+  it('previews with a titled cover, which it could not before the sample existed', () => {
+    // The `qa` namespace was absent from the sample entirely, so every Report
+    // Q&A preview rendered a cover with no title and every page past it dark.
+    const { html } = renderTemplateToHtml(REPORT_QA_TEMPLATES[0].schema as any, { data: SAMPLE });
+    expect(html).toContain('Rental yield on the Leichhardt purchase');
+    expect(html).toContain('Conversation transcript');
+    expect(html).not.toContain('{{');
+  });
+
+  it('draws the provenance line and the citations the exporters drop', () => {
+    const { html } = renderTemplateToHtml(REPORT_QA_TEMPLATES[0].schema as any, { data: SAMPLE });
+    expect(html).toContain('openai · gpt-5.2');
+    expect(html).toContain('p.12 · ¶3');
+    expect(html).toContain('91%');
   });
 });
 

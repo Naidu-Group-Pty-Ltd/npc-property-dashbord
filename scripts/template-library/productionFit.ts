@@ -171,6 +171,27 @@ function qaData(row: any): Record<string, any> {
   return data;
 }
 
+/**
+ * The single-answer subject against the longest answer a small conversation
+ * holds — 27,050 characters, which runs past the masters' eight answer pages,
+ * so this is the row that renders every continuation and the cut page.
+ */
+function qaAnswerData(row: any): Record<string, any> {
+  const built = buildReportQaDocument({
+    conversation: row.conversation,
+    messages: row.messages ?? [],
+    subject: 'answer',
+    messageId: row.answerMessageId,
+    preparedOn: new Date('2026-08-13').toISOString(),
+  } as any);
+  const data: Record<string, any> = { report: {}, brand: {} };
+  if ((built as any)?.ok !== false) {
+    applyReportQaProjection(data, (built as any).document ?? built);
+  }
+  applyOrganisationProjection(data, ORG as any, MARKS);
+  return data;
+}
+
 function capacityData(row: any): Record<string, any> {
   const { assessment, run } = row;
   const snapshot = buildCapacitySnapshot({
@@ -254,6 +275,7 @@ const SETS: Array<[string, any[], Record<string, any>]> = [
   ['Client Details (caps bite)', CLIENT_DETAILS_TEMPLATES as any[], clientDetailsData(ROWS.client_details_capped)],
   ['Client Details (second contact)', CLIENT_DETAILS_TEMPLATES as any[], clientDetailsData(ROWS.client_details_secondary)],
   ['Report Q&A', REPORT_QA_TEMPLATES as any[], qaData(ROWS2.qa)],
+  ['Report Q&A (long answer)', REPORT_QA_TEMPLATES as any[], qaAnswerData(ROWS2.qa_long_answer)],
   ['Commercial Capacity', COMMERCIAL_CAPACITY_TEMPLATES as any[], capacityData(ROWS2.commercial_capacity)],
   ['Market Intelligence', MARKET_INTELLIGENCE_TEMPLATES as any[], marketData(ROWS2.market_intelligence)],
 ];
