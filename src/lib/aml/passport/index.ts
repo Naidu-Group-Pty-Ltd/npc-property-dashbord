@@ -68,9 +68,13 @@ export {
 } from '../../../../supabase/functions/_shared/aml/passport/passportIdv.pure';
 
 export {
+  LEAF_H,
+  LEAF_W,
+  bookletGeometry,
   bookletLabel,
   bookletSpreads,
   buildBooklet,
+  type BookletGeometry,
   type BookletBlock,
   type BookletPage,
   type BookletTone,

@@ -814,3 +814,235 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+/* ══ cover ═══════════════════════════════════════════════════════════════
+   The navy front board, laid out to the approved design: the crest owns the
+   upper third inside an engraved halo, then the wordmark, a diamond rule, the
+   title, and the issue detail subordinate above the clasp. Drawn at the leaf's
+   design size and scaled with it, so cover and paper are always the same size
+   and the whole book scales as one object. */
+
+.passport-cover {
+  /* Vertical rhythm is set once here rather than with per-element margins, so
+     the composition holds at every scale. */
+  padding: 58px 44px 46px;
+  justify-content: flex-start;
+}
+
+.passport-cover__frame {
+  position: absolute;
+  inset: 14px;
+  border: 1px solid rgba(217, 166, 31, 0.55);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.passport-cover__frame-inner {
+  position: absolute;
+  inset: 20px;
+  border: 1px solid rgba(217, 166, 31, 0.2);
+  border-radius: 5px;
+  pointer-events: none;
+}
+
+.passport-cover__crest {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 210px;
+  height: 210px;
+  flex: none;
+}
+
+/* Concentric rings and radial ticks behind the mark — the design's engraved
+   halo. Masked to a ring so it reads as engraving rather than as a disc. */
+.passport-cover__halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0.55;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(217, 166, 31, 0.2) 0 1px, transparent 1px 15px),
+    repeating-conic-gradient(from 0deg, rgba(217, 166, 31, 0.14) 0 0.5deg, transparent 0.5deg 6deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 30%, hsl(0 0% 0%) 42% 76%, transparent 88%);
+  mask: radial-gradient(circle, transparent 0 30%, hsl(0 0% 0%) 42% 76%, transparent 88%);
+}
+
+.passport-cover__emblem {
+  width: 150px;
+  height: 150px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+}
+
+.passport-cover__wordmark {
+  margin: 14px 0 0;
+  font-family: var(--passport-font-display);
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: var(--passport-gold-soft);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+
+.passport-cover__systems {
+  margin-top: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.68em;
+  text-indent: 0.68em;
+  text-transform: uppercase;
+  color: var(--passport-gold-dim);
+}
+
+.passport-cover__diamond {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 190px;
+  margin: 26px 0 0;
+}
+.passport-cover__diamond-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(217, 166, 31, 0.7), transparent);
+}
+.passport-cover__diamond-mark {
+  font-size: 7px;
+  line-height: 1;
+  color: var(--passport-gold-dim);
+}
+
+.passport-cover__title {
+  margin-top: 26px;
+  font-family: var(--passport-font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  line-height: 1.85;
+  text-transform: uppercase;
+  color: var(--passport-gold-soft);
+}
+
+/* Pushed to the foot of the board, clear of the clasp. */
+.passport-cover__issue {
+  margin-top: auto;
+  padding-bottom: 46px;
+  width: 100%;
+}
+
+.passport-cover__holder {
+  font-family: var(--passport-font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--passport-gold-bright);
+}
+
+.passport-cover__credential {
+  font-family: var(--passport-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  color: var(--passport-gold-faint);
+}
+
+.passport-cover__fingerprint {
+  font-size: 8.5px;
+  color: var(--passport-gold-faint);
+  letter-spacing: 0.08em;
+}
+.passport-cover__fingerprint-k {
+  font-size: 6.5px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--passport-gold-dim);
+}
+
+.passport-cover__clasp {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  width: 46px;
+  height: 21px;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  border: 1px solid rgba(166, 130, 43, 0.8);
+  background: linear-gradient(180deg, hsl(44 62% 64%), hsl(43 55% 45%) 45%, hsl(42 50% 32%));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 2px 7px -2px rgba(0, 0, 0, 0.65);
+}
+
+/* ── leaf padding ──────────────────────────────────────────────────────
+   The gold frame sits at inset 9px/13px, so content must clear it or the text
+   reads as printed on the border. These are the design's own page margins. */
+.passport-leaf {
+  padding: 30px 30px 22px;
+}
+
+/* ── leaf body ─────────────────────────────────────────────────────────
+   The leaf is a FIXED design-size box, so its body scrolls internally rather
+   than pushing the page taller. Without this a long journey record stretched
+   the leaf and broke the passport's proportions — the defect that made a page
+   wrap one character per line. */
+.passport-leaf__body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(22, 35, 63, 0.28) transparent;
+}
+.passport-leaf__body::-webkit-scrollbar { width: 5px; }
+.passport-leaf__body::-webkit-scrollbar-thumb {
+  background: rgba(22, 35, 63, 0.28);
+  border-radius: 5px;
+}
+
+/* A leaf never shrinks below its design width: it is scaled, not squeezed. */
+.passport-board__leaf { flex: 0 0 auto; }
+
+.passport-pagechip--cover {
+  border-color: rgba(217, 166, 31, 0.5);
+  color: var(--passport-gold-soft);
+}
+
+/* The board holds the scaled spread; the spine is drawn between two leaves. */
+.passport-board__spine {
+  position: absolute;
+  left: -14px;
+  top: 4%;
+  bottom: 4%;
+  width: 3px;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(0, 0, 0, 0.6) 12%,
+    rgba(0, 0, 0, 0.6) 88%,
+    transparent
+  );
+  box-shadow: 0 0 16px 4px rgba(0, 0, 0, 0.5);
+}
+
+.passport-cover__holder {
+  font-family: var(--passport-font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--passport-gold-bright);
+}
+
+.passport-cover__fingerprint {
+  font-size: 9px;
+  color: var(--passport-gold-faint);
+  letter-spacing: 0.08em;
+}
+.passport-cover__fingerprint-k {
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--passport-gold-dim);
+}

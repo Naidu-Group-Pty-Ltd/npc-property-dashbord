@@ -144,6 +144,54 @@ no code on a document a partner may rely on, so the Verify block carries the
 credential ID and evidence fingerprint — what a verifier can actually check by
 hand — until public verification exists.
 
+### The cover, and why the leaf is scaled
+
+**The passport opens on its cover.** Page 1 is the navy Aurixa board — the delta
+(`/brand/aurixa-mark.svg`, the repo's existing brand asset), the wordmark, the
+title, the bearer, the credential, the state and the evidence fingerprint. A
+booklet whose first page is a data table reads as a report, which is the
+opposite of what this artefact is. The cover is **not numbered**: numbering
+starts on the first leaf, so adding or removing it can never shift a printed
+numeral.
+
+**A leaf is scaled, never squeezed.** Every type size, rule, seal and grid
+inside a leaf is authored against a 470×648 box. Letting flexbox shrink that box
+keeps 11px body copy and 30px seals inside a 200px-wide page — text reflows,
+wraps one character per line and overflows, which is exactly what the reported
+screenshot showed. The leaf now renders at its design size under a uniform
+`transform: scale()`, so every internal proportion is preserved at any viewport,
+and the aspect ratio is exact by construction rather than by CSS approximation.
+
+`bookletGeometry` owns that arithmetic so it is testable without a DOM: it fits
+by width *and* height (a short laptop never clips a page), caps enlargement,
+falls back from a facing pair to a single leaf when two would no longer be
+legible, and degrades to a usable minimum rather than collapsing on a phone.
+The leaf body scrolls internally, so a long journey record can never stretch the
+page out of proportion.
+
+**The dialog must override the primitive at the same breakpoint.** This cost a
+round. `DialogContent` sets `sm:max-w-lg`, `sm:max-h-[85dvh]` and
+`sm:overflow-visible`; tailwind-merge treats an unprefixed `max-w-*` as a
+different utility group from `sm:max-w-*`, so a plain `max-w-[1180px]` silently
+lost on every screen ≥640px. The booklet rendered inside a 512px dialog, could
+never show a facing pair, and — because the primitive also un-hides overflow at
+`sm:` — spilled off the bottom of the viewport. There is no runtime error, no
+type error and no failing render for this: jsdom has no layout, so only a
+source assertion catches it (`bookletDialog.test.ts`).
+
+The board also measures **its own box** rather than deriving a height from
+`window.innerHeight`. The book is nested in a dialog whose height is itself
+capped, so a window-derived guess is wrong by however much chrome sits above and
+below it.
+
+**One viewer, both portals.** `PassportBook` is shared by the Command dialog and
+the Client Portal page. The Client Portal previously carried a second booklet
+implementation — its own cover, its own page list and eight page components —
+which is how the two could drift. The audience difference is already handled by
+the projection, so the viewer does not need to know who is reading: the client's
+booklet simply has fewer leaves, because the client's projection has fewer
+sections.
+
 ## Connected portals, not a portal switcher
 
 The design's top chrome switches the view between Command, Client, Finance,

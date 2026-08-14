@@ -92,7 +92,9 @@ describe('PortalPassport', () => {
     getPassport.mockResolvedValue({ passport: clientView() });
     renderPage();
     await screen.findByText('Jordan Client');
-    screen.getByRole('button', { name: 'Identity' }).click();
+    // Navigation is by numbered page chip; the accessible name carries the
+    // leaf title, which is how a screen-reader user finds a page too.
+    screen.getByRole('button', { name: /Identity Information/ }).click();
     expect(await screen.findByText('Engineer')).toBeInTheDocument();
   });
 

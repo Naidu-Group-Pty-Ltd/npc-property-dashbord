@@ -52,10 +52,15 @@ html {
     text-size-adjust: 100%;
   }
   
-  /* Smoother scrolling on iOS with momentum */
+  /* Smoother scrolling on iOS with momentum. `overscroll-behavior-y` is the
+     browser default on purpose: `contain` here, combined with the overflow
+     guard further down (which used to promote body into a scroll container),
+     severed the touch scroll chain on Android — a pan landed on a body that
+     could never scroll itself and was then forbidden from handing the
+     gesture to the document. */
   body {
     -webkit-overflow-scrolling: touch;
-    overscroll-behavior-y: contain;
+    overscroll-behavior-y: auto;
   }
   
   /* Scrollable containers with momentum */
@@ -206,11 +211,45 @@ html {
   /* Global horizontal-overflow guard. Prevents stray fixed-width children
      (legacy min-w-[600px], oversized SVGs, etc.) from causing the entire
      page to scroll sideways on phones. Long-form content can still scroll
-     within its own container. */
+     within its own container.
+
+     `clip`, not `hidden` — the same distinction the CONTAINMENT section
+     below records for the surface frames, but here it decides whether the
+     page can scroll at all. `overflow-x: hidden` beside an unstated
+     overflow-y computes overflow-y to `auto`, which silently promoted html,
+     body AND #root into three competing vertical scroll containers on every
+     phone. The Client Portal document-scrolls on mobile, and on Android a
+     touch pan could be consumed by a promoted container that had nothing to
+     scroll (body/#root: scrollHeight == clientHeight) instead of by the
+     document — with body's old `overscroll-behavior-y: contain` then
+     refusing to chain the gesture upward. `clip` clips the axis without
+     creating a scroll container; `overflow-y: visible` is stated explicitly
+     so the viewport keeps exactly ONE native vertical scroll owner. The
+     `hidden` line before it is the fallback for engines without `clip`
+     (Safari < 16), which simply keep today's behaviour. */
   @media (max-width: 767px) {
-    html, body, #root {
+    html,
+    body,
+    #root {
+      max-width: 100%;
       overflow-x: hidden;
-      max-width: 100vw;
+      overflow-x: clip;
+      overflow-y: visible;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    /* Client Portal only — the one portal whose mobile main is
+       `overflow-visible`, so the document itself owns vertical panning.
+       Scoped with :has() because a global `touch-action: pan-y` on body
+       would also disable the pinch-zoom index.html explicitly allows
+       (`user-scalable=yes`) on every other route. */
+    body:has(.client-portal-theme) {
+      overscroll-behavior-y: auto;
+      touch-action: pan-y;
     }
   }
 
