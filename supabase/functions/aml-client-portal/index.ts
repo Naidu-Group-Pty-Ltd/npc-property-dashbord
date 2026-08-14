@@ -2645,9 +2645,11 @@ const __corsWrappedHandler = async (req: Request) => {
          * The canonical gate — the SAME rule the journey renders as "ready to
          * send" (`submissionBlockers` in portalJourney.pure.ts). The two checks
          * above stay for their detailed error payloads; this is the authority,
-         * and it closes the two holes they left: a case with no requirement
-         * rows and nothing uploaded ("Documents — not started") could submit,
-         * and identity verification was never consulted at all. A caller who
+         * and it closes the two holes they left: identity verification was
+         * never consulted at all, and a rejected document against a
+         * requirement row still marked `uploaded` slipped the row-only check.
+         * Documents with NO requirement rows stay optional here exactly as
+         * they are in the journey — see `stepHoldsSubmission`. A caller who
          * skips the portal UI meets exactly the same rule the UI shows.
          */
         const submitBlockers = submissionBlockers({
