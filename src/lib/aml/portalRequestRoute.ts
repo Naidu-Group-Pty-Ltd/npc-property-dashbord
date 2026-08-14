@@ -23,18 +23,32 @@
  *  - only values in `TARGET_STEPS` are ever honoured, so a URL-shaped or
  *    otherwise crafted target is ignored rather than followed.
  */
+import { CLIENT_ACTIONS } from
+  '../../../supabase/functions/_shared/aml/clientRequestContract.pure';
 
-/** Closed vocabulary → button copy + the portal step each opens. */
-export const REQUEST_ACTIONS: Record<string, { label: string; step: string }> = {
-  complete_identity_verification: { label: 'Complete identity verification', step: 'verify' },
-  upload_document: { label: 'Upload requested document', step: 'documents' },
-  update_questionnaire_section: { label: 'Update information', step: 'questionnaire' },
-  review_consent: { label: 'Review updated consent', step: 'consent' },
-  provide_clarification: { label: 'Respond', step: 'respond' },
-  review_and_submit: { label: 'Review and submit', step: 'review' },
-};
+/**
+ * Closed vocabulary → button copy + the portal step each opens.
+ *
+ * DERIVED from the shared contract rather than restated. This list and the one
+ * the server writes with must agree, and they did not have to: three
+ * independent copies existed, so a code accepted by the writer could be a code
+ * this router has no entry for — which reaches the client as a request with no
+ * button, and nothing anywhere reports it.
+ */
+export const REQUEST_ACTIONS: Record<string, { label: string; step: string }> =
+  Object.fromEntries(
+    Object.entries(CLIENT_ACTIONS).map(([code, a]) => [code, { label: a.label, step: a.step }]),
+  );
 
-/** The only `target_step` values a request may carry. */
+/**
+ * The `target_step` values that mean something to the IDENTITY branch below.
+ *
+ * Deliberately narrower than the contract's storable vocabulary: this decides
+ * electronic capture versus manual upload, and every other value — including a
+ * perfectly valid `documents` or `review` — must fall to manual, which is what
+ * `null` does here. Widening it to the full contract list would silently stop
+ * unknown targets falling back.
+ */
 export const TARGET_STEPS = ['identity_verification', 'upload_document'] as const;
 export type RequestTargetStep = (typeof TARGET_STEPS)[number];
 

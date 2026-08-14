@@ -25,15 +25,26 @@ import { PassportStateBadge } from "../PassportStateBadge";
 import { PassportBooklet } from "./PassportBooklet";
 import { PassportCoverThumb } from "./PassportBook";
 import { PassportPortalStrip, StampRecordDialog } from "./PassportPortals";
+import { RequestClientInformationDialog } from "./RequestClientInformationDialog";
+import { ComplianceActionSummary } from "./ComplianceActionSummary";
 import { PASSPORT_PAGES } from "./pageRegister";
 
 
 export function PassportWorkspace({
   caseId,
   initialPage = "journey",
+  onOpenCase,
 }: {
   caseId: string;
   initialPage?: string;
+  /**
+   * Navigate to the case workspace. Supplied by the PAGE, which is what owns
+   * the route — this component must render without a Router (it is mounted
+   * bare in tests, and a router hook here turns a presentation shell into
+   * something that throws outside one). Absent, the bridge is simply not
+   * offered rather than offered and broken.
+   */
+  onOpenCase?: (caseId: string) => void;
 }) {
   const access = useAmlAccess();
   const [view, setView] = useState<PassportView | null>(null);
@@ -43,6 +54,7 @@ export function PassportWorkspace({
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [bookletOpen, setBookletOpen] = useState(false);
   const [openStamp, setOpenStamp] = useState<PassportStamp | null>(null);
+  const [requestOpen, setRequestOpen] = useState(false);
 
   // `async` + try/catch rather than a promise chain, deliberately: the chain
   // form makes a mocked rejection surface as an unhandled rejection under the
@@ -235,11 +247,28 @@ export function PassportWorkspace({
               view={view}
               isMlro={access.isMlro}
               onChanged={() => { void load(); }}
+              // Sharing is a PAGE, not an anchor: Partner Access already holds
+              // the readiness cards and Link & Share, so the control selects it
+              // rather than scrolling at a DOM id that is not on this surface.
+              onShare={() => setPageId("partners")}
+              onRequestClientInformation={() => setRequestOpen(true)}
             />
           </div>
         </aside>
 
-        <main className={cn("min-w-0 flex-1", "passport-fade")} key={active.id}>
+        <main className={cn("min-w-0 flex-1", "passport-fade")}>
+          {/* The answer to "what is stopping this?", above the page content.
+              Command audience only: the client's own Passport is a record, not
+              a work queue, and this names whose move it is internally. */}
+          {view.audience === "command" && (
+            <ComplianceActionSummary
+              view={view}
+              onRequestClientInformation={() => setRequestOpen(true)}
+              onOpenPage={(id) => setPageId(id)}
+              onOpenCase={onOpenCase ? () => onOpenCase(caseId) : undefined}
+            />
+          )}
+          <div key={active.id} className="passport-fade">
           <ActivePage
             view={view}
             caseId={caseId}
@@ -250,9 +279,18 @@ export function PassportWorkspace({
               setOpenStamp(view.stamps.find((s) => s.code === code) ?? null)
             }
           />
+          </div>
         </main>
       </div>
 
+      {requestOpen && (
+        <RequestClientInformationDialog
+          caseId={caseId}
+          view={view}
+          onClose={() => setRequestOpen(false)}
+          onSent={() => { void load(); }}
+        />
+      )}
       {bookletOpen && <PassportBooklet view={view} onClose={() => setBookletOpen(false)} />}
       {openStamp && <StampRecordDialog stamp={openStamp} onClose={() => setOpenStamp(null)} />}
     </div>

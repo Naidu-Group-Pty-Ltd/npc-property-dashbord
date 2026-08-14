@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { BookMarked, Loader2, Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,7 @@ import { cn } from "@/lib/utils";
  * it belongs — the MLRO controls inside the case workspace.
  */
 export default function AmlPassports() {
+  const navigate = useNavigate();
   const [cases, setCases] = useState<AmlCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -162,7 +164,13 @@ export default function AmlPassports() {
                 </div>
                 {/* Renders the derived record; shows nothing at all while the
                     server-side aml_passport_command_view flag is off. */}
-                <PassportWorkspace key={selectedCase.id} caseId={selectedCase.id} />
+                <PassportWorkspace
+                  key={selectedCase.id}
+                  caseId={selectedCase.id}
+                  // The bridge back to where the work is done. The page owns
+                  // the route; the Passport shell only says when to take it.
+                  onOpenCase={(id) => navigate(`/admin/aml/cases/${id}`)}
+                />
               </div>
             )}
           </div>
