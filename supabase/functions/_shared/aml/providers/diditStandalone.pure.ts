@@ -17,10 +17,16 @@
  *   POST /v3/passive-liveness/ → `{ request_id, liveness: {...} }`
  *   POST /v3/face-match/       → `{ request_id, face_match: {...} }`
  *
- * There is no session, no workflow, no webhook and no `decision` — so there is
- * nothing to correlate against and nothing to re-fetch. **NPC** does the
- * roll-up, which is the point: the composition rule is ours, it is written
- * once, here, and it is covered by tests.
+ * There is no hosted workflow journey and no `decision` object — nothing to
+ * re-fetch, and **this synchronous response is the authoritative result**.
+ * NPC does the roll-up, which is the point: the composition rule is ours, it
+ * is written once, here, and it is covered by tests.
+ *
+ * `save_api_request=true` does persist each call as an API-type session, and a
+ * persisted session can emit `status.updated`. Those webhooks are
+ * acknowledged and ignored — see `didit-webhook`'s `classifyStandaloneEvent` —
+ * because settling from one would be a second authoritative path racing this
+ * response.
  *
  * ## The three rules the module serves
  *
@@ -32,12 +38,14 @@
  *     status, an absent score, a document Didit classified as something the
  *     customer did not claim — each of those is a referral to a human, never a
  *     verification and never (on its own) a finding against the customer.
- *  3. **Nothing image-shaped survives.** The Standalone responses carry inline
- *     base64 JPEGs when `save_api_request=false` — `portrait_image`,
- *     `front_image`, `back_image`. Those are the reference face and the
- *     customer's own document, and neither belongs in `outcome_detail`, a log
- *     line, or anything the portal can read. They are removed by NAME here
- *     before any persistence, on top of the size-based sweep in
+ *  3. **Nothing image-shaped survives.** The Standalone responses carry
+ *     `portrait_image`, `front_image` and `back_image` — inline base64 JPEGs
+ *     under `save_api_request=false`, short-lived media URLs under `true`.
+ *     Those are the reference face and the customer's own document, and
+ *     neither the bytes nor a URL that fetches them belongs in
+ *     `outcome_detail`, a log line, or anything the portal can read. Removing
+ *     by NAME covers both shapes; they go here before any persistence, on top
+ *     of the size-based sweep in
  *     `verificationEvidence.pure.ts`.
  */
 
@@ -97,6 +105,93 @@ export const COULD_NOT_RECOGNIZE_DOCUMENT = 'COULD_NOT_RECOGNIZE_DOCUMENT';
  * the credit refusal carries an `error` naming credits, and the unreadable
  * document carries `{"error": "COULD_NOT_RECOGNIZE_DOCUMENT"}`.
  */
+/* ─────────────────────── media-URL policy (SSRF) ────────────────────────── */
+
+/**
+ * Hosts NPC will fetch a persisted image from.
+ *
+ * Measured off the live account on 2026-08-14 rather than guessed: a persisted
+ * `portrait_image` came back as
+ * `https://service-didit-verification-production-a1c5f9b8.s3.amazonaws.com/ocr/…-portrait_image-….jpg?X-Amz-…`.
+ * Didit's own docs write the host as a `<media-host>` placeholder, so the real
+ * value is only knowable by observation — which is exactly why this is an
+ * allow-list with an override rather than a pattern somebody inferred.
+ *
+ * EXACT host matches only. A suffix rule like `.s3.amazonaws.com` would admit
+ * every bucket on S3, including one an attacker can create and name in a
+ * response — which is the vulnerability, not the fix.
+ *
+ * ONE entry, and only because it was observed. `verification.didit.me` was
+ * briefly listed here and has been removed: it is the API host, no persisted
+ * image URL has ever been seen pointing at it, and an allow-list entry nobody
+ * has evidence for is just widened attack surface. If the media host changes,
+ * `DIDIT_MEDIA_HOSTS` is the controlled way to say so — adding a guess here is
+ * not.
+ */
+export const DEFAULT_DIDIT_MEDIA_HOSTS: readonly string[] = [
+  'service-didit-verification-production-a1c5f9b8.s3.amazonaws.com',
+];
+
+/** Hostnames that must never be fetched, whatever an allow-list says. */
+const FORBIDDEN_HOST_PATTERNS: readonly RegExp[] = [
+  /^localhost$/i,
+  /\.local$/i,
+  /\.internal$/i,
+  /\.localdomain$/i,
+];
+
+/**
+ * Whether a hostname is an IP literal, and if so whether it is one that must
+ * never be reached. IP literals are refused outright — the allow-list is
+ * expressed as names, so a literal can only be an attempt to bypass it.
+ */
+function isIpLiteral(host: string): boolean {
+  // IPv6 arrives bracketed from `URL.hostname` stripped, so test both shapes.
+  if (host.includes(':')) return true;
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
+
+/**
+ * May this URL be fetched as a Face Match reference image?
+ *
+ * Pure, so the policy is testable without a network. Every rule is a refusal;
+ * the default answer is no.
+ *
+ * The allow-list is the primary control. The private-range and IP-literal
+ * checks sit in front of it as defence in depth: they are redundant while the
+ * list holds only public provider hosts, and they are what stops a
+ * mis-configured `DIDIT_MEDIA_HOSTS` entry (`127.0.0.1`, `metadata.internal`,
+ * an RFC1918 address) from turning this into a request primitive pointed at
+ * NPC's own infrastructure.
+ */
+export function isAllowedMediaUrl(
+  value: unknown, allowedHosts: readonly string[] = DEFAULT_DIDIT_MEDIA_HOSTS,
+): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false;
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+
+  // HTTPS only. No http, no data:, no file:, no gopher:, nothing else.
+  if (url.protocol !== 'https:') return false;
+  // Credentials in the URL would be sent to the host; refuse the shape.
+  if (url.username || url.password) return false;
+  // A non-default port is not something the provider's media host uses, and it
+  // is the usual way an internal service is addressed.
+  if (url.port && url.port !== '443') return false;
+
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return false;
+  if (isIpLiteral(host)) return false;
+  if (FORBIDDEN_HOST_PATTERNS.some((rx) => rx.test(host))) return false;
+
+  return allowedHosts.some((allowed) => host === allowed.toLowerCase());
+}
+
 export function classifyStandaloneHttpError(
   status: number, body: string,
 ): StandaloneErrorCategory {
@@ -192,7 +287,9 @@ export function readStandaloneThresholds(
 /* ──────────────────────────── sanitisation ──────────────────────────────── */
 
 /**
- * Fields that carry an inline image when `save_api_request=false`.
+ * Fields that carry the customer's own image — inline base64 under
+ * `save_api_request=false`, a short-lived media URL under `true`. Both are
+ * removed, because a URL that fetches a face is as disclosing as the face.
  *
  * Removed by NAME, before size-based redaction gets a chance to disagree about
  * what "long enough to be an image" means. A short base64 string is still a

@@ -208,24 +208,34 @@ then, once Didit stopped retrying, into no outcome at all.
 Four-part sessions minted during the attempt-scoped window stay valid for seven
 days, and refusing to parse them would strand a live customer's decision.
 
-### Why this flow was reactivated
+### This flow is NOT active — read this before switching to it
 
-`20260911000300` retired it on a product decision — no customer is sent to a
-verification vendor's page — and `20260914000000` reverses that. The reason is
-one the standalone architecture cannot satisfy at any setting.
+`20260911000300` retired it on a product decision: no customer is sent to a
+verification vendor's page. **That decision stands.** The code below is
+complete, tested and reachable, but no tenant resolves it —
+`didit_standalone` is the active provider row and `didit` is not, and
+`start_hosted_verification` answers `409 temporarily_unavailable` for a tenant
+that is not on a hosted provider.
 
-The Standalone APIs are called with `save_api_request=false`, whose published
-contract is that **nothing is stored**. NPC is billed, NPC holds its own
-evidence, and Didit persists no session — so a completed verification appears
-nowhere under **Verifications → User Verifications** and creates no **Directory
-→ Users** record. `POST /v3/session/` is the only shape of this integration that
-creates a provider-side verification record, confirmed by measurement: one
-create produced both a session and a Directory user whose `source` is
-`VERIFICATION` and whose `vendor_data` is the NPC key verbatim.
+It was briefly reactivated on 2026-08-14 on the reasoning that the Standalone
+APIs could not produce a provider-side record. That reasoning was wrong about
+the cause: the Standalone calls were sending `save_api_request=false`, and
+Didit's published contract for that flag is that nothing is stored. Setting it
+to `true` persists each request as an API-type session, visible in the Business
+Console under **Manual Checks** — which is the record the business needed,
+without moving anybody off NPC's own camera. See
+[`DIDIT_STANDALONE_IDV.md`](./DIDIT_STANDALONE_IDV.md).
 
-The standalone implementation is **not deleted**. Its provider row stays seeded,
-its evidence rows stay untouched, and the switch back is two `UPDATE`s — see the
-`ROLLBACK:` header on `20260914000000`.
+So the two consoles answer two different questions, and it is worth being
+precise about which:
+
+| Screen | Populated by |
+| --- | --- |
+| Verifications → **User Verifications**, Directory → **Users** | `POST /v3/session/` — the hosted flow below |
+| **Manual Checks** | the three Standalone endpoints with `save_api_request=true` |
+
+Activating this flow would need a migration flipping the two provider rows, and
+that migration deliberately does not exist in the tree.
 
 ### Stale configuration
 

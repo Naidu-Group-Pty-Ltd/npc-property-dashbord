@@ -69,7 +69,7 @@ import {
   type StandaloneErrorCategory,
 } from './providers/diditStandalone.pure.ts';
 import {
-  DiditStandaloneError, decodeInlineImage, readStandaloneEnvConfig,
+  DiditStandaloneError, resolveReferenceImage, readStandaloneEnvConfig,
 } from './providers/diditStandaloneClient.ts';
 import { canonicalOutcome } from './verificationOutcome.pure.ts';
 import { stripImagePayloads } from './verificationEvidence.pure.ts';
@@ -288,12 +288,21 @@ export async function runStandaloneVerification(
    * The correlation handle sent to the provider.
    *
    * Opaque, internal, and never a name, an email or a document number. It is
-   * echoed back on the response and is what ties a provider request id to an
-   * NPC attempt in the evidence record. It is NOT an idempotency key and is
-   * never treated as one — Didit does not document it as one.
+   * echoed back on the response and stored on the persisted request, so it is
+   * what ties a Manual Checks entry in Didit's console back to an NPC
+   * applicant.
+   *
+   * PERSON-scoped — `npc:<case>:<party|primary>`, no attempt suffix. Didit
+   * groups persisted requests by this exact string, so an attempt suffix would
+   * scatter one applicant's checks across several identities in the console,
+   * which is the opposite of what persisting them is for. The attempt is still
+   * recorded, in `metadata` below and on NPC's own row.
+   *
+   * It is NOT an idempotency key and is never treated as one — Didit does not
+   * document it as one, and these endpoints do not upsert on it the way
+   * `POST /v3/session/` does.
    */
-  const vendorData = buildVendorData(
-    check.case_id, check.party_id ?? null, check.capture_sequence ?? check.attempt_number ?? 1);
+  const vendorData = buildVendorData(check.case_id, check.party_id ?? null);
   const metadata = {
     npc_verification_check_id: checkId,
     npc_capture_sequence: check.capture_sequence ?? check.attempt_number ?? 1,
@@ -310,7 +319,10 @@ export async function runStandaloneVerification(
   const evidenceBase: Record<string, unknown> = {
     integration_mode: 'standalone',
     provider: provider.name,
-    save_api_request: false,
+    // True since 2026-08-14: each call is persisted by Didit and appears in
+    // the Business Console under Manual Checks. Recorded per attempt because
+    // it decides where the provider-side evidence for THIS check lives.
+    save_api_request: true,
     document_choice: plan.document_choice,
     required_captures: required,
     thresholds_applied: {
@@ -375,10 +387,21 @@ export async function runStandaloneVerification(
     return await handleProviderError(db, check, 'id_verification', err, evidenceBase, checkId);
   }
 
-  // The portrait exists in this variable and nowhere else. It is never
-  // persisted, never logged and never returned — `id.sanitised` (what goes to
-  // the database) has it removed by name.
-  const portraitBytes = decodeInlineImage(id.portraitBase64);
+  /**
+   * The Face Match reference.
+   *
+   * `save_api_request=true` returns `portrait_image` as a short-lived media URL
+   * rather than inline base64, so this resolves whichever shape arrived — see
+   * `resolveReferenceImage`, which is bounded and answers null rather than
+   * throwing. A null here is not an error: it means Face Match has no
+   * reference, the step does not run, and the composition settles as a
+   * referral.
+   *
+   * The portrait exists in this variable and nowhere else. It is never
+   * persisted, never logged and never returned — `id.sanitised` (what goes to
+   * the database) has the field removed by name, whether it held bytes or a URL.
+   */
+  const portraitBytes = await resolveReferenceImage(id.portraitBase64);
 
   await persistProgress({ id_verification: id.sanitised, id_verdict: id.verdict });
 

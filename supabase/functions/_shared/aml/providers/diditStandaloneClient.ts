@@ -24,12 +24,21 @@
  *     and the server then cannot split the body — every request fails with a
  *     400 that looks like a malformed image. `FormData` + `fetch` produce the
  *     header together; this module never sets it.
- *  2. **`save_api_request=false` on every call.** NPC's evidence store is its
- *     own private Supabase buckets. Didit is asked to answer a question, not to
- *     keep a copy of a customer's face — so no session is persisted on their
- *     side, no Manual Check exists to look up, and the authenticated response
- *     IS the result. There is no webhook to wait for and no decision to
- *     re-fetch.
+ *  2. **`save_api_request=true` on every call.** Each request is persisted by
+ *     Didit as an API-type session and appears in the Business Console under
+ *     **Manual Checks**, which is what makes an NPC verification auditable on
+ *     the provider's side. It was `false` until 2026-08-14, when that was
+ *     reversed: nothing was stored, so a completed check existed nowhere but
+ *     in NPC's own database.
+ *
+ *     Two things follow from the flag, and both are handled rather than
+ *     assumed. Didit now RETAINS the customer's document images and selfie —
+ *     NPC's private buckets are no longer the only copy — and the image fields
+ *     come back as **short-lived media URLs instead of inline base64**, which
+ *     is why `resolveReferenceImage` exists. The authenticated response is
+ *     still the authoritative result: there is no decision to re-fetch, and
+ *     although a persisted session can emit `status.updated`, NPC
+ *     acknowledges and ignores those rather than opening a second result path.
  *  3. **A failure is typed, never prose.** Every non-2xx becomes a
  *     `DiditStandaloneError` carrying a `StandaloneErrorCategory`, so an outage,
  *     an empty credit balance and an unreadable photograph can never be
@@ -48,6 +57,8 @@
 
 import {
   classifyStandaloneHttpError,
+  isAllowedMediaUrl,
+  DEFAULT_DIDIT_MEDIA_HOSTS,
   type StandaloneErrorCategory,
 } from './diditStandalone.pure.ts';
 
@@ -188,15 +199,19 @@ function imagePart(bytes: Uint8Array, filename: string): Blob {
 /**
  * Common fields.
  *
- * `save_api_request=false` is set here rather than per call site so no future
- * endpoint can be added without it. `metadata` carries internal correlation
- * only and is never given a name, an email or a document number — it is echoed
- * back verbatim and would otherwise put customer PII in a third party's
- * response body for no purpose.
+ * `save_api_request=true` is set here rather than per call site so no future
+ * endpoint can be added without it — the Manual Checks record has to be
+ * complete or it is not an audit trail.
+ *
+ * `vendor_data` is the person-scoped NPC key, which is what groups an
+ * applicant's persisted requests together in the console. `metadata` carries
+ * internal correlation only and is never given a name, an email or a document
+ * number — both fields are stored by Didit now, so putting customer PII in
+ * either would export it into a third party's records for no purpose.
  */
 function baseForm(vendorData: string, metadata: Record<string, unknown>): FormData {
   const form = new FormData();
-  form.append('save_api_request', 'false');
+  form.append('save_api_request', 'true');
   form.append('vendor_data', vendorData);
   form.append('metadata', JSON.stringify(metadata));
   return form;
@@ -284,19 +299,17 @@ export async function compareFaces(args: FaceMatchArgs): Promise<StandaloneCallR
 }
 
 /**
- * Decode the inline portrait into bytes.
+ * Decode an inline portrait into bytes.
  *
  * Returns null rather than throwing on anything unexpected: a portrait we
  * cannot decode means Face Match has no reference image, which is a referral,
  * and it must not be able to take down the whole sequence with an exception.
  * The `data:` prefix is tolerated because the field is documented as "url or
- * base64" and only the base64 form appears when `save_api_request=false`.
+ * base64"; a URL is the `save_api_request=true` shape and is handled by
+ * `fetchRemoteImage`, not here.
  */
 export function decodeInlineImage(value: string | null): Uint8Array | null {
   if (typeof value !== 'string' || !value) return null;
-  // A media URL, not an inline image — that is the `save_api_request=true`
-  // shape and NPC never sends true. Refuse rather than fetch it: following a
-  // URL out of a provider response is a request this code did not intend.
   if (/^https?:\/\//i.test(value)) return null;
   const comma = value.indexOf(',');
   const payload = value.startsWith('data:') && comma > -1 ? value.slice(comma + 1) : value;
@@ -308,4 +321,93 @@ export function decodeInlineImage(value: string | null): Uint8Array | null {
   } catch {
     return null;
   }
+}
+
+/** A reference image may not be larger than this. Portraits are ~10–100 KB. */
+const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The hosts a persisted image may be fetched from.
+ *
+ * Defaults to the measured provider media hosts. `DIDIT_MEDIA_HOSTS` overrides
+ * the list (comma-separated) for a deployment whose media host differs or
+ * changes — the value is a list of hostnames, never a pattern, and every entry
+ * still passes the IP-literal and internal-name refusals in
+ * `isAllowedMediaUrl`.
+ */
+function allowedMediaHosts(): readonly string[] {
+  const configured = (Deno.env.get('DIDIT_MEDIA_HOSTS') ?? '')
+    .split(',').map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0);
+  return configured.length > 0 ? configured : DEFAULT_DIDIT_MEDIA_HOSTS;
+}
+
+/**
+ * Fetch the portrait Didit stored, when it answered with a URL instead of bytes.
+ *
+ * ## Why this exists at all
+ *
+ * `save_api_request=true` changes the response shape: `portrait_image` becomes
+ * a short-lived media URL rather than inline base64. The ID portrait is Face
+ * Match's reference image, so without this the third call would simply never
+ * run and EVERY attempt would settle as a referral — a silent, total
+ * regression, and the reason the flag could not be flipped on its own.
+ *
+ * ## Why following it is bounded
+ *
+ * This code previously refused to follow a URL out of a provider response, and
+ * that instinct was right: it is server-side egress driven by a third party's
+ * payload, which is SSRF by construction unless it is fenced. It is admitted
+ * here under conditions that keep it from being a general fetch primitive:
+ *
+ *   - **The host must be on the allow-list** (`isAllowedMediaUrl`) — an exact
+ *     match against the measured provider media hosts, overridable by
+ *     `DIDIT_MEDIA_HOSTS`. This is the primary control; everything else is
+ *     defence in depth. IP literals, non-443 ports, embedded credentials,
+ *     `localhost`, `.local`/`.internal` names and every non-https scheme are
+ *     refused before the list is even consulted.
+ *   - **The credential is never sent.** The URL is pre-signed and belongs to a
+ *     media host, not to the API — attaching `x-api-key` would hand NPC's key
+ *     to whatever that payload named.
+ *   - **It must answer with an image**, under a size cap and a timeout.
+ *   - **Redirects are not followed.** A 3xx is refused rather than chased, so
+ *     an allow-listed host cannot bounce the request somewhere else.
+ *   - **It cannot throw, and it never returns a partial image.** Anything
+ *     unexpected is null, which is the same referral the missing-portrait path
+ *     has always produced. Unknown is never passed.
+ *
+ * The URL is not returned, logged or persisted anywhere: it is a credential
+ * for the customer's own photograph, and `stripImagePayloads` plus the
+ * by-name sanitiser keep the field out of `outcome_detail` regardless.
+ */
+export async function fetchRemoteImage(value: string | null): Promise<Uint8Array | null> {
+  if (!isAllowedMediaUrl(value, allowedMediaHosts())) return null;
+  try {
+    const res = await fetch(value, {
+      method: 'GET',
+      redirect: 'error',
+      signal: AbortSignal.timeout(STANDALONE_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+    if (!contentType.startsWith('image/')) return null;
+    const declared = Number(res.headers.get('content-length') ?? NaN);
+    if (Number.isFinite(declared) && declared > MAX_REFERENCE_IMAGE_BYTES) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_REFERENCE_IMAGE_BYTES) return null;
+    return bytes;
+  } catch {
+    // Timeout, DNS, TLS, a redirect, an unreadable body — all the same answer.
+    return null;
+  }
+}
+
+/**
+ * The Face Match reference, whichever shape the provider used.
+ *
+ * One entry point so the orchestrator does not have to know that the flag
+ * decides the shape — and so a future change of flag cannot quietly strand the
+ * third call again.
+ */
+export async function resolveReferenceImage(value: string | null): Promise<Uint8Array | null> {
+  return decodeInlineImage(value) ?? await fetchRemoteImage(value);
 }
