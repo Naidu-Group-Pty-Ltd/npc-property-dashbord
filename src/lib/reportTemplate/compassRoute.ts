@@ -60,7 +60,10 @@ export function tryRouteThroughTemplateBuilder(
 export function tryRouteThroughTemplateBuilderFor(
   reportType: string,
   reportId: string,
-  opts?: { variant?: string | null; brand?: unknown; templateId?: string | null },
+  opts?: {
+    variant?: string | null; brand?: unknown; templateId?: string | null;
+    payload?: Record<string, unknown> | null;
+  },
 ): Promise<TemplateBuilderRouteResult | null> {
   const adapter = getAdapter(reportType);
   if (!adapter?.supportsProduction) return Promise.resolve(null);
@@ -73,6 +76,9 @@ export function tryRouteThroughTemplateBuilderFor(
     // ranking when the choice no longer applies. Omitting it is what made a
     // stored choice inert on every format but the Compass one.
     templateId: opts?.templateId ?? null,
+    // The caller's reviewed data, for the adapter that documents support for
+    // it. See `payload` on `ReportTemplateAdapter`.
+    payload: opts?.payload ?? null,
   });
 }
 

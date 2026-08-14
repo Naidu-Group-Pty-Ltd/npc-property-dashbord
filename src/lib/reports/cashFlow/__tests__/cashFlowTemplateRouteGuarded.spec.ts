@@ -1,25 +1,30 @@
 /**
- * The 10 Year Cash Flow routes through Template Builder **only behind a proof
- * that the series on screen is the series that is stored**, and this file keeps
- * that condition from being dropped by someone tidying it into line with the
- * other seven formats.
+ * The 10 Year Cash Flow's template render **always carries the series on
+ * screen**, and this file keeps the two halves of that rule from drifting
+ * apart.
  *
- * ## Why it is the exception
+ * ## Why this format is the exception
  *
  * Every other migrated format's delivery path reads the same stored record its
- * adapter reads, so the two agree by construction and the template can simply
- * be asked for. This one does not. `requestCashFlowPdf` takes the projection as
- * an **argument**: `CashFlowAnalysisModal` recomputes ten years in the browser
- * from the report's `manual_overrides` plus whatever the adviser has changed
- * since the modal opened, and sends that. `cashFlowAdapter` reads the stored
- * `financial_calculations.projections`, a different series whenever an override
- * exists — which is the normal case for the reports this modal is opened on.
+ * adapter reads, so the two agree by construction. This one does not:
+ * `CashFlowAnalysisModal` recomputes ten years in the browser from
+ * `manual_overrides` plus whatever the adviser has changed since it opened,
+ * and `cashFlowAdapter` reads the stored `financial_calculations.projections`
+ * — a different series whenever an override exists, which is the normal case.
  *
- * Asking for the template unconditionally would hand a client a document whose
- * numbers are not the ones the adviser was reading while they sent it. So
- * `matchStoredScenario` must name a stored scenario first, and it answers null
- * for everything it cannot be certain of. The rule in one line: **the request
- * for a template is guarded, never bare.**
+ * The first answer was a gate: `matchStoredScenario` had to prove the screen
+ * equalled the store before the template was asked for at all. Correct, and
+ * almost never satisfied — so a chosen template silently fell back to the
+ * standard composer on nearly every download, and the picker's "your choice
+ * is kept" was a promise the generator did not keep.
+ *
+ * The answer now is a channel: the request is always made, and the match
+ * decides **what it carries**. A matched series routes as its named stored
+ * scenario, so the document may honestly say "Moderate". An unmatched one
+ * hands the adapter the same wire the composer receives (`payload`), and the
+ * document says "Adviser-reviewed" — never a scenario label the series does
+ * not satisfy. Both halves are asserted below, because either alone can be
+ * true of code that ships wrong figures or wrong labels.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -47,23 +52,32 @@ describe('the cash flow library', () => {
 describe('the modal', () => {
   const code = withoutComments(readFileSync(MODAL, 'utf8'));
 
-  it('never asks for a template without first matching the stored series', () => {
+  it('always asks, and the match decides what the request carries', () => {
     const at = code.indexOf('tryTemplateDocument(');
     expect(at, 'the modal no longer routes at all — that is a different change')
       .toBeGreaterThan(-1);
 
-    // The match has to be established *before* the request, and be what the
-    // request is conditional on. Both are asserted, because either one alone
-    // can be true of code that asks regardless.
+    // The match is still established before the request — it names the
+    // scenario a matched series may honestly be labelled with.
     const matchAt = code.indexOf('matchStoredScenario(');
-    expect(matchAt, 'the template is requested without matching the stored series first')
+    expect(matchAt, 'the stored-series match no longer runs before the request')
       .toBeGreaterThan(-1);
     expect(matchAt).toBeLessThan(at);
 
-    // The 200 characters before the call, where the condition has to be.
-    const guard = code.slice(Math.max(0, at - 200), at);
-    expect(guard, 'the request for a template is not guarded by the match')
-      .toMatch(/storedScenario\s*(\?|&&)/);
+    // The request itself is no longer conditional: `await` directly, not
+    // `storedScenario ? … : null`. Gating it again is how the choice went
+    // silently unhonoured on nearly every download of this format.
+    const call = code.slice(Math.max(0, at - 120), at);
+    expect(call, 'the request for a template has been gated again — read this file\'s header')
+      .not.toMatch(/storedScenario\s*\?\s*(await\s+)?tryTemplateDocument/);
+
+    // The unmatched case hands over the series on screen — the same wire the
+    // composer receives — and ONLY the unmatched case: a matched series routes
+    // as its named scenario so the document may say "Moderate" rather than
+    // being relabelled "Adviser-reviewed" for no reason.
+    const region = code.slice(at, at + 300);
+    expect(region, 'an unmatched series no longer hands the reviewed wire to the adapter')
+      .toMatch(/storedScenario\s*\?\s*\{\}\s*:\s*\{\s*payload:\s*\{\s*wire\s*\}\s*\}/);
   });
 
   it('renders the scenario it proved, not a default one', () => {

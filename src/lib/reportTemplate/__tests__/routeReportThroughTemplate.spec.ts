@@ -172,7 +172,7 @@ describe('the variant reaches the adapter', () => {
     expect(result?.templateId).toBe(TEMPLATE_ROW.id);
     // The two answers must describe one document: the routing call and the
     // binding call see the same variant.
-    expect(h.routingCalls).toEqual([{ reportId: REPORT_ID, variant: 'optimistic' }]);
+    expect(h.routingCalls).toEqual([{ reportId: REPORT_ID, variant: 'optimistic', payload: null }]);
     expect(h.bindingCalls).toHaveLength(1);
     expect(h.bindingCalls[0]).toMatchObject({ reportId: REPORT_ID, variant: 'optimistic' });
   });

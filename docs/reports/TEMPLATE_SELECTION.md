@@ -330,3 +330,34 @@ sweep of every call into the delivery modules found four:
   wired component's own file. `templateRouteEnforcement.spec.ts` now scans
   every component in `src/` and fails when a control that carries a dialog is
   rendered inside any `DropdownMenuContent`.
+
+## The choice must reach the render — and say so when it cannot
+
+"The final render doesn't follow the selection" was measured and had two
+halves. The general half: every failure inside the template path — an adapter
+refusal, a stale choice, a failed render — fell back **silently** to the
+format's own composer, and on the migrated formats that fallback is itself a
+well-typeset WeasyPrint document, so "your choice was honoured" and "your
+choice was ignored" were indistinguishable from the outside.
+`tryTemplateDocument` now says it out loud, once, at the moment it happens:
+when a stored selection exists and the document was not produced with it, a
+warning names what happened beside the file that still downloads
+(`notifySelectionNotUsed`), and a route that fell back to the ranking says the
+choice went stale. The capacity report's analysis refresh — the one action
+that bypasses the template path by design — says so too, only when a choice
+exists to bypass.
+
+The specific half was the 10 Year Cash Flow, the one format whose contract
+puts the arithmetic in the browser: the modal recomputes ten years live, the
+adapter reads the stored series, and the template was only asked for when the
+two matched exactly (`matchStoredScenario`) — the exception, not the rule. The
+adapter contract now carries an optional **`payload`** channel
+(`liveProjectionRow.ts`): the modal always asks, a matched series routes under
+its named scenario, and an unmatched one hands the adapter the same wire the
+composer receives. The reviewed series is published by the same projection
+producer under the same vocabulary, headlined by the composer's own headline
+figure (after-tax), labelled **"Adviser-reviewed"** — never a scenario name it
+does not satisfy — and the stored three-way scenario comparison is withheld
+because there is nothing to compare. `cashFlowTemplateRouteGuarded.spec.ts`
+pins both halves; `liveProjectionRow.spec.ts` pins the mapping, the refusals
+and the labelling.

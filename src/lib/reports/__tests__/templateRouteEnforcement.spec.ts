@@ -128,7 +128,10 @@ describe("the person's chosen template reaches the document", () => {
     // attachment and portal paths do not use the picker's hook and would
     // otherwise keep ignoring the choice.
     expect(code).toMatch(/fetchTemplateSelections/);
-    expect(code).toMatch(/templateId:\s*await selectedTemplateFor\(reportType\)/);
+    // Resolved once, forwarded by name: the id is also compared against the
+    // route's answer so a fallback to the ranking can be said out loud.
+    expect(code).toMatch(/const selectedId = await selectedTemplateFor\(reportType\)/);
+    expect(code).toMatch(/templateId:\s*selectedId/);
   });
 
   it('the Compass pilot still forwards its own', () => {
