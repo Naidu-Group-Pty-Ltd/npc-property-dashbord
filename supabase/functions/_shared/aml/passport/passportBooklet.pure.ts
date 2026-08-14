@@ -80,11 +80,23 @@ export type SealTone = "gold" | "green" | "navy" | "blue" | "red";
 export type BookletPage = {
   /** Stable id — used as the React key and by tests. */
   id: string;
+  /**
+   * `cover` is the navy leather front board, not a paper leaf. It is drawn by
+   * a different component and carries no blocks — a passport opens on its
+   * cover, and a booklet whose first page is a data table reads as a report.
+   */
+  variant: "cover" | "leaf";
   kicker: string;
   title: string;
   sub?: string;
-  /** Roman numeral as the design prints it, or null for the opening pages. */
+  /** Roman numeral as the design prints it, or null for the cover. */
   numeral: string | null;
+  /**
+   * Cover only. The evidence fingerprint is printed on the front board because
+   * it is what a holder or a verifier checks the document against — it was on
+   * the client's cover before the two booklets were unified and stays there.
+   */
+  fingerprint?: string | null;
   blocks: BookletBlock[];
   foot?: string;
 };
@@ -129,8 +141,34 @@ function fmtMoney(n: number | null | undefined): string {
 export function buildBooklet(view: PassportView): BookletPage[] {
   const h = view.header;
   const pages: BookletPage[] = [];
-  const push = (p: Omit<BookletPage, "numeral">) =>
-    pages.push({ ...p, numeral: ROMAN[pages.length] ?? String(pages.length + 1) });
+
+  // The cover is page 1 and is NOT numbered: numbering starts on the first
+  // leaf, exactly as a physical passport does. `leafIndex` therefore counts
+  // leaves rather than pages, so adding or removing the cover can never shift
+  // the roman numerals printed on the paper.
+  pages.push({
+    id: "cover",
+    variant: "cover",
+    kicker: "Aurixa Systems",
+    title: "AML/CTF Compliance Passport",
+    // The cover names its bearer. Branding alone would make every issued
+    // passport look identical, and the first thing a reader needs to know is
+    // whose document they have open.
+    sub: h.subject ?? undefined,
+    numeral: null,
+    foot: [h.credential, h.state.label].filter(Boolean).join("  ·  "),
+    fingerprint: h.evidence_fingerprint_short,
+    blocks: [],
+  });
+
+  const push = (p: Omit<BookletPage, "numeral" | "variant">) => {
+    const leafIndex = pages.filter((x) => x.variant === "leaf").length;
+    pages.push({
+      ...p,
+      variant: "leaf",
+      numeral: ROMAN[leafIndex] ?? String(leafIndex + 1),
+    });
+  };
 
   /* I — Client Identity */
   push({
@@ -238,7 +276,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.identity.fields.length > 0) {
     push({
       id: "identity-detail",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Identity Information",
       sub: "The attributes recorded for the customer and its parties.",
       blocks: [
@@ -259,7 +297,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.verification.parties.length > 0) {
     push({
       id: "verification",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Identity Verification",
       sub: "How each party was proven.",
       blocks: [
@@ -285,7 +323,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.ownership.length > 0) {
     push({
       id: "ownership",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Ownership & Control",
       sub: "Who ultimately owns and controls the customer.",
       blocks: [
@@ -309,7 +347,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
     const s = view.screening;
     push({
       id: "screening",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Screening",
       sub: "What the parties were screened against.",
       blocks: [
@@ -342,7 +380,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
     const f = view.funding;
     push({
       id: "funding",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Funding & Due Diligence",
       sub: "Where the consideration comes from.",
       blocks: [
@@ -365,7 +403,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.documents.length > 0) {
     push({
       id: "evidence",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Evidence Wallet",
       sub: "What the record is built on.",
       blocks: [
@@ -394,7 +432,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
     if (withManifest.length > 0) {
       push({
         id: "disclosure",
-        kicker: `Page ${ROMAN[pages.length]}`,
+        kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
         title: "Disclosure & Access",
         sub: "What each partner may see.",
         blocks: [
@@ -417,7 +455,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
 
     push({
       id: "partners",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Partner Access",
       sub: "Who has relied on this Passport.",
       blocks: [
@@ -440,7 +478,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.transactions.length > 0) {
     push({
       id: "transaction",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Transaction & Matter",
       sub: "What this Passport was issued for.",
       blocks: view.transactions.map((t) => ({
@@ -461,7 +499,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.stamps.length > 0) {
     push({
       id: "seals",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Certification Seals",
       sub: "Every seal is earned from a system record.",
       blocks: [
@@ -482,7 +520,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.versions.length > 0) {
     push({
       id: "versions",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Version Register",
       sub: "An issued version is immutable; material change supersedes it.",
       blocks: [
@@ -502,7 +540,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   /* XIV — Journey Record */
   push({
     id: "journey",
-    kicker: `Page ${ROMAN[pages.length]}`,
+    kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
     title: "Journey Record",
     sub: `${view.journey.recorded} of ${view.journey.total} milestones recorded.`,
     blocks: [
@@ -527,7 +565,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   if (view.transactions.length > 0) {
     push({
       id: "completion",
-      kicker: `Page ${ROMAN[pages.length]}`,
+      kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
       title: "Transaction Completion",
       sub: settled
         ? "The transaction has settled."
@@ -549,7 +587,7 @@ export function buildBooklet(view: PassportView): BookletPage[] {
   /* XVI — Review & Renewal */
   push({
     id: "renewal",
-    kicker: `Page ${ROMAN[pages.length]}`,
+    kicker: `Page ${ROMAN[pages.filter((x) => x.variant === "leaf").length]}`,
     title: "Review & Renewal",
     blocks: [
       {
@@ -600,4 +638,81 @@ export function bookletLabel(spread: number[], total: number): string {
   const first = spread[0] + 1;
   const last = spread[spread.length - 1] + 1;
   return first === last ? `PAGE ${first} OF ${total}` : `PAGES ${first}–${last} OF ${total}`;
+}
+
+/* ── geometry ──────────────────────────────────────────────────────────── */
+
+/**
+ * The leaf's design size, in CSS pixels.
+ *
+ * Every type size, rule and seal inside a leaf is authored against THIS box.
+ * That is the whole reason the booklet scales by transform rather than by
+ * letting flexbox squeeze the leaf: a leaf laid out at 200px wide still has
+ * 11px body copy and 30px seals, so the text reflows, wraps one character per
+ * line and overflows its page. Scaling the finished leaf keeps every internal
+ * proportion exactly as designed, at any size.
+ */
+export const LEAF_W = 470;
+export const LEAF_H = 648;
+
+export type BookletGeometry = {
+  /** Leaves shown side by side. */
+  perSpread: 1 | 2;
+  /** Uniform transform applied to each leaf. */
+  scale: number;
+  /** Rendered size of the whole spread, after scaling. */
+  width: number;
+  height: number;
+};
+
+/**
+ * Fit the spread to the space available.
+ *
+ * Two leaves are shown only when they can be drawn at a size a person can
+ * actually read; below that the booklet falls back to a single leaf rather
+ * than shrinking both into illegibility. `MIN_TWO_UP_SCALE` is that threshold
+ * — at 0.62 a 470px leaf renders ~291px wide, which still carries the design's
+ * 11px body copy at a legible ~7px.
+ */
+const MIN_TWO_UP_SCALE = 0.62;
+
+export function bookletGeometry(input: {
+  /** Space the board can use, in CSS pixels. */
+  availableWidth: number;
+  availableHeight: number;
+  /** Gap between facing leaves (the spine), in design pixels. */
+  spine?: number;
+  /** Never draw a leaf larger than this multiple of its design size. */
+  maxScale?: number;
+  /** Force a single leaf regardless of space (the client booklet does this). */
+  singleOnly?: boolean;
+}): BookletGeometry {
+  const spine = input.spine ?? 26;
+  const maxScale = input.maxScale ?? 1.15;
+  const availW = Math.max(0, input.availableWidth);
+  const availH = Math.max(0, input.availableHeight);
+
+  const fit = (leaves: 1 | 2) => {
+    const designW = LEAF_W * leaves + (leaves === 2 ? spine : 0);
+    const byWidth = availW / designW;
+    const byHeight = availH > 0 ? availH / LEAF_H : byWidth;
+    return Math.min(byWidth, byHeight, maxScale);
+  };
+
+  if (!input.singleOnly) {
+    const two = fit(2);
+    if (two >= MIN_TWO_UP_SCALE) {
+      return {
+        perSpread: 2,
+        scale: two,
+        width: (LEAF_W * 2 + spine) * two,
+        height: LEAF_H * two,
+      };
+    }
+  }
+
+  // A single leaf may still be tiny on a very small phone; clamp so the layout
+  // never collapses to zero and the page stays scrollable instead.
+  const one = Math.max(fit(1), 0.28);
+  return { perSpread: 1, scale: one, width: LEAF_W * one, height: LEAF_H * one };
 }

@@ -11,7 +11,10 @@ import {
   bookletLabel,
   bookletSpreads,
   buildBooklet,
+  bookletGeometry,
   buildPassportView,
+  LEAF_H,
+  LEAF_W,
   type PassportViewInput,
 } from './index';
 
@@ -53,12 +56,27 @@ const bookletFor = (over: Partial<PassportViewInput> = {}) =>
   buildBooklet(buildPassportView('command', input(over)));
 
 describe('buildBooklet', () => {
-  it('always opens with Client Identity and Compliance Summary', () => {
+  it('opens on the Aurixa cover, then Client Identity and Compliance Summary', () => {
     const pages = bookletFor();
-    expect(pages[0].title).toBe('Client Identity');
-    expect(pages[1].title).toBe('Compliance Summary');
-    // A passport that has not been issued still has a bearer and a state.
-    expect(pages.length).toBeGreaterThanOrEqual(3);
+    // A passport opens on its cover. A booklet whose first page is a data
+    // table reads as a report — the opposite of what this artefact is.
+    expect(pages[0].variant).toBe('cover');
+    expect(pages[0].blocks).toHaveLength(0);
+    expect(pages[1].title).toBe('Client Identity');
+    expect(pages[2].title).toBe('Compliance Summary');
+    expect(pages.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('does not number the cover — numbering starts on the first leaf', () => {
+    const pages = bookletFor();
+    expect(pages[0].numeral).toBeNull();
+    expect(pages[1].numeral).toBe('I');
+    // Adding or removing the cover must never shift a printed numeral.
+    const leaves = pages.filter((p) => p.variant === 'leaf');
+    expect(leaves[0].numeral).toBe('I');
+    expect(leaves[leaves.length - 1].numeral).toBe(
+      ['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV','XVI'][leaves.length - 1],
+    );
   });
 
   it('does NOT print a leaf whose records do not exist', () => {
@@ -88,13 +106,11 @@ describe('buildBooklet', () => {
     expect(rich.length).toBeGreaterThan(bookletFor().length);
   });
 
-  it('numbers pages in sequence with roman numerals', () => {
-    const pages = bookletFor();
-    expect(pages[0].numeral).toBe('I');
-    expect(pages[1].numeral).toBe('II');
-    expect(pages[2].numeral).toBe('III');
-    // No gaps, whatever the case holds.
-    expect(new Set(pages.map((p) => p.numeral)).size).toBe(pages.length);
+  it('numbers leaves in sequence with no gaps, whatever the case holds', () => {
+    const leaves = bookletFor().filter((p) => p.variant === 'leaf');
+    expect(leaves[0].numeral).toBe('I');
+    expect(leaves[1].numeral).toBe('II');
+    expect(new Set(leaves.map((p) => p.numeral)).size).toBe(leaves.length);
   });
 
   it('closes on Review & Renewal, which states the reliance boundary', () => {
@@ -160,5 +176,49 @@ describe('bookletSpreads / bookletLabel', () => {
 
   it('handles an empty document without producing a phantom spread', () => {
     expect(bookletSpreads(0, 2)).toEqual([]);
+  });
+});
+
+describe('bookletGeometry', () => {
+  it('scales the leaf instead of squeezing it — the design box never changes', () => {
+    // The defect this replaced: a leaf laid out at 200px still carried 11px
+    // body copy and 30px seals, so text wrapped one character per line.
+    const g = bookletGeometry({ availableWidth: 500, availableHeight: 900, singleOnly: true });
+    expect(g.perSpread).toBe(1);
+    expect(g.width).toBeCloseTo(LEAF_W * g.scale, 5);
+    expect(g.height).toBeCloseTo(LEAF_H * g.scale, 5);
+    // Aspect ratio is preserved exactly, at every size.
+    expect(g.width / g.height).toBeCloseTo(LEAF_W / LEAF_H, 10);
+  });
+
+  it('shows a facing pair only when both leaves stay legible', () => {
+    const wide = bookletGeometry({ availableWidth: 1100, availableHeight: 900 });
+    expect(wide.perSpread).toBe(2);
+
+    // Too narrow for two readable leaves: fall back to one rather than
+    // shrinking both into illegibility.
+    const narrow = bookletGeometry({ availableWidth: 560, availableHeight: 900 });
+    expect(narrow.perSpread).toBe(1);
+  });
+
+  it('never enlarges a leaf beyond its design size by more than the cap', () => {
+    const huge = bookletGeometry({ availableWidth: 6000, availableHeight: 6000 });
+    expect(huge.scale).toBeLessThanOrEqual(1.15);
+  });
+
+  it('fits height as well as width, so a short laptop never clips the page', () => {
+    const short = bookletGeometry({ availableWidth: 2000, availableHeight: 400, singleOnly: true });
+    expect(short.height).toBeLessThanOrEqual(400);
+  });
+
+  it('degrades to a usable size rather than collapsing on a tiny viewport', () => {
+    const tiny = bookletGeometry({ availableWidth: 100, availableHeight: 200 });
+    expect(tiny.perSpread).toBe(1);
+    expect(tiny.scale).toBeGreaterThan(0.2);
+  });
+
+  it('honours singleOnly even when there is room for two', () => {
+    const forced = bookletGeometry({ availableWidth: 2000, availableHeight: 900, singleOnly: true });
+    expect(forced.perSpread).toBe(1);
   });
 });
