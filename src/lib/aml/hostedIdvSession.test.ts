@@ -16,12 +16,14 @@ import {
  *
  * That suite asserted the ABSENCE of this flow — 68 guards written when the
  * product decision was that no customer is sent to a verification vendor's
- * page. The decision was reversed for a reason the standalone architecture
- * cannot satisfy at any setting: `save_api_request=false` means Didit persists
- * nothing, so a completed verification appears nowhere under Verifications →
- * User Verifications and creates no Directory → Users record. Keeping a suite
- * that fails the moment the requirement is met would be keeping a guard against
- * the thing the business asked for.
+ * page. The component exists again, so those guards could not stay.
+ *
+ * **The product decision itself stands**: no tenant resolves the hosted
+ * provider, and customers still use NPC's own camera. The provider-side record
+ * the business wanted turned out to be a flag on the Standalone calls —
+ * `save_api_request=true`, which persists each request under Manual Checks —
+ * not a different customer journey. What follows therefore describes a flow
+ * that is complete and correct but deliberately not active.
  *
  * What was worth keeping from it is kept, and is asserted here or in
  * `identityDocumentSession.test.ts`: no iframe, no credential in the browser,

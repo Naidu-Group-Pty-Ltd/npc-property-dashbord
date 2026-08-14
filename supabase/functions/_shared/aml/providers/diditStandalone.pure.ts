@@ -32,12 +32,14 @@
  *     status, an absent score, a document Didit classified as something the
  *     customer did not claim — each of those is a referral to a human, never a
  *     verification and never (on its own) a finding against the customer.
- *  3. **Nothing image-shaped survives.** The Standalone responses carry inline
- *     base64 JPEGs when `save_api_request=false` — `portrait_image`,
- *     `front_image`, `back_image`. Those are the reference face and the
- *     customer's own document, and neither belongs in `outcome_detail`, a log
- *     line, or anything the portal can read. They are removed by NAME here
- *     before any persistence, on top of the size-based sweep in
+ *  3. **Nothing image-shaped survives.** The Standalone responses carry
+ *     `portrait_image`, `front_image` and `back_image` — inline base64 JPEGs
+ *     under `save_api_request=false`, short-lived media URLs under `true`.
+ *     Those are the reference face and the customer's own document, and
+ *     neither the bytes nor a URL that fetches them belongs in
+ *     `outcome_detail`, a log line, or anything the portal can read. Removing
+ *     by NAME covers both shapes; they go here before any persistence, on top
+ *     of the size-based sweep in
  *     `verificationEvidence.pure.ts`.
  */
 
@@ -192,7 +194,9 @@ export function readStandaloneThresholds(
 /* ──────────────────────────── sanitisation ──────────────────────────────── */
 
 /**
- * Fields that carry an inline image when `save_api_request=false`.
+ * Fields that carry the customer's own image — inline base64 under
+ * `save_api_request=false`, a short-lived media URL under `true`. Both are
+ * removed, because a URL that fetches a face is as disclosing as the face.
  *
  * Removed by NAME, before size-based redaction gets a chance to disagree about
  * what "long enough to be an image" means. A short base64 string is still a

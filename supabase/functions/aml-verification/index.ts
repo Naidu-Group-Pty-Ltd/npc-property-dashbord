@@ -911,10 +911,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               DIDIT_WEBHOOK_SECRET: Boolean(Deno.env.get("DIDIT_WEBHOOK_SECRET")),
             } : isStandalone ? {
               // The Standalone path needs neither the workflow id nor the
-              // webhook secret — there is no workflow and, with
-              // save_api_request=false, no webhook is ever emitted. Reporting
-              // them would send an operator hunting for a secret that is
-              // correctly absent.
+              // webhook secret — there is no workflow, and these endpoints
+              // answer synchronously and emit no webhook (still true under
+              // save_api_request=true, which persists for audit rather than
+              // making NPC wait). Reporting them would send an operator
+              // hunting for a secret that is correctly absent.
               DIDIT_API_KEY: Boolean(Deno.env.get("DIDIT_API_KEY")),
               DIDIT_LIVENESS_THRESHOLD: Boolean(Deno.env.get("DIDIT_LIVENESS_THRESHOLD")),
               DIDIT_FACE_MATCH_THRESHOLD: Boolean(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD")),

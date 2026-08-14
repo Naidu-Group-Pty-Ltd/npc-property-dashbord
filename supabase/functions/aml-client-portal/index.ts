@@ -595,13 +595,15 @@ async function clientSafeIdvState(
      *
      * It was refused here — `manual_verification_required` — as the third lock
      * of the standalone cutover, whose product decision was that no customer is
-     * sent to a verification vendor's page. That decision has been reversed for
-     * a reason the standalone architecture cannot satisfy at all: the
-     * Standalone APIs are called with `save_api_request=false`, so Didit
-     * persists nothing and NPC's verifications never appear in the Business
-     * Console's Verifications → User Verifications or Directory → Users. A
-     * hosted session is the only shape of this integration that creates a
-     * provider-side verification record.
+     * sent to a verification vendor's page. **That decision stands**, and no
+     * tenant resolves this branch: `didit_standalone` is the active provider.
+     *
+     * The branch exists rather than refusing, because provider selection is
+     * configuration and a tenant that is genuinely on a hosted provider must
+     * get a working journey rather than a dead end. The provider-side audit
+     * record the business wanted comes from `save_api_request=true` on the
+     * Standalone calls instead (Manual Checks), which needed no change of
+     * customer experience — see docs/aml/DIDIT_STANDALONE_IDV.md.
      *
      * Readiness is the adapter's own: `getHostedIdvProvider` resolves the
      * credential, and `diditConfigured` requires the webhook secret and a

@@ -1161,9 +1161,11 @@ function diditIdvConfigured(resolved?: ResolvedProvider | null): boolean {
  *
  * Notice what is NOT here. `DIDIT_WORKFLOW_ID` is absent because there is no
  * workflow — the three endpoints are called directly. `DIDIT_WEBHOOK_SECRET` is
- * absent because with `save_api_request=false` no session is persisted on the
- * provider's side and no webhook is ever emitted; the authenticated response is
- * the result. Requiring either would refuse a correctly configured deployment.
+ * absent because these endpoints answer synchronously and emit no webhook; the
+ * authenticated response is the result. That stays true under
+ * `save_api_request=true`, which persists the request for audit but does not
+ * turn it into something NPC waits on. Requiring either would refuse a
+ * correctly configured deployment.
  *
  * Both thresholds ARE required, and that is the deliberate half: a production
  * deployment that has not stated its liveness and face-match policy is not

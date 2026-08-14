@@ -705,10 +705,11 @@ describe('the NPC capture journey', () => {
  * It was retired on a product decision — no customer reaches a verification
  * vendor's page — and `src/lib/aml/hostedIdvRetired.test.ts` held that as an
  * absence: no `window.open`, no iframe, no navigation, no way to ask for a
- * session. That suite is gone, because the decision was reversed for a reason
- * the NPC-camera architecture cannot satisfy at any setting: the Standalone
- * APIs are called with `save_api_request=false`, so Didit persists nothing and
- * a completed verification appears nowhere in the Business Console.
+ * session. That suite is gone, because the hosted component exists again — but
+ * the product decision it protected STANDS: no tenant resolves the hosted
+ * provider, and the customer still uses NPC's own camera. The provider-side
+ * record the business wanted comes from `save_api_request=true` on the
+ * Standalone calls (Manual Checks), not from moving anybody off NPC.
  *
  * What guards the flow now is `src/lib/aml/hostedIdvSession.test.ts` plus the
  * two behavioural tests above — the popup ORDERING (open synchronously inside

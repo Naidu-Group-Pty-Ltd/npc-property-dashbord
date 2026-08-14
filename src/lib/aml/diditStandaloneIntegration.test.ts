@@ -7,10 +7,9 @@ import { resolve } from 'node:path';
  *
  * These are source and contract assertions, in the style the rest of this
  * directory uses, because the properties they protect are not reachable from a
- * unit test: "the browser never gets the API key", "no new attempt opens a
- * provider window", "every paid call sends save_api_request=false" and "a
- * failed paid call is never automatically retried" are statements about which
- * code exists and which does not.
+ * unit test: "the browser never gets the API key", "every paid call sends
+ * save_api_request=true" and "a failed paid call is never automatically
+ * retried" are statements about which code exists and which does not.
  *
  * Every one of them corresponds to a way this integration could be wrong that
  * would not fail any behavioural test — it would just quietly cost money, leak
@@ -131,12 +130,59 @@ describe('the provider calls', () => {
     expect(CLIENT).not.toContain('callback');
   });
 
-  it('sends save_api_request=false on every call, from one place', () => {
-    // Set in `baseForm`, which every endpoint builds on — so a fourth endpoint
-    // cannot be added without it.
-    expect(CLIENT).toContain("form.append('save_api_request', 'false')");
-    expect(CLIENT.match(/save_api_request/g)?.length).toBeGreaterThanOrEqual(1);
-    expect(CLIENT).not.toContain("'save_api_request', 'true'");
+  it('sends save_api_request=true on every call, from one place', () => {
+    /*
+     * Set in `baseForm`, which all three endpoints build on — so a fourth
+     * cannot be added without it. The flag is what persists the request as an
+     * API-type session and puts it in the Business Console under Manual
+     * Checks; a call that skipped it would be a verification with no
+     * provider-side record, which is the state this reversed.
+     */
+    expect(CLIENT).toContain("form.append('save_api_request', 'true')");
+    expect(CLIENT).not.toContain("'save_api_request', 'false'");
+    // One place, not three.
+    expect(CLIENT.match(/form\.append\('save_api_request'/g)?.length).toBe(1);
+    const baseForm = CLIENT.slice(CLIENT.indexOf('function baseForm('), CLIENT.indexOf('export interface VerifyIdentityDocumentArgs'));
+    expect(baseForm).toContain("form.append('save_api_request', 'true')");
+    expect(baseForm).toContain("form.append('vendor_data', vendorData)");
+  });
+
+  it('every endpoint goes through baseForm, so every one is persisted', () => {
+    for (const fn of ['verifyIdentityDocument', 'checkPassiveLiveness', 'compareFaces']) {
+      const start = CLIENT.indexOf(`export async function ${fn}(`);
+      expect(start, fn).toBeGreaterThan(0);
+      const body = CLIENT.slice(start, CLIENT.indexOf('\n}', start));
+      expect(body, fn).toContain('baseForm(args.vendorData, args.metadata)');
+    }
+  });
+
+  it('resolves the Face Match reference whichever shape the flag produces', () => {
+    /*
+     * `save_api_request=true` returns `portrait_image` as a media URL instead
+     * of inline base64. Without this the third call would never run and every
+     * attempt would settle as a referral — the regression that made flipping
+     * the flag alone unsafe.
+     */
+    const ORCH = read('supabase/functions/_shared/aml/standaloneVerification.ts');
+    expect(ORCH).toContain('await resolveReferenceImage(id.portraitBase64)');
+    expect(ORCH).not.toContain('decodeInlineImage(id.portraitBase64)');
+    expect(CLIENT).toContain('export async function resolveReferenceImage(');
+  });
+
+  it('following a provider URL is bounded, and can never leak the credential', () => {
+    const fetcher = CLIENT.slice(
+      CLIENT.indexOf('export async function fetchRemoteImage('),
+      CLIENT.indexOf('export async function resolveReferenceImage('));
+    expect(fetcher).toMatch(/\^https:\\\/\\\//);      // https only
+    expect(fetcher).toContain("redirect: 'error'");    // never chased
+    expect(fetcher).toContain('AbortSignal.timeout');
+    expect(fetcher).toContain("contentType.startsWith('image/')");
+    expect(fetcher).toContain('MAX_REFERENCE_IMAGE_BYTES');
+    // The API key is never attached to a media host.
+    expect(fetcher).not.toContain('x-api-key');
+    expect(fetcher).not.toContain('apiKey');
+    // It cannot throw into the sequence.
+    expect(fetcher).toContain('catch {');
   });
 
   it('asks for document liveness on the ID call', () => {
@@ -164,7 +210,10 @@ describe('the provider calls', () => {
   });
 
   it('uses the provider-returned ID portrait as the face-match reference', () => {
-    expect(ORCHESTRATOR).toContain('decodeInlineImage(id.portraitBase64)');
+    // Resolved rather than decoded: under `save_api_request=true` the field is
+    // a media URL, and the older inline-only decode would have left every
+    // attempt without a reference. See the resolution test above.
+    expect(ORCHESTRATOR).toContain('await resolveReferenceImage(id.portraitBase64)');
     expect(ORCHESTRATOR).toContain('refImage: portraitBytes');
   });
 
@@ -194,8 +243,27 @@ describe('the provider calls', () => {
     expect(CLIENT).toContain('out.split(apiKey).join');
   });
 
+  it('sends a stable PERSON-scoped vendor_data, so an applicant is one identity', () => {
+    /*
+     * `npc:<case>:<party|primary>`, no attempt suffix. Didit groups persisted
+     * requests by this exact string, so a suffix would scatter one applicant's
+     * Manual Checks across several identities — the opposite of what
+     * persisting them is for. It matters more now than it did: with
+     * `save_api_request=false` the key correlated nothing that outlived the
+     * response.
+     */
+    expect(ORCHESTRATOR).toContain(
+      'const vendorData = buildVendorData(check.case_id, check.party_id ?? null);');
+    // The attempt must not creep back into the key; it is carried in metadata.
+    const line = ORCHESTRATOR.slice(
+      ORCHESTRATOR.indexOf('const vendorData = buildVendorData('),
+      ORCHESTRATOR.indexOf('const metadata = {'));
+    expect(line).not.toContain('capture_sequence');
+    expect(ORCHESTRATOR).toContain('npc_capture_sequence:');
+  });
+
   it('never sends customer PII as vendor_data or metadata', () => {
-    // vendor_data is the opaque npc:<case>:<party>:<sequence> handle.
+    // Both are stored by Didit now, so this matters more than it did.
     expect(ORCHESTRATOR).toContain('buildVendorData(');
     const metadata = ORCHESTRATOR.slice(ORCHESTRATOR.indexOf('const metadata = {'));
     const block = metadata.slice(0, metadata.indexOf('};') + 2);
