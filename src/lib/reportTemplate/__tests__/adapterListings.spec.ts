@@ -85,9 +85,66 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: (table: string) => builderFor(table) },
 }));
 
+/**
+ * The brokers, served from the same seeded rows as the tables.
+ *
+ * Three of the tables these adapters need — `investment_reports`,
+ * `property_comparisons`, `clients` — are invisible to the browser client
+ * under this app's custom auth (see `adapters/secureSource.ts`), so the
+ * adapters read them through `get-investment-reports` and `get-client-data`.
+ * This stub answers those two calls out of `harness.rows`, which keeps every
+ * assertion below about the thing it was written to check — the label column,
+ * the ordering, the `[]`-on-error rule — rather than about the transport.
+ *
+ * `harness.secure` still wins when a test sets it, so a test can still say
+ * "the broker failed" without reaching for a table.
+ */
 vi.mock('@/lib/secureInvoke', () => ({
   invokeSecureFunction: async (name: string, payload: Record<string, unknown>) => {
     harness.secureCalls.push([name, payload]);
+    if (harness.secure.data !== null || harness.secure.error !== null) return harness.secure;
+
+    const rows = (table: string) => harness.rows[table] ?? [];
+    const failed = (table: string) => harness.errors[table] ?? null;
+
+    if (name === 'get-investment-reports') {
+      const table = String(payload.table ?? 'investment_reports');
+      if (failed(table)) return { data: null, error: failed(table) };
+      const id = payload.reportId as string | undefined;
+      if (id) {
+        const row = rows(table).find((r) => r.id === id) ?? null;
+        return { data: { success: true, report: row }, error: null };
+      }
+      return { data: { success: true, reports: rows(table) }, error: null };
+    }
+
+    if (name === 'get-client-data') {
+      if (failed('clients')) return { data: null, error: failed('clients') };
+      const clientId = payload.clientId as string | undefined;
+      if (clientId) {
+        const client = rows('clients').find((r) => r.id === clientId) ?? null;
+        if (!client) return { data: null, error: { message: 'Client not found' } };
+        const include = (payload.include ?? {}) as Record<string, boolean>;
+        const child = (table: string) => rows(table).filter((r) => r.client_id === clientId);
+        return {
+          data: {
+            success: true,
+            client,
+            ...(include.properties === false ? {} : { properties: child('client_properties') }),
+            ...(include.employment ? { employment: child('client_employment') } : {}),
+            ...(include.income ? { income: child('client_income') } : {}),
+            ...(include.incomeSources ? { incomeSources: child('client_income_sources') } : {}),
+            ...(include.assets ? { assets: child('client_assets') } : {}),
+            ...(include.liabilities ? { liabilities: child('client_liabilities') } : {}),
+            ...(include.expenses ? { expenses: child('client_expenses') } : {}),
+            ...(include.addressHistory ? { addressHistory: child('client_address_history') } : {}),
+          },
+          error: null,
+        };
+      }
+      return { data: { success: true, clients: rows('clients') }, error: null };
+    }
+
     return harness.secure;
   },
 }));
@@ -98,6 +155,10 @@ import { CLIENT_NAME_COLUMNS } from '../../../../supabase/functions/_shared/clie
 
 const lastQuery = (table: string) =>
   [...harness.queries].reverse().find((q) => q.table === table);
+
+/** The last call made to a broker, for the reads that no longer touch a table. */
+const lastCall = (fn: string) =>
+  [...harness.secureCalls].reverse().find(([name]) => name === fn)?.[1] ?? null;
 
 beforeEach(() => {
   harness.rows = {};
@@ -131,14 +192,21 @@ describe('each lister reads its own table', () => {
     ]);
   });
 
-  it('investment falls back to the table when the edge function fails', async () => {
+  it('investment does not fall back to the table, because it cannot be read', async () => {
+    // This used to assert a browser-client fallback. That fallback could never
+    // work: `investment_reports`' only non-service SELECT policy is gated on
+    // `auth.uid()`, which is NULL under this app's custom cookie auth, so the
+    // read returns zero rows for every report. It read as though a second
+    // route existed, and it turned a broker failure into the same empty list
+    // more slowly. An empty list is the honest answer.
     harness.secure = { data: null, error: { message: 'unavailable' } };
     harness.rows.investment_reports = [
       { id: 'i2', property_address: '4/9 Bent St, Neutral Bay', created_at: '2026-07-20' },
     ];
     const rows = await getAdapter('investment')!.listRecentReports!();
-    expect(rows.map((r) => r.label)).toEqual(['4/9 Bent St, Neutral Bay']);
-    expect(lastQuery('investment_reports')).toBeTruthy();
+    expect(rows).toEqual([]);
+    expect(lastQuery('investment_reports'), 'the adapter read the invisible table directly')
+      .toBeUndefined();
   });
 
   it('borrowing capacity joins the client names through CLIENT_NAME_COLUMNS', async () => {
@@ -150,9 +218,11 @@ describe('each lister reads its own table', () => {
       { id: 'c1', primary_first_name: 'JORDAN', primary_surname: 'NGUYEN' },
     ];
     const rows = await getAdapter('borrowing_capacity')!.listRecentReports!();
-    const clientQuery = lastQuery('clients');
-    expect(clientQuery?.select).toBe(CLIENT_NAME_COLUMNS);
-    expect(clientQuery?.in).toEqual([['id', ['c1', 'c-missing']]]);
+    // Through the broker now — `clients` is invisible to the browser client —
+    // but still asking for the one sanctioned spelling of the name columns.
+    const call = lastCall('get-client-data') as Record<string, any> | null;
+    expect(call?.listOptions?.select).toContain(CLIENT_NAME_COLUMNS);
+    expect(lastQuery('clients'), 'the adapter read `clients` directly').toBeUndefined();
     // The name is cased for print, and a client that cannot be read still
     // lists — without a name, not without a row.
     expect(rows.map((r) => r.label)).toEqual(['Jordan Nguyen', 'Borrowing capacity assessment']);
@@ -182,9 +252,13 @@ describe('each lister reads its own table', () => {
       { id: 'i3', property_address: '7 Regent St, Newtown', created_at: '2026-08-08' },
     ];
     const rows = await getAdapter('cashflow')!.listRecentReports!();
-    const q = lastQuery('investment_reports');
-    // The server-side approximation of `hasProjections`: 162 rows, not 1,182.
-    expect(q?.not).toEqual([['financial_calculations->projections', 'is', null]]);
+    // The `projections is not null` filter cannot travel with the brokered
+    // read: the list projection omits the `financial_calculations` blob on
+    // purpose. `projectCashFlow`'s structural check is — and always was — the
+    // guard that actually refuses a report with no series, at render time.
+    // Listing one costs a refusal; the direct read cost the whole picker.
+    expect(lastQuery('investment_reports'), 'the adapter read the invisible table directly')
+      .toBeUndefined();
     expect(rows.map((r) => r.label)).toEqual(['7 Regent St, Newtown']);
   });
 
@@ -193,7 +267,10 @@ describe('each lister reads its own table', () => {
       { id: 'c2', primary_first_name: 'sam', primary_surname: 'taylor', updated_at: '2026-08-05' },
     ];
     const rows = await getAdapter('client_details')!.listRecentReports!();
-    expect(lastQuery('clients')?.select).toBe(
+    // Through the broker, and still naming the columns that exist: this is the
+    // assertion that caught `first_name, last_name`, which is on no table.
+    const call = lastCall('get-client-data') as Record<string, any> | null;
+    expect(call?.listOptions?.select).toBe(
       `${CLIENT_NAME_COLUMNS}, primary_middle_name, secondary_middle_name, updated_at, created_at`,
     );
     expect(rows).toEqual([{ id: 'c2', label: 'Sam Taylor', savedAt: '2026-08-05' }]);
@@ -355,14 +432,15 @@ describe('the client details routing read', () => {
       { id: 'c3', primary_first_name: 'JORDAN', primary_surname: 'NGUYEN', updated_at: '2026-08-05', created_at: '2026-08-01' },
     ];
     const routing = await clientDetailsAdapter.resolveRoutingContext({ reportId: 'c3' });
-    const q = lastQuery('clients');
-    // `first_name, last_name` was a PostgREST 42703 that declined every
-    // client; the constant is what keeps a fourth spelling out. The middle
-    // names ride on top of it because the document composes its subject's name
-    // from all three parts.
-    expect(q?.select).toBe(
-      `${CLIENT_NAME_COLUMNS}, primary_middle_name, secondary_middle_name, updated_at, created_at`,
-    );
+    // The read is brokered now, and the broker returns the whole client row
+    // rather than a projection — so the misspelling this test was written for
+    // (`first_name, last_name`, a PostgREST 42703 that declined every client)
+    // is no longer expressible on this path at all. What is still worth
+    // pinning is the consequence it broke: the routing read reaches a real
+    // client and titles the document with the name the page will print.
+    expect(lastQuery('clients'), 'the routing read touched the invisible table')
+      .toBeUndefined();
+    expect(lastCall('get-client-data')).toMatchObject({ clientId: 'c3' });
     expect(routing?.title).toBe('Client details — Jordan Nguyen');
   });
 

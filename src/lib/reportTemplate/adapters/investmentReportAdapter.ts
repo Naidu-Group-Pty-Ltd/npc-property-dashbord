@@ -38,16 +38,12 @@ async function loadInvestmentReport(reportId: string): Promise<any | null> {
     listOptions: { select: '*' },
   } as any);
 
-  let row: any = (resp as any)?.report ?? null;
-  if ((error || !row) && supabase) {
-    const r = await supabase
-      .from('investment_reports')
-      .select('*')
-      .eq('id', reportId)
-      .maybeSingle();
-    row = r.data;
-  }
-  return row ?? null;
+  // No browser-client fallback: `investment_reports` is invisible to it under
+  // this app's custom auth (see `adapters/secureSource.ts`), so the fallback
+  // could only ever turn a broker failure into the same null more slowly —
+  // while reading as though a second route existed.
+  if (error) return null;
+  return ((resp as any)?.report as any) ?? null;
 }
 
 function getReportType(row: any): string {
@@ -84,15 +80,8 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
           limit,
         },
       } as any);
-      let rows: any[] | null = (resp as any)?.reports ?? null;
-      if ((error || !rows) && supabase) {
-        const r = await supabase
-          .from('investment_reports')
-          .select('id, property_address, created_at')
-          .order('created_at', { ascending: false })
-          .limit(limit);
-        rows = r.error ? null : (r.data as any[]);
-      }
+      // Same reason as `loadReport`: there is no second route to fall back to.
+      const rows: any[] | null = error ? null : ((resp as any)?.reports ?? null);
       return (rows ?? []).map((row) => ({
         id: String(row.id),
         label: (row.property_address as string) || `Report ${String(row.id).slice(0, 8)}`,

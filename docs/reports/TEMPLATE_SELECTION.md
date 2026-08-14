@@ -361,3 +361,46 @@ does not satisfy — and the stored three-way scenario comparison is withheld
 because there is nothing to compare. `cashFlowTemplateRouteGuarded.spec.ts`
 pins both halves; `liveProjectionRow.spec.ts` pins the mapping, the refusals
 and the labelling.
+
+## The read that could never succeed
+
+The warning above ("your chosen template was not used") fired on a cash flow
+download whose report was healthy, whose template was active and WeasyPrint,
+and whose selection was stored. The render ledger settled it: `template_render_jobs`
+had **no row** for the attempt, and `render-template-pdf` writes its row before
+calling the engine — so the route refused before it ever rendered.
+
+The refusal was the adapter's own read. **Command Centre identity is a custom
+HttpOnly-cookie session, not a Supabase Auth session**: `integrations/supabase/client.ts`
+creates the client with the anon key and `persistSession: false`, so `auth.uid()`
+is always NULL in the browser. Three of the tables the adapters read have exactly
+one non-service SELECT policy and it is gated on `auth.uid()`:
+
+| Table | Policy | Formats affected |
+| --- | --- | --- |
+| `investment_reports` | `generated_by = auth.uid()` | cashflow (entry), investment |
+| `property_comparisons` | `user_id = auth.uid()` | comparison (entry) |
+| `clients` | `created_by = auth.uid()` | client_details (entry); borrowing_capacity and commercial_capacity (name only) |
+
+A read of any of them returned **zero rows for every record and every user** —
+not an error, an empty result. `loadReport` answered null, `resolveRoutingContext`
+answered null, the router read that as "this adapter refuses this record", and
+the caller fell through to the legacy generator. So three formats could never
+route at all, two printed documents with no client name, and the one format that
+ever rendered through the design system — `investment_compass` — is the one whose
+adapter already read through a broker. That is the mechanical explanation for
+`COVERAGE.md`'s 0.14%.
+
+Every adapter now reads through an edge function holding a service-role client,
+scoped to the verified session user: `get-investment-reports` for the two report
+tables and `get-client-data` for the client and its children — both already
+existed and are already permission-gated, so this added no new surface and no new
+authorisation decision. `adapters/secureSource.ts` is the only place that decides,
+and `adapterSourceReadable.spec.ts` fails any adapter that reads one of the three
+tables directly. Two consequences worth stating: the investment adapter's
+browser-client *fallbacks* were removed, because a fallback that returns nothing
+reads as though a second route exists; and the cash flow picker's
+"only reports that store a projection" filter no longer travels with the read,
+since the brokered list projection omits the blob on purpose — `projectCashFlow`'s
+structural check was always the guard that actually refuses such a report, at
+render time.

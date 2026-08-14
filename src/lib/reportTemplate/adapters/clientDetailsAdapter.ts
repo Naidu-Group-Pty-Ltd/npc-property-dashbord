@@ -29,6 +29,7 @@
  * clock. The adapter is the edge, so the adapter supplies it.
  */
 import { supabase } from '@/integrations/supabase/client';
+import { listClientRows, loadClientRecord as loadClientRecordSecure } from './secureSource';
 import { buildClientDetails, composeClientName } from '@/lib/reports/clientDetails/normalise.pure';
 import { applyClientDetailsProjection } from '../../../../supabase/functions/_shared/clientDetailsProjection.pure';
 import { CLIENT_NAME_COLUMNS } from '../../../../supabase/functions/_shared/clientName';
@@ -57,39 +58,39 @@ interface ClientRecord {
  * document that cannot be shown to be complete must not be produced at all.
  */
 async function loadClientRecord(clientId: string): Promise<ClientRecord | null> {
-  const [
-    clientRes, propertiesRes, employmentRes, incomeRes, incomeSourcesRes,
-    assetsRes, liabilitiesRes, expensesRes, historyRes,
-  ] = await Promise.all([
-    supabase.from('clients').select('*').eq('id', clientId).maybeSingle(),
-    supabase.from('client_properties').select('*').eq('client_id', clientId),
-    supabase.from('client_employment').select('*').eq('client_id', clientId),
-    supabase.from('client_income').select('*').eq('client_id', clientId),
-    supabase.from('client_income_sources').select('*').eq('client_id', clientId).eq('is_active', true),
-    supabase.from('client_assets').select('*').eq('client_id', clientId),
-    supabase.from('client_liabilities').select('*').eq('client_id', clientId),
-    supabase.from('client_expenses').select('*').eq('client_id', clientId),
-    supabase.from('client_address_history').select('*').eq('client_id', clientId),
-  ]);
-
-  for (const res of [
-    clientRes, propertiesRes, employmentRes, incomeRes, incomeSourcesRes,
-    assetsRes, liabilitiesRes, expensesRes, historyRes,
-  ]) {
-    if (res.error) return null;
-  }
-  if (!clientRes.data) return null;
+  // One authorised call rather than nine direct reads.
+  //
+  // `clients`' only non-service SELECT policy is `created_by = auth.uid()`,
+  // and this app's identity is a custom cookie session, so `auth.uid()` is
+  // NULL in the browser: the direct read returned no client for anybody, this
+  // function answered null for every client in the database, and the format
+  // fell through to its legacy generator every time. See `secureSource.ts`.
+  //
+  // The broker's `include` keys are this record's keys, and it applies the
+  // same `is_active` filter to income sources, so the shape below is the shape
+  // that was being assembled here.
+  const record = await loadClientRecordSecure(clientId, {
+    properties: true,
+    employment: true,
+    income: true,
+    incomeSources: true,
+    assets: true,
+    liabilities: true,
+    expenses: true,
+    addressHistory: true,
+  });
+  if (!record?.client) return null;
 
   return {
-    client: clientRes.data as Record<string, any>,
-    properties: propertiesRes.data ?? [],
-    employment: employmentRes.data ?? [],
-    income: incomeRes.data ?? [],
-    incomeSources: incomeSourcesRes.data ?? [],
-    assets: assetsRes.data ?? [],
-    liabilities: liabilitiesRes.data ?? [],
-    expenses: expensesRes.data ?? [],
-    addressHistory: historyRes.data ?? [],
+    client: record.client as Record<string, any>,
+    properties: record.properties ?? [],
+    employment: record.employment ?? [],
+    income: record.income ?? [],
+    incomeSources: record.incomeSources ?? [],
+    assets: record.assets ?? [],
+    liabilities: record.liabilities ?? [],
+    expenses: record.expenses ?? [],
+    addressHistory: record.addressHistory ?? [],
   };
 }
 
@@ -152,13 +153,15 @@ async function clientIdsWithRecords(): Promise<string[]> {
 
 /** Just the client row, for routing — nine reads to decide a title is waste. */
 async function loadClientRow(clientId: string): Promise<Record<string, any> | null> {
-  const { data, error } = await supabase
-    .from('clients')
-    .select(`${NAME_COLUMNS}, updated_at, created_at`)
-    .eq('id', clientId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
+  // Through the broker: `clients` is invisible to the browser client under
+  // this app's custom auth, so this read decided "no such client" for every
+  // client and routing declined the format outright. See `secureSource.ts`.
+  //
+  // The broker returns the whole client row rather than `NAME_COLUMNS`; that
+  // constant stays because it documents what the *document* composes a name
+  // from, and the two name reads below still project it.
+  const record = await loadClientRecordSecure(clientId, { properties: false });
+  return (record?.client as Record<string, any>) ?? null;
 }
 
 export const clientDetailsAdapter: ReportTemplateAdapter = {
@@ -199,30 +202,24 @@ export const clientDetailsAdapter: ReportTemplateAdapter = {
         savedAt: (row.updated_at as string) ?? (row.created_at as string) ?? null,
       });
 
-      const recorded = await clientIdsWithRecords();
-      const withRecords: Record<string, any>[] = [];
-      if (recorded.length > 0) {
-        const { data } = await supabase
-          .from('clients')
-          .select(`${NAME_COLUMNS}, updated_at, created_at`)
-          .in('id', recorded)
-          .order('updated_at', { ascending: false })
-          .limit(Math.max(1, Math.floor(limit * 0.75)));
-        withRecords.push(...((data ?? []) as Record<string, any>[]));
-      }
+      const recorded = new Set(await clientIdsWithRecords());
 
-      const { data: recent, error } = await supabase
-        .from('clients')
-        .select(`${NAME_COLUMNS}, updated_at, created_at`)
-        .order('updated_at', { ascending: false })
-        .limit(limit);
-      // The recorded half is a preference, not a requirement: if that read
-      // failed there is still a picker, and if this one failed there is not.
-      if (error && withRecords.length === 0) return [];
+      // One brokered page, partitioned here rather than two filtered reads:
+      // `clients` is invisible to the browser client, so both reads returned
+      // nothing and this picker was empty for everybody. The page is drawn
+      // wider than the limit so the clients-with-records half still has
+      // something to find in it.
+      const page = await listClientRows({
+        select: `${NAME_COLUMNS}, updated_at, created_at`,
+        orderBy: 'updated_at',
+        limit: Math.min(200, Math.max(limit * 4, 50)),
+      });
+      const withRecords = page.filter((row) => recorded.has(String(row.id)));
+      const recent = page;
 
       const out: ReportListing[] = [];
       const seen = new Set<string>();
-      for (const row of [...withRecords, ...((recent ?? []) as Record<string, any>[])]) {
+      for (const row of [...withRecords, ...recent]) {
         const id = String(row.id);
         if (seen.has(id)) continue;
         seen.add(id);
