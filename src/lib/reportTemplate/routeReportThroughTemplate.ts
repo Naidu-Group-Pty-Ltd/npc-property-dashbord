@@ -6,9 +6,8 @@
  * so callers can fall back to legacy generators whenever routing is not ready.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
+import { compileTemplateHtmlForPdf } from '@/lib/reportTemplate/compileTemplateForPdf';
 import { parseTemplate } from '@/lib/reportTemplate/templateSchema';
-import { preloadImages } from '@/lib/reportTemplate/imagePreloader';
 import { resolveReportTemplate, type ReportVariant } from '@/lib/reportTemplate/resolveTemplate';
 import { refuseUnboundReconstruction } from '@/lib/reportTemplate/rendering/productionTemplateGuard';
 import { getAdapter, listAdapters, type ReportTemplateAdapter } from '@/lib/reportTemplate/adapters';
@@ -126,6 +125,14 @@ export async function routeReportThroughTemplate(
     brand?: any;
     reportType?: string | null;
     allowedReportTypes?: readonly string[];
+    /**
+     * The format's own sub-selection — which scenario, tier or edition of the
+     * document this is. Read four times below and, until now, declared nowhere:
+     * `tryRouteThroughTemplateBuilderFor` has always passed it and the property
+     * has always arrived, so the omission was invisible at runtime and only a
+     * type check would ever have found it.
+     */
+    variant?: string | null;
     /**
      * The template the person chose for this format, if they have chosen one.
      *
@@ -257,14 +264,35 @@ export async function routeReportThroughTemplate(
         continue;
       }
 
-      // Reference mode — WeasyPrint fetches assets itself. See weasyPreview.ts.
-      const preparedSchema = await preloadImages(schema, { mode: 'reference' }).catch(() => schema);
-      const { html } = renderTemplateToHtml(preparedSchema, {
-        data: bindingData,
-        customCss: tplRow.custom_css ?? undefined,
-        title: `${tplRow.name} — ${routing.title ?? ''}`.trim(),
-        cascadeMetadata: true,
-      });
+      // Through the one compiler, not a second hand-rolled copy of it.
+      //
+      // This called `preloadImages` and `renderTemplateToHtml` itself, which is
+      // exactly the shape `compileTemplateForPdf.ts` was written to retire —
+      // and it repeated the omission that module documents. It resolved the
+      // rasters (so imported pages were not blank here), but it never set
+      // `fontSource: 'container'`, so the HTML carried a Google Fonts
+      // `@import` from `tokens.fontFaces` and `render-template-pdf` rejected
+      // every document at its resource boundary. That is why the production
+      // route rendered nothing at all while the editor's preview of the same
+      // template worked: the preview path already went through the compiler.
+      let html: string;
+      try {
+        ({ html } = await compileTemplateHtmlForPdf(schema, {
+          data: bindingData,
+          customCss: tplRow.custom_css ?? undefined,
+          title: `${tplRow.name} — ${routing.title ?? ''}`.trim(),
+          cascadeMetadata: true,
+        }));
+      } catch (e) {
+        // Guarded on its own rather than left to the outer catch: a signing or
+        // compile failure for one template must fall through to the next
+        // candidate adapter, and be reported as the render gate it is instead
+        // of as `unexpected_error`. The route's contract is that every failure
+        // is a fallback.
+        refuse('render_failed',
+          `compiling ${tplRow.id}: ${e instanceof Error ? e.message : String(e)}`);
+        continue;
+      }
 
       const safeLabel = String(routing.fileLabel ?? routing.title ?? routing.reportType ?? 'report')
         .replace(/[^a-zA-Z0-9._-]/g, '_')

@@ -86,7 +86,21 @@ export function assertSafeRenderResources(html: string, supabaseUrl: string): vo
       && url.origin === allowedOrigin
       && url.pathname.startsWith('/storage/v1/object/');
     if (!isProjectStorageObject) {
-      throw new Error('Remote render resources must be normalized into project storage');
+      // Name the offender.
+      //
+      // This threw the bare sentence for three years and it pointed at nothing
+      // — the caller got a 500 whose text could not distinguish a stray import
+      // from an un-normalised logo, and the comments above record two separate
+      // occasions when that cost a debugging session. The third was worse: all
+      // 500 seeded masters emit `@import url('https://fonts.googleapis.com/…')`
+      // from `tokens.fontFaces`, so every design-system render was refused
+      // here, silently, and the message said only that something remote was
+      // present. The URL came from the caller's own HTML, so echoing it back
+      // discloses nothing it did not send.
+      throw new Error(
+        'Remote render resources must be normalized into project storage; '
+        + `refused ${url.origin}${url.pathname}`,
+      );
     }
   }
 }

@@ -65,6 +65,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   let jobId: string | null = null;
   let templateId: string | null = null;
   let requestedBy: string | null = null;
+  // Hoisted so the catch can record a failure that happened before the job row
+  // was inserted. `file_name` is NOT NULL on the table, so a placeholder is what
+  // makes the pre-render failure recordable at all.
+  let fileName = 'template-render.pdf';
+  let mode = 'preview';
   const started = Date.now();
 
   try {
@@ -102,14 +107,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    // Metadata BEFORE the resource assertion, so a refusal is attributable.
+    //
+    // `templateId` used to be read after it, which meant a document rejected at
+    // the boundary wrote no `template_render_jobs` row (the insert is further
+    // down) AND no `template_events` row (that insert is guarded on
+    // `templateId`). A render refused here therefore left no trace anywhere: the
+    // caller saw a 500, fell back to its legacy generator, and the ledger said
+    // the render had never been attempted. Every design-system render this
+    // product made between 11 and 14 August 2026 failed exactly that way — all
+    // 500 seeded masters carry a Google Fonts `@import` — and finding it took a
+    // local reproduction rather than a query. These four lines are strings off
+    // an authenticated caller's own payload; reading them early costs nothing
+    // and is what makes the refusal visible.
+    fileName = String(payload.fileName || 'template-preview.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    templateId = payload.templateId ? String(payload.templateId) : null;
+    const templateName: string | null = payload.templateName ? String(payload.templateName).slice(0, 200) : null;
+    mode = payload.mode === 'final' ? 'final' : 'preview';
+
     // WeasyPrint resolves image, stylesheet, and font URLs from its own network.
     // Enforce the resource boundary here even if an earlier importer or caller
     // failed to normalize an asset.
     assertSafeRenderResources(html, Deno.env.get('SUPABASE_URL') || '');
-    const fileName: string = String(payload.fileName || 'template-preview.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-    templateId = payload.templateId ? String(payload.templateId) : null;
-    const templateName: string | null = payload.templateName ? String(payload.templateName).slice(0, 200) : null;
-    const mode: string = payload.mode === 'final' ? 'final' : 'preview';
     const variant: PdfVariant = toPdfVariant(payload.pdfVariant);
     const tagged: boolean = payload.tagged !== false;
     const optimizeImages: boolean = payload.optimizeImages !== false;
@@ -217,6 +236,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           duration_ms: Date.now() - started,
         })
         .eq('id', jobId);
+    } else if (requestedBy) {
+      // Failed before the job row existed — the resource boundary, a malformed
+      // payload, an unreachable renderer. Record it anyway. A render that
+      // leaves no row reads, to every query anyone will run, exactly like a
+      // render nobody asked for; that is what hid this for three days. Guarded
+      // on `requestedBy` so an unauthenticated request still writes nothing.
+      const { error: recordErr } = await supabase
+        .from('template_render_jobs')
+        .insert({
+          template_id: templateId,
+          requested_by: requestedBy,
+          mode,
+          file_name: fileName,
+          status: 'failed',
+          error: msg.slice(0, 2000),
+          duration_ms: Date.now() - started,
+          metadata: { failed_before_render: true },
+        });
+      if (recordErr) {
+        console.warn('[render-template-pdf] could not record pre-render failure:', recordErr.message);
+      }
     }
     // Phase 14 — analytics event (failure)
     try {

@@ -26,6 +26,10 @@ import {
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
 import { tokensToCssVariables, tokensToFontFaceCss, tokenCssDeclaration } from './cssTokens';
+import {
+  substitutePrintFontFaces,
+  substitutePrintTokenFonts,
+} from '@/lib/reportDesign/printFontPolicy.pure';
 import { toRendererHex } from './cssColor';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { stableJson, templateMetaKey } from './previewCache';
@@ -81,6 +85,27 @@ export interface HtmlRenderOptions {
    * the quality capture can still detect a missing asset.
    */
   regionCropSrc?: (regionId: string) => string | null;
+  /**
+   * Where the typefaces come from.
+   *
+   * `'remote'` (the default) is the browser: a template's `tokens.fontFaces`
+   * `cssUrl` is emitted as an `@import`, which is how a webfont has always
+   * reached a preview.
+   *
+   * `'container'` is **every render bound for WeasyPrint**, and it is a
+   * correctness requirement rather than a preference.
+   * `render-template-pdf` asserts that the HTML can make no network request
+   * before it invokes the engine, so one remote `@import` fails the entire
+   * document — and all 500 seeded masters carry one. Under `'container'` the
+   * stylesheet links are withheld and the families are resolved by fontconfig
+   * inside the image, which is already how the ten legacy report formats set
+   * type. Families the image does not install are substituted explicitly
+   * first; see `printFontPolicy.pure.ts`.
+   *
+   * Callers do not choose this by hand: `compileTemplateHtmlForPdf` — the one
+   * way to compile a template for the PDF renderer — sets it.
+   */
+  fontSource?: 'remote' | 'container';
 }
 
 export interface HtmlRenderResult {
@@ -88,6 +113,20 @@ export interface HtmlRenderResult {
   css: string;
 }
 
+/**
+ * Merge token layers, and rewrite any face the render container cannot set.
+ *
+ * The substitution happens HERE rather than at the top of the render because
+ * this is the one funnel every token layer passes through — the document's own
+ * tokens, an active theme, caller overrides, and each page's theme delta. A
+ * per-page theme naming Fraunces would otherwise reach the page untouched, and
+ * a face the image lacks prints as the engine's default with no warning from
+ * anything. See `printFontPolicy.pure.ts`.
+ *
+ * Applied in the preview too, deliberately: a preview that fetched Fraunces
+ * from Google would show a document the printer cannot produce, and a preview
+ * that disagrees with the print is worse than one that shows the substitute.
+ */
 function mergeTokens(base: Tokens, ...overrides: Array<Partial<Tokens> | undefined>): Tokens {
   const out: Tokens = {
     colors: { ...base.colors },
@@ -117,6 +156,10 @@ function mergeTokens(base: Tokens, ...overrides: Array<Partial<Tokens> | undefin
       ];
     }
   }
+  out.fonts = substitutePrintTokenFonts(out.fonts as Record<string, unknown>) as Tokens['fonts'];
+  (out as any).fontFaces = (out as any).fontFaces
+    ? substitutePrintFontFaces((out as any).fontFaces)
+    : (out as any).fontFaces;
   return out;
 }
 
@@ -853,7 +896,14 @@ export function renderTemplateToHtml(
 ` : '';
 
   const css = [
-    tokensToFontFaceCss(baseTokens),
+    // `container` withholds every remote stylesheet link. See `fontSource` on
+    // HtmlRenderOptions: one `@import` of a Google Fonts URL is enough for
+    // `render-template-pdf` to reject the whole document at its resource
+    // boundary, which is what made every design-system render fall back to the
+    // legacy generator.
+    tokensToFontFaceCss(baseTokens, {
+      remoteStylesheets: options.fontSource !== 'container',
+    }),
     tokensToCssVariables(baseTokens),
     baseCss(),
     pageCss(visiblePages, template, ctxBase).css,

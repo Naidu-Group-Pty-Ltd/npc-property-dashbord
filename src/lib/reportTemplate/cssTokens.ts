@@ -95,19 +95,42 @@ export function tokensToCssVariables(tokens: Tokens): string {
   return lines.join('\n');
 }
 
+export interface FontFaceCssOptions {
+  /**
+   * May this document reach the network for a font stylesheet?
+   *
+   * `true` (the default) is the browser preview, where a Google Fonts `@import`
+   * is how a template names a webfont and has always worked.
+   *
+   * `false` is **every render bound for WeasyPrint**, and it is not an
+   * optimisation. `render-template-pdf` runs `assertSafeRenderResources` over
+   * the HTML before invoking the engine, and that gate admits only `data:`
+   * payloads and this project's own storage objects — so a single `@import` of
+   * a remote stylesheet fails the whole document, silently, before anything is
+   * written to the render ledger. Every one of the 500 seeded masters carries
+   * one. See `printFontPolicy.pure.ts`; the container is the font source for
+   * print, and `substitutePrintTokenFonts` has already rewritten any family it
+   * does not have.
+   */
+  remoteStylesheets?: boolean;
+}
+
 /**
  * Phase 5 — emit @import / @font-face declarations from tokens.fontFaces so
  * the renderer can use custom or Google Fonts without manual setup.
  */
-export function tokensToFontFaceCss(tokens: Tokens): string {
+export function tokensToFontFaceCss(tokens: Tokens, options: FontFaceCssOptions = {}): string {
   const faces = (tokens as any).fontFaces as Array<any> | undefined;
   if (!faces || !faces.length) return '';
+  const allowRemote = options.remoteStylesheets !== false;
   const imports: string[] = [];
   const declarations: string[] = [];
   for (const f of faces) {
     if (f?.cssUrl) {
       const cssUrl = String(f.cssUrl);
-      if (isRemoteFontUrl(cssUrl)) imports.push(`@import url('${escapeCssString(cssUrl)}');`);
+      if (allowRemote && isRemoteFontUrl(cssUrl)) {
+        imports.push(`@import url('${escapeCssString(cssUrl)}');`);
+      }
       continue;
     }
     if (f?.src && f?.family) {
@@ -115,6 +138,12 @@ export function tokensToFontFaceCss(tokens: Tokens): string {
       // so embedded/captured fonts (R0, data: src) get the right format() hint.
       const src = String(f.src);
       if (!isFontSource(src)) continue;
+      // Same boundary as the `@import` above, for the same reason: a `src`
+      // pointing at another host is a network fetch, and the render gate
+      // rejects the whole document rather than the one face. A `data:` src —
+      // the captured/embedded fonts an import produces — travels with the
+      // HTML and is admitted, so those still reach the printed page.
+      if (!allowRemote && /^(?:https?:)?\/\//i.test(src)) continue;
       const fmt = /woff2/i.test(src) ? 'woff2'
         : /woff/i.test(src) ? 'woff'
         : /(otf|opentype)/i.test(src) ? 'opentype'
