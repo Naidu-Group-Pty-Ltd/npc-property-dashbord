@@ -266,11 +266,60 @@ describe('the generated schema knows every column these paths select', () => {
     const { problems, checkedColumns, unresolved } = check(adapterFiles());
     expect(problems).toEqual([]);
     // Coverage is asserted, because a parser that silently resolved nothing
-    // would pass this file for ever. 162 column references across the nine
-    // adapters at the time of writing; the floor catches a parser regression
-    // without failing on every new query.
-    expect(checkedColumns).toBeGreaterThan(170);
+    // would pass this file for ever. The floor was 170 when every adapter read
+    // its own tables directly; it is 100 now because three of those tables —
+    // `investment_reports`, `property_comparisons` and `clients` — are
+    // invisible to the browser client under this app's custom auth, so those
+    // reads moved into `get-investment-reports` and `get-client-data`, whose
+    // column lists live in the edge functions. The references that remain are
+    // the sixteen tables an adapter may still read for itself, and the test
+    // below covers the column lists that travelled to the brokers.
+    expect(checkedColumns).toBeGreaterThan(100);
     expect(unresolved).toEqual([]);
+  });
+
+  it('every column the adapters ask a broker for exists too', () => {
+    // The misspelling protection followed the read. `clientDetailsAdapter` and
+    // `borrowingCapacityAdapter` now pass their column list to
+    // `get-client-data`, and the investment and cash flow adapters pass theirs
+    // to `get-investment-reports`; a `first_name` there is the same 42703 it
+    // was on the direct read, just answered by a broker.
+    //
+    // The table is resolved from the call rather than assumed: the two brokers
+    // serve different tables, and checking one list against the other's
+    // columns would fail on correct code.
+    const tables = schemaTables();
+    const tableFor = (fn: string, body: string): string | null => {
+      if (fn === 'get-client-data') return 'clients';
+      if (fn !== 'get-investment-reports') return null;
+      return body.match(/table:\s*['"]([a-z_]+)['"]/)?.[1] ?? 'investment_reports';
+    };
+
+    const checked: string[] = [];
+    for (const rel of adapterFiles()) {
+      const code = readFileSync(join(ROOT, rel), 'utf8');
+      for (const call of code.matchAll(
+        /invokeSecureFunction\(\s*['"]([a-z-]+)['"]\s*,\s*\{([\s\S]*?)\}\s*as any\)/g,
+      )) {
+        const [, fn, body] = call;
+        const table = tableFor(fn, body);
+        if (!table) continue;
+        const known = tables.get(table);
+        if (!known) continue;
+        for (const sel of body.matchAll(/select:\s*[`'"]([^`'"]+)[`'"]/g)) {
+          for (const raw of sel[1].split(',')) {
+            const col = raw.trim();
+            // `${CLIENT_NAME_COLUMNS}` expands to columns asserted above; the
+            // interpolation itself is not a column name.
+            if (!col || col === '*' || col.includes('${')) continue;
+            checked.push(col);
+            expect(known.has(col), `\`${table}\` has no column \`${col}\` (${rel})`).toBe(true);
+          }
+        }
+      }
+    }
+    // The same canary: a regex that matched nothing would pass for ever.
+    expect(checked.length).toBeGreaterThan(2);
   });
 
   it('every column the render routes select exists', () => {

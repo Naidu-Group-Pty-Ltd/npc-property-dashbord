@@ -26,7 +26,6 @@
  * and a routing context that resolves for a report the binding cannot serve
  * would show an operator a ready-looking template that renders empty.
  */
-import { supabase } from '@/integrations/supabase/client';
 import {
   applyCashFlowProjection,
   projectCashFlow,
@@ -38,6 +37,7 @@ import {
   wireAsProjectionRow,
 } from '@/lib/reports/cashFlow/liveProjectionRow';
 import type { WireProjection } from '@/lib/reports/cashFlow/requestCashFlowPdf';
+import { listInvestmentReportRows, loadInvestmentReportRow } from './secureSource';
 import { applyOrganisationAndBrand } from './organisation';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
@@ -58,14 +58,19 @@ import type {
  */
 const COLUMNS = 'id, property_address, financial_calculations, created_at, updated_at';
 
+/**
+ * Read through the broker, never through the browser client.
+ *
+ * `investment_reports`' only non-service SELECT policy is gated on
+ * `auth.uid()`, and this app's identity is a custom cookie session — so a
+ * direct read returns zero rows for every report, and this adapter answered
+ * "I refuse this record" for all 1,182 of them. That is what made a chosen
+ * template come out as the standard layout on every download. See
+ * `secureSource.ts`. The `detail` projection `reportId` selects carries
+ * `financial_calculations`, which is the whole of what this format binds.
+ */
 async function loadReport(reportId: string): Promise<Record<string, any> | null> {
-  const { data, error } = await supabase
-    .from('investment_reports')
-    .select(COLUMNS)
-    .eq('id', reportId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
+  return loadInvestmentReportRow(reportId);
 }
 
 /**
@@ -123,22 +128,23 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
    * label a picker is the exact waste `COLUMNS` exists to avoid.
    */
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
-    try {
-      const { data, error } = await supabase
-        .from('investment_reports')
-        .select('id, property_address, created_at')
-        .not('financial_calculations->projections', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      if (error || !data) return [];
-      return (data as Record<string, any>[]).map((row) => ({
-        id: String(row.id),
-        label: (row.property_address as string) || '10 Year Cash Flow',
-        savedAt: (row.created_at as string) ?? null,
-      }));
-    } catch {
-      return [];
-    }
+    // Through the broker, for the same reason `loadReport` is: a direct read
+    // of `investment_reports` returns nothing at all in the browser.
+    //
+    // The "only reports that store a projection" filter cannot travel with it
+    // — the broker's list projection deliberately omits the
+    // `financial_calculations` blob, because pulling twenty of them to label a
+    // picker is exactly the waste `COLUMNS` exists to avoid. Listing a report
+    // that turns out to store no series costs a refusal at render time, which
+    // `projectCashFlow`'s structural check has always been the real guard for;
+    // listing nothing at all, which is what the direct read did, costs the
+    // whole picker.
+    const rows = await listInvestmentReportRows(limit);
+    return rows.map((row) => ({
+      id: String(row.id),
+      label: (row.property_address as string) || '10 Year Cash Flow',
+      savedAt: (row.created_at as string) ?? null,
+    }));
   },
 
   async resolveRoutingContext({ reportId, variant, payload }): Promise<RoutingContext | null> {

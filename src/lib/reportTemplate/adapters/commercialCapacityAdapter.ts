@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { loadClientRecord as loadClientRecordSecure } from './secureSource';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -80,12 +81,12 @@ async function loadRun(runId: string) {
  */
 async function loadClientName(clientId: string | null): Promise<string | null> {
   if (!clientId) return null;
-  const { data, error } = await supabase
-    .from('clients')
-    .select('primary_first_name, primary_surname')
-    .eq('id', clientId)
-    .maybeSingle();
-  if (error || !data) return null;
+  // Through the broker: `clients` is invisible to the browser client under
+  // this app's custom auth, so the report's client line was empty for every
+  // assessment. See `secureSource.ts`.
+  const record = await loadClientRecordSecure(clientId, { properties: false });
+  const data = record?.client as Record<string, any> | undefined;
+  if (!data) return null;
   const name = [data.primary_first_name, data.primary_surname]
     .map((p) => (typeof p === 'string' ? p.trim() : ''))
     .filter(Boolean)

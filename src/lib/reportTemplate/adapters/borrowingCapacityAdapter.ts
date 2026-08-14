@@ -33,6 +33,7 @@ import {
   CLIENT_NAME_COLUMNS, clientDisplayName, type ClientNameRow,
 } from '../../../../supabase/functions/_shared/clientName';
 import { applyOrganisationAndBrand } from './organisation';
+import { loadClientRecord as loadClientRecordSecure, loadClientRowsByIds } from './secureSource';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
@@ -63,13 +64,11 @@ async function loadAssessment(reportId: string): Promise<Record<string, any> | n
  */
 async function loadClient(clientId: unknown): Promise<ClientNameRow | null> {
   if (typeof clientId !== 'string' || !clientId) return null;
-  const { data, error } = await supabase
-    .from('clients')
-    .select(CLIENT_NAME_COLUMNS)
-    .eq('id', clientId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as ClientNameRow;
+  // Through the broker: `clients` is invisible to the browser client under
+  // this app's custom auth, so this read returned null for every client and
+  // the Snapshot's cover printed no name at all. See `secureSource.ts`.
+  const record = await loadClientRecordSecure(clientId, { properties: false });
+  return (record?.client as ClientNameRow) ?? null;
 }
 
 export const borrowingCapacityAdapter: ReportTemplateAdapter = {
@@ -101,13 +100,12 @@ export const borrowingCapacityAdapter: ReportTemplateAdapter = {
       )] as string[];
       const names = new Map<string, string>();
       if (clientIds.length > 0) {
-        const { data: clients } = await supabase
-          .from('clients')
-          .select(CLIENT_NAME_COLUMNS)
-          .in('id', clientIds);
-        for (const c of (clients ?? []) as Array<ClientNameRow & { id: string }>) {
-          const name = clientDisplayName(c);
-          if (name) names.set(c.id, name);
+        // One brokered list, indexed — `clients` is invisible to the browser
+        // client, so this lookup used to label nothing at all.
+        const rows = await loadClientRowsByIds(clientIds, CLIENT_NAME_COLUMNS);
+        for (const [id, row] of rows) {
+          const name = clientDisplayName(row as ClientNameRow);
+          if (name) names.set(id, name);
         }
       }
 

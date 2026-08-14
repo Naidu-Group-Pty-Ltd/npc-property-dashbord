@@ -19,18 +19,17 @@
 import { supabase } from '@/integrations/supabase/client';
 import { applyComparisonProjection } from '../../../../supabase/functions/_shared/comparisonProjection.pure';
 import { applyOrganisationAndBrand } from './organisation';
+import { listPropertyComparisonRows, loadPropertyComparisonRow } from './secureSource';
 import type {
   BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext,
 } from './types';
 
 async function loadComparison(reportId: string): Promise<Record<string, any> | null> {
-  const { data, error } = await supabase
-    .from('property_comparisons')
-    .select('*')
-    .eq('id', reportId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data as Record<string, any>;
+  // Through the broker: `property_comparisons`' only non-service SELECT policy
+  // is `user_id = auth.uid()`, and this app's identity is a custom cookie
+  // session, so the direct read returned nothing for every comparison and this
+  // format never routed. See `secureSource.ts`.
+  return loadPropertyComparisonRow(reportId);
 }
 
 /**
@@ -62,21 +61,13 @@ export const comparisonAdapter: ReportTemplateAdapter = {
   },
 
   async listRecentReports({ limit = 20 }: { limit?: number } = {}): Promise<ReportListing[]> {
-    try {
-      const { data, error } = await supabase
-        .from('property_comparisons')
-        .select('id, report_title, created_at')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      if (error || !data) return [];
-      return (data as Record<string, any>[]).map((row) => ({
-        id: String(row.id),
-        label: (row.report_title as string) || 'Property comparison',
-        savedAt: (row.created_at as string) ?? null,
-      }));
-    } catch {
-      return [];
-    }
+    // Through the broker, for the same reason `loadComparison` is.
+    const rows = await listPropertyComparisonRows(limit);
+    return rows.map((row) => ({
+      id: String(row.id),
+      label: (row.report_title as string) || 'Property comparison',
+      savedAt: (row.created_at as string) ?? null,
+    }));
   },
 
   async resolveRoutingContext({ reportId }): Promise<RoutingContext | null> {
