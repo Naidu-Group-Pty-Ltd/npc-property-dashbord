@@ -46,8 +46,17 @@ import type {
   CostLine,
 } from './reports/commercialCapacity/payload.pure.ts';
 import type { CapacityAnalysis } from './reports/commercialCapacity/analysis.pure.ts';
-import { ANALYSIS_PROVENANCE_NOTE } from './reports/commercialCapacity/render.pure.ts';
-import type { Measure } from './reportDesign/measure.pure.ts';
+import {
+  ANALYSIS_PROVENANCE_NOTE,
+  EFFECT_LABEL,
+  formatReportDate,
+} from './reports/commercialCapacity/render.pure.ts';
+import {
+  formatAmount,
+  formatDelta,
+  formatMeasure,
+  type Measure,
+} from './reportDesign/measure.pure.ts';
 
 /**
  * Collections a page may draw.
@@ -68,7 +77,18 @@ export const CAPS = {
   warnings: 5,
   outstanding: 6,
   nextActions: 5,
-  method: 8,
+  /** Five of the stored run's twenty steps fit beside the version table. */
+  method: 5,
+  /** The serviceability ledger — seven rows on the stored run, eight at the cap:
+   * the reserved height is the deepest variant's, and ten ran three variants'
+   * declared arithmetic past the footer. */
+  serviceabilityRows: 8,
+  /** Business income periods — the engine weights at most a handful. */
+  periods: 4,
+  /** Portfolio before/after rows — the normaliser builds a fixed measure set. */
+  portfolioRows: 8,
+  /** Compliance flags drawn as callouts; the count is printed beside them. */
+  flags: 2,
 } as const;
 
 function put(target: Record<string, unknown>, key: string, value: unknown): void {
@@ -94,18 +114,37 @@ function costLine(line: CostLine): Record<string, unknown> {
   return out;
 }
 
+/**
+ * One capacity test, in the legacy table's own columns.
+ *
+ * This used to read `limit`, `headroom` and `status` — three fields
+ * `ConstraintRow` has never had (it has `cap`, `threshold`, `actual`,
+ * `applied`), which the `as Record<string, unknown>` cast hid from the type
+ * checker. Every master's tests table therefore printed its Limit and Status
+ * columns **empty on every row** — on the table the format exists for.
+ *
+ * The columns are composed here because they mix units — `cap` is dollars,
+ * `threshold` and `actual` are a rate on the LVR row and a ratio on the DSCR
+ * row, and three of the eight stored tests carry neither — so one template
+ * filter cannot format the column. `formatMeasure` is the legacy table's own
+ * formatter, and the em dash is its own absent-cell treatment.
+ */
 function constraint(row: ConstraintRow): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  const r = row as unknown as Record<string, unknown>;
-  put(out, 'label', str(r.label));
-  put(out, 'actual', num(r.actual as Measure));
-  put(out, 'limit', num(r.limit as Measure));
-  put(out, 'headroom', num(r.headroom as Measure));
-  put(out, 'status', str(r.status));
+  put(out, 'label', str(row.label));
+  put(out, 'capLabel', row.applied && row.cap ? formatMeasure(row.cap) : '—');
+  put(out, 'thresholdLabel', row.threshold ? formatMeasure(row.threshold) : '—');
+  put(out, 'actualLabel', row.actual ? formatMeasure(row.actual) : '—');
+  // Three states, not two — "Not applicable" and "Does not bind" are different
+  // facts about a facility, and collapsing them tells a reader a test passed
+  // when it was never run. The legacy table's own words.
+  out.statusLabel = !row.applied ? 'Not applicable' : row.binding ? 'Binds' : 'Does not bind';
+  put(out, 'formula', str(row.formula));
+  put(out, 'cap', num(row.cap));
   // Which test decided the answer. The whole document turns on this one row and
   // all three assessments in production are bound by the same test, so it is
   // published as a flag a master can draw a marker from.
-  if (r.binding === true) out.binding = true;
+  if (row.binding === true) out.binding = true;
   return out;
 }
 
@@ -207,7 +246,97 @@ export function projectCommercialCapacity(
       put(capacity, 'constraintsOmitted',
         `${constraints.length - CAPS.constraints} further tests are not shown.`);
     }
+
+    /*
+     * The explanation the legacy sets over its constraints table, in its exact
+     * sentences — one shape when a test bound, another when none did, and the
+     * title composed beside the body because the two shapes take different
+     * titles. What was here before bound only the binding test's *name*.
+     */
+    const binding = constraints.find((c: ConstraintRow) => c.binding);
+    if (binding) {
+      put(capacity, 'bindingTitle',
+        `The ${binding.label.toLowerCase()} is what sets this capacity`);
+      put(capacity, 'bindingExplanation',
+        `Of the tests applied, the ${binding.label.toLowerCase()} permits the smallest facility — `
+        + `${formatMeasure(binding.cap)}. Every other test would allow more, so lifting them `
+        + 'changes nothing until this one moves.'
+        + (binding.formula ? ` It is calculated as ${binding.formula}.` : ''));
+    } else {
+      put(capacity, 'bindingTitle', 'No single binding test');
+      put(capacity, 'bindingExplanation',
+        'The assessment did not resolve to one binding constraint. That normally means '
+        + 'information the tests depend on is still outstanding — see the compliance section.');
+    }
   }
+
+  /*
+   * Where the transaction sits against policy — the answer page's ratio table,
+   * row for row. Composed because the two columns mix units (a rate on the LVR
+   * row, a ratio on the DSCR row) and because the policy cell is a labelled
+   * bound ("Ceiling 65%", "Minimum 1.25x") rather than a bare figure.
+   */
+  if (Object.keys(ratios).length) {
+    const ratioRows: Array<Record<string, unknown>> = [];
+    const ratioRow = (label: string, actual: Measure | null, bound: string | undefined) => {
+      if (!actual) return;
+      const row: Record<string, unknown> = { label, actualLabel: formatMeasure(actual) };
+      put(row, 'policyLabel', bound);
+      ratioRows.push(row);
+    };
+    ratioRow('Loan to value', r.lvr, r.lvrCeiling ? `Ceiling ${formatMeasure(r.lvrCeiling)}` : undefined);
+    ratioRow('Loan to cost', r.ltc, r.ltcCeiling ? `Ceiling ${formatMeasure(r.ltcCeiling)}` : undefined);
+    ratioRow('Debt service cover', r.dscr, r.dscrFloor ? `Minimum ${formatMeasure(r.dscrFloor)}` : undefined);
+    ratioRow('Interest cover', r.icr, r.icrFloor ? `Minimum ${formatMeasure(r.icrFloor)}` : undefined);
+    ratioRow('Debt yield', r.debtYield, r.debtYieldFloor ? `Minimum ${formatMeasure(r.debtYieldFloor)}` : undefined);
+    ratioRow('Debt to EBITDA', r.debtToEbitda, undefined);
+    if (ratioRows.length) capacity.ratioRows = ratioRows;
+  }
+
+  /*
+   * The assessment terms the legacy table prints and the masters never drew —
+   * the term composed with its amortisation, because "a five-year facility
+   * amortised over twenty has a repayment sized for twenty, and a terms table
+   * showing only the term invites the wrong arithmetic from a reader who does
+   * this for a living" (the payload's own words). One row, so an assessment
+   * with no separate amortisation shows no empty band.
+   */
+  if (h.loanTerm) {
+    put(headline, 'termLabel', h.amortisation
+      ? `${formatMeasure(h.loanTerm)}, amortised over ${formatMeasure(h.amortisation)}`
+      : formatMeasure(h.loanTerm));
+  }
+
+  // ── the serviceability ledger ────────────────────────────────────────────
+  //
+  // Income in, commitments out, the surplus at the foot — the legacy's own
+  // ledger, which this projection dropped entirely. `amountLabel` is signed by
+  // `formatAmount` because the commitments rows are negative and the sign is
+  // the row's meaning; `effect` is the direction in words, because colour
+  // alone gets it wrong and gets it wrong invisibly.
+  const svc = s.serviceability ?? {};
+  const svcRows = Array.isArray(svc.rows) ? svc.rows : [];
+  const serviceability: Record<string, unknown> = {};
+  if (svcRows.length) {
+    serviceability.rows = svcRows.slice(0, CAPS.serviceabilityRows).map((row: any) => {
+      const out: Record<string, unknown> = {};
+      put(out, 'label', str(row?.label));
+      if (row?.amount) put(out, 'amountLabel', formatAmount(row.amount));
+      const effect = EFFECT_LABEL[row?.direction as keyof typeof EFFECT_LABEL];
+      out.effect = effect ?? '—';
+      if (row?.emphasis === 'total') out.total = true;
+      return out;
+    });
+    put(serviceability, 'rowCount', svcRows.length);
+  }
+  put(serviceability, 'rateBasis', str(svc.assessmentRateBasis));
+  if (h.surplus && h.sensitisedSurplus) {
+    put(serviceability, 'surplusNote',
+      `${formatMeasure(h.surplus)}, falling to ${formatMeasure(h.sensitisedSurplus)} under the `
+      + "engine's rate sensitivity. A facility that services today and not under sensitivity "
+      + 'is a facility a credit assessor will ask about.');
+  }
+  if (Object.keys(serviceability).length) capacity.serviceability = serviceability;
 
   // ── the money ────────────────────────────────────────────────────────────
   const t = s.transaction ?? {};
@@ -221,6 +350,34 @@ export function projectCommercialCapacity(
   put(transaction, 'borrowerContribution', num(t.borrowerContribution));
   put(transaction, 'fundingGap', num(t.fundingGap));
   put(transaction, 'cashOut', num(t.cashOut));
+  /*
+   * The three notes the legacy transaction section prints, in its sentences.
+   * Each is a whole statement or absent — the valuation sidenote folds the
+   * purchase price and the cash-out release in only when the record holds
+   * them, so no master is left holding half a sentence.
+   */
+  if (t.fundingGap) {
+    put(transaction, 'fundingGapNote',
+      `${formatMeasure(t.fundingGap)} of the total project cost is not covered by the requested `
+      + 'facility and the recorded contribution. That gap has to be funded before settlement, '
+      + 'from equity, a second facility or a reduced scope.');
+  }
+  if (s.property?.valuation) {
+    const price = s.property.purchasePrice
+      ? `, against a purchase price of ${formatMeasure(s.property.purchasePrice)}`
+      : '';
+    const cashOut = t.cashOut
+      ? ` The structure releases ${formatMeasure(t.cashOut)} of cash to the borrower.`
+      : '';
+    const basis = str(s.property.valuationBasis);
+    put(transaction, 'valuationNote',
+      `${formatMeasure(s.property.valuation)}${basis ? ` on a ${basis.toLowerCase().replace(/\.$/, '')} basis` : ''}`
+      + `${price}. Lending is assessed on the lower of price and valuation.`
+      + (h.requiredContribution
+        ? ` At the assessed capacity the borrower would need to contribute ${formatMeasure(h.requiredContribution)}.`
+        : '')
+      + cashOut);
+  }
   if (Object.keys(transaction).length) capacity.transaction = transaction;
 
   const pi = s.propertyIncome ?? {};
@@ -236,6 +393,41 @@ export function projectCommercialCapacity(
   put(propertyIncome, 'wale', num(pi.wale));
   put(propertyIncome, 'tenantCount', num(pi.tenantCount));
   put(propertyIncome, 'tenantConcentration', num(pi.tenantConcentration));
+
+  /*
+   * The tenancy schedule — declared in the caps from the start, and never
+   * published. Income a lender can rely on is income with term left on it, so
+   * the legacy prints who pays what until when; the labels are composed here
+   * because area, rent and share are three different units in one row and the
+   * em dash is the legacy cell's own absent treatment.
+   */
+  const tenancies = Array.isArray(pi.tenancies) ? pi.tenancies : [];
+  if (tenancies.length) {
+    propertyIncome.tenancies = tenancies.slice(0, CAPS.tenancies).map((tn: any) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'tenant', str(tn?.tenant));
+      row.areaLabel = tn?.area ? `${formatMeasure(tn.area)} m²` : '—';
+      if (tn?.passingRent) put(row, 'rentLabel', formatAmount(tn.passingRent));
+      if (tn?.share) put(row, 'shareLabel', formatMeasure(tn.share));
+      row.expiry = str(tn?.expiry) ?? '—';
+      return row;
+    });
+    put(propertyIncome, 'tenancyCount', tenancies.length);
+    // The lease-profile sidenote, in the legacy's sentences — including the
+    // rule its first render taught: `formatMeasure` already appends "years",
+    // and appending another printed "3.5 years years".
+    const walePart = pi.wale ? `A WALE of ${formatMeasure(pi.wale)}` : 'The lease profile';
+    const concentration = pi.tenantConcentration
+      ? ` The largest tenancy carries ${formatMeasure(pi.tenantConcentration)} of the passing rent.`
+      : '';
+    if (pi.tenantCount) {
+      put(propertyIncome, 'leaseNote',
+        `${walePart} across ${formatMeasure(pi.tenantCount)} `
+        + `${pi.tenantCount.value === 1 ? 'tenancy' : 'tenancies'}.${concentration}`
+        + ' Income a lender can rely on is income with term left on it, so expiry '
+        + 'profile bears directly on what the property can support.');
+    }
+  }
   if (Object.keys(propertyIncome).length) capacity.propertyIncome = propertyIncome;
 
   const bi = s.businessIncome ?? {};
@@ -243,7 +435,121 @@ export function projectCommercialCapacity(
   put(businessIncome, 'adjustedEbitda', num(bi.adjustedEbitda));
   put(businessIncome, 'assessableIncome', num(bi.assessableIncome));
   put(businessIncome, 'trend', num(bi.trend));
+  put(businessIncome, 'verificationStatus', str(bi.verificationStatus));
+
+  /*
+   * The financial periods — reported EBITDA through add-backs to what the
+   * assessment counts, with the evidence each period rests on. The legacy's
+   * caption carries the selection basis ("assessed on a weighted 3:2:1…
+   * basis"), so it is composed here as one sentence a standfirst can bind.
+   */
+  const periods = Array.isArray(bi.periods) ? bi.periods : [];
+  if (periods.length) {
+    businessIncome.periods = periods.slice(0, CAPS.periods).map((period: any) => {
+      const row: Record<string, unknown> = {};
+      put(row, 'label', str(period?.label));
+      if (period?.reportedEbitda) put(row, 'reportedLabel', formatAmount(period.reportedEbitda));
+      if (period?.confirmedAddbacks) put(row, 'confirmedLabel', formatAmount(period.confirmedAddbacks));
+      if (period?.unconfirmedAddbacks) put(row, 'unconfirmedLabel', formatAmount(period.unconfirmedAddbacks));
+      if (period?.adjustedEbitda) put(row, 'adjustedLabel', formatAmount(period.adjustedEbitda));
+      put(row, 'verification', str(period?.verification));
+      return row;
+    });
+    put(businessIncome, 'periodCount', periods.length);
+    const basis = str(bi.selectionBasis);
+    if (basis) {
+      put(businessIncome, 'periodsCaption',
+        `Financial periods — assessed on a ${basis.toLowerCase().replace(/\.$/, '')} basis.`);
+    }
+  }
+  // The declining-earnings caution, only when the engine flagged one — the
+  // legacy's sentences, trend folded in when it was computed.
+  if (bi.decliningIncome) {
+    put(businessIncome, 'decliningNote',
+      'Adjusted earnings fall across the periods assessed'
+      + `${bi.trend ? `, by ${formatMeasure(bi.trend)}` : ''}. A lender assessing a declining `
+      + 'trend will generally take the most recent period rather than an average, and will '
+      + 'ask what changed.');
+  }
   if (Object.keys(businessIncome).length) capacity.businessIncome = businessIncome;
+
+  /*
+   * Portfolio impact — the whole section was dropped, and it is the one whose
+   * first render found the `formatDelta` bug that had been silently wrong in
+   * the Borrowing Capacity Snapshot's audit table too. `changeLabel` is signed
+   * by that same fixed `formatDelta`; `effect` is the direction in words,
+   * because "the effect column says which way each line moves for the
+   * borrower, which is not always the direction the number moves".
+   */
+  const pf = s.portfolio;
+  if (pf) {
+    const portfolio: Record<string, unknown> = {};
+    const pfRows = Array.isArray(pf.rows) ? pf.rows : [];
+    if (pfRows.length) {
+      portfolio.rows = pfRows.slice(0, CAPS.portfolioRows).map((row: any) => {
+        const out: Record<string, unknown> = {};
+        put(out, 'label', str(row?.label));
+        if (row?.current) put(out, 'currentLabel', formatMeasure(row.current));
+        if (row?.proposed) put(out, 'proposedLabel', formatMeasure(row.proposed));
+        out.changeLabel = row?.change ? formatDelta(row.change) : '—';
+        const effect = EFFECT_LABEL[row?.direction as keyof typeof EFFECT_LABEL];
+        out.effect = effect ?? '—';
+        return out;
+      });
+      put(portfolio, 'rowCount', pfRows.length);
+    }
+    put(portfolio, 'assetCount', num(pf.assetCount));
+    const DIRECTION: Record<string, string> = {
+      improves: 'improves',
+      weakens: 'weakens',
+      mixed: 'has a mixed effect on',
+      unchanged: 'leaves unchanged',
+    };
+    if (pf.assetCount && DIRECTION[pf.direction]) {
+      put(portfolio, 'overview',
+        `Across ${formatMeasure(pf.assetCount)} existing `
+        + `${pf.assetCount.value === 1 ? 'asset' : 'assets'}, this transaction `
+        + `${DIRECTION[pf.direction]} the borrower's position. `
+        + 'The effect column says which way each line moves for the borrower, which is not '
+        + 'always the direction the number moves.');
+    }
+    if (pf.crossCollateralisedShare && pf.crossCollateralisedShare.value > 0) {
+      put(portfolio, 'crossCollateralisationNote',
+        `${formatMeasure(pf.crossCollateralisedShare)} of the portfolio is cross-collateralised. `
+        + 'Security held across assets narrows the options on any one of them — a sale, a '
+        + 'refinance or an equity release has to be negotiated against the whole structure.');
+    }
+    if (Object.keys(portfolio).length) capacity.portfolio = portfolio;
+  }
+
+  /*
+   * Compliance — the legacy's always-on closing section, dropped entirely.
+   * The classification table's three rows, and the flags as message/action
+   * pairs a callout can draw. Zero flags exist in production; the slots light
+   * up as they land.
+   */
+  const comp = s.compliance;
+  if (comp) {
+    const compliance: Record<string, unknown> = {};
+    put(compliance, 'classification', str(comp.classificationLabel));
+    compliance.complianceReview = comp.requiresComplianceReview ? 'Yes' : 'No';
+    compliance.specialistReview = comp.requiresSpecialistReview ? 'Yes' : 'No';
+    const flags = Array.isArray(comp.flags) ? comp.flags : [];
+    if (flags.length) {
+      compliance.flags = flags.slice(0, CAPS.flags).map((flag: any) => {
+        const row: Record<string, unknown> = {};
+        put(row, 'message', str(flag?.message));
+        put(row, 'action', str(flag?.action));
+        return row;
+      });
+      put(compliance, 'flagCount', flags.length);
+      if (flags.length > CAPS.flags) {
+        put(compliance, 'flagsOmitted',
+          `${flags.length - CAPS.flags} further compliance flags are not shown here.`);
+      }
+    }
+    if (Object.keys(compliance).length) capacity.compliance = compliance;
+  }
 
   // ── what is missing, and what to do ──────────────────────────────────────
   const outstanding = Array.isArray(s.outstanding) ? s.outstanding : [];
@@ -267,25 +573,64 @@ export function projectCommercialCapacity(
     capacity.nextActions = nextActions.slice(0, CAPS.nextActions).map((label) => ({ label }));
   }
 
+  /*
+   * Risk indicators, critical first — the order and the words are the legacy
+   * table's own ("Critical" / "Warning" / "For information"). `label` keeps
+   * the message for anything already bound to it.
+   */
   const warnings = Array.isArray(s.warnings) ? s.warnings : [];
   if (warnings.length) {
-    capacity.warnings = warnings.slice(0, CAPS.warnings).map((w: any) => {
+    const bySeverity = [
+      ...warnings.filter((w: any) => w?.severity === 'critical'),
+      ...warnings.filter((w: any) => w?.severity !== 'critical'),
+    ];
+    capacity.warnings = bySeverity.slice(0, CAPS.warnings).map((w: any) => {
       const row: Record<string, unknown> = {};
       put(row, 'label', str(w?.label ?? w?.message ?? w?.title));
       put(row, 'detail', str(w?.detail ?? w?.description));
+      row.severityLabel = w?.severity === 'critical'
+        ? 'Critical'
+        : w?.severity === 'warning' ? 'Warning' : 'For information';
+      put(row, 'category', str(w?.category));
       return row;
     });
     put(capacity, 'warningCount', warnings.length);
+    // The compliance page draws four; the stored run carries five, and the
+    // fifth ran the most generous variant 47pt past the footer. Critical rows
+    // sort first, so what a four-row table drops is always the mildest.
+    if (warnings.length > 4) {
+      put(capacity, 'warningsOmitted',
+        `${warnings.length - 4} further risk ${warnings.length - 4 === 1 ? 'indicator is' : 'indicators are'} not shown here.`);
+    }
   }
 
-  const method = Array.isArray(s.method) ? s.method : [];
+  /*
+   * The explain trail, in the legacy appendix's own columns — stage, step,
+   * formula, result. This used to publish only a `detail` read from `note`,
+   * which is null on most steps, so the masters' method table drew an empty
+   * second column beside every step; and it kept the "Capacity caps" stage the
+   * legacy deliberately drops, because those rows repeat the constraints table
+   * label for label, formula for formula, five pages later.
+   */
+  const method = (Array.isArray(s.method) ? s.method : [])
+    .filter((step: any) => str(step?.group) !== 'Capacity caps');
   if (method.length) {
-    capacity.method = method.slice(0, CAPS.method).map((m: any) => {
+    capacity.method = method.slice(0, CAPS.method).map((step: any) => {
       const row: Record<string, unknown> = {};
-      put(row, 'label', str(m?.label ?? m?.step));
-      put(row, 'detail', str(m?.detail ?? m?.note));
+      put(row, 'group', str(step?.group));
+      put(row, 'label', str(step?.label ?? step?.step));
+      put(row, 'formula', str(step?.formula));
+      put(row, 'value', str(step?.value));
+      put(row, 'detail', str(step?.detail ?? step?.note));
       return row;
     });
+    put(capacity, 'methodCount', method.length);
+    // The stored run's trail is twenty steps against a page that draws five.
+    if (method.length > CAPS.method) {
+      put(capacity, 'methodOmitted',
+        `${method.length - CAPS.method} further steps are not shown here; `
+        + 'the flowing report carries the complete trail.');
+    }
   }
 
   put(capacity, 'disclaimer', str(s.disclaimer));
@@ -339,6 +684,11 @@ function applyAnalysis(
       const evidence = (Array.isArray(sc?.evidenceRequired) ? sc.evidenceRequired : [])
         .map(str).filter(Boolean) as string[];
       if (evidence.length) put(row, 'evidence', evidence.join('; '));
+      // The whole scenario in one bindable passage — the legacy prints the
+      // reasoning paragraph and then the expected effect, and the masters used
+      // to draw only the effect, which is a conclusion with its argument cut.
+      const detail = [str(sc?.reasoning), str(sc?.estimatedImpact)].filter(Boolean).join(' ');
+      put(row, 'detail', detail || undefined);
       return row;
     });
   }
@@ -353,6 +703,15 @@ function applyAnalysis(
 
   put(out, 'model', str(a.model));
   put(out, 'generatedAt', str(a.generatedAt));
+  // "Written by google/gemini-2.5-flash on 05 August 2026." — the legacy's
+  // attribution line under its provenance note, with the model's name and the
+  // date it wrote. A client is entitled to know which machine composed which
+  // part of a finance document, not merely that one did.
+  const model = str(a.model);
+  if (model) {
+    const when = str(a.generatedAt) ? formatReportDate(a.generatedAt) : '';
+    put(out, 'attribution', `Written by ${model}${when ? ` on ${when}` : ''}.`);
+  }
   capacity.analysis = out;
   capacity.analysisProvenance = ANALYSIS_PROVENANCE_NOTE;
 }

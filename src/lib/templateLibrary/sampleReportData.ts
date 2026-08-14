@@ -36,6 +36,7 @@
 import { projectCashFlow } from '../../../supabase/functions/_shared/cashFlowProjection.pure';
 import { projectClientDetails } from '../../../supabase/functions/_shared/clientDetailsProjection.pure';
 import { projectCashFlowComparison } from '../../../supabase/functions/_shared/cashFlowComparisonProjection.pure';
+import { projectCommercialCapacity } from '../../../supabase/functions/_shared/commercialCapacityProjection.pure';
 import { projectReportQa } from '../../../supabase/functions/_shared/reportQaProjection.pure';
 import { buildReportQaDocument } from '../../../supabase/functions/_shared/reports/reportQa/normalise.pure';
 
@@ -749,6 +750,251 @@ const REPORT_QA_SAMPLE = (() => {
   });
   if (!built.ok) throw new Error(`REPORT_QA_SAMPLE refused: ${built.error}`);
   return projectReportQa(built.document).qa;
+})();
+
+/**
+ * Commercial & Industrial Capacity, through the format's own projection.
+ *
+ * The `capacity` namespace was absent from the sample entirely, so every
+ * Commercial Capacity preview rendered a cover with no title and every page
+ * past it dark — the same defect the Report Q&A sample closed.
+ *
+ * The snapshot below is hand-authored **on the payload contract** (every
+ * number a `Measure`, absence as `null`) and shaped on the one stored
+ * production run: a decline, bound by the debt service coverage ratio, three
+ * of the eight tests carrying neither threshold nor actual — because a
+ * decline is not this format's edge case, it is the whole corpus. The story
+ * is the same fictional engagement as the rest of this file: Nguyen Holdings
+ * buying a Wetherill Park warehouse through Meridian.
+ */
+const COMMERCIAL_CAPACITY_SAMPLE = (() => {
+  const m = (value: number, unit = 'aud', precision?: number) =>
+    (precision === undefined ? { value, unit } : { value, unit, precision });
+  const aud = (value: number) => m(value);
+  const perYear = (value: number) => m(value, 'aud/year');
+  const pct = (value: number, precision = 2) => m(value, 'percent', precision);
+  const rate = (value: number, precision = 1) => m(value, 'rate', precision);
+  const ratio = (value: number) => m(value, 'ratio', 2);
+  const years = (value: number) => m(value, 'years', 0);
+  const count = (value: number) => m(value, 'count', 0);
+
+  const snapshot = {
+    meta: {
+      subject: 'Nguyen Holdings Pty Ltd',
+      reference: 'CI-2026-014',
+      title: 'Wetherill Park warehouse purchase',
+      assessedOn: '2026-08-01T00:00:00.000Z',
+      assessmentId: 'sample-assessment',
+      segment: 'industrial' as const,
+      assessmentTypeLabel: 'Purchase',
+      engineVersion: '2.4.1',
+      policyVersion: '2026.07',
+      lenderProfile: 'Mainstream commercial bank',
+    },
+    property: {
+      address: '2/18 Fabrication Drive, Wetherill Park NSW 2164',
+      assetClass: 'Warehouse',
+      gstTreatment: 'Going concern (GST-free)',
+      lettableArea: count(840),
+      purchasePrice: aud(1_600_000),
+      valuation: aud(1_600_000),
+      valuationBasis: 'Lower of purchase price and valuation (price)',
+    },
+    headline: {
+      outcome: 'outside_current_assumptions' as const,
+      outcomeLabel: 'Outside current assumptions',
+      outcomeReason:
+        'The debt service coverage ratio falls below the policy floor at the requested facility.',
+      maximumCapacity: aud(1_040_000),
+      requestedLoan: aud(1_120_000),
+      difference: aud(-80_000),
+      requiredContribution: aud(560_000),
+      bindingConstraint: 'Debt service coverage ratio',
+      assessmentRate: pct(7.8),
+      loanTerm: years(15),
+      amortisation: years(25),
+      monthlyDebtService: aud(10_674),
+      surplus: perYear(52_340),
+      sensitisedSurplus: perYear(38_512),
+    },
+    narrative:
+      'On the figures supplied, the facility supports an indicative capacity of $1,040,000 '
+      + 'against a request of $1,120,000. Capacity is set by the debt service coverage ratio. '
+      + 'The shortfall of $80,000 would need to be met by a larger contribution or a smaller '
+      + 'facility before the request fits current assumptions.',
+    ratios: {
+      lvr: rate(0.70), lvrCeiling: rate(0.65),
+      dscr: ratio(1.04), dscrFloor: ratio(1.25),
+      icr: ratio(1.31), icrFloor: ratio(1.50),
+      debtYield: rate(0.058), debtYieldFloor: rate(0.09),
+      ltc: rate(0.632), ltcCeiling: rate(0.70),
+      debtToEbitda: ratio(3.1),
+    },
+    constraints: [
+      { key: 'lvr', label: 'Loan-to-value ratio', cap: aud(1_040_000), formula: 'Valuation × max LVR 65%', binding: false, applied: true, threshold: rate(0.65), actual: rate(0.70) },
+      { key: 'ltc', label: 'Loan-to-cost ratio', cap: aud(1_240_250), formula: 'Total cost × max LTC 70%', binding: false, applied: true, threshold: rate(0.70), actual: rate(0.632) },
+      { key: 'dscr', label: 'Debt service coverage ratio', cap: aud(986_400), formula: 'NOI ÷ min DSCR 1.25x, capitalised at 7.80% over 25 years', binding: true, applied: true, threshold: ratio(1.25), actual: ratio(1.04) },
+      { key: 'icr', label: 'Interest cover ratio', cap: aud(1_101_300), formula: 'NOI ÷ (min ICR 1.50x × assessment rate)', binding: false, applied: true, threshold: ratio(1.50), actual: ratio(1.31) },
+      { key: 'debt_yield', label: 'Debt yield', cap: aud(1_040_000), formula: 'NOI ÷ minimum debt yield 9%', binding: false, applied: true, threshold: rate(0.09), actual: rate(0.058) },
+      { key: 'contribution', label: 'Available borrower contribution', cap: aud(1_120_000), formula: 'Cash and equity available at settlement', binding: false, applied: true, threshold: null, actual: null },
+      { key: 'global', label: 'Global servicing surplus', cap: aud(2_680_000), formula: 'Surplus across the group at the sensitised rate', binding: false, applied: true, threshold: null, actual: null },
+      { key: 'policy', label: 'Policy maximum', cap: aud(1_120_000), formula: 'Lender profile ceiling for the asset class', binding: false, applied: false, threshold: null, actual: null },
+    ],
+    transaction: {
+      lines: [
+        { label: 'Purchase price', amount: aud(1_600_000), emphasis: 'normal' as const },
+        { label: 'Stamp duty and government charges', amount: aud(88_400), emphasis: 'normal' as const },
+        { label: 'Legal and due diligence', amount: aud(21_600), emphasis: 'normal' as const },
+        { label: 'Lender and valuation fees', amount: aud(14_250), emphasis: 'normal' as const },
+        { label: 'Total project cost', amount: aud(1_724_250), emphasis: 'total' as const },
+      ],
+      totalProjectCost: aud(1_724_250),
+      borrowerContribution: aud(604_250),
+      fundingGap: null,
+      cashOut: null,
+    },
+    propertyIncome: {
+      lines: [
+        { label: 'Passing rent', amount: perYear(124_800), emphasis: 'normal' as const },
+        { label: 'Less outgoings shortfall', amount: perYear(-9_200), emphasis: 'normal' as const },
+        { label: 'Less vacancy allowance at 5%', amount: perYear(-6_240), emphasis: 'normal' as const },
+        { label: 'Net operating income', amount: perYear(109_360), emphasis: 'total' as const },
+      ],
+      netOperatingIncome: perYear(109_360),
+      capitalisationRate: rate(0.0585, 2),
+      breakEvenOccupancy: rate(0.72, 0),
+      wale: m(3.4, 'years', 1),
+      tenantCount: count(2),
+      tenantConcentration: rate(0.62, 0),
+      tenancies: [
+        { tenant: 'Coastal Fabrication Services Pty Ltd', area: count(520), passingRent: perYear(77_400), expiry: '2029-10-31', remainingTerm: m(3.2, 'years', 1), share: rate(0.62, 0) },
+        { tenant: 'Inner West Logistics Group', area: count(320), passingRent: perYear(47_400), expiry: '2028-03-31', remainingTerm: m(1.6, 'years', 1), share: rate(0.38, 0) },
+      ],
+    },
+    businessIncome: {
+      periods: [
+        { label: 'FY2026', periodEnd: '2026-06-30', basis: 'Accountant-prepared', verification: 'Accountant-prepared', reportedEbitda: perYear(510_000), confirmedAddbacks: perYear(68_500), unconfirmedAddbacks: perYear(0), adjustedEbitda: perYear(578_500), assessable: perYear(520_650) },
+        { label: 'FY2025', periodEnd: '2025-06-30', basis: 'Lodged returns', verification: 'Lodged returns', reportedEbitda: perYear(468_200), confirmedAddbacks: perYear(54_100), unconfirmedAddbacks: perYear(12_000), adjustedEbitda: perYear(522_300), assessable: perYear(470_070) },
+        { label: 'FY2024', periodEnd: '2024-06-30', basis: 'Lodged returns', verification: 'Lodged returns', reportedEbitda: perYear(431_800), confirmedAddbacks: perYear(49_700), unconfirmedAddbacks: perYear(0), adjustedEbitda: perYear(481_500), assessable: perYear(433_350) },
+      ],
+      selectionBasis: 'Weighted 3:2:1 across 3 periods, most recent weighted highest',
+      adjustedEbitda: perYear(578_500),
+      assessableIncome: perYear(520_650),
+      verificationStatus: 'Accountant-prepared',
+      trend: null,
+      decliningIncome: false,
+    },
+    serviceability: {
+      rows: [
+        { label: 'Assessable business and personal income', amount: perYear(520_650), emphasis: 'normal' as const, direction: 'favourable' as const },
+        { label: 'Proposed asset rent, after shading', amount: perYear(87_552), emphasis: 'normal' as const, direction: 'favourable' as const },
+        { label: 'Portfolio rent, after shading', amount: perYear(31_480), emphasis: 'normal' as const, direction: 'favourable' as const },
+        { label: 'Total assessable income', amount: perYear(639_682), emphasis: 'total' as const, direction: 'neutral' as const },
+        { label: 'Less existing debt commitments', amount: perYear(-121_400), emphasis: 'normal' as const, direction: 'adverse' as const },
+        { label: 'Less proposed facility at the assessment rate', amount: perYear(-128_093), emphasis: 'normal' as const, direction: 'adverse' as const },
+        { label: 'Surplus after debt service', amount: perYear(390_189), emphasis: 'total' as const, direction: 'favourable' as const },
+      ],
+      assessmentRateBasis: 'Contract rate 6.80% plus 1.00% buffer.',
+    },
+    portfolio: {
+      rows: [
+        { label: 'Portfolio value', current: aud(2_450_000), proposed: aud(4_050_000), change: aud(1_600_000), direction: 'favourable' as const },
+        { label: 'Total debt', current: aud(1_431_000), proposed: aud(2_551_000), change: aud(1_120_000), direction: 'adverse' as const },
+        { label: 'Net equity', current: aud(1_019_000), proposed: aud(1_499_000), change: aud(480_000), direction: 'favourable' as const },
+        { label: 'Portfolio LVR', current: rate(0.584), proposed: rate(0.63), change: rate(0.046), direction: 'adverse' as const },
+        { label: 'Portfolio DSCR', current: ratio(1.62), proposed: ratio(1.38), change: ratio(-0.24), direction: 'adverse' as const },
+        { label: 'Annual debt service', current: perYear(121_400), proposed: perYear(249_493), change: perYear(128_093), direction: 'adverse' as const },
+        { label: 'Net cash flow', current: perYear(64_200), proposed: perYear(45_920), change: perYear(-18_280), direction: 'adverse' as const },
+      ],
+      direction: 'weakens' as const,
+      assetCount: count(2),
+      crossCollateralisedShare: rate(0.40, 0),
+    },
+    compliance: {
+      classificationLabel: 'Business purpose (indicative)',
+      requiresComplianceReview: false,
+      requiresSpecialistReview: false,
+      flags: [
+        {
+          code: 'GST_TREATMENT',
+          severity: 'review' as const,
+          message: 'The going-concern GST treatment relies on both parties being registered at settlement.',
+          action: 'Confirm GST registration of vendor and purchaser before exchange.',
+        },
+      ],
+    },
+    warnings: [
+      { severity: 'critical' as const, category: 'Financial', message: 'The requested facility exceeds the maximum indicative capacity under the selected assumptions.' },
+      { severity: 'warning' as const, category: 'Financial', message: 'Debt service coverage sits below the policy floor at the requested amount.' },
+      { severity: 'info' as const, category: 'Verification', message: 'Business income is accountant-prepared and has not been verified against lodged returns.' },
+    ],
+    outstanding: [
+      { label: 'Executed lease for Unit B', blocking: true },
+      { label: 'FY2026 accountant declaration', blocking: true },
+      { label: 'Confirmation of plant and equipment exclusions', blocking: false },
+    ],
+    nextActions: [
+      'Obtain the executed Unit B lease and updated tenancy schedule.',
+      'Model the facility at $1,040,000 with the client before resubmission.',
+      'Confirm GST registration of both parties ahead of exchange.',
+    ],
+    method: [
+      { group: 'Income', label: 'Net operating income', inputs: ['Passing rent', 'Outgoings'], formula: 'Rent − outgoings shortfall − vacancy', value: '$109,360 pa', note: null },
+      { group: 'Servicing', label: 'Debt service capacity', inputs: ['NOI', 'Assessment rate'], formula: 'NOI ÷ min DSCR 1.25x', value: '$986,400', note: 'Capitalised at 7.80% over 25 years' },
+      { group: 'Security', label: 'LVR cap', inputs: ['Valuation'], formula: 'Valuation × 65%', value: '$1,040,000', note: null },
+      { group: 'Outcome', label: 'Indicative capacity', inputs: ['All caps'], formula: 'Lowest of the applied caps', value: '$1,040,000', note: 'Bound by the DSCR' },
+    ],
+    analysis: {
+      interpretation:
+        'The deal is short on servicing rather than on security. The asset itself covers the '
+        + 'request comfortably at valuation, but net operating income of $109,360 cannot carry '
+        + 'the requested facility at the sensitised rate, and the group surplus — while strong — '
+        + 'is weighted to business income that remains accountant-prepared. The gap is small '
+        + 'enough that structure, not price, is the likeliest path: a longer amortisation or a '
+        + 'modestly smaller facility both close it on the engine’s own arithmetic.',
+      findings: [
+        { title: 'Security is not the constraint', detail: 'The LVR cap permits the full request; the shortfall comes entirely from debt service.', significance: 'strength' },
+        { title: 'Verification is the soft point', detail: 'The strongest income period is accountant-prepared; a lender will discount it until lodged returns confirm it.', significance: 'risk' },
+        { title: 'Concentration is manageable', detail: 'The larger tenancy carries 62% of passing rent but has 3.2 years of term against a 15-year facility.', significance: 'neutral' },
+      ],
+      scenarios: [
+        {
+          name: 'Extend the amortisation to 30 years',
+          reasoning: 'Debt service is sized on the amortisation period, not the term. Extending it lowers the monthly commitment the DSCR is tested against, and the engine’s own capitalisation moves the DSCR cap above the requested facility.',
+          estimatedImpact: 'Indicative capacity rises above the $1,120,000 request; the DSCR ceases to bind.',
+          executionRisk: 'medium',
+          evidenceRequired: ['Lender term sheet confirming 30-year amortisation on the asset class'],
+        },
+        {
+          name: 'Reduce the facility to the assessed capacity',
+          reasoning: 'A facility of $1,040,000 passes every applied test as assessed today, and the additional $80,000 of contribution is within the funds the assessment already records at settlement.',
+          estimatedImpact: 'The request fits current assumptions with no change to the deal’s structure.',
+          executionRisk: 'low',
+          evidenceRequired: ['Updated contribution statement'],
+        },
+        {
+          name: 'Verify FY2026 business income',
+          reasoning: 'The weighted income basis discounts the strongest period while it is accountant-prepared. Lodged returns confirming FY2026 lift assessable income and with it the global servicing surplus.',
+          estimatedImpact: 'Assessable income rises by roughly the FY2026 discount; the servicing gap narrows.',
+          executionRisk: 'low',
+          evidenceRequired: ['Lodged FY2026 returns', 'ATO lodgement confirmation'],
+        },
+      ],
+      questionsForCredit: [
+        'Is a 30-year amortisation available on industrial assets under this profile?',
+        'Will the lender rely on accountant-prepared FY2026 income, and at what discount?',
+        'Does the going-concern GST treatment survive if the Unit B lease completes after exchange?',
+        'What rate buffer applies on review if the facility is written at the assessed capacity?',
+      ],
+      model: 'google/gemini-2.5-flash',
+      generatedAt: '2026-08-01T00:00:00.000Z',
+    },
+    disclaimer:
+      'This assessment is indicative only, is not a lender decision or an offer of finance, and '
+      + 'relies on the accuracy of the information supplied.',
+  };
+
+  return projectCommercialCapacity(snapshot as never).capacity;
 })();
 
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
@@ -2217,6 +2463,16 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   // real data — which is precisely what happened to the Investment Compass
   // masters before the projection landed.
   capacity: {
+    /*
+     * Two formats share this namespace: the keys below serve the voice
+     * templates' residential borrowing vocabulary, and the spread carries the
+     * Commercial & Industrial Capacity projection's output — absent entirely
+     * until August 2026, so every Commercial Capacity preview rendered a
+     * cover with no title and every page past it dark. The key sets do not
+     * overlap; `commercialCapacityCatalogue.spec.ts` asserts they stay that
+     * way. See `COMMERCIAL_CAPACITY_SAMPLE`.
+     */
+    ...(COMMERCIAL_CAPACITY_SAMPLE as Record<string, unknown>),
     borrowing: 1180000,
     stressTested: 1042000,
     monthlySurplus: 1290,

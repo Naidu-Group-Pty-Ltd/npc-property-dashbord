@@ -93,8 +93,13 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   const labelReserve = labelLines > 0
     ? `min-height:${(labelSize * labelLineHeight * labelLines).toFixed(2)}pt;`
     : '';
+  // `resolveBindable`, exactly as the value and note below it: a KPI label can
+  // legitimately be data — the Commercial Capacity band names its third cell
+  // "Shortfall" or "Headroom" from the projection, and this helper escaping the
+  // raw string printed the literal `{{capacity.headline.differenceLabel}}` in
+  // uppercase mono on the answer page of every render.
   const label = (item: KpiItem) =>
-    `<div style="color:${labelColor};font-size:${labelSize}pt;line-height:${labelLineHeight};text-transform:uppercase;${labelReserve}${labelTracking}${labelFont}">${esc(String(item.label || ''))}</div>`;
+    `<div style="color:${labelColor};font-size:${labelSize}pt;line-height:${labelLineHeight};text-transform:uppercase;${labelReserve}${labelTracking}${labelFont}">${esc(resolveBindable(String(item.label || ''), ctx))}</div>`;
 
   const note = (item: KpiItem) => (item.note
     ? `<div style="color:${labelColor};font-size:${noteSize}pt;margin-top:5pt;line-height:1.35;${noteFont}">${esc(resolveBindable(item.note, ctx))}</div>`
@@ -168,7 +173,7 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
     return `<div style="position:relative;background:${tileBg};border-radius:${radius}pt;padding:12pt 12pt 10pt 16pt;overflow:hidden;">
       <div style="position:absolute;left:0;top:0;bottom:0;width:3pt;background:${accent};"></div>
       <div style="color:${accent};font-weight:700;font-size:${valueSize}pt;line-height:1.1;font-variant-numeric:tabular-nums;">${esc(value)}</div>
-      <div style="color:${labelColor};font-size:8pt;text-transform:uppercase;letter-spacing:0.08em;margin-top:8pt;">${esc(String(item.label || ''))}</div>
+      <div style="color:${labelColor};font-size:8pt;text-transform:uppercase;letter-spacing:0.08em;margin-top:8pt;">${esc(resolveBindable(String(item.label || ''), ctx))}</div>
     </div>`;
   }).join('');
 
