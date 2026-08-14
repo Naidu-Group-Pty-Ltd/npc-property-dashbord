@@ -21,6 +21,7 @@ import { notifyFinancePortalAssignees } from "../_shared/finance-portal-notify.t
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceSessionToken } from '../_shared/financeSessionToken.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -160,12 +161,12 @@ function jsonResponseWithHeaders(data: any, responseCorsHeaders: Record<string, 
   });
 }
 
+// Delegates to the ONE cookie-aware reader. The local body used to read only
+// the header and the request body, so a portal whose session lives in the
+// HttpOnly `__Host-finance_session_token` cookie (WP-11B/C) got a 401 on
+// every call once its in-memory token was lost to a page load.
 function extractToken(headers: Headers, body?: any): string | null {
-  return headers.get('x-finance-session-token')
-    || body?.finance_session_token
-    || headers.get('x-session-token')
-    || body?.session_token
-    || null;
+  return extractFinanceSessionToken(headers, body as Record<string, unknown> | undefined);
 }
 
 function mergePermissions(global: any, perClient: any) {

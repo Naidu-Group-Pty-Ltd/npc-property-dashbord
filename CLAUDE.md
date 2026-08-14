@@ -269,6 +269,25 @@ is null on every agreement notification in production. That doc also records why
 returned void, so an issue whose notification never wrote said the same thing as
 one that landed.
 
+**The partner's session lives in a cookie, and for a long time nothing read
+it.** Read
+[`PARTNER_SESSION_TRANSPORT.md`](./docs/agreements/PARTNER_SESSION_TRANSPORT.md)
+before touching `_shared/financeSessionToken.ts`, `finance-portal-session.ts`
+or any `finance-portal-*` token extraction. WP-11B/C moved the session into an
+HttpOnly `__Host-finance_session_token` cookie and dropped the storage mirror —
+the client keeps an **in-memory copy that does not survive a page load** — but
+only `verify` and `logout` were taught to read the cookie. Every data function
+kept a hand-rolled four-`??` extractor that could not see it, so from the second
+page view onwards a partner got `401 Session token required` on everything: a
+cookie-only request is **byte-identical** to sending no credential at all (both
+54 bytes). The portal looked signed in because the session *check* read the
+cookie and the data calls did not. Three rules: there is **one reader**
+(`extractFinanceSessionToken`) and hand-rolled lookups fail
+`security:finance-session-transport`; the order **header → body → cookie** is
+load-bearing because it keeps every previously working caller on its path; and
+**cookie source implies a CSRF guard** — the cookie is `SameSite=None`, so
+honouring it creates ambient cross-site authority that `enforceCsrf` must cover.
+
 And an agreement must never be *nowhere*. Read
 [`CONTINUITY.md`](./docs/agreements/CONTINUITY.md) before touching the
 register's stage counters, its empty states, or `dashboardGroupForStatus` /

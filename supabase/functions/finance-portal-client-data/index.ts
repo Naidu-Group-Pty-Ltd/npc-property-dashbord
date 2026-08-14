@@ -47,6 +47,7 @@ function extractPrimaryName(payload: Record<string, any>) {
 
 import { createCorsHeaders } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { extractFinanceSessionToken } from '../_shared/financeSessionToken.ts';
 // Per-request CORS: the frontend calls this function with `credentials: 'include'`,
 // so we must echo the request Origin (never `*`) and set `Allow-Credentials: true`.
 // The previous wildcard ACAO caused browsers to block every response, resulting in
@@ -220,13 +221,12 @@ async function syncClientRollups(supabase: any, clientId: string, dbTable: strin
   }
 }
 
+// Delegates to the ONE cookie-aware reader. The local body used to read only
+// the header and the request body, so a portal whose session lives in the
+// HttpOnly `__Host-finance_session_token` cookie (WP-11B/C) got a 401 on
+// every call once its in-memory token was lost to a page load.
 function extractToken(headers: Headers, body?: any): string | null {
-  return headers.get('x-finance-session-token')
-    || body?.finance_session_token
-    || headers.get('x-session-token')
-    || headers.get('x-session-id')
-    || body?.session_token
-    || null;
+  return extractFinanceSessionToken(headers, body as Record<string, unknown> | undefined);
 }
 
 async function notifyCommandCentreOfFinanceClient(supabase: any, input: { clientId: string; clientName: string; financeEmail: string | null }) {

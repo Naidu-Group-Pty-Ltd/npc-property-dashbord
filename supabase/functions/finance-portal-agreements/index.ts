@@ -33,7 +33,8 @@
 // library either way — Deno Deploy resolves `npm:` from the registry natively.
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { createCorsHeaders } from '../_shared/auth.ts';
-import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { extractFinanceCredential, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import {
@@ -206,8 +207,21 @@ Deno.serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
-    const token = extractFinanceToken(req.headers, body);
-    const session = await resolveFinancePartner(supabase, token);
+    const credential = extractFinanceCredential(req.headers, body);
+
+    // The session cookie is `SameSite=None` — it has to be, because the portal
+    // and the Edge Functions are different origins — so the browser attaches it
+    // to CROSS-SITE requests too. Now that a cookie is actually honoured here,
+    // an attacker's page could otherwise drive `accept` or `sign` from a signed
+    // in partner's browser. A header credential cannot be forged that way, so
+    // the guard is applied exactly when the credential is a cookie; applying it
+    // to header auth would break non-browser callers for no security gain.
+    if (credential.source === 'cookie') {
+      const csrf = enforceCsrf(req);
+      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+    }
+
+    const session = await resolveFinancePartner(supabase, credential.token);
     if ('error' in session && session.error) return json({ error: session.error }, session.status ?? 401);
     const portalUser = (session as { portalUser: { id: string; email: string | null } }).portalUser;
 
