@@ -5,7 +5,7 @@ import { TemplateSchemaVersionError, validateAndMigrateTemplateSchemaVersion } f
 import { permForAction, requireModulePermission } from '../_shared/authz.ts';
 import { insertGoesLive, validateReportTemplateInsert } from '../_shared/reportTemplateInsertGuard.pure.ts';
 
-type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates' | 'workflows' | 'workflow_runs' | 'workflow_run_steps';
+type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'report_template_selections' | 'comparison_analysis_templates' | 'workflows' | 'workflow_runs' | 'workflow_run_steps';
 
 interface RequestBody {
   // Operation type
@@ -67,6 +67,7 @@ const DEFAULT_SELECTS: Record<TableName, string> = {
   cover_page_overlays: '*',
   report_templates: '*',
   report_template_versions: '*',
+  report_template_selections: '*',
   comparison_analysis_templates: '*',
   workflows: '*',
   workflow_runs: '*',
@@ -561,7 +562,7 @@ Deno.serve(async (req) => {
     }
 
     // Validate table
-    const validTables: TableName[] = ['report_structure_templates', 'client_branding_profiles', 'integration_configs', 'depreciation_comps', 'depreciation_estimator_runs', 'charts', 'chart_analysis', 'chart_configurations', 'global_report_settings', 'finance_agent_contacts', 'bulk_generation_jobs', 'property_comparisons', 'portfolio_analysis_templates', 'checklist_templates', 'checklist_template_sections', 'checklist_template_items', 'checklist_instances', 'checklist_instance_items', 'game_plans', 'game_plan_phases', 'game_plan_milestones', 'game_plan_kpis', 'game_plan_notes', 'game_plan_actions', 'custom_users', 'cover_page_overlays', 'report_templates', 'report_template_versions', 'comparison_analysis_templates', 'workflows', 'workflow_runs', 'workflow_run_steps'];
+    const validTables: TableName[] = ['report_structure_templates', 'client_branding_profiles', 'integration_configs', 'depreciation_comps', 'depreciation_estimator_runs', 'charts', 'chart_analysis', 'chart_configurations', 'global_report_settings', 'finance_agent_contacts', 'bulk_generation_jobs', 'property_comparisons', 'portfolio_analysis_templates', 'checklist_templates', 'checklist_template_sections', 'checklist_template_items', 'checklist_instances', 'checklist_instance_items', 'game_plans', 'game_plan_phases', 'game_plan_milestones', 'game_plan_kpis', 'game_plan_notes', 'game_plan_actions', 'custom_users', 'cover_page_overlays', 'report_templates', 'report_template_versions', 'report_template_selections', 'comparison_analysis_templates', 'workflows', 'workflow_runs', 'workflow_run_steps'];
     if (!validTables.includes(table)) {
       return new Response(
         JSON.stringify({ error: `Invalid table: ${table}` }),
@@ -598,6 +599,44 @@ Deno.serve(async (req) => {
       data = { ...data, created_by: userId };
     }
 
+    /**
+     * "Which template do my Investment reports come out in?" — one answer per
+     * person per format, and the same treatment comparison templates get above,
+     * for the same reason: this client is service-role and bypasses RLS, so
+     * ownership is enforced HERE rather than assumed from a policy.
+     *
+     * The owner is stamped from the verified session on every write and never
+     * read off the payload, so `owner_user_id` in a request body is inert. Reads
+     * are scoped the same way, so the list operation cannot enumerate anyone
+     * else's choices even with no filter supplied.
+     *
+     * No module permission is required, deliberately. A selection is a
+     * preference among templates somebody else already approved — a row is only
+     * selectable because it is `is_active`, and reaching that state goes through
+     * `validateReportTemplateUpdate` (superadmin, approved, production adapter,
+     * schema renders). Choosing between approved templates is not an
+     * authorisation decision, and gating it on `templates:edit` would mean the
+     * people who generate reports could not choose which template they use.
+     */
+    const isTemplateSelection = table === 'report_template_selections';
+    if (isTemplateSelection && ['get', 'update', 'delete'].includes(operation) && recordId) {
+      const { data: ownedSelection, error: selectionOwnershipError } = await supabase
+        .from('report_template_selections').select('id').eq('id', recordId).eq('owner_user_id', userId).maybeSingle();
+      if (selectionOwnershipError || !ownedSelection) {
+        return jsonResponse({ error: 'Template selection not found or not accessible.' }, 404, corsHeaders);
+      }
+    }
+    if (isTemplateSelection && ['insert', 'upsert'].includes(operation) && data) {
+      const stampOwner = (row: any) => {
+        // `id` is dropped rather than trusted. An upsert names its conflict
+        // target as (owner_user_id, report_type); a caller-supplied primary key
+        // would be a second, unscoped way to address a row — someone else's.
+        const { id: _ignored, ...rest } = (row ?? {}) as Record<string, unknown>;
+        return { ...rest, owner_user_id: userId };
+      };
+      data = Array.isArray(data) ? data.map(stampOwner) : stampOwner(data);
+    }
+
     // Handle list operation
     if (operation === 'list') {
       const { select = DEFAULT_SELECTS[table], orderBy = 'created_at', orderAsc = false, limit, filters } = listOptions;
@@ -605,6 +644,8 @@ Deno.serve(async (req) => {
       let query = supabase.from(table).select(select);
 
       if (isComparisonTemplate) query = query.eq('created_by', userId);
+      // Never enumerable across users, whatever filters the caller supplies.
+      if (isTemplateSelection) query = query.eq('owner_user_id', userId);
       if (table === 'report_templates') {
         query = applyReportTemplateReadScope(query, userId!, reportTemplatePermissions!.isSuperadmin);
       }

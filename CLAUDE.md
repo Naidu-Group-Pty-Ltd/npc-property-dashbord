@@ -125,6 +125,23 @@ diff, PDF/UA validation) is taken against fixtures in a harness and passes while
 that stays true. A correctness measure cannot see an unused system, so check
 coverage before improving output.
 
+**Which template a report comes out in is now a choice, and it never was.**
+Read [`docs/reports/TEMPLATE_SELECTION.md`](./docs/reports/TEMPLATE_SELECTION.md)
+before touching `_shared/reports/reportTemplateSelection.pure.ts`, the picker or
+anything that decides which `report_templates` row a document is drawn from. A
+template used to reach a document by **ranking alone** — no surface anywhere
+bound one to a report format, and every path that touched a template ended in
+the Template Builder, which is an editor. A selection is stored per (user,
+format) and read **before** the ranking, never instead of it, so a format with
+nothing chosen behaves exactly as it did. Three rules bite: a format has up to
+four spellings and they are **one** format (the alias map is now in that pure
+module and the registry re-exports it — two copies is how `commercial_industrial`
+became activatable and unresolvable); a chosen template whose engine is not
+`weasyprint` is **still selectable and says so**, because it is what the ranking
+would have picked and it produces the legacy document either way; and a
+selection that goes stale resolves to **`unavailable`**, never silently to a
+different template.
+
 Read [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 before touching any PDF generator — print has different contrast, colour and font
 rules from screen, and most of the repo's "logo" files are email-signature banners

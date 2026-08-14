@@ -276,6 +276,14 @@ jobs:
       - name: Deno type-check the borrowing capacity payload
         run: deno check supabase/functions/_shared/reports/borrowingCapacity/*.pure.ts
 
+      # Which template a report format is generated with. Named explicitly
+      # because it is the one module in `_shared/reports` that no Edge Function
+      # imports yet — the picker and the generation path are both in `src/`, so
+      # `check-edge-functions.mjs` never reaches it and a Deno-unparsable edit
+      # would be invisible until the broker starts reading these rules too.
+      - name: Deno type-check the report template selection rules
+        run: deno check supabase/functions/_shared/reports/reportTemplateSelection.pure.ts
+
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs

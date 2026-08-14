@@ -7,6 +7,8 @@ import { logActivityDirect } from "@/hooks/useActivityLogger";
 import { tryRouteThroughTemplateBuilder } from "@/lib/reportTemplate/compassRoute";
 import { FlattenPdfIconButton } from "@/components/common/FlattenPdfIconButton";
 import { fetchPdfBlob } from "@/lib/pdf/downloadPdf";
+import { useReportTemplateSelection } from "@/hooks/useReportTemplateSelection";
+import { INVESTMENT_REPORT_FORMAT } from "@/lib/reportTemplate/reportFormats";
 import type { PdfDesignOptions } from "./premiumPdfDesign";
 
 interface PremiumPdfButtonProps {
@@ -34,6 +36,18 @@ export function PremiumPdfButton({
 }: PremiumPdfButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  /**
+   * The template this person chose for Investment reports, if they chose one.
+   *
+   * Only a selection that still applies is passed on: `status` is `selected`
+   * exactly when the chosen row is still active and still this format. A stale
+   * one resolves to null here and the ranking decides, which is what the picker
+   * has already said is happening.
+   */
+  const { state: templateState } = useReportTemplateSelection(INVESTMENT_REPORT_FORMAT.reportType);
+  const selectedTemplateId = templateState?.status === 'selected'
+    ? templateState.selectedTemplateId
+    : null;
 
   const handleClick = async () => {
     if (loading) return;
@@ -42,7 +56,7 @@ export function PremiumPdfButton({
       // Phase 5 pilot: route Compass reports through the Template Builder /
       // WeasyPrint pipeline when an active template exists for this report
       // type. Falls through to the legacy renderer on any mismatch / error.
-      const routed = await tryRouteThroughTemplateBuilder(reportId);
+      const routed = await tryRouteThroughTemplateBuilder(reportId, selectedTemplateId);
       const result = routed
         ? { data: { fileUrl: routed.fileUrl, fileName: routed.fileName, renderer: routed.renderer }, error: null as any }
         : await invokeSecureFunction<{ fileUrl: string; fileName: string; renderer?: string }>(
@@ -117,7 +131,7 @@ export function PremiumPdfButton({
       metadata: { format: "pdf", source: "premium_weasyprint", flattened: true, designOptions },
     });
     return { blob, fileName: data.fileName || `investment-report-${reportId}.pdf` };
-  }, [reportId, propertyAddress, includeCharts, includeHeroImages, includeSparklines, designOptions]);
+  }, [reportId, propertyAddress, includeCharts, includeHeroImages, includeSparklines, designOptions, selectedTemplateId]);
 
   return (
     <div className="inline-flex items-center gap-1">
