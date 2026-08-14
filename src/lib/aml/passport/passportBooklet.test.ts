@@ -56,6 +56,28 @@ function input(over: Partial<PassportViewInput> = {}): PassportViewInput {
 const bookletFor = (over: Partial<PassportViewInput> = {}) =>
   buildBooklet(buildPassportView('command', input(over)));
 
+/**
+ * A transaction as the SERVER supplies one.
+ *
+ * `aml-reliance` feeds one `txns` result set into both `transactions` (what the
+ * pages print) and `stamp_input.transactions` (what the certifications are
+ * derived from), so a fixture that sets only the first describes a state
+ * production cannot be in — and the completion page's certification would be
+ * missing for a reason nothing outside the fixture shares.
+ */
+const withTransaction = (t: {
+  status: string; settlement_date: string | null;
+}): Partial<PassportViewInput> => ({
+  transactions: [{
+    id: 't1', kind: 'purchase', property_address: 'Lot 14', contract_date: NOW,
+    purchase_price: 1, status: t.status, settlement_date: t.settlement_date,
+  }],
+  stamp_input: {
+    ...input().stamp_input,
+    transactions: [{ id: 't1', status: t.status, settlement_date: t.settlement_date }],
+  },
+});
+
 describe('buildBooklet', () => {
   it('opens on the Aurixa cover, then Client Identity and Compliance Summary', () => {
     const pages = bookletFor();
@@ -122,18 +144,30 @@ describe('buildBooklet', () => {
     expect(note && 'text' in note ? note.text : '').toMatch(/remains responsible for its own obligations/i);
   });
 
-  it('leaves the settlement seal unearned until settlement is confirmed', () => {
-    const pending = bookletFor({
-      transactions: [{ id: 't1', kind: 'purchase', status: 'under_contract', property_address: 'Lot 14', contract_date: NOW, settlement_date: null, purchase_price: 1 }],
-    }).find((p) => p.id === 'completion');
+  it('leaves the settlement seal unstruck until settlement is confirmed', () => {
+    // The completion page carries the register's OWN `transaction_completed`
+    // certification, struck or unstruck — not a second seal with its own
+    // wording. It used to read "AWAITING SETTLEMENT" / "SETTLEMENT COMPLETE",
+    // a third name for a stamp the vocabulary already names once.
+    const pending = bookletFor(
+      withTransaction({ status: 'under_contract', settlement_date: null }),
+    ).find((p) => p.id === 'completion');
     const hero = pending?.blocks.find((b) => b.kind === 'hero');
-    expect(hero && 'earned' in hero ? hero.earned : true).toBe(false);
+    expect(hero?.kind).toBe('hero');
+    if (hero?.kind !== 'hero') throw new Error('no hero block');
+    expect(hero.stamp).toBeNull();
+    expect(hero.pending?.code).toBe('transaction_completed');
 
-    const done = bookletFor({
-      transactions: [{ id: 't1', kind: 'purchase', status: 'settled', property_address: 'Lot 14', contract_date: NOW, settlement_date: NOW, purchase_price: 1 }],
-    }).find((p) => p.id === 'completion');
+    const done = bookletFor(
+      withTransaction({ status: 'settled', settlement_date: NOW }),
+    ).find((p) => p.id === 'completion');
     const heroDone = done?.blocks.find((b) => b.kind === 'hero');
-    expect(heroDone && 'earned' in heroDone ? heroDone.earned : false).toBe(true);
+    if (heroDone?.kind !== 'hero') throw new Error('no hero block');
+    expect(heroDone.pending).toBeNull();
+    expect(heroDone.stamp?.code).toBe('transaction_completed');
+    // The struck impression carries its record, not just a label.
+    expect(heroDone.stamp?.at).toBeTruthy();
+    expect(heroDone.stamp?.title).toBe('TRANSACTION COMPLETED');
   });
 
   it('carries no restricted material onto paper', () => {

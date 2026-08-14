@@ -1171,23 +1171,29 @@
   filter: drop-shadow(0 6px 18px var(--stamp-glow));
 }
 
+/* The three shadow roles are TOKENS with the design's own values as their
+   fallbacks, not literals. The die is struck on two surfaces — the dark
+   register and the booklet's cream leaf — and on paper a black inset reads as
+   grime rather than as relief. Nothing defines these in the dark scope, so the
+   fallback applies and the register renders exactly as before; the leaf sets
+   them once, below, and re-inks the same die. */
 .passport-stamp--circle {
   width: 164px;
   height: 164px;
   border-radius: 50%;
   border: 2px solid var(--stamp-edge);
   box-shadow:
-    inset 0 0 0 4px hsl(0 0% 0% / 0.35),
+    inset 0 0 0 4px var(--stamp-emboss, hsl(0 0% 0% / 0.35)),
     inset 0 0 0 5px var(--stamp-line),
-    inset 0 0 26px hsl(0 0% 0% / 0.55);
-  background: radial-gradient(circle at 50% 38%, var(--stamp-wash), hsl(0 0% 0% / 0.25) 74%);
+    inset 0 0 26px var(--stamp-depth, hsl(0 0% 0% / 0.55));
+  background: radial-gradient(circle at 50% 38%, var(--stamp-wash), var(--stamp-field, hsl(0 0% 0% / 0.25)) 74%);
 }
 
 .passport-stamp--seal {
   width: 164px;
   height: 164px;
   clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
-  background: linear-gradient(150deg, var(--stamp-wash), hsl(0 0% 0% / 0.42));
+  background: linear-gradient(150deg, var(--stamp-wash), var(--stamp-field, hsl(0 0% 0% / 0.42)));
   box-shadow: 0 0 0 2px var(--stamp-edge);
 }
 
@@ -1198,10 +1204,10 @@
   border-radius: 2px;
   border: 1px solid var(--stamp-edge);
   box-shadow:
-    inset 0 0 0 3px hsl(0 0% 0% / 0.3),
+    inset 0 0 0 3px var(--stamp-emboss, hsl(0 0% 0% / 0.3)),
     inset 0 0 0 4px var(--stamp-line),
-    inset 0 0 22px hsl(0 0% 0% / 0.5);
-  background: linear-gradient(150deg, var(--stamp-wash), hsl(0 0% 0% / 0.28));
+    inset 0 0 22px var(--stamp-depth, hsl(0 0% 0% / 0.5));
+  background: linear-gradient(150deg, var(--stamp-wash), var(--stamp-field, hsl(0 0% 0% / 0.28)));
 }
 
 /* ── grain ── */
@@ -1290,11 +1296,15 @@
   align-items: center;
   justify-content: center;
   gap: 5px;
+  /* The die is the boundary. Without this the line simply grew past it — see
+     `LONG_ORG` in StampFace.tsx for what that measured. */
+  max-width: 100%;
 }
 .passport-stamp__org > span:nth-child(odd) {
   width: 9px;
   height: 1px;
   background: var(--stamp-line);
+  flex: none;
 }
 .passport-stamp__orgname {
   font-size: 6.8px;
@@ -1307,6 +1317,17 @@
      typed, and a stamp is set in capitals. */
   text-transform: uppercase;
 }
+
+/* A long issuer name: stepped down and allowed to wrap, never truncated. The
+   flanking rules go — at this width they have nothing left to flank. */
+.passport-stamp__org--long > span:nth-child(odd) { display: none; }
+.passport-stamp__orgname--long {
+  font-size: 5.3px;
+  letter-spacing: 0.1em;
+  line-height: 1.35;
+  white-space: normal;
+  text-wrap: balance;
+}
 .passport-stamp__title {
   margin: 5px 0 0;
   font-family: var(--passport-font-display);
@@ -1315,7 +1336,7 @@
   font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--stamp-ink);
-  text-shadow: 0 1px 0 hsl(0 0% 0% / 0.55);
+  text-shadow: 0 1px 0 var(--stamp-relief, hsl(0 0% 0% / 0.55));
 }
 /* The design drops a long title a step so it still fits the die. */
 .passport-stamp__title--long { font-size: 11.5px; }
@@ -1421,6 +1442,130 @@
 .passport-stamp--pending .passport-stamp__grain,
 .passport-stamp--pending .passport-stamp__tick { display: none; }
 .passport-stamp--pending .passport-stamp__title { text-shadow: none; }
+
+/* ══ the same impression, struck on cream paper ══════════════════════════
+   The booklet's leaf carries the SAME die as the register: same component,
+   same five layers, same watermark, same wording, same die shape, from the
+   same `PassportStamp` record. Only the INK changes with the surface, and it
+   changes here rather than in a second component — a paper-flavoured copy of
+   the face is precisely what let the booklet and the register disagree about
+   the same certification, which is the defect this section exists to make
+   unrepresentable.
+
+   Two things have to change for paper, and nothing else does:
+
+     ink     the three tones are pale because they are drawn on near-black.
+             On cream they take the leaf's own navy/foil values instead.
+     relief  the die's shadow roles are black. On paper black reads as grime
+             rather than as something pressed into the sheet, so emboss, depth
+             and field become the faintest navy the leaf already uses, and the
+             title's relief becomes a paper highlight rather than a shadow.
+
+   These are the SOURCE tone tokens, so `.passport-stamp--gold|partner|final`
+   keep resolving exactly as they do in the register — the ink rule
+   (`stampFaceTone`) is untouched, it just resolves to paper values here. */
+.passport-leaf {
+  --stamp-gold-ink: hsl(38 58% 27%);
+  --stamp-gold-dim: hsl(38 34% 42%);
+  --stamp-gold-line: hsl(42 59% 41% / 0.5);
+  --stamp-gold-edge: hsl(42 59% 41% / 0.72);
+  --stamp-gold-wash: hsl(42 59% 41% / 0.07);
+  --stamp-gold-glow: hsl(42 59% 41% / 0.13);
+
+  --stamp-partner-ink: hsl(218 46% 30%);
+  --stamp-partner-dim: hsl(219 25% 46%);
+  --stamp-partner-line: hsl(216 45% 42% / 0.42);
+  --stamp-partner-edge: hsl(216 45% 42% / 0.6);
+  --stamp-partner-wash: hsl(216 45% 42% / 0.06);
+  --stamp-partner-glow: hsl(216 45% 42% / 0.11);
+
+  --stamp-final-ink: hsl(99 32% 26%);
+  --stamp-final-dim: hsl(98 18% 40%);
+  --stamp-final-line: hsl(100 30% 34% / 0.42);
+  --stamp-final-edge: hsl(100 30% 34% / 0.58);
+  --stamp-final-wash: hsl(100 30% 34% / 0.06);
+  --stamp-final-glow: hsl(100 30% 34% / 0.11);
+
+  --stamp-emboss: hsl(221 48% 17% / 0.07);
+  --stamp-depth: hsl(221 48% 17% / 0.06);
+  --stamp-field: hsl(221 48% 17% / 0.035);
+  --stamp-relief: hsl(42 62% 96% / 0.6);
+}
+
+/* `screen` LIGHTENS, which on cream erases the mark entirely — the watermark
+   is the layer the whole design is built around, so it must survive the change
+   of surface. Paper takes ink out of the sheet: both screened layers multiply
+   into it instead. */
+.passport-leaf .passport-stamp__watermark {
+  mix-blend-mode: multiply;
+  filter: none;
+  opacity: 0.15;
+}
+.passport-leaf .passport-stamp__grain {
+  mix-blend-mode: multiply;
+  opacity: 0.14;
+}
+
+/* An unstruck die on paper: the register's greys are drawn for near-black. */
+.passport-leaf .passport-stamp--pending {
+  --stamp-ink: var(--passport-ink-muted);
+  --stamp-dim: var(--passport-ink-faint);
+  --stamp-line: hsl(221 48% 17% / 0.28);
+  --stamp-edge: hsl(221 48% 17% / 0.28);
+  background: hsl(221 48% 17% / 0.014);
+}
+
+/* ── the register as it sits on a leaf ──
+   The die is authored at 164px against the register's full-width panel. A
+   leaf's body is 410px, so three of them side by side do not fit. The die is
+   NOT re-authored smaller: every inset, tick, rule and type size inside it is
+   proportional to that 164px, and a second set of numbers would be a second
+   design to keep in step — which is the same mistake as a second component,
+   one layer down.
+
+   `zoom` rather than `transform: scale()` because zoom scales the LAYOUT box
+   too, so the caption sits under its impression and the grid reserves what it
+   actually draws; a transform would leave every slot claiming 164px of empty
+   room while drawing 95px.
+   The leaf itself is scaled the same way to fit the board (see LEAF_W). */
+.passport-stamp-leaf {
+  --stamp-leaf-zoom: 0.58;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px 4px;
+  justify-items: center;
+  align-items: center;
+  padding: 2px 0;
+}
+.passport-stamp-leaf__slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+.passport-stamp-leaf .passport-stamp,
+.passport-stamp-leaf__hero .passport-stamp {
+  zoom: var(--stamp-leaf-zoom, 0.58);
+}
+.passport-stamp-leaf__cap {
+  margin-top: 5px;
+  font-size: 6.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--passport-ink-faint);
+  text-align: center;
+}
+
+/* The one large impression — the completion page's own certification. */
+.passport-stamp-leaf__hero {
+  --stamp-leaf-zoom: 0.72;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  text-align: center;
+}
 
 /* ── the settlement panel the design closes the page with ── */
 .passport-stamp-settlement {

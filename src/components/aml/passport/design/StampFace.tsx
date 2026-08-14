@@ -42,6 +42,20 @@ const EMBLEM = "/brand/aurixa-emblem.png";
 /** The design steps a long title down so it still fits the die. */
 const LONG_TITLE = 22;
 
+/**
+ * The same treatment for the issuer line, and it is NOT cosmetic.
+ *
+ * The design's own issuer is "AURIXA SYSTEMS" — fourteen characters — and its
+ * org line is set nowrap at 6.8px on 0.2em tracking with a rule either side.
+ * A tenant name is whatever the operator typed: "Naidu Property Consulting
+ * Services" is thirty-four, which measures ~200px against a 164px die, so the
+ * line and its rules ran clean across the neighbouring impressions on the
+ * register — and would now do the same on a client's Passport. The name is the
+ * one thing on a stamp that may not be abbreviated, so a long one steps down
+ * and is allowed a second line rather than being truncated.
+ */
+const LONG_ORG = 18;
+
 function Inscription({
   org, title, date, sub,
 }: {
@@ -50,11 +64,19 @@ function Inscription({
   date: string;
   sub: string | null;
 }) {
+  const longOrg = org.length > LONG_ORG;
   return (
     <div className="passport-stamp__body">
-      <div className="passport-stamp__org">
+      <div className={cn("passport-stamp__org", longOrg && "passport-stamp__org--long")}>
         <span aria-hidden="true" />
-        <span className="passport-stamp__orgname">{org}</span>
+        <span
+          className={cn(
+            "passport-stamp__orgname",
+            longOrg && "passport-stamp__orgname--long",
+          )}
+        >
+          {org}
+        </span>
         <span aria-hidden="true" />
       </div>
       <div
