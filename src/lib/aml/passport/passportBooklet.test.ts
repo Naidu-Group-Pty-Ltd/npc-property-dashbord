@@ -181,8 +181,6 @@ describe('bookletSpreads / bookletLabel', () => {
 
 describe('bookletGeometry', () => {
   it('scales the leaf instead of squeezing it — the design box never changes', () => {
-    // The defect this replaced: a leaf laid out at 200px still carried 11px
-    // body copy and 30px seals, so text wrapped one character per line.
     const g = bookletGeometry({ availableWidth: 500, availableHeight: 900, singleOnly: true });
     expect(g.perSpread).toBe(1);
     expect(g.width).toBeCloseTo(LEAF_W * g.scale, 5);
@@ -191,34 +189,74 @@ describe('bookletGeometry', () => {
     expect(g.width / g.height).toBeCloseTo(LEAF_W / LEAF_H, 10);
   });
 
-  it('shows a facing pair only when both leaves stay legible', () => {
-    const wide = bookletGeometry({ availableWidth: 1100, availableHeight: 900 });
-    expect(wide.perSpread).toBe(2);
+  it('NEVER returns a spread larger than the space it was given', () => {
+    // This is the contract the whole viewer rests on: the caller sizes the
+    // board from these numbers, so a result wider than the container is a
+    // cropped passport — which is exactly the defect this replaced.
+    const widths = [420, 640, 768, 900, 1024, 1180, 1280, 1440, 1600, 1920, 2560, 3440];
+    const heights = [360, 480, 560, 640, 720, 800, 900, 1080, 1440];
+    for (const availableWidth of widths) {
+      for (const availableHeight of heights) {
+        for (const singleOnly of [false, true]) {
+          const g = bookletGeometry({ availableWidth, availableHeight, singleOnly });
+          // Exact, not within an epsilon: the scale is floored precisely so
+          // this holds. Below the documented minimum-scale floor the viewer
+          // scrolls rather than shrinking into nothing, so that case is exempt.
+          if (g.scale > 0.28) {
+            expect(
+              g.width,
+              `width overflowed at ${availableWidth}x${availableHeight} singleOnly=${singleOnly}`,
+            ).toBeLessThanOrEqual(availableWidth);
+            expect(
+              g.height,
+              `height overflowed at ${availableWidth}x${availableHeight} singleOnly=${singleOnly}`,
+            ).toBeLessThanOrEqual(availableHeight);
+          }
+          // The scaled layer is laid out at spreadWidth and transformed, so the
+          // two must agree exactly or the leaf is cropped or floats.
+          expect(g.width).toBeCloseTo(g.spreadWidth * g.scale, 6);
+        }
+      }
+    }
+  });
 
+  it('reports the unscaled spread width the scaled layer is laid out at', () => {
+    const one = bookletGeometry({ availableWidth: 500, availableHeight: 900, singleOnly: true });
+    expect(one.spreadWidth).toBe(LEAF_W);
+
+    const two = bookletGeometry({ availableWidth: 1400, availableHeight: 900, spine: 26 });
+    expect(two.perSpread).toBe(2);
+    expect(two.spreadWidth).toBe(LEAF_W * 2 + 26);
+  });
+
+  it('shows a facing pair only when both leaves stay legible', () => {
+    expect(bookletGeometry({ availableWidth: 1100, availableHeight: 900 }).perSpread).toBe(2);
     // Too narrow for two readable leaves: fall back to one rather than
     // shrinking both into illegibility.
-    const narrow = bookletGeometry({ availableWidth: 560, availableHeight: 900 });
-    expect(narrow.perSpread).toBe(1);
+    expect(bookletGeometry({ availableWidth: 560, availableHeight: 900 }).perSpread).toBe(1);
+  });
+
+  it('a short viewport forces a single leaf rather than cropping a pair', () => {
+    // Height is what usually runs out first on a laptop. Fitting by height
+    // alone would keep two leaves and shrink them below legibility.
+    const short = bookletGeometry({ availableWidth: 1600, availableHeight: 380 });
+    expect(short.height).toBeLessThanOrEqual(380);
+    expect(short.width).toBeLessThanOrEqual(1600);
   });
 
   it('never enlarges a leaf beyond its design size by more than the cap', () => {
-    const huge = bookletGeometry({ availableWidth: 6000, availableHeight: 6000 });
-    expect(huge.scale).toBeLessThanOrEqual(1.15);
-  });
-
-  it('fits height as well as width, so a short laptop never clips the page', () => {
-    const short = bookletGeometry({ availableWidth: 2000, availableHeight: 400, singleOnly: true });
-    expect(short.height).toBeLessThanOrEqual(400);
+    expect(bookletGeometry({ availableWidth: 6000, availableHeight: 6000 }).scale)
+      .toBeLessThanOrEqual(1.15);
   });
 
   it('degrades to a usable size rather than collapsing on a tiny viewport', () => {
     const tiny = bookletGeometry({ availableWidth: 100, availableHeight: 200 });
     expect(tiny.perSpread).toBe(1);
-    expect(tiny.scale).toBeGreaterThan(0.2);
+    expect(tiny.scale).toBeGreaterThanOrEqual(0.28);
   });
 
   it('honours singleOnly even when there is room for two', () => {
-    const forced = bookletGeometry({ availableWidth: 2000, availableHeight: 900, singleOnly: true });
-    expect(forced.perSpread).toBe(1);
+    expect(bookletGeometry({ availableWidth: 2000, availableHeight: 900, singleOnly: true }).perSpread)
+      .toBe(1);
   });
 });

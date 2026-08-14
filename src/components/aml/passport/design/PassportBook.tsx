@@ -131,10 +131,13 @@ export function BookletLeaf({ page }: { page: BookletPage }) {
 /* ── the book ─────────────────────────────────────────────────────────── */
 
 /**
- * Space the board frame takes around the leaves — its padding plus its border.
- * Subtracted before fitting so the leaf is sized to the room it actually has.
+ * The navy margin the board keeps around the leaves, and the spine gap between
+ * two facing leaves. Both are shared with `bookletGeometry` so the arithmetic
+ * that fits the spread and the arithmetic that draws it cannot disagree — a
+ * mismatch of a few pixels is exactly what crops a leaf.
  */
-const BOARD_INSET = 56;
+const BOARD_FRAME = 44;
+const SPINE = 26;
 
 /** Measures the board and returns the geometry that fits it. */
 function useBookGeometry(singleOnly: boolean) {
@@ -155,8 +158,9 @@ function useBookGeometry(singleOnly: boolean) {
     if (rect.width === 0 && rect.height === 0) return;
     setGeometry(
       bookletGeometry({
-        availableWidth: rect.width - BOARD_INSET,
-        availableHeight: rect.height - BOARD_INSET,
+        availableWidth: rect.width - BOARD_FRAME,
+        availableHeight: rect.height - BOARD_FRAME,
+        spine: SPINE,
         singleOnly,
       }),
     );
@@ -246,7 +250,7 @@ export function PassportBook({
       aria-label="Digital passport"
     >
       {/* page chips */}
-      <div className="flex flex-wrap items-center justify-center gap-1.5 px-4 py-2.5">
+      <div className="flex flex-none flex-wrap items-center justify-center gap-1.5 px-4 py-2.5">
         {pages.map((p, i) => (
           <button
             key={p.id}
@@ -262,56 +266,61 @@ export function PassportBook({
       </div>
 
       {/* board */}
-      <div ref={ref} className="flex min-h-0 flex-1 items-center justify-center px-4 py-3">
-        <div
-          className="passport-board flex items-center justify-center overflow-hidden"
-          style={{
-            width: Math.round(geometry.width + BOARD_INSET),
-            height: Math.round(geometry.height + BOARD_INSET),
-            maxWidth: "100%",
-          }}
-        >
+      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+        {/* The ref sits on a padding-free box so its measured rect IS the space
+            available. Measuring a padded element and subtracting a guessed
+            padding is how the board came to be sized larger than its container. */}
+        <div ref={ref} className="flex h-full w-full items-center justify-center">
           <div
-            className={cn(
-              "flex items-start justify-center",
-              turn === "fwd" && "passport-turn-fwd",
-              turn === "back" && "passport-turn-back",
-            )}
+            className="passport-board relative overflow-hidden"
             style={{
-              width: geometry.width,
-              height: geometry.height,
+              width: Math.round(geometry.width + BOARD_FRAME),
+              height: Math.round(geometry.height + BOARD_FRAME),
             }}
           >
+            {/* The scaled layer is ABSOLUTELY positioned, never a flex item.
+                A flex item wider than its line gets centred to a NEGATIVE left
+                offset, and `transform-origin: top left` then preserves that
+                offset — which cropped the left-hand leaf against the board's
+                overflow. Absolute positioning takes it out of flow entirely,
+                so the only thing that decides where it sits is this inset. */}
             <div
-              className="flex origin-top-left items-start"
+              className={cn(
+                "absolute origin-top-left",
+                turn === "fwd" && "passport-turn-fwd",
+                turn === "back" && "passport-turn-back",
+              )}
               style={{
-                width: geometry.width / geometry.scale,
+                left: BOARD_FRAME / 2,
+                top: BOARD_FRAME / 2,
+                width: geometry.spreadWidth,
                 height: LEAF_H,
                 transform: `scale(${geometry.scale})`,
-                gap: spread.length > 1 ? 26 : 0,
               }}
             >
-              {spread.map((pageIndex, n) => {
-                const page = pages[pageIndex];
-                if (!page) return null;
-                return (
-                  <div key={page.id} className="relative flex items-start">
-                    {n > 0 && <span aria-hidden="true" className="passport-board__spine" />}
-                    {page.variant === "cover" ? (
-                      <BookletCover page={page} />
-                    ) : (
-                      <BookletLeaf page={page} />
-                    )}
-                  </div>
-                );
-              })}
+              <div className="flex items-start" style={{ gap: spread.length > 1 ? SPINE : 0 }}>
+                {spread.map((pageIndex, n) => {
+                  const page = pages[pageIndex];
+                  if (!page) return null;
+                  return (
+                    <div key={page.id} className="relative flex flex-none items-start">
+                      {n > 0 && <span aria-hidden="true" className="passport-board__spine" />}
+                      {page.variant === "cover" ? (
+                        <BookletCover page={page} />
+                      ) : (
+                        <BookletLeaf page={page} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       {/* turn */}
-      <div className="flex items-center justify-between gap-3 border-t border-[color:var(--passport-hairline)] px-4 py-3">
+      <div className="flex flex-none items-center justify-between gap-3 border-t border-[color:var(--passport-hairline)] px-4 py-3">
         <button
           type="button"
           className="passport-action w-auto"
