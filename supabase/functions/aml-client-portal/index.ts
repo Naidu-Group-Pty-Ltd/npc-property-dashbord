@@ -55,6 +55,10 @@ import { buildClientStampInput } from "../_shared/aml/passport/passportStamps.pu
 import {
   buildJourney, documentsJourneyStatus, submissionBlockers, verificationJourneyStatus,
 } from "../_shared/aml/portalJourney.pure.ts";
+// Which entity questions a declared purchasing structure may answer. Shared
+// with the portal form so the fields on screen and the keys in the stored
+// payload cannot disagree — see purchasingStructure.pure.ts.
+import { prunePurchasingStructure } from "../_shared/aml/purchasingStructure.pure.ts";
 import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
@@ -1081,9 +1085,22 @@ const __corsWrappedHandler = async (req: Request) => {
         // subset) so an in-flight save is never rejected by a concurrent
         // structure change; superseded answers are retained, never deleted.
         if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
-        const payload = body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+        const submittedPayload = body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
           ? body.payload
           : {};
+        /**
+         * Answers the declared structure cannot give never reach the row.
+         *
+         * The client drops them too, on the change that makes them
+         * inapplicable — but the row is what an analyst reads and what
+         * `submit_for_review` freezes into the snapshot, so the guarantee is
+         * made HERE and holds for any caller. A pack declaring an Individual
+         * purchaser and carrying a company name and an ABN is a purchaser
+         * record that contradicts itself; this is what stops one being stored.
+         */
+        const payload = body.section === 'purchasing_structure'
+          ? prunePurchasingStructure(submittedPayload as Record<string, unknown>)
+          : submittedPayload;
         if (body.submit) {
           const { data: structureResponse } = body.section === 'entity_details'
             ? await admin.schema('aml').from('questionnaire_responses')

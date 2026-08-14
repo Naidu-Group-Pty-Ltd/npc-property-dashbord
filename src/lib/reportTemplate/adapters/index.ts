@@ -87,24 +87,20 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
 ];
 
-const ALIASES: Record<string, string> = {
-  compass: 'investment',
-  investment_compass: 'investment',
-  investment_report: 'investment',
-  property_investment: 'investment',
-  borrowing: 'borrowing_capacity',
-  // Both spellings reach `PRODUCTION_REPORT_TEMPLATE_TYPES` in the broker,
-  // which matches the raw `report_type` and does not run it through this map.
-  // Without the alias the two gates would disagree about `cash_flow`.
-  cash_flow: 'cashflow',
-  clientdetails: 'client_details',
-  formara: 'client_details',
-};
+/**
+ * The alias map moved to `_shared/reports/reportTemplateSelection.pure.ts` and
+ * is re-exported here unchanged, so every existing caller is unaffected.
+ *
+ * It moved because the template picker needs the same answer and runs against
+ * the raw `report_type` column, where one format is stored under up to four
+ * spellings. Two copies of that map would mean a template the broker will
+ * activate under `commercial_industrial` that the registry then resolves to no
+ * adapter — which is exactly what a second copy had already produced, and what
+ * `reportTemplateSelection.spec.ts` now checks for every spelling.
+ */
+export { normaliseReportType, REPORT_TYPE_ALIASES } from '../../../../supabase/functions/_shared/reports/reportTemplateSelection.pure.ts';
 
-export function normaliseReportType(reportType?: string | null): string {
-  const key = String(reportType ?? '').trim().toLowerCase();
-  return ALIASES[key] ?? key;
-}
+import { normaliseReportType } from '../../../../supabase/functions/_shared/reports/reportTemplateSelection.pure.ts';
 
 export function getAdapter(reportType?: string | null): ReportTemplateAdapter | null {
   const key = normaliseReportType(reportType);

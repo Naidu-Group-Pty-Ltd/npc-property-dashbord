@@ -1,9 +1,22 @@
 /**
- * "Use template" — name the working copy, create it, open it in the Builder.
+ * "Use template" — name the working copy and create it.
  *
  * The copy is assembled server-side in `manage-template-library` from the
  * verified session. This dialog supplies a name and a description and nothing
  * else; it cannot influence scope, ownership or activation state.
+ *
+ * ## Why it no longer jumps into the Builder
+ *
+ * It used to `navigate()` into `/admin/template-builder/:id` on success, with
+ * no other outcome available. That made the editor the destination of every
+ * template interaction in the product — including the one people actually
+ * wanted, which was to pick the template their reports come out in. Choosing is
+ * not editing, and it now has its own surface (`ReportTemplatePicker`), so
+ * opening the Builder is an option here rather than the only way out.
+ *
+ * The default is to stay put. A working copy is inactive until it is approved
+ * and activated, so there is nothing about creating one that requires the
+ * editor to be open.
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -68,7 +81,7 @@ export function UseTemplateDialog({ entry, colourwayId = null, open, onOpenChang
       ? `Names must be ${MAX_NAME} characters or fewer.`
       : null;
 
-  const submit = () => {
+  const submit = (thenEdit: boolean) => {
     setTouched(true);
     if (nameError) return;
     createCopy.mutate(
@@ -86,7 +99,10 @@ export function UseTemplateDialog({ entry, colourwayId = null, open, onOpenChang
               : 'Working copy created',
           );
           onOpenChange(false);
-          navigate(`/admin/template-builder/${templateId}`);
+          // Only when they asked for it. The copy exists either way, and it is
+          // inactive until approved — there is nothing here that has to be
+          // finished in an editor.
+          if (thenEdit) navigate(`/admin/template-builder/${templateId}`);
         },
         // Errors surface as a toast from the hook; the dialog stays open with
         // the user's input intact so a retry costs nothing.
@@ -173,15 +189,23 @@ export function UseTemplateDialog({ entry, colourwayId = null, open, onOpenChang
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2 sm:gap-2">
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
             disabled={createCopy.isPending}
           >
             Cancel
           </Button>
-          <Button onClick={submit} disabled={createCopy.isPending || (touched && !!nameError)}>
+          {/* Opening the editor is now a choice, and the quieter of the two. */}
+          <Button
+            variant="outline"
+            onClick={() => submit(true)}
+            disabled={createCopy.isPending || (touched && !!nameError)}
+          >
+            Create and edit
+          </Button>
+          <Button onClick={() => submit(false)} disabled={createCopy.isPending || (touched && !!nameError)}>
             {createCopy.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" />}
             {createCopy.isPending ? 'Creating…' : 'Create working copy'}
           </Button>

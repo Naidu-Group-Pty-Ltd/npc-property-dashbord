@@ -12,6 +12,7 @@ import { preloadImages } from '@/lib/reportTemplate/imagePreloader';
 import { resolveReportTemplate, type ReportVariant } from '@/lib/reportTemplate/resolveTemplate';
 import { refuseUnboundReconstruction } from '@/lib/reportTemplate/rendering/productionTemplateGuard';
 import { getAdapter, listAdapters, type ReportTemplateAdapter } from '@/lib/reportTemplate/adapters';
+import { isSelectableTemplate } from '@/lib/reportTemplate/templateSelection';
 
 export interface TemplateBuilderRouteResult {
   fileUrl: string;
@@ -27,6 +28,47 @@ function candidateAdapters(reportType?: string | null): ReportTemplateAdapter[] 
   return listAdapters().filter((adapter) => adapter.supportsProduction);
 }
 
+/**
+ * The template the person chose, when they chose one.
+ *
+ * Read back from the server rather than trusted from the caller: the id
+ * travelled through the browser, and the row it names has to still be active
+ * and still belong to this format. `manage-templates` applies its own read
+ * scope on top, so a caller cannot fetch a template they may not see.
+ *
+ * Returns null — never throws and never substitutes — when the selection no
+ * longer applies. The caller then resolves by ranking exactly as it did before
+ * selections existed, which is also what the picker has already told the user
+ * is happening (`status: 'unavailable'`).
+ */
+async function loadSelectedTemplate(
+  templateId: string, reportType: string,
+): Promise<any | null> {
+  try {
+    const { data, error } = await invokeSecureFunction('manage-templates', {
+      operation: 'get',
+      table: 'report_templates',
+      recordId: templateId,
+    });
+    const row = (data as any)?.record;
+    if (error || !row) {
+      console.warn('[routeReportThroughTemplate] selected template unreadable', error);
+      return null;
+    }
+    if (!isSelectableTemplate(row, reportType)) {
+      console.warn(
+        `[routeReportThroughTemplate] selected template ${templateId} no longer applies to `
+        + `${reportType} (active=${row.is_active}, type=${row.report_type}) — falling back to ranking`,
+      );
+      return null;
+    }
+    return row;
+  } catch (e) {
+    console.warn('[routeReportThroughTemplate] selected template lookup failed', e);
+    return null;
+  }
+}
+
 export async function routeReportThroughTemplate(
   reportId: string,
   opts?: {
@@ -36,14 +78,14 @@ export async function routeReportThroughTemplate(
     reportType?: string | null;
     allowedReportTypes?: readonly string[];
     /**
-     * What the caller asked for, passed through to the adapter — the Cash Flow
-     * adapter reads it to pick one of three stored scenarios and the Q&A
-     * adapter to pick a subject; the rest derive their own and ignore it. This
-     * was declared on the adapter interface from the start and passed by no
-     * caller, so every scenario rendered as `moderate` and every conversation
-     * as a transcript whatever was requested.
+     * The template the person chose for this format, if they have chosen one.
+     *
+     * An explicit choice beats the ranking — that is the whole point of a
+     * choice. It is still validated against the format and re-read from the
+     * server (`loadSelectedTemplate`), and a choice that no longer applies
+     * falls back to the ranking rather than failing the generation.
      */
-    variant?: string | null;
+    templateId?: string | null;
   },
 ): Promise<TemplateBuilderRouteResult | null> {
   try {
@@ -57,12 +99,18 @@ export async function routeReportThroughTemplate(
       if (!routing?.reportType) continue;
       if (opts?.allowedReportTypes && !opts.allowedReportTypes.includes(routing.reportType.toLowerCase())) continue;
 
-      const resolved = await resolveReportTemplate({
-        reportType: routing.reportType,
-        variant: routing.variant as ReportVariant | null,
-        agencyId: opts?.agencyId ?? null,
-        userId: opts?.userId ?? null,
-      });
+      const selected = opts?.templateId
+        ? await loadSelectedTemplate(opts.templateId, routing.reportType)
+        : null;
+
+      const resolved = selected
+        ? { template: selected, engine: (selected.engine ?? 'jspdf') as 'jspdf' | 'weasyprint', source: 'selected' }
+        : await resolveReportTemplate({
+          reportType: routing.reportType,
+          variant: routing.variant as ReportVariant | null,
+          agencyId: opts?.agencyId ?? null,
+          userId: opts?.userId ?? null,
+        });
       if (!resolved || resolved.engine !== 'weasyprint') continue;
 
       const tplRow = resolved.template;

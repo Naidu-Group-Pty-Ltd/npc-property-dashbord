@@ -29,9 +29,16 @@ import { resolveRequestStep, type IdvAvailability } from '@/lib/aml/portalReques
 // target and the review summary. Presentation only — the truth is the server's.
 import {
   buildPortalStepStates, initialStepIndex, onboardingStatusPresentation, portalProgress,
+  submissionReceipt,
   type PortalStepState, type PortalStepTone,
 } from '@/lib/aml/portalStepPresentation';
 import { stepHoldsSubmission, type SubmissionBlocker } from '@/lib/aml/portalJourney';
+// Which entity questions a declared purchasing structure may answer. The same
+// rule `save_questionnaire` applies at the write boundary, so what is rendered
+// and what is stored cannot be two different answers.
+import {
+  PURCHASING_STRUCTURE_TYPES, collectsEntityFields, prunePurchasingStructure,
+} from '@/lib/aml/purchasingStructure';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -793,6 +800,22 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void | 
 
 /* ─────────────────────  Questionnaire  ────────────────────── */
 
+/**
+ * The payload as it is WRITTEN, which is not always the form state.
+ *
+ * A section loaded from storage can carry answers the declared structure can no
+ * longer give — typed against a company, kept when the client switched to
+ * Individual, and invisible ever since. Normalising here means the autosave,
+ * the manual draft and the section submit all send the same thing, and none of
+ * them can put a value back that the form has stopped showing.
+ *
+ * The server applies the identical rule (`save_questionnaire`); this is not the
+ * authority, it is what keeps the request honest before it leaves.
+ */
+function payloadForSave(section: AmlSection, form: Record<string, any>): Record<string, any> {
+  return section === 'purchasing_structure' ? prunePurchasingStructure(form) : form;
+}
+
 function QuestionnaireStep({
   caseId, section, title, structureType, onSaved, onNext, onBack,
 }: {
@@ -836,7 +859,8 @@ function QuestionnaireStep({
       if (['submitted', 'accepted', 'complete'].includes(statusRef.current)) return;
       setAutosaving(true);
       try {
-        await amlPortalApi.saveQuestionnaire(caseId, section, formRef.current, false);
+        await amlPortalApi.saveQuestionnaire(
+          caseId, section, payloadForSave(section, formRef.current), false);
         dirtyRef.current = false;
         setLastSavedAt(new Date());
         if (statusRef.current === 'not_started') setStatus('draft');
@@ -849,20 +873,32 @@ function QuestionnaireStep({
     await pendingAutosaveRef.current;
   }, [caseId, section]);
 
-  const set = (k: string, v: any) => {
-    setForm(prev => ({ ...prev, [k]: v }));
+  /**
+   * Apply a whole-payload edit and schedule the autosave behind it.
+   *
+   * A question whose answer INVALIDATES other answers — the purchasing entity
+   * type is the one — has to change both in the same write. Two `set` calls
+   * would be two renders, and the autosave scheduled by the first could send
+   * the half-updated payload; this is one state transition and one timer.
+   */
+  const update = (next: (prev: Record<string, any>) => Record<string, any>) => {
+    setForm(prev => next(prev));
     dirtyRef.current = true;
     if (['submitted', 'accepted', 'complete'].includes(statusRef.current)) return;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => { void persistDraft(); }, 1200);
   };
 
+  const set = (k: string, v: any) => update(prev => ({ ...prev, [k]: v }));
+
   // Flush pending autosave on unmount / step change
   useEffect(() => {
     return () => {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
       if (dirtyRef.current && !['submitted', 'accepted', 'complete'].includes(statusRef.current)) {
-        void amlPortalApi.saveQuestionnaire(caseId, section, formRef.current, false).catch(() => { /* silent */ });
+        void amlPortalApi
+          .saveQuestionnaire(caseId, section, payloadForSave(section, formRef.current), false)
+          .catch(() => { /* silent */ });
       }
     };
   }, [caseId, section]);
@@ -873,7 +909,7 @@ function QuestionnaireStep({
     try {
       // Serialize manual saves after any draft request that has already started.
       await pendingAutosaveRef.current;
-      await amlPortalApi.saveQuestionnaire(caseId, section, form, submit);
+      await amlPortalApi.saveQuestionnaire(caseId, section, payloadForSave(section, form), submit);
       dirtyRef.current = false;
       setLastSavedAt(new Date());
       toast.success(submit ? 'Section submitted' : 'Draft saved');
@@ -908,7 +944,9 @@ function QuestionnaireStep({
         {loading ? <Skeleton className="h-40" /> : (
           <>
             {section === 'personal_details' && <PersonalDetailsForm value={form} set={set} />}
-            {section === 'purchasing_structure' && <PurchasingStructureForm value={form} set={set} />}
+            {section === 'purchasing_structure' && (
+              <PurchasingStructureForm value={form} set={set} update={update} />
+            )}
             {section === 'entity_details' && <EntityDetailsForm value={form} set={set} structureType={structureType} />}
             {section === 'related_parties' && <RelatedPartiesForm value={form} set={set} structureType={structureType} />}
             {section === 'purchase_profile' && <PurchaseProfileForm value={form} set={set} />}
@@ -987,12 +1025,40 @@ function PersonalDetailsForm({ value, set }: { value: any; set: (k: string, v: a
   );
 }
 
-function PurchasingStructureForm({ value, set }: { value: any; set: (k: string, v: any) => void }) {
+/**
+ * The purchasing structure, and only the questions the declared structure has
+ * an answer to.
+ *
+ * The five entity questions used to render for everybody. An Individual
+ * purchaser was asked for a company legal name, an ABN, their trustees and
+ * directors, and anyone controlling more than 25% of themselves — and whatever
+ * they typed was autosaved, kept when they corrected the structure, and frozen
+ * into the submission snapshot. They are CONDITIONALLY RENDERED, not hidden:
+ * an input nobody can see is still an input that saves.
+ *
+ * Changing the type clears what that type cannot answer, in the same state
+ * write, so nothing survives the change invisibly (see
+ * `prunePurchasingStructure`). Changing back re-shows the questions — empty,
+ * because the answers were discarded rather than parked.
+ */
+function PurchasingStructureForm({ value, set, update }: {
+  value: any;
+  set: (k: string, v: any) => void;
+  update: (next: (prev: Record<string, any>) => Record<string, any>) => void;
+}) {
+  const collectsEntity = collectsEntityFields(value.entity_type);
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Field label="Purchasing entity type" required>
-        <RadioGroup value={value.entity_type ?? ''} onValueChange={v => set('entity_type', v)} className="grid grid-cols-2 gap-2">
-          {['Individual', 'Joint', 'Company', 'Trust', 'SMSF', 'Partnership'].map(t => (
+        <RadioGroup
+          value={value.entity_type ?? ''}
+          // One write: set the type, and drop every answer the new type cannot
+          // give. Two `set` calls would leave a render in between in which the
+          // autosave could send a payload the client no longer means.
+          onValueChange={v => update(prev => prunePurchasingStructure({ ...prev, entity_type: v }))}
+          className="grid grid-cols-2 gap-2"
+        >
+          {PURCHASING_STRUCTURE_TYPES.map(t => (
             <label key={t} className="flex items-center gap-2 text-sm border rounded-md p-2 cursor-pointer">
               <RadioGroupItem value={t} /> {t}
             </label>
@@ -1007,21 +1073,38 @@ function PurchasingStructureForm({ value, set }: { value: any; set: (k: string, 
           </p>
         )}
       </Field>
-      <Field label="Entity legal name (if not individual)">
-        <Input value={value.entity_name ?? ''} onChange={e => set('entity_name', e.target.value)} />
-      </Field>
-      <Field label="ABN / ACN (if applicable)">
-        <Input value={value.abn_acn ?? ''} onChange={e => set('abn_acn', e.target.value)} />
-      </Field>
-      <Field label="Trustee / Director names">
-        <Textarea rows={2} value={value.controllers ?? ''} onChange={e => set('controllers', e.target.value)} />
-      </Field>
-      <Field label="Beneficial owners (>25% control)">
-        <Textarea rows={3} value={value.beneficial_owners ?? ''} onChange={e => set('beneficial_owners', e.target.value)} />
-      </Field>
-      <Field label="Registered address">
-        <Textarea rows={2} value={value.registered_address ?? ''} onChange={e => set('registered_address', e.target.value)} />
-      </Field>
+
+      {collectsEntity && (
+        <>
+          <Field label="Entity legal name">
+            <Input value={value.entity_name ?? ''} onChange={e => set('entity_name', e.target.value)} />
+          </Field>
+          <Field label="ABN / ACN (if applicable)">
+            <Input value={value.abn_acn ?? ''} onChange={e => set('abn_acn', e.target.value)} />
+          </Field>
+          <Field label="Trustee / Director names">
+            <Textarea rows={2} value={value.controllers ?? ''} onChange={e => set('controllers', e.target.value)} />
+          </Field>
+          <Field label="Beneficial owners (>25% control)">
+            <Textarea rows={3} value={value.beneficial_owners ?? ''} onChange={e => set('beneficial_owners', e.target.value)} />
+          </Field>
+          {/* The entity's REGISTERED OFFICE, not a purchaser address — an
+              individual gives theirs as "Residential address" under Personal
+              details, and `entity_details` asks companies and trusts for this
+              same key again and requires it. */}
+          <Field label="Registered address">
+            <Textarea rows={2} value={value.registered_address ?? ''} onChange={e => set('registered_address', e.target.value)} />
+          </Field>
+        </>
+      )}
+
+      {value.entity_type && !collectsEntity && (
+        <p className="text-xs text-muted-foreground self-end" role="status">
+          {value.entity_type === 'Joint'
+            ? 'Buying in your own names, so there are no entity details to give here. You’ll add each co-purchaser at the next step.'
+            : 'Buying in your own name, so there are no entity details to give here.'}
+        </p>
+      )}
     </div>
   );
 }
@@ -1267,14 +1350,42 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
  * documents hold the pack only when something REQUIRED is outstanding —
  * a Documents card reading "not started" with no requirements raised means
  * nothing was asked for, and does not hold submission.
+ *
+ * ## The second defect: pressing Submit changed nothing on the page
+ *
+ * The submit handler fired a toast and refreshed the overview, and that was
+ * all. The summary and the enabled "Submit for review" button stayed exactly
+ * as they were, so the client was left looking at the same outstanding action
+ * a second after sending their pack — with no confirmation that it worked, no
+ * statement of what happens next, and nothing between them and a second
+ * submission version. The toast is the least durable surface in the product:
+ * it is gone in four seconds and gone on refresh.
+ *
+ * The screen now has a submitted state, and it is derived from
+ * `aml.submission_versions` through the journey (`submissionReceipt`) rather
+ * than from anything this component remembers — so it is there after a
+ * refresh, after a re-login and on another device, and it is never on screen
+ * because of a click that had not landed.
  */
 function ReviewStep({
   overview, stepStates, caseId, onBack, onSubmitted,
 }: {
   overview: AmlPortalOverview | null; stepStates: PortalStepState[];
-  caseId: string; onBack: () => void; onSubmitted: () => void;
+  caseId: string; onBack: () => void; onSubmitted: () => void | Promise<void>;
 }) {
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * The row `submit_for_review` returned to this call.
+   *
+   * Not a second source of truth: the same row the overview will report a
+   * moment later, held only so the confirmation is on screen for the seconds
+   * the refetch takes. Without it the button goes live again between the
+   * insert landing and the refresh — which is a second submission version one
+   * impatient click away.
+   */
+  const [justSubmittedAt, setJustSubmittedAt] = useState<string | null>(null);
+  /** Kept on the page, unlike the toast, so a failure is still readable. */
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const sections = overview?.sections ?? [];
   const reqs = overview?.requirements ?? [];
   const missingSections = sections.filter(s => !['submitted', 'accepted', 'complete'].includes(s.status));
@@ -1296,14 +1407,52 @@ function ReviewStep({
   });
   const canSubmit = holding.length === 0;
 
+  // Whether the pack has actually been sent — the server's own record of
+  // `aml.submission_versions`, read through the journey. Survives a refresh
+  // and a re-login precisely because nothing about it lives in this component.
+  const receipt = submissionReceipt({
+    journeyStatus: stepStates.find(s => s.key === 'review')?.status,
+    recentSubmissions: overview?.recent_submissions,
+    justSubmittedAt,
+  });
+  /**
+   * The adviser has asked for something, so a fresh version is the point.
+   *
+   * A submitted pack is not a closed door — `submit_for_review` writes version
+   * N+1 by design, and that is how a client answers a request for more
+   * information. It is offered only when there IS an open request: otherwise
+   * resubmitting is an accident, not an intention.
+   */
+  const adviserAwaitingUpdate = (overview?.open_requests ?? [])
+    .some((r: any) => r?.status === 'open');
+  /**
+   * Nothing was ever asked of them here.
+   *
+   * `documentsJourneyStatus` reaches `not_started` only when no requirement was
+   * raised AND nothing was uploaded, which is why it does not hold the pack
+   * (see `stepHoldsSubmission`). Saying so is the difference between an
+   * all-clear that reads as a contradiction — "not started" beside "everything
+   * received" — and one that reads as the truth.
+   */
+  const documentsUnrequested = priorSteps
+    .some(s => s.key === 'documents' && s.status === 'not_started');
+
   const submit = async () => {
     setSubmitting(true);
+    setSubmitError(null);
     try {
-      await amlPortalApi.submitForReview(caseId);
-      toast.success('Submitted for review — your advisor has been notified.');
-      onSubmitted();
+      const result = await amlPortalApi.submitForReview(caseId);
+      // The server's timestamp when it gives one; otherwise simply "now", which
+      // only ever labels a submission that demonstrably succeeded.
+      setJustSubmittedAt(result?.submission?.submitted_at ?? new Date().toISOString());
+      toast.success('Onboarding submitted — your adviser has been notified.');
+      // Awaited: the confirmation must be backed by the refreshed journey
+      // before the button can become pressable again for any reason.
+      await onSubmitted();
     } catch (e: any) {
-      toast.error(e?.message ?? 'Submission failed');
+      const message = e?.message ?? 'We couldn’t submit your onboarding just now.';
+      setSubmitError(message);
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -1313,7 +1462,11 @@ function ReviewStep({
     <Card>
       <CardHeader>
         <CardTitle>Review & submit</CardTitle>
-        <CardDescription>Confirm everything is complete, then submit your onboarding pack for review.</CardDescription>
+        <CardDescription>
+          {receipt.submitted
+            ? 'Your onboarding pack is with your adviser. Here’s what happens next.'
+            : 'Confirm everything is complete, then submit your onboarding pack for review.'}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <ul className="grid md:grid-cols-2 gap-3" aria-label="Your onboarding summary">
@@ -1331,6 +1484,48 @@ function ReviewStep({
           ))}
         </ul>
 
+        {receipt.submitted ? (
+          /* The confirmation. It replaces the readiness banner rather than
+             sitting beside it — "everything has been received" is a statement
+             about what the client still owes, and once the pack is sent that is
+             no longer the question they are asking. */
+          <Alert variant="default">
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>Onboarding submitted successfully</AlertTitle>
+            <AlertDescription className="space-y-3">
+              <p>
+                Thank you. Your onboarding information has been submitted to your adviser
+                for review
+                {receipt.submittedAt
+                  ? ` on ${new Date(receipt.submittedAt).toLocaleDateString(undefined, {
+                    day: 'numeric', month: 'long', year: 'numeric',
+                  })}`
+                  : ''}.
+              </p>
+              <div>
+                <p className="font-medium">What happens next</p>
+                {/* Only what the product actually does: an adviser review, the
+                    request mechanism this page already renders, and continued
+                    access. No response time is promised — nothing in the
+                    onboarding model defines one. */}
+                <ol className="mt-1 list-decimal space-y-1 pl-4">
+                  <li>Your adviser will review your information and documents.</li>
+                  <li>
+                    If anything else is needed, your adviser will ask for it here — the
+                    request will appear on this page.
+                  </li>
+                  <li>You don’t need to submit again unless your adviser asks you to.</li>
+                  <li>You can keep using your client portal for updates.</li>
+                </ol>
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {/* Outstanding work is shown whether or not the pack has gone. A
+            document rejected after submission flips this step back to needing
+            attention, and a confirmation on its own would be the last thing
+            such a client should be reading. */}
         {holding.length > 0 ? (
           <Alert variant="default">
             <AlertTriangle className="h-4 w-4" />
@@ -1346,14 +1541,30 @@ function ReviewStep({
               {holding.map(s => `${s.label} — ${s.presentation.accessibleStatus}`).join('. ')}.
             </AlertDescription>
           </Alert>
-        ) : (
+        ) : !receipt.submitted ? (
           <Alert variant="default">
             <CheckCircle2 className="h-4 w-4" />
             <AlertTitle>Everything we need from you has been received.</AlertTitle>
+            {documentsUnrequested && (
+              <AlertDescription>
+                We haven’t asked you for any documents on this case, so there is nothing
+                outstanding there. If your adviser needs one later, they’ll ask you here.
+              </AlertDescription>
+            )}
+          </Alert>
+        ) : null}
+
+        {submitError && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>We couldn’t submit your onboarding</AlertTitle>
+            <AlertDescription>
+              {submitError} Nothing you have sent us is affected — please try again.
+            </AlertDescription>
           </Alert>
         )}
 
-        {(missingSections.length > 0 || missingReqs.length > 0) && (
+        {!receipt.submitted && (missingSections.length > 0 || missingReqs.length > 0) && (
           <p className="text-xs text-muted-foreground">
             {missingSections.length > 0 && <span>{missingSections.length} section(s) not yet submitted. </span>}
             {missingReqs.length > 0 && <span>{missingReqs.length} required document(s) missing.</span>}
@@ -1362,10 +1573,29 @@ function ReviewStep({
 
         <div className="flex justify-between">
           <Button variant="outline" onClick={onBack}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
-          <Button onClick={submit} disabled={!canSubmit || submitting}>
-            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            <Send className="h-4 w-4 mr-1" /> Submit for review
-          </Button>
+          {receipt.submitted ? (
+            adviserAwaitingUpdate || holding.length > 0 ? (
+              // The two cases where sending again is the point rather than an
+              // accident: the adviser has asked for something, or something has
+              // fallen back to needing attention since. Secondary styling, and
+              // still gated on the same readiness rule the server enforces.
+              <Button variant="outline" onClick={submit} disabled={!canSubmit || submitting}>
+                {submitting
+                  ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Submitting…</>
+                  : <><Send className="h-4 w-4 mr-1" /> Send updated information</>}
+              </Button>
+            ) : (
+              <Button disabled>
+                <CheckCircle2 className="h-4 w-4 mr-1" /> Submitted
+              </Button>
+            )
+          ) : (
+            <Button onClick={submit} disabled={!canSubmit || submitting}>
+              {submitting
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Submitting…</>
+                : <><Send className="h-4 w-4 mr-1" /> Submit for review</>}
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

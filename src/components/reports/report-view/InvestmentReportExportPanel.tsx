@@ -9,7 +9,9 @@ import { ClientPDFGenerator } from '@/components/reports/ClientPDFGenerator';
 import { PremiumPdfButton } from '@/components/reports/PremiumPdfButton';
 import { RegenerateWithPerplexityButton } from '@/components/reports/RegenerateWithPerplexityButton';
 import { PremiumPdfDesignPanel } from '@/components/reports/PremiumPdfDesignPanel';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { DEFAULT_PDF_DESIGN_OPTIONS } from '@/components/reports/premiumPdfDesign';
+import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
 import type { ExportPanelProps } from './types';
 
 interface ToggleRowProps {
@@ -121,6 +123,14 @@ export function InvestmentReportExportPanel({
               <h3 className="text-sm font-semibold">Generation</h3>
               <p className="text-xs text-muted-foreground">Create standard or premium PDFs and refresh the report content.</p>
             </div>
+            {/* Before the buttons, deliberately: which template the document
+                comes out in is a decision about the document, and it used to be
+                invisible — resolved by ranking, with no surface anywhere in the
+                product that showed it or let anyone change it. */}
+            <ReportTemplateSelector
+              reportType={INVESTMENT_REPORT_FORMAT.reportType}
+              formatLabel={INVESTMENT_REPORT_FORMAT.label}
+            />
             <div className="grid gap-2">
               <ErrorBoundary fallback={<div className="text-sm text-muted-foreground">PDF tools are unavailable.</div>}>
                 <ClientPDFGenerator ref={pdfGeneratorRef} report={report} includeSources={includeSources} includeScoring={includeScoring} />

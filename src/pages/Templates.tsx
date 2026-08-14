@@ -44,6 +44,7 @@ import {
   LibraryBig,
   ArrowRight,
 } from 'lucide-react';
+import { ReportTemplateBindings } from '@/components/reports/ReportTemplateBindings';
 import { TemplateLibraryTab } from '@/components/templateLibrary/TemplateLibraryTab';
 import { TemplateStartChoices } from '@/components/templateBuilder/TemplateStartChoices';
 import { isTemplateLibraryEnabled } from '@/lib/templateLibrary/featureFlag';
@@ -225,6 +226,12 @@ export default function Templates() {
         </div>
 
         <TabsContent value="report-formats" className="space-y-6">
+          {/* Which template each format's PDFs come out in. Separate from the
+              groups below, which configure `report_structure_templates` — the
+              prompts that decide what a report SAYS. This decides what it looks
+              like, and until now nothing in the product did. */}
+          <ReportTemplateBindings />
+
           {FORMAT_GROUPS.map((group) => (
             <ReportFormatGroup
               key={group.key}
