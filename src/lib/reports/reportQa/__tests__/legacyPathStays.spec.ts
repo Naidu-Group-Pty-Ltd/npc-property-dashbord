@@ -153,7 +153,10 @@ describe('the control hands back the bytes', () => {
   });
 
   it('hands the blob to the caller that asked for an email', () => {
-    const source = read('src/components/report-qa/ReportQaDownloadButton.tsx');
+    // The delivery moved into its own hook so ConversationExport can offer the
+    // same documents without embedding the button inside its menu; the button
+    // and the export menu both run this line now.
+    const source = read('src/components/report-qa/useReportQaDelivery.ts');
     expect(source).toContain('onAttachToEmail?.(result.blob, result.fileName)');
   });
 });

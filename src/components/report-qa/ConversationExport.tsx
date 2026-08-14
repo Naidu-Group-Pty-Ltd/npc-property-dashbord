@@ -7,10 +7,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Download, FileText, FileDown, Sparkles } from 'lucide-react';
+import { Download, FileText, FileDown, Loader2, MessageSquareText, Sparkles } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useReportTemplateMenu } from '@/components/reports/useReportTemplateMenu';
 import { ConversationReportEditor } from './ConversationReportEditor';
-import { ReportQaDownloadButton } from './ReportQaDownloadButton';
+import { useReportQaDelivery } from './useReportQaDelivery';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -28,6 +29,12 @@ interface ConversationExportProps {
 export function ConversationExport({ messages, title, reportNames, conversationId }: ConversationExportProps) {
   const { toast } = useToast();
   const [editorOpen, setEditorOpen] = useState(false);
+  // The typeset documents, as plain items in THIS menu. This used to embed the
+  // whole ReportQaDownloadButton — a DropdownMenu inside this menu's content,
+  // whose own template dialog was unmounted with it: the picker opened and
+  // vanished in the same frame. Same delivery hook, same toasts, no nesting.
+  const typeset = useReportQaDelivery({ conversationId: conversationId ?? null });
+  const template = useReportTemplateMenu('qa');
 
   const exportAsText = () => {
     const header = `# ${title}\n\nReports: ${reportNames.join(', ')}\nExported: ${new Date().toLocaleString()}\n\n---\n\n`;
@@ -145,25 +152,31 @@ export function ConversationExport({ messages, title, reportNames, conversationI
             Export
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="w-64">
           {/*
-            The typeset document, above the raster one. Both stay: this produces
-            real text through WeasyPrint, the item below it still opens the
-            jsPDF editor, and the four raw exports underneath are untouched —
-            the .md one is what the typeset document's own truncation notice
-            points at.
+            The typeset documents, above the raster one. All of it stays: these
+            produce real text through WeasyPrint, the item below them still
+            opens the jsPDF editor, and the four raw exports underneath are
+            untouched — the .md one is what the typeset document's own
+            truncation notice points at.
           */}
           {conversationId && (
-            <div className="px-1 py-1">
-              <ReportQaDownloadButton
-                conversationId={conversationId}
-                variant="ghost"
-                className="w-full justify-start"
-                label="Typeset PDF (WeasyPrint)"
-              />
-            </div>
+            <>
+              <DropdownMenuItem disabled={typeset.busy} onClick={() => void typeset.run('structured')}>
+                {typeset.running === 'structured'
+                  ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  : <Sparkles className="h-4 w-4 mr-2 text-primary" />}
+                Typeset Report (WeasyPrint, AI)
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={typeset.busy} onClick={() => void typeset.run('transcript')}>
+                {typeset.running === 'transcript'
+                  ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  : <MessageSquareText className="h-4 w-4 mr-2" />}
+                Typeset Transcript (WeasyPrint)
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
           )}
-          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setEditorOpen(true)}>
             <Sparkles className="h-4 w-4 mr-2 text-primary" />
             Export as Structured Report (AI)
@@ -185,8 +198,15 @@ export function ConversationExport({ messages, title, reportNames, conversationI
             <FileDown className="h-4 w-4 mr-2" />
             Export Raw Data (.json)
           </DropdownMenuItem>
+          {/* Which template the typeset documents come out in, at the foot of
+              the menu that produces them. */}
+          {template.section}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Outside the menu: its content unmounts on close and would take the
+          dialog with it. */}
+      {template.dialog}
 
       <ConversationReportEditor
         isOpen={editorOpen}

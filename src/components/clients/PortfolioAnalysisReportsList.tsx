@@ -4,6 +4,7 @@ import { smartCapitalize } from '@/lib/nameUtils';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageDownload } from '@/hooks/useSecureStorage';
 import { FlattenPdfMenuItem } from '@/components/common/FlattenPdfMenuItem';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { deliverPortfolioReview } from '@/lib/reports/portfolio/deliverPortfolioReview';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -444,6 +445,15 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
               : 'View all generated portfolio performance analysis reports across all clients'
             }
           </CardDescription>
+          {/* The rows below can typeset the review server-side, and which
+              template it comes out in was previously not answerable from this
+              list at all. Once for the card — the choice is per format, and
+              every row's typeset download reads it. */}
+          <ReportTemplateSelector
+            reportType="portfolio"
+            formatLabel="Portfolio Performance Review"
+            className="mt-3"
+          />
         </CardHeader>
         <CardContent className="bg-background dark:bg-black/15 p-0">
           {filteredReports.length === 0 ? (

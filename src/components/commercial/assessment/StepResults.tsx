@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, FileText, Info, Loader2, RefreshCw, Shield
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatMoney, formatMultiple, formatRatioPercent, toCents } from '@/lib/ciAssessment/money';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { CalculationExplainer } from './CalculationExplainer';
 import { ScenarioComparison } from './ScenarioComparison';
 import type { AssessmentOutcome, AssessmentResult } from '@/lib/ciAssessment/engine';
@@ -107,6 +108,16 @@ export function StepResults({
         {!canGenerateReport && reportBlockedReason ? (
           <p className="mt-2 text-xs text-muted-foreground">{reportBlockedReason}</p>
         ) : null}
+        {/* Beside the button that uses it: this step is where the report is
+            actually produced, and the choice was previously answerable only on
+            a client-modal tab behind a plan add-on. One row for the step — the
+            selection is per format, and Generate report reads it wherever it
+            is pressed. */}
+        <ReportTemplateSelector
+          reportType="commercial_capacity"
+          formatLabel="Commercial & Industrial Capacity"
+          className="mt-3"
+        />
       </section>
 
       {/* ---- Headline numbers ------------------------------------------ */}
