@@ -101,11 +101,27 @@ function resolveScenario(variant?: string | null): ScenarioName {
 function liveRowFromPayload(
   payload: Record<string, unknown> | null | undefined,
   reportId: string,
-  propertyAddress?: string | null,
 ): Record<string, unknown> | null {
   const wire = payload?.wire as WireProjection | undefined;
   if (!wire) return null;
-  return wireAsProjectionRow(wire, { reportId, propertyAddress });
+  return wireAsProjectionRow(wire, {
+    reportId,
+    // From the payload, never from the database: the whole point of this
+    // channel is that a caller holding the document's data can render it
+    // without a read that may be refused.
+    propertyAddress: (payload?.propertyAddress as string | null) ?? null,
+  });
+}
+
+/** The scenario the caller proved, when it proved one. */
+function provedScenario(payload: Record<string, unknown> | null | undefined): string | null {
+  const s = payload?.scenario;
+  return typeof s === 'string' && s.trim() ? s.trim() : null;
+}
+
+/** The document's title, from whichever source is serving it. */
+function titleFor(address: unknown): string {
+  return address ? `10 Year Cash Flow — ${address}` : '10 Year Cash Flow Analysis';
 }
 
 export const cashFlowAdapter: ReportTemplateAdapter = {
@@ -148,23 +164,37 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
   },
 
   async resolveRoutingContext({ reportId, variant, payload }): Promise<RoutingContext | null> {
+    // The supplied series is served WITHOUT a database read.
+    //
+    // This format's data is the ten years on screen, and the caller is holding
+    // them. Reading the record first made the render depend on a query that
+    // can be refused — by RLS, by a module permission, by the broker being
+    // unreachable — none of which the document actually needs. When a payload
+    // is present the only thing the row contributed was the address, so the
+    // caller supplies that too and the read is skipped entirely.
+    const live = liveRowFromPayload(payload, reportId);
+    if (live) {
+      return {
+        reportId,
+        reportType: 'cashflow',
+        variant: variant ?? null,
+        tier: null,
+        title: titleFor((payload as Record<string, unknown>)?.propertyAddress),
+        fileLabel: 'cash-flow-analysis',
+        sourceTable: 'investment_reports',
+        legacyFallback: cashFlowAdapter.legacyFallback,
+      };
+    }
+
     const row = await loadReport(reportId);
     if (!row) return null;
-    // A report with no stored series cannot be served by this format — unless
-    // the caller supplied the reviewed series itself, which is this format's
-    // documented source of truth. The payload is validated by the same bridge
-    // the binding uses, so a routing context can never resolve for a series
-    // the binding would then refuse.
-    const live = liveRowFromPayload(payload, reportId, row.property_address as string | null);
-    if (!live && !projectCashFlow(row, resolveScenario(variant)).hasProjections) return null;
+    if (!projectCashFlow(row, resolveScenario(variant)).hasProjections) return null;
     return {
       reportId,
       reportType: 'cashflow',
       variant: variant ?? null,
       tier: null,
-      title: row.property_address
-        ? `10 Year Cash Flow — ${row.property_address}`
-        : '10 Year Cash Flow Analysis',
+      title: titleFor(row.property_address),
       fileLabel: 'cash-flow-analysis',
       sourceTable: 'investment_reports',
       legacyFallback: cashFlowAdapter.legacyFallback,
@@ -177,22 +207,24 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
       payload?: Record<string, unknown> | null;
     },
   ): Promise<TemplateBindingContext | null> {
-    const row = await loadReport(reportId);
-    if (!row) return null;
+    // Same rule as routing: a supplied series needs no read at all.
+    const live = liveRowFromPayload(payload, reportId);
+    const row = live ? null : await loadReport(reportId);
+    if (!live && !row) return null;
 
-    const live = liveRowFromPayload(payload, reportId, row.property_address as string | null);
     const scenario = resolveScenario(variant);
-    if (!live && !projectCashFlow(row, scenario).hasProjections) return null;
+    if (!live && !projectCashFlow(row!, scenario).hasProjections) return null;
 
+    const source = live ?? row!;
     const data: Record<string, any> = {
       report: {
-        id: row.id,
+        id: reportId,
         type: 'cashflow',
-        generated_at: row.updated_at ?? row.created_at,
+        generated_at: (row?.updated_at ?? row?.created_at) ?? new Date().toISOString(),
       },
       // As with the other adapters, the raw row stays bound under its own column
       // names so anything already keyed on one keeps resolving.
-      analysis: row,
+      analysis: source,
       brand: {
         tokens: brand?.tokens ?? {},
         logo: brand?.logoUrl ?? null,
@@ -203,9 +235,9 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
       // The series the adviser reviewed, published under the same vocabulary
       // by the same producer — and never labelled with a scenario it does not
       // satisfy. See `liveProjectionRow.ts`.
-      applyLiveCashFlowProjection(data, live);
+      applyLiveCashFlowProjection(data, live, provedScenario(payload));
     } else {
-      applyCashFlowProjection(data, row, scenario);
+      applyCashFlowProjection(data, row!, scenario);
     }
     // The letterhead — the wordmark on the cover and the contact block on the
     // disclaimer page every template ends with. Nothing published `org` until

@@ -123,3 +123,55 @@ describe('the pseudo-row and its projection', () => {
     expect(wireAsProjectionRow(wire({ years: [] }), { reportId: 'rep-1' })).toBeNull();
   });
 });
+
+describe('a supplied series needs no database read', () => {
+  it('the adapter serves the payload before it ever loads a record', async () => {
+    // The rule this file's format depends on. Reading the record first made
+    // the render depend on a query that can be refused — by RLS under this
+    // app's custom cookie auth, by a module permission, by an unreachable
+    // broker — and a refused read is indistinguishable from "this record
+    // cannot be templated", so the document came out of the standard composer
+    // with no way to tell. Everything the template needs is on screen.
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const code = readFileSync(
+      join(__dirname, '../../../reportTemplate/adapters/cashFlowAdapter.ts'), 'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // Both entry points serve the live row first and only then fall back to a
+    // read — `liveRowFromPayload` must appear before `loadReport` in each.
+    for (const method of ['resolveRoutingContext', 'buildBindingContext']) {
+      const at = code.indexOf(method);
+      expect(at, `${method} is gone`).toBeGreaterThan(-1);
+      const body = code.slice(at, at + 1400);
+      const live = body.indexOf('liveRowFromPayload');
+      const load = body.indexOf('loadReport');
+      expect(live, `${method} no longer checks the payload`).toBeGreaterThan(-1);
+      expect(
+        live < load || load === -1,
+        `${method} reads the record before serving the supplied series`,
+      ).toBe(true);
+    }
+  });
+
+  it('takes the title from the payload, so the title needs no read either', () => {
+    const row = wireAsProjectionRow(wire(), {
+      reportId: 'rep-1', propertyAddress: '28 Bligh Street',
+    })!;
+    expect(row.property_address).toBe('28 Bligh Street');
+  });
+
+  it('prints a proved scenario by its own name, and nothing else as one', () => {
+    const row = wireAsProjectionRow(wire(), { reportId: 'rep-1' })!;
+
+    const proved: Record<string, any> = {};
+    applyLiveCashFlowProjection(proved, row, 'optimistic');
+    expect(proved.cashflow.scenario).toBe('optimistic');
+    expect(proved.cashflow.scenarioLabel).toBe('Optimistic');
+
+    const reviewed: Record<string, any> = {};
+    applyLiveCashFlowProjection(reviewed, row, null);
+    expect(reviewed.cashflow.scenario).toBe('reviewed');
+    expect(reviewed.cashflow.scenarioLabel).toBe('Adviser-reviewed');
+  });
+});

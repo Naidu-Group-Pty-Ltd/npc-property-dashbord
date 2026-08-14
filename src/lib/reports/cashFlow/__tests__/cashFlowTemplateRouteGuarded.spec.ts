@@ -71,13 +71,22 @@ describe('the modal', () => {
     expect(call, 'the request for a template has been gated again — read this file\'s header')
       .not.toMatch(/storedScenario\s*\?\s*(await\s+)?tryTemplateDocument/);
 
-    // The unmatched case hands over the series on screen — the same wire the
-    // composer receives — and ONLY the unmatched case: a matched series routes
-    // as its named scenario so the document may say "Moderate" rather than
-    // being relabelled "Adviser-reviewed" for no reason.
-    const region = code.slice(at, at + 300);
-    expect(region, 'an unmatched series no longer hands the reviewed wire to the adapter')
-      .toMatch(/storedScenario\s*\?\s*\{\}\s*:\s*\{\s*payload:\s*\{\s*wire\s*\}\s*\}/);
+    // The payload is sent ALWAYS, not only when the series is unmatched.
+    //
+    // Sending it conditionally left the matched case depending on the adapter
+    // re-reading `investment_reports` — a read that can be refused, and whose
+    // refusal is indistinguishable from "this record cannot be templated", so
+    // the document silently came out of the standard composer. Everything the
+    // template needs is on screen, so nothing is re-read.
+    const region = code.slice(at, at + 600);
+    expect(region, 'the reviewed wire is no longer handed to the adapter on every render')
+      .toMatch(/payload:\s*\{[\s\S]*?wire,/);
+    expect(region, 'the address must travel with it, or the title needs a read')
+      .toMatch(/propertyAddress:/);
+    // The proved scenario travels too, so a matched series may still print
+    // "Moderate" rather than being relabelled for no reason.
+    expect(region, 'the proved scenario no longer travels with the payload')
+      .toMatch(/scenario:\s*storedScenario/);
   });
 
   it('renders the scenario it proved, not a default one', () => {

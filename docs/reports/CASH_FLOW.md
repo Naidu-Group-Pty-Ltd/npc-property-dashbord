@@ -273,3 +273,27 @@ figure; and the projection is labelled `reviewed` / "Adviser-reviewed" with
 the stored scenario-comparison blocks withheld — a matched series still routes
 under its named scenario, so "Moderate" is only ever printed when the series
 is the stored moderate one.
+
+### The template render never reads the database
+
+The payload channel above was first sent *only* when the on-screen series did
+not match the stored one. That left the matched case — and it is the case a
+person hits when they have not overridden anything — depending on the adapter
+re-reading `investment_reports`. That read can be refused for reasons which
+have nothing to do with the document: RLS under this app's custom cookie auth,
+a module permission on the broker, an unreachable function. And a refused read
+is **indistinguishable from "this record cannot be templated"**, so the chosen
+template silently produced the standard composer's document instead.
+
+So the modal now sends the payload on **every** render, and the adapter serves
+it **before** it loads anything: `resolveRoutingContext` and
+`buildBindingContext` both check `liveRowFromPayload` first and only fall back
+to a read when no payload was supplied. Everything the template needs is
+already on screen — the ten years, the address for the title, and the scenario
+name when `matchStoredScenario` proved one — so a templated cash flow render
+now touches the database for exactly two things: the user's template selection
+and the template's own schema. Neither is optional and neither is this record.
+
+The proved scenario travels with the payload so the honest labelling survives:
+a matched series still prints "Moderate", and only a hand-shaped one is
+labelled "Adviser-reviewed".
