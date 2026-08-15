@@ -117,7 +117,7 @@ export function EmploymentManualEntry({ clientId, contacts, onComplete }: Employ
 
 
   const startEdit = (employment: any) => {
-    // The record's own contact決 determines which tab owns this draft.
+    // The record's own contact determines which tab owns this draft.
     const tabId = employment.additional_contact_id || employment.contact_type;
     setDrafts(prev => ({
       ...prev,
@@ -378,18 +378,7 @@ export function EmploymentManualEntry({ clientId, contacts, onComplete }: Employ
           </SheetHeader>
 
           <ScrollArea className="h-[calc(100vh-180px)] pr-4 mt-4">
-            <Tabs value={activeTab} onValueChange={(v) => {
-              setActiveTab(v);
-              if (v !== 'previous') {
-                const contact = contacts.find(c => c.id === v);
-                setFormData(prev => ({
-                  ...prev,
-                  contact_type: contact?.contactType === 'additional' ? 'additional' : (contact?.contactType || 'primary') as any,
-                  additional_contact_id: contact?.additionalContactId || null,
-                }));
-              }
-              setEditingId(null);
-            }}>
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
               <TabsList className={`grid w-full`} style={{ gridTemplateColumns: `repeat(${tabItems.length}, 1fr)` }}>
                 {tabItems.map(tab => (
                   <TabsTrigger key={tab.value} value={tab.value} className="text-xs">
