@@ -23,13 +23,13 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
   const isLandOnly = buildType === 'land_only';
 
   return (
-    <Card className="group flex h-full flex-col overflow-hidden border-border/80 bg-gradient-to-b from-background to-muted/20 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg">
-      <CardHeader className="space-y-4 pb-3">
+    <Card className="group flex h-full flex-col overflow-hidden border-border/70 bg-card shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg">
+      <CardHeader className="space-y-3 pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge
               variant={isNewBuild ? "default" : isLandOnly ? "outline" : "secondary"}
-              className="text-xs"
+              className="text-xs font-medium"
             >
               {isNewBuild ? (
                 <><Building className="h-3 w-3 mr-1" />New Build</>
@@ -45,37 +45,47 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
               </Badge>
             )}
           </div>
-          <div className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
             {format(new Date(report.created_at), 'dd MMM yyyy')}
-          </div>
+          </span>
         </div>
 
-        <div className="space-y-3">
-          <CardTitle className="line-clamp-2 text-lg leading-snug">
+        <div className="space-y-2.5">
+          <CardTitle className="line-clamp-2 font-heading text-base font-semibold leading-snug tracking-tight md:text-lg">
             {report.property_address}
           </CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline" className="border-success/30 bg-success/10 text-success hover:bg-success/10">
               <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
               Ready for cash-flow analysis
             </Badge>
             {weeklyRent <= 0 && (
               <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning hover:bg-warning/10">
+                <AlertTriangle className="mr-1 h-3.5 w-3.5" />
                 Rent review needed
               </Badge>
             )}
-
           </div>
         </div>
       </CardHeader>
 
-      <CardContent className="flex-1 space-y-4">
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <MetricTile label="Purchase Price" value={`$${purchasePrice.toLocaleString()}`} />
-          <MetricTile label="Weekly Rent" value={`$${weeklyRent.toLocaleString()}`} warning={weeklyRent <= 0} />
+      <CardContent className="flex-1 space-y-3">
+        <div className="grid grid-cols-2 gap-2.5 text-sm">
+          <MetricTile
+            label="Purchase Price"
+            value={purchasePrice > 0 ? `$${purchasePrice.toLocaleString()}` : 'Not set'}
+            hint="Contract value"
+            muted={purchasePrice <= 0}
+          />
+          <MetricTile
+            label="Weekly Rent"
+            value={weeklyRent > 0 ? `$${weeklyRent.toLocaleString()}` : 'Not set'}
+            hint={weeklyRent > 0 ? 'Per week' : 'Awaiting review'}
+            warning={weeklyRent <= 0}
+          />
         </div>
 
-        <div className="rounded-xl border bg-background/80 p-3 text-xs text-muted-foreground">
+        <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
           <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
             <ReceiptText className="h-3.5 w-3.5 text-primary" />
             Analysis inputs
@@ -84,7 +94,7 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
         </div>
       </CardContent>
 
-      <CardFooter className="flex flex-col-reverse gap-2 border-t bg-muted/20 p-4 sm:flex-row">
+      <CardFooter className="flex flex-col-reverse gap-2 border-t border-border/60 bg-muted/20 p-4 sm:flex-row">
         <Button
           variant="outline"
           size="sm"
@@ -102,18 +112,36 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
         >
           <Calculator className="h-4 w-4 mr-1" />
           {isOpening ? 'Loading...' : 'Open Cash Flow'}
-          {!isOpening && <ArrowRight className="h-3 w-3 ml-1" />}
+          {!isOpening && <ArrowRight className="h-3 w-3 ml-1 transition-transform group-hover:translate-x-0.5" />}
         </Button>
       </CardFooter>
     </Card>
   );
 }
 
-function MetricTile({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+function MetricTile({
+  label,
+  value,
+  hint,
+  warning = false,
+  muted = false,
+}: { label: string; value: string; hint?: string; warning?: boolean; muted?: boolean }) {
   return (
-    <div className={`rounded-xl border p-3 ${warning ? 'border-brand-200 bg-brand-50/70' : 'bg-background'}`}>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-1 font-semibold ${warning ? 'text-brand-700' : 'text-foreground'}`}>{value}</p>
+    <div
+      className={`rounded-xl border p-3 transition-colors ${
+        warning ? 'border-warning/30 bg-warning/10' : 'border-border/60 bg-muted/30'
+      }`}
+    >
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p
+        className={`mt-1 font-semibold tabular-nums ${
+          warning ? 'text-warning' : muted ? 'text-muted-foreground' : 'text-foreground'
+        }`}
+      >
+        {value}
+      </p>
+      {hint && <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }
+
