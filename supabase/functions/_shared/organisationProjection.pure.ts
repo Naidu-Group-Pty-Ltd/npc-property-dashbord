@@ -101,9 +101,74 @@ export function projectOrganisation(row: OrganisationRowLike | null | undefined)
   put(org, 'phone', str(row.email_signature_phone));
   put(org, 'email', str(row.email_signature_email));
   put(org, 'website', str(row.email_signature_website));
-  // Empty on the live row; published where a deployment fills it in.
+  // Empty on the live row; published where a deployment fills it in, and
+  // `contact_details` below fills it in on this one.
   put(org, 'address', str(row.email_signature_address));
-  // No `abn`: there is no column, and inventing one is out of the question.
+  // `abn` is not here because this row has no such column. It is not "nowhere"
+  // — see `projectReportSettings`.
+  return org;
+}
+
+/**
+ * The report settings the render routes already read, projected into `org`.
+ *
+ * ## The ABN was never missing, it was in the other table
+ *
+ * This module's header says `org.abn` has "no column" and `org.address` is an
+ * empty string. Both statements are true of `whitelabel_settings` and false of
+ * the deployment: `global_report_settings.contact_details` carries
+ *
+ *     abn      50 684 555 771
+ *     address  Level 5 Nexus Norwest, 4 Columbia Ct, Norwest NSW 2153
+ *
+ * and every render route already selects that row — `render-cash-flow-pdf` and
+ * its siblings fetch `contact_details` and `professional_disclaimer` together.
+ * The value reached the legacy composer and stopped there, so the design
+ * system's contact block printed four lines where the firm has six.
+ *
+ * ## And the disclaimer is a setting, not a constant
+ *
+ * `disclaimerPage()` bakes `STANDARD_DISCLAIMER` — five lines of generic
+ * boilerplate — into the schema of all 543 seeded templates. The deployment has
+ * `professional_disclaimer` set: **~1,400 characters over nine paragraphs**,
+ * `is_enabled: true`, written for a Buyers Agent and naming the risks that
+ * business carries. It reached the legacy composer and nothing else, so every
+ * design-system document carried the wrong disclaimer — the generic one, in
+ * place of the one the firm wrote and turned on.
+ *
+ * That is the defect behind "none of the templates are rendering the disclaimer
+ * section": the section renders, with text nobody chose.
+ *
+ * Published under `org` rather than a namespace of its own because it is the
+ * same block, on the same page, drawn from the same settings row as the contact
+ * lines beside it. `is_enabled: false` withholds the text and the block then
+ * omits it, which is what turning it off has to mean.
+ */
+export interface ReportSettingsLike {
+  contact?: Record<string, unknown> | null;
+  disclaimer?: Record<string, unknown> | null;
+}
+
+export function projectReportSettings(settings: ReportSettingsLike | null | undefined): Record<string, unknown> {
+  const org: Record<string, unknown> = {};
+  if (!settings) return org;
+  const contact = settings.contact ?? null;
+  if (contact) {
+    put(org, 'abn', str(contact.abn));
+    put(org, 'address', str(contact.address));
+    put(org, 'name', str(contact.company_name));
+    put(org, 'phone', str(contact.phone));
+    put(org, 'email', str(contact.email));
+    put(org, 'website', str(contact.website));
+  }
+  const disclaimer = settings.disclaimer ?? null;
+  if (disclaimer && disclaimer.is_enabled !== false) {
+    put(org, 'disclaimer', str(disclaimer.text));
+    // 'small' | 'medium' | 'large' — the disclaimer block's own vocabulary,
+    // passed through rather than converted to points here, so the block stays
+    // the one place that decides what each means.
+    put(org, 'disclaimerFontSize', str(disclaimer.font_size));
+  }
   return org;
 }
 
@@ -136,8 +201,13 @@ export function applyOrganisationProjection(
   data: Record<string, any>,
   row: OrganisationRowLike | null | undefined,
   marks?: BrandMarks | null,
+  settings?: ReportSettingsLike | null,
 ): Record<string, any> {
-  const org = projectOrganisation(row);
+  // `contact_details` wins over the email-signature columns where both carry a
+  // field. It is the row the Report Settings page writes for exactly this
+  // purpose, whereas the signature columns are an email's footer that this
+  // module borrows — see the note above on why they are read one at a time.
+  const org = { ...projectOrganisation(row), ...projectReportSettings(settings) };
   /*
    * Published only when the bytes exist.
    *

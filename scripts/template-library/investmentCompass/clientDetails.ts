@@ -434,8 +434,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
             headers: ['Previous address', 'From', 'To'],
             rows: Array.from({ length: n }, (_, i) => [
               `{{clientDetails.addressHistory.${i}.address}}`,
-              `{{clientDetails.addressHistory.${i}.startDate}}`,
-              `{{clientDetails.addressHistory.${i}.endDate}}`,
+              `{{clientDetails.addressHistory.${i}.startDate | date}}`,
+              `{{clientDetails.addressHistory.${i}.endDate | date}}`,
             ]),
             columnWidths: [0.56, 0.22, 0.22],
             numeric: [],

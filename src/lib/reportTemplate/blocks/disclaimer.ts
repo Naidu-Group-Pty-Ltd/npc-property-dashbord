@@ -87,10 +87,15 @@ export function drawDisclaimerBlock(block: Block, ctx: BlockRenderContext): void
   drawLine('Address', props.address);
   drawLine('ABN', props.abn);
 
-  // Disclaimer text
-  const text = resolveBindable(props.disclaimerText, ctx);
+  // Disclaimer text — the deployment's own, falling back to the template's.
+  // Kept in step with `disclaimer.html.ts`, which is what production prints;
+  // this one draws the editor's canvas preview and must not disagree with it.
+  const text = resolveBindable(props.disclaimerText, ctx)
+    || resolveBindable(props.disclaimerFallback ?? '', ctx);
   if (text) {
-    const fontSize = props.fontSize === 'medium' ? 10 : props.fontSize === 'large' ? 12 : 8.5;
+    const sizeToken = resolveBindable(props.fontSize ?? '', ctx)
+      || resolveBindable(props.fontSizeFallback ?? '', ctx);
+    const fontSize = sizeToken === 'medium' ? 10 : sizeToken === 'large' ? 12 : 8.5;
     doc.setFontSize(fontSize);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(GRAY.r, GRAY.g, GRAY.b);
