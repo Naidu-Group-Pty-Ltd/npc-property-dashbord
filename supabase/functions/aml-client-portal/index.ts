@@ -170,6 +170,42 @@ function applicableSections(
 
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
+/**
+ * Content types a document may be served INLINE under — everything else is
+ * served as an attachment.
+ *
+ * `request_upload_url` does not constrain what is stored, and the storage
+ * origin is the same host as this API, so a document served inline under a
+ * scriptable type would execute there. That is why every document used to be
+ * served `Content-Disposition: attachment` — safe, and the reason a customer
+ * pressing "View" on their own PDF got a download instead of a document.
+ *
+ * The list is therefore the whole of the security argument, and it is a
+ * closed one: three formats the portal actually accepts (PDF, JPEG, PNG) plus
+ * the two other raster types a browser may be handed, and nothing that can
+ * carry script. `image/svg+xml` is the trap — it matches the upload control's
+ * `image/*` and it is a document with a script element in it, so it is an
+ * image everywhere except here. `text/html` is absent for the same reason.
+ *
+ * `application/octet-stream` is absent for a second one. Storage answers a
+ * signed object with no `X-Content-Type-Options` header — measured, not
+ * assumed — so the declared type is load-bearing: a browser honours
+ * `application/pdf` and `image/png` and will not sniff past them, but it does
+ * sniff a generic or absent type, which is precisely the set left out here.
+ *
+ * Lower-cased and stripped of any `; charset=` before it is consulted.
+ */
+const INLINE_VIEWABLE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  // Not a registered type, but a non-browser uploader can declare it and a
+  // browser renders it as JPEG either way.
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
+
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -2543,11 +2579,27 @@ const __corsWrappedHandler = async (req: Request) => {
        * traversal waiting to happen, and a caller-supplied bucket turns this
        * into a general-purpose read of the project's storage.
        *
-       * `download` sets `Content-Disposition: attachment`, matching the staff
-       * path. `request_upload_url` does not constrain the stored content type,
-       * so an HTML file could be served inline from the storage origin — which
-       * is the same host as this API. An attachment disposition costs the
-       * customer nothing and removes that entirely.
+       * The disposition is decided per document rather than fixed. `download`
+       * — `Content-Disposition: attachment` — used to be set unconditionally,
+       * because `request_upload_url` does not constrain the stored content
+       * type and the storage origin is the same host as this API, so an HTML
+       * upload served inline would execute there. That reasoning is sound and
+       * the conclusion was too broad: it also meant a customer pressing "View"
+       * on their own PDF was handed a download rather than a document.
+       *
+       * So the type is checked instead of assumed. A content type in
+       * `INLINE_VIEWABLE_MIME_TYPES` is served inline and everything else
+       * keeps the attachment disposition exactly as before — including, on
+       * purpose, `image/svg+xml`, which the upload control's `image/*` admits
+       * and which is a scriptable document wearing an image's name.
+       *
+       * The type consulted is the one STORAGE WILL SERVE, read back from the
+       * object, and not the row's `mime_type`. They come from the same client
+       * but by different routes — the content type was set on the PUT, the
+       * column was sent afterwards by `confirm_upload` — so they can disagree,
+       * and the served value is the only one that decides how a browser treats
+       * the response. An unreadable or unknown type is not in the set, so the
+       * failure direction is a download.
        *
        * 120 seconds: long enough for the browser to follow it, short enough
        * that a URL captured from history or a proxy log is already dead.
@@ -2567,9 +2619,23 @@ const __corsWrappedHandler = async (req: Request) => {
         // apart would confirm that a document id exists on another case.
         if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
 
+        // What storage holds against this path, for its content type alone.
+        // Same `list`-with-`search` shape `confirm_upload` uses to prove an
+        // upload landed. The path comes from the row, never the request.
+        const slash = doc.storage_path.lastIndexOf('/');
+        const objectDir = slash > 0 ? doc.storage_path.slice(0, slash) : '';
+        const objectFile = doc.storage_path.slice(slash + 1);
+        const { data: objects } = await admin.storage
+          .from('aml-documents')
+          .list(objectDir, { search: objectFile, limit: 100 });
+        const servedType = String(
+          (objects ?? []).find((o) => o.name === objectFile)?.metadata?.mimetype ?? '',
+        ).split(';')[0].trim().toLowerCase();
+        const inline = INLINE_VIEWABLE_MIME_TYPES.has(servedType);
+
         const { data: signed, error: signErr } = await admin.storage
           .from('aml-documents')
-          .createSignedUrl(doc.storage_path, 120, { download: doc.filename });
+          .createSignedUrl(doc.storage_path, 120, inline ? {} : { download: doc.filename });
         if (signErr || !signed?.signedUrl) {
           // Never echo the storage error: it carries the path and the bucket.
           console.error('[aml-client-portal] document url signing failed');

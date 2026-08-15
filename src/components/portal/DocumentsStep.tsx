@@ -168,16 +168,72 @@ export function DocumentsStep({
   /**
    * Open a document.
    *
+   * ## Why the tab is opened before there is anything to put in it
+   *
+   * This is the whole of the "View does nothing" bug, and it was never the
+   * server: `get_document_url` signs the object correctly and always has. The
+   * window was opened AFTER the `await`, and a window opened after an `await`
+   * is an unsolicited popup — Safari and Firefox drop it on default settings,
+   * and `window.open`'s return value was not read, so the refusal produced no
+   * tab, no toast and no console line. Pressing View did exactly nothing,
+   * repeatably, with a working backend behind it.
+   *
+   * So the tab is opened SYNCHRONOUSLY inside the click, while the customer's
+   * gesture is still current, and navigated once the URL arrives. It is the
+   * same ordering `IdentityVerificationStep` opens the hosted-verification
+   * window with, and for the same reason.
+   *
+   * `noopener` cannot be passed — the feature detaches the handle this needs —
+   * so the reference is severed the other way, by nulling the child's
+   * `opener`. The tab reaches the same place with the same authority: none.
+   *
+   * A window blocked even synchronously is reported and offered again rather
+   * than swallowed. The second attempt runs inside its own click, which is
+   * what makes it succeed where the first was refused.
+   *
    * The URL is fetched at the moment of the click, used immediately, and
    * dropped. It is a short-lived credential for one file — it is never held in
    * state, never written to storage and never logged.
    */
   const openDocument = async (doc: AmlPortalDocument) => {
+    // One at a time. The per-row `disabled` covers a double-click on the same
+    // document; this covers a second row pressed while the first is signing.
+    if (opening) return;
     setOpening(doc.id);
+
+    const viewer = window.open('', '_blank');
+    // See above: the substitute for the `noopener` feature, which would have
+    // returned null instead of a handle.
+    if (viewer) viewer.opener = null;
+
     try {
       const { url } = await amlPortalApi.documentUrl(caseId, doc.id);
-      window.open(url, '_blank', 'noopener,noreferrer');
+      if (viewer && !viewer.closed) {
+        // `replace`, not `href`: the placeholder must not become a back-button
+        // stop between the portal and the document.
+        viewer.location.replace(url);
+      } else {
+        /*
+         * Blocked outright, or closed while we were signing. The link is live
+         * for a couple of minutes, so it is offered rather than discarded —
+         * held in this closure and nowhere else, exactly as long as the toast.
+         */
+        toast.error('Your browser blocked the document window.', {
+          action: {
+            label: 'Open',
+            onClick: () => window.open(url, '_blank', 'noopener,noreferrer'),
+          },
+        });
+      }
     } catch (e: any) {
+      // Never leave a blank tab standing where a document was asked for.
+      viewer?.close();
+      if (import.meta.env.DEV) {
+        // Deliberately not the signed link, which is a live credential.
+        console.error('[DocumentsStep] could not open document', {
+          document: doc.id, reason: e?.message, code: e?.code,
+        });
+      }
       toast.error(e?.message ?? 'We could not open that document just now. Please try again.');
     } finally {
       setOpening(null);

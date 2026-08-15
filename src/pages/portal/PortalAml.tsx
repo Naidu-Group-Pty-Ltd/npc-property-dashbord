@@ -1261,6 +1261,42 @@ function RelatedPartiesForm({ value, set, structureType }: {
   );
 }
 
+/**
+ * An amount input carrying a visual `$`.
+ *
+ * Local to this file and used by exactly two fields — the Client Portal's
+ * "Target price range (AUD)" and "Estimated deposit amount (AUD)". It is
+ * deliberately NOT a shared component: `Input` has no adornment slot, and
+ * giving it one would put a dollar sign in front of every input in the
+ * product.
+ *
+ * The `$` is a SIBLING of the input, never a prefix on its value. Nothing
+ * here formats, parses or rewrites what the customer typed, so there is no
+ * path by which the symbol can reach form state, the autosave payload,
+ * validation, a submission or a stored value — the field round-trips exactly
+ * the characters it did before this existed.
+ *
+ * `pointer-events-none` is load-bearing rather than tidy: without it the
+ * symbol swallows a click aimed at the start of the number, which is exactly
+ * where someone correcting a figure clicks. `aria-hidden` because both labels
+ * already say "(AUD)", and a loose "dollar" announced between the label and
+ * the value is noise.
+ */
+function AudInput({ className, ...props }: React.ComponentProps<typeof Input>) {
+  return (
+    <div className="relative">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none select-none absolute left-3 top-1/2 -translate-y-1/2 text-base md:text-sm text-muted-foreground"
+      >
+        $
+      </span>
+      {/* Clears the glyph at both type sizes the input itself steps between. */}
+      <Input className={cn('pl-7', className)} {...props} />
+    </div>
+  );
+}
+
 function PurchaseProfileForm({ value, set }: { value: any; set: (k: string, v: any) => void }) {
   return (
     <div className="grid md:grid-cols-2 gap-4">
@@ -1274,7 +1310,7 @@ function PurchaseProfileForm({ value, set }: { value: any; set: (k: string, v: a
         </RadioGroup>
       </Field>
       <Field label="Target price range (AUD)" required>
-        <Input value={value.price_range ?? ''} onChange={e => set('price_range', e.target.value)} placeholder="e.g. 750,000 – 900,000" />
+        <AudInput value={value.price_range ?? ''} onChange={e => set('price_range', e.target.value)} placeholder="e.g. 750,000 – 900,000" />
       </Field>
       <Field label="Target location(s)">
         <Textarea rows={2} value={value.locations ?? ''} onChange={e => set('locations', e.target.value)} />
@@ -1314,7 +1350,7 @@ function FundingForm({ value, set }: { value: any; set: (k: string, v: any) => v
         </div>
       </div>
       <Field label="Estimated deposit amount (AUD)" required>
-        <Input value={value.deposit ?? ''} onChange={e => set('deposit', e.target.value)} />
+        <AudInput value={value.deposit ?? ''} onChange={e => set('deposit', e.target.value)} />
       </Field>
       <Field label="Describe how these funds were accumulated" required>
         <Textarea rows={4} value={value.narrative ?? ''} onChange={e => set('narrative', e.target.value)} />

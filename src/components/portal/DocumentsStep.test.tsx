@@ -58,6 +58,22 @@ const requirement = (over: Record<string, unknown> = {}) => ({
 
 const onChange = vi.fn();
 const noop = () => {};
+
+/**
+ * A stand-in for the tab View opens.
+ *
+ * jsdom's `window.open` returns null and warns, which is indistinguishable
+ * from the blocked case — so the spy is always installed and the tests that
+ * are ABOUT blocking opt into null explicitly.
+ */
+const fakeWindow = () => ({
+  closed: false,
+  opener: {} as unknown,
+  location: { replace: vi.fn() },
+  close: vi.fn(),
+});
+let viewer: ReturnType<typeof fakeWindow>;
+let openSpy: ReturnType<typeof vi.spyOn>;
 const renderStep = (requirements: any[] = []) => render(
   <DocumentsStep
     caseId="case-1"
@@ -89,6 +105,8 @@ beforeEach(() => {
   onChange.mockReset();
   listDocuments.mockResolvedValue({ documents: [] });
   uploadAmlDocument.mockResolvedValue({ document: {} });
+  viewer = fakeWindow();
+  openSpy = vi.spyOn(window, 'open').mockReturnValue(viewer as unknown as Window);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -393,27 +411,118 @@ describe('errors', () => {
 /* ── viewing ─────────────────────────────────────────────────────────────── */
 
 describe('viewing a document', () => {
+  const withDocument = (over: Record<string, unknown> = {}) => {
+    listDocuments.mockResolvedValue({
+      documents: [doc({ id: 'doc-9', filename: 'passport.pdf', ...over })],
+    });
+  };
+  const clickView = async () =>
+    fireEvent.click(await screen.findByRole('button', { name: /view passport\.pdf/i }));
+
   it('asks the server for a link, scoped to this case and document', async () => {
-    listDocuments.mockResolvedValue({ documents: [doc({ id: 'doc-9', filename: 'passport.pdf' })] });
+    withDocument();
     documentUrl.mockResolvedValue({ url: 'https://storage.test/signed?token=T', filename: 'passport.pdf' });
-    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     renderStep();
 
-    fireEvent.click(await screen.findByRole('button', { name: /view passport\.pdf/i }));
+    await clickView();
 
     // Both ids: a document id alone must never be enough.
     await waitFor(() => expect(documentUrl).toHaveBeenCalledWith('case-1', 'doc-9'));
-    await waitFor(() => expect(open).toHaveBeenCalledWith(
-      'https://storage.test/signed?token=T', '_blank', 'noopener,noreferrer'));
+  });
+
+  it('opens the tab inside the click, BEFORE the link exists', async () => {
+    /*
+     * The reported bug, in one assertion. The tab used to be opened after the
+     * `await`, which makes it an unsolicited popup: Safari and Firefox drop it
+     * on default settings, `window.open`'s null return was never read, and
+     * pressing View produced no tab and no message at all.
+     */
+    withDocument();
+    let resolveUrl: (v: unknown) => void = () => {};
+    documentUrl.mockReturnValue(new Promise((r) => { resolveUrl = r; }));
+    renderStep();
+
+    await clickView();
+
+    // Synchronously, while the customer's gesture is still the current one.
+    expect(openSpy).toHaveBeenCalledWith('', '_blank');
+    expect(viewer.location.replace).not.toHaveBeenCalled();
+
+    resolveUrl({ url: 'https://storage.test/signed?token=T', filename: 'passport.pdf' });
+
+    await waitFor(() => expect(viewer.location.replace).toHaveBeenCalledWith(
+      'https://storage.test/signed?token=T'));
+  });
+
+  it('severs the opened tab from this one', async () => {
+    // `noopener` cannot be passed — it returns null instead of the handle the
+    // navigation needs — so the reference is cut from this side instead.
+    withDocument();
+    documentUrl.mockResolvedValue({ url: 'https://storage.test/signed?token=T', filename: 'passport.pdf' });
+    renderStep();
+
+    await clickView();
+
+    await waitFor(() => expect(viewer.opener).toBeNull());
+  });
+
+  it('reports a blocked window and offers it again, rather than doing nothing', async () => {
+    withDocument();
+    documentUrl.mockResolvedValue({ url: 'https://storage.test/signed?token=T', filename: 'passport.pdf' });
+    openSpy.mockReturnValue(null);
+    renderStep();
+
+    await clickView();
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(
+      'Your browser blocked the document window.',
+      expect.objectContaining({ action: expect.objectContaining({ label: 'Open' }) }),
+    ));
+
+    // The retry runs inside its own click, which is what makes it land.
+    const action = (toastError.mock.calls[0][1] as any).action;
+    action.onClick();
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://storage.test/signed?token=T', '_blank', 'noopener,noreferrer');
+  });
+
+  it('closes the blank tab when the link cannot be signed', async () => {
+    // Otherwise a refusal leaves an about:blank tab standing where the
+    // customer asked for their document.
+    withDocument();
+    documentUrl.mockRejectedValue(new Error('We could not open that document just now.'));
+    renderStep();
+
+    await clickView();
+
+    await waitFor(() => expect(viewer.close).toHaveBeenCalled());
+    expect(toastError).toHaveBeenCalledWith('We could not open that document just now.');
+  });
+
+  it('ignores a second document pressed while the first is still signing', async () => {
+    listDocuments.mockResolvedValue({
+      documents: [
+        doc({ id: 'a', filename: 'passport.pdf' }),
+        doc({ id: 'b', filename: 'licence.pdf' }),
+      ],
+    });
+    documentUrl.mockReturnValue(new Promise(() => {}));
+    renderStep();
+
+    await clickView();
+    fireEvent.click(screen.getByRole('button', { name: /view licence\.pdf/i }));
+
+    // One request, one tab — not a second blank window over the first.
+    await waitFor(() => expect(documentUrl).toHaveBeenCalledTimes(1));
+    expect(openSpy).toHaveBeenCalledTimes(1);
   });
 
   it('never puts the signed URL in storage or on the page', async () => {
-    listDocuments.mockResolvedValue({ documents: [doc({ filename: 'passport.pdf' })] });
+    withDocument();
     documentUrl.mockResolvedValue({ url: 'https://storage.test/signed?token=SECRET', filename: 'passport.pdf' });
-    vi.spyOn(window, 'open').mockImplementation(() => null);
     renderStep();
 
-    fireEvent.click(await screen.findByRole('button', { name: /view passport\.pdf/i }));
+    await clickView();
     await waitFor(() => expect(documentUrl).toHaveBeenCalled());
 
     // A short-lived credential: used at the moment of the click and dropped.
