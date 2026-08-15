@@ -1,8 +1,25 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { callLLM, LLMError } from '../_shared/llmRouter.ts';
 import { normalizePropertyListingUrl } from './urlPolicy.ts';
+import { describeScrapeFailure, shouldRetryWithoutSchema } from './scrapeFailure.pure.ts';
+
+/**
+ * The Model Hub agent whose binding drives this extraction
+ * (`agent_model_assignments.agent_key`, labelled "Property Listing Scraper").
+ */
+const LISTING_SCRAPE_AGENT_KEY = 'listing_scrape';
+
+/**
+ * Budgets for the model phase. The scrape runs detached under
+ * `EdgeRuntime.waitUntil`, so no request timeout bounds it — the direct fetch
+ * this replaced passed no signal at all, which is why a hung provider could
+ * leave a job 'processing' for ever. The chain-wide deadline is what stops the
+ * fallback walk (and the schema-free retry) from compounding into one.
+ */
+const PER_MODEL_TIMEOUT_MS = 90_000;
+const MODEL_PHASE_BUDGET_MS = 240_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,7 +27,7 @@ const corsHeaders = {
   "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
 };
 
-type PerplexityListingExtraction = {
+type ListingExtraction = {
   title: string | null;
   address: string | null;
   suburb: string | null;
@@ -158,14 +175,14 @@ function deriveListingHints(url: string): { propertyId?: string; addressHint?: s
   }
 }
 
-function fill<T extends keyof PerplexityListingExtraction>(target: PerplexityListingExtraction, key: T, value: PerplexityListingExtraction[T] | null | undefined) {
+function fill<T extends keyof ListingExtraction>(target: ListingExtraction, key: T, value: ListingExtraction[T] | null | undefined) {
   const current = target[key];
   if ((current === null || current === undefined || current === '' || (Array.isArray(current) && current.length === 0)) && value !== null && value !== undefined && value !== '') {
     (target as any)[key] = value;
   }
 }
 
-function enrichExtractionFromSource(extracted: PerplexityListingExtraction, sourceText: string | null, url: string, propertyCategory: string): PerplexityListingExtraction {
+function enrichExtractionFromSource(extracted: ListingExtraction, sourceText: string | null, url: string, propertyCategory: string): ListingExtraction {
   const enriched = { ...extracted };
   const hints = deriveListingHints(url);
   const text = sourceText || '';
@@ -266,7 +283,7 @@ function enrichExtractionFromSource(extracted: PerplexityListingExtraction, sour
   return enriched;
 }
 
-function toExtractedDetails(extracted: PerplexityListingExtraction, fallbackTitle?: string | null) {
+function toExtractedDetails(extracted: ListingExtraction, fallbackTitle?: string | null) {
   const details: any = {};
 
   const title = extracted.title ?? fallbackTitle ?? null;
@@ -344,7 +361,7 @@ function toExtractedDetails(extracted: PerplexityListingExtraction, fallbackTitl
   return details;
 }
 
-function buildListingMarkdown(inputUrl: string, extracted: PerplexityListingExtraction, citations: string[] | undefined) {
+function buildListingMarkdown(inputUrl: string, extracted: ListingExtraction, citations: string[] | undefined) {
   const lines: string[] = [];
   lines.push(`# Property Listing (AI extracted)`);
   lines.push(`Source URL: ${inputUrl}`);
@@ -511,22 +528,21 @@ async function searchExactListing(url: string, apiKey: string): Promise<{ markdo
   }
 }
 
-async function extractWithPerplexity(url: string, propertyCategory = 'auto') {
-  const apiKey = Deno.env.get("PERPLEXITY_API_KEY");
-  if (!apiKey) {
-    return {
-      ok: false as const,
-      status: 500,
-      error: "PERPLEXITY_API_KEY not configured. Please set it in Supabase secrets.",
-    };
-  }
+async function extractListingWithModel(url: string, propertyCategory = 'auto', userId: string | null = null) {
+  // The Perplexity key buys the LAST of three source fetchers (their Search
+  // API), not the extraction — that is whatever model `listing_scrape` is bound
+  // to. Missing, it costs one fallback; it must not fail the whole scrape, or
+  // moving this agent onto OpenRouter would break on a key it no longer spends.
+  const perplexitySearchKey = Deno.env.get("PERPLEXITY_API_KEY");
 
   // Step 1: scrape the actual page so the model extracts from real content
   // instead of hallucinating from a URL slug.
-  const scraped = await scrapeWithFirecrawl(url) ?? await scrapeWithReaderMode(url) ?? await searchExactListing(url, apiKey);
+  const scraped = await scrapeWithFirecrawl(url)
+    ?? await scrapeWithReaderMode(url)
+    ?? (perplexitySearchKey ? await searchExactListing(url, perplexitySearchKey) : null);
   const pageContent = scraped?.markdown ?? null;
   if (pageContent) {
-    console.log(`[scrape-property-listing] Firecrawl markdown length: ${pageContent.length}`);
+    console.log(`[scrape-property-listing] source markdown length: ${pageContent.length}`);
   }
 
   const system = [
@@ -635,17 +651,26 @@ FINAL SELF-CHECK BEFORE RESPONDING:
 
 Return JSON only.`;
 
-  const body = {
-    model: "sonar-pro",
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    temperature: 0,
-    top_p: 0.9,
-    max_tokens: 6000,
-    ...(pageContent || !listingHints.hostname ? {} : { search_domain_filter: [listingHints.hostname] }),
-    response_format: {
+  const messages = [
+    { role: "system" as const, content: system },
+    { role: "user" as const, content: user },
+  ];
+
+  // Perplexity-only body fields, scoped to Perplexity so they are dropped rather
+  // than sent when the chain falls back. `search_domain_filter` is a search
+  // control no other provider knows: sent to the gateway or to OpenRouter it is
+  // an unknown field, which would turn the fallback step into a 400 — a fallback
+  // that fails on the way to rescuing the call is worse than none.
+  const providerExtras = {
+    perplexity: {
+      top_p: 0.9,
+      // Only pin the search to the listing's own domain when we have no scraped
+      // page and the model must find the listing itself.
+      ...(pageContent || !listingHints.hostname ? {} : { search_domain_filter: [listingHints.hostname] }),
+    },
+  };
+
+  const responseFormat = {
       type: "json_schema",
       json_schema: {
         name: "property_listing_extraction",
@@ -787,69 +812,95 @@ Return JSON only.`;
           additionalProperties: false,
         },
       },
-    },
   };
 
-  // Call Perplexity DIRECTLY (bypass router) so structured JSON schema is preserved
-  // and we guarantee sonar-pro is used. The LLM router's native Perplexity caller
-  // drops `response_format`, which would lose DB-schema-aligned JSON enforcement.
-  const perplexityKey = Deno.env.get('PERPLEXITY_API_KEY');
-  if (!perplexityKey) {
-    return { ok: false as const, status: 500, error: 'PERPLEXITY_API_KEY not configured', raw: '' };
-  }
-
-  const pplxResp = await fetch('https://api.perplexity.ai/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${perplexityKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
+  // Which model runs this is `listing_scrape`'s Model Hub binding, not a
+  // constant. It WAS a constant — a hardcoded `sonar-pro` behind a direct fetch
+  // to api.perplexity.ai — because this router used to drop `response_format`
+  // and with it the DB-schema-aligned JSON enforcement. It no longer does, so
+  // the bypass is gone and with it the two things the bypass cost: the Model
+  // Hub selection for this agent did nothing at all, and a Perplexity 5xx ended
+  // the job outright even though the agent has a fallback chain configured and
+  // the UI promises "the fallback chain auto-engages on 404/410/5xx errors".
+  const deadlineAt = Date.now() + MODEL_PHASE_BUDGET_MS;
+  const callModel = (withSchema: boolean) => callLLM({
+    agentKey: LISTING_SCRAPE_AGENT_KEY,
+    messages,
+    temperature: 0,
+    maxTokens: 6000,
+    ...(withSchema ? { responseFormat } : {}),
+    providerExtras,
+    timeoutMs: PER_MODEL_TIMEOUT_MS,
+    deadlineAt,
+    // Keeps the person on the ledger row: the manual `logApiUsage` this
+    // replaced passed `user_id`, and the router's metering would otherwise
+    // coarsen it to the deployment.
+    ...(userId ? { meterUserId: userId } : {}),
   });
 
-  const rawText = await pplxResp.text();
-  let parsed: any = null;
+  let result: Awaited<ReturnType<typeof callLLM>>;
+  let schemaEnforced = true;
   try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    // keep raw
+    result = await callModel(true);
+  } catch (e) {
+    const err = e as LLMError;
+    if (!shouldRetryWithoutSchema(err?.attempts)) {
+      return {
+        ok: false as const,
+        status: err?.status ?? 500,
+        error: describeScrapeFailure({ status: err?.status, attempts: err?.attempts, message: err?.message }),
+        raw: '',
+      };
+    }
+    // Every model failed for a reason a different request shape could change.
+    // The schema is the part we can drop and still get an answer — the prompt
+    // already ends with "Return JSON only" and `safeJsonParse` lifts an object
+    // out of prose — so spend what is left of the budget on one schema-free
+    // pass rather than failing a job the operator is watching.
+    console.warn('[scrape-property-listing] all models failed with a schema; retrying without response_format');
+    schemaEnforced = false;
+    try {
+      result = await callModel(false);
+    } catch (e2) {
+      const err2 = e2 as LLMError;
+      return {
+        ok: false as const,
+        status: err2?.status ?? 500,
+        error: describeScrapeFailure({ status: err2?.status, attempts: err2?.attempts, message: err2?.message }),
+        raw: '',
+      };
+    }
   }
 
-  if (!pplxResp.ok) {
-    const message =
-      parsed?.error?.message ||
-      parsed?.message ||
-      `Perplexity request failed with status ${pplxResp.status}`;
-
-    return { ok: false as const, status: pplxResp.status, error: message, raw: rawText };
-  }
-
-  const content = parsed?.choices?.[0]?.message?.content as string | undefined;
-  const finishReason = parsed?.choices?.[0]?.finish_reason;
+  const finishReason = result.rawResponse?.choices?.[0]?.finish_reason;
   if (finishReason && finishReason !== "stop") {
     console.warn(`[scrape-property-listing] LLM finish_reason=${finishReason} (possible truncation)`);
   }
-  let extracted = content ? safeJsonParse<PerplexityListingExtraction>(content) : null;
+  let extracted = result.content ? safeJsonParse<ListingExtraction>(result.content) : null;
 
   if (!extracted) {
     return {
       ok: false as const,
-      status: 500,
-      error: "Perplexity response could not be parsed as structured extraction.",
-      raw: rawText,
+      status: 502,
+      error: `${result.routeUsed}/${result.modelUsed} answered, but not with structured property data. `
+        + 'Pick a model that supports JSON output in Model Hub → Agent Bindings → Property Listing Scraper.',
+      raw: result.content ?? '',
     };
   }
 
   extracted = enrichExtractionFromSource(extracted, pageContent, url, propertyCategory);
 
-  const citations = (parsed?.citations as string[] | undefined) ?? [];
+  const citations = (result.rawResponse?.citations as string[] | undefined) ?? [];
 
   return {
     ok: true as const,
     extracted,
     citations,
-    raw: parsed,
+    raw: result.rawResponse,
     scrapedFromPage: !!pageContent,
+    modelUsed: result.modelUsed,
+    routeUsed: result.routeUsed,
+    schemaEnforced,
   };
 }
 
@@ -866,19 +917,16 @@ async function runScrapeJob(
       started_at: new Date().toISOString(),
     }).eq('id', jobId);
 
-    const result = await extractWithPerplexity(formattedUrl, propertyCategory);
+    const result = await extractListingWithModel(formattedUrl, propertyCategory, userId);
 
     if (!result.ok) {
-      const status = result.status;
-      const friendly =
-        status === 429
-          ? "Perplexity rate limit exceeded (429). Please wait and try again."
-          : status === 402
-            ? "Perplexity credits exhausted (402). Please top up or change plan."
-            : result.error;
+      // `describeScrapeFailure` has already turned the router's attempt list
+      // into a sentence naming the models that ran. The 429/402 special-casing
+      // that stood here named Perplexity unconditionally, which was wrong the
+      // moment the model became a choice.
       await supabase.from('property_scrape_jobs').update({
         status: 'failed',
-        error: friendly,
+        error: result.error,
         completed_at: new Date().toISOString(),
       }).eq('id', jobId);
       return;
@@ -889,26 +937,22 @@ async function runScrapeJob(
     const metadata = {
       title: result.extracted.title,
       description: result.extracted.listing_text,
-      provider: result.scrapedFromPage ? "firecrawl+perplexity" : "perplexity",
+      // Name what actually ran. This read "firecrawl+perplexity" for every
+      // scrape, including the ones a different model would now serve.
+      provider: [result.scrapedFromPage ? 'firecrawl' : null, `${result.routeUsed}/${result.modelUsed}`]
+        .filter(Boolean).join('+'),
+      model: { route: result.routeUsed, modelId: result.modelUsed, schemaEnforced: result.schemaEnforced },
       scrapedFromPage: result.scrapedFromPage,
       citations: result.citations,
       confidence: result.extracted.confidence,
     };
 
-    const rawUsage = result.raw?.usage;
-    try {
-      await logApiUsage(supabase, {
-        service_name: 'perplexity',
-        endpoint: '/chat/completions',
-        model_used: 'sonar-pro',
-        prompt_tokens: rawUsage?.prompt_tokens || 0,
-        completion_tokens: rawUsage?.completion_tokens || 0,
-        tokens_used: rawUsage?.total_tokens || 0,
-        status: 'success',
-        user_id: userId || undefined,
-        metadata: { function: 'scrape-property-listing', url: formattedUrl, jobId },
-      });
-    } catch (_) { /* non-fatal */ }
+    // NO `logApiUsage` HERE. `llmRouter` meters its own successful call
+    // (`meterUsage` defaults true) against the credential the route actually
+    // spent. The hardcoded `service_name: 'perplexity' / model_used: 'sonar-pro'`
+    // row that stood here would have billed Perplexity for an OpenRouter call
+    // the moment the binding changed — and logging in both places bills the
+    // tenant twice, which API_USAGE_METERING.md rates worse than not billing.
 
     await supabase.from('property_scrape_jobs').update({
       status: 'succeeded',

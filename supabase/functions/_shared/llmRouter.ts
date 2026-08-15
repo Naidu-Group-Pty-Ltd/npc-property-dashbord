@@ -46,6 +46,23 @@ export interface CallLLMArgs {
   forceModelId?: string;
   /** Per-call response_format */
   responseFormat?: any;
+  /**
+   * Body fields only ONE provider understands, keyed by the provider that
+   * understands them — `'perplexity'`, `'openai'`, `'lovable-ai-gateway'`, … the
+   * same `serviceName` `llmUsageBinding.resolveLlmCredential` returns for the
+   * attempt.
+   *
+   * Scoping is the whole point. `search_domain_filter` / `search_recency_filter`
+   * are Perplexity search controls; sent to the gateway or to OpenAI they are an
+   * unknown field on the request, so a flat pass-through would turn every
+   * fallback step into a 400 and defeat the chain it is falling back through.
+   * Extras reach a provider only on an attempt that actually resolves to it, and
+   * are dropped — not carried — on every other step.
+   *
+   * Reserved keys (`model`, `messages`) are ignored: this widens a request, it
+   * never redirects one.
+   */
+  providerExtras?: Record<string, Record<string, unknown>>;
   /** Abort a single provider attempt after this many ms (AbortController).
    *  Prevents a hung provider from blocking the edge function to a gateway 504. */
   timeoutMs?: number;
@@ -69,6 +86,14 @@ export interface CallLLMArgs {
    * three route through here and all three were unbilled.
    */
   meterUsage?: boolean;
+  /**
+   * Who the metered call is attributed to on the `api_usage_log` row. Optional
+   * and additive: omitted, the row is written exactly as before, which is what
+   * every existing caller gets. Pass it when the caller knows the acting user
+   * and was previously logging that itself — dropping to the router's metering
+   * must not silently coarsen a ledger row that already had a person on it.
+   */
+  meterUserId?: string;
 }
 
 export interface CallLLMResult {
@@ -125,6 +150,41 @@ function safeAttemptError(status?: number, error?: string): string | undefined {
   if (/not configured/i.test(error)) return 'provider_not_configured';
   if (status) return `provider_http_${status}`;
   return 'provider_error';
+}
+
+/** Body keys `providerExtras` may never set — an extra widens a request, it
+ *  never redirects one to another model or another conversation. */
+const RESERVED_BODY_KEYS = new Set(['model', 'messages', 'stream']);
+
+/**
+ * The extras declared for the provider this `(route, modelId)` attempt spends a
+ * credential on, or undefined.
+ *
+ * The provider is resolved by `resolveLlmCredential` — the same module the
+ * billing ledger uses — rather than by a second prefix chain here, so a family
+ * this router can call is a family extras can target, with no third copy of the
+ * dispatch rules to drift.
+ */
+function providerExtrasFor(
+  route: LLMRoute,
+  modelId: string,
+  extras: CallLLMArgs['providerExtras'],
+): Record<string, unknown> | undefined {
+  if (!extras) return undefined;
+  const provider = resolveLlmCredential(route, modelId)?.serviceName;
+  if (!provider) return undefined;
+  const scoped = extras[provider];
+  return scoped && Object.keys(scoped).length > 0 ? scoped : undefined;
+}
+
+/** Merge provider extras into a request body, minus the reserved keys. */
+function applyProviderExtras(body: Record<string, any>, extras?: Record<string, unknown>) {
+  if (!extras) return body;
+  for (const [key, value] of Object.entries(extras)) {
+    if (RESERVED_BODY_KEYS.has(key) || value === undefined) continue;
+    body[key] = value;
+  }
+  return body;
 }
 
 function getAdminClient() {
@@ -194,26 +254,27 @@ async function callRoute(
   const max_tokens = args.maxTokens ?? assignment.max_tokens ?? undefined;
   const reasoning_effort = args.reasoningEffort ?? assignment.reasoning_effort ?? undefined;
   const timeoutMs = args.timeoutMs;
+  const extras = providerExtrasFor(route, modelId, args.providerExtras);
 
   try {
     if (route === 'gateway') {
-      return await callGateway(modelId, args.messages, { temperature, max_tokens, reasoning_effort, tools: args.tools, tool_choice: args.toolChoice, response_format: args.responseFormat, timeoutMs });
+      return await callGateway(modelId, args.messages, { temperature, max_tokens, reasoning_effort, tools: args.tools, tool_choice: args.toolChoice, response_format: args.responseFormat, timeoutMs, extras });
     }
     if (route === 'openrouter') {
-      return await callOpenRouter(modelId, args.messages, { temperature, max_tokens, tools: args.tools, tool_choice: args.toolChoice, response_format: args.responseFormat, timeoutMs });
+      return await callOpenRouter(modelId, args.messages, { temperature, max_tokens, tools: args.tools, tool_choice: args.toolChoice, response_format: args.responseFormat, timeoutMs, extras });
     }
     // native
     if (modelId.startsWith('gpt-') || modelId.startsWith('o') || modelId.startsWith('chatgpt')) {
-      return await callOpenAINative(modelId, args.messages, { temperature, max_tokens, tools: args.tools, tool_choice: args.toolChoice, response_format: args.responseFormat, timeoutMs });
+      return await callOpenAINative(modelId, args.messages, { temperature, max_tokens, tools: args.tools, tool_choice: args.toolChoice, response_format: args.responseFormat, timeoutMs, extras });
     }
     if (modelId.startsWith('claude-')) {
-      return await callAnthropicNative(modelId, args.messages, { temperature, max_tokens, timeoutMs });
+      return await callAnthropicNative(modelId, args.messages, { temperature, max_tokens, timeoutMs, extras });
     }
     if (modelId.startsWith('gemini-')) {
-      return await callGeminiNative(modelId, args.messages, { temperature, max_tokens, timeoutMs });
+      return await callGeminiNative(modelId, args.messages, { temperature, max_tokens, timeoutMs, extras });
     }
     if (modelId.startsWith('sonar')) {
-      return await callPerplexityNative(modelId, args.messages, { temperature, max_tokens, timeoutMs });
+      return await callPerplexityNative(modelId, args.messages, { temperature, max_tokens, response_format: args.responseFormat, timeoutMs, extras });
     }
     return { ok: false, error: `[llmRouter] Unknown native model family: ${modelId}` };
   } catch (e: any) {
@@ -233,6 +294,7 @@ async function callGateway(model: string, messages: LLMMessage[], opts: any) {
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   if (opts.response_format) body.response_format = opts.response_format;
   if (opts.reasoning_effort) body.reasoning = { effort: opts.reasoning_effort };
+  applyProviderExtras(body, opts.extras);
 
   const r = await fetchWithTimeout('https://ai.gateway.lovable.dev/v1/chat/completions', {
     method: 'POST',
@@ -252,6 +314,7 @@ async function callOpenRouter(model: string, messages: LLMMessage[], opts: any) 
   if (opts.tools) body.tools = opts.tools;
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   if (opts.response_format) body.response_format = opts.response_format;
+  applyProviderExtras(body, opts.extras);
 
   const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -276,6 +339,7 @@ async function callOpenAINative(model: string, messages: LLMMessage[], opts: any
   if (opts.tools) body.tools = opts.tools;
   if (opts.tool_choice) body.tool_choice = opts.tool_choice;
   if (opts.response_format) body.response_format = opts.response_format;
+  applyProviderExtras(body, opts.extras);
 
   const r = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -292,6 +356,13 @@ async function callPerplexityNative(model: string, messages: LLMMessage[], opts:
   const body: any = { model, messages };
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
   if (opts.max_tokens !== undefined) body.max_tokens = opts.max_tokens;
+  // Perplexity's chat/completions is OpenAI-compatible and honours
+  // `response_format`, including `json_schema`. Dropping it here is what made
+  // `scrape-property-listing` bypass this router entirely and hardcode
+  // `sonar-pro` — which in turn made its Model Hub binding inert and left a
+  // Perplexity 502 with no fallback to fall back to.
+  if (opts.response_format) body.response_format = opts.response_format;
+  applyProviderExtras(body, opts.extras);
 
   const r = await fetchWithTimeout('https://api.perplexity.ai/chat/completions', {
     method: 'POST',
@@ -322,6 +393,7 @@ async function callAnthropicNative(model: string, messages: LLMMessage[], opts: 
   if (systemMsg) body.system = systemMsg;
   // Opus 4.7+/Fable reject `temperature` (400); older Claude models still accept it.
   if (opts.temperature !== undefined && !anthropicRejectsSampling(model)) body.temperature = opts.temperature;
+  applyProviderExtras(body, opts.extras);
 
   const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -357,6 +429,9 @@ async function callGeminiNative(model: string, messages: LLMMessage[], opts: any
     if (opts.temperature !== undefined) body.generationConfig.temperature = opts.temperature;
     if (opts.max_tokens !== undefined) body.generationConfig.maxOutputTokens = opts.max_tokens;
   }
+  // Gemini's native body is `contents`/`generationConfig`, not the OpenAI shape —
+  // extras aimed at this provider are written in that vocabulary.
+  applyProviderExtras(body, opts.extras);
 
   const r = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
     method: 'POST',
@@ -386,6 +461,7 @@ async function meterRouterCall(
   data: unknown,
   responseMs: number,
   agentKey: string,
+  userId?: string,
 ): Promise<void> {
   try {
     const binding = resolveLlmCredential(route, modelId);
@@ -409,6 +485,7 @@ async function meterRouterCall(
       tokens_used: tokens?.totalTokens ?? 0,
       response_time_ms: responseMs,
       status: 'success',
+      ...(userId ? { user_id: userId } : {}),
       metadata: { secret_name: secretName, source: 'llmRouter', agent_key: agentKey, route },
     });
   } catch (e) {
@@ -473,7 +550,7 @@ export async function callLLM(args: CallLLMArgs): Promise<CallLLMResult> {
       // BILLING. Detached and best-effort: a ledger write must never turn a
       // completed model call into a failure the caller sees.
       if (args.meterUsage !== false) {
-        void meterRouterCall(step.route, step.model_id, res.data, Date.now() - attemptStartedAt, args.agentKey);
+        void meterRouterCall(step.route, step.model_id, res.data, Date.now() - attemptStartedAt, args.agentKey, args.meterUserId);
       }
 
       return {
@@ -528,7 +605,19 @@ export class LLMError extends Error {
  * selection, fallback, and provider routing.
  */
 export async function callLLMRaw(args: CallLLMArgs & {
-  /** Pass-through body fields like response_format that aren't on CallLLMArgs */
+  /**
+   * NOT APPLIED. `streamLLM` builds its own request body and honours this;
+   * `callLLMRaw` delegates to `callLLM`, which builds a body per provider and
+   * has never read this field — so anything passed here is silently dropped.
+   * `rba-data-service` passes `search_domain_filter`/`search_recency_filter`
+   * through it, and those have never reached a provider.
+   *
+   * It is left inert rather than wired up because a flat pass-through is the
+   * wrong shape: those two fields are Perplexity-only, and that function is
+   * bound to a gateway model today, so applying them to every route would turn
+   * a working call into a 400. Use `providerExtras` (scoped to the provider that
+   * understands the field) for new call sites.
+   */
   extraBody?: Record<string, any>;
 }): Promise<{
   ok: boolean;
