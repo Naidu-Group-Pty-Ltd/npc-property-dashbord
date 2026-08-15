@@ -841,6 +841,73 @@ describe("activation client picker", () => {
   });
 });
 
+/**
+ * Document naming and identification.
+ *
+ * Three client camera uploads read as `1786816346072…jpg` in the review
+ * list. The category was never lost — every one carries a correct
+ * `requirement_id` — the op selected `*` and never joined it.
+ */
+describe("documents say what they are, without changing what they are", () => {
+  const row = readFileSync(
+    join(repo, "src/components/aml/AmlDocumentRow.tsx"), "utf8");
+  const naming = readFileSync(
+    join(repo, "supabase/functions/_shared/aml/documentNaming.pure.ts"), "utf8");
+  const renameBlock = casesSource.slice(
+    casesSource.indexOf("case 'rename_document'"),
+    casesSource.indexOf("case 'get_document_download_url'"),
+  );
+
+  it("returns the requirement WITH the document, instead of selecting *", () => {
+    const listBlock = casesSource.slice(
+      casesSource.indexOf("case 'list_documents'"),
+      casesSource.indexOf("case 'rename_document'"),
+    );
+    expect(listBlock).toContain("requirement:requirement_id");
+    expect(listBlock).not.toMatch(/\.select\('\*'\)/);
+  });
+
+  it("never rewrites the filename — it is the record of what arrived", () => {
+    // The update payload sets the display name and nothing else.
+    expect(renameBlock).toContain(".update({ display_name: nextName })");
+    // `filename` appears only where it is READ for the audit trail, never
+    // on the left of an assignment into the row.
+    expect(renameBlock).not.toMatch(/\bfilename:\s*(?!.*before\.filename)/);
+    expect(renameBlock).toContain("original_filename: before.filename");
+  });
+
+  it("moves no relationship when renaming", () => {
+    // The document's case, requirement, client and Passport bindings are
+    // foreign keys, and a rename must not touch any of them.
+    for (const key of ["case_id:", "requirement_id:", "client_id:"]) {
+      expect(renameBlock).not.toContain(key);
+    }
+  });
+
+  it("gates renaming behind a write role and leaves an audit event", () => {
+    expect(renameBlock).toContain("if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);");
+    expect(renameBlock).toContain("appendEvent(");
+    expect(renameBlock).toContain("previous_display_name");
+    expect(renameBlock).toContain("new_display_name");
+  });
+
+  it("derives the category from the requirement, never from a filename", () => {
+    // A filename is a claim by whoever uploaded it; a requirement is a
+    // record of what was asked for.
+    expect(row).toContain("document.requirement?.label");
+    expect(naming).toContain("never inferred from a name");
+    expect(row).not.toMatch(/filename.*(includes|match|test)\(/);
+  });
+
+  it("keeps one naming implementation for the portal and the Command Centre", () => {
+    const portal = readFileSync(
+      join(repo, "supabase/functions/aml-client-portal/index.ts"), "utf8");
+    expect(portal).toContain("sanitiseDocumentName");
+    expect(casesSource).toContain("sanitiseDocumentName");
+    expect(row).toContain("resolveDocumentDisplayName");
+  });
+});
+
 describe("activation hands the client a portal link", () => {
   const branch = casesSource.slice(
     casesSource.indexOf("case 'activate_client':"),

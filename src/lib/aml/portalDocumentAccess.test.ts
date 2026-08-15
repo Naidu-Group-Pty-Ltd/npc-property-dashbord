@@ -38,8 +38,13 @@ describe('list_documents stays portal-safe', () => {
     // function selects `*`, and copying that here would ship `storage_path`,
     // `checksum`, `uploaded_by` and the reviewer to the browser.
     expect(listBranch).toContain(
-      "'id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, rejection_reason'");
+      "'id, requirement_id, filename, display_name, mime_type, size_bytes, status, uploaded_at, rejection_reason, requirement:requirement_id (code, label)'");
     expect(listBranch).not.toContain("select('*')");
+    // `display_name` and the requirement's code/label are client-facing by
+    // construction: the client chose the one and was shown the other when
+    // they were asked for the document.
+    expect(listBranch).toContain("display_name");
+    expect(listBranch).toContain("requirement:requirement_id (code, label)");
   });
 
   it('never exposes a storage path, bucket or checksum', () => {

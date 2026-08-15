@@ -86,6 +86,7 @@ import {
   AmlOutstandingItems, AmlRecentActivity, AmlServiceReadinessCard, AmlWorkspaceHeader,
   MlroDecisionDossier, SECTION_LABELS,
 } from "@/components/aml/workspace";
+import { AmlDocumentRow } from "@/components/aml/AmlDocumentRow";
 import { useAmlCaseSummary } from "@/lib/aml/useAmlCaseSummary";
 import {
   deriveAmlLivePosition, isJourneyStageId, JOURNEY_STAGES, sectionsForStage, stageForSection,
@@ -1002,6 +1003,19 @@ function DocumentsEvidenceSection({
     }
   };
 
+  const rename = async (documentId: string, displayName: string) => {
+    setBusy(documentId);
+    try {
+      await amlCasesApi.renameDocument(documentId, displayName);
+      await refresh();
+      onChanged();
+    } catch (e: any) {
+      toast({ title: "Could not rename document", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const seed = async () => {
     setBusy("seed");
     try {
@@ -1085,31 +1099,16 @@ function DocumentsEvidenceSection({
           ) : (
             <ul className="divide-y divide-border/60 text-sm">
               {documents.map((d) => (
-                <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate">{d.filename}</div>
-                    <div className="text-xs text-muted-foreground">
-                      Uploaded {displayDateTime(d.uploaded_at)}
-                      {d.rejection_reason ? ` · rejected: ${d.rejection_reason}` : ""}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="capitalize">{String(d.status ?? "uploaded").replace(/_/g, " ")}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => download(d.id)}>Download</Button>
-                    {canWrite && d.status === "uploaded" && (
-                      <>
-                        <Button size="sm" variant="outline" disabled={busy === d.id}
-                          onClick={() => review(d.id, "accepted")}>
-                          Accept
-                        </Button>
-                        <Button size="sm" variant="outline" disabled={busy === d.id}
-                          onClick={() => review(d.id, "rejected")}>
-                          Reject
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </li>
+                <AmlDocumentRow
+                  key={d.id}
+                  document={d}
+                  canWrite={canWrite}
+                  busy={busy === d.id}
+                  formatDateTime={displayDateTime}
+                  onDownload={download}
+                  onReview={review}
+                  onRename={rename}
+                />
               ))}
             </ul>
           )}
