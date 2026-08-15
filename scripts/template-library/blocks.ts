@@ -841,8 +841,17 @@ export function disclaimerPage(text: string): PageDef {
       // ground, which is the one §5 names for the contact page.
       mark: '{{org.markMono}}',
       markHeight: 37,
-      disclaimerText: text,
-      fontSize: 8,
+      // The deployment's own disclaimer, exactly as the Investment Compass
+      // families bind it — see the note in
+      // `investmentCompass/blocks.ts:disclaimerPage`. These 43 voice templates
+      // were missed by the first pass and kept printing the baked boilerplate
+      // while the other 500 had moved to the configured text, which is a worse
+      // state than either: two documents from one product, disagreeing about
+      // what the firm's disclaimer says.
+      disclaimerText: `{{org.disclaimer}}`,
+      disclaimerFallback: text,
+      fontSize: '{{org.disclaimerFontSize}}',
+      fontSizeFallback: 'small',
     }),
   ]);
 }
