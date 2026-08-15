@@ -210,6 +210,10 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
     // The caller's assets first: a Notion collection knows which row owns
     // which cover, and the CSV it became cannot.
     rowAssets: [...(input.rowAssets ?? []), ...extraction.rowAssets],
+    // A PDF's properties come out of prose and carry no anchor of their own;
+    // these are what lets one be tied back to the page it was described on.
+    pageTexts: extraction.pageTexts,
+    filename: upload.original_filename,
   });
 
   if (!outcome.detected) {

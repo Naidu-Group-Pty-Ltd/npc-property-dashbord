@@ -31,11 +31,8 @@ import {
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from './drivePackage.pure.ts';
 import {
-  flattenedPageImage, parseImagePlacements, readFirstPage, selectPropertyPhotograph,
-} from './pdfPageImages.pure.ts';
-import { isolatePhotographBand } from './pdfFlattenedPhoto.pure.ts';
-import { cropRows, encodePng, inflate, sha256Hex } from './rasterPng.ts';
-import { validateSourceImageBytes } from './sourceAssets.pure.ts';
+  extractExactSourcePhotoFromPdf, type PdfPhotoProvenance,
+} from './pdfSourcePhoto.ts';
 
 /** Folder listings one repair run may read. Shared and cached across rows. */
 const MAX_LISTINGS_PER_RUN = 40;
@@ -95,30 +92,7 @@ export interface RecoveredPackageImage {
    * which page, which object, how big it was, what it hashes to, and whether
    * anything was done to it.
    */
-  provenance: {
-    page: number;
-    /** `embedded_raster` copies the asset out untouched; `page_crop` cuts a
-     *  rectangle of the builder's own pixels out of a flattened page. */
-    method: 'embedded_raster' | 'page_crop';
-    objectNumber: number | null;
-    resourceName: string | null;
-    sourceWidth: number;
-    sourceHeight: number;
-    /** Hash of the bytes as they sit in the builder's document. */
-    sourceSha256: string;
-    /** Hash of what we stored. Equal to the above unless a crop happened. */
-    storedSha256: string;
-    /** Set only for a crop. */
-    crop: {
-      top: number; bottom: number; left: number; right: number;
-      pageWidth: number; pageHeight: number;
-      distinctColours: number;
-    } | null;
-    /** Share of the page the picture covers, when the layout stated it. */
-    pageAreaShare: number | null;
-    /** What the transformation was, when there was one. */
-    transformation: string | null;
-  };
+  provenance: PdfPhotoProvenance;
 }
 
 export type PackageOutcome =
@@ -224,17 +198,11 @@ async function findLotFolder(
 /**
  * Take the property's photograph out of one document.
  *
- * Two ways, in order, and no third:
- *
- *   1. THE EMBEDDED ASSET. The page's own drawing instructions say where each
- *      picture is placed and how large it appears; the largest photographic
- *      raster on the page is the one the layout leads with, and its bytes are
- *      copied out exactly as the builder stored them.
- *   2. THE FLATTENED PAGE. When the whole page is one raster — a brochure
- *      exported as page pictures — the photograph is cut out of it, and only
- *      out of it. Pixels are cropped, never generated.
- *
- * Anything else returns nothing, and nothing means the card shows no image.
+ * The finding and the downloading are this module's; everything that happens
+ * to the bytes afterwards is `pdfSourcePhoto.ts`, which a directly uploaded
+ * PDF goes through as well. One implementation, so a brochure reached through
+ * a link and a brochure uploaded through the portal cannot disagree about
+ * which picture is the property.
  */
 async function extractFromDocument(
   fetchPackage: PackageFetcher,
@@ -257,142 +225,23 @@ async function extractFromDocument(
     return { status: 'unreachable', detail: 'That document is not publicly downloadable.' };
   }
 
-  const page = readFirstPage(bytes);
-  if (!page) return { status: 'not_identified', detail: 'That document could not be read.' };
-
-  // The page's drawing instructions, inflated where the document compressed
-  // them. Without them nothing can be said about what the page leads with.
-  let content = '';
-  for (const slice of page.contents) {
-    const raw = bytes.slice(slice.start, slice.end);
-    try {
-      const decoded = slice.flate ? await inflate(raw) : raw;
-      content += new TextDecoder('latin1').decode(decoded);
-    } catch {
-      /* an unreadable content stream simply contributes nothing */
-    }
-  }
-  const placements = parseImagePlacements(content);
-
-  // (1) The photograph the layout leads with.
-  const chosen = selectPropertyPhotograph(page, placements);
-  if (chosen) {
-    const raw = bytes.slice(chosen.image.start, chosen.image.end);
-    const asset = chosen.image.filters[0] === 'FlateDecode'
-      ? await inflate(raw).catch(() => null)
-      : raw;
-    if (asset) {
-      const check = validateSourceImageBytes(asset);
-      if (check.ok === true) {
-        const hash = await sha256Hex(asset);
-        return {
-          status: 'recovered',
-          image: {
-            bytes: asset,
-            contentType: check.contentType,
-            reference: `${documentName}#page1:${chosen.image.name}`,
-            documentName,
-            documentUrl: url,
-            provenance: {
-              page: 1,
-              method: 'embedded_raster',
-              objectNumber: chosen.image.objectNumber,
-              resourceName: chosen.image.name,
-              sourceWidth: chosen.image.width,
-              sourceHeight: chosen.image.height,
-              sourceSha256: hash,
-              // Nothing was done to the bytes, so the two hashes are one hash.
-              storedSha256: hash,
-              crop: null,
-              pageAreaShare: Number(chosen.pageAreaShare.toFixed(4)),
-              transformation: null,
-            },
-          },
-        };
-      }
-    }
-  }
-
-  // (2) A flattened page: cut the photograph out of the builder's own pixels.
-  const flattened = flattenedPageImage(page, placements);
-  if (!flattened) {
+  const photo = await extractExactSourcePhotoFromPdf(bytes);
+  if (!photo) {
     return { status: 'not_identified', detail: 'That document leads with no photograph.' };
   }
-  /**
-   * No guessing at the colour space. Cropping RGB bytes as if they were CMYK
-   * shears the picture into stripes, and a plausible-looking wrong image is
-   * exactly what this whole path exists to prevent.
-   */
-  const components = flattened.image.components;
-  if (components !== 1 && components !== 3) {
-    return {
-      status: 'not_identified',
-      detail: 'That page image is in a colour space we will not re-encode.',
-    };
-  }
-  const raw = bytes.slice(flattened.image.start, flattened.image.end);
-  const pixels = await inflate(raw).catch(() => null);
-  if (!pixels) {
-    return { status: 'not_identified', detail: 'That page image could not be read.' };
-  }
-  const sourceHash = await sha256Hex(pixels);
 
-  const band = isolatePhotographBand(pixels, {
-    width: flattened.image.width,
-    height: flattened.image.height,
-    components,
-  });
-  if (!band) {
-    return {
-      status: 'not_identified',
-      detail: 'No single photograph could be isolated on that page.',
-    };
-  }
-
-  const cropped = cropRows(pixels,
-    { width: flattened.image.width, height: flattened.image.height, components }, band);
-  const png = await encodePng(cropped.pixels, {
-    width: cropped.width, height: cropped.height, components,
-  });
-  if (!png) {
-    return { status: 'not_identified', detail: 'That page image could not be cut out.' };
-  }
-  const check = validateSourceImageBytes(png);
-  if (check.ok !== true) return { status: 'not_identified', detail: check.reason };
-
+  const suffix = photo.provenance.method === 'page_crop'
+    ? `crop(${photo.provenance.crop?.top}-${photo.provenance.crop?.bottom})`
+    : photo.provenance.resourceName;
   return {
     status: 'recovered',
     image: {
-      bytes: png,
-      contentType: check.contentType,
-      reference: `${documentName}#page1:crop(${band.top}-${band.bottom})`,
+      bytes: photo.bytes,
+      contentType: photo.contentType,
+      reference: `${documentName}#page${photo.provenance.page}:${suffix}`,
       documentName,
       documentUrl: url,
-      provenance: {
-        page: 1,
-        method: 'page_crop',
-        objectNumber: flattened.image.objectNumber,
-        resourceName: flattened.image.name,
-        sourceWidth: flattened.image.width,
-        sourceHeight: flattened.image.height,
-        // The page as the builder stored it, and the rectangle taken out of it.
-        sourceSha256: sourceHash,
-        storedSha256: await sha256Hex(png),
-        crop: {
-          top: band.top,
-          bottom: band.bottom,
-          left: 0,
-          right: flattened.image.width,
-          pageWidth: flattened.image.width,
-          pageHeight: flattened.image.height,
-          distinctColours: band.distinctColours,
-        },
-        pageAreaShare: null,
-        // Stated rather than hidden: the pixels are the builder's, the
-        // container is ours, and the crop rectangle above reproduces it.
-        transformation: 'cropped to the isolated photograph and re-encoded '
-          + 'losslessly as PNG; no pixel values changed',
-      },
+      provenance: photo.provenance,
     },
   };
 }
