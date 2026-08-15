@@ -203,7 +203,9 @@ export function ActivateClientDialog({
         setSubmitError(firstBlocker.message);
         requestAnimationFrame(() => {
           const target = document.getElementById(firstBlocker.id);
-          target?.scrollIntoView({ block: "center", behavior: "smooth" });
+          if (typeof target?.scrollIntoView === "function") {
+            target.scrollIntoView({ block: "center", behavior: "smooth" });
+          }
           target?.focus({ preventScroll: true });
         });
       }

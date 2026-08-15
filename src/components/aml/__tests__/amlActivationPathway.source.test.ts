@@ -8,11 +8,14 @@ const repo = process.cwd();
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
 const MIGRATION_PATH = "supabase/migrations/20260804160000_aml_activate_inactive_client.sql";
+const ATOMIC_AUDIT_MIGRATION_PATH =
+  "supabase/migrations/20260815135258_c6cfab57-c04d-483a-9906-c31550a23e5a.sql";
 const OLD_FUTURE_DATED_MIGRATION_PATH =
   "supabase/migrations/20260826000000_aml_activate_inactive_client.sql";
 
 const edgeSource = read("supabase/functions/aml-cases/index.ts");
 const migrationSource = read(MIGRATION_PATH);
+const atomicAuditMigrationSource = read(ATOMIC_AUDIT_MIGRATION_PATH);
 const amlCasesPage = read("src/pages/aml/AmlCases.tsx");
 const dialogSource = read("src/components/aml/ActivateClientDialog.tsx");
 const activateAction = read("src/components/clients/ClientAmlActivateAction.tsx");
@@ -90,8 +93,8 @@ describe("AML activation pathway — server contract", () => {
   });
 
   it("writes the required activation audit event inside the inactive-client transaction", () => {
-    expect(migrationSource).toContain("INSERT INTO aml.case_events");
-    expect(migrationSource).toContain("activation_audit_event");
+    expect(atomicAuditMigrationSource).toContain("INSERT INTO aml.case_events");
+    expect(atomicAuditMigrationSource).toContain("activation_audit_event");
     expect(edgeSource).toContain("activation_audit_event: activationAuditEvent");
     expect(edgeSource).toContain("if (!clientWasInactive) {");
   });
