@@ -28,6 +28,11 @@ const page = (
   has_more: extra.has_more ?? false,
   browsing: extra.browsing ?? true,
 });
+const createClientRecord = vi.fn();
+vi.mock("@/lib/clients/createClientRecord", async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  createClientRecord: (...a: unknown[]) => createClientRecord(...a),
+}));
 vi.mock("@/lib/aml/amlTenantApi", () => ({
   amlTenantApi: { getActivationProgram: vi.fn().mockResolvedValue(null) },
 }));
@@ -81,6 +86,7 @@ beforeEach(() => {
   // The picker browses on open, so every test needs a default page.
   listClientsForActivation.mockResolvedValue(page([]));
   activateClient.mockReset();
+  createClientRecord.mockReset();
   toast.mockReset();
 });
 
@@ -292,13 +298,54 @@ describe("ActivateClientDialog — the client picker", () => {
     const { unmount } = setup();
     // Nothing at all: this is the only case that points at creating a client.
     await waitFor(() => expect(screen.getByText("No clients yet")).toBeInTheDocument());
-    expect(screen.getByText(/created in Client Management/)).toBeInTheDocument();
+    // The one empty state that offers creation, and it says the register is
+    // shared rather than sending the operator to another screen.
+    expect(screen.getByText(/same register either way/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create a new client/ })).toBeInTheDocument();
     unmount();
 
     setup();
     await waitFor(() => expect(screen.getByText("No clients yet")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Active" }));
     await waitFor(() => expect(screen.getByText("No active clients")).toBeInTheDocument());
+    // ...and an empty SLICE does not offer creation: the client is probably
+    // sitting in the tab next door.
+    expect(screen.queryByRole("button", { name: /Create a new client/ })).not.toBeInTheDocument();
+  });
+
+  it("never reports an empty register when the server predates browsing", async () => {
+    /*
+     * This happened in production. The frontend for browsing shipped and the
+     * `aml-cases` deploy was CANCELLED by a burst of merges, so the old
+     * function answered `{ clients: [] }` to the empty browse query and the
+     * picker said "No clients yet" over a register of 775 clients — the exact
+     * lie that sends an operator off to create a duplicate.
+     *
+     * The SHAPE of the response decides, not the row count: no `total` and no
+     * `browsing` means an old server, never an empty register.
+     */
+    listClientsForActivation.mockResolvedValue({ clients: [] });
+    setup();
+
+    await waitFor(() =>
+      expect(screen.getByText("Type a name to find a client")).toBeInTheDocument());
+    expect(screen.queryByText("No clients yet")).not.toBeInTheDocument();
+    expect(screen.getByText(/Browsing the full register needs the updated server/))
+      .toBeInTheDocument();
+  });
+
+  it("still searches successfully against a server that predates browsing", async () => {
+    // Degraded, not broken: search reaches every client on the old function.
+    listClientsForActivation.mockResolvedValue({
+      clients: [{
+        id: "a", label: "Alex Naidu", email: null, mobile: null,
+        is_active: true, has_open_case: false,
+      }],
+    });
+    setup();
+    fireEvent.change(screen.getByLabelText("Search clients"), { target: { value: "naidu" } });
+
+    await waitFor(() => expect(screen.getByText("Alex Naidu")).toBeInTheDocument(), { timeout: 2000 });
   });
 
   it("never renders a failed lookup as an empty register", async () => {
@@ -341,5 +388,167 @@ describe("ActivateClientDialog — responsive layout", () => {
     const activate = screen.getByRole("button", { name: "Activate client" });
     expect(body?.contains(cancel)).toBe(false);
     expect(body?.contains(activate)).toBe(false);
+  });
+});
+
+
+/**
+ * Creating a brand-new client without leaving the dialog.
+ *
+ * ── The rule this must not break ──────────────────────────────────────
+ * A case may only be opened after a HUMAN-CONFIRMED activation event
+ * (AGENTS.md §2). "Create and activate in one click" would mean the frontend
+ * manufacturing a compliance outcome, so creating a client selects them and
+ * hands them to the same activation form — which is what removes the round
+ * trip — while the event, the reason and the confirmation stay a person's act.
+ */
+describe("ActivateClientDialog — create a new client", () => {
+  const openCreate = async () => {
+    setup();
+    await waitFor(() => expect(screen.getByRole("button", { name: /New client/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /New client/ }));
+    await waitFor(() => expect(screen.getByTestId("ac-create-client")).toBeInTheDocument());
+  };
+
+  const fillNewClient = (first = "Priya", surname = "Raman") => {
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: first } });
+    fireEvent.change(screen.getByLabelText("Surname"), { target: { value: surname } });
+  };
+
+  it("reaches the create form from the register without leaving the dialog", async () => {
+    await openCreate();
+    // Still the same dialog, still on step 1.
+    expect(screen.getByTestId("activate-client-dialog")).toBeInTheDocument();
+    expect(screen.getByText("1 · Selected client")).toBeInTheDocument();
+  });
+
+  it("requires both names, because both columns are NOT NULL", async () => {
+    await openCreate();
+    const submit = screen.getByTestId("ac-create-client-submit");
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Priya" } });
+    // A first name alone is not enough — writing null into primary_surname is
+    // a Postgres 23502 surfaced as an opaque 500.
+    expect(submit).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Surname"), { target: { value: "Raman" } });
+    await waitFor(() => expect(submit).toBeEnabled());
+  });
+
+  it("rejects a malformed email before it reaches the server", async () => {
+    await openCreate();
+    fillNewClient();
+    fireEvent.change(screen.getByLabelText(/Email/), { target: { value: "not-an-email" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("ac-create-client-submit")).toBeDisabled());
+    expect(createClientRecord).not.toHaveBeenCalled();
+  });
+
+  it("creates through the central register and selects the new client", async () => {
+    createClientRecord.mockResolvedValue({
+      id: "new-1", primary_first_name: "Priya", primary_surname: "Raman",
+      primary_email: null, primary_mobile: null,
+    });
+    await openCreate();
+    fillNewClient();
+    fireEvent.click(screen.getByTestId("ac-create-client-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ac-selected-client")).toHaveTextContent("Priya Raman"));
+    expect(createClientRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ firstName: "Priya", surname: "Raman" }));
+    // The subject name is carried across so nothing is retyped.
+    expect(screen.getByLabelText("Subject display name")).toHaveValue("Priya Raman");
+  });
+
+  it("does NOT open a case on creation — the activation event is still a person's act", async () => {
+    createClientRecord.mockResolvedValue({
+      id: "new-1", primary_first_name: "Priya", primary_surname: "Raman",
+      primary_email: null, primary_mobile: null,
+    });
+    await openCreate();
+    fillNewClient();
+    fireEvent.click(screen.getByTestId("ac-create-client-submit"));
+    await waitFor(() => expect(screen.getByTestId("ac-selected-client")).toBeInTheDocument());
+
+    // Creating a client is not activating one.
+    expect(activateClient).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Activate client" })).toBeDisabled();
+  });
+
+  it("activates the newly created client once the event is confirmed", async () => {
+    createClientRecord.mockResolvedValue({
+      id: "new-1", primary_first_name: "Priya", primary_surname: "Raman",
+      primary_email: null, primary_mobile: null,
+    });
+    activateClient.mockResolvedValue({ case: { id: "c1", case_reference: "AML-2026-00005" } });
+    await openCreate();
+    fillNewClient();
+    fireEvent.click(screen.getByTestId("ac-create-client-submit"));
+    await waitFor(() => expect(screen.getByTestId("ac-selected-client")).toBeInTheDocument());
+
+    fillRequiredFields();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Activate client" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Activate client" }));
+
+    await waitFor(() => expect(activateClient).toHaveBeenCalledWith(
+      expect.objectContaining({ client_id: "new-1", human_confirmed: true })));
+  });
+
+  it("warns about an existing client before a duplicate is created", async () => {
+    // Detection happens BEFORE the insert — the point is to stop the
+    // duplicate existing, not to report it afterwards.
+    listClientsForActivation.mockResolvedValue(page([{
+      id: "dup-1", label: "Priya Raman", email: "priya@example.test",
+      mobile: null, is_active: true, has_open_case: false,
+    }], { total: 1 }));
+    await openCreate();
+    fillNewClient();
+
+    await waitFor(() =>
+      expect(screen.getByText("A similar client already exists")).toBeInTheDocument(),
+      { timeout: 2000 });
+
+    // ...and the existing record can be adopted instead of duplicated.
+    fireEvent.click(screen.getByRole("button", { name: /Priya Raman/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("ac-selected-client")).toHaveTextContent("Priya Raman"));
+    expect(createClientRecord).not.toHaveBeenCalled();
+  });
+
+  it("checks for duplicates by email as well as by name", async () => {
+    // A name check cannot match "Rob Smith" to an existing "Robert Smith";
+    // the shared email address will.
+    listClientsForActivation.mockResolvedValue(page([]));
+    await openCreate();
+    fillNewClient("Rob", "Smith");
+    fireEvent.change(screen.getByLabelText(/Email/), { target: { value: "robert@example.test" } });
+
+    await waitFor(() => expect(listClientsForActivation).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "robert@example.test" })), { timeout: 2000 });
+  });
+
+  it("keeps a creation failure on the form instead of losing what was typed", async () => {
+    createClientRecord.mockRejectedValue(new Error("Insufficient permissions"));
+    await openCreate();
+    fillNewClient();
+    fireEvent.click(screen.getByTestId("ac-create-client-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByText("The client was not created")).toBeInTheDocument());
+    expect(screen.getByText("Insufficient permissions")).toBeInTheDocument();
+    // The typed values survive so the operator can fix and retry.
+    expect(screen.getByLabelText("First name")).toHaveValue("Priya");
+    expect(screen.queryByTestId("ac-selected-client")).not.toBeInTheDocument();
+  });
+
+  it("returns to the register without creating anything", async () => {
+    await openCreate();
+    fireEvent.click(screen.getByRole("button", { name: /Back to register/ }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("ac-create-client")).not.toBeInTheDocument());
+    expect(createClientRecord).not.toHaveBeenCalled();
   });
 });

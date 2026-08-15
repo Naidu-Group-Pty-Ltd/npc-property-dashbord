@@ -21,6 +21,7 @@
 export interface ClientSearchRow {
   id: string;
   is_active: boolean | null;
+  secondary_email?: string | null;
   primary_first_name?: string | null;
   primary_middle_name?: string | null;
   primary_surname?: string | null;
@@ -46,9 +47,27 @@ export const CLIENT_SEARCH_NAME_COLUMNS = [
   'secondary_first_name', 'secondary_middle_name', 'secondary_surname',
 ] as const;
 
+/**
+ * Email is searchable too.
+ *
+ * Two reasons, and the second is the load-bearing one. An operator holding an
+ * enquiry email expects to paste it in; and duplicate detection before
+ * creating a client is only worth anything if it can match on the one field
+ * people actually reuse. A name search cannot catch "Rob Smith" against an
+ * existing "Robert Smith", but the shared email address will.
+ */
+export const CLIENT_SEARCH_EMAIL_COLUMNS = [
+  'primary_email', 'secondary_email',
+] as const;
+
+export const CLIENT_SEARCH_MATCH_COLUMNS = [
+  ...CLIENT_SEARCH_NAME_COLUMNS,
+  ...CLIENT_SEARCH_EMAIL_COLUMNS,
+] as const;
+
 /** Columns the search op selects — identification only, no financials. */
 export const CLIENT_SEARCH_SELECT = [
-  'id', 'is_active', 'primary_email', 'primary_mobile',
+  'id', 'is_active', 'primary_email', 'primary_mobile', 'secondary_email',
   ...CLIENT_SEARCH_NAME_COLUMNS,
 ].join(', ');
 
@@ -149,7 +168,7 @@ export function tokenizeClientSearch(sanitized: string): string[] {
  */
 export function buildClientSearchOrFilter(terms: string[]): string {
   return terms
-    .flatMap((t) => CLIENT_SEARCH_NAME_COLUMNS.map((c) => `${c}.ilike.%${t}%`))
+    .flatMap((t) => CLIENT_SEARCH_MATCH_COLUMNS.map((c) => `${c}.ilike.%${t}%`))
     .join(',');
 }
 
@@ -174,11 +193,18 @@ export function clientDisplayName(
  */
 export function matchesAllTerms(row: ClientSearchRow, terms: string[]): boolean {
   if (terms.length === 0) return false;
-  const primary = clientDisplayName(row, 'primary').toLowerCase();
-  const secondary = clientDisplayName(row, 'secondary').toLowerCase();
   const lower = terms.map((t) => t.toLowerCase());
-  return lower.every((t) => primary.includes(t))
-    || (secondary.length > 0 && lower.every((t) => secondary.includes(t)));
+  // One applicant's name and their own email form a single haystack, so the
+  // all-tokens-on-ONE-person rule still holds: "rugesh naidu" must not match
+  // by taking "rugesh" from the primary applicant and "naidu" from the
+  // secondary, and it must not match by taking a token from someone else's
+  // email either.
+  const haystacks = (['primary', 'secondary'] as const).map((prefix) => {
+    const r = row as unknown as Record<string, string | null | undefined>;
+    return [clientDisplayName(row, prefix), r[`${prefix}_email`] ?? '']
+      .filter(Boolean).join(' ').toLowerCase();
+  });
+  return haystacks.some((hay) => hay.length > 0 && lower.every((t) => hay.includes(t)));
 }
 
 export function toActivationClientResult(

@@ -249,3 +249,54 @@ describe("a page of search results reports the true total", () => {
     expect(selectActivationPage(many, "", 25, 0)).toEqual({ rows: [], total: 0 });
   });
 });
+
+/**
+ * Email matching.
+ *
+ * An operator holding an enquiry email expects to paste it in — but the
+ * load-bearing reason is duplicate detection before a client is created. A
+ * name check cannot match "Rob Smith" to an existing "Robert Smith"; the
+ * shared address will.
+ */
+describe("email is searchable, without loosening the one-person rule", () => {
+  const withEmails: ClientSearchRow = {
+    id: "77777777-7777-4777-8777-777777777777",
+    is_active: true,
+    primary_first_name: "Robert",
+    primary_surname: "Smith",
+    primary_email: "robert@example.test",
+    secondary_first_name: "Dana",
+    secondary_surname: "Okafor",
+    secondary_email: "dana@example.test",
+  };
+
+  it("matches a full email address", () => {
+    const terms = tokenizeClientSearch(sanitizeClientSearchQuery("robert@example.test"));
+    expect(matchesAllTerms(withEmails, terms)).toBe(true);
+  });
+
+  it("matches the secondary applicant on their own email", () => {
+    const terms = tokenizeClientSearch(sanitizeClientSearchQuery("dana@example.test"));
+    expect(matchesAllTerms(withEmails, terms)).toBe(true);
+  });
+
+  it("never assembles a match across two different people", () => {
+    // "Dana" from the secondary applicant plus the PRIMARY applicant's email
+    // is not a person. Widening the haystack must not widen this.
+    const terms = tokenizeClientSearch(sanitizeClientSearchQuery("dana robert@example.test"));
+    expect(matchesAllTerms(withEmails, terms)).toBe(false);
+  });
+
+  it("still matches a name that shares no tokens with any email", () => {
+    expect(matchesAllTerms(withEmails, ["robert", "smith"])).toBe(true);
+    expect(matchesAllTerms(withEmails, ["robert", "okafor"])).toBe(false);
+  });
+
+  it("asks the database for email columns as well as name columns", () => {
+    const filter = buildClientSearchOrFilter(["smith"]);
+    expect(filter).toContain("primary_email.ilike.%smith%");
+    expect(filter).toContain("secondary_email.ilike.%smith%");
+    // ...and selects them, or the in-memory match could never see them.
+    expect(CLIENT_SEARCH_SELECT).toContain("secondary_email");
+  });
+});

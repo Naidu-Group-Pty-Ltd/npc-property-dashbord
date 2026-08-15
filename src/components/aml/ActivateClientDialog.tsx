@@ -20,6 +20,7 @@ import {
 } from "@/lib/aml/amlCasesApi";
 import { amlTenantApi, type AmlActivationProgram } from "@/lib/aml/amlTenantApi";
 import { AmlClientPicker, ClientStatusBadge } from "@/components/aml/AmlClientPicker";
+import { AmlCreateClientForm } from "@/components/aml/AmlCreateClientForm";
 import { toast } from "@/hooks/use-toast";
 
 /**
@@ -82,6 +83,12 @@ export function ActivateClientDialog({
   // The client picker owns its own browsing, searching, filtering and paging
   // (`AmlClientPicker`). It reads the same AML-role-gated `search_clients` op
   // this dialog always used — the register is never duplicated here.
+  //
+  // `create` swaps that picker for a short new-client form. It is the same
+  // step of the same dialog, not a second journey: whichever way the client
+  // is arrived at, the activation event still has to be stated and confirmed
+  // below before a case exists.
+  const [mode, setMode] = useState<"pick" | "create">("pick");
   const modelBReady = Boolean(program?.legal_approval && program?.program_version?.trim());
 
   useEffect(() => {
@@ -95,6 +102,7 @@ export function ActivateClientDialog({
     setReason("");
     setConfirmed(false);
     setRouteError(null);
+    setMode("pick");
 
     let alive = true;
 
@@ -293,11 +301,19 @@ export function ActivateClientDialog({
                       </Alert>
                     )}
                   </div>
+                ) : mode === "create" ? (
+                  <AmlCreateClientForm
+                    disabled={submitting}
+                    onCancel={() => setMode("pick")}
+                    onCreated={(c) => { selectClient(c); setMode("pick"); }}
+                    onUseExisting={(c) => { selectClient(c); setMode("pick"); }}
+                  />
                 ) : (
                   <AmlClientPicker
                     resetKey={open}
                     disabled={submitting}
                     onSelect={selectClient}
+                    onCreateNew={() => setMode("create")}
                   />
                 )}
               </section>
