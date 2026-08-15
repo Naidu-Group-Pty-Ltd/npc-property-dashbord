@@ -20,7 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Loader2, ShieldCheck, ScanSearch, Gauge, ClipboardList, Play,
   Network, Wallet, ExternalLink, AlertTriangle, History,
-  Scale, CircleDot,
+  Scale, CircleDot, CheckCircle2, Lock, ShieldQuestion,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -47,6 +47,7 @@ import {
   caseStage, clientPortalStatus, financePortalStatus, serviceGateStatus,
 } from "@/lib/aml/caseDimensions";
 import { smartCapitalize } from "@/lib/nameUtils";
+import { displayDateTime } from "@/lib/aml/displayDate";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -70,8 +71,14 @@ const KNOWN_TABS = new Set([
   "ownership", "finance", "timeline", "audit",
 ]);
 
-/** Shared trigger treatment: roomy touch target, never-wrapping label. */
-const TAB_TRIGGER_CLS = "min-h-9 shrink-0 whitespace-nowrap px-3";
+/**
+ * Shared trigger treatment: roomy touch target, never-wrapping label, and a
+ * selected state that is unmistakable. The glass tab rail already gives the
+ * active trigger a raised surface and a brand-coloured edge; the extra
+ * weight here means the selection survives a glance at the label alone.
+ */
+const TAB_TRIGGER_CLS =
+  "min-h-9 shrink-0 whitespace-nowrap px-3 data-[state=active]:font-semibold";
 
 export function CaseWorkspaceTabs({
   caseRow, events, canWrite, canInvestigate, onChanged, initialTab, fillHeight,
@@ -92,7 +99,13 @@ export function CaseWorkspaceTabs({
       className={cn("w-full", fillHeight && "flex min-h-0 flex-1 flex-col")}
     >
 
-      <TabsList className="h-auto w-full shrink-0 justify-start gap-1 overflow-x-auto p-1">
+      <TabsList
+        aria-label="Case sections"
+        // `sm:justify-start` as well as `justify-start`: the shared rail
+        // centres itself from `sm` up, which left the workflow floating in
+        // the middle of a 1240px workspace instead of reading left to right.
+        className="h-auto w-full shrink-0 justify-start gap-1 overflow-x-auto p-1 sm:justify-start"
+      >
         <TabsTrigger value="overview" className={TAB_TRIGGER_CLS}>
           <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> Overview
         </TabsTrigger>
@@ -185,9 +198,18 @@ const AGREEMENT_STATE_LABELS: Record<string, string> = {
 };
 
 /**
- * Overview — a case dashboard rather than a flat label/value list:
- * summary grid, progress/readiness tiles, activation record and a recent
- * activity preview drawn from the already-loaded events (no extra fetches).
+ * Overview — an operational read of the case rather than a flat label/value
+ * list. The order answers an operator's questions in the order they ask
+ * them: where is this case and what is holding it up, then who the case is
+ * for, then how it was activated, then what happened recently.
+ *
+ * ── Presentation only ─────────────────────────────────────────────────
+ * Every value below is the same value this tab has always shown, read
+ * through the same `caseDimensions` helpers. Nothing is inferred, no
+ * status is combined with another, and the service gate keeps exactly the
+ * tone mapping it already had (positive only when approved, destructive
+ * only when locked or terminated). The hierarchy is carried by type,
+ * spacing and grouping instead of by giving every field its own border.
  */
 function OverviewTab({
   caseRow, events, onOpenAudit,
@@ -199,14 +221,64 @@ function OverviewTab({
   const finance = financePortalStatus(caseRow);
   const recent = events.slice(0, 4);
 
+  // The existing gate treatment, unchanged: only an approved gate reads
+  // positive and only a locked/terminated one reads destructive. The icon
+  // is a second, non-colour cue for the same three cases.
+  const gateApproved = ["approved", "approved_with_controls"].includes(gate);
+  const gateStopped = ["locked", "terminated"].includes(gate);
+  const GateIcon = gateApproved ? CheckCircle2 : gateStopped ? Lock : ShieldQuestion;
+  const gateTone = gateApproved ? "text-success" : gateStopped ? "text-destructive" : undefined;
+
+  const secondaryActivation = activation
+    ? [
+        caseRow.activation_timing && {
+          label: "Activation timing",
+          value: ACTIVATION_TIMING_LABELS[caseRow.activation_timing] ?? caseRow.activation_timing,
+        },
+        caseRow.agreement_state && {
+          label: "Agreement state",
+          value: AGREEMENT_STATE_LABELS[caseRow.agreement_state] ?? caseRow.agreement_state,
+        },
+        activation.program_version && {
+          label: "Program version", value: activation.program_version, mono: true,
+        },
+      ].filter(Boolean) as Array<{ label: string; value: string; mono?: boolean }>
+    : [];
+
   return (
-    <div className="space-y-5">
-      {/* Case summary */}
+    <div className="space-y-7">
+      {/* 1 — Where the case is, and whether the service may proceed.
+             Promoted above the identifying detail because it is the
+             question an operator opens the case to answer. */}
+      <section aria-label="Progress and readiness" className="space-y-2.5">
+        <OverviewSectionHeading>Progress &amp; readiness</OverviewSectionHeading>
+        <div className="rounded-xl border border-border/60 bg-muted/15">
+          <dl className="grid gap-x-8 gap-y-4 p-4 sm:grid-cols-3">
+            <ProgressField label="Case stage" value={CASE_STAGE_LABELS[stage]} />
+            <ProgressField label="Client onboarding" value={CLIENT_PORTAL_STATUS_LABELS[portal]} />
+            <ProgressField label="Finance portal" value={FINANCE_PORTAL_STATUS_LABELS[finance]} />
+          </dl>
+          {/* The service gate is the conclusion the three readings above
+              feed into, so it sits apart from them rather than beside
+              them as a fourth equal tile. */}
+          <div className="flex items-start gap-2.5 border-t border-border/50 px-4 py-3">
+            <GateIcon aria-hidden className={cn("mt-0.5 h-4 w-4 shrink-0", gateTone ?? "text-muted-foreground")} />
+            <dl className="min-w-0">
+              <dt className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                Service gate
+              </dt>
+              <dd className={cn("mt-0.5 text-sm font-semibold leading-snug", gateTone)}>
+                {SERVICE_GATE_LABELS[gate]}
+              </dd>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      {/* 2 — Who the case is for. A definition grid, not nine cards. */}
       <section aria-label="Case summary" className="space-y-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Case summary
-        </h3>
-        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+        <OverviewSectionHeading>Case summary</OverviewSectionHeading>
+        <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-4">
           <InfoCell label="Reference" value={caseRow.case_reference} mono />
           <InfoCell label="Subject" value={smartCapitalize(caseRow.subject_display_name)} />
           <InfoCell
@@ -224,88 +296,54 @@ function OverviewTab({
               <span className="text-muted-foreground">Unrated</span>
             )}
           />
-          <InfoCell label="Opened" value={new Date(caseRow.opened_at).toLocaleString()} />
-          <InfoCell label="Last updated" value={new Date(caseRow.updated_at).toLocaleString()} />
+          <InfoCell label="Opened" value={displayDateTime(caseRow.opened_at)} />
+          <InfoCell label="Last updated" value={displayDateTime(caseRow.updated_at)} />
           {caseRow.assigned_analyst_id && (
             <InfoCell label="Assigned analyst" value={caseRow.assigned_analyst_id} mono truncate />
           )}
           {caseRow.assigned_mlro_id && (
             <InfoCell label="Assigned MLRO" value={caseRow.assigned_mlro_id} mono truncate />
           )}
-        </div>
+        </dl>
       </section>
 
-      {/* Progress & readiness */}
-      <section aria-label="Progress and readiness" className="space-y-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Progress &amp; readiness
-        </h3>
-        <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-          <InfoCell label="Case stage" value={CASE_STAGE_LABELS[stage]} />
-          <InfoCell label="Client onboarding" value={CLIENT_PORTAL_STATUS_LABELS[portal]} />
-          <InfoCell label="Finance portal" value={FINANCE_PORTAL_STATUS_LABELS[finance]} />
-          <InfoCell
-            label="Service gate"
-            value={
-              <span
-                className={cn(
-                  ["approved", "approved_with_controls"].includes(gate)
-                    ? "text-success"
-                    : ["locked", "terminated"].includes(gate)
-                      ? "text-destructive"
-                      : undefined,
-                )}
-              >
-                {SERVICE_GATE_LABELS[gate]}
-              </span>
-            }
-          />
-        </div>
-      </section>
-
-      {/* Activation record */}
+      {/* 3 — Activation record: the four facts that identify the
+             activation, then the policy detail behind them. */}
       <section aria-label="Activation" className="space-y-2.5">
-        <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Activation
-        </h3>
+        <OverviewSectionHeading>Activation</OverviewSectionHeading>
         {activation ? (
-          <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-            <InfoCell label="Activation model" value={`Model ${activation.model}`} />
-            <InfoCell label="Activation event" value={activation.event ?? "—"} />
-            <InfoCell label="Confirmed by" value={activation.activated_by_email ?? "—"} truncate />
-            <InfoCell
-              label="Activated at"
-              value={activation.activated_at ? new Date(activation.activated_at).toLocaleString() : "—"}
-            />
-            {caseRow.activation_timing && (
-              <InfoCell
-                label="Activation timing"
-                value={ACTIVATION_TIMING_LABELS[caseRow.activation_timing] ?? caseRow.activation_timing}
-              />
-            )}
-            {caseRow.agreement_state && (
-              <InfoCell
-                label="Agreement state"
-                value={AGREEMENT_STATE_LABELS[caseRow.agreement_state] ?? caseRow.agreement_state}
-              />
-            )}
-            {activation.program_version && (
-              <InfoCell label="Program version" value={activation.program_version} mono />
+          <div className="space-y-3">
+            <dl className="grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-4">
+              <InfoCell label="Activation model" value={`Model ${activation.model}`} />
+              <InfoCell label="Activation event" value={activation.event ?? "—"} />
+              <InfoCell label="Confirmed by" value={activation.activated_by_email ?? "—"} truncate />
+              <InfoCell label="Activated at" value={displayDateTime(activation.activated_at)} />
+            </dl>
+            {secondaryActivation.length > 0 && (
+              <dl className="flex flex-wrap gap-x-8 gap-y-1.5 text-xs">
+                {secondaryActivation.map((item) => (
+                  <div key={item.label} className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <dt className="text-muted-foreground">{item.label}</dt>
+                    <dd className={cn("min-w-0 break-words", item.mono && "font-mono")}>
+                      {item.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             )}
           </div>
         ) : (
-          <p className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             No activation metadata recorded (legacy case).
           </p>
         )}
       </section>
 
-      {/* Recent activity — already-loaded events, no duplicate fetch. */}
+      {/* 4 — Recent activity, from the already-loaded events (no extra
+             fetch). The description leads; when and what kind support it. */}
       <section aria-label="Recent activity" className="space-y-2.5">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Recent activity
-          </h3>
+          <OverviewSectionHeading>Recent activity</OverviewSectionHeading>
           {onOpenAudit && events.length > 0 && (
             <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onOpenAudit}>
               View full audit trail
@@ -313,17 +351,24 @@ function OverviewTab({
           )}
         </div>
         {recent.length === 0 ? (
-          <p className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-sm text-muted-foreground">
-            No events recorded yet.
-          </p>
+          <p className="text-sm text-muted-foreground">No events recorded yet.</p>
         ) : (
-          <ol className="space-y-2">
+          <ol className="divide-y divide-border/40 border-y border-border/40">
             {recent.map((ev) => (
-              <li key={ev.id} className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
-                <div className="text-xs text-muted-foreground">
-                  {new Date(ev.created_at).toLocaleString()} · {ev.category.replace(/_/g, " ")}
+              <li key={ev.id} className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:items-baseline sm:gap-4">
+                <time
+                  dateTime={ev.created_at}
+                  className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-44"
+                >
+                  {displayDateTime(ev.created_at)}
+                </time>
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm leading-snug">{ev.summary}</p>
+                  <p className="mt-0.5 text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                    {ev.category.replace(/_/g, " ")}
+                    {ev.actor_label ? ` · ${ev.actor_label}` : ""}
+                  </p>
                 </div>
-                <div className="break-words text-sm">{ev.summary}</div>
               </li>
             ))}
           </ol>
@@ -333,25 +378,51 @@ function OverviewTab({
   );
 }
 
-/** Compact information cell for the Overview grids. */
+/** Section title for the Overview. Compact, quiet, and the same on each. */
+function OverviewSectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+      {children}
+    </h3>
+  );
+}
+
+/** One reading inside the grouped Progress & readiness panel. */
+function ProgressField({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-0.5 break-words text-sm leading-snug">{value}</dd>
+    </div>
+  );
+}
+
+/**
+ * One field of an Overview definition grid. Deliberately borderless: the
+ * grid gets its structure from a single hairline under each field and from
+ * column alignment, so eight facts read as one table rather than as eight
+ * boxes.
+ */
 function InfoCell({
   label, value, mono, truncate,
 }: { label: string; value: React.ReactNode; mono?: boolean; truncate?: boolean }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border/60 bg-muted/20 px-3 py-2">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="min-w-0 border-b border-border/40 py-2.5">
+      <dt className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
         {label}
-      </div>
-      <div
+      </dt>
+      <dd
         className={cn(
-          "mt-0.5 text-sm leading-snug",
+          "mt-1 text-sm leading-snug",
           mono && "font-mono text-[13px]",
           truncate ? "truncate" : "break-words",
         )}
         title={truncate && typeof value === "string" ? value : undefined}
       >
         {value}
-      </div>
+      </dd>
     </div>
   );
 }
