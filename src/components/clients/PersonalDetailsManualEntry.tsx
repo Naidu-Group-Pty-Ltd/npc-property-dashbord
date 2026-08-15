@@ -347,6 +347,12 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         throw new Error(String(details));
       }
 
+      // What we just wrote is now the record's state, so a second save in the
+      // same session diffs against it rather than re-sending these fields.
+      baselineRef.current = { ...(baseline || {}), ...changedData };
+
+
+
       // Delete removed contacts
       for (const contactId of deletedContactIds) {
         try {
