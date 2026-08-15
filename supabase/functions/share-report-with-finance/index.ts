@@ -4,10 +4,23 @@
  * This is deliberately separate from `send-email-reply`: creating an internal
  * Finance Portal document and notification must never depend on a staff
  * member's personal mailbox.  Email remains an explicit, separate action.
+ *
+ * ## Two actions, one set of rules
+ *
+ * `action: 'list_recipients'` answers *who could receive this*, and the share
+ * itself answers *send it to them*. Both resolve the recipient through
+ * `_shared/financeReportRecipients.pure.ts`, so the list a person picks from
+ * cannot offer a partner this function would then refuse — which is exactly
+ * what the menus that named a recipient by `is_default` ordering used to do.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 import { checkPermission } from "../_shared/permissions.ts";
+import {
+  evaluateRecipient,
+  recipientBlockMessage,
+  recipientBlockStatus,
+} from "../_shared/financeReportRecipients.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -70,7 +83,77 @@ Deno.serve(async (req) => {
     const auth = await verifyAuth(supabase, req.headers, body);
     if (auth.error || !auth.userId) return json({ error: 'Authentication required' }, 401, corsHeaders);
 
-    const { client_id, finance_contact_id, filename, content_base64, mime_type = 'application/pdf' } = body;
+    const { action, client_id, finance_contact_id, filename, content_base64, mime_type = 'application/pdf' } = body;
+
+    // ── Who could receive this client's report? ──────────────────────────────
+    // Read-only, and gated by the same authority a share is: someone who may
+    // not share for this client learns nothing about its partners.
+    if (action === 'list_recipients') {
+      if (!client_id) return json({ error: 'client_id is required' }, 400, corsHeaders);
+      if (!(await canShareForClient(supabase, auth.userId, client_id, auth.authMethod))) {
+        return json({ error: 'You are not authorised to share reports for this client' }, 403, corsHeaders);
+      }
+
+      const [{ data: client }, { data: contacts }] = await Promise.all([
+        supabase.from('clients').select('id, finance_contact_id').eq('id', client_id).maybeSingle(),
+        supabase
+          .from('finance_agent_contacts')
+          .select('id, name, email, company, is_active, is_default')
+          .eq('is_active', true)
+          .order('name', { ascending: true }),
+      ]);
+      if (!client) return json({ error: 'Client was not found' }, 404, corsHeaders);
+
+      const contactRows = contacts || [];
+      const contactIds = contactRows.map((row: any) => row.id);
+      const { data: portalUsers } = contactIds.length
+        ? await supabase
+            .from('finance_portal_users')
+            .select('id, finance_contact_id, is_active, revoked_at, global_permissions')
+            .in('finance_contact_id', contactIds)
+            .order('created_at', { ascending: true })
+        : { data: [] as any[] };
+      const portalUserIds = (portalUsers || []).map((row: any) => row.id);
+      const { data: assignments } = portalUserIds.length
+        ? await supabase
+            .from('finance_portal_client_assignments')
+            .select('id, finance_user_id, permissions')
+            .eq('client_id', client_id)
+            .in('finance_user_id', portalUserIds)
+        : { data: [] as any[] };
+
+      // First account per contact, oldest first — the send path reads that
+      // relationship with `maybeSingle()`, so the list must not answer for a
+      // different row than the send would resolve.
+      const portalByContact = new Map<string, any>();
+      for (const row of portalUsers || []) {
+        if (!portalByContact.has(row.finance_contact_id)) portalByContact.set(row.finance_contact_id, row);
+      }
+      const assignmentByUser = new Map((assignments || []).map((row: any) => [row.finance_user_id, row]));
+
+      const recipients = contactRows.map((contact: any) => {
+        const portalUser = portalByContact.get(contact.id) ?? null;
+        const assignment = portalUser ? assignmentByUser.get(portalUser.id) ?? null : null;
+        const verdict = evaluateRecipient({ contact, portalUser, assignment });
+        return {
+          id: contact.id,
+          name: contact.name,
+          email: contact.email,
+          company: contact.company,
+          // Assignment is the platform's own answer to "whose client is this";
+          // `clients.finance_contact_id` is the typed one. Both are reported
+          // because they disagree, and the picker surfaces the assigned partner.
+          is_assigned_to_client: !!assignment,
+          is_client_finance_contact: client.finance_contact_id === contact.id,
+          eligible: verdict.eligible,
+          blocked_reason: verdict.reason,
+          blocked_message: verdict.reason ? recipientBlockMessage(verdict.reason) : null,
+        };
+      });
+
+      return json({ success: true, recipients }, 200, corsHeaders);
+    }
+
     if (!client_id || !finance_contact_id || !filename || !content_base64) {
       return json({ error: 'client_id, finance_contact_id, filename and content_base64 are required' }, 400, corsHeaders);
     }
@@ -94,35 +177,25 @@ Deno.serve(async (req) => {
       supabase.from('finance_portal_users').select('id, is_active, revoked_at, global_permissions').eq('finance_contact_id', finance_contact_id).maybeSingle(),
     ]);
     if (!client) return json({ error: 'Client was not found' }, 404, corsHeaders);
-    if (!contact?.is_active) {
-      return json({ error: 'The selected Finance Partner is inactive' }, 403, corsHeaders);
-    }
-    if (!portalUser?.is_active || portalUser.revoked_at) {
-      return json({ error: 'This Finance Partner does not currently have an active Finance Portal account' }, 422, corsHeaders);
-    }
+
     // Assignment is the source of truth for tri-portal authorisation — a partner
     // may be assigned to a client without being the client's primary
     // finance_contact_id (auto-link + manual assignments both count).
-    const { data: assignment } = await supabase
-      .from('finance_portal_client_assignments')
-      .select('id, permissions')
-      .eq('finance_user_id', portalUser.id)
-      .eq('client_id', client_id)
-      .maybeSingle();
-    if (!assignment) {
-      return json({ error: 'The selected Finance Partner is not authorised for this client' }, 403, corsHeaders);
-    }
-    // Effective permissions = OR-merge(global baseline, per-client matrix).
-    // The `documents` key is default-allow when both sides omit it (matches
-    // finance-portal-document-requirements and finance-portal-client-tasks).
-    const globalPerms = (portalUser.global_permissions as any) || {};
-    const perClient = (assignment.permissions as any) || {};
-    const gDocs = globalPerms.documents;
-    const pDocs = perClient.documents;
-    const canViewDocs =
-      (!gDocs && !pDocs) || !!(gDocs?.view) || !!(pDocs?.view);
-    if (!canViewDocs) {
-      return json({ error: 'The selected Finance Partner is not authorised to view this client’s documents' }, 403, corsHeaders);
+    const { data: assignment } = portalUser?.id
+      ? await supabase
+          .from('finance_portal_client_assignments')
+          .select('id, permissions')
+          .eq('finance_user_id', portalUser.id)
+          .eq('client_id', client_id)
+          .maybeSingle()
+      : { data: null };
+
+    // The same four conditions the picker listed this partner under. Sharing one
+    // module is what stops a menu offering a recipient this call would refuse.
+    const verdict = evaluateRecipient({ contact, portalUser, assignment });
+    if (!verdict.eligible) {
+      const reason = verdict.reason!;
+      return json({ error: recipientBlockMessage(reason) }, recipientBlockStatus(reason), corsHeaders);
     }
 
     // Repeated sends of the same generated report are idempotent for this

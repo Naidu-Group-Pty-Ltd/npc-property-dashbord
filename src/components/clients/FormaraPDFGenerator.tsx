@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Download, FileText, Home, Loader2, Mail, Send, Users, Calculator } from 'lucide-react';
+import { Download, FileText, Home, Loader2, Mail, Send, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
@@ -25,13 +25,11 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { useFinanceContacts } from '@/hooks/useFinanceContacts';
+import { FinanceRecipientPicker } from '@/components/clients/FinanceRecipientPicker';
+import type { FinanceReportRecipient } from '@/hooks/useFinanceReportRecipients';
 
 interface ClientData {
   id: string;
@@ -378,8 +376,8 @@ export function FormaraPDFGenerator({
   const [isSending, setIsSending] = useState(false);
   const [includeOwnerOccupied, setIncludeOwnerOccupied] = useState(true);
   const [includeBorrowingCapacity, setIncludeBorrowingCapacity] = useState(false);
+  const [financePickerOpen, setFinancePickerOpen] = useState(false);
   const { settings: brand } = useBrand();
-  const { contacts, defaultContact, hasContacts } = useFinanceContacts();
 
   // Persist Formara PDF to storage + client_files in background
   const persistFormaraPdf = async (blob: Blob, fileName: string, clientIdVal: string) => {
@@ -785,21 +783,16 @@ export function FormaraPDFGenerator({
     }
   };
 
-  const handleQuickSend = async (contactId?: string) => {
+  /**
+   * Quick Send, to the partner the picker returned.
+   *
+   * It used to accept an optional id and fall back to `defaultContact` — the
+   * first `finance_agent_contacts` row, since production flags none as default
+   * — so the menu named a partner nobody had chosen and, in this deployment,
+   * one with no Finance Portal account for the send to reach.
+   */
+  const handleQuickSend = async (recipient: FinanceReportRecipient) => {
     if (isDisabled) return;
-    if (!hasContacts) {
-      toast.error('No finance contacts configured. Add contacts in Settings → Finance Agent Contacts.');
-      return;
-    }
-
-    const targetContact = contactId 
-      ? contacts.find(c => c.id === contactId) 
-      : defaultContact;
-
-    if (!targetContact) {
-      toast.error('No finance contact selected');
-      return;
-    }
 
     setIsSending(true);
     
@@ -828,14 +821,15 @@ export function FormaraPDFGenerator({
       // explicit action for sending from a user's connected mailbox.
       const { data: shareResult, error } = await invokeSecureFunction('share-report-with-finance', {
         client_id: data.client.id,
-        finance_contact_id: targetContact.id,
+        finance_contact_id: recipient.id,
         filename: fileName,
         content_base64: base64Data,
         mime_type: 'application/pdf',
       });
       if (error || !shareResult?.success) throw new Error(error?.message || shareResult?.error || 'Finance Portal share failed');
 
-      toast.success(`Report securely shared with ${targetContact.name} through the Finance Portal`);
+      setFinancePickerOpen(false);
+      toast.success(`Report securely shared with ${recipient.name} through the Finance Portal`);
       
       onQuickSendComplete?.();
       
@@ -859,6 +853,7 @@ export function FormaraPDFGenerator({
   }
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant={variant} size={size} disabled={isDisabled}>
@@ -910,44 +905,34 @@ export function FormaraPDFGenerator({
               <Mail className="h-4 w-4 mr-2" />
               Compose Email with PDF
             </DropdownMenuItem>
-            {hasContacts ? (
-              contacts.length === 1 ? (
-                <DropdownMenuItem onSelect={() => { void handleQuickSend(); }} disabled={isDisabled}>
-                  <Send className="h-4 w-4 mr-2" />
-                  Quick Send to {defaultContact?.name}
-                </DropdownMenuItem>
-              ) : (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger disabled={isDisabled}>
-                    <Send className="h-4 w-4 mr-2" />
-                    Quick Send to Finance
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    {contacts.map((contact) => (
-                      <DropdownMenuItem 
-                        key={contact.id}
-                        onSelect={() => { void handleQuickSend(contact.id); }}
-                      >
-                        <Users className="h-4 w-4 mr-2" />
-                        {contact.name}
-                        {contact.is_default && (
-                          <span className="ml-2 text-xs text-muted-foreground">(default)</span>
-                        )}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              )
-            ) : (
-              <DropdownMenuItem disabled className="text-muted-foreground">
-                <Send className="h-4 w-4 mr-2" />
-                No finance contacts configured
-              </DropdownMenuItem>
-            )}
+            {/* One item whatever the organisation's partner list looks like.
+                The submenu it replaces listed every finance contact with no
+                indication that most of them cannot receive this client's
+                report — and collapsed to a person's name when there was one. */}
+            <DropdownMenuItem
+              onSelect={(e) => { e.preventDefault(); setFinancePickerOpen(true); }}
+              disabled={isDisabled}
+            >
+              <Send className="h-4 w-4 mr-2" />
+              Quick Send to Finance
+            </DropdownMenuItem>
           </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+
+    {/* Outside the menu: Radix unmounts the menu's content when it closes, and
+        a dialog rendered inside would close with it. */}
+    <FinanceRecipientPicker
+      open={financePickerOpen}
+      onOpenChange={setFinancePickerOpen}
+      clientId={data.client.id}
+      clientName={clientName}
+      documentLabel="this client details report"
+      busy={isSending}
+      onConfirm={(recipient) => { void handleQuickSend(recipient); }}
+    />
+    </>
   );
 }
 

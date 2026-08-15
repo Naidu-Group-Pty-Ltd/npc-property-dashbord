@@ -19,6 +19,12 @@ interface EmailAttachment {
 }
 
 interface SendEmailRequest {
+  /**
+   * `'list_senders'` asks which identities this caller may send as. Anything
+   * else (including nothing) is a send, which is what every existing caller
+   * posts — so the new action cannot change what one of them does.
+   */
+  action?: 'list_senders';
   to: string;
   subject: string;
   body: string;
@@ -306,7 +312,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { to, subject, body: emailBody, cc, bcc, originalEmailId, attachments, mailboxSource, senderMailboxId, effectiveUserId, source, ghlConversationId }: SendEmailRequest = body;
+    const { action, to, subject, body: emailBody, cc, bcc, originalEmailId, attachments, mailboxSource, senderMailboxId, effectiveUserId, source, ghlConversationId }: SendEmailRequest = body;
     
     // SECURITY: Verify authentication
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -348,6 +354,75 @@ Deno.serve(async (req) => {
       }
     }
     console.log('[send-email-reply] Authenticated user:', userId);
+
+    // ── Which identities may this caller send as? ────────────────────────────
+    //
+    // The list is produced by the function that enforces it, from the same two
+    // facts the send resolves a mailbox from: `custom_users.personal_mailbox`
+    // for a personal send, and MICROSOFT_MAILBOX_EMAIL for the shared one. A
+    // composer that built the list itself could only ever guess — and the one
+    // on the client screen guessed a label ("Organisation shared mailbox") in
+    // place of an address, so nobody could see which account their email would
+    // leave from.
+    //
+    // The permission gate above has already run: someone who may not send has
+    // been refused, rather than shown a list of accounts they cannot use.
+    if (action === 'list_senders') {
+      const forUserId = userId === 'service_role' ? effectiveUserId : userId;
+      const senders: Array<{
+        id: string;
+        source: 'personal' | 'admin';
+        emailAddress: string;
+        displayName: string;
+        isDefault: boolean;
+      }> = [];
+
+      if (forUserId && forUserId !== 'service_role') {
+        const { data: profile } = await supabase
+          .from('custom_users')
+          .select('username, email, personal_mailbox')
+          .eq('id', forUserId)
+          .maybeSingle();
+        const personalMailbox = profile?.personal_mailbox?.trim();
+        if (personalMailbox) {
+          senders.push({
+            // The id the send path authorises against: it must equal the
+            // authenticated user, which is what makes spoofing another staff
+            // member's mailbox impossible from the browser.
+            id: forUserId,
+            source: 'personal',
+            emailAddress: personalMailbox,
+            // A person, not their login address — the two differ, and the login
+            // address was what the composer used to show twice over.
+            displayName: profile?.username?.trim() || profile?.email?.trim() || personalMailbox,
+            isDefault: true,
+          });
+        }
+      }
+
+      // The organisation's own mailbox is not a per-user credential; it is the
+      // address every send falls back to, so it is always offered to a caller
+      // who got past the permission gate. Its name comes from white-label
+      // settings rather than being written into the UI.
+      const { data: brand } = await supabase
+        .from('whitelabel_settings')
+        .select('company_name')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const organisation = brand?.company_name?.trim();
+      senders.push({
+        id: 'admin',
+        source: 'admin',
+        emailAddress: mailboxEmail!,
+        displayName: organisation ? `${organisation} shared mailbox` : 'Organisation shared mailbox',
+        isDefault: senders.length === 0,
+      });
+
+      return new Response(JSON.stringify({ success: true, senders }), {
+        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!to || !subject || !emailBody) {
       throw new Error('Missing required fields: to, subject, body');

@@ -1,6 +1,25 @@
+/**
+ * The client email composer.
+ *
+ * ## Two things it got wrong, both structural
+ *
+ * **The From field was not a chooser.** It listed whatever the browser could
+ * see — the signed-in user's `personal_mailbox`, plus a hardcoded row reading
+ * "Organisation shared mailbox" where an address belongs — because the shared
+ * mailbox's address is a server secret. So the one line that says which account
+ * a client's report leaves from could not say it. `useSenderMailboxes` asks
+ * `send-email-reply`, the function that resolves and validates the sender, so
+ * the list is exactly what will be accepted and each row carries a name and an
+ * address.
+ *
+ * **The dialog had no scroll boundary.** `DialogContent` is `max-h-[85dvh]` and
+ * `sm:overflow-visible` above the mobile breakpoint, so a taller body did not
+ * scroll — it overflowed the viewport, taking Send Email with it. Expanding
+ * Cc/Bcc adds two fields and did exactly that on a 768px-tall laptop. The
+ * dialog is now a flex column: header and footer fixed, the fields between them
+ * the only thing that scrolls, so Send is reachable in every state.
+ */
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,17 +52,8 @@ import {
   Send
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '@/hooks/useAuth';
 import { fileToBase64, secureStorageDownload } from '@/hooks/useSecureStorage';
-
-interface SenderMailbox {
-  id: string;
-  emailAddress: string;
-  displayName: string;
-  provider: 'outlook';
-  source: 'personal' | 'admin';
-  isDefault: boolean;
-}
+import { useSenderMailboxes } from '@/hooks/useSenderMailboxes';
 
 interface ClientEmailComposeProps {
   open: boolean;
@@ -85,47 +95,16 @@ export function ClientEmailCompose({
   const [selectedAttachments, setSelectedAttachments] = useState<string[]>([]);
   const [showCcBcc, setShowCcBcc] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const { user } = useAuth();
 
-  // Fetch current user's mailbox only (session isolation)
-  const { data: mailboxes = [], isLoading: isLoadingMailboxes, error: mailboxesError, refetch: refetchMailboxes } = useQuery<SenderMailbox[]>({
-    queryKey: ['mailboxes-for-email', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return [];
-      const { data, error } = await supabase
-        .from('custom_users')
-        .select('id, email, personal_mailbox')
-        .eq('id', user.id)
-        .not('personal_mailbox', 'is', null)
-        .maybeSingle();
-
-      if (error) throw error;
-      const personalMailbox = data?.personal_mailbox?.trim();
-      const available: SenderMailbox[] = [];
-      if (personalMailbox) {
-        available.push({
-          id: user.id,
-          emailAddress: personalMailbox,
-          displayName: data?.email || personalMailbox,
-          provider: 'outlook',
-          source: 'personal',
-          isDefault: true,
-        });
-      }
-      // The server remains the permission authority for this option and rejects
-      // unauthorised shared-mailbox sends without exposing mailbox credentials.
-      available.push({
-        id: 'admin',
-        emailAddress: 'Organisation shared mailbox',
-        displayName: 'Organisation shared mailbox',
-        provider: 'outlook',
-        source: 'admin',
-        isDefault: !personalMailbox,
-      });
-      return available;
-    },
-    enabled: open && !!user?.id
-  });
+  // The identities this person may send as, from the function that enforces it.
+  // Choosing one here does not grant it: `send-email-reply` re-checks every send.
+  const {
+    mailboxes,
+    defaultMailbox,
+    isLoading: isLoadingMailboxes,
+    error: mailboxesError,
+    refetch: refetchMailboxes,
+  } = useSenderMailboxes(open);
 
   // Set defaults when modal opens
   useEffect(() => {
@@ -140,12 +119,13 @@ export function ClientEmailCompose({
         setSelectedAttachments([preSelectedAttachmentId]);
       }
       
-      // Set default mailbox
-      if (mailboxes.length > 0 && !selectedMailbox) {
-        setSelectedMailbox(mailboxes.find(m => m.isDefault)?.id || mailboxes[0]?.id || '');
+      // Preselect the default sender once the list arrives, without overwriting
+      // a choice already made — the query can settle after the dialog opens.
+      if (defaultMailbox && !selectedMailbox) {
+        setSelectedMailbox(defaultMailbox.id);
       }
     }
-  }, [open, clientEmail, clientName, preSelectedAttachmentId, mailboxes, user?.id, defaultSubject, defaultBody]);
+  }, [open, clientEmail, clientName, preSelectedAttachmentId, defaultMailbox, selectedMailbox, defaultSubject, defaultBody]);
 
   const toggleAttachment = (attachmentId: string) => {
     setSelectedAttachments(prev => 
@@ -254,42 +234,55 @@ export function ClientEmailCompose({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+      {/*
+        Flex column with a hard ceiling, so the composer is bounded by the
+        viewport rather than by how many fields happen to be open. `gap-0`/`p-0`
+        drop the shared grid spacing — the three regions carry their own padding
+        so the scroll boundary sits exactly between header and footer.
+      */}
+      <DialogContent className="flex max-h-[90dvh] flex-col gap-0 p-0 sm:max-h-[85dvh] sm:max-w-2xl sm:p-0">
+        <DialogHeader className="shrink-0 space-y-1.5 border-b border-border/60 p-4 sm:p-6">
+          <DialogTitle className="flex items-center gap-2 pr-8 text-left">
             <Mail className="h-5 w-5" />
             Compose Email
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-left">
             Send an email to {clientName}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-4">
+        {/* The only region that scrolls. `min-h-0` is what lets it: a flex child
+            defaults to min-height:auto and would push the footer off instead. */}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden p-4 sm:p-6">
           {/* Sender */}
           <div className="space-y-2">
             <Label htmlFor="client-email-sender">From</Label>
             <Select value={selectedMailbox} onValueChange={setSelectedMailbox} disabled={isLoadingMailboxes || mailboxes.length === 0}>
-              <SelectTrigger id="client-email-sender" aria-label="Sender mailbox" className="w-full">
-                <SelectValue placeholder={isLoadingMailboxes ? 'Loading sender mailboxes…' : mailboxes.length === 0 ? 'No sender mailbox connected' : 'Select sender mailbox'} />
+              <SelectTrigger id="client-email-sender" aria-label="Sender mailbox" className="h-auto w-full py-2">
+                <SelectValue placeholder={isLoadingMailboxes ? 'Loading available sending accounts…' : mailboxes.length === 0 ? 'No sender mailbox available' : 'Select sender mailbox'} />
               </SelectTrigger>
               <SelectContent className="z-[100]" position="popper">
+                {/* Name over address, for both kinds: which account this email
+                    leaves from is the question the field exists to answer. */}
                 {mailboxes.map((mailbox) => (
                   <SelectItem key={mailbox.id} value={mailbox.id}>
-                    {mailbox.displayName}{mailbox.source === 'personal' ? ` — ${mailbox.emailAddress}` : ''}
+                    <span className="flex min-w-0 flex-col text-left">
+                      <span className="truncate">{mailbox.displayName}</span>
+                      <span className="truncate text-xs text-muted-foreground">{mailbox.emailAddress}</span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             {mailboxesError && (
               <div className="flex items-center justify-between gap-2 text-xs text-destructive" role="alert">
-                <span>Unable to load sender mailboxes.</span>
+                <span>Unable to retrieve authorised sending accounts.</span>
                 <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={() => refetchMailboxes()}>Retry</Button>
               </div>
             )}
             {!isLoadingMailboxes && !mailboxesError && mailboxes.length === 0 && (
               <p className="text-xs text-muted-foreground">
-                No sender mailbox is connected. Connect a mailbox in Settings to send this email.
+                No sender mailbox is available for your account. Ask an administrator to connect one in Settings.
               </p>
             )}
           </div>
@@ -299,9 +292,12 @@ export function ClientEmailCompose({
             <div className="flex items-center justify-between">
               <Label>To</Label>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => setShowCcBcc(!showCcBcc)}
+                aria-expanded={showCcBcc}
+                aria-controls="client-email-ccbcc"
                 className="h-auto py-0 px-1 text-xs text-muted-foreground"
               >
                 {showCcBcc ? <ChevronUp className="h-3 w-3 mr-1" /> : <ChevronDown className="h-3 w-3 mr-1" />}
@@ -316,9 +312,10 @@ export function ClientEmailCompose({
             />
           </div>
 
-          {/* CC/BCC fields */}
+          {/* CC/BCC fields. They add height to the scroll region and nothing
+              else — the footer is outside it, so nothing moves off screen. */}
           {showCcBcc && (
-            <>
+            <div id="client-email-ccbcc" className="space-y-4">
               <div className="space-y-2">
                 <Label>Cc</Label>
                 <Input
@@ -337,7 +334,7 @@ export function ClientEmailCompose({
                   placeholder="bcc@email.com"
                 />
               </div>
-            </>
+            </div>
           )}
 
           {/* Subject */}
@@ -410,7 +407,9 @@ export function ClientEmailCompose({
           )}
         </div>
 
-        <DialogFooter>
+        {/* Fixed: Send Email is reachable whatever the body's height, which is
+            the property the Cc/Bcc expansion used to break. */}
+        <DialogFooter className="shrink-0 gap-2 border-t border-border/60 p-4 sm:p-6">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
