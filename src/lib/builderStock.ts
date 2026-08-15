@@ -308,7 +308,15 @@ export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | n
     const chosen = usable.find((image) => image.id === item.primary_image_id);
     if (chosen) return chosen;
   }
-  return [...usable].sort((a, b) =>
+  /**
+   * The builder's own image wins outright, exactly as the server's
+   * `chooseAndStorePrimaryImage` decides it — a partition, not a ranking a
+   * Street View could climb. This branch only runs when the stored choice is
+   * missing or stale, and the two must not disagree about what the card shows.
+   */
+  const sourceSupplied = usable.filter((image) => image.source_stage === 'uploaded_document');
+  const candidates = sourceSupplied.length ? sourceSupplied : usable;
+  return [...candidates].sort((a, b) =>
     (STAGE_PRIORITY[a.source_stage] ?? 9) - (STAGE_PRIORITY[b.source_stage] ?? 9)
     || a.position - b.position)[0] ?? null;
 }

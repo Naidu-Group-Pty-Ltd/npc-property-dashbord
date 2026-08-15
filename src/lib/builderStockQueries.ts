@@ -270,6 +270,45 @@ export function useAcknowledgeStockSelection() {
   });
 }
 
+/** What one source yielded when its imagery was recovered. */
+export interface StockSourceImageRepair {
+  upload_id: string;
+  rows_read: number;
+  rows_with_imagery: number;
+  matched: number;
+  images_stored: number;
+  /** Images taken out of a row's own linked package document. */
+  from_package: number;
+  /** Rows whose linked package named nothing for that exact property. */
+  package_not_identified: number;
+  /** Rows whose linked package needs a sign-in we will never do. */
+  package_unreachable: number;
+  /** The run was budgeted out; asking again continues where it stopped. */
+  incomplete: boolean;
+  primary_updated: number;
+  error: string | null;
+}
+
+/**
+ * Re-read a source and attach the imagery it supplied.
+ *
+ * For stock that is ALREADY imported. Nothing is created, no property field is
+ * touched and no client selection moves — the source is read again and the
+ * builder's own photographs are attached to the properties they came from,
+ * which is what the earlier import failed to do.
+ */
+export function useRecoverStockSourceImages() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (uploadId?: string) =>
+      invoke<{ results: StockSourceImageRepair[] }>({
+        operation: 'reprocess_source_images',
+        ...(uploadId ? { upload_id: uploadId } : {}),
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
+
 /** Resume enrichment for stock left pending by an earlier upload. */
 export function useEnrichPendingStockImages() {
   const queryClient = useQueryClient();

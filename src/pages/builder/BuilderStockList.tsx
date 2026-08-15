@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Boxes, CheckCircle2, ChevronLeft, ChevronRight, FileSpreadsheet,
-  Image as ImageIcon, Link2, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2,
+  Image as ImageIcon, ImageDown, Link2, Loader2, Plus, RefreshCw, Search, Sparkles, Trash2,
   Upload, UserCheck,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -31,7 +31,7 @@ import {
   importBuilderStockUrl,
   useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections,
   useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages,
-  useSetBuilderStockAvailability, uploadBuilderStockFile,
+  useRecoverStockSourceImages, useSetBuilderStockAvailability, uploadBuilderStockFile,
   type StockImportSummary, type StockUploadProgress,
 } from '@/lib/builderStockQueries';
 import {
@@ -120,6 +120,7 @@ export default function BuilderStockList() {
   const acknowledge = useAcknowledgeStockSelection();
   const enrichPending = useEnrichPendingStockImages();
   const deleteSource = useDeleteBuilderStockSource();
+  const recoverImages = useRecoverStockSourceImages();
 
   const records = itemsQuery.data?.records ?? [];
   const pagination = itemsQuery.data?.pagination;
@@ -156,6 +157,46 @@ export default function BuilderStockList() {
     });
     void uploadsQuery.refetch();
   }, [toast, uploadsQuery]);
+
+  /**
+   * Re-read one source and attach the imagery it supplied.
+   *
+   * For stock that is already imported: the properties, their prices, their
+   * availability and every client selection stay exactly where they are, and
+   * only the pictures change.
+   */
+  const recoverSourceImages = useCallback((upload: BuilderStockUpload) => {
+    recoverImages.mutate(upload.id, {
+      onSuccess: (response) => {
+        const result = response.results?.[0];
+        if (result?.error) {
+          toast({
+            title: 'That source could not be read again',
+            description: result.error,
+            variant: 'destructive',
+          });
+          return;
+        }
+        const stored = result?.images_stored ?? 0;
+        toast({
+          title: stored
+            ? `${stored} supplied image${stored === 1 ? '' : 's'} recovered`
+            : 'No supplied images were found',
+          description: stored
+            ? `${result?.primary_updated ?? 0} propert${(result?.primary_updated ?? 0) === 1 ? 'y' : 'ies'} now show the builder's own photograph.`
+            : 'This source does not carry a photograph for any of its properties.',
+        });
+        refreshAll();
+      },
+      onError: (error: unknown) => {
+        toast({
+          title: 'The source images could not be recovered',
+          description: (error as Error).message,
+          variant: 'destructive',
+        });
+      },
+    });
+  }, [recoverImages, refreshAll, toast]);
 
   const handleFile = useCallback(async (file: File) => {
     if (file.size > MAX_STOCK_FILE_BYTES) {
@@ -563,6 +604,25 @@ export default function BuilderStockList() {
                         ) : null}
                       </TableCell>
                       <TableCell className="text-right">
+                        {/*
+                          Recover the imagery this source supplied.
+                          For stock that is already imported: the source is read
+                          again and the builder's own photographs are attached to
+                          the properties they came from. Nothing is re-imported,
+                          so prices, availability and client selections are
+                          untouched — deleting and re-uploading a stock list to
+                          fix a picture is not a repair.
+                        */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={recoverImages.isPending || deleteSource.isPending || busy}
+                          onClick={() => recoverSourceImages(upload)}
+                          aria-label={`Recover source images for ${stockSourceLabel(upload)}`}
+                        >
+                          <ImageDown className="h-4 w-4" aria-hidden />
+                          <span className="sr-only sm:not-sr-only sm:ml-2">Source images</span>
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
