@@ -1754,8 +1754,28 @@ export function disclaimerPage(text: string): PageDef {
       // the binding resolves to nothing.
       mark: '{{org.markMono}}',
       markHeight: 37,
-      disclaimerText: text,
-      fontSize: 8,
+      /*
+       * The deployment's own disclaimer, not this constant.
+       *
+       * `text` is `STANDARD_DISCLAIMER` — five lines of generic boilerplate —
+       * and baking it into the schema meant all 543 seeded templates carried
+       * it verbatim. This deployment has `professional_disclaimer` set:
+       * ~1,400 characters over nine paragraphs, `is_enabled: true`, written
+       * for a Buyers Agent. It reached the legacy composer and nothing else,
+       * so every design-system document showed the wrong disclaimer — which
+       * is what "the disclaimer section isn't rendering" turned out to be.
+       *
+       * Bound rather than seeded, so editing it on the Report Settings page
+       * changes the next document instead of requiring a re-seed of the
+       * catalogue. `?? ...` is the block's own fallback for a deployment that
+       * has set none, and it is the same constant as before.
+       */
+      disclaimerText: `{{org.disclaimer}}`,
+      disclaimerFallback: text,
+      // 'small' | 'medium' | 'large'. The firm's setting is "medium"; the
+      // hardcoded 8 was below the block's own small.
+      fontSize: '{{org.disclaimerFontSize}}',
+      fontSizeFallback: 'small',
     }),
   ]);
 }

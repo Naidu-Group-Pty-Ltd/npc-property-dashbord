@@ -23,6 +23,7 @@ import {
   applyOrganisationProjection,
   type BrandMarks,
   type OrganisationRowLike,
+  type ReportSettingsLike,
 } from '../../../../supabase/functions/_shared/organisationProjection.pure';
 import {
   resolveReportAsset,
@@ -125,12 +126,59 @@ export async function loadBrandMarks(): Promise<BrandMarks> {
 export async function applyOrganisationAndBrand(
   data: Record<string, any>,
 ): Promise<Record<string, any>> {
-  const [row, marks] = await Promise.all([loadOrganisation(), loadBrandMarks()]);
-  return applyOrganisationProjection(data, row, marks);
+  const [row, marks, settings] = await Promise.all([
+    loadOrganisation(), loadBrandMarks(), loadReportSettings(),
+  ]);
+  return applyOrganisationProjection(data, row, marks, settings);
+}
+
+/**
+ * `global_report_settings`, the row the Report Settings page writes.
+ *
+ * It carries the firm's ABN and postal address — the two `org` fields the
+ * `whitelabel_settings` row genuinely has no column for — and the professional
+ * disclaimer, which is what the last page of every report is *for*. The render
+ * routes have always read this row; they passed it to the legacy composer and
+ * nowhere else, so the design-system path never saw it.
+ *
+ * Cached and failure-tolerant on the same terms as the two above: a settings
+ * read that fails leaves the standard disclaimer and the signature-column
+ * contact lines, which is what the documents had before this existed.
+ */
+let settingsInFlight: Promise<ReportSettingsLike | null> | null = null;
+
+export async function loadReportSettings(): Promise<ReportSettingsLike | null> {
+  if (settingsInFlight) return settingsInFlight;
+  settingsInFlight = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('global_report_settings')
+        .select('setting_key, setting_value')
+        .in('setting_key', ['contact_details', 'professional_disclaimer']);
+      if (error || !data) {
+        settingsInFlight = null;
+        return null;
+      }
+      let contact: Record<string, unknown> | null = null;
+      let disclaimer: Record<string, unknown> | null = null;
+      for (const row of data as Array<Record<string, unknown>>) {
+        const value = row.setting_value;
+        if (!value || typeof value !== 'object') continue;
+        if (row.setting_key === 'contact_details') contact = value as Record<string, unknown>;
+        else if (row.setting_key === 'professional_disclaimer') disclaimer = value as Record<string, unknown>;
+      }
+      return { contact, disclaimer };
+    } catch {
+      settingsInFlight = null;
+      return null;
+    }
+  })();
+  return settingsInFlight;
 }
 
 /** Test seam: drop the memoised row so a spec can change what is returned. */
 export function resetOrganisationCache(): void {
   inFlight = null;
   marksInFlight = null;
+  settingsInFlight = null;
 }
