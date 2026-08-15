@@ -148,10 +148,41 @@ jobs:
           failed=''
           for fn in ${{ steps.changed.outputs.list }}; do
             echo "::group::$fn"
-            # `verify_jwt` comes from config.toml, so it is not passed here —
-            # these functions authenticate in their own bodies and a flag on the
-            # command line would silently disagree with the file.
-            if supabase functions deploy "$fn" --project-ref "$PROJECT_REF"; then
+            # `verify_jwt` is passed EXPLICITLY, and only ever to turn the
+            # gateway check OFF.
+            #
+            # The comment here used to say the flag was omitted because
+            # config.toml is the source of truth. It is not: `supabase functions
+            # deploy --project-ref` does not apply the file's `verify_jwt` to an
+            # already-deployed function, so the deployed value is sticky
+            # server-side state that config.toml only describes. Measured on
+            # 15 Aug 2026 — `admin-password-reset` reads `verify_jwt = true` in
+            # the file, was redeployed with all 356 functions, and answers a
+            # preflight 200; `legal-matters-admin` and `import-schools-data`
+            # read the same flag and answer 503.
+            #
+            # That mattered because a CORS preflight carries no `Authorization`
+            # header, so a JWT-guarded function is rejected by the gateway
+            # BEFORE it runs — every browser call to those two failed as an
+            # opaque "Network/CORS error", and the Solicitor Portal's admin
+            # panels and the Data Import page had never worked.
+            #
+            # Only the `false` direction is asserted, deliberately. Sixty-nine
+            # browser-called functions still read `verify_jwt = true` in the
+            # file while running with it off; passing the flag in that direction
+            # would switch the gateway check ON for all of them at once and
+            # break every page. Turning it off is safe, is what the file asks
+            # for, and is what those functions' own `verifyAuth` replaces.
+            jwt_flag=''
+            if awk -v fn="[functions.$fn]" '
+                 index($0, fn) == 1 { found = 1; next }
+                 found && /^\[/ { exit }
+                 found && /verify_jwt[[:space:]]*=[[:space:]]*false/ { print "no"; exit }
+               ' supabase/config.toml | grep -q no; then
+              jwt_flag='--no-verify-jwt'
+              echo "$fn: config.toml declares verify_jwt = false — passing --no-verify-jwt"
+            fi
+            if supabase functions deploy "$fn" --project-ref "$PROJECT_REF" $jwt_flag; then
               echo "- \`$fn\` deployed" >> "$GITHUB_STEP_SUMMARY"
             else
               failed="$failed $fn"
@@ -192,6 +223,7 @@ jobs:
             # Exact-origin by construction: createCorsHeaders(...), the
             # withRequestOrigin wrapper, or createTokenAuthCorsHeaders(<origin>).
             grep -qE 'createCorsHeaders\(|withRequestOrigin|createTokenAuthCorsHeaders\([^)[:space:]]' "$src" || continue
+
             checked=$((checked + 1))
             headers=$(curl -sS -m 30 -D - -o /dev/null -X OPTIONS \
               "https://$PROJECT_REF.supabase.co/functions/v1/$fn" \
@@ -199,17 +231,46 @@ jobs:
               -H 'Access-Control-Request-Method: POST' \
               -H 'Access-Control-Request-Headers: content-type,authorization,apikey' \
               | tr -d '\r' || true)
+            status=$(printf '%s\n' "$headers" | awk '/^HTTP/{print $2}' | tail -1)
             acao=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
             acac=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-credentials"{print tolower($2)}' | tail -1)
             if [ "$acao" = "$ORIGIN" ] && [ "$acac" = "true" ]; then
               echo "- \`$fn\` CORS verified (exact origin + credentials)" >> "$GITHUB_STEP_SUMMARY"
+            elif awk -v fn="[functions.$fn]" '
+                   index($0, fn) == 1 { found = 1; next }
+                   found && /^\[/ { exit }
+                   found && /verify_jwt[[:space:]]*=[[:space:]]*true/ { print "yes"; exit }
+                 ' supabase/config.toml | grep -q yes; then
+              # Declared gateway-JWT-guarded, so a preflight CANNOT succeed: it
+              # is an unauthenticated OPTIONS by specification and the gateway
+              # rejects it before the function runs. That is not a CORS fault
+              # and there is nothing in the function to fix.
+              #
+              # Excused on FAILURE rather than skipped before the probe, so the
+              # sixty-nine browser-called functions that read `verify_jwt = true`
+              # while running with it off keep being checked — they pass today,
+              # and pre-skipping them would have quietly dropped the coverage
+              # this step exists for.
+              #
+              # This is what failed three consecutive releases naming
+              # `sqm-rent-service`, which is called only by
+              # `generate-investment-report` with an explicit bearer token and is
+              # SUPPOSED to be guarded. Red for a correctly configured function
+              # is how a release check stops being read.
+              echo "- \`$fn\` not browser-reachable (verify_jwt = true) — preflight refusal expected" >> "$GITHUB_STEP_SUMMARY"
             else
               bad="$bad $fn"
-              echo "- \`$fn\` **CORS WRONG** — origin=\`${acao:-<none>}\` credentials=\`${acac:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "- \`$fn\` **PREFLIGHT REFUSED** — status=\`${status:-<none>}\` origin=\`${acao:-<none>}\` credentials=\`${acac:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
           echo "verified $checked function(s)"
           if [ -n "$bad" ]; then
-            echo "::error::deployed but answering the wrong CORS policy:$bad — the browser will not send the session cookie, so every call arrives unauthenticated."
+            echo "::error::preflight refused for:$bad"
+            echo "::error::Two different causes look identical here, so check which one it is before editing any CORS code."
+            echo "::error::  (a) origin=* with a 2xx — the function answered, with the previous build's policy. Fix the function."
+            echo "::error::  (b) a 4xx/5xx status — the GATEWAY rejected the OPTIONS before the function ran, which is what"
+            echo "::error::      verify_jwt does to a preflight (it carries no Authorization header). Fix it with"
+            echo "::error::      verify_jwt = false in supabase/config.toml and let the function's own verifyAuth stand."
+            echo "::error::Either way the browser refuses to send the session cookie and every call arrives unauthenticated."
             exit 1
           fi

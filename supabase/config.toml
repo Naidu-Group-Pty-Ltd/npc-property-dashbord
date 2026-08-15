@@ -303,8 +303,19 @@ verify_jwt = false
 [functions.public-transport-service]
 verify_jwt = false
 
+# Browser-called, so the gateway JWT check must stay OFF.
+#
+# A CORS preflight carries no `Authorization` header — browsers never send one —
+# so with `verify_jwt = true` the gateway rejects the OPTIONS with a 503 and its
+# own wildcard CORS headers, and the function never runs at all. The browser
+# then fails the preflight and `fetch` rejects, which the app surfaces as
+# "Network/CORS error calling <fn>". The deploy gate reported it as a CORS
+# policy fault for months; it was this.
+#
+# Safe because the function authenticates itself before doing anything:
+# `enforceCsrf` -> `verifyAuth` -> an explicit admin-role check.
 [functions.import-schools-data]
-verify_jwt = true
+verify_jwt = false
 
 [functions.generate-bulk-reports]
 verify_jwt = true
@@ -1095,8 +1106,19 @@ verify_jwt = false
 [functions.solicitor-portal-compliance]
 verify_jwt = false
 
+# Browser-called, so the gateway JWT check must stay OFF.
+#
+# A CORS preflight carries no `Authorization` header — browsers never send one —
+# so with `verify_jwt = true` the gateway rejects the OPTIONS with a 503 and its
+# own wildcard CORS headers, and the function never runs at all. The browser
+# then fails the preflight and `fetch` rejects, which the app surfaces as
+# "Network/CORS error calling <fn>". The deploy gate reported it as a CORS
+# policy fault for months; it was this.
+#
+# Safe because the function authenticates itself before doing anything:
+# `enforceCsrf` -> `verifyAuth` -> `requireModulePermission`.
 [functions.legal-matters-admin]
-verify_jwt = true
+verify_jwt = false
 
 [functions.cross-portal-outbox-worker]
 verify_jwt = false
