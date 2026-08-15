@@ -234,3 +234,57 @@ describe("every case in the production register produces a usable journey", () =
     }
   });
 });
+
+/**
+ * Portal access, and the difference between "not started" and "cannot start".
+ *
+ * `client_portal_status` says how far the client has got. It says nothing
+ * about whether they can log in. AML-2026-00005 was activated, its portal
+ * notification written to `/client/aml` at 15:41, and the client has no
+ * `client_portal_users` row at all — so the workspace told an operator to
+ * "send or chase the onboarding invitation" when there was nothing to chase
+ * and no way, from that screen, to send one.
+ */
+describe("the intake stage knows whether the client can actually get in", () => {
+  const base = activatedAwaitingClient;
+
+  it("names the missing login rather than telling anyone to chase it", () => {
+    const journey = deriveAmlJourney({
+      ...base,
+      portalAccess: { exists: false },
+    });
+    const intake = journey.stages.find((s) => s.id === "intake")!;
+    expect(intake.blockers.map((b) => b.key)).toContain("portal_no_access");
+    expect(intake.blockers.map((b) => b.key)).not.toContain("portal_not_started");
+    expect(intake.blockers.find((b) => b.key === "portal_no_access")?.detail)
+      .toMatch(/issue portal access/i);
+  });
+
+  it("says chase, and only chase, once the client can sign in", () => {
+    const journey = deriveAmlJourney({
+      ...base,
+      portalAccess: { exists: true, status: "active", lastLoginAt: null },
+    });
+    const intake = journey.stages.find((s) => s.id === "intake")!;
+    expect(intake.blockers.map((b) => b.key)).toContain("portal_not_started");
+    expect(intake.blockers.find((b) => b.key === "portal_not_started")?.detail)
+      .toMatch(/chase/i);
+  });
+
+  it("degrades to the old wording when the portal was never read", () => {
+    // An unread fact must not become "they have no login" — that would
+    // offer to issue access to a client who already has it.
+    const journey = deriveAmlJourney(base);
+    const intake = journey.stages.find((s) => s.id === "intake")!;
+    expect(intake.blockers.map((b) => b.key)).toContain("portal_not_started");
+    expect(intake.blockers.map((b) => b.key)).not.toContain("portal_no_access");
+  });
+
+  it("leaves every other stage untouched by the new fact", () => {
+    const without = deriveAmlJourney(base);
+    const with_ = deriveAmlJourney({ ...base, portalAccess: { exists: false } });
+    const other = (j: typeof without) =>
+      j.stages.filter((s) => s.id !== "intake").map((s) => `${s.id}:${s.status}`);
+    expect(other(with_)).toEqual(other(without));
+  });
+});

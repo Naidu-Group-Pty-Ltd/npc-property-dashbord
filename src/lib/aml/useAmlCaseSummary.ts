@@ -49,6 +49,8 @@ import {
   type AmlWorkspaceSummary,
 } from "./workspaceViewModel";
 import { deriveAmlJourney, type AmlJourney } from "./journeyModel";
+import { readClientPortalAccess } from "./clientPortalAccessApi";
+import type { AmlPortalAccessFacts } from "./portalAccessState";
 
 export interface AmlCaseEvidence {
   identity: AmlIdentityFacts | null;
@@ -75,6 +77,17 @@ export interface AmlCaseEvidence {
    * exactly the one the section has today.
    */
   matterLabel: string | null;
+  /**
+   * Whether the client can actually get into their portal.
+   *
+   * Read from `client-portal-invite`'s `check_status` — the same endpoint
+   * that issues access, so the workspace and the invite dialog can never
+   * disagree about what exists. `null` = the read did not answer, which is
+   * reported as "not available" and NEVER as "no account": offering to issue
+   * access on an unknown state is how a client who already has a login gets
+   * a second invitation.
+   */
+  portalAccess: AmlPortalAccessFacts | null;
 }
 
 const EMPTY_EVIDENCE: AmlCaseEvidence = {
@@ -91,6 +104,7 @@ const EMPTY_EVIDENCE: AmlCaseEvidence = {
   passport: null,
   transactions: null,
   matterLabel: null,
+  portalAccess: null,
 };
 
 export interface AmlCaseSummaryResult {
@@ -120,10 +134,11 @@ const soft = <T>(run: () => Promise<T>): Promise<T | null> => {
 export function useAmlCaseSummary(
   caseRow: AmlWorkspaceCaseFacts | null,
   openClientRequests: number | undefined,
-  options: { enabled?: boolean; canReadMatter?: boolean } = {},
+  options: { enabled?: boolean; canReadMatter?: boolean; clientId?: string | null } = {},
 ): AmlCaseSummaryResult {
   const enabled = options.enabled !== false;
   const canReadMatter = options.canReadMatter === true;
+  const clientId = options.clientId ?? null;
   const caseId = caseRow?.id ?? "";
   const [evidence, setEvidence] = useState<AmlCaseEvidence>(EMPTY_EVIDENCE);
   const [loading, setLoading] = useState(false);
@@ -148,6 +163,7 @@ export function useAmlCaseSummary(
         transactions,
         consent,
         passport,
+        portalAccess,
       ] = await Promise.all([
         soft(() => amlVerificationApi.listVerificationChecks(caseId)),
         soft(() => amlCasesApi.listPartyScreening(caseId)),
@@ -166,6 +182,14 @@ export function useAmlCaseSummary(
         // Role-gated server-side (MLRO); a refusal lands as `null` and is
         // recovered below from the projection every AML role may read.
         soft(() => amlRelianceApi.getPassportDistributionStatus(caseId)),
+        // Can the client actually get into their portal? Read from the same
+        // endpoint that issues access, so the workspace and the invite
+        // dialog can never disagree about what exists. The email is left
+        // unread here: `undefined` means "not known", which offers the
+        // invitation rather than refusing one that would have worked.
+        clientId
+          ? soft(() => readClientPortalAccess(clientId))
+          : Promise.resolve(null),
       ]);
       if (mine !== seq.current) return;
 
@@ -217,6 +241,7 @@ export function useAmlCaseSummary(
               version: consent.version ?? null,
             }
           : null,
+        portalAccess,
         passport: passport
           ? {
               enabled: passport.enabled !== false,
@@ -277,6 +302,7 @@ export function useAmlCaseSummary(
       documents: evidence.documents,
       ownership: evidence.ownership,
       funding: evidence.funding,
+      portalAccess: evidence.portalAccess,
       activation: ((caseRow as { metadata?: { activation?: unknown } } | null)?.metadata
         ?.activation ?? null) as AmlWorkspaceFacts["activation"],
       consent: evidence.consent,

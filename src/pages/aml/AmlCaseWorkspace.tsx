@@ -86,6 +86,7 @@ import {
   AmlOutstandingItems, AmlRecentActivity, AmlServiceReadinessCard, AmlWorkspaceHeader,
   MlroDecisionDossier, SECTION_LABELS,
 } from "@/components/aml/workspace";
+import { AmlPortalAccessCard } from "@/components/aml/AmlPortalAccessCard";
 import { useAmlCaseSummary } from "@/lib/aml/useAmlCaseSummary";
 import {
   deriveAmlLivePosition, isJourneyStageId, JOURNEY_STAGES, sectionsForStage, stageForSection,
@@ -224,6 +225,7 @@ export default function AmlCaseWorkspace() {
     {
       enabled: access.hasAnyRole && access.flagEnabled && Boolean(caseRow),
       canReadMatter: canInvestigate,
+      clientId: caseRow?.client_id ?? null,
     },
   );
 
@@ -400,6 +402,19 @@ export default function AmlCaseWorkspace() {
           {/* ── Stage 2 · Client intake ─────────────────────────────── */}
           {section === "requests" && (
             <div className="space-y-4">
+              {/*
+                Can the client actually get in? Placed FIRST in this stage,
+                above their progress through it, because chasing somebody
+                who has no login is chasing nothing — and that is exactly
+                what this workspace used to ask an operator to do.
+              */}
+              <AmlPortalAccessCard
+                facts={evidence.portalAccess}
+                loading={summaryLoading && !evidence.portalAccess}
+                clientId={caseRow.client_id ?? null}
+                clientName={caseRow.subject_display_name}
+                onChanged={load}
+              />
               <ClientIntakeCard caseRow={caseRow} consent={evidence.consent} requests={requests} />
               {/* Consent evidence belongs with the client's own intake. */}
               <ConsentEvidenceCard caseId={caseRow.id} />
