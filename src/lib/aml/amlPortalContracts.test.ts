@@ -766,6 +766,48 @@ describe("activation client picker", () => {
     expect(picker).toContain("browsing");
   });
 
+  it("creates a client through the CRM path, never through its own insert", () => {
+    const createForm = readFileSync(
+      join(repo, "src/components/aml/AmlCreateClientForm.tsx"), "utf8");
+    const wrapper = readFileSync(
+      join(repo, "src/lib/clients/createClientRecord.ts"), "utf8");
+
+    // One creation path: `manage-client-data`, the canonical staff endpoint,
+    // with its own `client_management.can_edit` check. Holding an AML role is
+    // not authority to create a client.
+    expect(wrapper).toContain('"manage-client-data"');
+    expect(wrapper).toContain('operation: "create"');
+    expect(wrapper).toContain('table: "clients"');
+    // The AML function must never grow a clients INSERT of its own.
+    expect(casesSource).not.toMatch(/from\('clients'\)\s*\.insert/);
+    // ...and the form must not reach the database or another creation route.
+    expect(createForm).not.toMatch(/supabase|invokeSecureFunction/);
+    expect(createForm).toContain("createClientRecord");
+  });
+
+  it("creating a client is not activating one — the event stays a human act", () => {
+    const createForm = readFileSync(
+      join(repo, "src/components/aml/AmlCreateClientForm.tsx"), "utf8");
+    // AGENTS.md §2: a case opens only after a human-confirmed activation
+    // event. A "create and activate in one click" would be the frontend
+    // manufacturing a compliance outcome.
+    expect(createForm).not.toContain("activateClient");
+    expect(createForm).not.toContain("human_confirmed");
+  });
+
+  it("checks for an existing client before creating, not after", () => {
+    const createForm = readFileSync(
+      join(repo, "src/components/aml/AmlCreateClientForm.tsx"), "utf8");
+    // Detection reads the same AML-gated register the picker uses, on name
+    // AND email — a name check cannot catch "Rob" against "Robert".
+    expect(createForm).toContain("listClientsForActivation");
+    expect(createForm).toContain("onUseExisting");
+    const dupIndex = createForm.indexOf("checkDuplicates");
+    const createIndex = createForm.indexOf("createClientRecord(form)");
+    expect(dupIndex).toBeGreaterThan(-1);
+    expect(createIndex).toBeGreaterThan(dupIndex);
+  });
+
   it("shows a client that already has an open case rather than hiding it", () => {
     // Hiding it gives the worst answer a picker can give — "that client does
     // not exist" — when the truth is that they are already covered.

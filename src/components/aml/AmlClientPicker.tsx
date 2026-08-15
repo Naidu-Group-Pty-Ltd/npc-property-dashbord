@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  AlertTriangle, Check, FolderOpen, Loader2, Mail, Search, Users,
+  AlertTriangle, Check, FolderOpen, Loader2, Mail, Search, UserPlus, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -49,6 +49,11 @@ export interface AmlClientPickerProps {
   disabled?: boolean;
   /** Resets and refetches when this changes — the dialog passes `open`. */
   resetKey?: unknown;
+  /**
+   * Switch to the create-a-new-client form. Omitted when the caller has no
+   * creation affordance to offer.
+   */
+  onCreateNew?: () => void;
 }
 
 const PAGE_SIZE = 25;
@@ -75,7 +80,7 @@ export function ClientStatusBadge({ active }: { active: boolean }) {
   );
 }
 
-export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPickerProps) {
+export function AmlClientPicker({ onSelect, disabled, resetKey, onCreateNew }: AmlClientPickerProps) {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [status, setStatus] = useState<AmlClientPickerStatus>("all");
@@ -86,6 +91,13 @@ export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPicke
   const [browsing, setBrowsing] = useState(true);
 
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  /**
+   * True when the server answered without the browse fields — i.e. it is
+   * running a build that predates browsing. Search still works against it;
+   * browsing does not, and the picker says so rather than reporting an
+   * empty register.
+   */
+  const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
@@ -118,11 +130,26 @@ export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPicke
           offset,
         });
         if (seq !== requestSeq.current) return;
-        setClients((prev) =>
-          offset === 0 ? (page.clients ?? []) : [...prev, ...(page.clients ?? [])]);
-        setTotal(page.total ?? 0);
+        const rows = page.clients ?? [];
+        /*
+         * An answer with no `total`/`browsing` came from a deployment of
+         * `aml-cases` that predates browsing. That server returns `[]` to an
+         * empty query — and rendering THAT as "No clients yet" is the exact
+         * lie this component exists to stop telling: it reads as an empty
+         * register and sends an operator off to create a duplicate. It
+         * happened for real, on a register of 775 clients, because the
+         * function deploy for the browse change was cancelled while the
+         * frontend shipped.
+         *
+         * So the shape of the response decides, not the row count.
+         */
+        const answered =
+          typeof page.total === "number" && typeof page.browsing === "boolean";
+        setStale(!answered);
+        setClients((prev) => (offset === 0 ? rows : [...prev, ...rows]));
+        setTotal(answered ? page.total : rows.length);
         setHasMore(Boolean(page.has_more));
-        setBrowsing(page.browsing !== false);
+        setBrowsing(answered ? page.browsing : debounced.length < 2);
         setError(null);
         setState("ready");
       } catch (e: any) {
@@ -170,6 +197,7 @@ export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPicke
           />
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-2">
         <div
           className="flex flex-wrap gap-1.5"
           role="group"
@@ -195,6 +223,24 @@ export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPicke
               </Button>
             );
           })}
+        </div>
+        {/*
+          The way out of the register, for a client the business has never
+          held. Kept beside the filters rather than inside the list: it is a
+          different KIND of action from picking somebody, and burying it in
+          an empty state would hide it exactly when the register is full.
+        */}
+        {onCreateNew && (
+          <Button
+            type="button" size="sm" variant="outline"
+            className="h-7 gap-1.5 px-2.5 text-xs"
+            disabled={disabled}
+            onClick={onCreateNew}
+          >
+            <UserPlus aria-hidden="true" className="h-3.5 w-3.5" />
+            New client
+          </Button>
+        )}
         </div>
       </div>
 
@@ -239,7 +285,20 @@ export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPicke
               on an empty register would be a lie, and it is the answer that
               makes somebody create a duplicate.
             */}
-            {!browsing ? (
+            {stale && browsing ? (
+              /*
+                The server predates browsing, so it answered `[]` to an empty
+                query. That is not an empty register and must never be shown
+                as one — search still reaches every client, so say that.
+              */
+              <>
+                <p className="text-sm font-medium">Type a name to find a client</p>
+                <p className="max-w-xs text-xs text-muted-foreground">
+                  Browsing the full register needs the updated server. Search
+                  works now and covers every client.
+                </p>
+              </>
+            ) : !browsing ? (
               <>
                 <p className="text-sm font-medium">No client matches “{debounced}”</p>
                 <p className="max-w-xs text-xs text-muted-foreground">
@@ -260,10 +319,27 @@ export function AmlClientPicker({ onSelect, disabled, resetKey }: AmlClientPicke
               <>
                 <p className="text-sm font-medium">No clients yet</p>
                 <p className="max-w-xs text-xs text-muted-foreground">
-                  Clients are created in Client Management. Once one exists it
-                  appears here automatically.
+                  Create the first client here, or in Client Management —
+                  it is the same register either way.
                 </p>
               </>
+            )}
+            {/*
+              Offered on the two empty states where creating is plausibly the
+              right move — an unmatched search and an empty register — and NOT
+              on an empty status filter, where the client probably exists in
+              the slice next door.
+            */}
+            {onCreateNew && (status === "all" || !browsing) && !stale && (
+              <Button
+                type="button" size="sm" variant="outline"
+                className="mt-1 h-7 gap-1.5 px-2.5 text-xs"
+                disabled={disabled}
+                onClick={onCreateNew}
+              >
+                <UserPlus aria-hidden="true" className="h-3.5 w-3.5" />
+                Create a new client
+              </Button>
             )}
           </div>
         ) : (
