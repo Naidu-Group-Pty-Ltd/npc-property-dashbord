@@ -31471,6 +31471,48 @@ export type Database = {
           },
         ]
       }
+      report_template_selections: {
+        Row: {
+          id: string
+          owner_user_id: string
+          report_type: string
+          selected_at: string
+          template_id: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          owner_user_id: string
+          report_type: string
+          selected_at?: string
+          template_id: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          owner_user_id?: string
+          report_type?: string
+          selected_at?: string
+          template_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_template_selections_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_template_selections_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "report_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       report_template_versions: {
         Row: {
           created_at: string

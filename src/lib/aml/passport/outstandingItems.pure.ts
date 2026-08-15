@@ -192,7 +192,7 @@ export function outstandingHeadline(
   view: PassportView, s: OutstandingSummary,
 ): { title: string; detail: string } {
   const state = view.header?.state?.code ?? null;
-  if (state === 'current') {
+  if (String(state) === 'current' || String(state) === 'issued_current') {
     return {
       title: 'Passport current',
       detail: 'The issued version is the current one. Partners may be given access to it.',

@@ -92,7 +92,7 @@ function relianceCandidate(
     assessment: {
       id: `asm-${orgId}`, status: 'operative', decision: 'suitable',
       assessed_at: '2026-06-01T00:00:00Z', next_review_due: '2027-01-01',
-    } as DistributionCandidate['assessment'],
+    } as unknown as DistributionCandidate['assessment'],
     existingGrant: null,
     manifestPresent: true,
     evidence: {
@@ -199,7 +199,7 @@ describe('§18/§19 — a new version does not rewrite an old decision', () => {
     const holdingV1 = relianceCandidate('org-A', 'Finance Partner A', 'finance', {
       existingGrant: {
         id: 'grant-1', attestation_id: 'att-v1',
-        revoked_at: null, expires_at: '2027-01-01T00:00:00Z',
+        revoked_at: null, refresh_required_at: null, partner_org_id: 'org-A', expires_at: '2027-01-01T00:00:00Z',
       },
     });
     const r = evaluateDistribution(ctxV2, holdingV1);
@@ -218,7 +218,7 @@ describe('§18/§19 — a new version does not rewrite an old decision', () => {
     const holdingV2 = relianceCandidate('org-A', 'Finance Partner A', 'finance', {
       existingGrant: {
         id: 'grant-2', attestation_id: 'att-v2',
-        revoked_at: null, expires_at: '2027-01-01T00:00:00Z',
+        revoked_at: null, refresh_required_at: null, partner_org_id: 'org-A', expires_at: '2027-01-01T00:00:00Z',
       },
     });
     const r = evaluateDistribution(ctxV2, holdingV2);
@@ -242,7 +242,7 @@ describe('§20 — revocation and suspension fail closed', () => {
     const r = evaluateDistribution(contextFor(1), relianceCandidate('org-A', 'Finance Partner A', 'finance', {
       existingGrant: {
         id: 'grant-1', attestation_id: 'att-v1',
-        revoked_at: '2026-08-12T00:00:00Z', expires_at: '2027-01-01T00:00:00Z',
+        revoked_at: '2026-08-12T00:00:00Z', refresh_required_at: null, partner_org_id: 'org-A', expires_at: '2027-01-01T00:00:00Z',
       },
     }));
     expect(r.state).toBe('GRANT_REVOKED');
@@ -259,7 +259,7 @@ describe('§20 — revocation and suspension fail closed', () => {
     const r = evaluateDistribution(contextFor(1), relianceCandidate('org-A', 'Finance Partner A', 'finance', {
       existingGrant: {
         id: 'grant-1', attestation_id: 'att-v1',
-        revoked_at: null, expires_at: '2026-01-01T00:00:00Z',
+        revoked_at: null, refresh_required_at: null, partner_org_id: 'org-A', expires_at: '2026-01-01T00:00:00Z',
       },
     }));
     expect(r.state).toBe('GRANT_EXPIRED');

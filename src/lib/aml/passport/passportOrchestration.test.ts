@@ -61,7 +61,7 @@ describe('a request target is a whitelist, never a location', () => {
   });
 
   it('never echoes back an unrecognised key', () => {
-    const out = sanitiseActionTarget({ target_step: 'documents', evil: 'yes', href: 'x' }) as
+    const out = sanitiseActionTarget({ target_step: 'documents', evil: 'yes', href: 'x' }) as unknown as
       Record<string, unknown>;
     expect(out.evil).toBeUndefined();
     expect(out.href).toBeUndefined();
@@ -218,7 +218,7 @@ describe('outstanding items are derived and client-safe', () => {
   it('does not ask again for something already asked', () => {
     const items = deriveOutstandingItems(view({
       open_requests: [{ id: 'r1', kind: 'additional_info', subject: 'x', status: 'open', created_at: '' }],
-    } as Partial<PassportView>));
+    } as unknown as Partial<PassportView>));
     const waiting = items.find((i) => i.key === 'requests_awaiting_client')!;
     expect(waiting.owner).toBe('client');
     expect(waiting.request).toBeUndefined();
@@ -227,7 +227,7 @@ describe('outstanding items are derived and client-safe', () => {
   it('puts a client response on STAFF, never back on the client', () => {
     const items = deriveOutstandingItems(view({
       open_requests: [{ id: 'r1', kind: 'additional_info', subject: 'x', status: 'responded', created_at: '' }],
-    } as Partial<PassportView>));
+    } as unknown as Partial<PassportView>));
     expect(items.find((i) => i.key === 'requests_awaiting_staff')!.owner).toBe('staff');
   });
 
@@ -235,7 +235,7 @@ describe('outstanding items are derived and client-safe', () => {
     const items = deriveOutstandingItems(view({
       documents: [{ id: 'doc-1', label: 'Passport', required: true, status: 'requested',
         uploaded_at: null, version_number: null }],
-    } as Partial<PassportView>));
+    } as unknown as Partial<PassportView>));
     const doc = items.find((i) => i.key === 'document_doc-1')!;
     expect(doc.request!.target!.requirement_id).toBeUndefined();
     expect(doc.request!.target!.target_step).toBe('documents');
@@ -245,7 +245,7 @@ describe('outstanding items are derived and client-safe', () => {
     const items = deriveOutstandingItems(view({
       documents: [{ id: 'd', label: 'Proof of address', required: true, status: 'requested',
         uploaded_at: null, version_number: null }],
-    } as Partial<PassportView>));
+    } as unknown as Partial<PassportView>));
     const messages = items.filter((i) => i.request).map((i) => i.request!.message).join(' | ');
     for (const internal of [
       /risk/i, /CDD/i, /screening/i, /PEP/i, /EDD/i, /suspicio/i, /SMR/i, /MLRO/i,
@@ -259,7 +259,7 @@ describe('outstanding items are derived and client-safe', () => {
     const items = deriveOutstandingItems(view({
       documents: [{ id: 'd', label: 'Payslip', required: true, status: 'pending_review',
         uploaded_at: null, version_number: null }],
-    } as Partial<PassportView>));
+    } as unknown as Partial<PassportView>));
     const s = summariseOutstanding(items);
     expect(s.awaitingStaff).toBeGreaterThan(0);
     expect(s.total).toBe(items.length);
@@ -268,7 +268,7 @@ describe('outstanding items are derived and client-safe', () => {
   it('never claims blanket compliance', () => {
     const current = view({
       header: { state: { code: 'current', label: 'Current', tone: 'ok' } },
-    } as Partial<PassportView>);
+    } as unknown as Partial<PassportView>);
     const h = outstandingHeadline(current, summariseOutstanding(deriveOutstandingItems(current)));
     expect(h.title).toBe('Passport current');
     const all = `${h.title} ${h.detail}`;

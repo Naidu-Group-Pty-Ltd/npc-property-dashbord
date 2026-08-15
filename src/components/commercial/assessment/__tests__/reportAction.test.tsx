@@ -34,7 +34,7 @@ vi.mock('@/lib/reports/commercialCapacity/requestCapacityReport', () => ({
 // covered by `lib/reports/__tests__/templateRouteWiring.spec.ts`.
 const tryTemplateDocument = vi.fn(async () => null);
 vi.mock('@/lib/reportTemplate/templateDocument', () => ({
-  tryTemplateDocument: (...args: unknown[]) => tryTemplateDocument(...args),
+  tryTemplateDocument: () => tryTemplateDocument(),
   saveTemplateDocument: vi.fn(),
 }));
 vi.mock('@/hooks/use-toast', () => ({ toast: (...args: unknown[]) => toast(...args) }));

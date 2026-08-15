@@ -43,7 +43,7 @@ function installMatchMedia(initialMatches: boolean, seenQueries: string[] = []) 
       removeListener: (cb: MediaListener) => { listeners.delete(cb); },
       dispatchEvent: () => false,
     };
-  }) as typeof window.matchMedia;
+  }) as unknown as typeof window.matchMedia;
   return {
     setMatches(next: boolean) {
       matches = next;

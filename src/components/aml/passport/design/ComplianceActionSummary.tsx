@@ -45,7 +45,7 @@ export function ComplianceActionSummary({
   const headline = outstandingHeadline(view, summary);
 
   const state = view.header?.state?.code ?? null;
-  const issued = state === "current";
+  const issued = String(state) === "current" || String(state) === "issued_current";
 
   return (
     <PassportCard className="mb-4">
