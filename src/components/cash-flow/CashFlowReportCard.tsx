@@ -60,10 +60,11 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
               Ready for cash-flow analysis
             </Badge>
             {weeklyRent <= 0 && (
-              <Badge variant="outline" className="border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-50">
+              <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning hover:bg-warning/10">
                 Rent review needed
               </Badge>
             )}
+
           </div>
         </div>
       </CardHeader>
