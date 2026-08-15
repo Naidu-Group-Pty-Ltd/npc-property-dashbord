@@ -8,6 +8,7 @@
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
 import { parseNaturalDate } from '../_shared/parse-natural-date.ts';
+import { enforceRawBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
@@ -71,11 +72,47 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = makeServiceClient();
-    const body = await req.json().catch(() => ({}));
+    // Read the body ONCE, as bytes. `run_due` is authenticated by an HMAC over
+    // exactly these bytes, so it cannot be re-derived from a parsed object.
+    const bounded = await enforceRawBodyLimit(req, 16 * 1024);
+    if (!bounded.ok) return bounded.error;
+    let body: any = {};
+    try { body = bounded.raw ? JSON.parse(bounded.raw) : {}; } catch { body = {}; }
     const { operation } = body;
 
-    // run_due is callable without partner session (cron + service)
+    // run_due is the cron entry and takes no partner session, so it carries its
+    // own credential: the HMAC that `public.cron_invoke_signed_function` signs
+    // every scheduled invocation with. The live job is
+    //
+    //   select public.cron_invoke_signed_function(
+    //     'finance-portal-snoozes', '{"operation":"run_due"}'::jsonb, 'pg_cron');
+    //
+    // so `pg_cron` is the caller to allow — read off the schedule rather than
+    // assumed. `resume-bulk-generation` and `resume-investment-reports` each
+    // allow-list a bespoke caller name that no job sends, and reject every
+    // invocation they get; that is the mistake this comment exists to avoid.
+    //
+    // This branch used to require nothing at all. Its comment said "cron +
+    // service", which described the intent — the gateway JWT was assumed to be
+    // standing in front of it. It was not: `supabase/config.toml` never
+    // declared this function, an undeclared function reads as
+    // `verify_jwt = true`, and it is deployed with the check OFF. So an
+    // unauthenticated `{"operation":"run_due"}` from anywhere on the internet
+    // reached here and ran `notifyDue` under the service client. Measured
+    // 15 Aug 2026 by probing production: the request reached the function,
+    // where a gateway-guarded function answers `UNAUTHORIZED_NO_AUTH_HEADER`.
+    //
+    // Fails closed: `verifySignedInternal` returns `missing_credentials` when
+    // `INTERNAL_EDGE_SECRET` is unset, and legacy static-secret and
+    // service-role-key fallbacks are both refused inside it.
     if (operation === 'run_due') {
+      const cron = await verifySignedInternal(supabase, req, bounded.raw, ['pg_cron']);
+      if (!cron.ok) {
+        console.warn('[finance-portal-snoozes] rejected unsigned run_due', {
+          correlationId: cron.correlationId, errorCode: cron.errorCode,
+        });
+        return json({ error: 'Cron authentication required' }, 401);
+      }
       const result = await notifyDue(supabase);
       return json({ ok: true, ...result });
     }

@@ -48,6 +48,23 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+## What the API gateway checks (`verify_jwt`)
+Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
+changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's
+changed-function list, or a function's own auth check. **An omitted
+`[functions.X]` block is not "no opinion"** — the CLI reads it as `true`, which
+asserts the gateway is checking a Supabase JWT in front of that function; it was
+wrong for 91 of 425, and `check-verify-jwt-declared.mjs` now fails CI on a
+missing declaration.
+
+Two rules bite. **A preflight is not a `verify_jwt` probe** — the gateway exempts
+`OPTIONS` and enforces on the real request, so a guarded function answers its
+preflight normally; every wrong conclusion in this area came from reading a 200
+(or a 503, which was a boot failure) as evidence about the gateway. Ask the
+Management API instead. And **a config-only edit used to deploy nothing**,
+because the changed-function list was built from `supabase/functions/**` paths
+alone — which is how a declaration and production came to disagree at all.
+
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
 the run engine, the trigger-capture triggers or the dispatcher. One engine serves

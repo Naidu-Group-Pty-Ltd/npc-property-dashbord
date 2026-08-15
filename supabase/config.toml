@@ -258,6 +258,7 @@ verify_jwt = false
 request_timeout = 1500
 
 [functions.resume-bulk-generation]
+verify_jwt = false
 request_timeout = 1500
 
 [functions.resume-investment-reports]
@@ -1257,8 +1258,18 @@ request_timeout = 120
 # Agreement Centre — staff-side document preview/download. Staff cookie session
 # + agreements module, like partner-agreement-records; long timeout because it
 # calls the PDF service.
+# `verify_jwt = false` because this is called from the browser
+# (`src/hooks/useAgreementCentre.ts`) and authenticates on the app's HttpOnly
+# `__Host-session_token` cookie via `verifyAuth`. A browser holding that cookie
+# has no Supabase JWT to present, so the gateway check could only ever reject
+# it. It read `true` here and is deployed `false` — the only function in the
+# repo whose explicit declaration disagreed with production — because a
+# config.toml edit did not redeploy anything: the deploy's changed-function list
+# was built from `supabase/functions/**` paths alone, so this declaration sat
+# unapplied. That is the mechanism behind the whole class; the workflow now
+# redeploys a function whose block here changes.
 [functions.agreement-centre-render]
-verify_jwt = true
+verify_jwt = false
 request_timeout = 300
 
 # MCP server (@lovable.dev/mcp-js). `verify_jwt = false` because MCP clients
@@ -1272,4 +1283,304 @@ request_timeout = 300
 # been applied. The first successful deploy would otherwise have silently
 # flipped a working endpoint to true and broken every MCP client.
 [functions.mcp]
+verify_jwt = false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Functions that were never declared here at all (added 15 Aug 2026).
+#
+# An omitted `[functions.X]` block is NOT "no opinion" — the CLI defaults
+# `verify_jwt` to true, so silence in this file asserts that the gateway is
+# checking a Supabase JWT in front of the function. For these 91 it was not:
+# every one is deployed with the check OFF, which is what they need and what
+# their own code assumes.
+#
+# Silence therefore described 91 functions incorrectly, and the `mcp` block
+# below records what that costs — that function had no entry either, and the
+# first deploy to apply the default "would otherwise have silently flipped a
+# working endpoint to true and broken every MCP client".
+#
+# It already cost something. `finance-portal-snoozes` has a `run_due` cron
+# branch whose comment read "callable without partner session (cron + service)"
+# — the gateway JWT was assumed to be standing in front of it. It was not, so
+# the branch was reachable unauthenticated from anywhere on the internet. It now
+# verifies the HMAC that `cron_invoke_signed_function` signs the schedule with.
+#
+# Every function below authenticates its own callers (session cookie, portal
+# session token, or signed-internal HMAC); the gateway JWT is not the credential
+# for any of them, and could not be — a browser holding this app's HttpOnly
+# session cookie has no Supabase JWT to present, and a CORS preflight carries no
+# Authorization header at all.
+#
+# `check-verify-jwt-declared.mjs` now fails CI on a function with no declaration,
+# so this list cannot grow silently again.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[functions.agent-insights-runner]
+verify_jwt = false
+
+[functions.agent-planner]
+verify_jwt = false
+
+[functions.agent-skill-marketplace]
+verify_jwt = false
+
+[functions.aml-idv-retention]
+verify_jwt = false
+
+[functions.aml-verification-processor]
+verify_jwt = false
+
+[functions.backfill-message-directions]
+verify_jwt = false
+
+[functions.backfill-opportunity-mappings]
+verify_jwt = false
+
+[functions.bc-scenario-agent]
+verify_jwt = false
+
+[functions.build-conversations-export-worker]
+verify_jwt = false
+
+[functions.check-model-availability]
+verify_jwt = false
+
+[functions.client-portal-batch6]
+verify_jwt = false
+
+[functions.client-portal-finance-hub]
+verify_jwt = false
+
+[functions.conversation-sync-cron]
+verify_jwt = false
+
+[functions.convert-template-document]
+verify_jwt = false
+
+[functions.cotality-service]
+verify_jwt = false
+
+[functions.email-body-backfill]
+verify_jwt = false
+
+[functions.email-copilot-extras]
+verify_jwt = false
+
+[functions.finance-portal-audit-timeline]
+verify_jwt = false
+
+[functions.finance-portal-automations]
+verify_jwt = false
+
+[functions.finance-portal-batch6]
+verify_jwt = false
+
+[functions.finance-portal-batch7]
+verify_jwt = false
+
+[functions.finance-portal-batch8]
+verify_jwt = false
+
+[functions.finance-portal-batch9-10]
+verify_jwt = false
+
+[functions.finance-portal-briefing-runner]
+verify_jwt = false
+
+[functions.finance-portal-broker-kpis]
+verify_jwt = false
+
+[functions.finance-portal-change-password]
+verify_jwt = false
+
+[functions.finance-portal-client-mirror]
+verify_jwt = false
+
+[functions.finance-portal-client-tasks]
+verify_jwt = false
+
+[functions.finance-portal-dashboard-metrics]
+verify_jwt = false
+
+[functions.finance-portal-deal-trackers]
+verify_jwt = false
+
+[functions.finance-portal-document-requirements]
+verify_jwt = false
+
+[functions.finance-portal-engagement]
+verify_jwt = false
+
+[functions.finance-portal-forecasting]
+verify_jwt = false
+
+[functions.finance-portal-lender-packet]
+verify_jwt = false
+
+[functions.finance-portal-saved-views]
+verify_jwt = false
+
+[functions.finance-portal-settings]
+verify_jwt = false
+
+[functions.finance-portal-settlement-runway]
+verify_jwt = false
+
+[functions.finance-portal-snoozes]
+verify_jwt = false
+
+[functions.finance-portal-tri-portal-health]
+verify_jwt = false
+
+[functions.generate-brand-design-system]
+verify_jwt = false
+
+[functions.get-token-event-trail]
+verify_jwt = false
+
+[functions.get-user-names]
+verify_jwt = false
+
+[functions.ghl-legacy-wipe-orchestrator]
+verify_jwt = false
+
+[functions.ghl-legacy-wipe-worker]
+verify_jwt = false
+
+[functions.ghl-marketing-raw-dump]
+verify_jwt = false
+
+[functions.ghl-migrate-conversations-reset-phantoms]
+verify_jwt = false
+
+[functions.ghl-migrate-workflow-enrollments-worker]
+verify_jwt = false
+
+[functions.ghl-migrate-workflow-reenroll-worker]
+verify_jwt = false
+
+[functions.ghl-migrate-workflows-snapshot-worker]
+verify_jwt = false
+
+[functions.ghl-workflow-visualizer]
+verify_jwt = false
+
+[functions.healthcheck-ping]
+verify_jwt = false
+
+[functions.hero-image-studio]
+verify_jwt = false
+
+[functions.internal-messaging]
+verify_jwt = false
+
+[functions.list-token-audit]
+verify_jwt = false
+
+[functions.list-token-usage]
+verify_jwt = false
+
+[functions.manage-agent-models]
+verify_jwt = false
+
+[functions.manage-ci-assessments]
+verify_jwt = false
+
+[functions.manage-commercial-data]
+verify_jwt = false
+
+[functions.manage-industrial-data]
+verify_jwt = false
+
+[functions.manage-lead-magnets]
+verify_jwt = false
+
+[functions.manage-lender-favourites]
+verify_jwt = false
+
+[functions.manage-lender-rate-alerts]
+verify_jwt = false
+
+[functions.manage-lender-submissions]
+verify_jwt = false
+
+[functions.manage-partner-referrals]
+verify_jwt = false
+
+[functions.market-source-relay]
+verify_jwt = false
+
+[functions.migration-job-control]
+verify_jwt = false
+
+[functions.migration-upload-source]
+verify_jwt = false
+
+[functions.notifications-feed]
+verify_jwt = false
+
+[functions.notifications-feed-v2]
+verify_jwt = false
+
+[functions.one-time-bulk-conversation-sync]
+verify_jwt = false
+
+[functions.partner-compliance]
+verify_jwt = false
+
+[functions.pdf-parse-recover-stuck-jobs]
+verify_jwt = false
+
+[functions.phase6-quality-ops]
+verify_jwt = false
+
+[functions.portal-upload-file]
+verify_jwt = false
+
+[functions.prepare-report-hero-images]
+verify_jwt = false
+
+[functions.process-scheduled-emails]
+verify_jwt = false
+
+[functions.reclassify-property]
+verify_jwt = false
+
+[functions.render-cash-flow-comparison-pdf]
+verify_jwt = false
+
+[functions.render-cash-flow-pdf]
+verify_jwt = false
+
+[functions.render-client-details-pdf]
+verify_jwt = false
+
+[functions.render-market-intelligence-pdf]
+verify_jwt = false
+
+[functions.render-portfolio-review-pdf]
+verify_jwt = false
+
+[functions.render-property-comparison-pdf]
+verify_jwt = false
+
+[functions.render-report-qa-pdf]
+verify_jwt = false
+
+[functions.report-engine-agent]
+verify_jwt = false
+
+[functions.report-engine-inspector]
+verify_jwt = false
+
+[functions.staff-client-portal-handoff-create]
+verify_jwt = false
+
+[functions.start-conversations-export]
+verify_jwt = false
+
+[functions.sync-ghl-marketing-assets]
+verify_jwt = false
+
+[functions.template-import-finalize-worker]
 verify_jwt = false
