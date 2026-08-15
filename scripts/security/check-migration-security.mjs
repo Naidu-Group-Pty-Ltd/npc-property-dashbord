@@ -159,7 +159,7 @@ for (const file of files) {
     if (!['public', 'aml'].includes(schema)) continue;
     const enabled = new RegExp(
       `ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?[\\w".]*\\b${bare}\\b[\\s\\S]{0,120}?ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`, 'i',
-    ).test(sql);
+    ).test(sql) || dynamicallyRlsEnabled(sql).has(bare.toLowerCase());
     if (!enabled) {
       at('table_rls', name,
         `\`${name}\` is created without \`ENABLE ROW LEVEL SECURITY\` in the same migration. `
@@ -168,6 +168,50 @@ for (const file of files) {
         + `here), enable RLS and add none, which denies every other role.`);
     }
   }
+}
+
+/**
+ * Tables whose RLS is enabled by DYNAMIC DDL, which the literal scan cannot see.
+ *
+ * The idiomatic way to apply the same policy to a family of tables here is a
+ * loop:
+ *
+ *     DO $$ DECLARE t text; BEGIN
+ *       FOREACH t IN ARRAY ARRAY['a','b','c','d'] LOOP
+ *         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+ *         ...
+ *       END LOOP;
+ *     END $$;
+ *
+ * The literal regex below cannot read that, and it failed in the worst possible
+ * way: it looks for the table name within 120 characters of
+ * `ENABLE ROW LEVEL SECURITY`, so the two tables named EARLY in the array
+ * matched — by accident, against the array literal rather than against any
+ * statement — and the two named late did not. Half a file passing for a reason
+ * unrelated to what it is checking is worse than the file failing.
+ *
+ * That is what `20260915000000_builder_stock_list_marketplace.sql` hit. It
+ * enables RLS on all four of its tables, adds a service-role-only policy to
+ * each, and revokes every grant from `anon` and `authenticated` — verified
+ * against production, where all four carry `relrowsecurity = true`, one policy,
+ * and no grant for either role. The gate reported two of them as unprotected
+ * and turned the `security` job red for every branch.
+ *
+ * Deliberately narrow. Only a literal `ARRAY[...]` of quoted names inside a
+ * block that dynamically enables RLS counts. A name built at runtime, read from
+ * a catalog query, or passed in as a parameter is still unreadable, and the
+ * table still has to be enabled literally — which is the right answer, because
+ * a gate cannot verify what it cannot enumerate.
+ */
+function dynamicallyRlsEnabled(sql) {
+  const enabled = new Set();
+  for (const block of sql.match(/DO\s+\$\$[\s\S]*?\$\$/gi) ?? []) {
+    if (!/EXECUTE\s+format\s*\([^)]*ENABLE\s+ROW\s+LEVEL\s+SECURITY/i.test(block)) continue;
+    for (const arr of block.match(/ARRAY\s*\[[^\]]*\]/gi) ?? []) {
+      for (const [, name] of arr.matchAll(/'([A-Za-z_][\w$]*)'/g)) enabled.add(name.toLowerCase());
+    }
+  }
+  return enabled;
 }
 
 // A stale exemption is the same failure wearing a note.

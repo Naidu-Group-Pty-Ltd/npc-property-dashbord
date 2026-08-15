@@ -69,6 +69,12 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
+    "agreement-centre-render": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "agreement-centre",
+      "reviewed": true
+    },
     "ai-dashboard-agent": {
       "verify_jwt": false,
       "exposure_class": "authenticated-staff",
@@ -466,6 +472,12 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-portal-stock": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-portal-transactions": {
       "verify_jwt": false,
       "exposure_class": "portal-authenticated",
@@ -486,6 +498,12 @@
     },
     "builder-projects-admin": {
       "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-stock-marketplace": {
+      "verify_jwt": false,
       "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
@@ -891,6 +909,12 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "finance-portal-agreements": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "agreement-centre",
+      "reviewed": true
     },
     "finance-portal-ai-copilot": {
       "verify_jwt": false,
@@ -1606,7 +1630,7 @@
       "wp14_auto_classified": true
     },
     "import-schools-data": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
@@ -1645,7 +1669,7 @@
       "reviewed": true
     },
     "legal-matters-admin": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "module-gated",
       "owner": "solicitor-portal-program",
       "reviewed": true
@@ -2859,18 +2883,6 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
-    },
-    "finance-portal-agreements": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "agreement-centre",
-      "reviewed": true
-    },
-    "agreement-centre-render": {
-      "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "agreement-centre",
-      "reviewed": true
     }
   }
 }

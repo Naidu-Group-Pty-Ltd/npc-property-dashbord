@@ -22,6 +22,20 @@ interface RequestBody {
     /** Deprecated and deliberately ignored: callers cannot define database projections. */
     select?: string;
   };
+  /**
+   * The session carriers `verifyAuth` reads off the body.
+   *
+   * Declared so the call type-checks: `verifyAuth`'s third parameter is
+   * `{ session_token?: string; command_centre_session_token?: string }`, and a
+   * `RequestBody` with no property in common with it is a TS2559 rather than a
+   * structural match. Every other caller declares them; this one had not.
+   *
+   * `_shared/auth.ts` reads the HttpOnly `__Host-session_token` cookie and
+   * nothing else (WP-11B/C), so these are inert at runtime — they exist to keep
+   * the shape honest, not to reopen a carrier.
+   */
+  session_token?: string;
+  command_centre_session_token?: string;
 }
 
 export const INVESTMENT_LIBRARY_SELECT = 'id,property_address,property_listing_id,client_property_id,canonical_property_key,created_at,current_version,report_scope,report_tier,parent_report_id,status,is_archived,is_client_report,report_variant,derived_from_report_id,investment_score,generated_by';
@@ -117,7 +131,16 @@ async function hydrateCompleteAddresses(
       .select('id,report_content,sources_content')
       .in('id', missingContentIds);
     if (contentResult.error) return { rows, error: contentResult.error };
-    contentById = new Map((contentResult.data || []).map(item => [item.id, item]));
+    // Typed at the boundary rather than inferred. The client cannot resolve a
+    // runtime `select` string to a row type, so `item` widens to `unknown` and
+    // the Map infers `Map<unknown, …>`, which does not assign to the declared
+    // `Map<string, …>`. The shape asserted here is exactly the three columns
+    // the select above names.
+    contentById = new Map(
+      ((contentResult.data || []) as Array<{
+        id: string; report_content?: string; sources_content?: string;
+      }>).map((item) => [item.id, item]),
+    );
   }
 
   return {
