@@ -25,6 +25,7 @@ import { TokenEventsListener } from "@/components/billing/TokenEventsListener";
 import { PricingMockBanner } from "@/components/billing/PricingMockBanner";
 import { PushNotificationPrompt } from "./components/PushNotificationPrompt";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { DashboardErrorFallback } from "@/components/layout/DashboardErrorFallback";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { HarveyCountdown } from "@/components/HarveyCountdown";
 import { Button } from "@/components/ui/button";
@@ -330,7 +331,25 @@ const BuildVersionWatcher = () => {
   return null;
 };
 
+/**
+ * Last line of defence for the whole application.
+ *
+ * `index.html` ships an empty `#root`, so an uncaught render error anywhere in
+ * the provider tree below unmounts everything and leaves a blank white page —
+ * indistinguishable from "the site is down", and with no way back short of
+ * clearing browser data. The providers above the router all mount for a signed
+ * OUT visitor too, so this covers the sign-in page as much as the dashboard.
+ */
+const AppErrorFallback = () => (
+  <div className="flex min-h-screen items-center justify-center bg-background p-4">
+    <div className="w-full max-w-xl">
+      <DashboardErrorFallback />
+    </div>
+  </div>
+);
+
 const App = () => (
+  <ErrorBoundary fallback={<AppErrorFallback />}>
   <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <AuthProvider>
@@ -340,13 +359,24 @@ const App = () => (
               <BrowserRouter>
                 <PathNormalizer />
                 <NotificationsProvider>
-                  <BackgroundJobTracker />
-                  <ReportGenerationProgress />
-                  <CallNotificationListener />
-                  <Phase1NotificationListeners />
-                  <TokenEventsListener />
-                  <PricingMockBanner />
-                  <PushNotificationPrompt />
+                  {/*
+                    Ambient background listeners: they render nothing the page
+                    depends on, but they mount above every route — including
+                    /auth, for a visitor who has no session for them to watch.
+                    A throw in one of them used to unmount the entire tree and
+                    leave a blank page nobody could sign in from, so they are
+                    isolated: one failing degrades its own feature and nothing
+                    else. `null` because there is no UI here to replace.
+                  */}
+                  <ErrorBoundary fallback={null}>
+                    <BackgroundJobTracker />
+                    <ReportGenerationProgress />
+                    <CallNotificationListener />
+                    <Phase1NotificationListeners />
+                    <TokenEventsListener />
+                    <PricingMockBanner />
+                    <PushNotificationPrompt />
+                  </ErrorBoundary>
                   <ComparisonProvider>
                     <SearchProvider>
                       <Toaster />
@@ -744,6 +774,7 @@ const App = () => (
         </AuthProvider>
       </TooltipProvider>
   </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;
