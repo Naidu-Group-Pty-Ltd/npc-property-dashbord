@@ -72,10 +72,12 @@ const EXPECTED_FUNCTIONS = [
     'builder-portal-logout',
     'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-stock',
     'builder-portal-transactions',
     'builder-portal-verify',
     'builder-portal-workspace',
     'builder-projects-admin',
+    'builder-stock-marketplace',
     'builder-transactions-admin',
     'builder-workspace-admin',
 ];

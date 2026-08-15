@@ -1171,6 +1171,18 @@ verify_jwt = true
 [functions.builder-portal-inventory]
 verify_jwt = false
 
+# Stock List / Marketplace. Browser-called from the Builder Portal and the
+# Command Centre respectively, so the gateway check stays off and each function
+# authenticates itself — builder-portal cookie session plus organisation scope
+# from the stored session, and internal session plus module permission plus
+# feature flag. Both answer a preflight 200 with the exact origin today; these
+# blocks declare what is already deployed.
+[functions.builder-portal-stock]
+verify_jwt = false
+
+[functions.builder-stock-marketplace]
+verify_jwt = false
+
 [functions.builder-inventory-admin]
 verify_jwt = true
 

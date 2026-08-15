@@ -473,7 +473,7 @@
       "reviewed": true
     },
     "builder-portal-stock": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "portal-authenticated",
       "owner": "builder-portal-program",
       "reviewed": true
@@ -503,7 +503,7 @@
       "reviewed": true
     },
     "builder-stock-marketplace": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
