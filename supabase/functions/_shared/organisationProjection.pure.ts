@@ -144,6 +144,52 @@ export function projectOrganisation(row: OrganisationRowLike | null | undefined)
  * lines beside it. `is_enabled: false` withholds the text and the block then
  * omits it, which is what turning it off has to mean.
  */
+/**
+ * A stored disclaimer, safe to bind into a block that does not preserve breaks.
+ *
+ * ## Why a bound value may not carry raw newlines
+ *
+ * WeasyPrint refuses them. A text node containing `\n` under `white-space:
+ * normal` fails the render outright:
+ *
+ *     render_failed: Got ' \n' between two lines.
+ *                    Expected nothing or a preserved line break
+ *
+ * That is not a warning and not a degraded page — it is a 500, and the document
+ * does not exist. The stored `professional_disclaimer` is ~1,400 characters
+ * typed into a textarea, so it is full of them: single newlines where the
+ * author wrapped a line, blank lines where they meant a paragraph.
+ *
+ * `org.disclaimer` is bound by 543 templates and this module cannot know what
+ * `white-space` each one sets. So the value it publishes is safe under all of
+ * them: **soft wraps become spaces, paragraph breaks become a single `\n\n`**,
+ * which `disclaimer.html.ts` preserves (it sets `pre-wrap`) and which a block
+ * that does not preserve breaks renders as ordinary spacing rather than
+ * refusing to render at all.
+ *
+ * The alternative — collapsing everything to one line — is safe too and throws
+ * away nine paragraphs the firm wrote. This keeps the structure where it can be
+ * kept and never bets the whole document on it.
+ */
+function normaliseParagraphs(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  // A sentinel, because the paragraph break has to survive the step that eats
+  // every other newline. NUL cannot appear in a Postgres text column.
+  const PARA = '\u0000';
+  const out = text
+    .replace(/\r\n?/g, '\n')
+    // A blank line is a paragraph break; mark it before soft wraps are eaten.
+    .replace(/\n[ \t]*\n\s*/g, PARA)
+    // Everything left is a soft wrap or a run of spaces: one space.
+    .replace(/[ \t\n]+/g, ' ')
+    .split(PARA)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+  return out || undefined;
+}
+
 export interface ReportSettingsLike {
   contact?: Record<string, unknown> | null;
   disclaimer?: Record<string, unknown> | null;
@@ -163,7 +209,7 @@ export function projectReportSettings(settings: ReportSettingsLike | null | unde
   }
   const disclaimer = settings.disclaimer ?? null;
   if (disclaimer && disclaimer.is_enabled !== false) {
-    put(org, 'disclaimer', str(disclaimer.text));
+    put(org, 'disclaimer', normaliseParagraphs(str(disclaimer.text)));
     // 'small' | 'medium' | 'large' — the disclaimer block's own vocabulary,
     // passed through rather than converted to points here, so the block stays
     // the one place that decides what each means.
