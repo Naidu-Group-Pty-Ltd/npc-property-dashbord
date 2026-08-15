@@ -25,7 +25,9 @@ import {
   parseDriveFolderListing, selectLotFolder, selectPackageDocument,
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from '../../../supabase/functions/_shared/builderStock/drivePackage.pure';
-import { firstPageJpegImages } from '../../../supabase/functions/_shared/builderStock/pdfPageImages.pure';
+import {
+  flattenedPageImage, parseImagePlacements, readFirstPage, selectPropertyPhotograph,
+} from '../../../supabase/functions/_shared/builderStock/pdfPageImages.pure';
 import {
   DriveListingCache, recoverPackageImage,
 } from '../../../supabase/functions/_shared/builderStock/packageImages';
@@ -78,20 +80,36 @@ function concat(parts: Array<Uint8Array | string>): Uint8Array {
  * ESTATE MASTERPLAN on page 2. The second must never be returned.
  */
 function packagePdf(page1: Uint8Array, page2: Uint8Array): Uint8Array {
+  const draw1 = 'q 516 0 0 290 40 480 cm /Im0 Do Q';
+  const draw2 = 'q 580 0 0 820 5 10 cm /Im1 Do Q';
   return concat([
     '%PDF-1.4\n',
     '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
     '2 0 obj<</Type/Pages/Kids[3 0 R 6 0 R]/Count 2>>endobj\n',
-    '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n',
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox [0 0 595 842]'
+      + '/Resources<</XObject<</Im0 4 0 R>>>>/Contents 5 0 R>>endobj\n',
     `4 0 obj<</Type/XObject/Subtype/Image/Width 1700/Height 956/Filter/DCTDecode/Length ${page1.length}>>stream\n`,
     page1,
     '\nendstream\nendobj\n',
-    '6 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im1 7 0 R>>>>>>endobj\n',
+    `5 0 obj<</Length ${draw1.length}>>stream\n${draw1}\nendstream\nendobj\n`,
+    '6 0 obj<</Type/Page/Parent 2 0 R/MediaBox [0 0 595 842]'
+      + '/Resources<</XObject<</Im1 7 0 R>>>>/Contents 8 0 R>>endobj\n',
     `7 0 obj<</Type/XObject/Subtype/Image/Width 2000/Height 1414/Filter/DCTDecode/Length ${page2.length}>>stream\n`,
     page2,
     '\nendstream\nendobj\n',
+    `8 0 obj<</Length ${draw2.length}>>stream\n${draw2}\nendstream\nendobj\n`,
     'trailer<</Root 1 0 R>>\n%%EOF\n',
   ]);
+}
+
+/** Read a fixture's first page the way `packageImages.ts` does. */
+function firstPage(bytes: Uint8Array) {
+  const page = readFirstPage(bytes)!;
+  let content = '';
+  for (const slice of page.contents) {
+    content += new TextDecoder('latin1').decode(bytes.slice(slice.start, slice.end));
+  }
+  return { page, placements: parseImagePlacements(content) };
 }
 
 // ---------------------------------------------------------------------------
@@ -201,45 +219,60 @@ describe('the image a package leads with', () => {
   it('returns the first page and never a later one', () => {
     const render = jpegBytes(4096, 0x11);
     const masterplan = jpegBytes(6000, 0x22);
-    const slices = firstPageJpegImages(packagePdf(render, masterplan));
+    const pdf = packagePdf(render, masterplan);
+    const { page, placements } = firstPage(pdf);
 
-    expect(slices).toHaveLength(1);
-    expect(slices[0]).toMatchObject({ width: 1700, height: 956, flate: false });
-    const bytes = packagePdf(render, masterplan).slice(slices[0].start, slices[0].end);
+    const chosen = selectPropertyPhotograph(page, placements)!;
+    expect(chosen.image).toMatchObject({ width: 1700, height: 956, name: 'Im0' });
+    const bytes = pdf.slice(chosen.image.start, chosen.image.end);
     expect(bytes.length).toBe(render.length);
     expect(bytes[0]).toBe(0xff);
     expect(bytes[bytes.length - 1]).toBe(0xd9);
   });
 
   it('ignores a page-one logo', () => {
+    const draw = 'q 60 0 0 40 20 780 cm /Im0 Do Q';
     const pdfBytes = concat([
       '%PDF-1.4\n',
       '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
       '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n',
-      '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n',
+      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox [0 0 595 842]'
+        + '/Resources<</XObject<</Im0 4 0 R>>>>/Contents 5 0 R>>endobj\n',
       '4 0 obj<</Type/XObject/Subtype/Image/Width 240/Height 90/Filter/DCTDecode/Length 4096>>stream\n',
       jpegBytes(),
-      '\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n',
+      '\nendstream\nendobj\n',
+      `5 0 obj<</Length ${draw.length}>>stream\n${draw}\nendstream\nendobj\n`,
+      'trailer<</Root 1 0 R>>\n',
     ]);
-    expect(firstPageJpegImages(pdfBytes)).toEqual([]);
+    const { page, placements } = firstPage(pdfBytes);
+    expect(selectPropertyPhotograph(page, placements)).toBeNull();
   });
 
-  it('refuses a flattened page scan rather than serving it as a photograph', () => {
-    // What the Covella package actually is: whole pages as raw bitmaps.
+  it('never serves a flattened page scan AS the photograph', () => {
+    // What the Covella package actually is: whole pages as raw bitmaps. It is
+    // not a photograph of a house, so it is not chosen — it is handed to the
+    // isolation step instead, which crops the render out of it or refuses.
+    const draw = 'q 595 0 0 842 0 0 cm /Im0 Do Q';
     const pdfBytes = concat([
       '%PDF-1.4\n',
       '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
       '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n',
-      '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n',
-      '4 0 obj<</Type/XObject/Subtype/Image/Width 2480/Height 3506/Filter/FlateDecode/Length 64>>stream\n',
+      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox [0 0 595 842]'
+        + '/Resources<</XObject<</Im0 4 0 R>>>>/Contents 5 0 R>>endobj\n',
+      '4 0 obj<</Type/XObject/Subtype/Image/Width 2480/Height 3506/ColorSpace/DeviceRGB'
+        + '/BitsPerComponent 8/Filter/FlateDecode/Length 64>>stream\n',
       new Uint8Array(64),
-      '\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n',
+      '\nendstream\nendobj\n',
+      `5 0 obj<</Length ${draw.length}>>stream\n${draw}\nendstream\nendobj\n`,
+      'trailer<</Root 1 0 R>>\n',
     ]);
-    expect(firstPageJpegImages(pdfBytes)).toEqual([]);
+    const { page, placements } = firstPage(pdfBytes);
+    expect(selectPropertyPhotograph(page, placements)).toBeNull();
+    expect(flattenedPageImage(page, placements)?.image.name).toBe('Im0');
   });
 
   it('says nothing about a file it cannot parse', () => {
-    expect(firstPageJpegImages(new TextEncoder().encode('not a pdf'))).toEqual([]);
+    expect(readFirstPage(new TextEncoder().encode('not a pdf'))).toBeNull();
   });
 });
 
@@ -288,7 +321,12 @@ describe('recovering a row-linked package image', () => {
     expect(outcome.status).toBe('recovered');
     if (outcome.status !== 'recovered') return;
     expect(outcome.image.documentName).toBe('Lot 43 - Stradbroke 180 - Property Package.pdf');
-    expect(outcome.image.reference).toBe('Lot 43 - Stradbroke 180 - Property Package.pdf#page1');
+    // The reference names the document, the page AND the object it came out
+    // of, so the picture can be found again in the builder's own file.
+    expect(outcome.image.reference).toBe('Lot 43 - Stradbroke 180 - Property Package.pdf#page1:Im0');
+    expect(outcome.image.provenance).toMatchObject({
+      page: 1, method: 'embedded_raster', resourceName: 'Im0', transformation: null,
+    });
     expect(outcome.image.contentType).toBe('image/jpeg');
     expect(outcome.image.bytes.length).toBe(render.length);
     // Everything fetched stayed inside the folder the row linked.

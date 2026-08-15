@@ -42,10 +42,12 @@ import {
  * Every card names the builder it came from, because the whole point of this
  * tab is that the property has an owner on the other side of the link.
  *
- * IMAGE PROVENANCE IS ON THE CARD. The three enrichment stages are not merged:
- * a render the builder supplied, a Street View still and a photograph found by
- * a search are three different claims, and the last one is labelled unverified
- * wherever it appears.
+ * THE CARD SHOWS THE BUILDER'S OWN PHOTOGRAPH, OR NOTHING. Street View, a
+ * satellite still and a search result are not photographs of the property, and
+ * a card that shows one tells a client something untrue about a house they are
+ * being asked to buy — so a property whose builder supplied no image gets the
+ * empty state instead. The other stages are still recorded and still reported
+ * in the source panel; they are simply never what the card draws.
  */
 
 const STATE_OPTIONS = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'];

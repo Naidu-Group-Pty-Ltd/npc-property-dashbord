@@ -36,7 +36,10 @@ import {
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import { SOURCE_ANCHOR_HEADER, type AnchoredAssets, type SourceImageAsset } from './sourceAssets.pure.ts';
-import { hasReadySourceImage, storeSourceImageBytes, storeSourceImages } from './sourceImages.ts';
+import {
+  demoteUnprovenSourceImage, hasReadySourceImage, storeSourceImageBytes,
+  storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
+} from './sourceImages.ts';
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
   DriveListingCache, recoverPackageImage, type PackageFetcher,
@@ -63,6 +66,11 @@ export interface RepairOutcome {
   packageUnreachable: number;
   /** True when the wall-clock budget ran out; run it again to continue. */
   incomplete: boolean;
+  /**
+   * Stage-1 rows this run could not prove belong to the property, demoted so
+   * the marketplace will not show them. The row itself is kept.
+   */
+  demoted: number;
   /** Properties whose card now shows the builder's own image. */
   primaryUpdated: number;
   /** Safe to show: why a source could not be re-read at all. */
@@ -113,13 +121,14 @@ export async function repairSourceImagesForUpload(
      */
     deadlineAt?: number;
   },
-  deps: { fetchPackage?: PackageFetcher } = {},
+  deps: { fetchPackage?: PackageFetcher; fetchImage?: SourceImageFetcher } = {},
 ): Promise<RepairOutcome> {
   const outcome: RepairOutcome = {
     uploadId: input.uploadId,
     rowsRead: 0, rowsWithImagery: 0, matched: 0,
     imagesStored: 0, fromPackage: 0, packageNotIdentified: 0,
-    packageUnreachable: 0, incomplete: false, primaryUpdated: 0, problems: [],
+    packageUnreachable: 0, incomplete: false, demoted: 0,
+    primaryUpdated: 0, problems: [],
   };
 
   const { data: upload } = await db
@@ -249,6 +258,17 @@ export async function repairSourceImagesForUpload(
   const itemIdByAnchor = new Map<string, string | null>();
   const itemIdsInOrder: string[] = [];
   const touched = new Set<string>();
+  /**
+   * What this run could PROVE about each property: the source references it
+   * re-derived from the builder's own source. Anything else already sitting on
+   * the property as stage 1 is unproven, and unproven means not displayable.
+   */
+  const provenByItem = new Map<string, Set<string>>();
+  const prove = (itemId: string, reference: string) => {
+    const set = provenByItem.get(itemId) ?? new Set<string>();
+    set.add(reference.slice(0, 400));
+    provenByItem.set(itemId, set);
+  };
 
   for (const raw of rows) {
     const record: NormalisedStockRecord | null = normaliseStockRow(raw);
@@ -290,9 +310,10 @@ export async function repairSourceImagesForUpload(
         uploadId: upload.id,
         stockItemId: itemId,
         assets: all,
-      });
+      }, { fetchImage: deps.fetchImage });
       outcome.imagesStored += stored.stored;
       outcome.problems.push(...stored.problems.slice(0, 5));
+      for (const asset of all) prove(itemId, asset.reference);
       touched.add(itemId);
       continue;
     }
@@ -305,9 +326,10 @@ export async function repairSourceImagesForUpload(
     const packageUrl = solePackageUrl(record.unmapped);
     if (!packageUrl) continue;
     if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
-    // A property that already holds one is skipped, which is what makes a
-    // budgeted run resumable rather than repetitive.
-    if (await hasReadySourceImage(db, itemId)) continue;
+    // A property that already holds a PROVEN one is skipped, which is what
+    // makes a budgeted run resumable rather than repetitive. A row from before
+    // provenance was recorded does not count, so it gets re-derived.
+    if (await hasReadySourceImage(db, itemId, PROVENANCE_VERSION)) continue;
 
     const recovered = await recoverPackageImage(
       { packageUrl, label: stockRecordLabel(record) },
@@ -335,11 +357,30 @@ export async function repairSourceImagesForUpload(
       origin: 'linked_package_document',
       pageUrl: packageUrl,
       position: 0,
-      detail: { document: recovered.image.documentName },
+      // Enough to prove this exact picture came out of this exact document:
+      // the file, the page, the object, its size, its hashes and whatever was
+      // done to it (nothing, unless it was cut out of a flattened page).
+      detail: {
+        document: recovered.image.documentName,
+        document_url: recovered.image.documentUrl,
+        source_row_anchor: anchor,
+        page: recovered.image.provenance.page,
+        extraction_method: recovered.image.provenance.method,
+        pdf_object: recovered.image.provenance.objectNumber,
+        pdf_resource: recovered.image.provenance.resourceName,
+        source_width: recovered.image.provenance.sourceWidth,
+        source_height: recovered.image.provenance.sourceHeight,
+        source_sha256: recovered.image.provenance.sourceSha256,
+        stored_sha256: recovered.image.provenance.storedSha256,
+        crop: recovered.image.provenance.crop,
+        page_area_share: recovered.image.provenance.pageAreaShare,
+        transformation: recovered.image.provenance.transformation,
+      },
     });
     if (written) {
       outcome.imagesStored += 1;
       outcome.fromPackage += 1;
+      prove(itemId, recovered.image.reference);
       touched.add(itemId);
     } else {
       outcome.problems.push({
@@ -359,6 +400,41 @@ export async function repairSourceImagesForUpload(
       itemIdByAnchor,
     );
     for (const itemId of itemIdsInOrder) touched.add(itemId);
+  }
+
+  /**
+   * RE-AUDIT. Every stage-1 row already on a property this run matched is
+   * checked against what the source actually says now. A row written before
+   * provenance was recorded, or one naming an asset the source no longer
+   * carries, is demoted — kept for the audit trail, refused for display.
+   */
+  for (const itemId of new Set(itemIdsInOrder)) {
+    const proven = provenByItem.get(itemId) ?? new Set<string>();
+    const { data: existing } = await db
+      .from('builder_stock_item_images')
+      .select('id, source_reference, source_detail, processing_status')
+      .eq('stock_item_id', itemId)
+      .eq('source_stage', 'uploaded_document')
+      .limit(200);
+
+    for (const row of (existing ?? []) as Array<{
+      id: string; source_reference: string | null;
+      source_detail: Record<string, unknown> | null; processing_status: string;
+    }>) {
+      if (row.processing_status !== 'ready') continue;
+      const reference = String(row.source_reference ?? '');
+      if (proven.has(reference)) continue;
+      const version = Number((row.source_detail ?? {}).provenance_version ?? 0);
+      if (version >= PROVENANCE_VERSION) continue;
+
+      await demoteUnprovenSourceImage(db, {
+        stockItemId: itemId,
+        imageId: row.id,
+        reason: 'This image predates the source-provenance record and could not be '
+          + 're-derived from the builder\'s source, so it is not shown.',
+      });
+      outcome.demoted += 1;
+    }
   }
 
   for (const itemId of touched) {

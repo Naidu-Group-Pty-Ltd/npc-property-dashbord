@@ -58,6 +58,7 @@ import {
 } from '../_shared/builderStock/images.ts';
 import type { AnchoredAssets } from '../_shared/builderStock/sourceAssets.pure.ts';
 import { repairSourceImagesForUpload } from '../_shared/builderStock/repairSourceImages.ts';
+import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import {
   BUILDER_SELECTION_SELECT, STOCK_AVAILABILITY_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, STOCK_UPLOAD_SELECT, stockPagination,
@@ -752,19 +753,29 @@ Deno.serve(async (req) => {
           package_not_identified: result.packageNotIdentified,
           package_unreachable: result.packageUnreachable,
           incomplete: result.incomplete,
+          demoted: result.demoted,
           primary_updated: result.primaryUpdated,
           error: result.error ?? null,
         });
       }
 
+      /**
+       * Settle EVERY property, not only the ones this run touched.
+       *
+       * A property whose builder supplied nothing must end the run with no
+       * primary image rather than the Street View it had before the rule
+       * changed — that stale pointer IS the defect being repaired.
+       */
+      const primaries = await enforceStrictPrimaryImages(supabase, activeOrganisationId);
+
       await logBuilderProjectActivity(supabase, req, {
         builderUserId: me.id, organisationId: activeOrganisationId,
         action: 'builder_stock_source_images_reprocessed',
         entityType: 'stock_upload', entityId: sourceIds[0] ?? null,
-        metadata: { sources: results.length, results },
+        metadata: { sources: results.length, results, primaries },
       });
 
-      return json({ success: true, results });
+      return json({ success: true, results, primaries });
     }
 
     if (operation === 'enrich_images') {

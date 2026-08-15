@@ -33,7 +33,9 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/documentAnchors.pure';
 import { extractStockFile } from '../../../supabase/functions/_shared/builderStock/extract';
 import { storeSourceImages } from '../../../supabase/functions/_shared/builderStock/sourceImages';
-import { chooseAndStorePrimaryImage } from '../../../supabase/functions/_shared/builderStock/primaryImage';
+import {
+  chooseAndStorePrimaryImage, isDisplayableSourceImage,
+} from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import { repairSourceImagesForUpload } from '../../../supabase/functions/_shared/builderStock/repairSourceImages';
 
 // ---------------------------------------------------------------------------
@@ -457,11 +459,13 @@ describe('bringing the source image inside', () => {
     const row = db.tables.builder_stock_item_images[0];
     expect(row.processing_status).toBe('failed');
     expect(row.storage_path).toBeUndefined();
-    // An expiring URL is never left behind as product data.
-    expect(row.external_url).toBeNull();
+    // The URL is kept for the audit trail, and the row stays un-displayable:
+    // bytes we do not hold cannot be shown as the builder's exact image.
+    expect(row.external_url).toBe('https://example.invalid/render.png');
+    expect(isDisplayableSourceImage(row as never)).toBe(false);
   });
 
-  it('lets an ordinary published link stand when the bytes cannot be fetched', async () => {
+  it('never displays a link whose bytes could not be fetched', async () => {
     const db = fakeDb();
     await storeSourceImages(db, {
       organisationId: 'org-1',
@@ -478,10 +482,16 @@ describe('bringing the source image inside', () => {
       }],
     }, { fetchImage: async () => { throw new Error('That address could not be reached.'); } });
 
+    /**
+     * The link IS the builder's, but we hold none of its bytes and can hash
+     * none of them — so it is recorded and refused rather than hot-linked to
+     * somebody else's server and called provenance.
+     */
     const row = db.tables.builder_stock_item_images[0];
-    expect(row.processing_status).toBe('ready');
+    expect(row.processing_status).toBe('failed');
     expect(row.external_url).toBe('https://builder.example/lot-1.jpg');
     expect(row.verification_status).toBe('source_supplied');
+    expect(isDisplayableSourceImage(row as never)).toBe(false);
   });
 
   it('reads the bytes, not the promise', () => {
@@ -607,6 +617,7 @@ describe('which image the marketplace shows', () => {
         },
         {
           id: 'source-1', stock_item_id: 'item-1', source_stage: 'uploaded_document',
+          verification_status: 'source_supplied',
           processing_status: 'ready', position: 3, storage_path: 'org/items/item-1/source/cover.png',
         },
       ],
@@ -627,6 +638,7 @@ describe('which image the marketplace shows', () => {
         },
         {
           id: 'source-1', stock_item_id: 'item-1', source_stage: 'uploaded_document',
+          verification_status: 'source_supplied',
           processing_status: 'ready', position: 9, storage_path: 's.png',
         },
       ],
@@ -634,8 +646,9 @@ describe('which image the marketplace shows', () => {
     expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('source-1');
   });
 
-  // TEST H — no builder image: the fallback still works exactly as designed.
-  it('falls back to location imagery when the source supplied nothing', async () => {
+  // No builder image: the card shows NOTHING. Location imagery and a search
+  // result are not photographs of the property, so neither may be the card.
+  it('shows no image at all when the source supplied nothing', async () => {
     const db = fakeDb({
       items: [{ id: 'item-2', primary_image_id: null }],
       images: [
@@ -649,10 +662,11 @@ describe('which image the marketplace shows', () => {
         },
       ],
     });
-    expect(await chooseAndStorePrimaryImage(db, 'item-2')).toBe('google-2');
+    expect(await chooseAndStorePrimaryImage(db, 'item-2')).toBeNull();
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
   });
 
-  it('does not promote a source image that failed to come inside', async () => {
+  it('leaves a card empty when the only source image failed to come inside', async () => {
     const db = fakeDb({
       items: [{ id: 'item-3', primary_image_id: null }],
       images: [
@@ -666,7 +680,7 @@ describe('which image the marketplace shows', () => {
         },
       ],
     });
-    expect(await chooseAndStorePrimaryImage(db, 'item-3')).toBe('google-3');
+    expect(await chooseAndStorePrimaryImage(db, 'item-3')).toBeNull();
   });
 });
 
@@ -710,9 +724,13 @@ describe('repairing stock that is already imported', () => {
     });
 
     const before = db.tables.builder_stock_items.length;
-    const outcome = await repairSourceImagesForUpload(db, {
-      organisationId: 'org-a', uploadId: 'upload-1',
-    });
+    const outcome = await repairSourceImagesForUpload(
+      db,
+      { organisationId: 'org-a', uploadId: 'upload-1' },
+      // The row's own image column: the bytes are fetched, hashed and stored,
+      // exactly as production does behind the SSRF guard.
+      { fetchImage: async () => ({ bytes: pngBytes(), finalUrl: 'https://builder.example/img/lot-101.jpg' }) },
+    );
 
     expect(outcome.error).toBeUndefined();
     expect(outcome.rowsRead).toBe(1);
@@ -723,7 +741,8 @@ describe('repairing stock that is already imported', () => {
     expect(db.tables.builder_stock_items[0].external_reference).toBe('NPC-101');
 
     const sourceRow = db.tables.builder_stock_item_images
-      .find((row: FakeRow) => row.source_stage === 'uploaded_document');
+      .find((row: FakeRow) => row.source_stage === 'uploaded_document'
+        && row.processing_status === 'ready');
     expect(sourceRow).toMatchObject({
       stock_item_id: 'item-101',
       verification_status: 'source_supplied',
@@ -782,12 +801,17 @@ describe('repairing stock that is already imported', () => {
     };
     const FOLDER = 'application/vnd.google-apps.folder';
     const pdfBytes = (() => {
+      // A real page: a MediaBox, and a content stream that DRAWS the render.
+      const draw = 'q 516 0 0 290 40 480 cm /Im0 Do Q';
       const head = encoder.encode('%PDF-1.4\n'
         + '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
         + '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
-        + '3 0 obj<</Type/Page/Parent 2 0 R/Resources<</XObject<</Im0 4 0 R>>>>>>endobj\n'
+        + '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox [0 0 595 842]'
+        + '/Resources<</XObject<</Im0 4 0 R>>>>/Contents 5 0 R>>endobj\n'
         + `4 0 obj<</Type/XObject/Subtype/Image/Width 1700/Height 956/Filter/DCTDecode/Length ${jpeg.length}>>stream\n`);
-      const tail = encoder.encode('\nendstream\nendobj\ntrailer<</Root 1 0 R>>\n');
+      const tail = encoder.encode('\nendstream\nendobj\n'
+        + `5 0 obj<</Length ${draw.length}>>stream\n${draw}\nendstream\nendobj\n`
+        + 'trailer<</Root 1 0 R>>\n');
       const out = new Uint8Array(head.length + jpeg.length + tail.length);
       out.set(head, 0); out.set(jpeg, head.length); out.set(tail, head.length + jpeg.length);
       return out;
@@ -849,7 +873,18 @@ describe('repairing stock that is already imported', () => {
       content_type: 'image/jpeg',
     });
     expect(stored!.source_reference)
-      .toBe('Lot 43 - Stradbroke 180 - Property Package.pdf#page1');
+      .toBe('Lot 43 - Stradbroke 180 - Property Package.pdf#page1:Im0');
+    // Provenance enough to prove it: the document, the page, the object and
+    // the hash of the bytes we are serving.
+    expect(stored!.source_detail).toMatchObject({
+      document: 'Lot 43 - Stradbroke 180 - Property Package.pdf',
+      page: 1,
+      extraction_method: 'embedded_raster',
+      pdf_resource: 'Im0',
+      transformation: null,
+    });
+    expect(String((stored!.source_detail as Record<string, unknown>).stored_sha256))
+      .toHaveLength(64);
     // The card now shows the builder's render; the property itself is untouched.
     expect(db.tables.builder_stock_items[0].primary_image_id).toBe(stored!.id);
     expect(db.tables.builder_stock_items).toHaveLength(1);
