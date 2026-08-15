@@ -1145,6 +1145,28 @@ export function kpis(items: KpiItem[]): FlowItem {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A table in whichever treatment `table_style` declares. */
+/**
+ * Column widths as FRACTIONS, from the point measures a table is laid out in.
+ *
+ * `data-table` renders `columnWidths` as percentages — `width:${w * 100}%` — so
+ * a fraction is what it wants. Four masters passed POINTS instead
+ * (`[c.contentWidth - 330, 90, 70, 70, 100]` is `width:18500%` on the first
+ * column), and it only ever looked right because each array sums to exactly
+ * `contentWidth`, so the browser's proportional normalisation lands on the
+ * ratios a correct fraction array would have produced.
+ *
+ * That is luck holding a layout up: change one number without its partner, or
+ * write an array that does not sum to the measure, and the columns silently
+ * stop meaning what they say. Normalised against the array's own sum, so a
+ * table whose widths do not add up is still drawn in the proportions its author
+ * wrote rather than overflowing the measure. Already-fractional arrays are
+ * unchanged — they sum to 1.
+ */
+export function cols(...points: number[]): number[] {
+  const total = points.reduce((sum, w) => sum + w, 0);
+  return total > 0 ? points.map((w) => w / total) : points;
+}
+
 export function table(opts: {
   headers: string[];
   rows: string[][];

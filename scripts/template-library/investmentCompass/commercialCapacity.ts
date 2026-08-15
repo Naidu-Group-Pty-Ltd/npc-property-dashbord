@@ -38,6 +38,7 @@ import {
 import {
   beginCompassTemplate,
   callout,
+  cols,
   contentTop,
   cover,
   definitions,
@@ -60,32 +61,6 @@ import { STANDARD_DISCLAIMER } from '../designSystem';
 
 const FOOTER = '{{capacity.meta.reference}} · Commercial & Industrial Capacity';
 const DOCUMENT_LABEL = 'Commercial & Industrial Capacity';
-
-/**
- * Column widths as FRACTIONS, from the point measures these tables are laid out
- * in.
- *
- * `data-table` renders `columnWidths` as percentages — `width:${w * 100}%` — so
- * a fraction is what it wants, and every other master in the catalogue passes
- * one (`[0.13, 0.29, 0.29, 0.29]`). This master alone passed **points**:
- * `[c.contentWidth - 330, 90, 70, 70, 100]` becomes `width:18500%` on the first
- * column.
- *
- * It only ever looked right by accident. Each of these arrays sums to exactly
- * `contentWidth`, so the browser's proportional normalisation lands on the same
- * ratios a correct fraction array would have produced. That is luck holding a
- * layout up: change one number without changing its partner, or write an array
- * that does not sum to the measure, and the columns silently stop meaning what
- * they say.
- *
- * Normalised against the array's own sum rather than `contentWidth`, so a table
- * whose widths do not add up is still drawn in the proportions its author
- * wrote, instead of overflowing the measure.
- */
-const cols = (...points: number[]): number[] => {
-  const total = points.reduce((sum, w) => sum + w, 0);
-  return total > 0 ? points.map((w) => w / total) : points;
-};
 
 /** Rows a table draws. Mirrors the projection's caps; the record's count is printed. */
 const ROWS = {
