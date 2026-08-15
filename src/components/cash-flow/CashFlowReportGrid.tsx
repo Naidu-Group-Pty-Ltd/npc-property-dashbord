@@ -12,7 +12,7 @@ interface CashFlowReportGridProps {
 
 export function CashFlowReportGrid({ reports, openingReportId, getBuildType, getInvestmentGrade, onViewReport, onOpenCashFlow }: CashFlowReportGridProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5 lg:grid-cols-3">
       {reports.map((report) => (
         <CashFlowReportCard
           key={report.id}
