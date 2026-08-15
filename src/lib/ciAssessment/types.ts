@@ -521,6 +521,13 @@ export interface AssessmentPayload {
   provenance: FieldProvenance[];
   /** Free-form internal notes. Excluded from client-facing report output. */
   internalNotes: string;
+  /**
+   * Investment-analysis assumptions — valuation, forecast and industrial site
+   * metrics. Optional because every assessment written before the analysis
+   * workspace existed predates it; `analysisOf()` reads it with defaults, and
+   * it only appears on disk once somebody sets one. See `analysis.ts`.
+   */
+  analysis?: import('./analysis').AnalysisSection;
 }
 
 export interface AssessmentRecord {
@@ -681,5 +688,9 @@ export function hydrateAssessmentPayload(raw: unknown): AssessmentPayload {
     },
     provenance: source.provenance ?? [],
     internalNotes: source.internalNotes ?? '',
+    // Left undefined rather than defaulted, so a record that has never carried
+    // analysis assumptions is not rewritten with a set of them on its next
+    // autosave. `analysisOf()` supplies the defaults at the point of reading.
+    ...(source.analysis ? { analysis: source.analysis } : {}),
   };
 }
