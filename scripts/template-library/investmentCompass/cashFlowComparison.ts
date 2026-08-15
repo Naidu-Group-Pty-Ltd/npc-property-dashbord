@@ -258,11 +258,15 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
    */
   const VERDICT_KPIS: KpiItem[] = [
     { label: 'Lead over second', value: '{{cashFlowComparison.scoreboard.leadMargin | percent}}', note: 'Of the top return' },
-    { label: 'Ranked first', value: '{{cashFlowComparison.ranked.0.shortAddress}}', note: 'Ten-year return' },
+    // `shortAddress` is prose, not a figure, and it sets at the band's figure
+    // size — 30.75pt on Objective. It is `address.split(',')[0]`
+    // (`propertyComparison/normalise.pure.ts:166`), so "93 Bimbadeen Avenue"
+    // (19) is typical and a unit line is the long end.
+    { label: 'Ranked first', value: '{{cashFlowComparison.ranked.0.shortAddress}}', note: 'Ten-year return', valueChars: 30 },
     { label: 'Its total return', value: '{{cashFlowComparison.ranked.0.totalReturn | currency}}', note: 'Gain plus cash flow' },
     { label: 'Properties', value: '{{cashFlowComparison.propertyCount | fixed:0}}', note: 'Over {{cashFlowComparison.termYears}} years' },
     { label: 'Its return on capital', value: '{{cashFlowComparison.ranked.0.roi | percent}}', note: 'On cash invested' },
-    { label: 'Profile', value: '{{cashFlowComparison.investorProfile}}', note: 'Ranking made for' },
+    { label: 'Profile', value: '{{cashFlowComparison.investorProfile}}', note: 'Ranking made for', valueChars: 24 },
   ];
 
   // ── 01 Cover ─────────────────────────────────────────────────────────────

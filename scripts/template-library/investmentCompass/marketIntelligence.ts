@@ -179,6 +179,9 @@ function layerPages(index: number, bodyHeight: number, firstHeight: number): Pag
         sectionHeading({
           eyebrow: 'Market intelligence',
           heading: `{{marketIntel.layers.${index}.title}}`,
+          // A layer title — the same order as the longest stored event name
+          // (47, `LENGTHS.eventName`), with a line's worth of slack.
+          headingChars: 60,
         }),
         markdown(source, 0, firstHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),

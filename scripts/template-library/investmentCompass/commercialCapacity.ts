@@ -228,7 +228,13 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   pages.push({
     ...withFurniture(page('The answer', [
       ...flow([
-        sectionHeading({ eyebrow: 'The answer', heading: '{{capacity.headline.outcomeLabel}}' }),
+        sectionHeading({
+          eyebrow: 'The answer',
+          heading: '{{capacity.headline.outcomeLabel}}',
+          // The longest of `OUTCOME_LABELS`, "Supported Subject to
+          // Verification" (33) — `commercialCapacity/normalise.pure.ts:133`.
+          headingChars: 33,
+        }),
         prose('{{capacity.headline.outcomeReason}}', textHeight(LENGTHS.outcomeReason)),
         kpis(ANSWER_KPIS),
         {
@@ -483,6 +489,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           eyebrow: 'What the business earns',
           heading: 'Business income',
           standfirst: '{{capacity.businessIncome.periodsCaption}}',
+        // "Financial periods — assessed on a <basis> basis." — the sentence is
+        // composed in `commercialCapacityProjection.pure.ts:461`; 47 characters
+        // of frame plus the stored `selectionBasis`.
+        standfirstChars: 90,
         }),
         (() => {
           const periodsTable = (n: number) => table({

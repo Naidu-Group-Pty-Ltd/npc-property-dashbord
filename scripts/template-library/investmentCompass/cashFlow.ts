@@ -253,6 +253,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         numeral: nextNumeral(),
         standfirst: 'Figures are the {{cashflow.scenario}} scenario. The other two are set '
           + 'side by side later in the document.',
+        // The sentence is literal apart from the scenario name, which is one
+        // word ("base", "optimistic", "pessimistic") — shorter than the binding
+        // it replaces, so the source length is the safe measure.
+        standfirstChars: 108,
       }),
       /*
        * The legacy document's opening narrative, in its own sentence shapes —
