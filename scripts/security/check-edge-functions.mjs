@@ -42,6 +42,14 @@
  * Lower a number whenever you fix something — `--update` rewrites the baseline,
  * and the committed file is the record of the backlog shrinking.
  *
+ * ## What the baseline may not absorb
+ *
+ * Five diagnostics mean the module is unloadable rather than merely
+ * mistyped, so the function answers `BOOT_ERROR` to every request. Those are
+ * reported whatever the baseline says and `--update` refuses to bank them —
+ * see `LOAD_FATAL` below for the four production functions that were shipped
+ * in exactly that state and stayed there because their counts were baselined.
+ *
  *   node scripts/security/check-edge-functions.mjs            # check
  *   node scripts/security/check-edge-functions.mjs --update   # rewrite baseline
  */
@@ -177,15 +185,84 @@ if (RESOLUTION_FAILURE.test(plain)) {
   process.exit(1);
 }
 
+/**
+ * The diagnostics that are not type debt, because the module never loads.
+ *
+ * The baseline below exists because 430 pre-existing type errors cannot be
+ * fixed in one change, and nearly all of them are harmless at runtime: Deno
+ * strips types and runs the JavaScript underneath, so a bad cast or an
+ * unchecked null is a latent bug rather than an immediate one.
+ *
+ * These five are different in kind. Each one means the *JavaScript* is
+ * unloadable, so the function does not run at all — it answers
+ *
+ *     {"code":"BOOT_ERROR","message":"Function failed to start (please check logs)"}
+ *
+ * to every request that ever reaches it. Counting them alongside the debt is
+ * how four functions came to be shipped in that state and stay there:
+ *
+ *   - `import-schools-data` and `sqm-rent-service` each declared
+ *     `supabaseUrl`/`supabaseKey`/`supabase` twice in one block scope (TS2451),
+ *     which is a parse-time SyntaxError;
+ *   - `legal-matters-admin` imported `mirrorToFinancePortal` from
+ *     `_shared/legalComms.ts`, which has never exported it and which nothing in
+ *     this repo defines;
+ *   - `pdf-parse-chunk-callback` imported `PAGE_ARTIFACT_CONTRACT_VERSION` from
+ *     `pageArtifactContractV3.pure.ts`, which imports that constant for its own
+ *     use and does not re-export it.
+ *
+ * All four were inside their baselined counts — 6, 6, 3 and 10 — so the gate
+ * read them as backlog and passed. They were invisible from the outside too,
+ * because three of them are called from the browser and the gateway's JWT check
+ * refused the CORS preflight *before* the runtime tried to load the module: the
+ * caller saw an opaque "Network/CORS error", and the boot failure underneath it
+ * only surfaced once the preflight was fixed.
+ *
+ * So these are reported whatever the baseline says, and `--update` refuses to
+ * bank them. A missing export used only as a type is elided by Deno and would
+ * run — it is still a broken import, and fixing one costs a line, which is much
+ * less than the chance of being wrong about which of the two it is.
+ */
+const LOAD_FATAL = new Map([
+  ['TS2300', 'duplicate identifier — the module is not valid JavaScript'],
+  ['TS2305', 'imported name is not exported by that module — SyntaxError at load'],
+  ['TS2307', 'module cannot be resolved — nothing to load'],
+  ['TS2451', 'block-scoped redeclaration — SyntaxError at parse'],
+  ['TS2459', 'name is declared locally by that module but not exported — SyntaxError at load'],
+]);
+
 /** `at file:///…/supabase/functions/<name>/…` — the file an error was reported in. */
 const AT_FILE = /at file:\/\/(\S+?):\d+:\d+/g;
 const counts = new Map();
+const fatal = [];
 for (const block of plain.split(/(?=^TS\d+ \[ERROR\])/m)) {
   if (!/^TS\d+ \[ERROR\]/.test(block)) continue;
   const at = [...block.matchAll(AT_FILE)][0];
   if (!at) continue;
   const file = relative(root, at[1]).replace(/\\/g, '/');
   counts.set(file, (counts.get(file) ?? 0) + 1);
+  const code = block.match(/^(TS\d+) \[ERROR\]/)[1];
+  if (LOAD_FATAL.has(code)) {
+    fatal.push({
+      code,
+      where: `${file}:${at[0].match(/:(\d+:\d+)$/)[1]}`,
+      message: block.split('\n')[0].replace(/^TS\d+ \[ERROR\]:\s*/, '').trim(),
+    });
+  }
+}
+
+// Before `--update`, so a fatal error can never be banked as backlog.
+if (fatal.length) {
+  console.error(
+    `\nEdge Function type-check FAILED — ${fatal.length} diagnostic(s) that stop a function booting.\n`
+    + 'These are not type debt and are never baselined: the module is unloadable, so every\n'
+    + 'request to the function answers BOOT_ERROR.\n',
+  );
+  for (const { code, where, message } of fatal) {
+    console.error(` - ${where}\n     ${code}: ${message}\n     why fatal: ${LOAD_FATAL.get(code)}`);
+  }
+  console.error('\nFix them. --update will not bank them.\n');
+  process.exit(1);
 }
 
 const observed = Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));

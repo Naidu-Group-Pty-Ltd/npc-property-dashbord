@@ -59,11 +59,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    // The client is the one created above, before authentication. A second
+    // `const supabase` (with its own `supabaseUrl`/`supabaseKey`) stood here —
+    // a redeclaration in the same block scope, which is a parse-time
+    // SyntaxError, so this module never loaded and every invocation answered
+    // BOOT_ERROR rather than running a single line of this function.
     const firecrawlKey = Deno.env.get('FIRECRAWL_API_KEY');
-
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Normalize inputs
     const normalizedSuburb = suburb.toUpperCase().trim();
