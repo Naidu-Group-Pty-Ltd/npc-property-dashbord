@@ -153,9 +153,14 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
     marital_status: '', dependents_count: 0,
   });
 
+  // What the record looked like when this sheet last loaded it. Saving diffs
+  // against this so an untouched field is never written back.
+  const baselineRef = useRef<Record<string, any> | null>(null);
+
   useEffect(() => {
     if (open && clientData) {
       setFormData({
+
         primary_first_name: clientData.primary_first_name || '',
         primary_middle_name: clientData.primary_middle_name || '',
         primary_surname: clientData.primary_surname || '',
