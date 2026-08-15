@@ -413,7 +413,7 @@ export function evaluateDistribution(
 
   if (route && RELIANCE_ROUTES.has(route)) {
     if (!linkDecision.ok) {
-      relianceCode = (linkDecision as { code?: typeof relianceCode }).code ?? relianceCode;
+      relianceCode = (linkDecision as { code?: RelianceDenialCode | null }).code ?? relianceCode;
       add("PARTNER_LINK_REQUIRED");
     }
     // Classification is a s 37A prerequisite and is never inferred.
@@ -446,8 +446,17 @@ export function evaluateDistribution(
       now: ctx.now,
     });
     if (!arrangementDecision.ok) {
-      const arrangementCode = (arrangementDecision as { code?: typeof relianceCode }).code;
-      relianceCode = relianceCode ?? arrangementCode;
+      // The DECLARED union, not `typeof relianceCode`. By this line control flow
+      // has narrowed the variable to `"agreement_missing" | null` (the assignment
+      // above), so `typeof` collapsed the cast to that one literal and every other
+      // case below became "not comparable" — six type errors, and a switch the
+      // compiler could no longer check for exhaustiveness on the reliance-denial
+      // codes. Type-only: the runtime value is whatever the decision returned.
+      const arrangementCode = (arrangementDecision as { code?: RelianceDenialCode | null }).code;
+      // `?? null` because the cast's `code?:` is optional, so the expression is
+      // `… | undefined` while the variable is `… | null`. Behaviour-identical —
+      // `??` already treats undefined as absent.
+      relianceCode = relianceCode ?? arrangementCode ?? null;
       switch (arrangementCode) {
         case "review_overdue":
         case "assessment_overdue":
