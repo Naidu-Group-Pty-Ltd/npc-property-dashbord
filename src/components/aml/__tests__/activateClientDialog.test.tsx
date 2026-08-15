@@ -599,3 +599,146 @@ describe("ActivateClientDialog — create a new client", () => {
     expect(createClientRecord).not.toHaveBeenCalled();
   });
 });
+
+
+/**
+ * Why the button would not work, said on screen.
+ *
+ * The Activate button was styled as the primary action and simply disabled
+ * — no reason, pointing at nothing. Somebody who had just created a client
+ * pressed it, nothing happened, and concluded "I cannot create a client and
+ * it shows inactive". The register gained FOUR identical Rugesh Naidu
+ * records in 45 minutes from exactly that loop.
+ *
+ * The requirements are unchanged (AGENTS.md §2 still governs). They are said.
+ */
+describe("ActivateClientDialog — the button explains itself", () => {
+  const alex = {
+    id: "a", label: "Alex Naidu", email: "alex@example.test",
+    mobile: null, is_active: false, has_open_case: false,
+  };
+
+  it("names every outstanding step before a client is chosen", async () => {
+    setup();
+    await waitFor(() =>
+      expect(screen.getByText(/Select or create a client/)).toBeInTheDocument());
+  });
+
+  it("counts down as the form is completed, then says it is ready", async () => {
+    listClientsForActivation.mockResolvedValue(page([alex], { total: 1 }));
+    setup();
+    await waitFor(() => expect(screen.getByText("Alex Naidu")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Select Alex Naidu/ }));
+
+    // The client is chosen; the activation event and reason are not.
+    await waitFor(() =>
+      expect(screen.getByText(/Name the activation event/)).toBeInTheDocument());
+    expect(screen.getByText(/3 steps left/)).toBeInTheDocument();
+
+    fillRequiredFields();
+    await waitFor(() => expect(screen.getByText("Ready to activate")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Activate client" })).toBeEnabled();
+  });
+
+  it("ties the explanation to the button for a screen reader", async () => {
+    setup();
+    await waitFor(() => expect(screen.getByText(/Select or create a client/)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Activate client" }))
+      .toHaveAttribute("aria-describedby", "ac-outstanding");
+  });
+
+  it("says an open case is what is blocking, rather than staying silent", async () => {
+    getClientForActivation.mockResolvedValue({
+      client: { ...inactiveClient, has_open_case: true,
+        open_case: { id: "x", case_reference: "AML-2026-00001" } },
+    });
+    setup({ clientId: CLIENT_ID });
+    await waitFor(() =>
+      expect(screen.getByText(/already has an open case/)).toBeInTheDocument());
+  });
+});
+
+/**
+ * Duplicate creation, actually prevented.
+ *
+ * The first version only warned. In 45 minutes of real use it was clicked
+ * past four times and the register gained four identical
+ * "Rugesh Naidu / naidu.rugesh@gmail.com" records. A warning that can be
+ * dismissed is a note about duplicates, not a safeguard against them.
+ */
+describe("ActivateClientDialog — duplicate creation is blocked, not just flagged", () => {
+  const openCreate = async () => {
+    setup();
+    await waitFor(() => expect(screen.getByRole("button", { name: /New client/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /New client/ }));
+    await waitFor(() => expect(screen.getByTestId("ac-create-client")).toBeInTheDocument());
+  };
+
+  const existing = {
+    id: "dup-1", label: "Rugesh Naidu", email: "naidu.rugesh@gmail.com",
+    mobile: null, is_active: false, has_open_case: false,
+  };
+
+  it("refuses to create a second client on the same email", async () => {
+    listClientsForActivation.mockResolvedValue(page([existing], { total: 1 }));
+    await openCreate();
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Rugesh" } });
+    fireEvent.change(screen.getByLabelText("Surname"), { target: { value: "Naidu" } });
+    fireEvent.change(screen.getByLabelText(/Email/), {
+      target: { value: "naidu.rugesh@gmail.com" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText("That email already belongs to a client")).toBeInTheDocument(),
+      { timeout: 2000 });
+    expect(screen.getByTestId("ac-create-client-submit")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("ac-create-client-submit"));
+    expect(createClientRecord).not.toHaveBeenCalled();
+  });
+
+  it("matches the email case-insensitively", async () => {
+    listClientsForActivation.mockResolvedValue(page([existing], { total: 1 }));
+    await openCreate();
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Rugesh" } });
+    fireEvent.change(screen.getByLabelText("Surname"), { target: { value: "Naidu" } });
+    fireEvent.change(screen.getByLabelText(/Email/), {
+      target: { value: "  NAIDU.RUGESH@GMAIL.COM  " },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("ac-create-client-submit")).toBeDisabled(), { timeout: 2000 });
+  });
+
+  it("still allows a genuine namesake — a name is not an identifier", async () => {
+    // Two different people are called Rugesh Naidu; two different people do
+    // not share an inbox. Refusing on name would make namesakes uncreatable.
+    listClientsForActivation.mockResolvedValue(page([existing], { total: 1 }));
+    await openCreate();
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Rugesh" } });
+    fireEvent.change(screen.getByLabelText("Surname"), { target: { value: "Naidu" } });
+    fireEvent.change(screen.getByLabelText(/Email/), {
+      target: { value: "different.person@example.test" },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText(/similar client/i)).toBeInTheDocument(), { timeout: 2000 });
+    // Warned, not blocked.
+    await waitFor(() =>
+      expect(screen.getByTestId("ac-create-client-submit")).toBeEnabled());
+  });
+
+  it("tells otherwise-identical duplicates apart", async () => {
+    // Four rows read "Rugesh Naidu / naidu.rugesh@gmail.com" in production.
+    // Identical rows are unchoosable.
+    listClientsForActivation.mockResolvedValue(page([
+      { ...existing, id: "10e2e305-cef6-42e3-9203-fb8b2d1dd14e" },
+      { ...existing, id: "67a78519-aa48-46bb-a6db-7fe26b8d0eda" },
+    ], { total: 2 }));
+    await openCreate();
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Rugesh" } });
+    fireEvent.change(screen.getByLabelText("Surname"), { target: { value: "Naidu" } });
+
+    await waitFor(() => expect(screen.getByText("10e2e305")).toBeInTheDocument(), { timeout: 2000 });
+    expect(screen.getByText("67a78519")).toBeInTheDocument();
+  });
+});

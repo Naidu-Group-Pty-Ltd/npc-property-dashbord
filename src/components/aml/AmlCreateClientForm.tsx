@@ -101,8 +101,32 @@ export function AmlCreateClientForm({
     return () => clearTimeout(t);
   }, [checkDuplicates]);
 
+  /**
+   * An existing client with the SAME email blocks creation outright.
+   *
+   * ── Why blocking, and why only on email ───────────────────────────────
+   * The first version of this only warned. In 45 minutes of real use it was
+   * clicked past four times and the register gained four identical
+   * "Rugesh Naidu / naidu.rugesh@gmail.com" records. A warning that can be
+   * dismissed is not a safeguard against duplicates; it is a note about
+   * them.
+   *
+   * Email only, because an email is an identifier and a name is not. Two
+   * different people are called Rugesh Naidu; two different people do not
+   * share an inbox. A name collision still warns and still lets the operator
+   * proceed, because refusing it would make legitimate namesakes
+   * uncreatable.
+   *
+   * The server has no unique index on `primary_email` to fall back on — the
+   * register already holds duplicate emails (one address appears 7 times) —
+   * so adding one would fail on existing data. This stops the next one.
+   */
+  const emailClash = email
+    ? duplicates.find((c) => (c.email ?? "").trim().toLowerCase() === email.toLowerCase())
+    : undefined;
+
   const validationError = validateNewClient(form);
-  const canSubmit = !validationError && !submitting && !disabled;
+  const canSubmit = !validationError && !emailClash && !submitting && !disabled;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -191,16 +215,20 @@ export function AmlCreateClientForm({
 
       {/* Duplicate detection — before the insert, never after it. */}
       {duplicates.length > 0 && (
-        <Alert role="status">
+        <Alert role="status" variant={emailClash ? "destructive" : "default"}>
           <AlertTriangle aria-hidden="true" className="h-4 w-4" />
           <AlertTitle>
-            {duplicates.length === 1
-              ? "A similar client already exists"
-              : `${duplicates.length} similar clients already exist`}
+            {emailClash
+              ? "That email already belongs to a client"
+              : duplicates.length === 1
+                ? "A similar client already exists"
+                : `${duplicates.length} similar clients already exist`}
           </AlertTitle>
           <AlertDescription className="space-y-2">
             <p className="text-xs">
-              Use the existing record instead of creating a second one.
+              {emailClash
+                ? "Two clients cannot share an email address. Use the existing record, or change the email if this is genuinely a different person."
+                : "Use the existing record instead of creating a second one."}
             </p>
             <ul className="space-y-1">
               {duplicates.map((c) => (
@@ -216,6 +244,14 @@ export function AmlCreateClientForm({
                       {c.email && (
                         <span className="block truncate text-muted-foreground">{c.email}</span>
                       )}
+                      {/*
+                        Four records read "Rugesh Naidu / naidu.rugesh@gmail.com"
+                        in production. Identical rows are unchoosable, so the
+                        record's own reference is shown to tell them apart.
+                      */}
+                      <span className="block truncate font-mono text-[0.65rem] text-muted-foreground/70">
+                        {c.id.slice(0, 8)}
+                      </span>
                     </span>
                     <span className="shrink-0">
                       {c.has_open_case
@@ -240,7 +276,11 @@ export function AmlCreateClientForm({
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground" aria-live="polite">
-          {checking ? "Checking for existing clients…" : validationError ?? ""}
+          {checking
+            ? "Checking for existing clients…"
+            : emailClash
+              ? "Use the existing client above, or change the email."
+              : validationError ?? ""}
         </p>
         <Button
           type="button" size="sm" onClick={submit} disabled={!canSubmit}
