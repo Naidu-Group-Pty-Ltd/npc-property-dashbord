@@ -52,16 +52,18 @@ export const STOCK_IMAGE_SELECT = `
  */
 export const BUILDER_SELECTION_SELECT = `
   id, stock_item_id, organisation_id, source_upload_id,
-  originating_builder_user_id, status, selected_at, acknowledged_at,
-  acknowledged_by_builder_user_id, builder_reference, created_at, updated_at
+  originating_builder_user_id, builder_project_id, status, selected_at,
+  acknowledged_at, acknowledged_by_builder_user_id, builder_reference,
+  created_at, updated_at
 `;
 
 /** Selection columns for the Command Centre, which made the selection. */
 export const COMMAND_SELECTION_SELECT = `
   id, stock_item_id, organisation_id, source_upload_id,
-  originating_builder_user_id, client_id, selected_by_user_id, status,
-  selected_at, acknowledged_at, acknowledged_by_builder_user_id,
-  withdrawn_at, internal_notes, builder_reference, created_at, updated_at
+  originating_builder_user_id, builder_project_id, client_id,
+  selected_by_user_id, status, selected_at, acknowledged_at,
+  acknowledged_by_builder_user_id, withdrawn_at, internal_notes,
+  builder_reference, created_at, updated_at
 `;
 
 /** Statuses a Command Centre user may move a selection to. */

@@ -126,6 +126,7 @@ export interface BuilderStockSelectionForBuilder {
   organisation_id: string;
   source_upload_id: string | null;
   originating_builder_user_id: string | null;
+  builder_project_id: string | null;
   status: StockSelectionStatus;
   selected_at: string;
   acknowledged_at: string | null;

@@ -22,8 +22,20 @@
  * an image is allowed to change what the marketplace shows.
  */
 import { meteredFetch } from '../meteredFetch.ts';
+import { enforceGlobalDailyQuota, killSwitchActive } from '../publicAbuseControls.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress } from './normalise.pure.ts';
+
+/**
+ * The SAME circuit scope `street-view` uses.
+ *
+ * Google imagery is one vendor account with one bill and one failure mode, so
+ * it gets one circuit, one daily ceiling and one kill switch — shared with the
+ * Listings page rather than duplicated for this feature. A second scope would
+ * mean the breaker could be open for the dashboard and closed here, and the
+ * daily limit would be spent twice over.
+ */
+const GOOGLE_CIRCUIT_SCOPE = 'google_street_view';
 
 export interface EnrichableStockItem {
   id: string;
@@ -44,11 +56,21 @@ export interface StageOutcome {
   detail: string;
 }
 
-const FETCH_TIMEOUT_MS = 8000;
+/**
+ * A search is slower than a map tile, and it is the last thing that runs
+ * before the batch's wall-clock budget matters.
+ */
+const SEARCH_TIMEOUT_MS = 15_000;
 
+/**
+ * `publicAbuseControls.fetchWithTimeout` is the shared primitive, but it calls
+ * plain `fetch`, and a Perplexity call that skips `meteredFetch` is billed to
+ * nobody. This is the same abort-on-deadline shape applied to the metered
+ * wrapper instead of replacing it.
+ */
 async function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
   try {
     return await work(controller.signal);
   } finally {
@@ -86,10 +108,19 @@ async function recordStageUnavailable(
 /**
  * Street View of the address, falling back to a satellite still.
  *
- * The key is read from the environment inside this function and is never
- * returned to any caller: the bytes are stored in a private bucket and the
- * browser gets a short-lived signed URL from the edge function, exactly as
- * `street-view` does for the Listings page.
+ * THE CREDENTIAL AND THE CONTROLS AROUND IT ARE THE EXISTING ONES.
+ * `GOOGLE_MAPS_API_KEY` is the same secret `street-view`, `google-places-autocomplete`
+ * and `resolve-listing-coordinates` spend, read from the environment inside
+ * this function and never returned to any caller: the bytes land in a private
+ * bucket and the browser gets a short-lived signed URL. Around it sit the same
+ * `publicAbuseControls` primitives the Listings page's Street View proxy uses —
+ * one kill switch, one daily ceiling and one circuit breaker on the shared
+ * `google_street_view` scope, so a bulk stock import cannot quietly spend the
+ * dashboard's Google budget or hammer a provider that is already failing.
+ *
+ * `meteredFetch` still wraps every call: it resolves the credential from the
+ * host and writes the `api_usage_log` row, so this spend is recharged to the
+ * tenant that made it.
  */
 export async function enrichFromGoogle(
   db: any,
@@ -109,12 +140,48 @@ export async function enrichFromGoogle(
       'This property has no street address to look up.', 'google');
   }
 
+  // The operator's off switch, shared with `street-view`.
+  if (killSwitchActive('GOOGLE_STREET_VIEW_KILL_SWITCH')) {
+    return await recordStageUnavailable(
+      db, item, 'google_maps', 'unavailable',
+      'Location imagery is temporarily switched off.', 'google');
+  }
+
+  /**
+   * The circuit reports whether GOOGLE is failing. Fail OPEN when our own
+   * circuit store cannot be read — that says nothing about Google, and
+   * `street-view` records what treating an unreadable store as "open" cost:
+   * an unapplied migration turned a local database gap into a total outage of
+   * the feature.
+   */
+  const { data: circuitOpen, error: circuitReadError } = await db
+    .rpc('provider_circuit_is_open', { p_scope: GOOGLE_CIRCUIT_SCOPE });
+  if (circuitReadError) {
+    console.warn('[builderStock] google circuit state unreadable, proceeding:',
+      circuitReadError.message);
+  } else if (circuitOpen === true) {
+    return await recordStageUnavailable(
+      db, item, 'google_maps', 'unavailable',
+      'Location imagery is temporarily unavailable.', 'google');
+  }
+
+  // The same daily ceiling and the same env var as `street-view`, because it
+  // is the same Google account being billed.
+  const dailyLimit = Number(Deno.env.get('GOOGLE_STREET_VIEW_DAILY_LIMIT') ?? '5000');
+  const spend = async (): Promise<boolean> =>
+    (await enforceGlobalDailyQuota(db, GOOGLE_CIRCUIT_SCOPE, dailyLimit)).ok;
+
   try {
-    const geocoded = await withTimeout((signal) => meteredFetch(
+    if (!await spend()) {
+      return await recordStageUnavailable(
+        db, item, 'google_maps', 'unavailable',
+        'The daily limit for location imagery has been reached.', 'google');
+    }
+    const geocoded = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=au&key=${apiKey}`,
-      { signal },
+      {},
       { feature: 'builder-stock/geocode' },
-    ));
+    );
     const geo = await geocoded.json().catch(() => null);
     const location = geo?.results?.[0]?.geometry?.location;
     if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
@@ -127,26 +194,41 @@ export async function enrichFromGoogle(
     let bytes: Uint8Array | null = null;
     let product = 'streetview';
 
-    const metadata = await withTimeout((signal) => meteredFetch(
+    if (!await spend()) {
+      return await recordStageUnavailable(
+        db, item, 'google_maps', 'unavailable',
+        'The daily limit for location imagery has been reached.', 'google');
+    }
+    const metadata = await meteredFetch(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(point)}&key=${apiKey}`,
-      { signal },
+      {},
       { feature: 'builder-stock/streetview-metadata' },
-    ));
+    );
     const meta = await metadata.json().catch(() => ({}));
 
-    if (meta?.status === 'OK') {
+    if (meta?.status !== 'OK' && meta?.status !== 'ZERO_RESULTS') {
+      // A provider error, not an absence of coverage. Tell the shared breaker.
+      await db.rpc('provider_circuit_record_failure',
+        { p_scope: GOOGLE_CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
+    }
+
+    if (meta?.status === 'OK' && await spend()) {
       const params = new URLSearchParams({
         size: '640x400', location: point, fov: '80', pitch: '0',
         return_error_code: 'true', key: apiKey,
       });
-      const image = await withTimeout((signal) => meteredFetch(
+      const image = await meteredFetch(
         `https://maps.googleapis.com/maps/api/streetview?${params.toString()}`,
-        { signal }, { feature: 'builder-stock/streetview' },
-      ));
+        {}, { feature: 'builder-stock/streetview' },
+      );
       if (image.ok) bytes = new Uint8Array(await image.arrayBuffer());
+      else {
+        await db.rpc('provider_circuit_record_failure',
+          { p_scope: GOOGLE_CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
+      }
     }
 
-    if (!bytes) {
+    if (!bytes && await spend()) {
       // No Street View coverage is normal on a new estate — the road may not
       // have been driven. A satellite still of the lot is still location
       // imagery of the right place.
@@ -155,11 +237,15 @@ export async function enrichFromGoogle(
         center: point, zoom: '18', size: '640x400', maptype: 'satellite',
         markers: `color:red|${point}`, key: apiKey,
       });
-      const image = await withTimeout((signal) => meteredFetch(
+      const image = await meteredFetch(
         `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`,
-        { signal }, { feature: 'builder-stock/staticmap' },
-      ));
+        {}, { feature: 'builder-stock/staticmap' },
+      );
       if (image.ok) bytes = new Uint8Array(await image.arrayBuffer());
+    }
+
+    if (bytes) {
+      await db.rpc('provider_circuit_record_success', { p_scope: GOOGLE_CIRCUIT_SCOPE });
     }
 
     if (!bytes || bytes.length < 1024) {
@@ -233,6 +319,17 @@ export function stockSearchQuery(
   return parts.join(', ').slice(0, 300);
 }
 
+/**
+ * The broader search.
+ *
+ * THE CREDENTIAL IS THE EXISTING ONE. `PERPLEXITY_API_KEY` is the same secret
+ * `estimate-property-expenses`, `generate-investment-report`,
+ * `format-comparison-report` and `generate-market-intelligence-report` already
+ * spend, read server-side and never returned to a caller. The call goes through
+ * `meteredFetch`, which resolves the credential from `perplexity.ai` and writes
+ * the `api_usage_log` row — the repo's rule is that a vendor call which skips
+ * it is billed to nobody.
+ */
 export async function enrichFromInternetSearch(
   db: any,
   item: EnrichableStockItem,

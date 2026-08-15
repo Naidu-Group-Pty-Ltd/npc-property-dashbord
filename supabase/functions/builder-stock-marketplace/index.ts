@@ -346,6 +346,8 @@ Deno.serve(async (req) => {
           // Resolved, not accepted. The database trigger checks it again.
           organisation_id: item.organisation_id,
           source_upload_id: item.upload_id ?? null,
+          // Also resolved from the item, never from the request.
+          builder_project_id: item.builder_project_id ?? null,
           originating_builder_user_id:
             upload?.uploaded_by_builder_user_id ?? item.created_by_builder_user_id ?? null,
           client_id: client.id,

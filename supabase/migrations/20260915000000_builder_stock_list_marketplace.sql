@@ -331,6 +331,10 @@ CREATE TABLE IF NOT EXISTS public.builder_stock_selections (
   source_upload_id uuid REFERENCES public.builder_stock_uploads(id) ON DELETE SET NULL,
   originating_builder_user_id uuid
     REFERENCES public.builder_portal_users(id) ON DELETE SET NULL,
+  -- The development the property belongs to, when the portal holds one. Copied
+  -- at selection time for the same reason the organisation is: an activation
+  -- must keep naming the project it was made against.
+  builder_project_id uuid REFERENCES public.builder_projects(id) ON DELETE SET NULL,
 
   client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
   -- The Command Centre user who made the selection. auth.users, as everywhere
