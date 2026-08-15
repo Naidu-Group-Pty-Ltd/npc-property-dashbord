@@ -1,3 +1,17 @@
+/**
+ * DEPLOYMENT: this function must keep `verify_jwt = false`.
+ *
+ * It is called from the browser, and a CORS preflight is an unauthenticated
+ * OPTIONS by specification. With the gateway check on, the gateway refuses the
+ * preflight before this file runs — 503 with its own wildcard headers — and the
+ * `createCorsHeaders(origin)` below never executes. Every call then fails as an
+ * opaque "Network/CORS error calling <fn>", which is what this function did
+ * from the day it shipped until 15 August 2026.
+ *
+ * Nothing is lost by turning it off: the gateway JWT was never the credential
+ * here. This app authenticates on the HttpOnly `__Host-session_token` cookie,
+ * which `verifyAuth` reads below, after `enforceCsrf`.
+ */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
 

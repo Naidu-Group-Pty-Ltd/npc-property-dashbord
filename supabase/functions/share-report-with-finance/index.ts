@@ -198,6 +198,19 @@ Deno.serve(async (req) => {
       return json({ error: recipientBlockMessage(reason) }, recipientBlockStatus(reason), corsHeaders);
     }
 
+    // Re-checked rather than asserted with `!`.
+    //
+    // `evaluateRecipient` returns `eligible: true` only past its own
+    // `if (!inputs.portalUser)` arm, so this is unreachable — but the compiler
+    // cannot see that through the module boundary, and `portalUser.id` is the
+    // identity every write below is scoped to. A non-null assertion would buy
+    // the same five errors' silence and give up the one check that still holds
+    // if that pure module's ordering ever changes.
+    if (!portalUser) {
+      return json({ error: recipientBlockMessage('no_portal_account') },
+        recipientBlockStatus('no_portal_account'), corsHeaders);
+    }
+
     // Repeated sends of the same generated report are idempotent for this
     // recipient.  The correlation key also protects notification fan-out.
     const safeName = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
