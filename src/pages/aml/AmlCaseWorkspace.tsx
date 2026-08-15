@@ -1,24 +1,38 @@
 /**
- * Full-page AML case workspace (directive §11, tri-portal Phase 3).
+ * Full-page AML case workspace — the ten-stage compliance journey.
  *
- * The authoritative processing surface for a single case: a persistent
- * header, a five-phase macro rail, five operator areas, the section the
- * operator chose, and a right rail contextual to that area.
+ * ── What an operator sees ─────────────────────────────────────────────
+ *   identity + risk + gate            persistent header
+ *   ten numbered journey stages       the primary navigation
+ *   one stage workspace at a time     the existing section components
+ *   live position · readiness ·       sticky right rail
+ *     attention · next action
+ *   Previous · Stage X of 10 · Next   footer
  *
- * ── What the redesign changed, and what it did not ────────────────────
- * The eleven sections are unchanged. Each still lives at the same
+ * ── What the journey changed, and what it did not ─────────────────────
+ * The twelve sections are unchanged. Each still lives at the same
  * `?section=` key, still mounts the same component, and still calls the
- * same server operations with the same server-side authorisation. What
- * changed is how much an operator has to read before they can act: the
- * eleven-item rail became five areas, the fourteen-pill progress strip
- * became five phases (the fourteen-step rail is untouched and still
- * canonical — it renders in Records → Timeline), and the Overview became
- * an operational summary instead of a wall of label/value cards.
+ * same server operations under the same server-side authorisation. What
+ * changed is that the operator no longer has to know the architecture to
+ * find them: the rail is the AML process, and each stage says whose move
+ * it is, what is blocking it, and where the work is done.
  *
- * Everything the Overview shows is derived, per render, by the pure
- * helpers in `src/lib/aml/workspaceViewModel.ts`. None of it is stored,
- * and none of it is an authority: the service gate is still moved only by
- * an explicit human decision recorded server-side.
+ * Two sections moved stage rather than section. Screening left the
+ * identity stage — identity evidence and a sanctions finding answer
+ * different questions and the directive is explicit that their meanings
+ * must not be merged — and both are still reachable at `?section=identity`
+ * and `?section=ownership` exactly as before.
+ *
+ * ── Nothing on this page is an authority ──────────────────────────────
+ * Everything the rail and the right rail show is derived, per render, by
+ * the pure helpers in `src/lib/aml/journeyModel.ts` and
+ * `src/lib/aml/workspaceViewModel.ts`. None of it is stored. Selecting a
+ * stage, or pressing Next, is a page turn: it moves no case stage, no
+ * verification outcome, no screening result, no decision, no service gate,
+ * no Passport version and no partner access. The service gate is still
+ * moved only by an explicit human decision recorded server-side, the
+ * Passport is still issued only by `aml-reliance issue_attestation`, and
+ * partner distribution readiness is still derived by the server.
  *
  * Rendered at /admin/aml/cases/:caseId behind `aml_v3_case_workspace`;
  * while the flag is off the route redirects to the legacy side-sheet deep
@@ -27,7 +41,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, Loader2, Lock, Minus,
+  AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, History, Loader2, Lock, Minus,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,16 +81,21 @@ import {
 } from "@/components/aml/CaseWorkspaceTabs";
 import { AmlLoadingState } from "@/components/aml/primitives";
 import {
-  AmlComplianceSummary, AmlConnectedPortals, AmlContextActionPanel, AmlNextActionCard,
+  AmlComplianceSummary, AmlConnectedPortals, AmlContextActionPanel, AmlJourneyFooter,
+  AmlJourneyRail, AmlJourneyStageHeader, AmlLivePositionRail, AmlNextActionCard,
   AmlOutstandingItems, AmlRecentActivity, AmlServiceReadinessCard, AmlWorkspaceHeader,
-  AmlWorkspaceNavigation, SECTION_LABELS,
+  MlroDecisionDossier, SECTION_LABELS,
 } from "@/components/aml/workspace";
 import { useAmlCaseSummary } from "@/lib/aml/useAmlCaseSummary";
 import {
-  areaForSection, AREA_SECTIONS, deriveAmlConnectedPortals, isWorkspaceSection,
-  WORKSPACE_SECTIONS, type AmlAttentionLevel, type AmlWorkspaceArea,
+  deriveAmlLivePosition, isJourneyStageId, JOURNEY_STAGES, sectionsForStage, stageForSection,
+  type AmlJourneyStageId,
+} from "@/lib/aml/journeyModel";
+import {
+  deriveAmlConnectedPortals, isWorkspaceSection, WORKSPACE_SECTIONS,
   type AmlWorkspaceSection as SectionKey,
 } from "@/lib/aml/workspaceViewModel";
+import { BLOCKER_TITLE, portalLabel, routeLabel, stateLabel } from "@/lib/aml/passport/distributionPresentation.pure";
 
 /**
  * Which sections a role may open. Unchanged from the previous rail:
@@ -99,6 +118,9 @@ const SECTION_VISIBILITY: Record<SectionKey, (a: { canInvestigate: boolean }) =>
   timeline: () => true,
 };
 
+/** The record surface sits beside the journey, not inside it. */
+const RECORD_SECTION: SectionKey = "timeline";
+
 
 export default function AmlCaseWorkspace() {
   const { caseId = "" } = useParams<{ caseId: string }>();
@@ -112,21 +134,56 @@ export default function AmlCaseWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // The selected section lives in the `section` URL parameter, so deep links
-  // work, a refresh keeps the section, and browser back/forward walks the
-  // sections the user visited. Overview is the unparameterised default.
-  const requestedSection = searchParams.get("section");
-  const section: SectionKey = isWorkspaceSection(requestedSection) ? requestedSection : "overview";
-  const setSection = (next: SectionKey) => {
-    if (next === section) return;
-    const params = new URLSearchParams(searchParams);
-    if (next === "overview") params.delete("section");
-    else params.set("section", next);
-    setSearchParams(params);
-  };
-
   const canWrite = access.canWrite;
   const canInvestigate = access.roles.has("analyst") || access.roles.has("reviewer") || access.roles.has("mlro");
+
+  const visibleSections = useMemo(
+    () =>
+      new Set<SectionKey>(
+        WORKSPACE_SECTIONS.filter((s) => SECTION_VISIBILITY[s]({ canInvestigate })),
+      ),
+    [canInvestigate],
+  );
+
+  /** A stage with no section this role may open is omitted from the rail. */
+  const visibleStages = useMemo(
+    () =>
+      new Set<AmlJourneyStageId>(
+        JOURNEY_STAGES.filter((id) => sectionsForStage(id).some((s) => visibleSections.has(s))),
+      ),
+    [visibleSections],
+  );
+
+  const firstSectionOf = useCallback(
+    (id: AmlJourneyStageId): SectionKey | null =>
+      sectionsForStage(id).find((s) => visibleSections.has(s)) ?? null,
+    [visibleSections],
+  );
+
+  // The selected section lives in the `section` URL parameter, so deep links
+  // work, a refresh keeps the section, and browser back/forward walks the
+  // sections the user visited. `?stage=` is accepted as an alias and resolves
+  // to that stage's first visible section. Overview is the default.
+  const requestedSection = searchParams.get("section");
+  const requestedStage = searchParams.get("stage");
+  const section: SectionKey = (() => {
+    if (isWorkspaceSection(requestedSection) && visibleSections.has(requestedSection)) {
+      return requestedSection;
+    }
+    if (isJourneyStageId(requestedStage) && visibleStages.has(requestedStage)) {
+      return firstSectionOf(requestedStage) ?? "overview";
+    }
+    return "overview";
+  })();
+
+  const setSection = (next: SectionKey) => {
+    const params = new URLSearchParams(searchParams);
+    params.delete("stage");
+    if (next === "overview") params.delete("section");
+    else params.set("section", next);
+    if (params.toString() === searchParams.toString()) return;
+    setSearchParams(params);
+  };
 
   const load = useCallback(async () => {
     if (!caseId) return;
@@ -158,11 +215,10 @@ export default function AmlCaseWorkspace() {
 
   /**
    * One batched wave of existing reads, fired once per case and shared by
-   * every Overview component. It replaces five self-fetching cards; the
-   * passport section and the full journey map now load only when somebody
-   * opens Records.
+   * every stage. It replaces five self-fetching cards; the heavy stage
+   * bodies still load their own detail only when their stage is opened.
    */
-  const { loading: summaryLoading, evidence, summary } = useAmlCaseSummary(
+  const { loading: summaryLoading, evidence, facts, summary, journey } = useAmlCaseSummary(
     caseRow,
     caseRow ? openRequests.length : undefined,
     {
@@ -170,30 +226,6 @@ export default function AmlCaseWorkspace() {
       canReadMatter: canInvestigate,
     },
   );
-
-  const visibleSections = useMemo(
-    () =>
-      new Set<SectionKey>(
-        WORKSPACE_SECTIONS.filter((s) => SECTION_VISIBILITY[s]({ canInvestigate })),
-      ),
-    [canInvestigate],
-  );
-
-  /** Advisory dots on the area rail — the ranked reading, grouped by area. */
-  const areaAttention = useMemo(() => {
-    const out: Partial<Record<AmlWorkspaceArea, AmlAttentionLevel>> = {};
-    const rank: Record<AmlAttentionLevel, number> = {
-      critical: 0, attention: 1, waiting: 2, steady: 3, none: 4,
-    };
-    const mark = (sectionKey: SectionKey, level: AmlAttentionLevel) => {
-      const area = areaForSection(sectionKey);
-      const current = out[area];
-      if (!current || rank[level] < rank[current]) out[area] = level;
-    };
-    mark(summary.nextAction.section, summary.nextAction.attention);
-    for (const item of summary.outstanding) mark(item.section, item.attention);
-    return out;
-  }, [summary]);
 
   const connectedPortals = useMemo(
     () =>
@@ -239,109 +271,191 @@ export default function AmlCaseWorkspace() {
   }
 
   const activation = (caseRow.metadata as any)?.activation;
-  const area = areaForSection(section);
-  // A section the current role may not open (a stale deep link, or a role
-  // change) falls back to the Overview rather than rendering nothing.
-  const resolvedSection: SectionKey = visibleSections.has(section) ? section : "overview";
+  const recordMode = section === RECORD_SECTION;
+  const activeStageId = recordMode ? null : stageForSection(section);
+  const activeStage =
+    journey.stages.find((s) => s.id === activeStageId) ??
+    journey.stages.find((s) => s.id === journey.currentStageId) ??
+    journey.stages[0];
+  const position = deriveAmlLivePosition(facts, journey);
+
+  // Previous / Next walk only the stages this role can actually open.
+  const walkable = journey.stages.filter((s) => visibleStages.has(s.id));
+  const walkIndex = walkable.findIndex((s) => s.id === activeStage.id);
+  const previousStage = walkIndex > 0 ? walkable[walkIndex - 1] : null;
+  const nextStage = walkIndex >= 0 && walkIndex < walkable.length - 1 ? walkable[walkIndex + 1] : null;
+  const goToStage = (id: AmlJourneyStageId) => {
+    const target = firstSectionOf(id);
+    if (target) setSection(target);
+  };
+
+  /** Sections inside the open stage, when it has more than one. */
+  const stageSections = activeStageId
+    ? sectionsForStage(activeStageId).filter((s) => visibleSections.has(s))
+    : [];
 
   return (
-    <div className="space-y-5">
-      {/* ── Persistent case header + five-phase macro rail ───────────── */}
-      <AmlWorkspaceHeader
-        caseRow={caseRow}
-        macro={summary.macro}
-        matterLabel={evidence.matterLabel}
-      />
+    <div className="space-y-4">
+      {/* ── Persistent case identity ──────────────────────────────────── */}
+      <AmlWorkspaceHeader caseRow={caseRow} matterLabel={evidence.matterLabel} />
 
-      {/* ── Body: area rail · section content · contextual rail ───────
-          At lg (1024px laptops) the rail and the content share the row so
-          the main column keeps a workable measure; the contextual rail
-          joins as a sticky third column from xl and drops to a full-width
-          row beneath the content below that. */}
-      <div className="grid gap-5 lg:grid-cols-[212px_minmax(0,1fr)] xl:grid-cols-[212px_minmax(0,1fr)_296px]">
-        <AmlWorkspaceNavigation
-          section={resolvedSection}
-          onSelectSection={setSection}
-          visibleSections={visibleSections}
-          sectionBadges={{ requests: openRequests.length }}
-          areaAttention={areaAttention}
-          className="lg:self-start"
+      {/* ── The journey: ten stages, plus the record surface beside them ─ */}
+      {/* On a phone the record button would eat a third of the rail, so it
+          drops to its own row there and rejoins the rail from `sm` up. */}
+      <div className="flex flex-col items-stretch gap-2 rounded-xl border border-border/60 bg-card/45 p-2 shadow-sm sm:flex-row">
+        <AmlJourneyRail
+          className="min-w-0 flex-1"
+          journey={journey}
+          activeStageId={activeStageId}
+          onSelectStage={goToStage}
+          visibleStages={visibleStages}
         />
+        <div className="flex shrink-0 items-center border-t border-border/60 pt-2 sm:border-l sm:border-t-0 sm:pl-2 sm:pt-0">
+          <Button
+            variant={recordMode ? "secondary" : "ghost"}
+            size="sm"
+            className="h-auto w-full gap-1.5 px-2 py-1.5 text-[11px] sm:w-auto sm:flex-col sm:gap-1"
+            aria-current={recordMode ? "page" : undefined}
+            onClick={() => setSection(RECORD_SECTION)}
+          >
+            <History aria-hidden className="h-4 w-4" />
+            Case record
+          </Button>
+        </div>
+      </div>
 
-        <main className="min-w-0 space-y-4" aria-label={`${SECTION_LABELS[resolvedSection]} section`}>
-          {resolvedSection === "overview" && (
+      {/* ── Body: the open stage, with the live position rail beside it ── */}
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <main
+          className="min-w-0 space-y-4"
+          aria-label={recordMode ? "Case record" : `${activeStage.label} stage`}
+        >
+          {recordMode ? (
+            <header>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Case record
+              </p>
+              <h2 className="mt-0.5 text-lg font-semibold tracking-tight sm:text-xl">
+                Timeline &amp; audit
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                The canonical fourteen-step rail and the hash-chained event history. Nothing here is
+                a journey stage — casework is done on the stages, and every one of them writes here.
+              </p>
+            </header>
+          ) : (
+            <AmlJourneyStageHeader
+              stage={activeStage}
+              totalStages={JOURNEY_STAGES.length}
+              onOpenSection={setSection}
+            />
+          )}
+
+          {/* A stage with more than one section gets a compact sub-rail
+              rather than stacking two heavy bodies — one workspace at a
+              time, and the section keys stay exactly as they were. */}
+          {stageSections.length > 1 && (
+            <div
+              role="tablist"
+              aria-label={`${activeStage.label} sections`}
+              className="flex flex-wrap gap-1 rounded-lg border border-border/60 bg-muted/25 p-1"
+            >
+              {stageSections.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={key === section}
+                  onClick={() => setSection(key)}
+                  className={cnStageTab(key === section)}
+                >
+                  {SECTION_LABELS[key]}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── Stage 1 · Activation ────────────────────────────────── */}
+          {section === "overview" && (
             <>
-              {/* 1 — the one dominant thing to do next. */}
+              <ActivationRecordCard caseRow={caseRow} activation={activation} />
               <AmlNextActionCard action={summary.nextAction} onOpenSection={setSection} />
-
-              {/* 2 & 4 — may the service proceed, and what else is open. */}
               <div className="grid items-start gap-4 md:grid-cols-2">
-                <AmlServiceReadinessCard readiness={summary.readiness} />
                 <AmlOutstandingItems items={summary.outstanding} onOpenSection={setSection} />
+                <AmlRecentActivity events={events} onOpenTimeline={() => setSection(RECORD_SECTION)} />
               </div>
-
-              {/* 3 — the evidence behind the position. */}
               <AmlComplianceSummary
                 summary={summary.compliance}
                 loading={summaryLoading}
                 onOpenSection={setSection}
               />
-
-              {/* 5 & 6 — recent activity, then the sharing position. */}
-              <div className="grid items-start gap-4 md:grid-cols-2">
-                <AmlRecentActivity events={events} onOpenTimeline={() => setSection("timeline")} />
-                <AmlConnectedPortals
-                  portals={connectedPortals}
-                  loading={summaryLoading}
-                  onOpenSharing={() => setSection("passport")}
-                />
-              </div>
-
-              {activation && (
-                <p className="text-xs text-muted-foreground">
-                  Activated {activation.activated_at ? displayDate(activation.activated_at) : ""} —{" "}
-                  {caseRow.activation_timing === "conditional_agreement"
-                    ? "compliance runs under a conditional agreement; the service unlocks when the gate is approved."
-                    : "the designated service trigger had occurred at activation."}
-                </p>
-              )}
+              <AmlConnectedPortals
+                portals={connectedPortals}
+                loading={summaryLoading}
+                onOpenSharing={() => setSection("passport")}
+              />
             </>
           )}
 
-          {resolvedSection === "identity" && (
+          {/* ── Stage 2 · Client intake ─────────────────────────────── */}
+          {section === "requests" && (
+            <div className="space-y-4">
+              <ClientIntakeCard caseRow={caseRow} consent={evidence.consent} requests={requests} />
+              {/* Consent evidence belongs with the client's own intake. */}
+              <ConsentEvidenceCard caseId={caseRow.id} />
+              <RequestsSection
+                caseId={caseRow.id}
+                requests={requests}
+                canWrite={canWrite}
+                onChanged={load}
+              />
+            </div>
+          )}
+
+          {/* ── Stage 3 · Documents & evidence ──────────────────────── */}
+          {section === "documents" && (
+            <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+          )}
+
+          {/* ── Stage 4 · Identity verification ─────────────────────── */}
+          {section === "identity" && (
             <div className="space-y-4">
               {/* ONE canonical identity-verification surface: per-party
                   attempts, processing state, document sightings and audited
                   biometric access. The legacy identity_checks history lives
                   in its own collapsed read-only panel below — there are no
-                  two competing primary actions.
-
-                  Identity and screening share this surface but never share a
-                  meaning: they are separate panels, separate evidence and
-                  separate adjudication. */}
+                  two competing primary actions. */}
               <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
               <PartyVerificationPanel caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
-              <PartyScreeningPanel caseId={caseRow.id} canWrite={canWrite} canAdjudicate={access.isMlro || access.roles.has("reviewer")} onChanged={load} />
               <LegacyVerificationHistoryPanel caseId={caseRow.id} />
-              <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
-              {/* Consent evidence belongs with the customer, not on the
-                  Overview where it competed with the next action. */}
-              <ConsentEvidenceCard caseId={caseRow.id} />
             </div>
           )}
 
-          {resolvedSection === "ownership" && (
-            <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+          {/* ── Stage 5 · Screening & ownership ─────────────────────── */}
+          {section === "ownership" && (
+            <div className="space-y-4">
+              {/* Identity and screening share a customer but never share a
+                  meaning: separate panels, separate evidence, separate
+                  adjudication. That is why screening is its own stage. */}
+              <PartyScreeningPanel
+                caseId={caseRow.id}
+                canWrite={canWrite}
+                canAdjudicate={access.isMlro || access.roles.has("reviewer")}
+                onChanged={load}
+              />
+              <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
+              <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+            </div>
           )}
 
-          {resolvedSection === "counterparty" && canInvestigate && (
+          {/* ── Stage 6 · Funding & transaction ─────────────────────── */}
+          {section === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
+          {section === "counterparty" && canInvestigate && (
             <PurchaseCounterpartySection caseRow={caseRow} canWrite={canWrite} />
           )}
-          {resolvedSection === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
-          {resolvedSection === "documents" && (
-            <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
-          )}
-          {resolvedSection === "submission-review" && (
+
+          {/* ── Stage 7 · Submission review ─────────────────────────── */}
+          {section === "submission-review" && (
             <SubmissionReviewPanel
               caseId={caseRow.id}
               canWrite={canWrite}
@@ -350,65 +464,330 @@ export default function AmlCaseWorkspace() {
             />
           )}
 
-          {resolvedSection === "risk" && (
-            <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+          {/* ── Stage 8 · Risk & MLRO decision ──────────────────────── */}
+          {section === "risk" && (
+            <div className="space-y-4">
+              <MlroDecisionDossier
+                facts={facts}
+                readiness={summary.readiness}
+                events={events}
+                onOpenSection={setSection}
+              />
+              <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+            </div>
           )}
 
-          {resolvedSection === "requests" && (
-            <RequestsSection
-              caseId={caseRow.id}
-              requests={requests}
-              canWrite={canWrite}
-              onChanged={load}
-            />
-          )}
-          {resolvedSection === "passport" && (
+          {/* ── Stage 9 · Service gate & Passport ───────────────────── */}
+          {section === "passport" && (
             <div className="space-y-4">
+              <AmlServiceReadinessCard readiness={summary.readiness} />
               {/* The full journey map keeps its place in the product — it
-                  now sits where sharing is worked on rather than at the top
-                  of every case. */}
+                  sits where the credential is worked on. */}
               <ComplianceJourneyMap caseRow={caseRow} />
               <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
             </div>
           )}
-          {resolvedSection === "monitoring" && canInvestigate && (
-            <MonitoringReviewsSection
-              caseId={caseRow.id}
-              canWrite={canWrite}
-              isReviewer={access.roles.has("reviewer") || access.isMlro}
-              onChanged={load}
-            />
-          )}
-          {resolvedSection === "timeline" && (
+
+          {/* ── Stage 10 · Partners & ongoing CDD ───────────────────── */}
+          {section === "monitoring" && canInvestigate && (
             <div className="space-y-4">
-              {/* The canonical fourteen-step rail, in full. The five-phase
-                  header rail is a map over this; this is the territory. */}
+              <PartnerDistributionCard passport={evidence.passport} loading={summaryLoading} />
+              <MonitoringReviewsSection
+                caseId={caseRow.id}
+                canWrite={canWrite}
+                isReviewer={access.roles.has("reviewer") || access.isMlro}
+                onChanged={load}
+              />
+            </div>
+          )}
+
+          {/* ── The record surface ──────────────────────────────────── */}
+          {recordMode && (
+            <div className="space-y-4">
+              {/* The canonical fourteen-step rail, in full. The journey rail
+                  is a map over this; this is the territory. */}
               <DetailedProcessRail caseRow={caseRow} />
               <TimelineTab caseId={caseRow.id} events={events} canInvestigate={canInvestigate} />
               <AuditTab events={events} />
             </div>
           )}
+
+          {!recordMode && (
+            <AmlJourneyFooter
+              stage={activeStage}
+              position={walkIndex + 1}
+              total={walkable.length}
+              previousLabel={previousStage?.shortLabel ?? null}
+              nextLabel={nextStage?.shortLabel ?? null}
+              onPrevious={() => previousStage && goToStage(previousStage.id)}
+              onNext={() => nextStage && goToStage(nextStage.id)}
+            />
+          )}
         </main>
 
-        <aside
-          className="space-y-4 lg:col-span-2 xl:col-span-1 xl:sticky xl:top-4 xl:self-start"
-          aria-label="Case actions"
-        >
+        <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start" aria-label="Case position and actions">
+          <AmlLivePositionRail
+            position={position}
+            stage={activeStage}
+            nextAction={summary.nextAction}
+            attention={summary.outstanding}
+            riskLabel={caseRow.risk_rating ? caseRow.risk_rating.toUpperCase() : "Unrated"}
+            // Stage 1 shows both at full width; anywhere else the rail is
+            // the only place they appear.
+            showAttention={section !== "overview"}
+            showNextAction={section !== "overview"}
+            onOpenSection={setSection}
+          />
           <AmlContextActionPanel
             caseRow={caseRow}
-            section={resolvedSection}
-            nextAction={summary.nextAction}
-            readiness={summary.readiness}
-            outstanding={summary.outstanding}
-            visibleSections={visibleSections}
             canWrite={canWrite}
             isMlro={access.isMlro}
             onChanged={load}
-            onOpenSection={setSection}
           />
         </aside>
       </div>
     </div>
+  );
+}
+
+/** Sub-rail tab treatment, kept out of the JSX for readability. */
+function cnStageTab(active: boolean): string {
+  return [
+    "rounded-md px-3 py-1.5 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+    active
+      ? "bg-background font-semibold text-foreground shadow-sm"
+      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+  ].join(" ");
+}
+
+/* ------------------------------------------------------------------ */
+/* Stage 1 — the activation record                                     */
+/* ------------------------------------------------------------------ */
+
+const ACTIVATION_TIMING_LABELS: Record<string, string> = {
+  post_agreement_trigger: "At service trigger — agreement in place",
+  conditional_agreement: "Before service — conditional agreement",
+};
+
+const AGREEMENT_STATE_LABELS: Record<string, string> = {
+  operative: "Operative",
+  conditional_executed: "Conditional (executed)",
+  not_executed: "Not executed",
+  terminated: "Terminated",
+};
+
+function ActivationRecordCard({
+  caseRow, activation,
+}: { caseRow: AmlCase; activation: any }) {
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Activation record
+        </p>
+        {activation ? (
+          <>
+            <dl className="mt-2 grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-4">
+              <ActivationField label="Model" value={activation.model ? `Model ${activation.model}` : "—"} />
+              <ActivationField label="Trigger" value={activation.event ?? "—"} />
+              <ActivationField label="Confirmed by" value={activation.activated_by_email ?? "—"} />
+              <ActivationField label="Activated" value={displayDateTime(activation.activated_at)} />
+            </dl>
+            <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-1.5 text-xs">
+              {caseRow.activation_timing && (
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <dt className="text-muted-foreground">Timing</dt>
+                  <dd>{ACTIVATION_TIMING_LABELS[caseRow.activation_timing] ?? caseRow.activation_timing}</dd>
+                </div>
+              )}
+              {caseRow.agreement_state && (
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <dt className="text-muted-foreground">Agreement</dt>
+                  <dd>{AGREEMENT_STATE_LABELS[caseRow.agreement_state] ?? caseRow.agreement_state}</dd>
+                </div>
+              )}
+              {activation.program_version && (
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <dt className="text-muted-foreground">Program version</dt>
+                  <dd className="font-mono">{activation.program_version}</dd>
+                </div>
+              )}
+            </dl>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">
+            No activation metadata recorded. This case predates the activation contract; its
+            history and evidence are unaffected.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ActivationField({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="min-w-0 border-b border-border/40 py-2.5">
+      <dt className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-1 break-words text-sm leading-snug">{value}</dd>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Stage 2 — what the client has been asked for, and where they are    */
+/* ------------------------------------------------------------------ */
+
+const CLIENT_PORTAL_LABELS: Record<string, string> = {
+  not_started: "Not started",
+  action_required: "Action required",
+  in_progress: "In progress",
+  submitted: "Submitted",
+  under_review: "Under review",
+  additional_info_required: "Information requested",
+  complete: "Complete",
+  contact_adviser: "Asked to contact adviser",
+};
+
+/**
+ * The client's side of the case, in one place: where they are, whether the
+ * consents are in, and what we have asked for. Every value is read from the
+ * case row, the consent catalogue and the existing client-request records —
+ * nothing here is a second store, and nothing here is shown to the client.
+ */
+function ClientIntakeCard({
+  caseRow, consent, requests,
+}: {
+  caseRow: AmlCase;
+  consent: { satisfied: boolean; outstanding: string[] } | null;
+  requests: any[];
+}) {
+  const portal = String(caseRow.client_portal_status ?? "not_started");
+  const open = requests.filter((r) => r.status === "open" || r.status === "responded");
+  const responded = requests.filter((r) => r.status === "responded");
+  const latest = [...requests].sort((a, b) =>
+    String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))[0];
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Client position
+        </p>
+        <dl className="mt-2 grid grid-cols-1 gap-x-8 sm:grid-cols-2 xl:grid-cols-4">
+          <ActivationField label="Onboarding" value={CLIENT_PORTAL_LABELS[portal] ?? portal} />
+          <ActivationField
+            label="Consents"
+            value={
+              consent === null
+                ? "Not available"
+                : consent.satisfied
+                  ? "Accepted"
+                  : `${consent.outstanding.length || "Some"} outstanding`
+            }
+          />
+          <ActivationField
+            label="Open requests"
+            value={`${open.length}${responded.length > 0 ? ` · ${responded.length} answered` : ""}`}
+          />
+          <ActivationField
+            label="Latest request"
+            value={latest ? `${latest.subject ?? "Request"} · ${displayDate(latest.created_at)}` : "None sent"}
+          />
+        </dl>
+        <p className="mt-3 border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+          The client sees only the plain-English request wording recorded below — never a risk
+          rating, a screening reason or an internal note.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Stage 10 — who may receive the Passport, exactly as the server says  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Partner distribution readiness. Every field — the state, the route, the
+ * blockers — is derived by `aml-reliance` and rendered verbatim. The browser
+ * does not recompute eligibility, and this card carries no share control:
+ * distribution is performed on the dedicated Compliance Passport page, which
+ * calls the server-authorised operation and re-derives readiness first.
+ */
+function PartnerDistributionCard({
+  passport, loading,
+}: {
+  passport: import("@/lib/aml/useAmlCaseSummary").AmlCaseEvidence["passport"];
+  loading: boolean;
+}) {
+  if (loading && !passport) {
+    return <AmlLoadingState variant="spinner" label="Reading partner readiness…" />;
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Partner distribution
+          </p>
+          <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs">
+            <Link to="/admin/aml/passport">Open the Compliance Passport</Link>
+          </Button>
+        </div>
+
+        {!passport ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Partner readiness could not be read. Treat it as unknown rather than as blocked.
+          </p>
+        ) : passport.enabled === false ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Passport distribution is not enabled for this deployment.
+          </p>
+        ) : (passport.partners ?? []).length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            No partner organisation is linked to this case, so there is nothing to distribute yet.
+          </p>
+        ) : (
+          <ul className="mt-2 divide-y divide-border/50">
+            {(passport.partners ?? []).map((p, i) => (
+              <li key={p.partner?.org_id ?? i} className="py-2.5 first:pt-0">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="min-w-0 text-sm font-medium">
+                    {p.partner?.org_name ?? "Partner organisation"}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {stateLabel(String(p.state ?? ""))}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {portalLabel(p.partner?.portal_type)}
+                  {p.legal_route ? ` · ${routeLabel(p.legal_route)}` : ""}
+                </p>
+                {(p.blockers ?? []).length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {(p.blockers ?? []).map((code) => (
+                      <li key={code} className="text-xs text-muted-foreground">
+                        — {BLOCKER_TITLE[code as keyof typeof BLOCKER_TITLE] ?? code}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <p className="mt-3 border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground">
+          Readiness is decided by the server on every read. A partner receives only the
+          audience-authorised credential and evidence classes — never internal risk, screening
+          reasoning or decision rationale.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

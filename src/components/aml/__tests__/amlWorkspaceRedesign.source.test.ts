@@ -17,6 +17,7 @@ const repo = process.cwd();
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
 const viewModel = read("src/lib/aml/workspaceViewModel.ts");
+const journeyModel = read("src/lib/aml/journeyModel.ts");
 const summaryHook = read("src/lib/aml/useAmlCaseSummary.ts");
 const workspace = read("src/pages/aml/AmlCaseWorkspace.tsx");
 const register = read("src/pages/aml/AmlCases.tsx");
@@ -257,30 +258,126 @@ describe("presentation discipline", () => {
   it("marks status with words as well as tone — no colour-only meaning", () => {
     // Every attention level maps to a label, not just a class.
     expect(viewModel).toContain("EVIDENCE_STATE_LABELS");
-    const nav = componentFiles.find((f) => f.name === "AmlWorkspaceNavigation.tsx")!.source;
-    expect(nav).toContain('aria-label={level === "critical"');
-    const macro = componentFiles.find((f) => f.name === "AmlMacroProgress.tsx")!.source;
-    expect(macro).toContain("STATE_DESCRIPTION");
-    expect(macro).toContain('className="sr-only"');
+    // The journey rail replaced the area rail and the five-phase macro rail.
+    // It carries the same guarantee those two did: every step states its
+    // status in words a screen reader can read, not only in a tone.
+    const rail = componentFiles.find((f) => f.name === "AmlJourneyRail.tsx")!.source;
+    expect(rail).toContain("function statusSentence");
+    expect(rail).toContain("EVIDENCE_STATE_LABELS");
+    expect(rail).toContain('className="sr-only"');
+    expect(rail).toContain('aria-current={active ? "step" : undefined}');
+    const stageHeader = componentFiles.find((f) => f.name === "AmlJourneyStageHeader.tsx")!.source;
+    expect(stageHeader).toContain("EVIDENCE_STATE_LABELS");
+    expect(stageHeader).toContain("stage.ownerLabel");
   });
 });
 
 describe("no database change was needed", () => {
   it("no migration persists a derived reading", () => {
-    // The next action, the macro phase and the attention level are computed
-    // per render. If any of them ever acquires a column, it has become a
-    // source of truth — which is the one thing this redesign may not do.
-    // Scoped to the AML schema: an unrelated `next_action` on a finance
-    // portal valuations table predates all of this and is not ours.
+    // The next action, the macro phase, the journey stage and the attention
+    // level are computed per render. If any of them ever acquires a column,
+    // it has become a source of truth — which is the one thing this
+    // architecture may not do. Scoped to the AML schema: an unrelated
+    // `next_action` on a finance portal valuations table predates all of
+    // this and is not ours.
     const offenders = readdirSync(join(repo, "supabase/migrations"))
       .filter((f) => f.endsWith(".sql"))
       .filter((f) => {
         const sql = read(`supabase/migrations/${f}`);
         return (
           /\baml\./i.test(sql) &&
-          /\b(next_action|macro_phase|case_attention|attention_level|service_readiness)\b/i.test(sql)
+          /\b(next_action|macro_phase|case_attention|attention_level|service_readiness|journey_stage|current_stage)\b/i.test(sql)
         );
       });
     expect(offenders).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The ten-stage journey                                               */
+/* ------------------------------------------------------------------ */
+
+describe("the journey model is pure and cannot become an authority", () => {
+  it("fetches nothing and references no API client", () => {
+    expect(journeyModel).not.toMatch(/supabase|invokeSecureFunction|invokeAmlFunction|\bfetch\(/);
+    expect(journeyModel).not.toMatch(/\baml\w*Api\./);
+    // No React at all: it is a pure module, not a hook.
+    expect(journeyModel).not.toMatch(/\buse(State|Effect|Memo|Callback)\b/);
+  });
+
+  it("declares itself presentation-only where a reader will see it", () => {
+    expect(journeyModel).toContain("It never fetches");
+    expect(journeyModel).toContain("It never persists");
+    expect(journeyModel).toContain("It never decides");
+    expect(journeyModel).toContain("It never invents");
+  });
+
+  it("has no stored stage — the reading is recomputed per render", () => {
+    for (const source of [journeyModel, workspace]) {
+      expect(source).not.toMatch(/current_stage['"\s]*[:=]/);
+      expect(source).not.toMatch(/journey_stage['"\s]*[:=]/);
+    }
+  });
+
+  it("reuses the existing status vocabulary instead of forking a second one", () => {
+    // `status` is `AmlEvidenceState`, the vocabulary the compliance summary
+    // already uses. A parallel journey-status union would have to be kept in
+    // step with it for ever, and would drift.
+    expect(journeyModel).toContain("status: AmlEvidenceState");
+    expect(journeyModel).toContain("EVIDENCE_STATE_LABELS");
+    expect(journeyModel).not.toMatch(/JOURNEY_STATUSES\s*=/);
+  });
+
+  it("reads the Passport state the server derived and never derives one", () => {
+    // `derivePassportState` runs in the edge function. A browser-side copy
+    // is exactly the two-truths bug the Passport architecture exists to
+    // prevent, so neither the model nor the workspace may call it.
+    for (const source of [journeyModel, workspace, ...componentFiles.map((f) => f.source)]) {
+      expect(source).not.toMatch(/derivePassportState/);
+    }
+    expect(journeyModel).toContain("facts.passport.state?.code");
+  });
+
+  it("never lets navigation change state — the stage rail and footer mutate nothing", () => {
+    const journeyComponents = componentFiles.filter((f) =>
+      /^(AmlJourney|AmlLivePositionRail|MlroDecisionDossier)/.test(f.name),
+    );
+    expect(journeyComponents.length).toBeGreaterThanOrEqual(4);
+    for (const { name, source } of journeyComponents) {
+      expect(/aml\w*Api\./.test(source), `${name} must not call an API`).toBe(false);
+    }
+  });
+
+  it("the MLRO dossier consolidates by reference and states that it is not a decision", () => {
+    const dossier = componentFiles.find((f) => f.name === "MlroDecisionDossier.tsx")!.source;
+    expect(dossier).toContain("BY REFERENCE");
+    expect(dossier).toContain("It is not a decision");
+    // It names the canonical source of every group it renders.
+    expect(dossier).toContain("source:");
+    // An unread stream is called out rather than counted as satisfied.
+    expect(dossier).toContain("Unknown is not");
+  });
+
+  it("the readiness meter is never presented as a clearance", () => {
+    const rail = componentFiles.find((f) => f.name === "AmlLivePositionRail.tsx")!.source;
+    expect(rail).toMatch(/evidence, not a clearance/i);
+    expect(rail).toContain("explicit service-gate decision");
+  });
+});
+
+describe("the journey adds no server surface", () => {
+  it("the two new reads are existing operations on existing typed clients", () => {
+    expect(summaryHook).toContain("amlCasesApi.consentStatus(");
+    expect(summaryHook).toContain("amlRelianceApi.getPassportDistributionStatus(");
+    // Still no direct transport of any kind.
+    expect(summaryHook).not.toMatch(/supabase|invokeSecureFunction|invokeAmlFunction|\bfetch\(/);
+  });
+
+  it("partner distribution stays server-decided — the workspace ships no share control", () => {
+    // Distribution is performed on the dedicated Passport page, which
+    // re-derives readiness server-side first. A share button here would be
+    // a second path with a browser-side idea of eligibility.
+    expect(workspace).not.toMatch(/sharePassportTo(Partner|Partners)\(/);
+    expect(workspace).not.toMatch(/issueAttestation\(|grantAccess\(/);
   });
 });

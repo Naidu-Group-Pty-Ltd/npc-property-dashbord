@@ -34,17 +34,21 @@ import { amlTransactionsApi } from "./amlTransactionsApi";
 import { amlVerificationApi } from "./amlVerificationApi";
 import {
   deriveAmlWorkspaceSummary,
+  type AmlConsentFacts,
   type AmlDocumentFacts,
   type AmlFundingFacts,
   type AmlGateFacts,
   type AmlIdentityFacts,
   type AmlMonitoringFacts,
   type AmlOwnershipFacts,
+  type AmlPassportFacts,
   type AmlScreeningFacts,
+  type AmlTransactionFacts,
   type AmlWorkspaceCaseFacts,
   type AmlWorkspaceFacts,
   type AmlWorkspaceSummary,
 } from "./workspaceViewModel";
+import { deriveAmlJourney, type AmlJourney } from "./journeyModel";
 
 export interface AmlCaseEvidence {
   identity: AmlIdentityFacts | null;
@@ -56,6 +60,15 @@ export interface AmlCaseEvidence {
   funding: AmlFundingFacts | null;
   grants: RelianceGrant[] | null;
   assessments: IndependentAssessment[] | null;
+  /** The AUSTRAC-referenced consent catalogue's acceptance state. */
+  consent: AmlConsentFacts | null;
+  /**
+   * Passport state and partner distribution readiness, exactly as the server
+   * derives them. `null` = the read was unavailable (disabled, unauthorised,
+   * or failed) and reads as "not available" everywhere downstream.
+   */
+  passport: AmlPassportFacts | null;
+  transactions: AmlTransactionFacts | null;
   /**
    * The matter line for the case header. Only read for roles that could
    * already open Purchase & counterparty — the visibility boundary is
@@ -74,6 +87,9 @@ const EMPTY_EVIDENCE: AmlCaseEvidence = {
   funding: null,
   grants: null,
   assessments: null,
+  consent: null,
+  passport: null,
+  transactions: null,
   matterLabel: null,
 };
 
@@ -83,6 +99,8 @@ export interface AmlCaseSummaryResult {
   evidence: AmlCaseEvidence;
   facts: AmlWorkspaceFacts;
   summary: AmlWorkspaceSummary;
+  /** The ten-stage operational reading of the same facts. */
+  journey: AmlJourney;
   refresh: () => Promise<void>;
 }
 
@@ -128,6 +146,8 @@ export function useAmlCaseSummary(
         grants,
         assessments,
         transactions,
+        consent,
+        passport,
       ] = await Promise.all([
         soft(() => amlVerificationApi.listVerificationChecks(caseId)),
         soft(() => amlCasesApi.listPartyScreening(caseId)),
@@ -141,6 +161,11 @@ export function useAmlCaseSummary(
         canReadMatter
           ? soft(() => amlTransactionsApi.listTransactions(caseId))
           : Promise.resolve(null),
+        soft(() => amlCasesApi.consentStatus(caseId)),
+        // Passport state AND partner readiness in one server-derived read.
+        // Flag-gated and role-gated server-side; a refusal lands as `null`
+        // and reads as "not available", never as "not ready".
+        soft(() => amlRelianceApi.getPassportDistributionStatus(caseId)),
       ]);
       if (mine !== seq.current) return;
 
@@ -158,6 +183,36 @@ export function useAmlCaseSummary(
         funding: sof ? { sources: sof.items ?? [] } : null,
         grants: grants?.grants ?? null,
         assessments: assessments?.assessments ?? null,
+        consent: consent
+          ? {
+              satisfied: Boolean(consent.satisfied),
+              // The catalogue returns `{ code, title }`; the journey reads
+              // titles, and a title is what an operator would say out loud.
+              outstanding: (consent.outstanding ?? []).map((o) => o.title ?? o.code),
+              version: consent.version ?? null,
+            }
+          : null,
+        passport: passport
+          ? {
+              enabled: passport.enabled !== false,
+              state: passport.passport?.state ?? null,
+              version: passport.passport?.version ?? null,
+              issued_at: passport.passport?.issued_at ?? null,
+              partners: (passport.partners ?? []).map((p) => ({
+                partner: {
+                  org_id: p.partner?.org_id ?? null,
+                  org_name: p.partner?.org_name ?? null,
+                  portal_type: p.partner?.portal_type ?? null,
+                },
+                state: p.state ?? null,
+                ready: p.ready,
+                blockers: p.blockers ?? [],
+                legal_route: p.legal_route ?? null,
+              })),
+              summary: passport.summary ?? null,
+            }
+          : null,
+        transactions: transactions ? { transactions: transactions.transactions ?? [] } : null,
         matterLabel: matter?.property_address ?? matter?.reference ?? null,
       });
     } finally {
@@ -185,12 +240,18 @@ export function useAmlCaseSummary(
       documents: evidence.documents,
       ownership: evidence.ownership,
       funding: evidence.funding,
+      activation: ((caseRow as { metadata?: { activation?: unknown } } | null)?.metadata
+        ?.activation ?? null) as AmlWorkspaceFacts["activation"],
+      consent: evidence.consent,
+      transactions: evidence.transactions,
+      passport: evidence.passport,
     }),
     // `fallbackCase` is a constant literal, so it is intentionally not a dep.
     [caseRow, openClientRequests, evidence],
   );
 
   const summary = useMemo(() => deriveAmlWorkspaceSummary(facts), [facts]);
+  const journey = useMemo(() => deriveAmlJourney(facts), [facts]);
 
-  return { loading, evidence, facts, summary, refresh: load };
+  return { loading, evidence, facts, summary, journey, refresh: load };
 }
