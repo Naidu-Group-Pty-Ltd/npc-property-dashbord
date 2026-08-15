@@ -223,6 +223,17 @@ export const amlCasesApi = {
     invoke<{ requirements: any[] }>({ op: "list_requirements", case_id }),
   seedDefaultRequirements: (case_id: string) =>
     invoke<{ requirements: any[] }>({ op: "seed_default_requirements", case_id }),
+  /**
+   * Rename a document for review.
+   *
+   * Presentation only: `filename` is preserved as the record of what
+   * arrived, and no relationship moves — the document's case, requirement,
+   * client and Passport bindings are untouched. An empty name clears the
+   * override and the document shows its requirement again.
+   */
+  renameDocument: (document_id: string, display_name: string) =>
+    invoke<{ document: any }>({ op: "rename_document", document_id, display_name }),
+
   listDocuments: (case_id: string) =>
     invoke<{ documents: any[] }>({ op: "list_documents", case_id }),
   getDocumentDownloadUrl: (document_id: string) =>
