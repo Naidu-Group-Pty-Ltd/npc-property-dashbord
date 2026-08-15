@@ -282,10 +282,19 @@ export interface AmlTransactionFacts {
  * deployment — materially different from "the Passport is not ready".
  */
 export interface AmlPassportFacts {
+  /**
+   * Whether PARTNER DISTRIBUTION is switched on for this deployment. It says
+   * nothing about the credential: the server returns the real passport state
+   * either way, and reading the state only when distribution is enabled
+   * reports "not available" for a Passport whose state is perfectly well
+   * known. `undefined` = the state was recovered from the projection, which
+   * does not describe distribution at all.
+   */
   enabled?: boolean;
   state?: { code?: string | null; label?: string | null; tone?: string | null } | null;
   version?: number | null;
   issued_at?: string | null;
+  /** `undefined` = not read (absent), `[]` = read and genuinely none. */
   partners?: Array<{
     partner?: { org_id?: string | null; org_name?: string | null; portal_type?: string | null } | null;
     state?: string | null;
