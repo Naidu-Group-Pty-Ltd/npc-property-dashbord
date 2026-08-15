@@ -63,13 +63,27 @@ export default function Auth() {
 
   const [deviceLimit, setDeviceLimit] = useState<DeviceLimitInfo | null>(null);
 
+  // The spinner below exists only to stop the form flashing in front of someone
+  // who is already signed in — it is a courtesy, never a precondition. Sign-in
+  // itself needs nothing from the session probe, so after a short grace period
+  // the form is shown regardless of how that probe is getting on. Without this,
+  // every future stall anywhere in `AuthProvider` becomes a login page that
+  // never arrives; the redirect for a valid session still fires from the effect
+  // below whenever the probe does answer.
+  const [graceElapsed, setGraceElapsed] = useState(false);
+
   const clearTurnstileToken = useCallback(() => setTurnstileToken(null), []);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => setGraceElapsed(true), 2500);
+    return () => window.clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     if (user) navigate('/', { replace: true });
   }, [user, navigate]);
 
-  if (loading) {
+  if (loading && !graceElapsed) {
     return (
       <div className="aurixa-aurora-bg min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
