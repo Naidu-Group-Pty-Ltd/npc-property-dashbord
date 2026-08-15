@@ -285,6 +285,8 @@ export interface StockSourceImageRepair {
   package_unreachable: number;
   /** The run was budgeted out; asking again continues where it stopped. */
   incomplete: boolean;
+  /** Stage-1 rows whose origin could not be proven, refused for display. */
+  demoted: number;
   primary_updated: number;
   error: string | null;
 }
@@ -301,7 +303,10 @@ export function useRecoverStockSourceImages() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (uploadId?: string) =>
-      invoke<{ results: StockSourceImageRepair[] }>({
+      invoke<{
+        results: StockSourceImageRepair[];
+        primaries: { inspected: number; cleared: number; corrected: number };
+      }>({
         operation: 'reprocess_source_images',
         ...(uploadId ? { upload_id: uploadId } : {}),
       }),

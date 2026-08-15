@@ -29,6 +29,15 @@ import {
   MAX_SOURCE_IMAGE_BYTES, sourceImageObjectPath, validateSourceImageBytes,
   type SourceImageAsset,
 } from './sourceAssets.pure.ts';
+import { sha256Hex } from './rasterPng.ts';
+
+/**
+ * Bumped when what we record about an image's origin changes.
+ *
+ * A row written before provenance was recorded cannot prove where its picture
+ * came from, so the repair re-derives it rather than trusting the label.
+ */
+export const PROVENANCE_VERSION = 2;
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {
@@ -121,6 +130,14 @@ export async function storeSourceImages(
           origin: asset.origin,
           fetched_from_host: hostOf(finalUrl),
           snapshotted: true,
+          // The bytes are stored exactly as the source served them, so one
+          // hash answers both "what did the builder supply" and "what are we
+          // serving".
+          source_sha256: await sha256Hex(bytes),
+          stored_sha256: await sha256Hex(bytes),
+          extraction_method: 'downloaded_asset',
+          transformation: null,
+          provenance_version: PROVENANCE_VERSION,
         },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 
@@ -132,15 +149,14 @@ export async function storeSourceImages(
       outcome.problems.push({ reference, reason });
 
       /**
-       * Recorded rather than dropped. The source said this property has a
-       * render; that we could not bring it inside is a fact worth keeping.
+       * Recorded rather than dropped, and NEVER as something displayable.
        *
-       * An ordinary published URL still stands as a link — a browser can load
-       * what a server-side fetch was refused — but an expiring one never
-       * does, because it would put a broken image on a client's page weeks
-       * later instead of falling back honestly now.
+       * A link we could not fetch is a picture whose bytes we do not hold and
+       * cannot hash, so it cannot be shown as the builder's exact image — the
+       * URL is kept for the audit trail and the stage stays `failed`, which
+       * leaves the card in its no-image state rather than hot-linking
+       * somebody else's server and calling it provenance.
        */
-      const keepAsLink = asset.linkFallback && /^https?:\/\//i.test(asset.url);
       await db.from('builder_stock_item_images').upsert({
         stock_item_id: input.stockItemId,
         upload_id: input.uploadId,
@@ -149,13 +165,17 @@ export async function storeSourceImages(
         source_reference: reference,
         source_provider: asset.provider,
         source_page_url: asset.pageUrl,
-        external_url: keepAsLink ? asset.url : null,
+        external_url: asset.url.slice(0, 1500),
         verification_status: 'source_supplied',
-        confidence: keepAsLink ? 1 : null,
-        processing_status: keepAsLink ? 'ready' : 'failed',
+        confidence: null,
+        processing_status: 'failed',
         error_message: reason,
         position: asset.position,
-        source_detail: { origin: asset.origin, snapshotted: false },
+        source_detail: {
+          origin: asset.origin,
+          snapshotted: false,
+          provenance_version: PROVENANCE_VERSION,
+        },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' }).then(
         () => undefined,
         () => undefined,
@@ -220,10 +240,35 @@ export async function storeSourceImageBytes(
     processing_status: 'ready',
     error_message: null,
     position: input.position,
-    source_detail: { origin: input.origin, snapshotted: true, ...(input.detail ?? {}) },
+    source_detail: {
+      origin: input.origin,
+      snapshotted: true,
+      provenance_version: PROVENANCE_VERSION,
+      ...(input.detail ?? {}),
+    },
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 
   return true;
+}
+
+/**
+ * Demote a stage-1 row that this run could NOT prove belongs to the property.
+ *
+ * The row is kept — audit history is never deleted — but it stops being
+ * something the marketplace may show, because the only images allowed on a
+ * Builder Stock card are ones whose source we can point at.
+ */
+export async function demoteUnprovenSourceImage(
+  db: any,
+  input: { stockItemId: string; imageId: string; reason: string },
+): Promise<void> {
+  await db.from('builder_stock_item_images')
+    .update({
+      processing_status: 'unavailable',
+      error_message: input.reason,
+    })
+    .eq('id', input.imageId)
+    .eq('stock_item_id', input.stockItemId);
 }
 
 function hostOf(rawUrl: string): string | null {
@@ -241,13 +286,20 @@ function hostOf(rawUrl: string): string | null {
  * has nothing to gain from a Street View of the same lot, and every provider
  * call is billed to somebody.
  */
-export async function hasReadySourceImage(db: any, stockItemId: string): Promise<boolean> {
+export async function hasReadySourceImage(
+  db: any,
+  stockItemId: string,
+  /** Only count a row whose origin is recorded to at least this standard. */
+  minimumProvenanceVersion = 0,
+): Promise<boolean> {
   const { data } = await db
     .from('builder_stock_item_images')
-    .select('id, storage_path, external_url')
+    .select('id, storage_path, external_url, source_detail')
     .eq('stock_item_id', stockItemId)
     .eq('source_stage', 'uploaded_document')
     .eq('processing_status', 'ready')
     .limit(20);
-  return (data ?? []).some((row: any) => row.storage_path || row.external_url);
+  return (data ?? []).some((row: any) =>
+    (row.storage_path || row.external_url)
+    && Number((row.source_detail ?? {}).provenance_version ?? 0) >= minimumProvenanceVersion);
 }
