@@ -110,7 +110,8 @@ const REPO = resolve(__dirname, '../..');
  * | maybe — 40 templates in the NPC voices | `20260803090000_seed_template_library_v3.sql` |
  * | yes — 93: the voices plus 50 Investment Compass masters | `20260811120000_seed_template_library_v4_investment_compass.sql` |
  * | yes — 543: every format's masters | `20260812090000_seed_template_library_v5_borrowing_capacity_portfolio.sql` |
- * | not yet — 543, with the binding fixes below | the one below |
+ * | yes — 543, with the date and conditional fixes | `20260815150000_seed_template_library_v6_binding_fixes.sql` |
+ * | not yet — 543, with the voice templates' disclaimer bound too | the one below |
  *
  * v4 was a new file rather than an edit of v3 because it added rows and wrote a
  * column (`design_meta`) that v3 did not know about.
@@ -147,12 +148,28 @@ const REPO = resolve(__dirname, '../..');
  * a complete replacement rather than a delta — a fresh database replays v1..v6
  * and a production one applies only v6, and both land on the same 543 rows.
  *
+ * **And v7, one hour later, for the same reason.** `apply-migration.yml` ran v6
+ * against production at 15:52 and recorded `20260815150000`, so the one-query
+ * check now answers "applied" for v6 too and editing it would be inert.
+ *
+ * v7 exists because the disclaimer fix was incomplete. `disclaimerPage()` binds
+ * `{{org.disclaimer}}` in `investmentCompass/blocks.ts`, which is 500 of the
+ * 543 — the 43 **voice** templates come from `template-library/blocks.ts` and
+ * kept the baked boilerplate. Measured after v6 applied:
+ *
+ *     disclaimer_bound      500
+ *     still_baked_literal   534     <- 500 fallbacks + 34 voice templates
+ *
+ * Two documents out of one product disagreeing about what the firm's
+ * disclaimer says is worse than both being wrong, which is why this is a
+ * migration rather than a note.
+ *
  * Run the same one-query check before editing this file: if
- * `20260815150000` is already recorded, the next change needs a v7.
+ * `20260815170000` is already recorded, the next change needs a v8.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20260815150000_seed_template_library_v6_binding_fixes.sql',
+  'supabase/migrations/20260815170000_seed_template_library_v7_voice_disclaimer.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
