@@ -215,6 +215,7 @@ const BuilderProjects = lazyWithRetry(() => import("@/pages/builder/BuilderProje
 const BuilderProjectDetail = lazyWithRetry(() => import("@/pages/builder/BuilderProjectDetail"));
 const BuilderInventory = lazyWithRetry(() => import("@/pages/builder/BuilderInventory"));
 const BuilderUnitDetail = lazyWithRetry(() => import("@/pages/builder/BuilderUnitDetail"));
+const BuilderStockList = lazyWithRetry(() => import("@/pages/builder/BuilderStockList"));
 const BuilderTransactions = lazyWithRetry(() => import("@/pages/builder/BuilderTransactions"));
 const BuilderTransactionDetail = lazyWithRetry(() => import("@/pages/builder/BuilderTransactionDetail"));
 const BuilderPipeline = lazyWithRetry(() => import("@/pages/builder/BuilderPipeline"));
@@ -534,6 +535,7 @@ const App = () => (
                                   <Route path="projects/:projectId" element={<BuilderProjectDetail />} />
                                   <Route path="inventory" element={<BuilderInventory />} />
                                   <Route path="inventory/:unitId" element={<BuilderUnitDetail />} />
+                                  <Route path="stock" element={<BuilderStockList />} />
                                   <Route path="transactions" element={<BuilderTransactions />} />
                                   <Route path="transactions/:transactionId" element={<BuilderTransactionDetail />} />
                                   <Route path="pipeline" element={<BuilderPipeline />} />
