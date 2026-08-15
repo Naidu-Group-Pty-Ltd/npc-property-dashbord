@@ -9,12 +9,14 @@ Object.defineProperty(globalThis, "ResizeObserver", { writable: true, value: Tes
 const getClientForActivation = vi.fn();
 const listClientsForActivation = vi.fn();
 const activateClient = vi.fn();
+const clientSummary = vi.fn();
 
 vi.mock("@/lib/aml/amlCasesApi", () => ({
   amlCasesApi: {
     getClientForActivation: (...a: unknown[]) => getClientForActivation(...a),
     listClientsForActivation: (...a: unknown[]) => listClientsForActivation(...a),
     activateClient: (...a: unknown[]) => activateClient(...a),
+    clientSummary: (...a: unknown[]) => clientSummary(...a),
   },
 }));
 
@@ -86,6 +88,8 @@ beforeEach(() => {
   // The picker browses on open, so every test needs a default page.
   listClientsForActivation.mockResolvedValue(page([]));
   activateClient.mockReset();
+  clientSummary.mockReset();
+  clientSummary.mockResolvedValue({ case: null, has_open_case: false });
   createClientRecord.mockReset();
   toast.mockReset();
 });
@@ -116,7 +120,7 @@ describe("ActivateClientDialog — route/record preselection", () => {
     expect(screen.queryByText(/Mark the client active on their record first/)).not.toBeInTheDocument();
   });
 
-  it("keeps Activate disabled until all required fields and the confirmation are complete, then submits with the trusted client id", async () => {
+  it("explains the first missing requirement, then submits with the trusted client id", async () => {
     getClientForActivation.mockResolvedValue({ client: inactiveClient });
     activateClient.mockResolvedValue({
       case: { id: "case-1", case_reference: "AML-2026-00001" },
@@ -127,7 +131,10 @@ describe("ActivateClientDialog — route/record preselection", () => {
 
     await waitFor(() => expect(screen.getByTestId("ac-selected-client")).toBeInTheDocument());
     const activate = screen.getByRole("button", { name: "Activate client" });
-    expect(activate).toBeDisabled();
+    expect(activate).toBeEnabled();
+    fireEvent.click(activate);
+    expect(await screen.findByTestId("ac-submit-error")).toHaveTextContent("Enter the activation event");
+    expect(activateClient).not.toHaveBeenCalled();
 
     fillRequiredFields();
     await waitFor(() => expect(activate).toBeEnabled());
@@ -140,6 +147,39 @@ describe("ActivateClientDialog — route/record preselection", () => {
       human_confirmed: true,
     });
     await waitFor(() => expect(onActivated).toHaveBeenCalled());
+  });
+
+  it("reconciles an interrupted response when the authoritative summary contains the committed case", async () => {
+    getClientForActivation.mockResolvedValue({ client: inactiveClient });
+    activateClient.mockRejectedValue(new Error("Failed to fetch"));
+    clientSummary.mockResolvedValue({
+      has_open_case: true,
+      case: { id: "case-committed", client_id: CLIENT_ID, case_reference: "AML-2026-00077" },
+    });
+    const { onActivated, onOpenChange } = setup({ clientId: CLIENT_ID });
+    await waitFor(() => expect(screen.getByTestId("ac-selected-client")).toBeInTheDocument());
+    fillRequiredFields();
+    fireEvent.click(screen.getByRole("button", { name: "Activate client" }));
+
+    await waitFor(() => expect(clientSummary).toHaveBeenCalledWith(CLIENT_ID));
+    expect(onActivated).toHaveBeenCalledWith(expect.objectContaining({ id: "case-committed" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.queryByText("Activation failed")).not.toBeInTheDocument();
+  });
+
+  it("preserves the completed form and offers retry after a confirmed failure", async () => {
+    getClientForActivation.mockResolvedValue({ client: inactiveClient });
+    activateClient.mockRejectedValue(new Error("Service temporarily unavailable"));
+    const { onOpenChange } = setup({ clientId: CLIENT_ID });
+    await waitFor(() => expect(screen.getByTestId("ac-selected-client")).toBeInTheDocument());
+    fillRequiredFields();
+    fireEvent.click(screen.getByRole("button", { name: "Activate client" }));
+
+    expect(await screen.findByTestId("ac-submit-error")).toHaveTextContent("Service temporarily unavailable");
+    expect(screen.getByLabelText("Activation event")).toHaveValue("Signed engagement letter");
+    expect(screen.getByRole("checkbox", { name: "Confirm activation event" })).toBeChecked();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(screen.getByRole("button", { name: "Activate client" })).toBeEnabled();
   });
 
   it("blocks activation and explains when an open AML case already exists", async () => {
@@ -156,7 +196,8 @@ describe("ActivateClientDialog — route/record preselection", () => {
     await waitFor(() =>
       expect(screen.getByText(/An open AML\/CTF case already exists for this client\./)).toBeInTheDocument());
     fillRequiredFields();
-    expect(screen.getByRole("button", { name: "Activate client" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Activate client" }));
+    expect(await screen.findByTestId("ac-submit-error")).toHaveTextContent("already has an open AML/CTF case");
   });
 
   it("shows a clear error and no activation form when the client cannot be loaded", async () => {

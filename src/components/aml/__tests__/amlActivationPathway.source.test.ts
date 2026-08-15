@@ -89,6 +89,27 @@ describe("AML activation pathway — server contract", () => {
     expect(migrationSource).toContain("GRANT EXECUTE ON FUNCTION public.aml_activate_client_open_case(uuid, jsonb) TO service_role");
   });
 
+  it("writes the required activation audit event inside the inactive-client transaction", () => {
+    expect(migrationSource).toContain("INSERT INTO aml.case_events");
+    expect(migrationSource).toContain("activation_audit_event");
+    const inactiveBranch = edgeSource.slice(
+      edgeSource.indexOf("if (clientWasInactive) {"),
+      edgeSource.indexOf("} else {", edgeSource.indexOf("if (clientWasInactive) {")),
+    );
+    expect(inactiveBranch).toContain("activation_audit_event: activationAuditEvent");
+    expect(inactiveBranch).not.toContain("appendEvent(");
+  });
+
+  it("reconciles an exact retry but still rejects a different duplicate activation", () => {
+    const activateBlock = edgeSource.slice(
+      edgeSource.indexOf("case 'activate_client'"),
+      edgeSource.indexOf("case 'update'"),
+    );
+    expect(activateBlock).toContain("const isSameConfirmedActivation");
+    expect(activateBlock).toContain("reconciled: true");
+    expect(activateBlock).toContain("An open AML case already exists for this client");
+  });
+
   it("keeps duplicate-open-case prevention on every creation path", () => {
     // Pre-check…
     expect(edgeSource).toContain("Duplicate-open guard: one open case per client at a time.");
