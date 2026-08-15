@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import type { BuildType, InvestmentGrade, InvestmentReport } from './types';
+import { resolveCashFlowFinancialSummary } from './financialSummary';
 
 interface CashFlowReportCardProps {
   report: InvestmentReport;
@@ -15,10 +16,7 @@ interface CashFlowReportCardProps {
 }
 
 export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, onViewReport, onOpenCashFlow }: CashFlowReportCardProps) {
-  const fc = report.financial_calculations || {};
-  const mo = report.manual_overrides || {};
-  const purchasePrice = mo.purchasePrice || fc.purchasePrice || fc.propertyValue || 0;
-  const weeklyRent = mo.weeklyRent || fc.weeklyRent || 0;
+  const { purchasePrice, weeklyRent } = resolveCashFlowFinancialSummary(report);
   const isNewBuild = buildType === 'new_build';
   const isLandOnly = buildType === 'land_only';
 
@@ -59,7 +57,7 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
               <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
               Ready for cash-flow analysis
             </Badge>
-            {weeklyRent <= 0 && (
+            {weeklyRent === null && (
               <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning hover:bg-warning/10">
                 <AlertTriangle className="mr-1 h-3.5 w-3.5" />
                 Rent review needed
@@ -73,15 +71,15 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
         <div className="grid grid-cols-2 gap-2.5 text-sm">
           <MetricTile
             label="Purchase Price"
-            value={purchasePrice > 0 ? `$${purchasePrice.toLocaleString()}` : 'Not set'}
+            value={purchasePrice !== null ? formatCurrency(purchasePrice) : 'Not set'}
             hint="Contract value"
-            muted={purchasePrice <= 0}
+            muted={purchasePrice === null}
           />
           <MetricTile
             label="Weekly Rent"
-            value={weeklyRent > 0 ? `$${weeklyRent.toLocaleString()}` : 'Not set'}
-            hint={weeklyRent > 0 ? 'Per week' : 'Awaiting review'}
-            warning={weeklyRent <= 0}
+            value={weeklyRent !== null ? formatCurrency(weeklyRent) : 'Not set'}
+            hint={weeklyRent !== null ? 'Per week' : 'Awaiting review'}
+            warning={weeklyRent === null}
           />
         </div>
 
@@ -117,6 +115,16 @@ export function CashFlowReportCard({ report, buildType, gradeInfo, isOpening, on
       </CardFooter>
     </Card>
   );
+}
+
+const AUD_CURRENCY = new Intl.NumberFormat('en-AU', {
+  style: 'currency',
+  currency: 'AUD',
+  maximumFractionDigits: 0,
+});
+
+function formatCurrency(value: number) {
+  return AUD_CURRENCY.format(value);
 }
 
 function MetricTile({

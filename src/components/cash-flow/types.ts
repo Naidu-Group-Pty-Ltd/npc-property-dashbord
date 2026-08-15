@@ -8,6 +8,9 @@ export interface InvestmentReport {
   current_version?: number;
   report_scope?: string;
   status?: string;
+  /** Lightweight display scalars resolved by the secure report-list endpoint. */
+  cash_flow_purchase_price?: number | null;
+  cash_flow_weekly_rent?: number | null;
   manual_overrides?: any;
   financial_calculations?: any;
   demographics_data?: any;

@@ -76,17 +76,6 @@ export default function CashFlowAnalysis() {
     }
   }, [loading, reports, searchParams, hasHandledDeepLink, navigate]);
 
-  const hasRequiredData = (report: InvestmentReport) => {
-    const fc = report.financial_calculations || {};
-    const mo = report.manual_overrides || {};
-    
-    // Check for purchase price (required) - rent is optional but helpful
-    const hasPrice = mo.purchasePrice || fc.purchasePrice || fc.propertyValue;
-    
-    // For now, only require price - rent can be estimated or added later
-    return !!hasPrice;
-  };
-
   const getBuildType = (report: InvestmentReport): 'new_build' | 'existing_property' | 'land_only' => {
     const buildType = report.manual_overrides?.buildType;
     if (buildType === 'new_build' || buildType === 'land_only') return buildType;
@@ -108,16 +97,15 @@ export default function CashFlowAnalysis() {
       }
       const { data, error } = await invokeSecureFunction('get-investment-reports', {
         listMode: true,
+        projection: 'cashFlowLibrary',
         listOptions,
       });
 
       if (error) throw new Error(error.message);
 
       const fetched: InvestmentReport[] = data?.reports || [];
-      // Note: the `library` projection returned by get-investment-reports does not
-      // include manual_overrides or financial_calculations, so we cannot filter by
-      // purchase price here. The full payload (with price/rent) is fetched on click
-      // via openAnalysisForReport(); the modal handles missing figures gracefully.
+      // The list response includes only pre-resolved financial summary scalars;
+      // the full calculation payload remains detail-only and is fetched on click.
       setReports(prev => append ? [...prev, ...fetched] : fetched);
       setBackendOffset(currentOffset + fetched.length);
       setHasMore(fetched.length === PAGE_SIZE);
@@ -202,7 +190,7 @@ export default function CashFlowAnalysis() {
   };
 
   return (
-    <div className="space-y-6 overflow-x-hidden p-4 md:p-6">
+    <div className="space-y-5 overflow-x-hidden p-4 md:p-6">
       <CashFlowPageHero
         reports={reports}
         filteredReports={filteredReports}
