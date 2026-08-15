@@ -72,6 +72,7 @@ import {
   ifItFits,
   kpiCapacity,
   kpis,
+  oneOf,
   page,
   prose,
   rule,
@@ -97,6 +98,33 @@ import { STANDARD_DISCLAIMER } from '../designSystem';
  */
 const FOOTER = '{{cashflow.property.address}} · Ten year cash flow';
 const DOCUMENT_LABEL = 'Ten Year Cash Flow Analysis';
+
+/**
+ * What the adviser-reviewed path does not publish, and this master must not
+ * print a label for.
+ *
+ * Two producers feed these masters. `projectCashFlow` over a stored row
+ * publishes everything. `applyLiveCashFlowProjection` over the series an
+ * adviser reviewed on screen publishes a strict subset, and each omission is
+ * deliberate and recorded in `liveProjectionRow.ts`:
+ *
+ *  - `scenarios` / `scenarioBasis` are deleted, because only the series on
+ *    screen was reviewed and the stored three are not a comparison against it;
+ *  - `roi` is absent from every year, because the wire has no such field and
+ *    "the stored derivation this repo has no second implementation of"
+ *    (`cashFlowAdapter.ts`) — so a figure invented here would be a number in a
+ *    client's financial document that no other surface agrees with.
+ *
+ * Withholding is right. Printing the labels anyway is not, and that is what the
+ * 15 Aug 2026 export of 28 Bligh Street did: a blank three-row scenarios table,
+ * a "Return" column empty in all ten rows, a "Return at year ten" KPI reading
+ * "—", and three assumption lines reading "Conservative capital growth ·
+ * rental growth, a year" with no rates in them.
+ */
+const HAS_SCENARIOS = 'cashflow && cashflow.scenarios';
+const HAS_SCENARIO_BASIS = 'cashflow && cashflow.scenarioBasis';
+const HAS_ROI = 'cashflow && cashflow.outcome && cashflow.outcome.roi != null';
+const NO_ROI = 'cashflow && (!cashflow.outcome || cashflow.outcome.roi == null)';
 
 /** Every stored series is exactly this long, in all three scenarios, on all 162. */
 const YEARS = 10;
@@ -185,7 +213,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     eyebrow: 'Ten year cash flow analysis',
     title: '{{cashflow.property.address}}',
     standfirst: 'What the property is projected to be worth, what it owes, and what it costs to hold — year by year.',
-    locations: 'Prepared {{report.generatedDate}}',
+    locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       { label: 'Value at year ten', value: '{{cashflow.outcome.propertyValue | currency}}' },
       { label: 'Equity at year ten', value: '{{cashflow.outcome.equity | currency}}' },
@@ -239,7 +267,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         ...prose('{{cashflow.overview}}', textHeight(340)),
         conditional: 'cashflow && cashflow.overview',
       },
-      kpis(POSITION_KPIS.slice(0, kpiCapacity())),
+      // Same two shapes as the cash table. "Return at year ten" is dropped
+      // rather than printed as an em dash when `roi` is not published — the
+      // remaining figures then take the full row.
+      oneOf(
+        {
+          when: HAS_ROI,
+          item: kpis(POSITION_KPIS.slice(0, kpiCapacity())),
+        },
+        {
+          when: NO_ROI,
+          item: kpis(POSITION_KPIS.filter((k) => k.label !== 'Return at year ten')
+            .slice(0, kpiCapacity())),
+        },
+      ),
     ], [
       // The one figure in the record that sets the paper gain against what it
       // cost. Optional because it is a summary of the two KPIs above it rather
@@ -321,16 +362,48 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           + 'in every year of every scenario on almost every projection this product has '
           + 'stored, and the cumulative column is what that adds up to.',
       }),
-      table({
-        headers: ['Year', 'Rent', 'Cash flow', 'Cumulative', 'Return'],
-        rows: Array.from({ length: YEARS }, (_, i) => cashRow(i)),
-        columnWidths: [0.11, 0.22, 0.22, 0.26, 0.19],
-      }),
+      // Two mutually exclusive shapes of the same table, because the Return
+      // column exists only when `roi` does. Drawn with it, the adviser-reviewed
+      // path printed a labelled fifth column with ten empty cells; drawn
+      // without, the four columns it does have take the full measure.
+      oneOf(
+        {
+          when: HAS_ROI,
+          item: table({
+            headers: ['Year', 'Rent', 'Cash flow', 'Cumulative', 'Return'],
+            rows: Array.from({ length: YEARS }, (_, i) => cashRow(i)),
+            columnWidths: [0.11, 0.22, 0.22, 0.26, 0.19],
+          }),
+        },
+        {
+          when: NO_ROI,
+          item: table({
+            headers: ['Year', 'Rent', 'Cash flow', 'Cumulative'],
+            rows: Array.from({ length: YEARS }, (_, i) => cashRow(i).slice(0, 4)),
+            columnWidths: [0.13, 0.29, 0.29, 0.29],
+          }),
+        },
+      ),
     ], contentTop()),
   ]), FOOTER));
 
   // ── 06 The three scenarios ───────────────────────────────────────────────
-  pages.push(withFurniture(page('The three scenarios', [
+  //
+  // Conditional on the comparison existing, because it does not always.
+  //
+  // `applyLiveCashFlowProjection` deletes `scenarios` and `scenarioBasis` on
+  // the adviser-reviewed path, for a good reason: only the series on screen was
+  // reviewed, and a stored three-way comparison against it would be comparing
+  // two different things. But the page was drawn regardless, so an
+  // adviser-reviewed export printed this table with its three scenario names
+  // and every figure cell empty — a labelled, ruled, entirely blank table in a
+  // client's financial document, followed by a "How to read this" panel
+  // explaining how to read it. Observed on the 15 Aug 2026 export of
+  // 28 Bligh Street.
+  //
+  // `visiblePages` drops a conditional page before anything is laid out, so the
+  // contents list and the page numbering both follow it down.
+  const scenariosPage = withFurniture(page('The three scenarios', [
     ...furniture(DOCUMENT_LABEL, nextPart('Scenarios'), 'The three scenarios'),
     ...flow(ifItFits([
       sectionHeading({
@@ -353,7 +426,9 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Cash contributed', definition: 'Barely moves. Holding costs and repayments do not fall because the market rises.' },
       ], 150),
     ], contentTop()), contentTop()),
-  ]), FOOTER));
+  ]), FOOTER);
+  scenariosPage.conditional = HAS_SCENARIOS;
+  pages.push(scenariosPage);
 
   // ── 07 What it costs to hold ─────────────────────────────────────────────
   //
@@ -449,11 +524,20 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: 'What this rests on',
         numeral: nextNumeral(),
       }),
-      definitions('What each scenario assumes', [
-        { term: 'Conservative', definition: '{{cashflow.scenarioBasis.conservative.capitalGrowth | percent}} capital growth · {{cashflow.scenarioBasis.conservative.rentalGrowth | percent}} rental growth, a year' },
-        { term: 'Moderate', definition: '{{cashflow.scenarioBasis.moderate.capitalGrowth | percent}} capital growth · {{cashflow.scenarioBasis.moderate.rentalGrowth | percent}} rental growth, a year' },
-        { term: 'Optimistic', definition: '{{cashflow.scenarioBasis.optimistic.capitalGrowth | percent}} capital growth · {{cashflow.scenarioBasis.optimistic.rentalGrowth | percent}} rental growth, a year' },
-      ], 76),
+      // Conditional for the same reason the scenarios page is: on the
+      // adviser-reviewed path `scenarioBasis` is deleted, and these three lines
+      // printed as "Conservative capital growth · rental growth, a year" —
+      // a sentence with its numbers missing. `basis` (the rates read off the
+      // series actually shown) survives on both paths and is stated below under
+      // "Scenario shown", so the page still says what it was drawn at.
+      {
+        ...definitions('What each scenario assumes', [
+          { term: 'Conservative', definition: '{{cashflow.scenarioBasis.conservative.capitalGrowth | percent}} capital growth · {{cashflow.scenarioBasis.conservative.rentalGrowth | percent}} rental growth, a year' },
+          { term: 'Moderate', definition: '{{cashflow.scenarioBasis.moderate.capitalGrowth | percent}} capital growth · {{cashflow.scenarioBasis.moderate.rentalGrowth | percent}} rental growth, a year' },
+          { term: 'Optimistic', definition: '{{cashflow.scenarioBasis.optimistic.capitalGrowth | percent}} capital growth · {{cashflow.scenarioBasis.optimistic.rentalGrowth | percent}} rental growth, a year' },
+        ], 76),
+        conditional: HAS_SCENARIO_BASIS,
+      },
       callout(
         'What this projection does not include',
         'No tax position is modelled: there is no depreciation, no negative-gearing benefit '
@@ -465,7 +549,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       definitions('Scope', [
         { term: 'Term', definition: '{{cashflow.termYears}} years' },
         { term: 'Scenario shown', definition: '{{cashflow.scenarioLabel}}, at {{cashflow.basis.capitalGrowth | percent}} capital growth' },
-        { term: 'Prepared', definition: '{{report.generatedDate}}' },
+        { term: 'Prepared', definition: '{{report.generatedDate | date}}' },
       ], 60),
     ], contentTop()),
   ]), FOOTER));

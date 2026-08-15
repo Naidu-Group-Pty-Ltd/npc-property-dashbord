@@ -110,9 +110,18 @@ function liveRowFromPayload(
    * override changes and which the payload does not carry.
    */
   storedFinancials?: Record<string, unknown> | null,
+  /**
+   * The record's timestamps, which are what date the document.
+   *
+   * Same best-effort rule as `storedFinancials`: taken from the record when it
+   * is readable, withheld when it is not. Without them the cover printed
+   * "Prepared" and nothing after it.
+   */
+  timestamps?: { updated_at?: unknown; created_at?: unknown } | null,
 ): Record<string, unknown> | null {
   const wire = payload?.wire as WireProjection | undefined;
   if (!wire) return null;
+  const iso = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
   return wireAsProjectionRow(wire, {
     reportId,
     // From the payload, never from the database: the whole point of this
@@ -120,6 +129,8 @@ function liveRowFromPayload(
     // without a read that may be refused.
     propertyAddress: (payload?.propertyAddress as string | null) ?? null,
     storedFinancials: storedFinancials ?? null,
+    updatedAt: iso(timestamps?.updated_at),
+    createdAt: iso(timestamps?.created_at),
   });
 }
 
@@ -237,6 +248,7 @@ export const cashFlowAdapter: ReportTemplateAdapter = {
     const row = await loadReport(reportId);
     const live = liveRowFromPayload(
       payload, reportId, (row?.financial_calculations ?? null) as Record<string, unknown> | null,
+      row as { updated_at?: unknown; created_at?: unknown } | null,
     );
     if (!live && !row) return null;
 
